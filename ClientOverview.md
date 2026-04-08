@@ -56,7 +56,7 @@ The customer taps "Book an Errand" and goes through a simple step-by-step bookin
 4. **Choose how to price the errand:**
    - **Fixed Price** — The app calculates the price automatically based on distance and the runner's vehicle type. The customer sees a full price breakdown before confirming.
    - **Negotiate** — The customer sets their own offered price. The system shows a recommended range to guide them. Nearby runners can then accept or skip the offer.
-5. **Choose payment method** — Credit/Debit Card, GCash, PayPal, Cash on Delivery, or in-app Wallet
+5. **Choose payment method** — Credit/Debit Card, GCash, Maya, Cash on Delivery, or in-app Wallet
 6. **Confirm** — The booking is submitted
 
 #### 3. Getting Matched with a Runner
@@ -253,7 +253,7 @@ Customers have an in-app **wallet** they can top up with funds and use to pay fo
 Accepted payment methods:
 - Credit or Debit Card
 - GCash
-- PayPal
+- Maya
 - Cash on Delivery
 - ErrandGuy Wallet
 

@@ -1,0 +1,186 @@
+# Auth Flow E2E Test — ErrandGuy
+# Tests: Register → Verify OTP → Select Role → Land on Customer Home
+#
+# Prerequisites:
+#   - Backend running at configured API_URL
+#   - Fresh app state (clearState on start)
+#
+# Run: maestro test .maestro/auth-flow.yaml
+
+appId: com.errandguy.app
+tags:
+  - auth
+  - smoke
+
+---
+
+# ============================================================================
+# STEP 1: Welcome Screen — Navigate to Register
+# ============================================================================
+
+- assertVisible: "ErrandGuy"
+- assertVisible: "Get Started"
+- tapOn: "Get Started"
+
+# ============================================================================
+# STEP 2: Register Screen — Fill out registration form
+# ============================================================================
+
+- assertVisible: "Create your account"
+- assertVisible: "Let's set up your profile"
+
+# Fill in full name
+- tapOn: "Full Name"
+- inputText: "Test User E2E"
+
+# Fill in phone number
+- tapOn: "Phone Number"
+- inputText: "09171234567"
+
+# Fill in email
+- tapOn: "Email"
+- inputText: "testuser.e2e@errandguy.test"
+
+# Fill in password (meets strength requirements: upper, lower, digit, special)
+- tapOn:
+    text: "Password"
+    index: 0
+- inputText: "TestP@ss123!"
+
+# Fill in confirm password
+- scrollUntilVisible:
+    element: "Confirm Password"
+    direction: DOWN
+- tapOn: "Confirm Password"
+- inputText: "TestP@ss123!"
+
+# Accept terms
+- scrollUntilVisible:
+    element: "Terms of Service"
+    direction: DOWN
+- tapOn: "Terms of Service"
+
+# Submit registration
+- scrollUntilVisible:
+    element: "Create Account"
+    direction: DOWN
+- tapOn: "Create Account"
+
+# Wait for API response
+- extendedWaitUntil:
+    visible: "Enter verification code"
+    timeout: 15000
+
+# ============================================================================
+# STEP 3: Verify OTP Screen
+# ============================================================================
+
+- assertVisible: "Enter verification code"
+- assertVisible: "09****4567"
+
+# Enter a 6-digit OTP code
+# In test environment, OTP should be fixed (e.g., 123456) or bypass enabled
+- inputText: "123456"
+
+# Wait for verification to complete and redirect
+- extendedWaitUntil:
+    visible: "How will you use ErrandGuy?"
+    timeout: 15000
+
+# ============================================================================
+# STEP 4: Role Selection Screen
+# ============================================================================
+
+- assertVisible: "How will you use ErrandGuy?"
+- assertVisible: "I need errands done"
+- assertVisible: "I want to earn money"
+
+# Select Customer role
+- tapOn: "I need errands done"
+- tapOn: "Continue"
+
+# Wait for navigation to Customer Home
+- extendedWaitUntil:
+    visible: "What do you need done?"
+    timeout: 10000
+
+# ============================================================================
+# STEP 5: Verify Customer Home Screen
+# ============================================================================
+
+- assertVisible: "What do you need done?"
+
+# Verify bottom tab navigation is visible
+- assertVisible: "Home"
+- assertVisible: "Activity"
+- assertVisible: "Profile"
+
+# ============================================================================
+# STEP 6: Logout and Login Flow
+# ============================================================================
+
+# Navigate to Profile tab
+- tapOn: "Profile"
+- assertVisible: "Test User E2E"
+
+# Scroll to logout
+- scrollUntilVisible:
+    element: "Log Out"
+    direction: DOWN
+- tapOn: "Log Out"
+
+# Confirm logout if dialog appears
+- runFlow:
+    when:
+      visible: "Are you sure"
+    commands:
+      - tapOn: "Log Out"
+
+# Wait for login screen
+- extendedWaitUntil:
+    visible: "Welcome back"
+    timeout: 10000
+
+# ============================================================================
+# STEP 7: Login with existing credentials
+# ============================================================================
+
+- assertVisible: "Welcome back"
+- assertVisible: "Log in to your account"
+
+# Switch to phone mode (should be default)
+- assertVisible: "Phone"
+
+# Enter phone number
+- tapOn: "Phone Number"
+- inputText: "09171234567"
+
+# Enter password
+- tapOn:
+    text: "Password"
+    index: 0
+- inputText: "TestP@ss123!"
+
+# Tap Log In
+- tapOn: "Log In"
+
+# Wait for OTP or direct login
+- extendedWaitUntil:
+    visible:
+      anyOf:
+        - "What do you need done?"
+        - "Enter verification code"
+    timeout: 15000
+
+# If OTP needed, enter it
+- runFlow:
+    when:
+      visible: "Enter verification code"
+    commands:
+      - inputText: "123456"
+      - extendedWaitUntil:
+          visible: "What do you need done?"
+          timeout: 15000
+
+# Verify we're on Customer Home
+- assertVisible: "What do you need done?"

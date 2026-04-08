@@ -527,7 +527,7 @@
   - Warning Popover if amount > 3× recommended price
   - Info note about lower offers in `#475569`
 - **Payment Method Selector**
-  - Shows current default method (card brand + last 4, or GCash/PayPal/Wallet/Cash icon)
+  - Shows current default method (card brand + last 4, or GCash/Maya/Wallet/Cash icon)
   - Edit pencil icon → opens Payment Method bottom sheet:
     - List of saved methods with radio selection
     - "Add new card" option
@@ -1157,7 +1157,7 @@
 │  ├────────────────────────────────────┤  │
 │  │  📱 GCash                   ○      │  │
 │  ├────────────────────────────────────┤  │
-│  │  🅿️  PayPal                 ○      │  │
+│  │  📱  Maya                    ○      │  │
 │  └────────────────────────────────────┘  │
 │                                          │
 │  ┌────────────────────────────────────┐  │

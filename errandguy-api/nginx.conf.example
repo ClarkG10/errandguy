@@ -1,0 +1,58 @@
+# ErrandGuy API — Nginx Configuration Template
+# Laravel Forge auto-generates Nginx config, but you can reference this
+# for manual setup or Forge "Edit Nginx Configuration" overrides.
+
+server {
+    listen 80;
+    listen [::]:80;
+    server_name api.errandguy.app;
+    return 301 https://$host$request_uri;
+}
+
+server {
+    listen 443 ssl http2;
+    listen [::]:443 ssl http2;
+    server_name api.errandguy.app;
+    root /home/forge/errandguy-api/public;
+
+    index index.php;
+    charset utf-8;
+
+    # SSL — Forge handles cert paths via Let's Encrypt
+    ssl_certificate /etc/nginx/ssl/api.errandguy.app/server.crt;
+    ssl_certificate_key /etc/nginx/ssl/api.errandguy.app/server.key;
+    ssl_protocols TLSv1.2 TLSv1.3;
+
+    # Security headers (supplement Laravel SecurityHeaders middleware)
+    add_header X-Frame-Options "SAMEORIGIN" always;
+    add_header X-Content-Type-Options "nosniff" always;
+
+    # Gzip
+    gzip on;
+    gzip_types application/json text/plain application/xml;
+
+    # Max upload size (for photo proofs / document uploads)
+    client_max_body_size 20M;
+
+    location / {
+        try_files $uri $uri/ /index.php?$query_string;
+    }
+
+    location = /favicon.ico { access_log off; log_not_found off; }
+    location = /robots.txt  { access_log off; log_not_found off; }
+
+    error_page 404 /index.php;
+
+    location ~ \.php$ {
+        fastcgi_split_path_info ^(.+\.php)(/.+)$;
+        fastcgi_pass unix:/var/run/php/php8.3-fpm.sock;
+        fastcgi_index index.php;
+        include fastcgi_params;
+        fastcgi_param SCRIPT_FILENAME $realpath_root$fastcgi_script_name;
+    }
+
+    # Deny hidden files
+    location ~ /\.(?!well-known).* {
+        deny all;
+    }
+}

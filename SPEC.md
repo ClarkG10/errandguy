@@ -28,7 +28,7 @@ ErrandGuy is an on-demand errand booking and service platform. Customers post er
 | Auth | Laravel Sanctum (token-based) |
 | Database | Supabase (PostgreSQL 16) |
 | Real-Time | Supabase Realtime (WebSocket channels) |
-| Payments | Stripe, GCash, PayPal SDK, Cash on Delivery |
+| Payments | PayMongo (Card, GCash, Maya), Cash on Delivery |
 | Push Notifications | Expo Notifications + Firebase Cloud Messaging |
 | File Storage | Supabase Storage |
 | Mobile Deployment | Expo (Android + iOS) |
@@ -113,9 +113,9 @@ ErrandGuy is an on-demand errand booking and service platform. Customers post er
 
 #### Module 6 — Payments
 - Multiple payment methods per booking:
-  - Credit/Debit Card (Stripe)
-  - GCash (via payment gateway)
-  - PayPal
+  - Credit/Debit Card (via PayMongo)
+  - GCash (via PayMongo)
+  - Maya (via PayMongo)
   - Cash on Delivery
 - Wallet system (top-up balance, refunds credited to wallet)
 - Receipts and transaction history
@@ -252,7 +252,7 @@ Booking an Errand
 │     ├─ ● Fixed Price — see calculated price breakdown (by distance + vehicle type)
 │     └─ ○ Negotiate — enter your offered price (system shows recommended range)
 ├─ 6. View price breakdown (Fixed) or confirm your offer (Negotiate)
-├─ 7. Select payment method (Card / GCash / PayPal / Cash / Wallet)
+├─ 7. Select payment method (Card / GCash / Maya / Cash / Wallet)
 ├─ 8. Confirm booking
 ├─ 9a. [Fixed] System auto-matches nearest runner → 30s countdown
 ├─ 9b. [Negotiate] Booking broadcast to nearby runners → first to accept wins
@@ -1293,10 +1293,10 @@ CREATE TABLE payments (
     amount              DECIMAL(10, 2) NOT NULL,
     currency            VARCHAR(3) DEFAULT 'PHP',
     method              VARCHAR(20) NOT NULL
-                        CHECK (method IN ('card', 'gcash', 'paypal', 'wallet', 'cash')),
+                        CHECK (method IN ('card', 'gcash', 'maya', 'wallet', 'cash')),
     status              VARCHAR(20) NOT NULL DEFAULT 'pending'
                         CHECK (status IN ('pending', 'processing', 'completed', 'failed', 'refunded', 'partially_refunded')),
-    gateway_tx_id       VARCHAR(255),            -- Stripe/PayPal/GCash transaction ID
+    gateway_tx_id       VARCHAR(255),            -- PayMongo transaction ID
     gateway_response    JSONB,                   -- Raw gateway response (sanitized)
     paid_at             TIMESTAMPTZ,
     refund_amount       DECIMAL(10, 2),
@@ -1316,7 +1316,7 @@ CREATE TABLE payment_methods (
     id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     user_id         UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     type            VARCHAR(20) NOT NULL
-                    CHECK (type IN ('card', 'gcash', 'paypal')),
+                    CHECK (type IN ('card', 'gcash', 'maya')),
     label           VARCHAR(50),                 -- "Visa ending 4242"
     gateway_token   VARCHAR(255) NOT NULL,       -- Tokenized by gateway, never raw card data
     is_default      BOOLEAN DEFAULT FALSE,
@@ -1579,8 +1579,8 @@ CREATE POLICY payments_self ON payments
            ▼                       ▼
     ┌──────────────┐     ┌──────────────────┐
     │  Supabase    │     │  External APIs   │
-    │  PostgreSQL  │     │  Stripe/GCash/   │
-    │  + Storage   │     │  PayPal/FCM/Maps │
+    │  PostgreSQL  │     │  PayMongo/       │
+    │  + Storage   │     │  FCM/Mapbox      │
     └──────────────┘     └──────────────────┘
 ```
 
@@ -2397,9 +2397,9 @@ App receives:
 
 | Method | Provider | Flow Type | When Charged |
 |---|---|---|---|
-| Credit/Debit Card | Stripe | Tokenized (PaymentIntent) | Pre-authorized at booking, captured on completion |
-| GCash | PayMongo / DragonPay | Redirect-based (Source) | Charged at booking confirmation |
-| PayPal | PayPal SDK | In-app SDK | Charged at booking confirmation |
+| Credit/Debit Card | PayMongo | Tokenized (PaymentIntent) | Pre-authorized at booking, captured on completion |
+| GCash | PayMongo | Redirect-based (Source) | Charged at booking confirmation |
+| Maya | PayMongo | Redirect-based (Source) | Charged at booking confirmation |
 | Wallet | Internal | Direct debit from balance | Instant debit at booking |
 | Cash on Delivery | N/A | Runner collects | Runner collects cash upon completion |
 
@@ -2412,33 +2412,34 @@ Customer confirms booking
     ┌──────────────────────────────────────┐
     │ Which payment method?                │
     │                                      │
-    ├── CARD (Stripe) ─────────────────────┤
+    ├── CARD (PayMongo) ───────────────────┤
     │   1. Create PaymentIntent (amount)   │
-    │   2. Confirm with saved card token   │
-    │   3. Status: requires_capture        │
-    │   4. Hold amount on customer's card  │
-    │   5. On errand completion:           │
-    │      └── Capture PaymentIntent       │
-    │   6. On cancellation:               │
-    │      └── Cancel PaymentIntent        │
-    │         (release hold)               │
-    │                                      │
-    ├── GCASH ─────────────────────────────┤
-    │   1. Create GCash Source via PayMongo│
-    │   2. Redirect customer to GCash app  │
-    │   3. Customer authorizes payment     │
-    │   4. Webhook: payment.paid           │
-    │   5. Booking proceeds               │
+    │   2. Create PaymentMethod (card)      │
+    │   3. Attach PaymentMethod to Intent   │
+    │   4. Payment processes via PayMongo   │
+    │   5. Webhook: payment.paid            │
     │   6. On cancellation:               │
     │      └── Refund via PayMongo API     │
     │                                      │
-    ├── PAYPAL ────────────────────────────┤
-    │   1. Create PayPal Order (amount)    │
-    │   2. Show PayPal in-app button       │
-    │   3. Customer approves in PayPal     │
-    │   4. Capture order on approval       │
-    │   5. On cancellation:               │
-    │      └── Refund via PayPal API       │
+    ├── GCASH (PayMongo) ──────────────────┤
+    │   1. Create GCash Source via PayMongo│
+    │   2. Redirect customer to GCash app  │
+    │   3. Customer authorizes payment     │
+    │   4. Webhook: source.chargeable      │
+    │   5. Create payment from source      │
+    │   6. Webhook: payment.paid           │
+    │   7. On cancellation:               │
+    │      └── Refund via PayMongo API     │
+    │                                      │
+    ├── MAYA (PayMongo) ───────────────────┤
+    │   1. Create Maya Source via PayMongo │
+    │   2. Redirect customer to Maya app   │
+    │   3. Customer authorizes payment     │
+    │   4. Webhook: source.chargeable      │
+    │   5. Create payment from source      │
+    │   6. Webhook: payment.paid           │
+    │   7. On cancellation:               │
+    │      └── Refund via PayMongo API     │
     │                                      │
     ├── WALLET ────────────────────────────┤
     │   1. Check wallet_balance >= amount  │
@@ -2457,95 +2458,100 @@ Customer confirms booking
     ───────────────────────────────────────┘
 ```
 
-### 7.3 Stripe Integration (Card Payments)
+### 7.3 PayMongo Integration (Card Payments)
 
 #### Adding a Card
 ```typescript
-// Frontend: Collect card via Stripe SDK (never touches our server)
-import { useStripe } from '@stripe/stripe-react-native';
-
-const { createPaymentMethod } = useStripe();
-
-const addCard = async () => {
-  // 1. Collect card details via Stripe's secure UI component
-  const { paymentMethod, error } = await createPaymentMethod({
-    paymentMethodType: 'Card',
+// Frontend: Collect card details and create PayMongo PaymentMethod via API
+const addCard = async (cardDetails: { number: string; exp_month: number; exp_year: number; cvc: string }) => {
+  // 1. Create PayMongo PaymentMethod via backend
+  const response = await api.post('/payments/methods', {
+    type: 'card',
+    card_number: cardDetails.number,
+    exp_month: cardDetails.exp_month,
+    exp_year: cardDetails.exp_year,
+    cvc: cardDetails.cvc,
   });
-
-  if (paymentMethod) {
-    // 2. Send only the token to our backend
-    await api.post('/payments/methods', {
-      type: 'card',
-      gateway_token: paymentMethod.id,  // pm_xxx — never raw card numbers
-      last_four: paymentMethod.card.last4,
-      card_brand: paymentMethod.card.brand,
-    });
-  }
+  // Backend creates PayMongo PaymentMethod and stores token
 };
 ```
 
 #### Charging a Card
 ```php
-// Backend: Laravel PaymentService
+// Backend: Laravel PaymentService (via PayMongo REST API)
 class PaymentService
 {
     public function chargeCard(Booking $booking, PaymentMethod $method): Payment
     {
-        // 1. Create PaymentIntent with capture_method = manual (authorize only)
-        $intent = Stripe::paymentIntents()->create([
-            'amount' => (int) ($booking->total_amount * 100), // cents
-            'currency' => 'php',
-            'payment_method' => $method->gateway_token,
-            'customer' => $booking->customer->stripe_customer_id,
-            'confirm' => true,
-            'capture_method' => 'manual', // authorize, don't capture yet
-            'metadata' => [
-                'booking_id' => $booking->id,
-                'booking_number' => $booking->booking_number,
-            ],
-        ]);
+        // 1. Create PaymentIntent
+        $intent = Http::withBasicAuth(config('services.paymongo.secret_key'), '')
+            ->post('https://api.paymongo.com/v1/payment_intents', [
+                'data' => [
+                    'attributes' => [
+                        'amount' => (int) ($booking->total_amount * 100), // centavos
+                        'payment_method_allowed' => ['card'],
+                        'currency' => 'PHP',
+                        'description' => "Booking #{$booking->booking_number}",
+                        'metadata' => ['booking_id' => $booking->id],
+                    ],
+                ],
+            ]);
 
-        // 2. Save payment record
+        // 2. Attach PaymentMethod to Intent
+        $intentId = $intent['data']['id'];
+        Http::withBasicAuth(config('services.paymongo.secret_key'), '')
+            ->post("https://api.paymongo.com/v1/payment_intents/{$intentId}/attach", [
+                'data' => [
+                    'attributes' => [
+                        'payment_method' => $method->gateway_token,
+                        'return_url' => config('app.url') . "/payment/return/{$booking->id}",
+                    ],
+                ],
+            ]);
+
+        // 3. Save payment record
         return Payment::create([
             'booking_id' => $booking->id,
             'customer_id' => $booking->customer_id,
             'amount' => $booking->total_amount,
             'method' => 'card',
-            'status' => 'processing', // authorized but not captured
-            'gateway_tx_id' => $intent->id,
+            'status' => 'processing',
+            'gateway_tx_id' => $intentId,
         ]);
     }
 
-    public function capturePayment(Payment $payment): void
+    public function refundPayment(Payment $payment, float $amount): void
     {
-        // Called when errand is completed
-        Stripe::paymentIntents()->capture($payment->gateway_tx_id);
-        $payment->update(['status' => 'completed', 'paid_at' => now()]);
-    }
-
-    public function cancelAuthorization(Payment $payment): void
-    {
-        // Called when booking is cancelled
-        Stripe::paymentIntents()->cancel($payment->gateway_tx_id);
-        $payment->update(['status' => 'failed']);
+        Http::withBasicAuth(config('services.paymongo.secret_key'), '')
+            ->post('https://api.paymongo.com/v1/refunds', [
+                'data' => [
+                    'attributes' => [
+                        'amount' => (int) ($amount * 100),
+                        'payment_id' => $payment->gateway_tx_id,
+                        'reason' => 'requested_by_customer',
+                    ],
+                ],
+            ]);
+        $payment->update(['status' => 'refunded', 'refund_amount' => $amount, 'refunded_at' => now()]);
     }
 }
 ```
 
-### 7.4 GCash Integration (via PayMongo)
+### 7.4 GCash / Maya Integration (via PayMongo)
 
 ```php
-class GCashPaymentService
+class PaymentService
 {
-    public function createGCashSource(Booking $booking): array
+    public function createSource(Booking $booking, string $type): array
     {
-        $source = Http::withToken(config('services.paymongo.secret_key'))
+        // $type: 'gcash' or 'paymaya'
+        $source = Http::withBasicAuth(config('services.paymongo.secret_key'), '')
             ->post('https://api.paymongo.com/v1/sources', [
                 'data' => [
                     'attributes' => [
                         'amount' => (int) ($booking->total_amount * 100),
                         'currency' => 'PHP',
-                        'type' => 'gcash',
+                        'type' => $type,
                         'redirect' => [
                             'success' => config('app.url') . "/payment/success/{$booking->id}",
                             'failed' => config('app.url') . "/payment/failed/{$booking->id}",
@@ -2564,7 +2570,7 @@ class GCashPaymentService
         ];
     }
 
-    // Webhook handler: PayMongo calls this when payment succeeds
+    // Webhook handler: PayMongo calls this when source is chargeable
     public function handleWebhook(Request $request): void
     {
         $event = $request->input('data.attributes');
@@ -2574,7 +2580,7 @@ class GCashPaymentService
             $amount = $event['data']['attributes']['amount'];
 
             // Create payment from the chargeable source
-            Http::withToken(config('services.paymongo.secret_key'))
+            Http::withBasicAuth(config('services.paymongo.secret_key'), '')
                 ->post('https://api.paymongo.com/v1/payments', [
                     'data' => [
                         'attributes' => [
@@ -2666,14 +2672,14 @@ Errand completed
 ```
 Refund triggered (cancellation or dispute resolution)
     │
-    ├── CARD payment → Stripe refund (full or partial)
+    ├── CARD payment → PayMongo refund (full or partial)
     │   → Appears on customer's card in 5–10 business days
     │
     ├── GCASH payment → PayMongo refund API
     │   → Credited back to GCash wallet
     │
-    ├── PAYPAL → PayPal refund API
-    │   → Credited back to PayPal balance
+    ├── MAYA payment → PayMongo refund API
+    │   → Credited back to Maya wallet
     │
     ├── WALLET payment → Instant credit back to app wallet
     │
@@ -2931,8 +2937,8 @@ class CreateBookingRequest extends FormRequest
             'estimated_item_value'=> 'nullable|numeric|min:0|max:100000',
             'schedule_type'       => 'required|in:now,scheduled',
             'scheduled_at'        => 'required_if:schedule_type,scheduled|date|after:now',
-            'payment_method'      => 'required|in:card,gcash,paypal,wallet,cash',
-            'payment_method_id'   => 'required_if:payment_method,card,paypal|uuid|exists:payment_methods,id',
+            'payment_method'      => 'required|in:card,gcash,maya,wallet,cash',
+            'payment_method_id'   => 'required_if:payment_method,card,maya|uuid|exists:payment_methods,id',
             'promo_code'          => 'nullable|string|max:30',
         ];
     }
@@ -3095,7 +3101,7 @@ Alerts: Slack/email for failed payment spikes, auth failures > threshold, 5xx er
 [x] Encrypted sensitive fields at app level
 [x] Supabase anon key: read-only where allowed, zero write access
 [x] Service role key: server-side only, never exposed to client
-[x] Webhook signature verification (Stripe, PayMongo, PayPal)
+[x] Webhook signature verification (PayMongo)
 [x] CORS restricted to admin dashboard domain only
 [x] Admin 2FA enforced
 [x] Audit trail for admin actions
@@ -3477,7 +3483,7 @@ Frontend:
 Backend:
   - Unit tests: Services, pricing engine, business rules (PHPUnit)
   - Feature tests: Full API endpoint tests with auth (PHPUnit)
-  - Integration tests: Payment gateway mocking (Stripe test mode)
+  - Integration tests: Payment gateway mocking (PayMongo test mode)
 
 Coverage targets:
   - Services/business logic: 90%+
@@ -3583,10 +3589,10 @@ Each task below is designed to be **focused on one feature**, **completable in o
 
 | # | Task | Scope | Inputs | Expected Output |
 |---|---|---|---|---|
-| 7.1 | **Stripe integration (backend)** | Backend | Section 7.3 | PaymentIntent create/capture/cancel, save payment methods |
-| 7.2 | **Stripe card input (frontend)** | Frontend | Section 7.3 | Add card via Stripe SDK, tokenize, save to backend |
+| 7.1 | **PayMongo integration (backend)** | Backend | Section 7.3 | PaymentIntent create/attach/refund via PayMongo REST API |
+| 7.2 | **Card payment input (frontend)** | Frontend | Section 7.3 | Add card via PayMongo API, tokenize, save to backend |
 | 7.3 | **GCash integration** | Backend | Section 7.4 | PayMongo source creation, webhook handling |
-| 7.4 | **PayPal integration** | Backend | Section 7.2 | PayPal order creation, capture, refund |
+| 7.4 | **Maya integration** | Backend | Section 7.4 | PayMongo source creation (paymaya type), webhook handling |
 | 7.5 | **Wallet system** | Backend | Section 7.5 | WalletService: debit, credit, top-up, balance check |
 | 7.6 | **Wallet screen** | Frontend | Section 3.3 | Balance display, transaction history, top-up flow |
 | 7.7 | **Payment method management screen** | Frontend | Section 3.3 | List/add/remove/set-default payment methods |

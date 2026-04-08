@@ -1,0 +1,15 @@
+# Maestro E2E Configuration for ErrandGuy
+# Run: maestro test .maestro/
+# Single flow: maestro test .maestro/auth-flow.yaml
+
+appId: com.errandguy.app
+name: ErrandGuy E2E Tests
+
+# Default settings
+onFlowStart:
+  - clearState
+
+# Tags for selective test runs
+# maestro test .maestro/ --include-tags=auth
+# maestro test .maestro/ --include-tags=customer
+# maestro test .maestro/ --include-tags=runner

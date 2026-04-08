@@ -1,0 +1,244 @@
+# Booking Flow E2E Test — ErrandGuy (Customer)
+# Tests: Create Booking → Searching → Matched → Track Runner → Complete → Review
+#
+# Prerequisites:
+#   - Customer user already registered and logged in
+#   - Backend running with at least one approved runner online
+#   - Test environment with auto-matching enabled
+#
+# Run: maestro test .maestro/booking-flow.yaml
+
+appId: com.errandguy.app
+tags:
+  - customer
+  - booking
+  - smoke
+
+---
+
+# ============================================================================
+# STEP 1: Start from Customer Home
+# ============================================================================
+
+- assertVisible: "What do you need done?"
+
+# ============================================================================
+# STEP 2: Select Errand Type
+# ============================================================================
+
+# Tap on the Package Delivery errand type
+- tapOn: "Package Delivery"
+
+# Wait for type selection screen
+- extendedWaitUntil:
+    visible: "What type of errand?"
+    timeout: 5000
+
+# Select Package type
+- tapOn: "Package"
+- tapOn: "Continue"
+
+# ============================================================================
+# STEP 3: Fill Booking Details
+# ============================================================================
+
+- extendedWaitUntil:
+    visible: "Pickup Location"
+    timeout: 5000
+
+# Enter pickup address
+- tapOn: "Pickup Location"
+- inputText: "123 Rizal Ave, Manila"
+# Select first suggestion if dropdown appears
+- runFlow:
+    when:
+      visible: "Rizal"
+    commands:
+      - tapOn:
+          text: "Rizal"
+          index: 0
+
+# Enter dropoff address
+- tapOn: "Dropoff Location"
+- inputText: "456 EDSA, Quezon City"
+- runFlow:
+    when:
+      visible: "EDSA"
+    commands:
+      - tapOn:
+          text: "EDSA"
+          index: 0
+
+# Fill contact name
+- scrollUntilVisible:
+    element: "Receiver Name"
+    direction: DOWN
+- tapOn: "Receiver Name"
+- inputText: "Maria Santos"
+
+# Fill contact phone
+- tapOn: "Receiver Phone"
+- inputText: "09181234567"
+
+# Add description
+- scrollUntilVisible:
+    element: "Item Description"
+    direction: DOWN
+- tapOn: "Item Description"
+- inputText: "Small box with documents, handle with care"
+
+# Continue to next step
+- scrollUntilVisible:
+    element: "Next"
+    direction: DOWN
+- tapOn: "Next"
+
+# ============================================================================
+# STEP 4: Review & Pricing
+# ============================================================================
+
+- extendedWaitUntil:
+    visible: "Review Booking"
+    timeout: 5000
+
+# Verify pricing info is shown
+- assertVisible: "Price Breakdown"
+
+# Select vehicle type (Motorcycle for fast delivery)
+- scrollUntilVisible:
+    element: "Motorcycle"
+    direction: DOWN
+- tapOn: "Motorcycle"
+
+# Try applying a promo code
+- scrollUntilVisible:
+    element: "Promo Code"
+    direction: DOWN
+- tapOn: "Promo Code"
+- inputText: "TESTPROMO"
+- tapOn: "Apply"
+
+# Select payment method (default or cash)
+- scrollUntilVisible:
+    element: "Payment Method"
+    direction: DOWN
+- runFlow:
+    when:
+      visible: "Cash"
+    commands:
+      - tapOn: "Cash"
+
+# Place the booking
+- scrollUntilVisible:
+    element: "Place Booking"
+    direction: DOWN
+- tapOn: "Place Booking"
+
+# ============================================================================
+# STEP 5: Booking Confirmation — Searching for Runner
+# ============================================================================
+
+- extendedWaitUntil:
+    visible:
+      anyOf:
+        - "Searching for a runner"
+        - "Finding your runner"
+        - "Looking for runners"
+    timeout: 10000
+
+# Wait for runner match (in test env should be fast)
+- extendedWaitUntil:
+    visible:
+      anyOf:
+        - "Runner found"
+        - "Runner matched"
+        - "has accepted"
+    timeout: 30000
+
+# ============================================================================
+# STEP 6: Live Tracking Screen
+# ============================================================================
+
+- extendedWaitUntil:
+    visible:
+      anyOf:
+        - "On the way to pickup"
+        - "Heading to pickup"
+        - "Runner is on the way"
+    timeout: 15000
+
+# Verify tracking elements
+- assertVisible: "Status"
+
+# Verify runner info card is visible
+- runFlow:
+    when:
+      visible: "Chat"
+    commands:
+      - assertVisible: "Chat"
+
+# Verify SOS button (safety feature)
+- scrollUntilVisible:
+    element: "SOS"
+    direction: DOWN
+- assertVisible: "SOS"
+
+# ============================================================================
+# STEP 7: Wait for Completion (simulated in test env)
+# ============================================================================
+
+# In test environment, the runner bot should progress through statuses
+# picked_up → in_transit → delivered → completed
+- extendedWaitUntil:
+    visible:
+      anyOf:
+        - "Errand Completed"
+        - "Delivery Complete"
+        - "completed"
+    timeout: 60000
+
+# ============================================================================
+# STEP 8: Rate & Review
+# ============================================================================
+
+- extendedWaitUntil:
+    visible:
+      anyOf:
+        - "How was your experience"
+        - "Rate your runner"
+    timeout: 10000
+
+# Tap 5-star rating (tap the 5th star)
+- tapOn:
+    text: "★"
+    index: 4
+
+# Add a comment
+- runFlow:
+    when:
+      visible: "Leave a comment"
+    commands:
+      - tapOn: "Leave a comment"
+      - inputText: "Great service! Very fast delivery."
+
+# Add a tip
+- runFlow:
+    when:
+      visible: "₱50"
+    commands:
+      - tapOn: "₱50"
+
+# Submit review
+- tapOn:
+    anyOf:
+      - "Submit Review"
+      - "Submit"
+      - "Done"
+
+# Verify we're back on home or activity
+- extendedWaitUntil:
+    visible:
+      anyOf:
+        - "What do you need done?"
+        - "Activity"
+    timeout: 10000

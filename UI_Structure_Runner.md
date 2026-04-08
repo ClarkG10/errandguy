@@ -1101,7 +1101,7 @@
   - Masked account number
   - "Primary payout method" label
   - "Change →" link → opens payout method setup
-    - Options: Bank account, GCash, PayPal e-wallet
+    - Options: Bank account, GCash, Maya e-wallet
     - Form: account name, account number, verification
 - **Next Scheduled Payout**
   - Calendar icon + date

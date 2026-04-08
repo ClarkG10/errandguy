@@ -1,0 +1,315 @@
+# Runner Flow E2E Test — ErrandGuy (Runner)
+# Tests: Go Online → Receive Request → Accept → Complete Errand → Verify Earnings
+#
+# Prerequisites:
+#   - Runner user already registered, approved, and logged in
+#   - Backend running with a test customer creating a booking
+#   - Test environment with matching directed at this runner
+#
+# Run: maestro test .maestro/runner-flow.yaml
+
+appId: com.errandguy.app
+tags:
+  - runner
+  - errand
+  - smoke
+
+---
+
+# ============================================================================
+# STEP 1: Runner Home — Verify Dashboard
+# ============================================================================
+
+- assertVisible:
+    anyOf:
+      - "Runner Dashboard"
+      - "Go Online"
+      - "Today's Earnings"
+
+# Verify dashboard stats are visible
+- assertVisible: "Today's Earnings"
+
+# ============================================================================
+# STEP 2: Go Online
+# ============================================================================
+
+# Toggle online status
+- tapOn:
+    anyOf:
+      - "Go Online"
+      - "Offline"
+
+# Verify online state
+- extendedWaitUntil:
+    visible:
+      anyOf:
+        - "Online"
+        - "Go Offline"
+        - "You're online"
+    timeout: 5000
+
+# ============================================================================
+# STEP 3: Wait for and Receive Errand Request
+# ============================================================================
+
+# In test environment, a booking should be created by a test customer
+- extendedWaitUntil:
+    visible:
+      anyOf:
+        - "New Errand Request"
+        - "Incoming Request"
+        - "New request"
+    timeout: 60000
+
+# Verify request details are shown
+- assertVisible:
+    anyOf:
+      - "Package"
+      - "Pickup"
+
+# ============================================================================
+# STEP 4: Accept the Errand
+# ============================================================================
+
+- tapOn:
+    anyOf:
+      - "Accept"
+      - "Accept Errand"
+
+# Wait for acceptance confirmation
+- extendedWaitUntil:
+    visible:
+      anyOf:
+        - "Errand accepted"
+        - "Navigate to pickup"
+        - "Head to pickup"
+    timeout: 10000
+
+# ============================================================================
+# STEP 5: Navigate to Pickup — Update Status
+# ============================================================================
+
+# Verify errand detail screen
+- assertVisible:
+    anyOf:
+      - "Pickup Location"
+      - "Errand Details"
+
+# Tap Navigate button for directions
+- runFlow:
+    when:
+      visible: "Navigate"
+    commands:
+      - tapOn: "Navigate"
+      # Return to app after map opens (back button)
+      - back
+
+# Update status: Arrived at Pickup
+- scrollUntilVisible:
+    element:
+      anyOf:
+        - "Arrived at Pickup"
+        - "I've Arrived"
+    direction: DOWN
+- tapOn:
+    anyOf:
+      - "Arrived at Pickup"
+      - "I've Arrived"
+
+# Confirm status update
+- runFlow:
+    when:
+      visible: "Confirm"
+    commands:
+      - tapOn: "Confirm"
+
+# ============================================================================
+# STEP 6: Pick Up Item — Upload Photo Proof
+# ============================================================================
+
+- extendedWaitUntil:
+    visible:
+      anyOf:
+        - "Pick Up Item"
+        - "Picked Up"
+        - "Confirm Pickup"
+    timeout: 10000
+
+# Take pickup photo (simulated)
+- runFlow:
+    when:
+      visible:
+        anyOf:
+          - "Take Photo"
+          - "Upload Photo"
+    commands:
+      - tapOn:
+          anyOf:
+            - "Take Photo"
+            - "Upload Photo"
+      # In test mode, auto-capture or skip photo
+      - runFlow:
+          when:
+            visible: "Use Photo"
+          commands:
+            - tapOn: "Use Photo"
+
+# Confirm pickup
+- tapOn:
+    anyOf:
+      - "Confirm Pickup"
+      - "Item Picked Up"
+      - "Picked Up"
+
+# ============================================================================
+# STEP 7: Verify PIN (for transportation errands)
+# ============================================================================
+
+# PIN verification only for transportation type — conditional
+- runFlow:
+    when:
+      visible: "Enter Ride PIN"
+    commands:
+      - inputText: "1234"
+      - tapOn: "Verify"
+
+# ============================================================================
+# STEP 8: In Transit → Deliver
+# ============================================================================
+
+- extendedWaitUntil:
+    visible:
+      anyOf:
+        - "In Transit"
+        - "On the way"
+        - "Heading to dropoff"
+    timeout: 10000
+
+# Navigate to dropoff
+- runFlow:
+    when:
+      visible: "Navigate"
+    commands:
+      - tapOn: "Navigate"
+      - back
+
+# Arrived at dropoff
+- scrollUntilVisible:
+    element:
+      anyOf:
+        - "Arrived at Dropoff"
+        - "I've Arrived"
+    direction: DOWN
+- tapOn:
+    anyOf:
+      - "Arrived at Dropoff"
+      - "I've Arrived"
+
+# ============================================================================
+# STEP 9: Complete Delivery — Photo Proof + Signature
+# ============================================================================
+
+# Take delivery photo
+- runFlow:
+    when:
+      visible:
+        anyOf:
+          - "Take Photo"
+          - "Delivery Photo"
+    commands:
+      - tapOn:
+          anyOf:
+            - "Take Photo"
+            - "Delivery Photo"
+      - runFlow:
+          when:
+            visible: "Use Photo"
+          commands:
+            - tapOn: "Use Photo"
+
+# Collect signature if required
+- runFlow:
+    when:
+      visible: "Collect Signature"
+    commands:
+      - tapOn: "Collect Signature"
+      # Draw signature (swipe gesture on signature pad)
+      - swipe:
+          start: 30%, 50%
+          end: 70%, 50%
+          duration: 500
+      - tapOn:
+          anyOf:
+            - "Done"
+            - "Confirm"
+
+# Complete the errand
+- tapOn:
+    anyOf:
+      - "Complete Errand"
+      - "Mark as Delivered"
+      - "Complete"
+
+# ============================================================================
+# STEP 10: Rate Customer (if prompted)
+# ============================================================================
+
+- runFlow:
+    when:
+      visible:
+        anyOf:
+          - "Rate customer"
+          - "How was the customer"
+    commands:
+      - tapOn:
+          text: "★"
+          index: 4
+      - tapOn:
+          anyOf:
+            - "Submit"
+            - "Done"
+
+# ============================================================================
+# STEP 11: Verify Earnings Updated
+# ============================================================================
+
+- extendedWaitUntil:
+    visible:
+      anyOf:
+        - "Errand Completed"
+        - "Earned"
+        - "₱"
+    timeout: 10000
+
+# Navigate to Earnings tab
+- tapOn: "Earnings"
+
+# Verify earnings have been updated
+- assertVisible: "Today's Earnings"
+
+# Verify the completed errand appears
+- assertVisible:
+    anyOf:
+      - "Package"
+      - "Completed"
+
+# ============================================================================
+# STEP 12: Go Offline
+# ============================================================================
+
+# Navigate back to Home
+- tapOn: "Home"
+
+# Go offline
+- tapOn:
+    anyOf:
+      - "Go Offline"
+      - "Online"
+
+# Verify offline state
+- extendedWaitUntil:
+    visible:
+      anyOf:
+        - "Offline"
+        - "Go Online"
+    timeout: 5000
