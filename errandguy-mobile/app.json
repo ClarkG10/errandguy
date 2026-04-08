@@ -63,12 +63,6 @@
       },
       "router": {}
     },
-    "updates": {
-      "url": ""
-    },
-    "runtimeVersion": {
-      "policy": "appVersion"
-    },
     "owner": "clark123"
   }
 }
