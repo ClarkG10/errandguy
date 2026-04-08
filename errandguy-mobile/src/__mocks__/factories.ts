@@ -1,6 +1,6 @@
-import type { User } from '../../types';
-import type { Booking } from '../../types';
-import type { RunnerProfile } from '../../types';
+import type { User } from '../types';
+import type { Booking } from '../types';
+import type { RunnerProfile } from '../types';
 
 export function makeUser(overrides: Partial<User> = {}): User {
   return {

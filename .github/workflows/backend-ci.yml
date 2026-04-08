@@ -79,7 +79,8 @@ jobs:
           tools: php-cs-fixer
 
       - name: Check syntax
-        run: find errandguy-api/app errandguy-api/routes errandguy-api/config errandguy-api/database -name "*.php" -exec php -l {} \;
+        run: find app routes config database -name "*.php" -exec php -l {} \;
+        working-directory: errandguy-api
 
   deploy:
     name: Deploy to Forge
