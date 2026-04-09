@@ -28,7 +28,7 @@ ErrandGuy is an on-demand errand booking and service platform. Customers post er
 | Auth | Laravel Sanctum (token-based) |
 | Database | Supabase (PostgreSQL 16) |
 | Real-Time | Supabase Realtime (WebSocket channels) |
-| Payments | PayMongo (Card, GCash, Maya), Cash on Delivery |
+| Payments | Xendit (Card, GCash, Maya), Cash on Delivery |
 | Push Notifications | Expo Notifications + Firebase Cloud Messaging |
 | File Storage | Supabase Storage |
 | Mobile Deployment | Expo (Android + iOS) |
@@ -113,9 +113,9 @@ ErrandGuy is an on-demand errand booking and service platform. Customers post er
 
 #### Module 6 — Payments
 - Multiple payment methods per booking:
-  - Credit/Debit Card (via PayMongo)
-  - GCash (via PayMongo)
-  - Maya (via PayMongo)
+  - Credit/Debit Card (via Xendit)
+  - GCash (via Xendit)
+  - Maya (via Xendit)
   - Cash on Delivery
 - Wallet system (top-up balance, refunds credited to wallet)
 - Receipts and transaction history
@@ -1296,7 +1296,7 @@ CREATE TABLE payments (
                         CHECK (method IN ('card', 'gcash', 'maya', 'wallet', 'cash')),
     status              VARCHAR(20) NOT NULL DEFAULT 'pending'
                         CHECK (status IN ('pending', 'processing', 'completed', 'failed', 'refunded', 'partially_refunded')),
-    gateway_tx_id       VARCHAR(255),            -- PayMongo transaction ID
+    gateway_tx_id       VARCHAR(255),            -- Xendit payment request ID
     gateway_response    JSONB,                   -- Raw gateway response (sanitized)
     paid_at             TIMESTAMPTZ,
     refund_amount       DECIMAL(10, 2),
@@ -1579,7 +1579,7 @@ CREATE POLICY payments_self ON payments
            ▼                       ▼
     ┌──────────────┐     ┌──────────────────┐
     │  Supabase    │     │  External APIs   │
-    │  PostgreSQL  │     │  PayMongo/       │
+    │  PostgreSQL  │     │  Xendit/       │
     │  + Storage   │     │  FCM/Mapbox      │
     └──────────────┘     └──────────────────┘
 ```
@@ -2397,9 +2397,9 @@ App receives:
 
 | Method | Provider | Flow Type | When Charged |
 |---|---|---|---|
-| Credit/Debit Card | PayMongo | Tokenized (PaymentIntent) | Pre-authorized at booking, captured on completion |
-| GCash | PayMongo | Redirect-based (Source) | Charged at booking confirmation |
-| Maya | PayMongo | Redirect-based (Source) | Charged at booking confirmation |
+| Credit/Debit Card | Xendit | Payment Request (CARD) | Pre-authorized at booking, captured on completion |
+| GCash | Xendit | E-Wallet Payment Request | Charged at booking confirmation |
+| Maya | Xendit | E-Wallet Payment Request | Charged at booking confirmation |
 | Wallet | Internal | Direct debit from balance | Instant debit at booking |
 | Cash on Delivery | N/A | Runner collects | Runner collects cash upon completion |
 
@@ -2412,34 +2412,29 @@ Customer confirms booking
     ┌──────────────────────────────────────┐
     │ Which payment method?                │
     │                                      │
-    ├── CARD (PayMongo) ───────────────────┤
-    │   1. Create PaymentIntent (amount)   │
-    │   2. Create PaymentMethod (card)      │
-    │   3. Attach PaymentMethod to Intent   │
-    │   4. Payment processes via PayMongo   │
-    │   5. Webhook: payment.paid            │
-    │   6. On cancellation:               │
-    │      └── Refund via PayMongo API     │
+    ├── CARD (Xendit) ─────────────────────┤
+    │   1. Create Payment Request (CARD)   │
+    │   2. Customer enters card details     │
+    │   3. Payment processes via Xendit     │
+    │   4. Webhook: payment.succeeded       │
+    │   5. On cancellation:               │
+    │      └── Refund via Xendit API       │
     │                                      │
-    ├── GCASH (PayMongo) ──────────────────┤
-    │   1. Create GCash Source via PayMongo│
+    ├── GCASH (Xendit) ────────────────────┤
+    │   1. Create Payment Request (EWALLET)│
     │   2. Redirect customer to GCash app  │
     │   3. Customer authorizes payment     │
-    │   4. Webhook: source.chargeable      │
-    │   5. Create payment from source      │
-    │   6. Webhook: payment.paid           │
-    │   7. On cancellation:               │
-    │      └── Refund via PayMongo API     │
+    │   4. Webhook: payment.succeeded      │
+    │   5. On cancellation:               │
+    │      └── Refund via Xendit API       │
     │                                      │
-    ├── MAYA (PayMongo) ───────────────────┤
-    │   1. Create Maya Source via PayMongo │
+    ├── MAYA (Xendit) ─────────────────────┤
+    │   1. Create Payment Request (EWALLET)│
     │   2. Redirect customer to Maya app   │
     │   3. Customer authorizes payment     │
-    │   4. Webhook: source.chargeable      │
-    │   5. Create payment from source      │
-    │   6. Webhook: payment.paid           │
-    │   7. On cancellation:               │
-    │      └── Refund via PayMongo API     │
+    │   4. Webhook: payment.succeeded      │
+    │   5. On cancellation:               │
+    │      └── Refund via Xendit API       │
     │                                      │
     ├── WALLET ────────────────────────────┤
     │   1. Check wallet_balance >= amount  │
@@ -2458,13 +2453,13 @@ Customer confirms booking
     ───────────────────────────────────────┘
 ```
 
-### 7.3 PayMongo Integration (Card Payments)
+### 7.3 Xendit Integration (Card Payments)
 
 #### Adding a Card
 ```typescript
-// Frontend: Collect card details and create PayMongo PaymentMethod via API
+// Frontend: Collect card details and create payment via Xendit API
 const addCard = async (cardDetails: { number: string; exp_month: number; exp_year: number; cvc: string }) => {
-  // 1. Create PayMongo PaymentMethod via backend
+  // 1. Create payment method via backend (Xendit)
   const response = await api.post('/payments/methods', {
     type: 'card',
     card_number: cardDetails.number,
@@ -2472,126 +2467,105 @@ const addCard = async (cardDetails: { number: string; exp_month: number; exp_yea
     exp_year: cardDetails.exp_year,
     cvc: cardDetails.cvc,
   });
-  // Backend creates PayMongo PaymentMethod and stores token
+  // Backend creates Xendit tokenized card and stores reference
 };
 ```
 
 #### Charging a Card
 ```php
-// Backend: Laravel PaymentService (via PayMongo REST API)
+// Backend: Laravel PaymentService (via Xendit REST API)
 class PaymentService
 {
     public function chargeCard(Booking $booking, PaymentMethod $method): Payment
     {
-        // 1. Create PaymentIntent
-        $intent = Http::withBasicAuth(config('services.paymongo.secret_key'), '')
-            ->post('https://api.paymongo.com/v1/payment_intents', [
-                'data' => [
-                    'attributes' => [
-                        'amount' => (int) ($booking->total_amount * 100), // centavos
-                        'payment_method_allowed' => ['card'],
-                        'currency' => 'PHP',
-                        'description' => "Booking #{$booking->booking_number}",
-                        'metadata' => ['booking_id' => $booking->id],
+        // 1. Create Payment Request
+        $paymentRequest = Http::withBasicAuth(config('services.xendit.secret_key'), '')
+            ->post('https://api.xendit.co/payment_requests', [
+                'reference_id' => "booking-{$booking->id}",
+                'amount' => round($booking->total_amount, 2),
+                'currency' => 'PHP',
+                'description' => "Booking #{$booking->booking_number}",
+                'payment_method' => [
+                    'type' => 'CARD',
+                    'reusability' => 'ONE_TIME_USE',
+                    'card' => [
+                        'channel_properties' => [
+                            'success_return_url' => config('app.url') . "/payment/success/{$booking->id}",
+                            'failure_return_url' => config('app.url') . "/payment/failed/{$booking->id}",
+                        ],
                     ],
                 ],
+                'metadata' => ['booking_id' => $booking->id],
             ]);
 
-        // 2. Attach PaymentMethod to Intent
-        $intentId = $intent['data']['id'];
-        Http::withBasicAuth(config('services.paymongo.secret_key'), '')
-            ->post("https://api.paymongo.com/v1/payment_intents/{$intentId}/attach", [
-                'data' => [
-                    'attributes' => [
-                        'payment_method' => $method->gateway_token,
-                        'return_url' => config('app.url') . "/payment/return/{$booking->id}",
-                    ],
-                ],
-            ]);
-
-        // 3. Save payment record
+        // 2. Save payment record
         return Payment::create([
             'booking_id' => $booking->id,
             'customer_id' => $booking->customer_id,
             'amount' => $booking->total_amount,
             'method' => 'card',
             'status' => 'processing',
-            'gateway_tx_id' => $intentId,
+            'gateway_tx_id' => $paymentRequest['id'],
         ]);
     }
 
     public function refundPayment(Payment $payment, float $amount): void
     {
-        Http::withBasicAuth(config('services.paymongo.secret_key'), '')
-            ->post('https://api.paymongo.com/v1/refunds', [
-                'data' => [
-                    'attributes' => [
-                        'amount' => (int) ($amount * 100),
-                        'payment_id' => $payment->gateway_tx_id,
-                        'reason' => 'requested_by_customer',
-                    ],
-                ],
+        Http::withBasicAuth(config('services.xendit.secret_key'), '')
+            ->post('https://api.xendit.co/refunds', [
+                'payment_request_id' => $payment->gateway_tx_id,
+                'amount' => round($amount, 2),
+                'currency' => 'PHP',
+                'reason' => 'REQUESTED_BY_CUSTOMER',
+                'reference_id' => "refund-{$payment->id}",
             ]);
         $payment->update(['status' => 'refunded', 'refund_amount' => $amount, 'refunded_at' => now()]);
     }
 }
 ```
 
-### 7.4 GCash / Maya Integration (via PayMongo)
+### 7.4 GCash / Maya Integration (via Xendit)
 
 ```php
 class PaymentService
 {
-    public function createSource(Booking $booking, string $type): array
+    public function createEwalletPayment(Booking $booking, string $type): array
     {
-        // $type: 'gcash' or 'paymaya'
-        $source = Http::withBasicAuth(config('services.paymongo.secret_key'), '')
-            ->post('https://api.paymongo.com/v1/sources', [
-                'data' => [
-                    'attributes' => [
-                        'amount' => (int) ($booking->total_amount * 100),
-                        'currency' => 'PHP',
-                        'type' => $type,
-                        'redirect' => [
-                            'success' => config('app.url') . "/payment/success/{$booking->id}",
-                            'failed' => config('app.url') . "/payment/failed/{$booking->id}",
-                        ],
-                        'metadata' => [
-                            'booking_id' => $booking->id,
+        // $type: 'gcash' or 'maya'
+        $channelCode = $type === 'gcash' ? 'GCASH' : 'PAYMAYA';
+
+        $paymentRequest = Http::withBasicAuth(config('services.xendit.secret_key'), '')
+            ->post('https://api.xendit.co/payment_requests', [
+                'reference_id' => "booking-{$booking->id}",
+                'amount' => round($booking->total_amount, 2),
+                'currency' => 'PHP',
+                'payment_method' => [
+                    'type' => 'EWALLET',
+                    'reusability' => 'ONE_TIME_USE',
+                    'ewallet' => [
+                        'channel_code' => $channelCode,
+                        'channel_properties' => [
+                            'success_return_url' => config('app.url') . "/payment/success/{$booking->id}",
+                            'failure_return_url' => config('app.url') . "/payment/failed/{$booking->id}",
                         ],
                     ],
                 ],
+                'metadata' => ['booking_id' => $booking->id],
             ]);
 
-        // Return redirect URL → mobile app opens in-app browser
+        // Return action URL → mobile app opens in-app browser
+        $actions = $paymentRequest['actions'] ?? [];
+        $redirectUrl = collect($actions)->firstWhere('action', 'AUTH')['url'] ?? null;
+
         return [
-            'source_id' => $source['data']['id'],
-            'checkout_url' => $source['data']['attributes']['redirect']['checkout_url'],
+            'payment_request_id' => $paymentRequest['id'],
+            'redirect_url' => $redirectUrl,
         ];
     }
 
-    // Webhook handler: PayMongo calls this when source is chargeable
-    public function handleWebhook(Request $request): void
-    {
-        $event = $request->input('data.attributes');
-        
-        if ($event['type'] === 'source.chargeable') {
-            $sourceId = $event['data']['id'];
-            $amount = $event['data']['attributes']['amount'];
-
-            // Create payment from the chargeable source
-            Http::withBasicAuth(config('services.paymongo.secret_key'), '')
-                ->post('https://api.paymongo.com/v1/payments', [
-                    'data' => [
-                        'attributes' => [
-                            'amount' => $amount,
-                            'currency' => 'PHP',
-                            'source' => ['id' => $sourceId, 'type' => 'source'],
-                        ],
-                    ],
-                ]);
-        }
-    }
+    // Webhook handler: Xendit calls this when payment succeeds
+    // Uses x-callback-token header for verification
+    // Events: payment.succeeded, payment.failed, payment.pending
 }
 ```
 
@@ -2672,13 +2646,13 @@ Errand completed
 ```
 Refund triggered (cancellation or dispute resolution)
     │
-    ├── CARD payment → PayMongo refund (full or partial)
+    ├── CARD payment → Xendit refund (full or partial)
     │   → Appears on customer's card in 5–10 business days
     │
-    ├── GCASH payment → PayMongo refund API
+    ├── GCASH payment → Xendit refund API
     │   → Credited back to GCash wallet
     │
-    ├── MAYA payment → PayMongo refund API
+    ├── MAYA payment → Xendit refund API
     │   → Credited back to Maya wallet
     │
     ├── WALLET payment → Instant credit back to app wallet
@@ -3101,7 +3075,7 @@ Alerts: Slack/email for failed payment spikes, auth failures > threshold, 5xx er
 [x] Encrypted sensitive fields at app level
 [x] Supabase anon key: read-only where allowed, zero write access
 [x] Service role key: server-side only, never exposed to client
-[x] Webhook signature verification (PayMongo)
+[x] Webhook token verification (Xendit)
 [x] CORS restricted to admin dashboard domain only
 [x] Admin 2FA enforced
 [x] Audit trail for admin actions
@@ -3483,7 +3457,7 @@ Frontend:
 Backend:
   - Unit tests: Services, pricing engine, business rules (PHPUnit)
   - Feature tests: Full API endpoint tests with auth (PHPUnit)
-  - Integration tests: Payment gateway mocking (PayMongo test mode)
+  - Integration tests: Payment gateway mocking (Xendit test mode)
 
 Coverage targets:
   - Services/business logic: 90%+
@@ -3589,10 +3563,10 @@ Each task below is designed to be **focused on one feature**, **completable in o
 
 | # | Task | Scope | Inputs | Expected Output |
 |---|---|---|---|---|
-| 7.1 | **PayMongo integration (backend)** | Backend | Section 7.3 | PaymentIntent create/attach/refund via PayMongo REST API |
-| 7.2 | **Card payment input (frontend)** | Frontend | Section 7.3 | Add card via PayMongo API, tokenize, save to backend |
-| 7.3 | **GCash integration** | Backend | Section 7.4 | PayMongo source creation, webhook handling |
-| 7.4 | **Maya integration** | Backend | Section 7.4 | PayMongo source creation (paymaya type), webhook handling |
+| 7.1 | **Xendit integration (backend)** | Backend | Section 7.3 | Payment Request create/refund via Xendit REST API |
+| 7.2 | **Card payment input (frontend)** | Frontend | Section 7.3 | Add card via Xendit API, tokenize, save to backend |
+| 7.3 | **GCash integration** | Backend | Section 7.4 | Xendit e-wallet payment request, webhook handling |
+| 7.4 | **Maya integration** | Backend | Section 7.4 | Xendit e-wallet payment request (PAYMAYA channel), webhook handling |
 | 7.5 | **Wallet system** | Backend | Section 7.5 | WalletService: debit, credit, top-up, balance check |
 | 7.6 | **Wallet screen** | Frontend | Section 3.3 | Balance display, transaction history, top-up flow |
 | 7.7 | **Payment method management screen** | Frontend | Section 3.3 | List/add/remove/set-default payment methods |

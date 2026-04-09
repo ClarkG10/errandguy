@@ -9,20 +9,19 @@ use App\Models\User;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Tests\TestCase;
 
-class PayMongoWebhookTest extends TestCase
+class XenditWebhookTest extends TestCase
 {
     use RefreshDatabase;
 
     private Payment $payment;
     private Booking $booking;
-    private string $webhookSecret = 'whsec_test_secret_key_for_testing';
+    private string $webhookToken = 'xnd_test_callback_token_for_testing';
 
     protected function setUp(): void
     {
         parent::setUp();
 
-        // Set webhook secret in config for test environment
-        config(['services.paymongo.webhook_secret' => $this->webhookSecret]);
+        config(['services.xendit.webhook_token' => $this->webhookToken]);
 
         $customer = User::factory()->create(['role' => 'customer', 'status' => 'active']);
 
@@ -53,47 +52,30 @@ class PayMongoWebhookTest extends TestCase
             'currency' => 'PHP',
             'method' => 'gcash',
             'status' => 'pending',
-            'gateway_tx_id' => 'pay_test_123',
+            'gateway_tx_id' => 'pr_test_123',
         ]);
     }
 
-    /**
-     * Generate a valid PayMongo webhook signature header for a given payload.
-     */
-    private function generateSignatureHeader(array $payload): string
+    private function postWebhook(array $payload, ?string $token = null): \Illuminate\Testing\TestResponse
     {
-        $timestamp = time();
-        $signedPayload = "{$timestamp}." . json_encode($payload);
-        $signature = hash_hmac('sha256', $signedPayload, $this->webhookSecret);
-
-        return "t={$timestamp},te={$signature}";
-    }
-
-    /**
-     * Send a signed webhook POST request.
-     */
-    private function postSignedWebhook(array $payload): \Illuminate\Testing\TestResponse
-    {
-        return $this->postJson('/api/v1/webhooks/paymongo', $payload, [
-            'Paymongo-Signature' => $this->generateSignatureHeader($payload),
+        return $this->postJson('/api/v1/webhooks/xendit', $payload, [
+            'x-callback-token' => $token ?? $this->webhookToken,
         ]);
     }
 
-    public function test_payment_paid_webhook_updates_payment(): void
+    public function test_payment_succeeded_webhook_updates_payment(): void
     {
         $payload = [
+            'event' => 'payment.succeeded',
             'data' => [
-                'attributes' => [
-                    'type' => 'payment.paid',
-                    'data' => [
-                        'id' => 'pay_test_123',
-                        'attributes' => ['status' => 'paid'],
-                    ],
-                ],
+                'id' => 'ddpy_test_456',
+                'payment_request_id' => 'pr_test_123',
+                'status' => 'SUCCEEDED',
+                'amount' => 115.00,
             ],
         ];
 
-        $response = $this->postSignedWebhook($payload);
+        $response = $this->postWebhook($payload);
 
         $response->assertOk()
             ->assertJsonPath('status', 'ok');
@@ -106,18 +88,15 @@ class PayMongoWebhookTest extends TestCase
     public function test_payment_failed_webhook_updates_payment(): void
     {
         $payload = [
+            'event' => 'payment.failed',
             'data' => [
-                'attributes' => [
-                    'type' => 'payment.failed',
-                    'data' => [
-                        'id' => 'pay_test_123',
-                        'attributes' => ['status' => 'failed'],
-                    ],
-                ],
+                'id' => 'ddpy_test_456',
+                'payment_request_id' => 'pr_test_123',
+                'status' => 'FAILED',
             ],
         ];
 
-        $response = $this->postSignedWebhook($payload);
+        $response = $this->postWebhook($payload);
 
         $response->assertOk();
 
@@ -128,18 +107,15 @@ class PayMongoWebhookTest extends TestCase
     public function test_unknown_payment_id_is_ignored(): void
     {
         $payload = [
+            'event' => 'payment.succeeded',
             'data' => [
-                'attributes' => [
-                    'type' => 'payment.paid',
-                    'data' => [
-                        'id' => 'pay_unknown_999',
-                        'attributes' => ['status' => 'paid'],
-                    ],
-                ],
+                'id' => 'ddpy_unknown_999',
+                'payment_request_id' => 'pr_unknown_999',
+                'status' => 'SUCCEEDED',
             ],
         ];
 
-        $response = $this->postSignedWebhook($payload);
+        $response = $this->postWebhook($payload);
 
         $response->assertOk();
 
@@ -147,68 +123,64 @@ class PayMongoWebhookTest extends TestCase
         $this->assertEquals('pending', $this->payment->status);
     }
 
-    public function test_invalid_signature_rejected(): void
+    public function test_invalid_token_rejected(): void
     {
         $payload = [
-            'data' => ['attributes' => ['type' => 'payment.paid', 'data' => ['id' => 'pay_test_123']]],
+            'event' => 'payment.succeeded',
+            'data' => [
+                'id' => 'ddpy_test_456',
+                'payment_request_id' => 'pr_test_123',
+            ],
         ];
 
-        // Send with wrong signature
-        $response = $this->postJson('/api/v1/webhooks/paymongo', $payload, [
-            'Paymongo-Signature' => 't=12345,te=invalidsignature',
-        ]);
+        $response = $this->postWebhook($payload, 'invalid_token');
 
         $response->assertStatus(400)
-            ->assertJsonPath('error', 'Invalid signature');
+            ->assertJsonPath('error', 'Invalid token');
     }
 
-    public function test_missing_signature_header_rejected(): void
+    public function test_missing_token_header_rejected(): void
     {
-        $response = $this->postJson('/api/v1/webhooks/paymongo', [
-            'data' => ['attributes' => []],
+        $response = $this->postJson('/api/v1/webhooks/xendit', [
+            'event' => 'payment.succeeded',
+            'data' => [
+                'id' => 'ddpy_test_456',
+                'payment_request_id' => 'pr_test_123',
+            ],
         ]);
 
         $response->assertStatus(400)
-            ->assertJsonPath('error', 'Signature verification required');
+            ->assertJsonPath('error', 'Token verification required');
     }
 
     public function test_unhandled_event_type_returns_ok(): void
     {
         $payload = [
-            'data' => [
-                'attributes' => [
-                    'type' => 'checkout.session.completed',
-                    'data' => ['id' => 'cs_123'],
-                ],
-            ],
+            'event' => 'some.unknown.event',
+            'data' => ['id' => 'xyz_123'],
         ];
 
-        $response = $this->postSignedWebhook($payload);
+        $response = $this->postWebhook($payload);
         $response->assertOk();
     }
 
-    public function test_idempotent_payment_paid_skips_already_completed(): void
+    public function test_idempotent_payment_succeeded_skips_already_completed(): void
     {
-        // Pre-set payment as completed
         $this->payment->update(['status' => 'completed', 'paid_at' => now()->subHour()]);
         $originalPaidAt = $this->payment->fresh()->paid_at;
 
         $payload = [
+            'event' => 'payment.succeeded',
             'data' => [
-                'attributes' => [
-                    'type' => 'payment.paid',
-                    'data' => [
-                        'id' => 'pay_test_123',
-                        'attributes' => ['status' => 'paid'],
-                    ],
-                ],
+                'id' => 'ddpy_test_456',
+                'payment_request_id' => 'pr_test_123',
+                'status' => 'SUCCEEDED',
             ],
         ];
 
-        $response = $this->postSignedWebhook($payload);
+        $response = $this->postWebhook($payload);
         $response->assertOk();
 
-        // paid_at should NOT change (idempotency)
         $this->payment->refresh();
         $this->assertEquals('completed', $this->payment->status);
         $this->assertEquals($originalPaidAt->toDateTimeString(), $this->payment->paid_at->toDateTimeString());

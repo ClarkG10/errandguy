@@ -15,114 +15,78 @@ class PaymentService
 
     public function __construct()
     {
-        $this->baseUrl = 'https://api.paymongo.com/v1';
-        $this->secretKey = config('services.paymongo.secret_key');
+        $this->baseUrl = 'https://api.xendit.co';
+        $this->secretKey = config('services.xendit.secret_key');
     }
 
-    public function createPaymentIntent(float $amount, string $description = ''): array
+    public function createPaymentRequest(float $amount, string $referenceId, string $method, string $description = '', ?string $successRedirectUrl = null, ?string $failureRedirectUrl = null): array
     {
-        $response = Http::withBasicAuth($this->secretKey, '')
-            ->post("{$this->baseUrl}/payment_intents", [
-                'data' => [
-                    'attributes' => [
-                        'amount' => (int) round($amount * 100),
-                        'payment_method_allowed' => ['card', 'gcash', 'grab_pay', 'paymaya'],
-                        'currency' => 'PHP',
-                        'description' => $description,
-                        'statement_descriptor' => 'ErrandGuy',
-                    ],
+        $payload = [
+            'reference_id' => $referenceId,
+            'amount' => round($amount, 2),
+            'currency' => 'PHP',
+            'description' => $description,
+            'payment_method' => [
+                'type' => $this->mapPaymentMethod($method),
+                'reusability' => 'ONE_TIME_USE',
+            ],
+        ];
+
+        if ($method === 'gcash' || $method === 'maya') {
+            $payload['payment_method']['ewallet'] = [
+                'channel_code' => $method === 'gcash' ? 'GCASH' : 'PAYMAYA',
+                'channel_properties' => [
+                    'success_return_url' => $successRedirectUrl ?? config('app.url') . '/payment/success',
+                    'failure_return_url' => $failureRedirectUrl ?? config('app.url') . '/payment/failed',
                 ],
-            ]);
-
-        if (!$response->successful()) {
-            Log::error('PayMongo: Failed to create payment intent', [
-                'response' => $response->json(),
-            ]);
-            throw new \RuntimeException('Failed to create payment intent.');
-        }
-
-        return $response->json('data');
-    }
-
-    public function attachPaymentIntent(string $paymentIntentId, string $paymentMethodId, string $returnUrl): array
-    {
-        $response = Http::withBasicAuth($this->secretKey, '')
-            ->post("{$this->baseUrl}/payment_intents/{$paymentIntentId}/attach", [
-                'data' => [
-                    'attributes' => [
-                        'payment_method' => $paymentMethodId,
-                        'return_url' => $returnUrl,
-                    ],
-                ],
-            ]);
-
-        if (!$response->successful()) {
-            Log::error('PayMongo: Failed to attach payment intent', [
-                'response' => $response->json(),
-            ]);
-            throw new \RuntimeException('Failed to attach payment intent.');
-        }
-
-        return $response->json('data');
-    }
-
-    public function createPaymentMethod(string $type, array $details = [], array $billing = []): array
-    {
-        $attributes = ['type' => $type];
-
-        if (!empty($details)) {
-            $attributes['details'] = $details;
-        }
-
-        if (!empty($billing)) {
-            $attributes['billing'] = $billing;
+            ];
         }
 
         $response = Http::withBasicAuth($this->secretKey, '')
-            ->post("{$this->baseUrl}/payment_methods", [
-                'data' => [
-                    'attributes' => $attributes,
-                ],
-            ]);
+            ->post("{$this->baseUrl}/payment_requests", $payload);
 
         if (!$response->successful()) {
-            Log::error('PayMongo: Failed to create payment method', [
+            Log::error('Xendit: Failed to create payment request', [
                 'response' => $response->json(),
             ]);
-            throw new \RuntimeException('Failed to create payment method.');
+            throw new \RuntimeException('Failed to create payment request.');
         }
 
-        return $response->json('data');
+        return $response->json();
     }
 
-    public function createSource(float $amount, string $type, string $redirectSuccess, string $redirectFailed): array
+    public function createInvoice(float $amount, string $externalId, string $description = '', string $payerEmail = '', ?string $successRedirectUrl = null): array
     {
-        $response = Http::withBasicAuth($this->secretKey, '')
-            ->post("{$this->baseUrl}/sources", [
-                'data' => [
-                    'attributes' => [
-                        'amount' => (int) round($amount * 100),
-                        'currency' => 'PHP',
-                        'type' => $type,
-                        'redirect' => [
-                            'success' => $redirectSuccess,
-                            'failed' => $redirectFailed,
-                        ],
-                    ],
-                ],
-            ]);
+        $payload = [
+            'external_id' => $externalId,
+            'amount' => round($amount, 2),
+            'currency' => 'PHP',
+            'description' => $description,
+            'payment_methods' => ['GCASH', 'PAYMAYA', 'CREDIT_CARD'],
+        ];
 
-        if (!$response->successful()) {
-            Log::error('PayMongo: Failed to create source', [
-                'response' => $response->json(),
-            ]);
-            throw new \RuntimeException('Failed to create payment source.');
+        if ($payerEmail) {
+            $payload['payer_email'] = $payerEmail;
         }
 
-        return $response->json('data');
+        if ($successRedirectUrl) {
+            $payload['success_redirect_url'] = $successRedirectUrl;
+        }
+
+        $response = Http::withBasicAuth($this->secretKey, '')
+            ->post("{$this->baseUrl}/v2/invoices", $payload);
+
+        if (!$response->successful()) {
+            Log::error('Xendit: Failed to create invoice', [
+                'response' => $response->json(),
+            ]);
+            throw new \RuntimeException('Failed to create invoice.');
+        }
+
+        return $response->json();
     }
 
-    public function refundPayment(string $paymentId, ?float $amount = null, string $reason = 'requested_by_customer'): array
+    public function refundPayment(string $paymentId, ?float $amount = null, string $reason = 'REQUESTED_BY_CUSTOMER'): array
     {
         $payment = Payment::findOrFail($paymentId);
 
@@ -130,17 +94,15 @@ class PaymentService
 
         $response = Http::withBasicAuth($this->secretKey, '')
             ->post("{$this->baseUrl}/refunds", [
-                'data' => [
-                    'attributes' => [
-                        'amount' => (int) round($refundAmount * 100),
-                        'payment_id' => $payment->gateway_tx_id,
-                        'reason' => $reason,
-                    ],
-                ],
+                'payment_request_id' => $payment->gateway_tx_id,
+                'amount' => round($refundAmount, 2),
+                'currency' => 'PHP',
+                'reason' => $reason,
+                'reference_id' => "refund-{$payment->id}",
             ]);
 
         if (!$response->successful()) {
-            Log::error('PayMongo: Failed to process refund', [
+            Log::error('Xendit: Failed to process refund', [
                 'response' => $response->json(),
             ]);
             throw new \RuntimeException('Failed to process refund.');
@@ -152,19 +114,19 @@ class PaymentService
             'status' => 'refunded',
         ]);
 
-        return $response->json('data');
+        return $response->json();
     }
 
-    public function retrievePaymentIntent(string $paymentIntentId): array
+    public function getPaymentRequest(string $paymentRequestId): array
     {
         $response = Http::withBasicAuth($this->secretKey, '')
-            ->get("{$this->baseUrl}/payment_intents/{$paymentIntentId}");
+            ->get("{$this->baseUrl}/payment_requests/{$paymentRequestId}");
 
         if (!$response->successful()) {
-            throw new \RuntimeException('Failed to retrieve payment intent.');
+            throw new \RuntimeException('Failed to retrieve payment request.');
         }
 
-        return $response->json('data');
+        return $response->json();
     }
 
     public function processBookingPayment(
@@ -202,11 +164,16 @@ class PaymentService
         }
 
         try {
-            $intent = $this->createPaymentIntent($amount, "Booking {$bookingId}");
+            $paymentRequest = $this->createPaymentRequest(
+                $amount,
+                "booking-{$bookingId}",
+                $method,
+                "Booking {$bookingId}"
+            );
 
             $payment->update([
-                'gateway_tx_id' => $intent['id'],
-                'gateway_response' => $intent,
+                'gateway_tx_id' => $paymentRequest['id'],
+                'gateway_response' => $paymentRequest,
                 'status' => 'processing',
             ]);
         } catch (\Throwable $e) {
@@ -219,5 +186,15 @@ class PaymentService
         }
 
         return $payment;
+    }
+
+    private function mapPaymentMethod(string $method): string
+    {
+        return match ($method) {
+            'gcash', 'maya' => 'EWALLET',
+            'card' => 'CARD',
+            'grab_pay' => 'EWALLET',
+            default => 'EWALLET',
+        };
     }
 }

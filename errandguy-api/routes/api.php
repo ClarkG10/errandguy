@@ -26,7 +26,7 @@ use App\Http\Controllers\Customer\TripShareController;
 use App\Http\Controllers\PublicTripController;
 use App\Http\Controllers\Payment\PaymentMethodController;
 use App\Http\Controllers\Payment\PaymentHistoryController;
-use App\Http\Controllers\Payment\PayMongoWebhookController;
+use App\Http\Controllers\Payment\XenditWebhookController;
 use App\Http\Controllers\Payment\WalletController;
 use App\Http\Controllers\Admin\AdminAuthController;
 use App\Http\Controllers\Admin\DashboardController;
@@ -198,8 +198,8 @@ Route::prefix('v1')->group(function () {
         });
     });
 
-    // Webhook routes (no auth, signature-verified)
-    Route::post('/webhooks/paymongo', [PayMongoWebhookController::class, 'handle']);
+    // Webhook routes (no auth, token-verified)
+    Route::post('/webhooks/xendit', [XenditWebhookController::class, 'handle']);
 
     // Public trip tracking (no auth, rate limited)
     Route::get('/trip/{token}', [PublicTripController::class, 'show'])->middleware('throttle:60,1');

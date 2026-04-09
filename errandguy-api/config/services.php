@@ -40,10 +40,10 @@ return [
         'service_key' => env('SUPABASE_SERVICE_KEY'),
     ],
 
-    'paymongo' => [
-        'secret_key' => env('PAYMONGO_SECRET_KEY'),
-        'public_key' => env('PAYMONGO_PUBLIC_KEY'),
-        'webhook_secret' => env('PAYMONGO_WEBHOOK_SECRET'),
+    'xendit' => [
+        'secret_key' => env('XENDIT_SECRET_KEY'),
+        'public_key' => env('XENDIT_PUBLIC_KEY'),
+        'webhook_token' => env('XENDIT_WEBHOOK_TOKEN'),
     ],
 
 ];

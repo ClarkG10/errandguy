@@ -2,7 +2,7 @@
 
 > **Purpose:** Step-by-step implementation roadmap for building the ErrandGuy mobile application (Auth, Customer, Runner) and backend (Laravel + Supabase). Each phase lists exact files, components, controllers, models, and configurations to create — no code, just what and where.
 
-> **Tech Stack:** React Native (Expo SDK 52+) · TypeScript · NativeWind · Zustand · Expo Router · Laravel 12 · Supabase (PostgreSQL 16) · Mapbox · PayMongo (Card/GCash/Maya)
+> **Tech Stack:** React Native (Expo SDK 52+) · TypeScript · NativeWind · Zustand · Expo Router · Laravel 12 · Supabase (PostgreSQL 16) · Mapbox · Xendit (Card/GCash/Maya)
 
 > **Tracking:** Mark each item `[ ]` → `[x]` as you complete it.
 
@@ -39,7 +39,7 @@
   - `EXPO_PUBLIC_SUPABASE_URL` — Supabase project URL
   - `EXPO_PUBLIC_SUPABASE_ANON_KEY` — Supabase anon public key
   - `EXPO_PUBLIC_MAPBOX_TOKEN` — Mapbox access token
-  - `EXPO_PUBLIC_PAYMONGO_PUBLIC_KEY` — PayMongo public key
+  - `EXPO_PUBLIC_XENDIT_PUBLIC_KEY` — Xendit public key
 - [x] Create `tsconfig.json` — set strict mode, path aliases (`@/*` → `./src/*`)
 - [x] Create `.eslintrc.js` — Expo + TypeScript rules
 - [x] Create `.prettierrc` — consistent formatting
@@ -63,7 +63,7 @@
 - [x] Date/time: `dayjs`
 - [x] Forms: `react-hook-form`, `zod` (validation)
 - [x] Keyboard: `react-native-keyboard-aware-scroll-view` 
-- [x] Payments: PayMongo (REST API — handles card, GCash, Maya natively; no native SDK needed)
+- [x] Payments: Xendit (REST API — handles card, GCash, Maya natively; no native SDK needed)
 
 ### 0.3 — Configure Tailwind (NativeWind)
 
@@ -88,9 +88,9 @@
   - `DB_PASSWORD` — Supabase database password
   - `SUPABASE_URL` — Supabase project URL
   - `SUPABASE_SERVICE_KEY` — Supabase service role key (server-side only)
-  - `PAYMONGO_SECRET_KEY` — PayMongo secret key
-  - `PAYMONGO_PUBLIC_KEY` — PayMongo public key
-  - `PAYMONGO_WEBHOOK_SECRET` — PayMongo webhook signing secret
+  - `XENDIT_SECRET_KEY` — Xendit secret key
+  - `XENDIT_PUBLIC_KEY` — Xendit public key
+  - `XENDIT_WEBHOOK_TOKEN` — Xendit webhook callback token
   - `FCM_SERVER_KEY` — Firebase Cloud Messaging server key
   - `MAIL_*` — Mail configuration for password resets
   - `APP_URL` — Backend API URL
@@ -98,7 +98,7 @@
 - [x] Install Laravel packages:
   - `composer require laravel/sanctum` — API token authentication
   - `composer require kreait/laravel-firebase` — Firebase/FCM push notifications
-  - PayMongo payments via Laravel HTTP client (no additional package needed)
+  - Xendit payments via Laravel HTTP client (no additional package needed)
   - `composer require intervention/image` — Image processing (avatar resizing)
   - `composer require spatie/laravel-query-builder` — API query filtering/sorting
   - `composer require spatie/laravel-data` — Data transfer objects
@@ -1691,7 +1691,7 @@ Create Laravel migrations that match the Supabase schema (for schema documentati
   - "Top Up ₱{amount}" `Button` (primary, full width, loading state)
 - [x] API integration:
   - On confirm: call `paymentService.topUpWallet({ amount, payment_method_id })`
-  - Process payment via PayMongo API (card, GCash, or Maya)
+  - Process payment via Xendit API (card, GCash, or Maya)
   - On success: update `walletStore.balance`, show success toast, navigate back
 
 ### 6.15 — Trusted Contacts Screen (standalone)
@@ -2272,33 +2272,32 @@ Create Laravel migrations that match the Supabase schema (for schema documentati
 
 ## Phase 10 — Payments & Wallet System
 
-### 10.1 — PayMongo Integration (Backend)
+### 10.1 — Xendit Integration (Backend)
 
 - [x] Create `app/Services/PaymentService.php`:
-  - `createPaymentIntent($amount, $description, $paymentMethods, $metadata)` — create PayMongo PaymentIntent
-  - `attachPaymentIntent($intentId, $paymentMethodId, $returnUrl)` — attach payment method and confirm
-  - `createPaymentMethod($type, $details)` — create PayMongo PaymentMethod (card, gcash, paymaya)
-  - `createSource($amount, $type, $bookingId)` — create redirect-based Source (GCash, GrabPay, Maya)
-  - `refundPayment($paymentId, $amount, $reason)` — create PayMongo Refund
-  - `retrievePaymentIntent($intentId)` — check payment status
+  - `createPaymentRequest($amount, $referenceId, $method, $description)` — create Xendit Payment Request
+  - `createInvoice($amount, $externalId, $description, $payerEmail)` — create Xendit Invoice
+  - `refundPayment($paymentId, $amount, $reason)` — create Xendit Refund
+  - `getPaymentRequest($paymentRequestId)` — check payment status
   - `processBookingPayment($booking, $paymentMethodType, $paymentMethodId)` — orchestrate full booking payment
-  - Uses `Http::withBasicAuth()` for PayMongo REST API (no SDK package needed)
-  - Amounts in centavos (×100)
+  - Uses `Http::withBasicAuth()` for Xendit REST API (no SDK package needed)
+  - Amounts in PHP (no centavo conversion needed)
 
-- [x] Create `app/Http/Controllers/Payment/PayMongoWebhookController.php`:
-  - Handle `payment.paid` → update payment status to completed, update booking
+- [x] Create `app/Http/Controllers/Payment/XenditWebhookController.php`:
+  - Handle `payment.succeeded` → update payment status to completed, update booking
   - Handle `payment.failed` → update payment status to failed, notify customer
-  - Handle `source.chargeable` → update payment status to processing (ready to charge)
-  - Verify PayMongo webhook signature (HMAC SHA256) for security
+  - Handle `payment.pending` → update payment status to processing
+  - Handle `refund.succeeded` → update payment status to refunded
+  - Verify Xendit webhook via `x-callback-token` header
 
 ### 10.2 — GCash / Maya Integration (Backend)
 
-- [x] GCash and Maya payment processing handled by `PaymentService.php` via PayMongo:
-  - `createSource($amount, 'gcash', $bookingId)` — redirect flow to GCash app for authorization
-  - `createSource($amount, 'paymaya', $bookingId)` — redirect flow to Maya app for authorization
-  - Webhook: `source.chargeable` → create payment from chargeable source
-  - Webhook: `payment.paid` → mark payment as completed
-  - PayMongo handles GCash, Maya, and GrabPay natively as redirect-based Sources
+- [x] GCash and Maya payment processing handled by `PaymentService.php` via Xendit:
+  - `createPaymentRequest($amount, $referenceId, 'gcash')` — e-wallet redirect flow to GCash app
+  - `createPaymentRequest($amount, $referenceId, 'maya')` — e-wallet redirect flow to Maya app
+  - Webhook: `payment.succeeded` → mark payment as completed
+  - Webhook: `payment.failed` → mark payment as failed
+  - Xendit handles GCash and Maya natively as EWALLET Payment Requests
 
 ### 10.3 — Wallet System (Backend)
 
@@ -2327,7 +2326,7 @@ Create Laravel migrations that match the Supabase schema (for schema documentati
 
 - [x] Create `app/Http/Controllers/Payment/PaymentMethodController.php`:
   - `index()` — list user's payment methods (masked card info)
-  - `store(Request)` — add new payment method (card via PayMongo token, GCash, Maya)
+  - `store(Request)` — add new payment method (card via Xendit token, GCash, Maya)
   - `destroy($id)` — remove payment method (verify ownership)
   - `setDefault($id)` — set as default, unset other defaults
 
@@ -2359,16 +2358,16 @@ Create Laravel migrations that match the Supabase schema (for schema documentati
       GET    /transactions         → WalletController@transactions
   });
 
-  // Webhook (no auth middleware, signature-verified):
-  POST /webhooks/paymongo        → PayMongoWebhookController@handle
+  // Webhook (no auth middleware, token-verified):
+  POST /webhooks/xendit            → XenditWebhookController@handle
   ```
 
 ### 10.6 — Frontend Payment Integration
 
-- [x] PayMongo integration on frontend:
-  - Payment is handled via PayMongo REST API (no native SDK needed)
-  - Card payments: collect card details, create PayMongo PaymentMethod via API, attach to PaymentIntent
-  - GCash/Maya: redirect to payment app via in-app browser (URL from `createSource`)
+- [x] Xendit integration on frontend:
+  - Payment is handled via Xendit REST API (no native SDK needed)
+  - Card payments: collect card details, create Xendit Payment Request via API
+  - GCash/Maya: redirect to payment app via in-app browser (URL from Payment Request actions)
   - Return URL deep links back to app after authorization
 
 - [x] Implement wallet payment flow:
@@ -2627,11 +2626,11 @@ Create Laravel migrations that match the Supabase schema (for schema documentati
   - Test refund to wallet
   - Test payout request
   - Test atomic balance operations (concurrent deductions)
-- [x] Create `tests/Feature/Payment/PayMongoWebhookTest.php`:
-  - Test payment.paid handling
+- [x] Create `tests/Feature/Payment/XenditWebhookTest.php`:
+  - Test payment.succeeded handling
   - Test payment.failed handling
-  - Test source.chargeable handling
-  - Test invalid webhook signature rejected
+  - Test payment.pending handling
+  - Test invalid webhook token rejected
 - [x] Create `tests/Feature/Chat/MessageTest.php`:
   - Test send message
   - Test get messages (only booking participants)
@@ -2706,7 +2705,7 @@ Create Laravel migrations that match the Supabase schema (for schema documentati
 - [x] Verify parameterized queries only (no raw SQL concatenation) — ✅ Eloquent ORM only, no raw SQL
 - [x] Verify passwords are Bcrypt-hashed (cost factor 12) — ✅ Confirmed in `config/hashing.php`
 - [x] Verify bank account numbers are AES-256-GCM encrypted — ✅ `EncryptedCast` on `account_number`
-- [x] Verify PayMongo webhook signature validation — ✅ **FIXED**: Was conditional (only if header AND secret existed). Now always enforced; returns 400 if missing. Added idempotency checks on `handlePaymentPaid`/`handlePaymentFailed`
+- [x] Verify Xendit webhook token validation — ✅ **FIXED**: Was conditional (only if header AND secret existed). Now always enforced; returns 400 if missing. Added idempotency checks on `handlePaymentSucceeded`/`handlePaymentFailed`
 - [x] Verify file upload MIME type validation (not just extension) — ✅ **FIXED**: `getClientOriginalExtension()` → `guessExtension()` in ProfileController & RunnerDocumentController (MIME-based detection)
 - [x] Verify rate limiting on all auth routes + OTP — ✅ **FIXED**: Added `throttle:auth` to register, login, social-login, forgot-password, reset-password, admin-login (were unthrottled)
 - [x] Verify API security headers present on all responses — ✅ `SecurityHeaders` middleware sets X-Frame-Options, X-XSS-Protection, X-Content-Type-Options, Referrer-Policy, etc.
@@ -2719,7 +2718,7 @@ Create Laravel migrations that match the Supabase schema (for schema documentati
 > **Security Fixes Summary (Phase 13.4):**
 > - 🔴 CRITICAL: Admin middleware added (`EnsureAdminUser.php` — NEW), registered in `bootstrap/app.php`
 > - 🔴 CRITICAL: Rate limiting added to 6 auth endpoints that were unprotected
-> - 🟠 HIGH: PayMongo webhook signature verification now mandatory + idempotency
+> - 🟠 HIGH: Xendit webhook token verification now mandatory + idempotency
 > - 🟠 HIGH: `ride_pin`/`trip_share_token` no longer leaked in BookingResource
 > - 🟡 MEDIUM: MIME-based file extension detection; cleanup command scheduling
 > - **166 backend tests, 468 assertions — all passing after fixes**
@@ -2749,8 +2748,8 @@ Create Laravel migrations that match the Supabase schema (for schema documentati
 ### 13.6 — Environment & Deployment Setup ✅
 
 - [x] Backend deployment (Laravel Forge):
-  - Created `.env.production.example` — full production env template (Supabase PG, Redis, Firebase, Resend, PayMongo)
-  - Updated `.env.example` — added all missing service vars (DB_CONNECTION=pgsql, Sanctum, Firebase, Resend, PayMongo, Supabase, Mapbox)
+  - Created `.env.production.example` — full production env template (Supabase PG, Redis, Firebase, Resend, Xendit)
+  - Updated `.env.example` — added all missing service vars (DB_CONNECTION=pgsql, Sanctum, Firebase, Resend, Xendit, Supabase, Mapbox)
   - Created `deploy.sh` — Forge deploy script (git pull → composer install → migrate → cache → queue:restart → FPM reload)
   - Created `nginx.conf.example` — reference Nginx config (SSL, gzip, 20M upload, security headers)
   - Added `firebase-credentials.json` to `.gitignore`
@@ -2782,7 +2781,7 @@ Create Laravel migrations that match the Supabase schema (for schema documentati
 
 - [x] 30k-User Production Readiness Fixes (from audit):
   - CRITICAL: LocationService `Cache::has()`→`Cache::add()` atomic throttle (prevents duplicate location inserts)
-  - CRITICAL: PayMongo webhook `lockForUpdate()` in DB::transaction (prevents double wallet credits)
+  - CRITICAL: Xendit webhook `lockForUpdate()` in DB::transaction (prevents double wallet credits)
   - HIGH: ReviewController `lockForUpdate()` in DB::transaction (prevents runner avg_rating race condition)
   - HIGH: Auth rate limiter uses phone/email/ip (prevents shared NAT blocking legitimate users)
   - HIGH: Dashboard cache TTL bumped from 60s to 600s (prevents query storm on cache miss)
