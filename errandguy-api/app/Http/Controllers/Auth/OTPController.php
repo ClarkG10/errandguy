@@ -9,6 +9,7 @@ use App\Http\Resources\UserResource;
 use App\Models\User;
 use App\Services\OTPService;
 use Illuminate\Http\JsonResponse;
+use Illuminate\Support\Facades\Log;
 
 class OTPController extends Controller
 {
@@ -19,6 +20,13 @@ class OTPController extends Controller
     public function sendOTP(SendOTPRequest $request): JsonResponse
     {
         $identifier = $request->phone ?? $request->email;
+
+        Log::info('OTP send requested', [
+            'identifier' => $identifier,
+            'channel' => $request->phone ? 'sms' : 'email',
+            'ip' => $request->ip(),
+        ]);
+
         $otp = $this->otpService->generateOTP();
 
         $this->otpService->storeOTP($identifier, $otp);
@@ -37,6 +45,12 @@ class OTPController extends Controller
     public function verifyOTP(VerifyOTPRequest $request): JsonResponse
     {
         $identifier = $request->phone ?? $request->email;
+
+        Log::info('OTP verify attempt', [
+            'identifier' => $identifier,
+            'ip' => $request->ip(),
+        ]);
+
         $attempts = $this->otpService->getAttemptCount($identifier);
 
         if ($attempts >= 5) {

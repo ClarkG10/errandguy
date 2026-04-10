@@ -56,7 +56,7 @@ export function CompletionModal({
             <Image
               source={{ uri: deliveryPhotoUrl }}
               className="w-full h-32 rounded-xl"
-              resizeMode="cover"
+              contentFit="cover"
             />
           </View>
         )}

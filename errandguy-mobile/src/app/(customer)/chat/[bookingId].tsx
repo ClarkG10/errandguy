@@ -130,7 +130,7 @@ export default function ChatScreen() {
               <Image
                 source={{ uri: item.image_url }}
                 className="w-48 h-48 rounded-lg mb-1"
-                resizeMode="cover"
+                contentFit="cover"
               />
             )}
             {item.content && (

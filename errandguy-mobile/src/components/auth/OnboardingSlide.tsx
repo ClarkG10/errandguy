@@ -17,7 +17,7 @@ export function OnboardingSlide({ image, title, description }: OnboardingSlidePr
         <Image
           source={image}
           className="w-64 h-64"
-          resizeMode="contain"
+          contentFit="contain"
         />
       </View>
       <View className="flex-[0.4] items-center">

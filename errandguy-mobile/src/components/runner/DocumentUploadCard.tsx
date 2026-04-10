@@ -55,7 +55,7 @@ export function DocumentUploadCard({
         <Image
           source={{ uri: fileUrl }}
           className="w-full h-24 rounded-lg mb-2"
-          resizeMode="cover"
+          contentFit="cover"
         />
       )}
 

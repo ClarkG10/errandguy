@@ -13,7 +13,7 @@ export default function RunnerTabsLayout() {
         tabBarActiveTintColor: '#2563EB',
         tabBarInactiveTintColor: '#475569',
         tabBarLabelStyle: {
-          fontFamily: 'Montserrat_400Regular',
+          fontFamily: 'Lato_400Regular',
           fontSize: 11,
         },
         tabBarStyle: {

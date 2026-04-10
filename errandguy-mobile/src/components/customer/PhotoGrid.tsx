@@ -32,7 +32,7 @@ export function PhotoGrid({
             <Image
               source={{ uri }}
               className="w-full h-full"
-              resizeMode="cover"
+              contentFit="cover"
             />
             <Pressable
               className="absolute top-1 right-1 w-5 h-5 rounded-full bg-danger items-center justify-center"

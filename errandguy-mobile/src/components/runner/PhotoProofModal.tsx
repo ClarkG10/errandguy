@@ -67,7 +67,7 @@ export function PhotoProofModal({ type, onConfirm, onClose }: PhotoProofModalPro
             <Image
               source={{ uri: photoUri }}
               className="w-full h-48 rounded-xl mb-4"
-              resizeMode="cover"
+              contentFit="cover"
             />
             <View className="flex-row gap-3">
               <View className="flex-1">

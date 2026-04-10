@@ -1,5 +1,5 @@
 import React, { useRef, useState, useCallback } from 'react';
-import { View, Text, FlatList, Pressable, useWindowDimensions } from 'react-native';
+import { View, Text, FlatList, TouchableOpacity, useWindowDimensions, StyleSheet } from 'react-native';
 import { useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import AsyncStorage from '@react-native-async-storage/async-storage';
@@ -64,9 +64,14 @@ export default function WelcomeScreen() {
   return (
     <SafeAreaView className="flex-1 bg-surface">
       <View className="flex-row justify-end px-4 pt-2">
-        <Pressable onPress={handleSkip}>
-          <Text className="text-sm font-montserrat text-primary">Skip</Text>
-        </Pressable>
+        <TouchableOpacity
+          cssInterop={false}
+          style={ws.skipBtn}
+          activeOpacity={0.6}
+          onPress={handleSkip}
+        >
+          <Text cssInterop={false} style={ws.skipText}>Skip</Text>
+        </TouchableOpacity>
       </View>
 
       <FlatList
@@ -102,13 +107,26 @@ export default function WelcomeScreen() {
             onPress={handleNext}
           />
         </View>
-        <Pressable className="mt-4 items-center" onPress={() => router.push('/(auth)/login')}>
-          <Text className="text-sm font-montserrat text-textSecondary">
+        <TouchableOpacity
+          cssInterop={false}
+          style={ws.loginLink}
+          activeOpacity={0.6}
+          onPress={() => router.push('/(auth)/login')}
+        >
+          <Text cssInterop={false} style={ws.loginText}>
             Already have an account?{' '}
-            <Text className="text-primary font-montserrat-bold">Log In</Text>
+            <Text cssInterop={false} style={ws.loginBold}>Log In</Text>
           </Text>
-        </Pressable>
+        </TouchableOpacity>
       </View>
     </SafeAreaView>
   );
 }
+
+const ws = StyleSheet.create({
+  skipBtn: { padding: 8 },
+  skipText: { fontSize: 14, fontFamily: 'Lato_400Regular', color: '#2563EB' },
+  loginLink: { marginTop: 16, alignItems: 'center', padding: 8 },
+  loginText: { fontSize: 14, fontFamily: 'Lato_400Regular', color: '#475569' },
+  loginBold: { color: '#2563EB', fontFamily: 'Lato_700Bold' },
+});

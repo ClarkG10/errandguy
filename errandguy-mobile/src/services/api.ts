@@ -10,20 +10,46 @@ const api = axios.create({
   },
 });
 
+// ── Request logging ──
 api.interceptors.request.use(
   async (config) => {
     const token = await SecureStore.getItemAsync('auth_token');
     if (token) {
       config.headers.Authorization = `Bearer ${token}`;
     }
+    if (__DEV__) {
+      console.log(
+        `📡 ${config.method?.toUpperCase()} ${config.baseURL}${config.url}`,
+        config.data ? JSON.stringify(config.data).slice(0, 200) : '',
+      );
+    }
     return config;
   },
   (error) => Promise.reject(error),
 );
 
+// ── Response logging + error handling ──
 api.interceptors.response.use(
-  (response) => response,
+  (response) => {
+    if (__DEV__) {
+      console.log(
+        `✅ ${response.status} ${response.config.method?.toUpperCase()} ${response.config.url}`,
+      );
+    }
+    return response;
+  },
   async (error) => {
+    if (__DEV__) {
+      if (error.response) {
+        console.error(
+          `❌ ${error.response.status} ${error.config?.method?.toUpperCase()} ${error.config?.url}`,
+          JSON.stringify(error.response.data).slice(0, 500),
+        );
+      } else {
+        console.error(`❌ NETWORK ERROR ${error.config?.url}`, error.message);
+      }
+    }
+
     if (error.response) {
       const { status, data } = error.response;
 

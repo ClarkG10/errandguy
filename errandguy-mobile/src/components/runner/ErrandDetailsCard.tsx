@@ -85,7 +85,7 @@ export function ErrandDetailsCard({
                     key={i}
                     source={{ uri: photo }}
                     className="w-20 h-20 rounded-lg mr-2"
-                    resizeMode="cover"
+                    contentFit="cover"
                   />
                 ))}
               </ScrollView>

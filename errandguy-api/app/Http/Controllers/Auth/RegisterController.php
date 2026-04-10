@@ -11,11 +11,19 @@ use App\Models\User;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
+use Illuminate\Support\Facades\Log;
 
 class RegisterController extends Controller
 {
     public function register(RegisterRequest $request): JsonResponse
     {
+        Log::info('Registration attempt', [
+            'phone' => $request->phone,
+            'email' => $request->email,
+            'role' => $request->role,
+            'ip' => $request->ip(),
+        ]);
+
         $user = DB::transaction(function () use ($request) {
             $user = User::create([
                 'phone' => $request->phone,
@@ -42,6 +50,12 @@ class RegisterController extends Controller
 
             return $user;
         });
+
+        Log::info('Registration successful', [
+            'user_id' => $user->id,
+            'role' => $user->role,
+            'ip' => $request->ip(),
+        ]);
 
         $token = $user->createToken($request->header('User-Agent', 'mobile'))->plainTextToken;
 

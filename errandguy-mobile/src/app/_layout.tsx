@@ -3,20 +3,33 @@ import { Slot, useRouter, useSegments } from 'expo-router';
 import * as SplashScreen from 'expo-splash-screen';
 import {
   useFonts,
-  Montserrat_400Regular,
-  Montserrat_700Bold,
-} from '@expo-google-fonts/montserrat';
+  Lato_400Regular,
+  Lato_700Bold,
+} from '@expo-google-fonts/lato';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
+import { configureReanimatedLogger, ReanimatedLogLevel } from 'react-native-reanimated';
+import { deactivateKeepAwake } from 'expo-keep-awake';
 import { useAuthStore } from '../stores/authStore';
 import { userService } from '../services/user.service';
-import '../global.css';
+import '../../global.css';
+
+// Prevent ExpoKeepAwake.activate crash when activity is destroyed
+if (__DEV__) {
+  deactivateKeepAwake();
+}
+
+// Disable Reanimated strict mode — css-interop reads shared values during render
+configureReanimatedLogger({
+  level: ReanimatedLogLevel.warn,
+  strict: false,
+});
 
 SplashScreen.preventAutoHideAsync();
 
 export default function RootLayout() {
   const [fontsLoaded] = useFonts({
-    Montserrat_400Regular,
-    Montserrat_700Bold,
+    Lato_400Regular,
+    Lato_700Bold,
   });
 
   const { isAuthenticated, isLoading, role, token, loadFromStorage, setUser, logout } =

@@ -16,6 +16,7 @@ return Application::configure(basePath: dirname(__DIR__))
     )
     ->withMiddleware(function (Middleware $middleware): void {
         $middleware->api(prepend: [
+            \App\Http\Middleware\LogApiRequests::class,
             \App\Http\Middleware\SecurityHeaders::class,
             \Laravel\Sanctum\Http\Middleware\EnsureFrontendRequestsAreStateful::class,
         ]);
@@ -29,7 +30,16 @@ return Application::configure(basePath: dirname(__DIR__))
         $middleware->throttleApi('api');
     })
     ->withExceptions(function (Exceptions $exceptions): void {
-        //
+        $exceptions->reportable(function (\Throwable $e) {
+            \Illuminate\Support\Facades\Log::error('Unhandled exception', [
+                'exception' => get_class($e),
+                'message' => $e->getMessage(),
+                'file' => $e->getFile() . ':' . $e->getLine(),
+                'url' => request()?->fullUrl(),
+                'method' => request()?->method(),
+                'user_id' => request()?->user()?->id,
+            ]);
+        });
     })
     ->booting(function () {
         RateLimiter::for('api', function (Request $request) {

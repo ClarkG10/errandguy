@@ -8,12 +8,19 @@ use App\Http\Resources\UserResource;
 use App\Models\User;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Support\Facades\Hash;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Validation\ValidationException;
 
 class LoginController extends Controller
 {
     public function login(LoginRequest $request): JsonResponse
     {
+        Log::info('Login attempt', [
+            'phone' => $request->phone,
+            'email' => $request->email,
+            'ip' => $request->ip(),
+        ]);
+
         $request->ensureIsNotRateLimited();
 
         $user = User::when($request->phone, fn ($q) => $q->where('phone', $request->phone))
@@ -21,6 +28,13 @@ class LoginController extends Controller
             ->first();
 
         if (!$user || !Hash::check($request->password, $user->password_hash)) {
+            Log::warning('Login failed - invalid credentials', [
+                'phone' => $request->phone,
+                'email' => $request->email,
+                'user_found' => (bool) $user,
+                'ip' => $request->ip(),
+            ]);
+
             $request->incrementAttempts();
 
             throw ValidationException::withMessages([
@@ -43,6 +57,12 @@ class LoginController extends Controller
 
         $token = $user->createToken($deviceName)->plainTextToken;
         $user->update(['last_active_at' => now()]);
+
+        Log::info('Login successful', [
+            'user_id' => $user->id,
+            'role' => $user->role,
+            'ip' => $request->ip(),
+        ]);
 
         return response()->json([
             'user' => new UserResource($user->load('runnerProfile')),

@@ -1,9 +1,9 @@
 import React from 'react';
 import {
-  Pressable,
+  TouchableOpacity,
   Text,
   ActivityIndicator,
-  type PressableProps,
+  StyleSheet,
   type ViewStyle,
 } from 'react-native';
 import * as Haptics from 'expo-haptics';
@@ -12,41 +12,44 @@ import type { LucideIcon } from 'lucide-react-native';
 type ButtonVariant = 'primary' | 'secondary' | 'outline' | 'danger' | 'ghost';
 type ButtonSize = 'sm' | 'md' | 'lg';
 
-interface ButtonProps extends Omit<PressableProps, 'children'> {
+interface ButtonProps {
   title: string;
   variant?: ButtonVariant;
   size?: ButtonSize;
   loading?: boolean;
   icon?: LucideIcon;
   fullWidth?: boolean;
+  disabled?: boolean;
+  onPress?: () => void;
+  style?: ViewStyle;
 }
 
-const variantClasses: Record<ButtonVariant, string> = {
-  primary: 'bg-primary',
-  secondary: 'bg-primaryLight',
-  outline: 'bg-transparent border border-primary',
-  danger: 'bg-danger',
-  ghost: 'bg-transparent',
+const variantStyles: Record<ButtonVariant, ViewStyle> = {
+  primary: { backgroundColor: '#2563EB' },
+  secondary: { backgroundColor: '#DBEAFE' },
+  outline: { backgroundColor: 'transparent', borderWidth: 1, borderColor: '#2563EB' },
+  danger: { backgroundColor: '#EF4444' },
+  ghost: { backgroundColor: 'transparent' },
 };
 
-const variantTextClasses: Record<ButtonVariant, string> = {
-  primary: 'text-white',
-  secondary: 'text-primary',
-  outline: 'text-primary',
-  danger: 'text-white',
-  ghost: 'text-primary',
+const variantTextColors: Record<ButtonVariant, string> = {
+  primary: '#FFFFFF',
+  secondary: '#2563EB',
+  outline: '#2563EB',
+  danger: '#FFFFFF',
+  ghost: '#2563EB',
 };
 
-const sizeClasses: Record<ButtonSize, string> = {
-  sm: 'py-2 px-4',
-  md: 'py-3 px-6',
-  lg: 'py-4 px-8',
+const sizePadding: Record<ButtonSize, ViewStyle> = {
+  sm: { paddingVertical: 8, paddingHorizontal: 16 },
+  md: { paddingVertical: 12, paddingHorizontal: 24 },
+  lg: { paddingVertical: 16, paddingHorizontal: 32 },
 };
 
-const sizeTextClasses: Record<ButtonSize, string> = {
-  sm: 'text-xs',
-  md: 'text-sm',
-  lg: 'text-base',
+const sizeTextSizes: Record<ButtonSize, number> = {
+  sm: 12,
+  md: 14,
+  lg: 16,
 };
 
 const iconSizes: Record<ButtonSize, number> = {
@@ -64,19 +67,27 @@ export function Button({
   icon: Icon,
   fullWidth = false,
   onPress,
-  ...rest
+  style,
 }: ButtonProps) {
-  const handlePress = (e: any) => {
+  const handlePress = () => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-    onPress?.(e);
+    onPress?.();
   };
 
   return (
-    <Pressable
-      className={`flex-row items-center justify-center rounded-lg ${variantClasses[variant]} ${sizeClasses[size]} ${fullWidth ? 'w-full' : ''} ${disabled || loading ? 'opacity-50' : ''}`}
+    <TouchableOpacity
+      cssInterop={false}
+      activeOpacity={0.8}
+      style={[
+        bs.base,
+        variantStyles[variant],
+        sizePadding[size],
+        fullWidth && bs.full,
+        (disabled || loading) && bs.disabled,
+        style,
+      ]}
       disabled={disabled || loading}
       onPress={handlePress}
-      {...rest}
     >
       {loading ? (
         <ActivityIndicator
@@ -93,12 +104,28 @@ export function Button({
             />
           )}
           <Text
-            className={`font-montserrat-bold ${variantTextClasses[variant]} ${sizeTextClasses[size]}`}
+            cssInterop={false}
+            style={[
+              bs.text,
+              { fontSize: sizeTextSizes[size], color: variantTextColors[variant] },
+            ]}
           >
             {title}
           </Text>
         </>
       )}
-    </Pressable>
+    </TouchableOpacity>
   );
 }
+
+const bs = StyleSheet.create({
+  base: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: 14,
+  },
+  full: { width: '100%' },
+  disabled: { opacity: 0.5 },
+  text: { fontFamily: 'Lato_700Bold' },
+});

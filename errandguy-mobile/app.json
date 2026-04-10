@@ -44,7 +44,7 @@
       ]
     },
     "plugins": [
-      "expo-router",
+      ["expo-router", { "root": "./src/app" }],
       "expo-secure-store",
       "expo-location",
       "expo-camera",
@@ -61,7 +61,9 @@
       "eas": {
         "projectId": "1684a4bc-4b59-47f4-a87e-3b3262438098"
       },
-      "router": {}
+      "router": {
+        "root": "./src/app"
+      }
     },
     "owner": "clark123"
   }

@@ -2,10 +2,12 @@ import React, { useState } from 'react';
 import {
   View,
   Text,
-  Pressable,
+  TouchableOpacity,
   ScrollView,
   KeyboardAvoidingView,
   Platform,
+  ActivityIndicator,
+  StyleSheet,
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -14,7 +16,6 @@ import { ArrowLeft, Smartphone, Mail, Lock } from 'lucide-react-native';
 import { Input } from '../../components/ui/Input';
 import { Button } from '../../components/ui/Button';
 import { Toast } from '../../components/ui/Toast';
-import { SocialLoginButton } from '../../components/auth/SocialLoginButton';
 import { useAuth } from '../../hooks/useAuth';
 
 type LoginMode = 'phone' | 'email';
@@ -99,9 +100,14 @@ export default function LoginScreen() {
           contentContainerStyle={{ paddingHorizontal: 24 }}
           keyboardShouldPersistTaps="handled"
         >
-          <Pressable className="mt-2 mb-6" onPress={() => router.back()}>
+          <TouchableOpacity
+            cssInterop={false}
+            style={s.backBtn}
+            activeOpacity={0.6}
+            onPress={() => router.back()}
+          >
             <ArrowLeft size={24} color="#0F172A" />
-          </Pressable>
+          </TouchableOpacity>
 
           <Text className="text-2xl font-montserrat-bold text-textPrimary mb-1">
             Welcome back
@@ -111,27 +117,33 @@ export default function LoginScreen() {
           </Text>
 
           {/* Mode toggle */}
-          <View className="flex-row bg-background rounded-xl p-1 mb-6">
-            <Pressable
-              className={`flex-1 py-2.5 rounded-lg items-center ${mode === 'phone' ? 'bg-surface shadow-sm' : ''}`}
+          <View style={s.toggleRow}>
+            <TouchableOpacity
+              cssInterop={false}
+              style={[s.tab, mode === 'phone' && s.tabActive]}
+              activeOpacity={0.7}
               onPress={() => setMode('phone')}
             >
               <Text
-                className={`text-sm font-montserrat-bold ${mode === 'phone' ? 'text-primary' : 'text-textSecondary'}`}
+                cssInterop={false}
+                style={[s.tabText, mode === 'phone' && s.tabTextActive]}
               >
                 Phone
               </Text>
-            </Pressable>
-            <Pressable
-              className={`flex-1 py-2.5 rounded-lg items-center ${mode === 'email' ? 'bg-surface shadow-sm' : ''}`}
+            </TouchableOpacity>
+            <TouchableOpacity
+              cssInterop={false}
+              style={[s.tab, mode === 'email' && s.tabActive]}
+              activeOpacity={0.7}
               onPress={() => setMode('email')}
             >
               <Text
-                className={`text-sm font-montserrat-bold ${mode === 'email' ? 'text-primary' : 'text-textSecondary'}`}
+                cssInterop={false}
+                style={[s.tabText, mode === 'email' && s.tabTextActive]}
               >
                 Email
               </Text>
-            </Pressable>
+            </TouchableOpacity>
           </View>
 
           {mode === 'phone' ? (
@@ -203,14 +215,16 @@ export default function LoginScreen() {
             )}
           />
 
-          <Pressable
-            className="self-end mb-6"
+          <TouchableOpacity
+            cssInterop={false}
+            style={s.forgotBtn}
+            activeOpacity={0.6}
             onPress={() => router.push('/(auth)/forgot-password')}
           >
-            <Text className="text-sm font-montserrat text-primary">
+            <Text cssInterop={false} style={s.forgotText}>
               Forgot password?
             </Text>
-          </Pressable>
+          </TouchableOpacity>
 
           <Button
             title="Log In"
@@ -229,31 +243,117 @@ export default function LoginScreen() {
             <View className="flex-1 h-px bg-divider" />
           </View>
 
-          {/* Social Login */}
-          <View className="flex-row gap-3 mb-6">
-            <SocialLoginButton
-              provider="google"
+          {/* Social Login — icon-only */}
+          <View style={s.socialRow}>
+            <TouchableOpacity
+              cssInterop={false}
+              style={s.socialBtn}
+              activeOpacity={0.7}
               onPress={() => handleSocialLogin('google')}
-              loading={socialLoading === 'google'}
-            />
-            <SocialLoginButton
-              provider="facebook"
+              disabled={socialLoading === 'google'}
+            >
+              {socialLoading === 'google' ? (
+                <ActivityIndicator size="small" color="#475569" />
+              ) : (
+                <Text cssInterop={false} style={s.googleLetter}>G</Text>
+              )}
+            </TouchableOpacity>
+            <TouchableOpacity
+              cssInterop={false}
+              style={[s.socialBtn, s.fbBtn]}
+              activeOpacity={0.7}
               onPress={() => handleSocialLogin('facebook')}
-              loading={socialLoading === 'facebook'}
-            />
+              disabled={socialLoading === 'facebook'}
+            >
+              {socialLoading === 'facebook' ? (
+                <ActivityIndicator size="small" color="#fff" />
+              ) : (
+                <Text cssInterop={false} style={s.fbLetter}>f</Text>
+              )}
+            </TouchableOpacity>
           </View>
 
-          <Pressable
-            className="items-center mb-8"
+          <TouchableOpacity
+            cssInterop={false}
+            style={s.signupLink}
+            activeOpacity={0.6}
             onPress={() => router.push('/(auth)/register')}
           >
-            <Text className="text-sm font-montserrat text-textSecondary">
+            <Text cssInterop={false} style={s.signupText}>
               Don't have an account?{' '}
-              <Text className="text-primary font-montserrat-bold">Sign Up</Text>
+              <Text cssInterop={false} style={s.signupBold}>Sign Up</Text>
             </Text>
-          </Pressable>
+          </TouchableOpacity>
         </ScrollView>
       </KeyboardAvoidingView>
     </SafeAreaView>
   );
 }
+
+const s = StyleSheet.create({
+  backBtn: { marginTop: 8, marginBottom: 24, alignSelf: 'flex-start', padding: 4 },
+  toggleRow: {
+    flexDirection: 'row',
+    backgroundColor: '#F8FAFC',
+    borderRadius: 12,
+    padding: 4,
+    marginBottom: 24,
+  },
+  tab: {
+    flex: 1,
+    paddingVertical: 10,
+    borderRadius: 8,
+    alignItems: 'center',
+  },
+  tabActive: {
+    backgroundColor: '#FFFFFF',
+    shadowColor: '#000',
+    shadowOpacity: 0.06,
+    shadowRadius: 4,
+    shadowOffset: { width: 0, height: 1 },
+    elevation: 2,
+  },
+  tabText: {
+    fontSize: 14,
+    fontFamily: 'Lato_700Bold',
+    color: '#475569',
+  },
+  tabTextActive: {
+    color: '#2563EB',
+  },
+  forgotBtn: { alignSelf: 'flex-end', marginBottom: 24, padding: 4 },
+  forgotText: { fontSize: 14, fontFamily: 'Lato_400Regular', color: '#2563EB' },
+  socialRow: {
+    flexDirection: 'row',
+    justifyContent: 'center',
+    gap: 16,
+    marginBottom: 24,
+  },
+  socialBtn: {
+    width: 56,
+    height: 56,
+    borderRadius: 28,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    backgroundColor: '#FFFFFF',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  fbBtn: {
+    backgroundColor: '#1877F2',
+    borderColor: '#1877F2',
+  },
+  googleLetter: {
+    fontSize: 22,
+    fontFamily: 'Lato_700Bold',
+    color: '#4285F4',
+  },
+  fbLetter: {
+    fontSize: 22,
+    fontFamily: 'Lato_700Bold',
+    color: '#FFFFFF',
+  },
+  signupLink: { alignItems: 'center', marginBottom: 32, padding: 8 },
+  signupText: { fontSize: 14, fontFamily: 'Lato_400Regular', color: '#475569' },
+  signupBold: { color: '#2563EB', fontFamily: 'Lato_700Bold' },
+});
