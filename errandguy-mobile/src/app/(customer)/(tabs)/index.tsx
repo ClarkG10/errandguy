@@ -57,17 +57,25 @@ export default function CustomerHomeScreen() {
   const [searchText, setSearchText] = useState('');
 
   const fetchData = useCallback(async () => {
-    try {
-      const [activeRes, typesRes, recentRes] = await Promise.all([
-        bookingService.getActiveBooking(),
-        configService.getErrandTypes(),
-        bookingService.getBookings({ per_page: 3 }),
-      ]);
-      setActiveBooking(activeRes.data.data ?? null);
-      setErrandTypes(typesRes.data.data ?? []);
-      setRecentBookings(recentRes.data.data ?? []);
-    } catch {
-      // Silently handle — data will show as empty
+    // Fetch independently so one failure doesn't block the others
+    const results = await Promise.allSettled([
+      bookingService.getActiveBooking(),
+      configService.getErrandTypes(),
+      bookingService.getBookings({ per_page: 3 }),
+    ]);
+
+    if (results[0].status === 'fulfilled') {
+      setActiveBooking(results[0].value.data.data ?? null);
+    }
+    if (results[1].status === 'fulfilled') {
+      const types = results[1].value.data?.data;
+      setErrandTypes(Array.isArray(types) ? types : []);
+    } else {
+      console.warn('Failed to fetch errand types:', results[1].reason?.message);
+    }
+    if (results[2].status === 'fulfilled') {
+      const bookings = results[2].value.data?.data;
+      setRecentBookings(Array.isArray(bookings) ? bookings : []);
     }
   }, [setActiveBooking]);
 

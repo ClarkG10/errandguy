@@ -85,18 +85,32 @@ export default function TrustedContactsScreen() {
       Alert.alert('Error', 'Name and phone are required');
       return;
     }
+
+    // Normalize phone to Philippine format (09XXXXXXXXX)
+    let phone = formPhone.trim().replace(/\s+/g, '');
+    if (phone.startsWith('+63')) {
+      phone = '0' + phone.slice(3);
+    } else if (phone.startsWith('63')) {
+      phone = '0' + phone.slice(2);
+    } else if (!phone.startsWith('0') && phone.startsWith('9')) {
+      phone = '0' + phone;
+    }
+
+    if (!/^(0)9\d{9}$/.test(phone)) {
+      Alert.alert('Error', 'Please enter a valid Philippine phone number (e.g., 09XXXXXXXXX)');
+      return;
+    }
+
     setSaving(true);
     try {
       const payload = {
         name: formName.trim(),
-        phone: formPhone.trim(),
+        phone,
         relationship: formRelationship,
         priority: editingId
           ? contacts.find((c) => c.id === editingId)?.priority ?? contacts.length + 1
           : contacts.length + 1,
         is_active: true,
-        created_at: new Date().toISOString(),
-        updated_at: new Date().toISOString(),
       };
 
       if (editingId) {

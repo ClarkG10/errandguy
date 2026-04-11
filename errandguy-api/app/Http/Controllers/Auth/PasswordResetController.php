@@ -8,6 +8,7 @@ use App\Http\Requests\Auth\ResetPasswordRequest;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Mail;
 use Illuminate\Support\Str;
 use App\Models\User;
@@ -26,13 +27,24 @@ class PasswordResetController extends Controller
             ]
         );
 
-        Mail::raw(
-            "Your ErrandGuy password reset code is: {$token}\n\nThis code expires in 1 hour.",
-            function ($message) use ($request) {
-                $message->to($request->email)
-                    ->subject('ErrandGuy - Password Reset');
-            }
-        );
+        try {
+            Mail::raw(
+                "Your ErrandGuy password reset code is: {$token}\n\nThis code expires in 1 hour.",
+                function ($message) use ($request) {
+                    $message->to($request->email)
+                        ->subject('ErrandGuy - Password Reset');
+                }
+            );
+        } catch (\Throwable $e) {
+            Log::error('Failed to send password reset email', [
+                'email' => $request->email,
+                'error' => $e->getMessage(),
+            ]);
+
+            return response()->json([
+                'message' => 'Unable to send reset email at this time. Please try again later.',
+            ], 503);
+        }
 
         return response()->json([
             'message' => 'Password reset link sent to your email.',
