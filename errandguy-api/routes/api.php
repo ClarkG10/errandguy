@@ -58,6 +58,15 @@ Route::prefix('v1')->group(function () {
         Route::post('/logout', [LogoutController::class, 'logout'])->middleware('auth:sanctum');
     });
 
+    // Public config routes (no auth required)
+    Route::get('/errand-types', function () {
+        return response()->json([
+            'data' => \App\Services\CacheService::rememberStatic('errand_types:active', fn () =>
+                \App\Models\ErrandType::where('is_active', true)->orderBy('sort_order')->get()
+            ),
+        ]);
+    });
+
     // Authenticated routes
     Route::middleware(['auth:sanctum', 'active'])->group(function () {
 
@@ -150,14 +159,6 @@ Route::prefix('v1')->group(function () {
         });
 
         // Config routes (cached for performance)
-        Route::get('/errand-types', function () {
-            return response()->json([
-                'data' => \App\Services\CacheService::rememberStatic('errand_types:active', fn () =>
-                    \App\Models\ErrandType::where('is_active', true)->orderBy('sort_order')->get()
-                ),
-            ]);
-        });
-
         Route::get('/config/app', function () {
             return response()->json([
                 'data' => \App\Services\CacheService::rememberStatic('app_config', fn () =>
