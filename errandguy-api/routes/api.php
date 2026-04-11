@@ -62,7 +62,7 @@ Route::prefix('v1')->group(function () {
     Route::get('/errand-types', function () {
         return response()->json([
             'data' => \App\Services\CacheService::rememberStatic('errand_types:active', fn () =>
-                \App\Models\ErrandType::where('is_active', true)->orderBy('sort_order')->get()
+                \App\Models\ErrandType::where('is_active', true)->orderBy('sort_order')->get()->toArray()
             ),
         ]);
     });
