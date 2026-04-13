@@ -1,8 +1,9 @@
-import React, { useState, useCallback } from 'react';
+import React, { useState, useCallback, useMemo } from 'react';
 import { View, Text, ScrollView, Alert, RefreshControl, Pressable } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import { ArrowLeft, MapPin } from 'lucide-react-native';
+import Mapbox from '@rnmapbox/maps';
 import Slider from '@react-native-community/slider';
 import { Card } from '../../../components/ui/Card';
 import { Button } from '../../../components/ui/Button';
@@ -59,6 +60,25 @@ export default function WorkingAreasScreen() {
 
   const radiusKm = (radius / 1000).toFixed(1);
 
+  // Generate circle polygon for the working area
+  const circleGeoJSON = useMemo(() => {
+    if (!lat || !lng) return null;
+    const steps = 64;
+    const km = radius / 1000;
+    const coords: [number, number][] = [];
+    for (let i = 0; i <= steps; i++) {
+      const angle = (i / steps) * 2 * Math.PI;
+      const dLat = (km / 111.32) * Math.cos(angle);
+      const dLng = (km / (111.32 * Math.cos((lat * Math.PI) / 180))) * Math.sin(angle);
+      coords.push([lng + dLng, lat + dLat]);
+    }
+    return {
+      type: 'Feature' as const,
+      properties: {},
+      geometry: { type: 'Polygon' as const, coordinates: [coords] },
+    };
+  }, [lat, lng, radius]);
+
   return (
     <SafeAreaView className="flex-1 bg-background" edges={['top']}>
       {/* Header */}
@@ -75,11 +95,59 @@ export default function WorkingAreasScreen() {
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
         contentContainerStyle={{ paddingBottom: 120 }}
       >
-        {/* Map Placeholder */}
-        <View className="mx-5 h-56 bg-gray-100 rounded-xl items-center justify-center mb-4">
-          <MapPin size={32} color="#94A3B8" />
-          <Text className="text-sm font-montserrat text-textSecondary mt-2">Map View</Text>
-          <Text className="text-xs font-montserrat text-gray-400">(Coming with Mapbox)</Text>
+        {/* Map with circle overlay */}
+        <View className="mx-5 h-56 rounded-xl overflow-hidden mb-4">
+          {lat && lng ? (
+            <Mapbox.MapView
+              style={{ flex: 1 }}
+              styleURL={Mapbox.StyleURL.Street}
+              logoEnabled={false}
+              attributionEnabled={false}
+              compassEnabled={false}
+              scaleBarEnabled={false}
+            >
+              <Mapbox.Camera
+                centerCoordinate={[lng, lat]}
+                zoomLevel={Math.max(7, 14 - Math.log2(radius / 1000))}
+                animationDuration={500}
+              />
+
+              {/* Center marker */}
+              <Mapbox.PointAnnotation id="center" coordinate={[lng, lat]}>
+                <View className="w-8 h-8 rounded-full bg-primary items-center justify-center border-2 border-white shadow-md">
+                  <MapPin size={14} color="#FFFFFF" />
+                </View>
+              </Mapbox.PointAnnotation>
+
+              {/* Radius circle */}
+              {circleGeoJSON && (
+                <Mapbox.ShapeSource id="radiusCircle" shape={circleGeoJSON}>
+                  <Mapbox.FillLayer
+                    id="radiusFill"
+                    style={{
+                      fillColor: '#2563EB',
+                      fillOpacity: 0.12,
+                    }}
+                  />
+                  <Mapbox.LineLayer
+                    id="radiusOutline"
+                    style={{
+                      lineColor: '#2563EB',
+                      lineWidth: 2,
+                      lineDasharray: [2, 2],
+                    }}
+                  />
+                </Mapbox.ShapeSource>
+              )}
+            </Mapbox.MapView>
+          ) : (
+            <View className="flex-1 bg-gray-100 items-center justify-center">
+              <MapPin size={32} color="#94A3B8" />
+              <Text className="text-sm font-montserrat text-textSecondary mt-2">
+                Enable location to view map
+              </Text>
+            </View>
+          )}
         </View>
 
         {/* Center Location */}

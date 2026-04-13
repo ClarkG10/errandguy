@@ -1,6 +1,9 @@
-import React from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { View, Text } from 'react-native';
-import { MapPin, Navigation } from 'lucide-react-native';
+import { MapPin } from 'lucide-react-native';
+import Mapbox from '@rnmapbox/maps';
+
+const MAPBOX_TOKEN = process.env.EXPO_PUBLIC_MAPBOX_TOKEN ?? '';
 
 interface MiniRouteMapProps {
   pickupLat?: number;
@@ -21,6 +24,63 @@ export function MiniRouteMap({
 }: MiniRouteMapProps) {
   const hasPickup = pickupLat != null && pickupLng != null;
   const hasDropoff = dropoffLat != null && dropoffLng != null;
+  const hasBoth = hasPickup && hasDropoff;
+
+  const [routeCoords, setRouteCoords] = useState<[number, number][]>([]);
+
+  // Fetch directions from Mapbox
+  useEffect(() => {
+    if (!hasBoth || !MAPBOX_TOKEN) return;
+
+    let cancelled = false;
+    const url = `https://api.mapbox.com/directions/v5/mapbox/driving/${pickupLng},${pickupLat};${dropoffLng},${dropoffLat}?geometries=geojson&overview=full&access_token=${MAPBOX_TOKEN}`;
+
+    fetch(url)
+      .then((r) => r.json())
+      .then((data) => {
+        if (cancelled) return;
+        const coords = data.routes?.[0]?.geometry?.coordinates;
+        if (Array.isArray(coords)) {
+          setRouteCoords(coords);
+        }
+      })
+      .catch(() => {});
+
+    return () => { cancelled = true; };
+  }, [hasBoth, pickupLat, pickupLng, dropoffLat, dropoffLng]);
+
+  const routeGeoJSON = useMemo(() => {
+    if (routeCoords.length === 0) return null;
+    return {
+      type: 'Feature' as const,
+      properties: {},
+      geometry: {
+        type: 'LineString' as const,
+        coordinates: routeCoords,
+      },
+    };
+  }, [routeCoords]);
+
+  // Camera bounds
+  const bounds = useMemo(() => {
+    if (!hasBoth) return undefined;
+    const lngs = [pickupLng!, dropoffLng!];
+    const lats = [pickupLat!, dropoffLat!];
+    return {
+      ne: [Math.max(...lngs), Math.max(...lats)] as [number, number],
+      sw: [Math.min(...lngs), Math.min(...lats)] as [number, number],
+      paddingTop: 40,
+      paddingBottom: 40,
+      paddingLeft: 40,
+      paddingRight: 40,
+    };
+  }, [hasBoth, pickupLat, pickupLng, dropoffLat, dropoffLng]);
+
+  const center = hasPickup
+    ? [pickupLng!, pickupLat!]
+    : hasDropoff
+      ? [dropoffLng!, dropoffLat!]
+      : [121.0, 14.6]; // Manila default
 
   if (!hasPickup && !hasDropoff) return null;
 
@@ -29,16 +89,62 @@ export function MiniRouteMap({
       <Text className="text-sm font-montserrat-bold text-textPrimary mb-2">
         Route Preview
       </Text>
-      {/* Mapbox MapView placeholder — will be integrated with @rnmapbox/maps */}
-      <View className="h-40 bg-divider rounded-xl items-center justify-center overflow-hidden">
-        <View className="flex-1 w-full items-center justify-center">
-          <Navigation size={32} color="#94A3B8" />
-          <Text className="text-xs font-montserrat text-textSecondary mt-2">
-            Map Preview
-          </Text>
-        </View>
+      <View className="h-40 rounded-xl overflow-hidden">
+        <Mapbox.MapView
+          style={{ flex: 1 }}
+          styleURL={Mapbox.StyleURL.Street}
+          logoEnabled={false}
+          attributionEnabled={false}
+          compassEnabled={false}
+          scaleBarEnabled={false}
+          scrollEnabled={false}
+          pitchEnabled={false}
+          rotateEnabled={false}
+          zoomEnabled={false}
+        >
+          <Mapbox.Camera
+            {...(bounds
+              ? { bounds }
+              : { centerCoordinate: center as [number, number], zoomLevel: 14 }
+            )}
+            animationMode="none"
+          />
 
-        {/* Route summary overlay */}
+          {/* Pickup marker */}
+          {hasPickup && (
+            <Mapbox.PointAnnotation id="pickup" coordinate={[pickupLng!, pickupLat!]}>
+              <View className="w-6 h-6 rounded-full bg-primary items-center justify-center border-2 border-white">
+                <View className="w-2 h-2 rounded-full bg-white" />
+              </View>
+            </Mapbox.PointAnnotation>
+          )}
+
+          {/* Dropoff marker */}
+          {hasDropoff && (
+            <Mapbox.PointAnnotation id="dropoff" coordinate={[dropoffLng!, dropoffLat!]}>
+              <View className="w-6 h-6 rounded-full bg-danger items-center justify-center border-2 border-white">
+                <View className="w-2 h-2 rounded-full bg-white" />
+              </View>
+            </Mapbox.PointAnnotation>
+          )}
+
+          {/* Route line */}
+          {routeGeoJSON && (
+            <Mapbox.ShapeSource id="routeLine" shape={routeGeoJSON}>
+              <Mapbox.LineLayer
+                id="routeLineLayer"
+                style={{
+                  lineColor: '#2563EB',
+                  lineWidth: 4,
+                  lineCap: 'round',
+                  lineJoin: 'round',
+                }}
+              />
+            </Mapbox.ShapeSource>
+          )}
+        </Mapbox.MapView>
+
+        {/* Address overlay */}
         <View className="absolute bottom-0 left-0 right-0 bg-surface/90 px-3 py-2">
           {hasPickup && pickupAddress && (
             <View className="flex-row items-center mb-1">

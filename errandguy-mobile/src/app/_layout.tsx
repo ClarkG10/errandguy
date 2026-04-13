@@ -9,9 +9,13 @@ import {
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { configureReanimatedLogger, ReanimatedLogLevel } from 'react-native-reanimated';
 import { deactivateKeepAwake } from 'expo-keep-awake';
+import Mapbox from '@rnmapbox/maps';
 import { useAuthStore } from '../stores/authStore';
 import { userService } from '../services/user.service';
 import '../../global.css';
+
+// Initialize Mapbox
+Mapbox.setAccessToken(process.env.EXPO_PUBLIC_MAPBOX_TOKEN ?? '');
 
 // Prevent ExpoKeepAwake.activate crash when activity is destroyed
 if (__DEV__) {

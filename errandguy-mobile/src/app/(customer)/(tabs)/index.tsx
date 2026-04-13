@@ -69,6 +69,7 @@ export default function CustomerHomeScreen() {
     }
     if (results[1].status === 'fulfilled') {
       const types = results[1].value.data?.data;
+      console.log('📦 Errand types fetched:', Array.isArray(types) ? types.length : 'not array', types);
       setErrandTypes(Array.isArray(types) ? types : []);
     } else {
       console.warn('Failed to fetch errand types:', results[1].reason?.message);

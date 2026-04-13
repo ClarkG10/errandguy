@@ -58,13 +58,17 @@ jest.mock('expo-router', () => ({
 
 // Mock @rnmapbox/maps
 jest.mock('@rnmapbox/maps', () => ({
-  default: { setAccessToken: jest.fn() },
+  default: {
+    setAccessToken: jest.fn(),
+    StyleURL: { Street: 'mapbox://styles/mapbox/streets-v12' },
+  },
   MapView: 'MapView',
   Camera: 'Camera',
   MarkerView: 'MarkerView',
   PointAnnotation: 'PointAnnotation',
   ShapeSource: 'ShapeSource',
   LineLayer: 'LineLayer',
+  FillLayer: 'FillLayer',
   UserLocation: 'UserLocation',
 }));
 

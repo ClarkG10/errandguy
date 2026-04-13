@@ -1,7 +1,9 @@
 import React, { useState, useCallback, useEffect } from 'react';
-import { View, Text, TextInput, FlatList, Pressable } from 'react-native';
+import { View, Text, TextInput, FlatList, Pressable, ActivityIndicator } from 'react-native';
 import { MapPin, Navigation, Bookmark } from 'lucide-react-native';
 import { useDebounce } from '../../hooks/useDebounce';
+
+const MAPBOX_TOKEN = process.env.EXPO_PUBLIC_MAPBOX_TOKEN ?? '';
 
 interface AddressSuggestion {
   place_name: string;
@@ -30,18 +32,51 @@ export function AddressInput({
   const [query, setQuery] = useState(value);
   const [suggestions, setSuggestions] = useState<AddressSuggestion[]>([]);
   const [showSuggestions, setShowSuggestions] = useState(false);
-  const debouncedQuery = useDebounce(query, 300);
+  const [searching, setSearching] = useState(false);
+  const debouncedQuery = useDebounce(query, 400);
+
+  // Sync external value changes
+  useEffect(() => {
+    setQuery(value);
+  }, [value]);
 
   useEffect(() => {
-    if (debouncedQuery.length < 3) {
+    if (debouncedQuery.length < 3 || !MAPBOX_TOKEN) {
       setSuggestions([]);
       setShowSuggestions(false);
       return;
     }
-    // Mapbox Places API integration placeholder
-    // In production, call Mapbox Geocoding API here
-    setShowSuggestions(true);
-    setSuggestions([]);
+
+    let cancelled = false;
+    setSearching(true);
+
+    const encoded = encodeURIComponent(debouncedQuery);
+    // Bias results toward Philippines
+    const url = `https://api.mapbox.com/geocoding/v5/mapbox.places/${encoded}.json?access_token=${MAPBOX_TOKEN}&country=ph&limit=5&language=en&types=address,poi,place,locality,neighborhood`;
+
+    fetch(url)
+      .then((res) => res.json())
+      .then((data) => {
+        if (cancelled) return;
+        const results: AddressSuggestion[] = (data.features ?? []).map(
+          (f: any) => ({
+            place_name: f.place_name,
+            center: f.center as [number, number],
+          }),
+        );
+        setSuggestions(results);
+        setShowSuggestions(results.length > 0);
+      })
+      .catch(() => {
+        if (!cancelled) setSuggestions([]);
+      })
+      .finally(() => {
+        if (!cancelled) setSearching(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
   }, [debouncedQuery]);
 
   const searchPlaces = useCallback((text: string) => {
@@ -76,6 +111,7 @@ export function AddressInput({
           placeholder={placeholder}
           placeholderTextColor="#94A3B8"
         />
+        {searching && <ActivityIndicator size="small" color="#94A3B8" />}
       </View>
 
       {/* Quick Actions */}
@@ -110,6 +146,7 @@ export function AddressInput({
           <FlatList
             data={suggestions}
             keyExtractor={(_, i) => String(i)}
+            keyboardShouldPersistTaps="handled"
             renderItem={({ item }) => (
               <Pressable
                 className="flex-row items-center px-4 py-3 border-b border-divider"
