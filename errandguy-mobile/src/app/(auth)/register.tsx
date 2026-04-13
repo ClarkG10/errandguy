@@ -108,8 +108,10 @@ export default function RegisterScreen() {
         router.replace('/(auth)/role-select');
       }
     } catch (error: any) {
-      const serverErrors = error?.response?.data?.errors;
-      if (serverErrors) {
+      const status = error?.response?.status ?? error?.status;
+      const serverErrors = error?.response?.data?.errors ?? error?.errors;
+
+      if (serverErrors && typeof serverErrors === 'object') {
         for (const [field, messages] of Object.entries(serverErrors)) {
           if (field === 'phone' || field === 'email' || field === 'full_name' || field === 'password') {
             setError(field as keyof RegisterFormData, {
@@ -118,8 +120,17 @@ export default function RegisterScreen() {
           }
         }
       } else {
-        const message =
-          error?.response?.data?.message || 'Registration failed. Please try again.';
+        let message: string;
+        if (!error?.response && !error?.status) {
+          message = 'Unable to reach the server. Check your internet connection.';
+        } else if (status === 429) {
+          message = 'Too many attempts. Please wait a few minutes and try again.';
+        } else if (status === 500 || status >= 500) {
+          message = 'Something went wrong on our end. Please try again later.';
+        } else {
+          message =
+            error?.response?.data?.message ?? error?.message ?? 'Registration failed. Please try again.';
+        }
         setToast({ visible: true, message, variant: 'error' });
       }
     } finally {
@@ -148,7 +159,7 @@ export default function RegisterScreen() {
           <Pressable
             className="mt-2 mb-6 w-9 h-9 rounded-xl bg-surface items-center justify-center"
             style={{ shadowColor: '#0F172A', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.04, shadowRadius: 6, elevation: 1 }}
-            onPress={() => router.back()}
+            onPress={() => router.push('/(auth)/login')}
           >
             <ArrowLeft size={20} color="#0F172A" />
           </Pressable>

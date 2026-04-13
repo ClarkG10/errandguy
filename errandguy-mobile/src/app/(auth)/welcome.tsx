@@ -3,6 +3,8 @@ import { View, Text, FlatList, TouchableOpacity, useWindowDimensions, StyleSheet
 import { useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import * as Location from 'expo-location';
+import * as Haptics from 'expo-haptics';
 import { OnboardingSlide } from '../../components/auth/OnboardingSlide';
 import { DotIndicator } from '../../components/auth/DotIndicator';
 import { Button } from '../../components/ui/Button';
@@ -38,13 +40,17 @@ export default function WelcomeScreen() {
   const [activeIndex, setActiveIndex] = useState(0);
 
   const handleSkip = useCallback(async () => {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     await AsyncStorage.setItem('@onboarding_seen', 'true');
+    await Location.requestForegroundPermissionsAsync();
     router.replace('/(auth)/login');
   }, [router]);
 
   const handleNext = useCallback(async () => {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     if (activeIndex === slides.length - 1) {
       await AsyncStorage.setItem('@onboarding_seen', 'true');
+      await Location.requestForegroundPermissionsAsync();
       router.replace('/(auth)/login');
     } else {
       flatListRef.current?.scrollToIndex({ index: activeIndex + 1 });
@@ -69,6 +75,8 @@ export default function WelcomeScreen() {
           style={ws.skipBtn}
           activeOpacity={0.6}
           onPress={handleSkip}
+          accessibilityLabel="Skip onboarding"
+          accessibilityRole="button"
         >
           <Text cssInterop={false} style={ws.skipText}>Skip</Text>
         </TouchableOpacity>
@@ -112,6 +120,8 @@ export default function WelcomeScreen() {
           style={ws.loginLink}
           activeOpacity={0.6}
           onPress={() => router.push('/(auth)/login')}
+          accessibilityLabel="Log in to existing account"
+          accessibilityRole="button"
         >
           <Text cssInterop={false} style={ws.loginText}>
             Already have an account?{' '}

@@ -22,6 +22,8 @@ export function ProfileMenuItem({
     <Pressable
       className="flex-row items-center py-3.5 px-1"
       onPress={onPress}
+      accessibilityRole="button"
+      accessibilityLabel={label}
     >
       <View
         className="w-9 h-9 rounded-xl items-center justify-center mr-3"

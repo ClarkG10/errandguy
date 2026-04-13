@@ -1,8 +1,9 @@
-import React, { useState, useCallback, useRef } from 'react';
+import React, { useState, useCallback, useRef, useEffect } from 'react';
 import { View, Text, Modal, Pressable, ActivityIndicator } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { X, MapPin } from 'lucide-react-native';
+import { X, MapPin, Crosshair } from 'lucide-react-native';
 import Mapbox from '@rnmapbox/maps';
+import * as Location from 'expo-location';
 import { Button } from '../ui/Button';
 
 const MAPBOX_TOKEN = process.env.EXPO_PUBLIC_MAPBOX_TOKEN ?? '';
@@ -31,7 +32,54 @@ export function MapPickerModal({
   );
   const [address, setAddress] = useState<string>('');
   const [loading, setLoading] = useState(false);
+  const [locatingUser, setLocatingUser] = useState(false);
   const cameraRef = useRef<Mapbox.Camera>(null);
+
+  // Auto-center on user's location when opening if no initial coordinate
+  useEffect(() => {
+    if (!visible) return;
+    if (initialCoordinate) {
+      setSelectedCoord(initialCoordinate);
+      // Trigger reverse geocode for initial coordinate
+      reverseGeocode(initialCoordinate[0], initialCoordinate[1]).then(setAddress);
+      return;
+    }
+    // Try to get user location
+    (async () => {
+      try {
+        setLocatingUser(true);
+        const { status } = await Location.requestForegroundPermissionsAsync();
+        if (status !== 'granted') return;
+        const loc = await Location.getCurrentPositionAsync({
+          accuracy: Location.Accuracy.High,
+        });
+        const coords: [number, number] = [loc.coords.longitude, loc.coords.latitude];
+        setSelectedCoord(coords);
+        cameraRef.current?.setCamera({
+          centerCoordinate: coords,
+          zoomLevel: 16,
+          animationDuration: 500,
+        });
+        setLoading(true);
+        const addr = await reverseGeocode(coords[0], coords[1]);
+        setAddress(addr);
+        setLoading(false);
+      } catch {
+        // Silently fall back to default center
+      } finally {
+        setLocatingUser(false);
+      }
+    })();
+  }, [visible, initialCoordinate]);
+
+  // Reset state when modal closes
+  useEffect(() => {
+    if (!visible) {
+      setSelectedCoord(null);
+      setAddress('');
+      setLoading(false);
+    }
+  }, [visible]);
 
   const reverseGeocode = useCallback(async (lng: number, lat: number) => {
     if (!MAPBOX_TOKEN) return '';
@@ -114,7 +162,7 @@ export function MapPickerModal({
           </Mapbox.MapView>
 
           {/* Hint overlay */}
-          {!selectedCoord && (
+          {!selectedCoord && !locatingUser && (
             <View className="absolute top-4 left-5 right-5">
               <View className="bg-white/90 rounded-xl px-4 py-3 shadow-sm">
                 <Text className="text-sm font-montserrat text-textSecondary text-center">
@@ -123,6 +171,48 @@ export function MapPickerModal({
               </View>
             </View>
           )}
+
+          {locatingUser && (
+            <View className="absolute top-4 left-5 right-5">
+              <View className="bg-white/90 rounded-xl px-4 py-3 shadow-sm flex-row items-center justify-center">
+                <ActivityIndicator size="small" color="#2563EB" />
+                <Text className="text-sm font-montserrat text-textSecondary ml-2">
+                  Getting your location...
+                </Text>
+              </View>
+            </View>
+          )}
+
+          {/* My location button */}
+          <Pressable
+            className="absolute bottom-4 right-4 w-12 h-12 bg-white rounded-full items-center justify-center shadow-lg"
+            style={{ shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.15, shadowRadius: 6, elevation: 4 }}
+            onPress={async () => {
+              try {
+                setLocatingUser(true);
+                const loc = await Location.getCurrentPositionAsync({
+                  accuracy: Location.Accuracy.High,
+                });
+                const coords: [number, number] = [loc.coords.longitude, loc.coords.latitude];
+                setSelectedCoord(coords);
+                cameraRef.current?.setCamera({
+                  centerCoordinate: coords,
+                  zoomLevel: 16,
+                  animationDuration: 500,
+                });
+                setLoading(true);
+                const addr = await reverseGeocode(coords[0], coords[1]);
+                setAddress(addr);
+                setLoading(false);
+              } catch {
+                // Silently fail
+              } finally {
+                setLocatingUser(false);
+              }
+            }}
+          >
+            <Crosshair size={20} color="#2563EB" />
+          </Pressable>
         </View>
 
         {/* Bottom panel with selected address */}

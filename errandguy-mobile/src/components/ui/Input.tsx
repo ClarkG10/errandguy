@@ -84,6 +84,8 @@ export function Input({
           </Animated.Text>
         )}
         <TextInput
+          accessibilityLabel={label || placeholder}
+          accessibilityState={{ disabled: rest.editable === false }}
           style={[
             fs.input,
             label ? fs.inputWithLabel : null,
@@ -104,7 +106,12 @@ export function Input({
           {...rest}
         />
         {isPassword && (
-          <Pressable style={fs.toggle} onPress={() => setShowPassword(!showPassword)}>
+          <Pressable
+            style={fs.toggle}
+            onPress={() => setShowPassword(!showPassword)}
+            accessibilityRole="button"
+            accessibilityLabel={showPassword ? 'Hide password' : 'Show password'}
+          >
             {showPassword ? (
               <EyeOff size={18} color="#94A3B8" />
             ) : (

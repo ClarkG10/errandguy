@@ -1,4 +1,4 @@
-import React, { useCallback, useState } from 'react';
+import React, { useCallback, useRef, useState } from 'react';
 import {
   View,
   Text,
@@ -21,6 +21,8 @@ import {
   Search,
   MapPin,
   ArrowRight,
+  AlertCircle,
+  RefreshCw,
 } from 'lucide-react-native';
 import type { LucideIcon } from 'lucide-react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -29,6 +31,7 @@ import { useBookingStore } from '../../../stores/bookingStore';
 import { useNotificationStore } from '../../../stores/notificationStore';
 import { bookingService } from '../../../services/booking.service';
 import { configService } from '../../../services/config.service';
+import { CacheService, CacheTTL, CacheKeys } from '../../../services/cache.service';
 import { useRefreshOnFocus } from '../../../hooks/useRefreshOnFocus';
 import { Avatar } from '../../../components/ui/Avatar';
 import { HomeSkeleton } from '../../../components/ui/Skeleton';
@@ -57,33 +60,67 @@ export default function CustomerHomeScreen() {
   const [recentBookings, setRecentBookings] = useState<Booking[]>([]);
   const [refreshing, setRefreshing] = useState(false);
   const [initialLoading, setInitialLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const hasCacheLoaded = useRef(false);
 
-  const fetchData = useCallback(async () => {
-    const results = await Promise.allSettled([
-      bookingService.getActiveBooking(),
-      configService.getErrandTypes(),
-      bookingService.getBookings({ per_page: 3 }),
-    ]);
+  const fetchData = useCallback(async (isRefresh = false) => {
+    setError(null);
 
-    if (results[0].status === 'fulfilled') {
-      setActiveBooking(results[0].value.data.data ?? null);
+    // On first load, try cache first to avoid skeleton
+    if (!hasCacheLoaded.current && !isRefresh) {
+      const [cachedTypes, cachedBookings] = await Promise.all([
+        CacheService.get<ErrandType[]>(CacheKeys.errandTypes()),
+        CacheService.get<Booking[]>(CacheKeys.bookingHistory(user?.id ?? 'anon')),
+      ]);
+      if (cachedTypes) setErrandTypes(cachedTypes);
+      if (cachedBookings) setRecentBookings(cachedBookings);
+      if (cachedTypes || cachedBookings) {
+        hasCacheLoaded.current = true;
+        setInitialLoading(false);
+      }
     }
-    if (results[1].status === 'fulfilled') {
-      const types = results[1].value.data?.data;
-      setErrandTypes(Array.isArray(types) ? types : []);
+
+    try {
+      const results = await Promise.allSettled([
+        bookingService.getActiveBooking(),
+        configService.getErrandTypes(),
+        bookingService.getBookings({ per_page: 3 }),
+      ]);
+
+      if (results[0].status === 'fulfilled') {
+        setActiveBooking(results[0].value.data.data ?? null);
+      }
+      if (results[1].status === 'fulfilled') {
+        const types = results[1].value.data?.data;
+        const typesArray = Array.isArray(types) ? types : [];
+        setErrandTypes(typesArray);
+        CacheService.set(CacheKeys.errandTypes(), typesArray, CacheTTL.STATIC);
+      }
+      if (results[2].status === 'fulfilled') {
+        const bookings = results[2].value.data?.data;
+        const bookingsArray = Array.isArray(bookings) ? bookings : [];
+        setRecentBookings(bookingsArray);
+        CacheService.set(CacheKeys.bookingHistory(user?.id ?? 'anon'), bookingsArray, CacheTTL.SHORT);
+      }
+
+      // If all failed, show error
+      const allFailed = results.every((r) => r.status === 'rejected');
+      if (allFailed) {
+        setError('Unable to load data. Please check your connection.');
+      }
+    } catch {
+      setError('Something went wrong. Pull down to retry.');
     }
-    if (results[2].status === 'fulfilled') {
-      const bookings = results[2].value.data?.data;
-      setRecentBookings(Array.isArray(bookings) ? bookings : []);
-    }
+
+    hasCacheLoaded.current = true;
     setInitialLoading(false);
-  }, [setActiveBooking]);
+  }, [setActiveBooking, user?.id]);
 
   useRefreshOnFocus(fetchData);
 
   const onRefresh = useCallback(async () => {
     setRefreshing(true);
-    await fetchData();
+    await fetchData(true);
     setRefreshing(false);
   }, [fetchData]);
 
@@ -160,6 +197,18 @@ export default function CustomerHomeScreen() {
             What do you need help with?
           </Text>
         </Pressable>
+
+        {/* ── Error Banner ── */}
+        {error && (
+          <Pressable
+            className="mx-5 mt-3 flex-row items-center bg-danger/10 rounded-2xl px-4 py-3"
+            onPress={onRefresh}
+          >
+            <AlertCircle size={18} color="#EF4444" />
+            <Text className="flex-1 text-xs font-montserrat text-danger ml-2.5">{error}</Text>
+            <RefreshCw size={14} color="#EF4444" />
+          </Pressable>
+        )}
 
         {/* ── Active Errand ── */}
         {activeBooking && (

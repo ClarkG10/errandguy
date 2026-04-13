@@ -99,7 +99,7 @@ export default function LoginScreen() {
             cssInterop={false}
             style={s.backBtn}
             activeOpacity={0.6}
-            onPress={() => router.back()}
+            onPress={() => router.replace('/(auth)/welcome')}
           >
             <ArrowLeft size={20} color="#0F172A" />
           </TouchableOpacity>

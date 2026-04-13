@@ -101,9 +101,11 @@ export function AddressInput({
 
   return (
     <View className="mb-4">
-      <Text className="text-sm font-montserrat-bold text-textPrimary mb-1.5">
-        {label}
-      </Text>
+      {label ? (
+        <Text className="text-sm font-montserrat-bold text-textPrimary mb-1.5">
+          {label}
+        </Text>
+      ) : null}
       <View className="flex-row items-center border border-divider rounded-lg px-4 h-12 bg-surface">
         <MapPin size={18} color={iconColor} style={{ marginRight: 8 }} />
         <TextInput

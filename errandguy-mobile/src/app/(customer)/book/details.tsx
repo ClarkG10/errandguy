@@ -1,7 +1,7 @@
 import React, { useCallback, useMemo, useState } from 'react';
 import { View, Text, ScrollView, Pressable, Alert } from 'react-native';
 import { useRouter } from 'expo-router';
-import { ArrowLeft } from 'lucide-react-native';
+import { ArrowLeft, ChevronDown, ChevronUp, UserPlus } from 'lucide-react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useBookingStore } from '../../../stores/bookingStore';
 import { useLocation } from '../../../hooks/useLocation';
@@ -28,6 +28,12 @@ export default function TaskDetailsScreen() {
   const [mapPickerTarget, setMapPickerTarget] = useState<'pickup' | 'dropoff' | null>(null);
   const [photos, setPhotos] = useState<string[]>(
     draftBooking.item_photos ?? [],
+  );
+  const [showPickupContact, setShowPickupContact] = useState(
+    !!(draftBooking.pickup_contact_name || draftBooking.pickup_contact_phone),
+  );
+  const [showDropoffContact, setShowDropoffContact] = useState(
+    !!(draftBooking.dropoff_contact_name || draftBooking.dropoff_contact_phone),
   );
 
   // Determine if this is a transportation type
@@ -187,9 +193,40 @@ export default function TaskDetailsScreen() {
       </View>
 
       <ScrollView className="flex-1 px-5" showsVerticalScrollIndicator={false}>
-        {/* Pickup Section */}
+        {/* Pickup Section — Map-first selection */}
+        <Text className="text-sm font-montserrat-bold text-textPrimary mb-2">Pickup Location</Text>
+        {draftBooking.pickup_address ? (
+          <Pressable
+            className="flex-row items-center bg-surface border border-primary/30 rounded-2xl px-4 py-3 mb-2"
+            style={{ shadowColor: '#0F172A', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.03, shadowRadius: 6, elevation: 1 }}
+            onPress={() => setMapPickerTarget('pickup')}
+          >
+            <View className="w-8 h-8 rounded-full bg-primary/10 items-center justify-center mr-3">
+              <View className="w-2.5 h-2.5 rounded-full bg-primary" />
+            </View>
+            <Text className="flex-1 text-sm font-montserrat text-textPrimary" numberOfLines={2}>
+              {draftBooking.pickup_address}
+            </Text>
+            <Text className="text-xs font-montserrat-semi text-primary ml-2">Change</Text>
+          </Pressable>
+        ) : (
+          <Pressable
+            className="bg-surface border border-dashed border-primary/40 rounded-2xl px-4 py-5 mb-2 items-center"
+            onPress={() => setMapPickerTarget('pickup')}
+          >
+            <View className="w-10 h-10 rounded-full bg-primary/10 items-center justify-center mb-2">
+              <View className="w-3 h-3 rounded-full bg-primary" />
+            </View>
+            <Text className="text-sm font-montserrat-semi text-primary">
+              Tap to pick on map
+            </Text>
+            <Text className="text-xs font-montserrat text-textTertiary mt-0.5">
+              Or type an address below
+            </Text>
+          </Pressable>
+        )}
         <AddressInput
-          label="Pickup Location"
+          label=""
           value={draftBooking.pickup_address ?? ''}
           onSelect={(addr, lat, lng) =>
             updateDraft({
@@ -209,24 +246,74 @@ export default function TaskDetailsScreen() {
           </Text>
         )}
 
-        <Input
-          label="Contact Name (optional)"
-          value={draftBooking.pickup_contact_name ?? ''}
-          onChangeText={(v) => updateDraft({ pickup_contact_name: v })}
-          placeholder="Person at pickup"
-        />
-        <Input
-          label="Contact Phone (optional)"
-          value={draftBooking.pickup_contact_phone ?? ''}
-          onChangeText={(v) => updateDraft({ pickup_contact_phone: v })}
-          placeholder="Phone number"
-          keyboardType="phone-pad"
-        />
+        {/* Pickup Contact - collapsible */}
+        <Pressable
+          className="flex-row items-center mb-3"
+          onPress={() => setShowPickupContact(!showPickupContact)}
+        >
+          <UserPlus size={14} color="#2563EB" />
+          <Text className="text-xs font-montserrat-semi text-primary ml-1.5">
+            {showPickupContact ? 'Hide' : 'Add'} pickup contact
+          </Text>
+          {showPickupContact ? (
+            <ChevronUp size={14} color="#2563EB" style={{ marginLeft: 2 }} />
+          ) : (
+            <ChevronDown size={14} color="#2563EB" style={{ marginLeft: 2 }} />
+          )}
+        </Pressable>
+        {showPickupContact && (
+          <>
+            <Input
+              label="Contact Name"
+              value={draftBooking.pickup_contact_name ?? ''}
+              onChangeText={(v) => updateDraft({ pickup_contact_name: v })}
+              placeholder="Person at pickup"
+            />
+            <Input
+              label="Contact Phone"
+              value={draftBooking.pickup_contact_phone ?? ''}
+              onChangeText={(v) => updateDraft({ pickup_contact_phone: v })}
+              placeholder="Phone number"
+              keyboardType="phone-pad"
+            />
+          </>
+        )}
 
         {/* Dropoff Section */}
         <View className="h-px bg-divider my-4" />
+        <Text className="text-sm font-montserrat-bold text-textPrimary mb-2">Dropoff Location</Text>
+        {draftBooking.dropoff_address ? (
+          <Pressable
+            className="flex-row items-center bg-surface border border-danger/30 rounded-2xl px-4 py-3 mb-2"
+            style={{ shadowColor: '#0F172A', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.03, shadowRadius: 6, elevation: 1 }}
+            onPress={() => setMapPickerTarget('dropoff')}
+          >
+            <View className="w-8 h-8 rounded-full bg-danger/10 items-center justify-center mr-3">
+              <View className="w-2.5 h-2.5 rounded-full bg-danger" />
+            </View>
+            <Text className="flex-1 text-sm font-montserrat text-textPrimary" numberOfLines={2}>
+              {draftBooking.dropoff_address}
+            </Text>
+            <Text className="text-xs font-montserrat-semi text-primary ml-2">Change</Text>
+          </Pressable>
+        ) : (
+          <Pressable
+            className="bg-surface border border-dashed border-danger/40 rounded-2xl px-4 py-5 mb-2 items-center"
+            onPress={() => setMapPickerTarget('dropoff')}
+          >
+            <View className="w-10 h-10 rounded-full bg-danger/10 items-center justify-center mb-2">
+              <View className="w-3 h-3 rounded-full bg-danger" />
+            </View>
+            <Text className="text-sm font-montserrat-semi text-danger">
+              Tap to pick on map
+            </Text>
+            <Text className="text-xs font-montserrat text-textTertiary mt-0.5">
+              Or type an address below
+            </Text>
+          </Pressable>
+        )}
         <AddressInput
-          label="Dropoff Location"
+          label=""
           value={draftBooking.dropoff_address ?? ''}
           onSelect={(addr, lat, lng) =>
             updateDraft({
@@ -247,19 +334,38 @@ export default function TaskDetailsScreen() {
           </Text>
         )}
 
-        <Input
-          label="Contact Name (optional)"
-          value={draftBooking.dropoff_contact_name ?? ''}
-          onChangeText={(v) => updateDraft({ dropoff_contact_name: v })}
-          placeholder="Person at dropoff"
-        />
-        <Input
-          label="Contact Phone (optional)"
-          value={draftBooking.dropoff_contact_phone ?? ''}
-          onChangeText={(v) => updateDraft({ dropoff_contact_phone: v })}
-          placeholder="Phone number"
-          keyboardType="phone-pad"
-        />
+        {/* Dropoff Contact - collapsible */}
+        <Pressable
+          className="flex-row items-center mb-3"
+          onPress={() => setShowDropoffContact(!showDropoffContact)}
+        >
+          <UserPlus size={14} color="#2563EB" />
+          <Text className="text-xs font-montserrat-semi text-primary ml-1.5">
+            {showDropoffContact ? 'Hide' : 'Add'} dropoff contact
+          </Text>
+          {showDropoffContact ? (
+            <ChevronUp size={14} color="#2563EB" style={{ marginLeft: 2 }} />
+          ) : (
+            <ChevronDown size={14} color="#2563EB" style={{ marginLeft: 2 }} />
+          )}
+        </Pressable>
+        {showDropoffContact && (
+          <>
+            <Input
+              label="Contact Name"
+              value={draftBooking.dropoff_contact_name ?? ''}
+              onChangeText={(v) => updateDraft({ dropoff_contact_name: v })}
+              placeholder="Person at dropoff"
+            />
+            <Input
+              label="Contact Phone"
+              value={draftBooking.dropoff_contact_phone ?? ''}
+              onChangeText={(v) => updateDraft({ dropoff_contact_phone: v })}
+              placeholder="Phone number"
+              keyboardType="phone-pad"
+            />
+          </>
+        )}
 
         {/* Mini Map Preview */}
         <MiniRouteMap

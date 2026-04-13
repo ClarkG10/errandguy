@@ -1,5 +1,5 @@
 import React, { useCallback, useState } from 'react';
-import { View, Text, ScrollView, Pressable, Alert, RefreshControl } from 'react-native';
+import { View, Text, ScrollView, Pressable, Alert, RefreshControl, Modal, TextInput } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import {
@@ -16,14 +16,18 @@ import {
   ScrollText,
   LogOut,
   Trash2,
+  ShieldAlert,
 } from 'lucide-react-native';
+import * as Haptics from 'expo-haptics';
 import { Avatar } from '../../../components/ui/Avatar';
 import { Badge } from '../../../components/ui/Badge';
 import { Card } from '../../../components/ui/Card';
+import { Button } from '../../../components/ui/Button';
 import { PerformanceMetric } from '../../../components/runner/PerformanceMetric';
 import { useRunnerStore } from '../../../stores/runnerStore';
 import { useAuthStore } from '../../../stores/authStore';
 import { runnerService } from '../../../services/runner.service';
+import { userService } from '../../../services/user.service';
 import type { LucideIcon } from 'lucide-react-native';
 
 interface MenuItem {
@@ -41,6 +45,9 @@ export default function RunnerProfileScreen() {
   const logout = useAuthStore((s) => s.logout);
   const { runnerProfile, setRunnerProfile } = useRunnerStore();
   const [refreshing, setRefreshing] = useState(false);
+  const [showDeleteModal, setShowDeleteModal] = useState(false);
+  const [deleteConfirmText, setDeleteConfirmText] = useState('');
+  const [deleting, setDeleting] = useState(false);
 
   const onRefresh = useCallback(async () => {
     setRefreshing(true);
@@ -65,22 +72,22 @@ export default function RunnerProfileScreen() {
     ]);
   };
 
-  const handleDeleteAccount = () => {
-    Alert.alert(
-      'Delete Account',
-      'Your account will be deactivated and permanently deleted after 30 days. Are you sure?',
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Delete',
-          style: 'destructive',
-          onPress: () => {
-            // Would call delete API
-          },
-        },
-      ],
-    );
-  };
+  const handleDeleteAccount = useCallback(async () => {
+    if (deleteConfirmText !== 'DELETE') return;
+    setDeleting(true);
+    Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
+    try {
+      await userService.deleteAccount();
+      await logout();
+      router.replace('/(auth)/welcome' as any);
+    } catch {
+      Alert.alert('Error', 'Failed to delete account. Please try again.');
+    } finally {
+      setDeleting(false);
+      setShowDeleteModal(false);
+      setDeleteConfirmText('');
+    }
+  }, [deleteConfirmText, logout, router]);
 
   const isVerified = runnerProfile?.verification_status === 'approved';
 
@@ -220,8 +227,8 @@ export default function RunnerProfileScreen() {
           </Card>
         </View>
 
-        {/* Logout + Delete */}
-        <View className="px-5 gap-3 mb-6">
+        {/* Logout */}
+        <View className="px-5 mb-4">
           <Pressable
             onPress={handleLogout}
             className="bg-surface rounded-2xl py-3.5 items-center"
@@ -232,14 +239,82 @@ export default function RunnerProfileScreen() {
               <Text className="text-sm font-montserrat-bold text-textTertiary">Log Out</Text>
             </View>
           </Pressable>
-          <Pressable onPress={handleDeleteAccount} className="items-center py-2">
-            <View className="flex-row items-center gap-2">
-              <Trash2 size={16} color="#EF4444" />
-              <Text className="text-sm font-montserrat text-danger">Delete Account</Text>
+        </View>
+
+        {/* Danger Zone — Delete Account */}
+        <View className="px-5 mt-4 mb-8">
+          <View className="border border-danger/20 rounded-2xl bg-danger/5 p-4">
+            <View className="flex-row items-center mb-2">
+              <ShieldAlert size={16} color="#EF4444" />
+              <Text className="text-xs font-montserrat-bold text-danger ml-1.5 uppercase tracking-wider">
+                Danger Zone
+              </Text>
             </View>
-          </Pressable>
+            <Text className="text-xs font-montserrat text-textTertiary mb-3">
+              Deleting your account is permanent. All data, earnings, and errand history will be lost forever.
+            </Text>
+            <Pressable
+              className="flex-row items-center justify-center border border-danger/30 rounded-full py-2.5 px-4"
+              onPress={() => setShowDeleteModal(true)}
+            >
+              <Trash2 size={14} color="#EF4444" />
+              <Text className="text-xs font-montserrat-bold text-danger ml-1.5">
+                Delete My Account
+              </Text>
+            </Pressable>
+          </View>
         </View>
       </ScrollView>
+
+      {/* Delete Account Confirmation Modal */}
+      <Modal visible={showDeleteModal} transparent animationType="fade">
+        <Pressable
+          className="flex-1 bg-black/50 justify-end"
+          onPress={() => { setShowDeleteModal(false); setDeleteConfirmText(''); }}
+        >
+          <Pressable
+            className="bg-surface rounded-t-3xl px-6 pt-6 pb-10"
+            onPress={() => {}}
+          >
+            <View className="w-12 h-12 rounded-full bg-danger/10 items-center justify-center self-center mb-4">
+              <Trash2 size={22} color="#EF4444" />
+            </View>
+            <Text className="text-lg font-montserrat-bold text-textPrimary text-center mb-1">
+              Delete Account?
+            </Text>
+            <Text className="text-sm font-montserrat text-textTertiary text-center mb-5">
+              This action is irreversible. All your data, earnings, and errand history will be permanently removed.
+            </Text>
+            <Text className="text-xs font-montserrat-bold text-textPrimary mb-2">
+              Type "DELETE" to confirm:
+            </Text>
+            <View className="border border-divider rounded-2xl px-4 h-12 justify-center mb-4 bg-background">
+              <TextInput
+                value={deleteConfirmText}
+                onChangeText={setDeleteConfirmText}
+                placeholder="Type DELETE here"
+                placeholderTextColor="#CBD5E1"
+                autoCapitalize="characters"
+                style={{ fontFamily: 'Outfit_400Regular', fontSize: 15, color: '#0F172A' }}
+              />
+            </View>
+            <Button
+              title="Permanently Delete Account"
+              variant="danger"
+              fullWidth
+              loading={deleting}
+              disabled={deleteConfirmText !== 'DELETE'}
+              onPress={handleDeleteAccount}
+            />
+            <Pressable
+              className="mt-3 py-2 items-center"
+              onPress={() => { setShowDeleteModal(false); setDeleteConfirmText(''); }}
+            >
+              <Text className="text-sm font-montserrat-bold text-textTertiary">Cancel</Text>
+            </Pressable>
+          </Pressable>
+        </Pressable>
+      </Modal>
     </SafeAreaView>
   );
 }

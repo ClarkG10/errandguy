@@ -39,10 +39,21 @@ export default function ForgotPasswordScreen() {
       await authService.forgotPassword(data.email);
       setSent(true);
     } catch (error: any) {
-      const message =
-        error?.response?.data?.message ||
-        error?.response?.data?.errors?.email?.[0] ||
-        'Something went wrong. Please try again.';
+      const status = error?.response?.status ?? error?.status;
+      let message: string;
+      if (!error?.response && !error?.status) {
+        message = 'Unable to reach the server. Check your internet connection.';
+      } else if (status === 429) {
+        message = 'Too many attempts. Please wait a few minutes and try again.';
+      } else if (status === 500 || (status && status >= 500)) {
+        message = 'Something went wrong on our end. Please try again later.';
+      } else {
+        message =
+          error?.response?.data?.message ||
+          error?.response?.data?.errors?.email?.[0] ||
+          error?.message ||
+          'Something went wrong. Please try again.';
+      }
       setToast({ visible: true, message, variant: 'error' });
     } finally {
       setLoading(false);
