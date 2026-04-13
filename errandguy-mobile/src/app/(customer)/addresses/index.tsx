@@ -2,7 +2,7 @@ import React, { useCallback, useEffect, useState } from 'react';
 import { View, Text, ScrollView, Pressable, Alert, RefreshControl, TextInput } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
-import { ArrowLeft, Plus, MapPin, Trash2, Home, Briefcase, Star } from 'lucide-react-native';
+import { ArrowLeft, Plus, MapPin, Trash2, Pencil, Home, Briefcase, Star } from 'lucide-react-native';
 import { Card } from '../../../components/ui/Card';
 import { Button } from '../../../components/ui/Button';
 import { LoadingOverlay } from '../../../components/ui/LoadingOverlay';
@@ -23,6 +23,7 @@ export default function AddressesScreen() {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [showAdd, setShowAdd] = useState(false);
+  const [editingId, setEditingId] = useState<string | null>(null);
   const [newLabel, setNewLabel] = useState<AddressLabel>('home');
   const [newAddress, setNewAddress] = useState('');
   const [saving, setSaving] = useState(false);
@@ -52,22 +53,37 @@ export default function AddressesScreen() {
     if (!newAddress.trim()) return;
     setSaving(true);
     try {
-      await userService.addAddress({
-        label: newLabel,
-        address: newAddress.trim(),
-        lat: 0,
-        lng: 0,
-        is_default: false,
-        created_at: new Date().toISOString(),
-      } as any);
+      if (editingId) {
+        await userService.updateAddress(editingId, {
+          label: newLabel,
+          address: newAddress.trim(),
+        });
+      } else {
+        await userService.addAddress({
+          label: newLabel,
+          address: newAddress.trim(),
+          lat: 0,
+          lng: 0,
+          is_default: false,
+          created_at: new Date().toISOString(),
+        } as any);
+      }
       setNewAddress('');
       setShowAdd(false);
+      setEditingId(null);
       fetchAddresses();
     } catch {
       Alert.alert('Error', 'Failed to save address');
     } finally {
       setSaving(false);
     }
+  };
+
+  const handleEdit = (addr: SavedAddress) => {
+    setEditingId(addr.id);
+    setNewLabel(addr.label as AddressLabel);
+    setNewAddress(addr.address);
+    setShowAdd(true);
   };
 
   const handleDelete = (id: string) => {
@@ -104,7 +120,7 @@ export default function AddressesScreen() {
         <Text className="text-lg font-montserrat-bold text-textPrimary flex-1">
           Saved Addresses
         </Text>
-        <Pressable onPress={() => setShowAdd(!showAdd)}>
+        <Pressable onPress={() => { setShowAdd(!showAdd); setEditingId(null); setNewAddress(''); setNewLabel('home'); }}>
           <Plus size={24} color="#2563EB" />
         </Pressable>
       </View>
@@ -116,7 +132,9 @@ export default function AddressesScreen() {
         {/* Add New Address Form */}
         {showAdd && (
           <Card className="mb-4 p-4">
-            <Text className="text-sm font-montserrat-bold text-textPrimary mb-2">New Address</Text>
+            <Text className="text-sm font-montserrat-bold text-textPrimary mb-2">
+              {editingId ? 'Edit Address' : 'New Address'}
+            </Text>
 
             {/* Label selector */}
             <View className="flex-row gap-2 mb-3">
@@ -151,7 +169,7 @@ export default function AddressesScreen() {
             />
 
             <Button
-              title={saving ? 'Saving...' : 'Save Address'}
+              title={saving ? 'Saving...' : editingId ? 'Update Address' : 'Save Address'}
               onPress={handleAdd}
               disabled={saving || !newAddress.trim()}
               size="sm"
@@ -184,6 +202,9 @@ export default function AddressesScreen() {
                       {addr.address}
                     </Text>
                   </View>
+                  <Pressable onPress={() => handleEdit(addr)} className="p-1 mr-2">
+                    <Pencil size={16} color="#94A3B8" />
+                  </Pressable>
                   <Pressable onPress={() => handleDelete(addr.id)} className="p-1">
                     <Trash2 size={18} color="#EF4444" />
                   </Pressable>

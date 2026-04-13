@@ -130,5 +130,5 @@ const bs = StyleSheet.create({
   },
   full: { width: '100%' },
   disabled: { opacity: 0.5 },
-  text: { fontFamily: 'Outfit_700Bold' },
+  text: { fontFamily: 'Poppins_700Bold' },
 });

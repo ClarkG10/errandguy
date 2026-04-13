@@ -99,7 +99,7 @@ export default function LoginScreen() {
             cssInterop={false}
             style={s.backBtn}
             activeOpacity={0.6}
-            onPress={() => router.replace('/(auth)/welcome')}
+            onPress={() => router.back()}
           >
             <ArrowLeft size={20} color="#0F172A" />
           </TouchableOpacity>
@@ -278,15 +278,15 @@ const s = StyleSheet.create({
   },
   tabText: {
     fontSize: 14,
-    fontFamily: 'Outfit_700Bold',
+    fontFamily: 'Poppins_700Bold',
     color: '#64748B',
   },
   tabTextActive: {
     color: '#FFFFFF',
   },
   forgotBtn: { alignSelf: 'flex-end', marginBottom: 24, padding: 4 },
-  forgotText: { fontSize: 14, fontFamily: 'Outfit_600SemiBold', color: '#2563EB' },
+  forgotText: { fontSize: 14, fontFamily: 'Poppins_600SemiBold', color: '#2563EB' },
   signupLink: { alignItems: 'center', marginTop: 24, marginBottom: 32, padding: 8 },
-  signupText: { fontSize: 14, fontFamily: 'Outfit_400Regular', color: '#64748B' },
-  signupBold: { color: '#2563EB', fontFamily: 'Outfit_700Bold' },
+  signupText: { fontSize: 14, fontFamily: 'Poppins_400Regular', color: '#64748B' },
+  signupBold: { color: '#2563EB', fontFamily: 'Poppins_700Bold' },
 });

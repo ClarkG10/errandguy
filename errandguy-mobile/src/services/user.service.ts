@@ -36,6 +36,10 @@ export const userService = {
     return api.post('/user/addresses', data);
   },
 
+  updateAddress(id: string, data: Partial<SavedAddress>) {
+    return api.put(`/user/addresses/${id}`, data);
+  },
+
   deleteAddress(id: string) {
     return api.delete(`/user/addresses/${id}`);
   },

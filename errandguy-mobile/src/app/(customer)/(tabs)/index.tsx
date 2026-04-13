@@ -178,7 +178,7 @@ export default function CustomerHomeScreen() {
             <Bell size={20} color="#2563EB" strokeWidth={1.8} />
             {unreadCount > 0 && (
               <View className="absolute -top-0.5 -right-0.5 rounded-full items-center justify-center" style={{ width: 18, height: 18, backgroundColor: '#EF4444' }}>
-                <Text style={{ fontSize: 9, fontFamily: 'Outfit_700Bold', color: '#FFF' }}>
+                <Text style={{ fontSize: 9, fontFamily: 'Poppins_700Bold', color: '#FFF' }}>
                   {unreadCount > 9 ? '9+' : unreadCount}
                 </Text>
               </View>
@@ -226,7 +226,7 @@ export default function CustomerHomeScreen() {
                   </Text>
                 </View>
                 <View className="bg-white/15 rounded-full px-2.5 py-1">
-                  <Text style={{ fontSize: 10, fontFamily: 'Outfit_700Bold', color: '#FFF' }}>
+                  <Text style={{ fontSize: 10, fontFamily: 'Poppins_700Bold', color: '#FFF' }}>
                     {STATUS_LABELS[activeBooking.status] ?? activeBooking.status}
                   </Text>
                 </View>
@@ -248,7 +248,7 @@ export default function CustomerHomeScreen() {
                   {formatCurrency(activeBooking.total_amount)}
                 </Text>
                 <View className="flex-row items-center bg-white rounded-full px-3.5 py-1.5">
-                  <Text style={{ fontSize: 12, fontFamily: 'Outfit_700Bold', color: '#2563EB' }}>
+                  <Text style={{ fontSize: 12, fontFamily: 'Poppins_700Bold', color: '#2563EB' }}>
                     Track
                   </Text>
                   <ArrowRight size={14} color="#2563EB" style={{ marginLeft: 4 }} />
@@ -359,7 +359,7 @@ export default function CustomerHomeScreen() {
                         style={{ backgroundColor: statusColor + '15' }}
                       >
                         <Text
-                          style={{ fontSize: 10, fontFamily: 'Outfit_600SemiBold', color: statusColor }}
+                          style={{ fontSize: 10, fontFamily: 'Poppins_600SemiBold', color: statusColor }}
                         >
                           {STATUS_LABELS[booking.status] ?? booking.status}
                         </Text>

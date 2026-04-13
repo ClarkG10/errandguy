@@ -1,7 +1,7 @@
 export const FontFamily = {
-  regular: 'Outfit_400Regular',
-  semi: 'Outfit_600SemiBold',
-  bold: 'Outfit_700Bold',
+  regular: 'Poppins_400Regular',
+  semi: 'Poppins_600SemiBold',
+  bold: 'Poppins_700Bold',
 } as const;
 
 export const FontSize = {

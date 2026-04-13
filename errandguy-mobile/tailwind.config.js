@@ -56,9 +56,9 @@ module.exports = {
         dividerDark: '#1E293B',
       },
       fontFamily: {
-        montserrat: ['Outfit_400Regular'],
-        'montserrat-semi': ['Outfit_600SemiBold'],
-        'montserrat-bold': ['Outfit_700Bold'],
+        montserrat: ['Poppins_400Regular'],
+        'montserrat-semi': ['Poppins_600SemiBold'],
+        'montserrat-bold': ['Poppins_700Bold'],
       },
       borderRadius: {
         sm: '8px',

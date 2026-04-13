@@ -62,6 +62,20 @@ export default function TaskDetailsScreen() {
     return Object.keys(newErrors).length === 0;
   }, [draftBooking]);
 
+  const reverseGeocode = useCallback(async (lat: number, lng: number): Promise<string> => {
+    const token = process.env.EXPO_PUBLIC_MAPBOX_TOKEN ?? '';
+    if (!token) return `${lat.toFixed(6)}, ${lng.toFixed(6)}`;
+    try {
+      const res = await fetch(
+        `https://api.mapbox.com/geocoding/v5/mapbox.places/${lng},${lat}.json?access_token=${token}&language=en&limit=1`,
+      );
+      const data = await res.json();
+      return data.features?.[0]?.place_name ?? `${lat.toFixed(6)}, ${lng.toFixed(6)}`;
+    } catch {
+      return `${lat.toFixed(6)}, ${lng.toFixed(6)}`;
+    }
+  }, []);
+
   const handleCurrentLocation = useCallback(
     async (type: 'pickup' | 'dropoff') => {
       const coords = await getCurrentPosition();
@@ -72,7 +86,7 @@ export default function TaskDetailsScreen() {
         );
         return;
       }
-      const address = `${coords.lat.toFixed(6)}, ${coords.lng.toFixed(6)}`;
+      const address = await reverseGeocode(coords.lat, coords.lng);
       if (type === 'pickup') {
         updateDraft({
           pickup_address: address,
@@ -87,7 +101,7 @@ export default function TaskDetailsScreen() {
         });
       }
     },
-    [getCurrentPosition, updateDraft],
+    [getCurrentPosition, updateDraft, reverseGeocode],
   );
 
   const handleSavedAddressSelect = useCallback(

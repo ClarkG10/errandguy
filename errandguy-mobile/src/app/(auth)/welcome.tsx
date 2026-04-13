@@ -43,7 +43,7 @@ export default function WelcomeScreen() {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     await AsyncStorage.setItem('@onboarding_seen', 'true');
     await Location.requestForegroundPermissionsAsync();
-    router.replace('/(auth)/login');
+    router.push('/(auth)/login');
   }, [router]);
 
   const handleNext = useCallback(async () => {
@@ -51,7 +51,7 @@ export default function WelcomeScreen() {
     if (activeIndex === slides.length - 1) {
       await AsyncStorage.setItem('@onboarding_seen', 'true');
       await Location.requestForegroundPermissionsAsync();
-      router.replace('/(auth)/login');
+      router.push('/(auth)/login');
     } else {
       flatListRef.current?.scrollToIndex({ index: activeIndex + 1 });
     }
@@ -135,8 +135,8 @@ export default function WelcomeScreen() {
 
 const ws = StyleSheet.create({
   skipBtn: { padding: 8 },
-  skipText: { fontSize: 14, fontFamily: 'Outfit_600SemiBold', color: '#2563EB' },
+  skipText: { fontSize: 14, fontFamily: 'Poppins_600SemiBold', color: '#2563EB' },
   loginLink: { marginTop: 16, alignItems: 'center', padding: 8 },
-  loginText: { fontSize: 14, fontFamily: 'Outfit_400Regular', color: '#64748B' },
-  loginBold: { color: '#2563EB', fontFamily: 'Outfit_700Bold' },
+  loginText: { fontSize: 14, fontFamily: 'Poppins_400Regular', color: '#64748B' },
+  loginBold: { color: '#2563EB', fontFamily: 'Poppins_700Bold' },
 });

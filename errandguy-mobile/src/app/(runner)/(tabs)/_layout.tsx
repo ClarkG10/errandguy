@@ -14,18 +14,18 @@ export default function RunnerTabsLayout() {
         tabBarInactiveTintColor: '#94A3B8',
         tabBarShowLabel: true,
         tabBarLabelStyle: {
-          fontFamily: 'Outfit_600SemiBold',
-          fontSize: 10,
+          fontFamily: 'Poppins_600SemiBold',
+          fontSize: 11,
           marginTop: 2,
         },
         tabBarStyle: {
           position: 'absolute',
           bottom: Platform.OS === 'ios' ? 24 : 16,
-          left: 20,
-          right: 20,
+          left: 16,
+          right: 16,
           backgroundColor: '#FFFFFF',
           borderRadius: 24,
-          height: 64,
+          height: 68,
           borderTopWidth: 0,
           paddingBottom: 0,
           ...Platform.select({
