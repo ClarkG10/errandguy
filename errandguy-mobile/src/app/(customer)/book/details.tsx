@@ -11,6 +11,7 @@ import { Input } from '../../../components/ui/Input';
 import { AddressInput } from '../../../components/customer/AddressInput';
 import { PhotoGrid } from '../../../components/customer/PhotoGrid';
 import { MiniRouteMap } from '../../../components/customer/MiniRouteMap';
+import { MapPickerModal } from '../../../components/customer/MapPickerModal';
 import { SavedAddressSheet } from '../../../components/customer/SavedAddressSheet';
 import { ERRAND_TYPES } from '../../../constants/errandTypes';
 import type { SavedAddress } from '../../../types';
@@ -24,6 +25,7 @@ export default function TaskDetailsScreen() {
   const { pickImage, takePhoto } = useImagePicker();
 
   const [showSavedSheet, setShowSavedSheet] = useState(false);
+  const [mapPickerTarget, setMapPickerTarget] = useState<'pickup' | 'dropoff' | null>(null);
   const [photos, setPhotos] = useState<string[]>(
     draftBooking.item_photos ?? [],
   );
@@ -185,6 +187,7 @@ export default function TaskDetailsScreen() {
             })
           }
           onUseCurrentLocation={() => handleCurrentLocation('pickup')}
+          onPickOnMap={() => setMapPickerTarget('pickup')}
           placeholder="Enter pickup address..."
           iconColor="#2563EB"
         />
@@ -222,6 +225,7 @@ export default function TaskDetailsScreen() {
           }
           onUseCurrentLocation={() => handleCurrentLocation('dropoff')}
           onUseSavedAddress={() => setShowSavedSheet(true)}
+          onPickOnMap={() => setMapPickerTarget('dropoff')}
           placeholder="Enter dropoff address..."
           iconColor="#EF4444"
         />
@@ -310,6 +314,27 @@ export default function TaskDetailsScreen() {
         isVisible={showSavedSheet}
         onClose={() => setShowSavedSheet(false)}
         onSelect={handleSavedAddressSelect}
+      />
+
+      {/* Map Picker Modal */}
+      <MapPickerModal
+        visible={mapPickerTarget !== null}
+        onClose={() => setMapPickerTarget(null)}
+        title={mapPickerTarget === 'pickup' ? 'Pick Pickup Location' : 'Pick Dropoff Location'}
+        initialCoordinate={
+          mapPickerTarget === 'pickup' && draftBooking.pickup_lng && draftBooking.pickup_lat
+            ? [draftBooking.pickup_lng, draftBooking.pickup_lat]
+            : mapPickerTarget === 'dropoff' && draftBooking.dropoff_lng && draftBooking.dropoff_lat
+              ? [draftBooking.dropoff_lng, draftBooking.dropoff_lat]
+              : undefined
+        }
+        onConfirm={(addr, lat, lng) => {
+          if (mapPickerTarget === 'pickup') {
+            updateDraft({ pickup_address: addr, pickup_lat: lat, pickup_lng: lng });
+          } else {
+            updateDraft({ dropoff_address: addr, dropoff_lat: lat, dropoff_lng: lng });
+          }
+        }}
       />
 
       {/* Bottom CTA */}

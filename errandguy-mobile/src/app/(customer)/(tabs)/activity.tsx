@@ -13,6 +13,7 @@ import { bookingService } from '../../../services/booking.service';
 import { EmptyState } from '../../../components/ui/EmptyState';
 import { RecentErrandItem } from '../../../components/customer/RecentErrandItem';
 import { BookingDetailSheet } from '../../../components/customer/BookingDetailSheet';
+import { ActivitySkeleton } from '../../../components/ui/Skeleton';
 import type { Booking, BookingStatus } from '../../../types';
 
 type FilterKey = 'all' | 'active' | 'completed' | 'cancelled';
@@ -81,6 +82,14 @@ export default function ActivityScreen() {
       fetchBookings(page + 1);
     }
   }, [hasMore, loading, page, fetchBookings]);
+
+  if (loading && bookings.length === 0) {
+    return (
+      <SafeAreaView className="flex-1 bg-background" edges={['top']}>
+        <ActivitySkeleton />
+      </SafeAreaView>
+    );
+  }
 
   return (
     <SafeAreaView className="flex-1 bg-background" edges={['top']}>

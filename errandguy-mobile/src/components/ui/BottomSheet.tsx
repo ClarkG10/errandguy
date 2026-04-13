@@ -4,11 +4,13 @@ import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import Animated, {
   useSharedValue,
   useAnimatedStyle,
-  withSpring,
+  withTiming,
+  Easing,
   runOnJS,
 } from 'react-native-reanimated';
 
 const { height: SCREEN_HEIGHT } = Dimensions.get('window');
+const TIMING_CONFIG = { duration: 300, easing: Easing.out(Easing.cubic) };
 
 interface BottomSheetProps {
   isVisible: boolean;
@@ -30,15 +32,9 @@ export function BottomSheet({
 
   useEffect(() => {
     if (isVisible) {
-      translateY.value = withSpring(SCREEN_HEIGHT - maxSnap, {
-        damping: 15,
-        stiffness: 150,
-      });
+      translateY.value = withTiming(SCREEN_HEIGHT - maxSnap, TIMING_CONFIG);
     } else {
-      translateY.value = withSpring(SCREEN_HEIGHT, {
-        damping: 15,
-        stiffness: 150,
-      });
+      translateY.value = withTiming(SCREEN_HEIGHT, TIMING_CONFIG);
     }
   }, [isVisible, maxSnap, translateY]);
 
@@ -54,16 +50,10 @@ export function BottomSheet({
     })
     .onEnd((event) => {
       if (event.translationY > 100) {
-        translateY.value = withSpring(SCREEN_HEIGHT, {
-          damping: 15,
-          stiffness: 150,
-        });
+        translateY.value = withTiming(SCREEN_HEIGHT, TIMING_CONFIG);
         runOnJS(onClose)();
       } else {
-        translateY.value = withSpring(SCREEN_HEIGHT - maxSnap, {
-          damping: 15,
-          stiffness: 150,
-        });
+        translateY.value = withTiming(SCREEN_HEIGHT - maxSnap, TIMING_CONFIG);
       }
     });
 

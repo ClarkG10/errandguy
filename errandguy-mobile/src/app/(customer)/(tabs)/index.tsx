@@ -32,6 +32,7 @@ import { SearchBar } from '../../../components/ui/SearchBar';
 import { ActiveErrandBanner } from '../../../components/customer/ActiveErrandBanner';
 import { ErrandTypeCard } from '../../../components/customer/ErrandTypeCard';
 import { RecentErrandItem } from '../../../components/customer/RecentErrandItem';
+import { HomeSkeleton } from '../../../components/ui/Skeleton';
 import type { Booking, ErrandType } from '../../../types';
 import { formatCurrency } from '../../../utils/formatCurrency';
 
@@ -54,6 +55,7 @@ export default function CustomerHomeScreen() {
   const [errandTypes, setErrandTypes] = useState<ErrandType[]>([]);
   const [recentBookings, setRecentBookings] = useState<Booking[]>([]);
   const [refreshing, setRefreshing] = useState(false);
+  const [initialLoading, setInitialLoading] = useState(true);
   const [searchText, setSearchText] = useState('');
 
   const fetchData = useCallback(async () => {
@@ -78,6 +80,7 @@ export default function CustomerHomeScreen() {
       const bookings = results[2].value.data?.data;
       setRecentBookings(Array.isArray(bookings) ? bookings : []);
     }
+    setInitialLoading(false);
   }, [setActiveBooking]);
 
   useRefreshOnFocus(fetchData);
@@ -96,6 +99,14 @@ export default function CustomerHomeScreen() {
   };
 
   const firstName = user?.full_name?.split(' ')[0] ?? 'there';
+
+  if (initialLoading) {
+    return (
+      <SafeAreaView className="flex-1 bg-background" edges={['top']}>
+        <HomeSkeleton />
+      </SafeAreaView>
+    );
+  }
 
   return (
     <SafeAreaView className="flex-1 bg-background" edges={['top']}>

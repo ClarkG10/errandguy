@@ -16,6 +16,7 @@ import { useLocationStore } from '../../../stores/locationStore';
 import { useAuthStore } from '../../../stores/authStore';
 import { runnerService } from '../../../services/runner.service';
 import { formatCurrency } from '../../../utils/formatCurrency';
+import { RunnerHomeSkeleton } from '../../../components/ui/Skeleton';
 import type { Booking } from '../../../types';
 
 export default function RunnerHomeScreen() {
@@ -37,6 +38,7 @@ export default function RunnerHomeScreen() {
   const { startTracking, stopTracking } = useLocationStore();
 
   const [refreshing, setRefreshing] = useState(false);
+  const [initialLoading, setInitialLoading] = useState(true);
   const [negotiateOffers, setNegotiateOffers] = useState<Booking[]>([]);
   const [recentErrands, setRecentErrands] = useState<Booking[]>([]);
 
@@ -60,6 +62,8 @@ export default function RunnerHomeScreen() {
       }
     } catch {
       // silent fail - dashboard data is non-critical
+    } finally {
+      setInitialLoading(false);
     }
   }, [isOnline]);
 
@@ -116,6 +120,14 @@ export default function RunnerHomeScreen() {
   };
 
   const verificationStatus = runnerProfile?.verification_status ?? 'pending';
+
+  if (initialLoading) {
+    return (
+      <SafeAreaView className="flex-1 bg-background" edges={['top']}>
+        <RunnerHomeSkeleton />
+      </SafeAreaView>
+    );
+  }
 
   return (
     <SafeAreaView className="flex-1 bg-background" edges={['top']}>

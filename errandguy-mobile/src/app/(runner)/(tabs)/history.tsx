@@ -15,6 +15,7 @@ import { Badge } from '../../../components/ui/Badge';
 import { runnerService } from '../../../services/runner.service';
 import { formatCurrency } from '../../../utils/formatCurrency';
 import { useDebounce } from '../../../hooks/useDebounce';
+import { HistorySkeleton } from '../../../components/ui/Skeleton';
 import type { Booking } from '../../../types';
 
 export default function HistoryScreen() {
@@ -24,6 +25,7 @@ export default function HistoryScreen() {
   const [page, setPage] = useState(1);
   const [hasMore, setHasMore] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const [initialLoading, setInitialLoading] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
   const debouncedSearch = useDebounce(search, 300);
 
@@ -47,6 +49,8 @@ export default function HistoryScreen() {
         setHasMore(data.length >= 15);
       } catch {
         // silent
+      } finally {
+        setInitialLoading(false);
       }
     },
     [statusFilter],
@@ -144,6 +148,14 @@ export default function HistoryScreen() {
     },
     [],
   );
+
+  if (initialLoading) {
+    return (
+      <SafeAreaView className="flex-1 bg-background" edges={['top']}>
+        <HistorySkeleton />
+      </SafeAreaView>
+    );
+  }
 
   return (
     <SafeAreaView className="flex-1 bg-background" edges={['top']}>

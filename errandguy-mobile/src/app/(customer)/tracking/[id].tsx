@@ -4,7 +4,6 @@ import {
   Text,
   Pressable,
   Alert,
-  ActivityIndicator,
   ScrollView,
   Image,
 } from 'react-native';
@@ -21,6 +20,7 @@ import Mapbox from '@rnmapbox/maps';
 import { useBookingStore } from '../../../stores/bookingStore';
 import { bookingService } from '../../../services/booking.service';
 import { useRunnerTracking } from '../../../hooks/useRunnerTracking';
+import { TrackingSkeleton } from '../../../components/ui/Skeleton';
 import { Avatar } from '../../../components/ui/Avatar';
 import { RatingStars } from '../../../components/ui/RatingStars';
 import { StatusTimeline } from '../../../components/ui/StatusTimeline';
@@ -214,8 +214,8 @@ export default function TrackingScreen() {
 
   if (loading) {
     return (
-      <SafeAreaView className="flex-1 bg-background items-center justify-center">
-        <ActivityIndicator size="large" color="#2563EB" />
+      <SafeAreaView className="flex-1 bg-background" edges={['top']}>
+        <TrackingSkeleton />
       </SafeAreaView>
     );
   }

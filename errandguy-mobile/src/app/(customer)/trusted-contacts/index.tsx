@@ -7,7 +7,6 @@ import {
   Alert,
   Modal,
   ScrollView,
-  ActivityIndicator,
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import {
@@ -26,6 +25,7 @@ import { Button } from '../../../components/ui/Button';
 import { Input } from '../../../components/ui/Input';
 import { Badge } from '../../../components/ui/Badge';
 import { EmptyState } from '../../../components/ui/EmptyState';
+import { ContactsSkeleton } from '../../../components/ui/Skeleton';
 import type { TrustedContact } from '../../../types';
 
 const RELATIONSHIPS = ['Parent', 'Spouse', 'Sibling', 'Friend', 'Other'];
@@ -208,8 +208,8 @@ export default function TrustedContactsScreen() {
 
   if (loading) {
     return (
-      <SafeAreaView className="flex-1 bg-background items-center justify-center" edges={['top']}>
-        <ActivityIndicator size="large" color="#2563EB" />
+      <SafeAreaView className="flex-1 bg-background" edges={['top']}>
+        <ContactsSkeleton />
       </SafeAreaView>
     );
   }

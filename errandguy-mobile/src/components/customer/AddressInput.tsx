@@ -1,6 +1,6 @@
 import React, { useState, useCallback, useEffect } from 'react';
-import { View, Text, TextInput, FlatList, Pressable, ActivityIndicator } from 'react-native';
-import { MapPin, Navigation, Bookmark } from 'lucide-react-native';
+import { View, Text, TextInput, ScrollView, Pressable, ActivityIndicator } from 'react-native';
+import { MapPin, Navigation, Bookmark, Map } from 'lucide-react-native';
 import { useDebounce } from '../../hooks/useDebounce';
 
 const MAPBOX_TOKEN = process.env.EXPO_PUBLIC_MAPBOX_TOKEN ?? '';
@@ -16,6 +16,7 @@ interface AddressInputProps {
   onSelect: (address: string, lat: number, lng: number) => void;
   onUseCurrentLocation?: () => void;
   onUseSavedAddress?: () => void;
+  onPickOnMap?: () => void;
   placeholder?: string;
   iconColor?: string;
 }
@@ -26,6 +27,7 @@ export function AddressInput({
   onSelect,
   onUseCurrentLocation,
   onUseSavedAddress,
+  onPickOnMap,
   placeholder = 'Enter address...',
   iconColor = '#2563EB',
 }: AddressInputProps) {
@@ -138,31 +140,42 @@ export function AddressInput({
             </Text>
           </Pressable>
         )}
+        {onPickOnMap && (
+          <Pressable
+            className="flex-row items-center"
+            onPress={onPickOnMap}
+          >
+            <Map size={14} color="#2563EB" />
+            <Text className="text-xs font-montserrat text-primary ml-1">
+              Pick on Map
+            </Text>
+          </Pressable>
+        )}
       </View>
 
       {/* Suggestions Dropdown */}
       {showSuggestions && suggestions.length > 0 && (
-        <View className="bg-surface border border-divider rounded-lg mt-1 max-h-48 z-10">
-          <FlatList
-            data={suggestions}
-            keyExtractor={(_, i) => String(i)}
-            keyboardShouldPersistTaps="handled"
-            renderItem={({ item }) => (
-              <Pressable
-                className="flex-row items-center px-4 py-3 border-b border-divider"
-                onPress={() => handleSelect(item)}
+        <ScrollView
+          className="bg-surface border border-divider rounded-lg mt-1 max-h-48 z-10"
+          keyboardShouldPersistTaps="handled"
+          nestedScrollEnabled
+        >
+          {suggestions.map((item, index) => (
+            <Pressable
+              key={index}
+              className="flex-row items-center px-4 py-3 border-b border-divider"
+              onPress={() => handleSelect(item)}
+            >
+              <MapPin size={14} color="#94A3B8" />
+              <Text
+                className="text-sm font-montserrat text-textPrimary ml-2 flex-1"
+                numberOfLines={2}
               >
-                <MapPin size={14} color="#94A3B8" />
-                <Text
-                  className="text-sm font-montserrat text-textPrimary ml-2 flex-1"
-                  numberOfLines={2}
-                >
-                  {item.place_name}
-                </Text>
-              </Pressable>
-            )}
-          />
-        </View>
+                {item.place_name}
+              </Text>
+            </Pressable>
+          ))}
+        </ScrollView>
       )}
     </View>
   );
