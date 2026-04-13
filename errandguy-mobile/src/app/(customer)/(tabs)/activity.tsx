@@ -93,8 +93,8 @@ export default function ActivityScreen() {
 
   return (
     <SafeAreaView className="flex-1 bg-background" edges={['top']}>
-      <View className="px-5 py-4">
-        <Text className="text-xl font-montserrat-bold text-textPrimary">
+      <View className="px-5 pt-4 pb-2">
+        <Text className="text-lg font-montserrat-bold text-textPrimary">
           Activity
         </Text>
       </View>
@@ -110,13 +110,14 @@ export default function ActivityScreen() {
           <Pressable
             key={f.key}
             className={`px-4 py-2 rounded-full ${
-              filter === f.key ? 'bg-primary' : 'bg-divider'
+              filter === f.key ? 'bg-primary' : 'bg-surface'
             }`}
+            style={filter !== f.key ? { shadowColor: '#0F172A', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.04, shadowRadius: 6, elevation: 1 } : undefined}
             onPress={() => setFilter(f.key)}
           >
             <Text
-              className={`text-sm font-montserrat-bold ${
-                filter === f.key ? 'text-white' : 'text-textSecondary'
+              className={`text-sm font-montserrat-semi ${
+                filter === f.key ? 'text-white' : 'text-textTertiary'
               }`}
             >
               {f.label}
@@ -154,7 +155,7 @@ export default function ActivityScreen() {
             />
           ) : null
         }
-        contentContainerStyle={{ paddingBottom: 24 }}
+        contentContainerStyle={{ paddingBottom: 100 }}
       />
 
       {/* Booking Detail Sheet */}

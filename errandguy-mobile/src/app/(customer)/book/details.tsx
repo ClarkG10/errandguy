@@ -142,35 +142,47 @@ export default function TaskDetailsScreen() {
     <SafeAreaView className="flex-1 bg-background" edges={['top']}>
       {/* Header */}
       <View className="flex-row items-center px-5 py-4">
-        <Pressable onPress={() => router.back()} className="mr-3">
-          <ArrowLeft size={24} color="#0F172A" />
+        <Pressable
+          onPress={() => router.back()}
+          className="mr-3 w-9 h-9 rounded-xl bg-surface items-center justify-center"
+          style={{ shadowColor: '#0F172A', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.04, shadowRadius: 6, elevation: 1 }}
+        >
+          <ArrowLeft size={20} color="#0F172A" />
         </Pressable>
-        <Text className="text-xl font-montserrat-bold text-textPrimary">
+        <Text className="text-lg font-montserrat-bold text-textPrimary">
           Task Details
         </Text>
       </View>
 
       {/* Step Indicator */}
-      <View className="flex-row px-5 mb-4">
+      <View className="flex-row items-center px-5 mb-4">
         {STEP_LABELS.map((label, i) => (
-          <View key={label} className="flex-1 items-center">
-            <View
-              className={`w-8 h-8 rounded-full items-center justify-center ${
-                i <= 1 ? 'bg-primary' : 'bg-divider'
-              }`}
-            >
-              <Text
-                className={`text-xs font-montserrat-bold ${
-                  i <= 1 ? 'text-white' : 'text-textSecondary'
+          <React.Fragment key={label}>
+            <View className="items-center">
+              <View
+                className={`w-8 h-8 rounded-full items-center justify-center ${
+                  i <= 1 ? 'bg-primary' : 'bg-surface'
                 }`}
+                style={i > 1 ? { borderWidth: 2, borderColor: '#E2E8F0' } : undefined}
               >
-                {i + 1}
+                <Text
+                  className={`text-xs font-montserrat-bold ${
+                    i <= 1 ? 'text-white' : 'text-textTertiary'
+                  }`}
+                >
+                  {i + 1}
+                </Text>
+              </View>
+              <Text className="text-[10px] font-montserrat text-textTertiary mt-1">
+                {label}
               </Text>
             </View>
-            <Text className="text-[10px] font-montserrat text-textSecondary mt-1">
-              {label}
-            </Text>
-          </View>
+            {i < STEP_LABELS.length - 1 && (
+              <View className={`flex-1 h-0.5 mx-1 mt-[-10px] ${
+                i < 1 ? 'bg-primary' : 'bg-divider'
+              }`} />
+            )}
+          </React.Fragment>
         ))}
       </View>
 

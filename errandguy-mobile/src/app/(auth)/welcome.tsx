@@ -125,8 +125,8 @@ export default function WelcomeScreen() {
 
 const ws = StyleSheet.create({
   skipBtn: { padding: 8 },
-  skipText: { fontSize: 14, fontFamily: 'Lato_400Regular', color: '#2563EB' },
+  skipText: { fontSize: 14, fontFamily: 'Outfit_600SemiBold', color: '#2563EB' },
   loginLink: { marginTop: 16, alignItems: 'center', padding: 8 },
-  loginText: { fontSize: 14, fontFamily: 'Lato_400Regular', color: '#475569' },
-  loginBold: { color: '#2563EB', fontFamily: 'Lato_700Bold' },
+  loginText: { fontSize: 14, fontFamily: 'Outfit_400Regular', color: '#64748B' },
+  loginBold: { color: '#2563EB', fontFamily: 'Outfit_700Bold' },
 });

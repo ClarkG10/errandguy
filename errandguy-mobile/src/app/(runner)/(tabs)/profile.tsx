@@ -109,7 +109,12 @@ export default function RunnerProfileScreen() {
       className="flex-row items-center justify-between py-3.5"
     >
       <View className="flex-row items-center gap-3">
-        <item.icon size={20} color={item.color ?? '#475569'} />
+        <View
+          className="w-9 h-9 rounded-xl items-center justify-center"
+          style={{ backgroundColor: item.color ? item.color + '15' : '#EFF6FF' }}
+        >
+          <item.icon size={18} color={item.color ?? '#2563EB'} />
+        </View>
         <Text
           className="text-sm font-montserrat text-textPrimary"
           style={item.color ? { color: item.color } : undefined}
@@ -117,13 +122,13 @@ export default function RunnerProfileScreen() {
           {item.label}
         </Text>
       </View>
-      {item.trailing ?? <ChevronRight size={18} color="#94A3B8" />}
+      {item.trailing ?? <ChevronRight size={16} color="#CBD5E1" />}
     </Pressable>
   );
 
   return (
     <SafeAreaView className="flex-1 bg-background" edges={['top']}>
-      <View className="px-5 py-4">
+      <View className="px-5 pt-4 pb-2">
         <Text className="text-lg font-montserrat-bold text-textPrimary">Profile</Text>
       </View>
 
@@ -136,10 +141,10 @@ export default function RunnerProfileScreen() {
         {/* Profile Header */}
         <View className="items-center px-5 mb-6">
           <Avatar uri={user?.avatar_url} name={user?.full_name} size="xl" />
-          <Text className="text-xl font-montserrat-bold text-textPrimary mt-3">
+          <Text className="text-lg font-montserrat-bold text-textPrimary mt-3">
             {user?.full_name ?? 'Runner'}
           </Text>
-          <Text className="text-sm font-montserrat text-textSecondary mt-0.5">
+          <Text className="text-xs font-montserrat text-textTertiary mt-0.5">
             ★ {user?.avg_rating?.toFixed(1) ?? '0.0'} • {runnerProfile?.total_errands ?? 0} errands
           </Text>
           {isVerified && (
@@ -151,7 +156,7 @@ export default function RunnerProfileScreen() {
 
         {/* Performance */}
         <View className="px-5 mb-4">
-          <Text className="text-sm font-montserrat-bold text-textSecondary mb-3">Performance</Text>
+          <Text className="text-[11px] font-montserrat-bold text-textTertiary uppercase tracking-wider mb-3 ml-0.5">Performance</Text>
           <Card className="p-4">
             <View className="flex-row gap-3 mb-3">
               <PerformanceMetric
@@ -176,7 +181,7 @@ export default function RunnerProfileScreen() {
               />
             </View>
             <View className="flex-row items-center justify-between pt-2 border-t border-divider">
-              <Text className="text-xs font-montserrat text-textSecondary">Member since</Text>
+              <Text className="text-xs font-montserrat text-textTertiary">Member since</Text>
               <Text className="text-xs font-montserrat-bold text-textPrimary">
                 {runnerProfile
                   ? new Date(runnerProfile.created_at).toLocaleDateString([], {
@@ -191,7 +196,7 @@ export default function RunnerProfileScreen() {
 
         {/* Account Menu */}
         <View className="px-5 mb-4">
-          <Text className="text-sm font-montserrat-bold text-textSecondary mb-1">Account</Text>
+          <Text className="text-[11px] font-montserrat-bold text-textTertiary uppercase tracking-wider mb-1 ml-0.5">Account</Text>
           <Card className="px-4">
             {accountMenu.map((item, idx, arr) => (
               <View key={item.label}>
@@ -204,7 +209,7 @@ export default function RunnerProfileScreen() {
 
         {/* Settings Menu */}
         <View className="px-5 mb-6">
-          <Text className="text-sm font-montserrat-bold text-textSecondary mb-1">Settings</Text>
+          <Text className="text-[11px] font-montserrat-bold text-textTertiary uppercase tracking-wider mb-1 ml-0.5">Settings</Text>
           <Card className="px-4">
             {settingsMenu.map((item, idx, arr) => (
               <View key={item.label}>
@@ -219,11 +224,12 @@ export default function RunnerProfileScreen() {
         <View className="px-5 gap-3 mb-6">
           <Pressable
             onPress={handleLogout}
-            className="bg-surface border border-divider rounded-xl py-3.5 items-center"
+            className="bg-surface rounded-2xl py-3.5 items-center"
+            style={{ shadowColor: '#0F172A', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.04, shadowRadius: 8, elevation: 1 }}
           >
             <View className="flex-row items-center gap-2">
               <LogOut size={18} color="#475569" />
-              <Text className="text-sm font-montserrat-bold text-textSecondary">Log Out</Text>
+              <Text className="text-sm font-montserrat-bold text-textTertiary">Log Out</Text>
             </View>
           </Pressable>
           <Pressable onPress={handleDeleteAccount} className="items-center py-2">

@@ -96,14 +96,18 @@ export default function VerifyOTPScreen() {
         onDismiss={() => setToast((prev) => ({ ...prev, visible: false }))}
       />
 
-      <Pressable className="mt-2 mb-6" onPress={() => router.back()}>
-        <ArrowLeft size={24} color="#0F172A" />
+      <Pressable
+        className="mt-2 mb-6 w-9 h-9 rounded-xl bg-surface items-center justify-center"
+        style={{ shadowColor: '#0F172A', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.04, shadowRadius: 6, elevation: 1 }}
+        onPress={() => router.back()}
+      >
+        <ArrowLeft size={20} color="#0F172A" />
       </Pressable>
 
-      <Text className="text-2xl font-montserrat-bold text-textPrimary mb-1">
+      <Text className="text-xl font-montserrat-bold text-textPrimary mb-1">
         Verify your {phone ? 'number' : 'email'}
       </Text>
-      <Text className="text-base font-montserrat text-textSecondary mb-8">
+      <Text className="text-sm font-montserrat text-textTertiary mb-8">
         We sent a 6-digit code to {maskedIdentifier}
       </Text>
 

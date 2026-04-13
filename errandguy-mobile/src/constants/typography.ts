@@ -1,6 +1,7 @@
 export const FontFamily = {
-  regular: 'Montserrat_400Regular',
-  bold: 'Montserrat_700Bold',
+  regular: 'Outfit_400Regular',
+  semi: 'Outfit_600SemiBold',
+  bold: 'Outfit_700Bold',
 } as const;
 
 export const FontSize = {

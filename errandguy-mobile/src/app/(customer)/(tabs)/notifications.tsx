@@ -137,8 +137,8 @@ export default function NotificationsScreen() {
 
       return (
         <Pressable
-          className={`flex-row px-5 py-4 border-b border-divider ${
-            !item.is_read ? 'bg-primaryLight/20' : ''
+          className={`flex-row px-5 py-3.5 ${
+            !item.is_read ? 'bg-primary50' : ''
           }`}
           onPress={() => handleNotificationPress(item)}
         >
@@ -150,8 +150,8 @@ export default function NotificationsScreen() {
 
           {/* Icon */}
           <View
-            className="w-10 h-10 rounded-full items-center justify-center mr-3"
-            style={{ backgroundColor: color + '20' }}
+            className="w-10 h-10 rounded-xl items-center justify-center mr-3"
+            style={{ backgroundColor: color + '15' }}
           >
             <Icon size={18} color={color} />
           </View>
@@ -166,12 +166,12 @@ export default function NotificationsScreen() {
               {item.title}
             </Text>
             <Text
-              className="text-xs font-montserrat text-textSecondary mt-0.5"
+              className="text-xs font-montserrat text-textTertiary mt-0.5"
               numberOfLines={2}
             >
               {item.body}
             </Text>
-            <Text className="text-[10px] font-montserrat text-textSecondary mt-1">
+            <Text className="text-[10px] font-montserrat text-textTertiary mt-1">
               {formatRelativeTime(item.created_at)}
             </Text>
           </View>
@@ -184,13 +184,13 @@ export default function NotificationsScreen() {
   return (
     <SafeAreaView className="flex-1 bg-background" edges={['top']}>
       {/* Header */}
-      <View className="flex-row items-center justify-between px-5 py-4">
-        <Text className="text-xl font-montserrat-bold text-textPrimary">
+      <View className="flex-row items-center justify-between px-5 pt-4 pb-2">
+        <Text className="text-lg font-montserrat-bold text-textPrimary">
           Notifications
         </Text>
         {notifications.length > 0 && (
           <Pressable onPress={handleMarkAllRead}>
-            <Text className="text-sm font-montserrat text-primary">
+            <Text className="text-xs font-montserrat-semi text-primary">
               Mark all read
             </Text>
           </Pressable>

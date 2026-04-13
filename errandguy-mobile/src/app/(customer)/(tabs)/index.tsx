@@ -1,10 +1,11 @@
-import React, { useCallback, useMemo, useState } from 'react';
+import React, { useCallback, useState } from 'react';
 import {
   View,
   Text,
   ScrollView,
   RefreshControl,
   Pressable,
+  StyleSheet,
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import {
@@ -16,6 +17,10 @@ import {
   Car,
   PenTool,
   Bell,
+  ChevronRight,
+  Search,
+  MapPin,
+  ArrowRight,
 } from 'lucide-react-native';
 import type { LucideIcon } from 'lucide-react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -26,15 +31,11 @@ import { bookingService } from '../../../services/booking.service';
 import { configService } from '../../../services/config.service';
 import { useRefreshOnFocus } from '../../../hooks/useRefreshOnFocus';
 import { Avatar } from '../../../components/ui/Avatar';
-import { Badge } from '../../../components/ui/Badge';
-import { Card } from '../../../components/ui/Card';
-import { SearchBar } from '../../../components/ui/SearchBar';
-import { ActiveErrandBanner } from '../../../components/customer/ActiveErrandBanner';
-import { ErrandTypeCard } from '../../../components/customer/ErrandTypeCard';
-import { RecentErrandItem } from '../../../components/customer/RecentErrandItem';
 import { HomeSkeleton } from '../../../components/ui/Skeleton';
+import { STATUS_LABELS, STATUS_COLORS } from '../../../constants/statusLabels';
 import type { Booking, ErrandType } from '../../../types';
 import { formatCurrency } from '../../../utils/formatCurrency';
+import { formatRelativeTime } from '../../../utils/formatDate';
 
 const ICON_MAP: Record<string, LucideIcon> = {
   Package,
@@ -56,10 +57,8 @@ export default function CustomerHomeScreen() {
   const [recentBookings, setRecentBookings] = useState<Booking[]>([]);
   const [refreshing, setRefreshing] = useState(false);
   const [initialLoading, setInitialLoading] = useState(true);
-  const [searchText, setSearchText] = useState('');
 
   const fetchData = useCallback(async () => {
-    // Fetch independently so one failure doesn't block the others
     const results = await Promise.allSettled([
       bookingService.getActiveBooking(),
       configService.getErrandTypes(),
@@ -71,10 +70,7 @@ export default function CustomerHomeScreen() {
     }
     if (results[1].status === 'fulfilled') {
       const types = results[1].value.data?.data;
-      console.log('📦 Errand types fetched:', Array.isArray(types) ? types.length : 'not array', types);
       setErrandTypes(Array.isArray(types) ? types : []);
-    } else {
-      console.warn('Failed to fetch errand types:', results[1].reason?.message);
     }
     if (results[2].status === 'fulfilled') {
       const bookings = results[2].value.data?.data;
@@ -113,124 +109,235 @@ export default function CustomerHomeScreen() {
       <ScrollView
         className="flex-1"
         showsVerticalScrollIndicator={false}
+        contentContainerStyle={{ paddingBottom: 100 }}
         refreshControl={
-          <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
+          <RefreshControl
+            refreshing={refreshing}
+            onRefresh={onRefresh}
+            tintColor="#2563EB"
+            colors={['#2563EB']}
+          />
         }
       >
-        {/* Header */}
+        {/* ── Header ── */}
         <View className="flex-row items-center justify-between px-5 pt-4 pb-2">
           <View className="flex-row items-center flex-1">
             <Pressable onPress={() => router.push('/(customer)/(tabs)/profile')}>
-              <Avatar
-                uri={user?.avatar_url}
-                name={user?.full_name}
-                size="md"
-              />
+              <Avatar uri={user?.avatar_url} name={user?.full_name} size="md" />
             </Pressable>
             <View className="ml-3 flex-1">
-              <Text className="text-lg font-montserrat-bold text-textPrimary">
-                {getGreeting()}, {firstName}!
+              <Text className="text-xs font-montserrat text-textTertiary">
+                {getGreeting()}
+              </Text>
+              <Text className="text-lg font-montserrat-bold text-textPrimary" numberOfLines={1}>
+                {firstName}
               </Text>
             </View>
           </View>
           <Pressable
-            className="relative p-2"
+            className="relative w-10 h-10 rounded-full bg-primary50 items-center justify-center"
             onPress={() => router.push('/(customer)/(tabs)/notifications')}
           >
-            <Bell size={24} color="#0F172A" />
+            <Bell size={20} color="#2563EB" strokeWidth={1.8} />
             {unreadCount > 0 && (
-              <View className="absolute top-0 right-0">
-                <Badge count={unreadCount} variant="danger" size="sm" />
+              <View className="absolute -top-0.5 -right-0.5 rounded-full items-center justify-center" style={{ width: 18, height: 18, backgroundColor: '#EF4444' }}>
+                <Text style={{ fontSize: 9, fontFamily: 'Outfit_700Bold', color: '#FFF' }}>
+                  {unreadCount > 9 ? '9+' : unreadCount}
+                </Text>
               </View>
             )}
           </Pressable>
         </View>
 
-        {/* Search Bar */}
-        <View className="px-5 py-2">
-          <SearchBar
-            value={searchText}
-            onChangeText={setSearchText}
-            placeholder="Search errand types..."
-          />
-        </View>
+        {/* ── Search ── */}
+        <Pressable
+          className="mx-5 mt-3 flex-row items-center bg-surface rounded-2xl px-4 h-12"
+          style={hs.card}
+          onPress={() => router.push('/(customer)/book/type')}
+        >
+          <Search size={18} color="#94A3B8" strokeWidth={1.8} />
+          <Text className="ml-3 text-sm font-montserrat text-textTertiary flex-1">
+            What do you need help with?
+          </Text>
+        </Pressable>
 
-        {/* Active Errand */}
+        {/* ── Active Errand ── */}
         {activeBooking && (
-          <View className="px-5 py-2">
-            <ActiveErrandBanner
-              booking={activeBooking}
-              onTrack={() =>
-                router.push(`/(customer)/tracking/${activeBooking.id}`)
-              }
-            />
-          </View>
+          <Pressable
+            className="mx-5 mt-4 rounded-2xl overflow-hidden bg-primary"
+            style={hs.card}
+            onPress={() => router.push(`/(customer)/tracking/${activeBooking.id}`)}
+          >
+            <View className="p-4">
+              <View className="flex-row items-center justify-between mb-3">
+                <View className="flex-row items-center">
+                  <View className="w-2 h-2 rounded-full bg-white mr-2" />
+                  <Text className="text-xs font-montserrat-bold text-white/90">
+                    Active Errand
+                  </Text>
+                </View>
+                <View className="bg-white/15 rounded-full px-2.5 py-1">
+                  <Text style={{ fontSize: 10, fontFamily: 'Outfit_700Bold', color: '#FFF' }}>
+                    {STATUS_LABELS[activeBooking.status] ?? activeBooking.status}
+                  </Text>
+                </View>
+              </View>
+              <View className="flex-row items-center mb-1.5">
+                <MapPin size={12} color="rgba(255,255,255,0.6)" />
+                <Text className="text-xs font-montserrat text-white/70 ml-1.5 flex-1" numberOfLines={1}>
+                  {activeBooking.pickup_address}
+                </Text>
+              </View>
+              <View className="flex-row items-center">
+                <MapPin size={12} color="rgba(255,255,255,0.6)" />
+                <Text className="text-xs font-montserrat text-white/70 ml-1.5 flex-1" numberOfLines={1}>
+                  {activeBooking.dropoff_address}
+                </Text>
+              </View>
+              <View className="flex-row items-center justify-between mt-3 pt-3 border-t border-white/10">
+                <Text className="text-base font-montserrat-bold text-white">
+                  {formatCurrency(activeBooking.total_amount)}
+                </Text>
+                <View className="flex-row items-center bg-white rounded-full px-3.5 py-1.5">
+                  <Text style={{ fontSize: 12, fontFamily: 'Outfit_700Bold', color: '#2563EB' }}>
+                    Track
+                  </Text>
+                  <ArrowRight size={14} color="#2563EB" style={{ marginLeft: 4 }} />
+                </View>
+              </View>
+            </View>
+          </Pressable>
         )}
 
-        {/* Quick Actions */}
-        <View className="px-5 py-3">
+        {/* ── Services ── */}
+        <View className="px-5 mt-6">
           <Text className="text-base font-montserrat-bold text-textPrimary mb-3">
-            What do you need?
+            Services
           </Text>
-          <ScrollView
-            horizontal
-            showsHorizontalScrollIndicator={false}
-            contentContainerStyle={{ gap: 12 }}
-          >
+          <View className="flex-row flex-wrap" style={{ gap: 10 }}>
             {errandTypes
               .filter((t) => t.is_active)
-              .map((type) => (
-                <ErrandTypeCard
-                  key={type.id}
-                  name={type.name}
-                  icon={ICON_MAP[type.icon_name] ?? Package}
-                  baseFee={type.base_fee}
-                  onPress={() => {
-                    router.push({
-                      pathname: '/(customer)/book/type',
-                      params: { preselected: type.id },
-                    });
-                  }}
-                />
-              ))}
-          </ScrollView>
+              .map((type) => {
+                const Icon = ICON_MAP[type.icon_name] ?? Package;
+                return (
+                  <Pressable
+                    key={type.id}
+                    className="bg-surface rounded-2xl items-center justify-center py-4 px-2"
+                    style={[hs.serviceCard, hs.card]}
+                    onPress={() => {
+                      router.push({
+                        pathname: '/(customer)/book/type',
+                        params: { preselected: type.id },
+                      });
+                    }}
+                  >
+                    <View className="w-11 h-11 rounded-xl bg-primary50 items-center justify-center mb-2">
+                      <Icon size={20} color="#2563EB" strokeWidth={1.8} />
+                    </View>
+                    <Text
+                      className="text-[11px] font-montserrat-semi text-textPrimary text-center"
+                      numberOfLines={2}
+                    >
+                      {type.name}
+                    </Text>
+                    <Text className="text-[10px] font-montserrat text-textTertiary mt-0.5">
+                      From {formatCurrency(type.base_fee)}
+                    </Text>
+                  </Pressable>
+                );
+              })}
+          </View>
         </View>
 
-        {/* Recent Errands */}
-        <View className="px-5 py-3">
+        {/* ── Recent ── */}
+        <View className="px-5 mt-6">
           <View className="flex-row justify-between items-center mb-3">
             <Text className="text-base font-montserrat-bold text-textPrimary">
               Recent Errands
             </Text>
-            <Pressable
-              onPress={() => router.push('/(customer)/(tabs)/activity')}
-            >
-              <Text className="text-sm font-montserrat text-primary">
-                See All
-              </Text>
-            </Pressable>
+            {recentBookings.length > 0 && (
+              <Pressable
+                onPress={() => router.push('/(customer)/(tabs)/activity')}
+                className="flex-row items-center"
+              >
+                <Text className="text-xs font-montserrat-semi text-primary mr-0.5">
+                  See All
+                </Text>
+                <ChevronRight size={14} color="#2563EB" />
+              </Pressable>
+            )}
           </View>
           {recentBookings.length === 0 ? (
-            <Card className="items-center py-8">
-              <Text className="text-sm font-montserrat text-textSecondary">
-                No errands yet. Book your first one!
+            <View className="bg-surface rounded-2xl items-center py-10 px-6" style={hs.card}>
+              <View className="w-14 h-14 rounded-2xl bg-primary50 items-center justify-center mb-3">
+                <Package size={22} color="#2563EB" />
+              </View>
+              <Text className="text-sm font-montserrat-semi text-textPrimary mb-1">
+                No errands yet
               </Text>
-            </Card>
+              <Text className="text-xs font-montserrat text-textTertiary text-center">
+                Book your first errand and it will show here
+              </Text>
+            </View>
           ) : (
-            recentBookings.map((booking) => (
-              <RecentErrandItem
-                key={booking.id}
-                booking={booking}
-                onPress={() =>
-                  router.push(`/(customer)/tracking/${booking.id}`)
-                }
-              />
-            ))
+            recentBookings.map((booking) => {
+              const statusColor = STATUS_COLORS[booking.status] ?? '#94A3B8';
+              return (
+                <Pressable
+                  key={booking.id}
+                  className="bg-surface rounded-2xl p-4 mb-2.5"
+                  style={hs.card}
+                  onPress={() => router.push(`/(customer)/tracking/${booking.id}`)}
+                >
+                  <View className="flex-row items-center">
+                    <View className="w-10 h-10 rounded-xl bg-primary50 items-center justify-center mr-3">
+                      <Package size={18} color="#2563EB" />
+                    </View>
+                    <View className="flex-1">
+                      <Text className="text-sm font-montserrat-bold text-textPrimary" numberOfLines={1}>
+                        {booking.errand_type?.name ?? 'Errand'}
+                      </Text>
+                      <Text className="text-[11px] font-montserrat text-textTertiary mt-0.5">
+                        {formatRelativeTime(booking.created_at)}
+                      </Text>
+                    </View>
+                    <View className="items-end">
+                      <Text className="text-sm font-montserrat-bold text-textPrimary">
+                        {formatCurrency(booking.total_amount)}
+                      </Text>
+                      <View
+                        className="px-2 py-0.5 rounded-full mt-1"
+                        style={{ backgroundColor: statusColor + '15' }}
+                      >
+                        <Text
+                          style={{ fontSize: 10, fontFamily: 'Outfit_600SemiBold', color: statusColor }}
+                        >
+                          {STATUS_LABELS[booking.status] ?? booking.status}
+                        </Text>
+                      </View>
+                    </View>
+                  </View>
+                </Pressable>
+              );
+            })
           )}
         </View>
-
-        <View className="h-8" />
       </ScrollView>
     </SafeAreaView>
   );
 }
+
+const hs = StyleSheet.create({
+  card: {
+    shadowColor: '#0F172A',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.04,
+    shadowRadius: 8,
+    elevation: 1,
+  },
+  serviceCard: {
+    width: '30%',
+    flexGrow: 1,
+    minWidth: 100,
+  },
+});

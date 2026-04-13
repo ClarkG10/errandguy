@@ -8,9 +8,11 @@ import Animated, {
   Easing,
   interpolate,
 } from 'react-native-reanimated';
-import { LinearGradient } from 'expo-linear-gradient';
 
 // ── Shimmer bar ───────────────────────────────────────────────
+// Uses a pure Reanimated sliding overlay instead of expo-linear-gradient to
+// avoid the "Unable to get view config for ExpoLinearGradient" Android warning
+// that fires when requireNativeViewManager is called before the UI Manager is ready.
 interface SkeletonProps {
   width?: number | `${number}%`;
   height?: number;
@@ -37,9 +39,10 @@ export function Skeleton({
   const animatedStyle = useAnimatedStyle(() => ({
     transform: [
       {
-        translateX: interpolate(progress.value, [0, 1], [-200, 200]),
+        translateX: interpolate(progress.value, [0, 1], [-220, 220]),
       },
     ],
+    opacity: interpolate(progress.value, [0, 0.5, 1], [0, 0.55, 0]),
   }));
 
   return (
@@ -55,14 +58,18 @@ export function Skeleton({
         style,
       ]}
     >
-      <Animated.View style={[{ flex: 1 }, animatedStyle]}>
-        <LinearGradient
-          colors={['transparent', 'rgba(255,255,255,0.5)', 'transparent']}
-          start={{ x: 0, y: 0.5 }}
-          end={{ x: 1, y: 0.5 }}
-          style={{ width: 200, height: '100%' }}
-        />
-      </Animated.View>
+      <Animated.View
+        style={[
+          {
+            position: 'absolute',
+            top: 0,
+            bottom: 0,
+            width: 200,
+            backgroundColor: '#FFFFFF',
+          },
+          animatedStyle,
+        ]}
+      />
     </View>
   );
 }
@@ -79,58 +86,62 @@ export function SkeletonCircle({ size = 48, style }: SkeletonCircleProps) {
 
 // ── Prebuilt screen skeletons ─────────────────────────────────
 
-/** Home screen skeleton — header, search, errand type cards, recent list */
+/** Home screen skeleton — flat header, search, service grid, recent list */
 export function HomeSkeleton() {
   return (
-    <View className="flex-1 px-5 pt-4">
-      {/* Header: avatar + greeting */}
-      <View className="flex-row items-center mb-6">
-        <SkeletonCircle size={44} />
-        <View className="ml-3 flex-1">
-          <Skeleton width="40%" height={12} style={{ marginBottom: 6 }} />
-          <Skeleton width="55%" height={18} />
+    <View className="flex-1">
+      {/* Header area */}
+      <View className="flex-row items-center justify-between px-5 pt-4 pb-2">
+        <View className="flex-row items-center flex-1">
+          <SkeletonCircle size={44} />
+          <View className="ml-3 flex-1">
+            <Skeleton width="30%" height={10} style={{ marginBottom: 6 }} />
+            <Skeleton width="45%" height={16} />
+          </View>
         </View>
-        <SkeletonCircle size={32} />
+        <SkeletonCircle size={40} />
       </View>
 
       {/* Search bar */}
-      <Skeleton width="100%" height={44} borderRadius={12} style={{ marginBottom: 24 }} />
+      <View className="px-5 mt-3">
+        <Skeleton width="100%" height={48} borderRadius={16} />
+      </View>
 
-      {/* Section title */}
-      <Skeleton width="35%" height={14} style={{ marginBottom: 12 }} />
+      <View className="px-5 pt-5">
+        {/* Service grid title */}
+        <Skeleton width="25%" height={14} style={{ marginBottom: 14 }} />
 
-      {/* Errand type cards — horizontal row */}
-      <View className="flex-row gap-3 mb-6">
-        {[1, 2, 3, 4].map((i) => (
-          <View key={i} className="items-center" style={{ width: 80 }}>
-            <Skeleton width={64} height={64} borderRadius={16} style={{ marginBottom: 8 }} />
-            <Skeleton width={56} height={10} />
+        {/* Service cards grid */}
+        <View className="flex-row flex-wrap" style={{ gap: 10 }}>
+          {[1, 2, 3, 4, 5, 6].map((i) => (
+            <View key={i} className="items-center py-4" style={{ width: '30%', flexGrow: 1, minWidth: 100, backgroundColor: '#F8FAFC', borderRadius: 16 }}>
+              <Skeleton width={44} height={44} borderRadius={12} style={{ marginBottom: 8 }} />
+              <Skeleton width={52} height={10} />
+            </View>
+          ))}
+        </View>
+
+        {/* Recent errands title */}
+        <Skeleton width="35%" height={14} style={{ marginTop: 24, marginBottom: 14 }} />
+
+        {/* Recent errand cards */}
+        {[1, 2, 3].map((i) => (
+          <View
+            key={i}
+            className="bg-surface rounded-2xl p-4 mb-2.5"
+            style={{ shadowColor: '#0F172A', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.04, shadowRadius: 8, elevation: 1 }}
+          >
+            <View className="flex-row items-center">
+              <Skeleton width={40} height={40} borderRadius={12} />
+              <View className="flex-1 ml-3">
+                <Skeleton width="60%" height={14} style={{ marginBottom: 6 }} />
+                <Skeleton width="35%" height={10} />
+              </View>
+              <Skeleton width={56} height={22} borderRadius={12} />
+            </View>
           </View>
         ))}
       </View>
-
-      {/* Section title */}
-      <Skeleton width="40%" height={14} style={{ marginBottom: 12 }} />
-
-      {/* Recent errand cards */}
-      {[1, 2, 3].map((i) => (
-        <View
-          key={i}
-          className="bg-surface rounded-xl p-4 mb-3"
-          style={{ borderWidth: 1, borderColor: '#F1F5F9' }}
-        >
-          <View className="flex-row items-center mb-3">
-            <Skeleton width={36} height={36} borderRadius={10} />
-            <View className="flex-1 ml-3">
-              <Skeleton width="60%" height={14} style={{ marginBottom: 6 }} />
-              <Skeleton width="40%" height={10} />
-            </View>
-            <Skeleton width={64} height={22} borderRadius={12} />
-          </View>
-          <Skeleton width="85%" height={10} style={{ marginBottom: 4 }} />
-          <Skeleton width="70%" height={10} />
-        </View>
-      ))}
     </View>
   );
 }

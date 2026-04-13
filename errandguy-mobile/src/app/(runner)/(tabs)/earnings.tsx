@@ -57,7 +57,7 @@ export default function EarningsScreen() {
 
   return (
     <SafeAreaView className="flex-1 bg-background" edges={['top']}>
-      <View className="px-5 py-4">
+      <View className="px-5 pt-4 pb-2">
         <Text className="text-lg font-montserrat-bold text-textPrimary">Earnings</Text>
       </View>
 
@@ -68,17 +68,17 @@ export default function EarningsScreen() {
         contentContainerStyle={{ paddingBottom: 100 }}
       >
         {/* Hero Card */}
-        <View className="mx-5 mb-4 bg-primaryLight rounded-2xl p-6 items-center">
-          <Text className="text-3xl font-montserrat-bold text-textPrimary">
+        <View className="mx-5 mb-4 bg-primary rounded-2xl p-6 items-center">
+          <Text className="text-3xl font-montserrat-bold text-white">
             {formatCurrency(earningsData?.total_earnings ?? 0)}
           </Text>
-          <Text className="text-sm font-montserrat text-textSecondary mt-1">
+          <Text className="text-sm font-montserrat text-white/70 mt-1">
             {periodLabel[period]}
           </Text>
         </View>
 
         {/* Period Selector */}
-        <View className="flex-row mx-5 mb-4 bg-surface rounded-xl border border-divider overflow-hidden">
+        <View className="flex-row mx-5 mb-4 bg-surface rounded-2xl overflow-hidden" style={{ shadowColor: '#0F172A', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.04, shadowRadius: 8, elevation: 1 }}>
           {(['today', 'week', 'month'] as Period[]).map((p) => (
             <Pressable
               key={p}
@@ -86,10 +86,11 @@ export default function EarningsScreen() {
               className={`flex-1 py-2.5 items-center ${
                 period === p ? 'bg-primary' : ''
               }`}
+              style={period === p ? { borderRadius: 16 } : undefined}
             >
               <Text
-                className={`text-sm font-montserrat-bold ${
-                  period === p ? 'text-white' : 'text-textSecondary'
+                className={`text-sm font-montserrat-semi ${
+                  period === p ? 'text-white' : 'text-textTertiary'
                 }`}
               >
                 {p === 'today' ? 'Today' : p === 'week' ? 'Week' : 'Month'}
@@ -102,13 +103,13 @@ export default function EarningsScreen() {
         <View className="px-5 mb-4">
           <Card className="p-4">
             <View className="flex-row items-center justify-between mb-2">
-              <Text className="text-sm font-montserrat text-textSecondary">Total Errands</Text>
+              <Text className="text-sm font-montserrat text-textTertiary">Total Errands</Text>
               <Text className="text-sm font-montserrat-bold text-textPrimary">
                 {earningsData?.total_errands ?? 0}
               </Text>
             </View>
             <View className="flex-row items-center justify-between mb-2">
-              <Text className="text-sm font-montserrat text-textSecondary">Avg per Errand</Text>
+              <Text className="text-sm font-montserrat text-textTertiary">Avg per Errand</Text>
               <Text className="text-sm font-montserrat-bold text-textPrimary">
                 {formatCurrency(earningsData?.avg_per_errand ?? 0)}
               </Text>

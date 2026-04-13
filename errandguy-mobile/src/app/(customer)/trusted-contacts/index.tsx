@@ -219,8 +219,12 @@ export default function TrustedContactsScreen() {
       {/* Header */}
       <View className="flex-row items-center justify-between px-5 py-4">
         <View className="flex-row items-center">
-          <Pressable onPress={() => router.back()} className="mr-3">
-            <ArrowLeft size={24} color="#0F172A" />
+          <Pressable
+            onPress={() => router.back()}
+            className="mr-3 w-9 h-9 rounded-xl bg-surface items-center justify-center"
+            style={{ shadowColor: '#0F172A', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.04, shadowRadius: 6, elevation: 1 }}
+          >
+            <ArrowLeft size={20} color="#0F172A" />
           </Pressable>
           <Text className="text-xl font-montserrat-bold text-textPrimary">
             Trusted Contacts

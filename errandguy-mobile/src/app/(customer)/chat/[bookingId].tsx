@@ -160,8 +160,12 @@ export default function ChatScreen() {
     <SafeAreaView className="flex-1 bg-background" edges={['top']}>
       {/* Header */}
       <View className="flex-row items-center px-5 py-3 border-b border-divider">
-        <Pressable onPress={() => router.back()} className="mr-3">
-          <ArrowLeft size={24} color="#0F172A" />
+        <Pressable
+          onPress={() => router.back()}
+          className="mr-3 w-9 h-9 rounded-xl bg-surface items-center justify-center"
+          style={{ shadowColor: '#0F172A', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.04, shadowRadius: 6, elevation: 1 }}
+        >
+          <ArrowLeft size={20} color="#0F172A" />
         </Pressable>
         <Avatar size="sm" />
         <Text className="text-base font-montserrat-bold text-textPrimary ml-3 flex-1">

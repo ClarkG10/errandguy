@@ -17,37 +17,37 @@ export const RecentErrandItem = memo(function RecentErrandItem({ booking, onPres
 
   return (
     <Pressable
-      className="flex-row items-center bg-surface border border-divider rounded-xl p-3 mb-2"
+      className="flex-row items-center bg-surface rounded-2xl p-4 mb-2.5"
+      style={{ shadowColor: '#0F172A', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.04, shadowRadius: 8, elevation: 1 }}
       onPress={onPress}
     >
-      <View className="w-10 h-10 rounded-lg bg-primaryLight items-center justify-center mr-3">
-        <Package size={20} color="#2563EB" />
+      <View className="w-10 h-10 rounded-xl bg-primary50 items-center justify-center mr-3">
+        <Package size={18} color="#2563EB" />
       </View>
       <View className="flex-1">
         <Text className="text-sm font-montserrat-bold text-textPrimary" numberOfLines={1}>
           {booking.errand_type?.name ?? 'Errand'}
         </Text>
-        <Text className="text-xs font-montserrat text-textSecondary mt-0.5">
+        <Text className="text-[11px] font-montserrat text-textTertiary mt-0.5">
           {formatRelativeTime(booking.created_at)}
         </Text>
       </View>
-      <View className="items-end mr-2">
+      <View className="items-end">
         <Text className="text-sm font-montserrat-bold text-textPrimary">
           {formatCurrency(booking.total_amount)}
         </Text>
         <View
-          className="px-1.5 py-0.5 rounded mt-0.5"
-          style={{ backgroundColor: statusColor + '20' }}
+          className="px-2 py-0.5 rounded-full mt-1"
+          style={{ backgroundColor: statusColor + '15' }}
         >
           <Text
-            className="text-[10px] font-montserrat-bold"
+            className="text-[10px] font-montserrat-semi"
             style={{ color: statusColor }}
           >
             {statusLabel}
           </Text>
         </View>
       </View>
-      <ChevronRight size={16} color="#94A3B8" />
     </Pressable>
   );
 });

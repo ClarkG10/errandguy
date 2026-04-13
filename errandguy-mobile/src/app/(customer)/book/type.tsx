@@ -63,10 +63,14 @@ export default function TypeSelectionScreen() {
     <SafeAreaView className="flex-1 bg-background" edges={['top']}>
       {/* Header */}
       <View className="flex-row items-center px-5 py-4">
-        <Pressable onPress={() => router.back()} className="mr-3">
-          <ArrowLeft size={24} color="#0F172A" />
+        <Pressable
+          onPress={() => router.back()}
+          className="mr-3 w-9 h-9 rounded-xl bg-surface items-center justify-center"
+          style={{ shadowColor: '#0F172A', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.04, shadowRadius: 6, elevation: 1 }}
+        >
+          <ArrowLeft size={20} color="#0F172A" />
         </Pressable>
-        <Text className="text-xl font-montserrat-bold text-textPrimary">
+        <Text className="text-lg font-montserrat-bold text-textPrimary">
           What do you need?
         </Text>
       </View>
@@ -81,18 +85,22 @@ export default function TypeSelectionScreen() {
             return (
               <Pressable
                 key={type.id}
-                className={`w-[48%] mb-4 rounded-xl border p-4 ${
+                className={`w-[48%] mb-3 rounded-2xl p-4 ${
                   isSelected
-                    ? 'bg-primaryLight border-primary'
-                    : 'bg-surface border-divider'
+                    ? 'bg-primary50 border-2 border-primary'
+                    : 'bg-surface'
                 }`}
+                style={!isSelected ? { shadowColor: '#0F172A', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.04, shadowRadius: 8, elevation: 1 } : undefined}
                 onPress={() => setSelectedId(type.id)}
               >
-                <View className="flex-row items-center justify-between mb-2">
-                  <Icon
-                    size={28}
-                    color={isSelected ? '#2563EB' : '#475569'}
-                  />
+                <View className="flex-row items-center justify-between mb-3">
+                  <View className={`w-11 h-11 rounded-xl items-center justify-center ${isSelected ? 'bg-primary' : 'bg-primary50'}`}>
+                    <Icon
+                      size={20}
+                      color={isSelected ? '#FFFFFF' : '#2563EB'}
+                      strokeWidth={1.8}
+                    />
+                  </View>
                   {isTransportation && (
                     <Badge label="Ride" variant="primary" size="sm" />
                   )}
@@ -105,12 +113,12 @@ export default function TypeSelectionScreen() {
                   {type.name}
                 </Text>
                 <Text
-                  className="text-xs font-montserrat text-textSecondary mb-2"
+                  className="text-xs font-montserrat text-textTertiary mb-2"
                   numberOfLines={2}
                 >
                   {type.description}
                 </Text>
-                <Text className="text-xs font-montserrat text-textSecondary">
+                <Text className="text-xs font-montserrat-semi text-textTertiary">
                   From {formatCurrency(type.base_fee)}
                 </Text>
                 {isTransportation && (
@@ -126,7 +134,7 @@ export default function TypeSelectionScreen() {
       </ScrollView>
 
       {/* Bottom CTA */}
-      <View className="absolute bottom-0 left-0 right-0 bg-background border-t border-divider px-5 py-4 pb-8">
+      <View className="absolute bottom-0 left-0 right-0 bg-background px-5 py-4 pb-8" style={{ shadowColor: '#0F172A', shadowOffset: { width: 0, height: -2 }, shadowOpacity: 0.04, shadowRadius: 8, elevation: 4 }}>
         <Button
           title="Continue"
           onPress={handleContinue}

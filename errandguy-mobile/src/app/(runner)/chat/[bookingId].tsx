@@ -102,8 +102,12 @@ export default function RunnerChatScreen() {
     <SafeAreaView className="flex-1 bg-background" edges={['top']}>
       {/* Header */}
       <View className="flex-row items-center gap-3 px-5 py-4 border-b border-divider">
-        <Pressable onPress={() => router.back()}>
-          <ArrowLeft size={24} color="#0F172A" />
+        <Pressable
+          onPress={() => router.back()}
+          className="w-9 h-9 rounded-xl bg-surface items-center justify-center"
+          style={{ shadowColor: '#0F172A', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.04, shadowRadius: 6, elevation: 1 }}
+        >
+          <ArrowLeft size={20} color="#0F172A" />
         </Pressable>
         <View className="flex-1">
           <Text className="text-base font-montserrat-bold text-textPrimary">

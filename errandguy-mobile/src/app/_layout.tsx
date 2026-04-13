@@ -3,12 +3,13 @@ import { Slot, useRouter, useSegments } from 'expo-router';
 import * as SplashScreen from 'expo-splash-screen';
 import {
   useFonts,
-  Lato_400Regular,
-  Lato_700Bold,
-} from '@expo-google-fonts/lato';
+  Outfit_400Regular,
+  Outfit_600SemiBold,
+  Outfit_700Bold,
+} from '@expo-google-fonts/outfit';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { configureReanimatedLogger, ReanimatedLogLevel } from 'react-native-reanimated';
-import { deactivateKeepAwake } from 'expo-keep-awake';
+import { Platform } from 'react-native';
 import Mapbox from '@rnmapbox/maps';
 import { useAuthStore } from '../stores/authStore';
 import { userService } from '../services/user.service';
@@ -18,7 +19,8 @@ import '../../global.css';
 Mapbox.setAccessToken(process.env.EXPO_PUBLIC_MAPBOX_TOKEN ?? '');
 
 // Prevent ExpoKeepAwake.activate crash when activity is destroyed
-if (__DEV__) {
+if (__DEV__ && Platform.OS !== 'web') {
+  const { deactivateKeepAwake } = require('expo-keep-awake');
   deactivateKeepAwake();
 }
 
@@ -32,8 +34,9 @@ SplashScreen.preventAutoHideAsync();
 
 export default function RootLayout() {
   const [fontsLoaded] = useFonts({
-    Lato_400Regular,
-    Lato_700Bold,
+    Outfit_400Regular,
+    Outfit_600SemiBold,
+    Outfit_700Bold,
   });
 
   const { isAuthenticated, isLoading, role, token, loadFromStorage, setUser, logout } =

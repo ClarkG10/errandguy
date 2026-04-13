@@ -8,7 +8,7 @@ import type { PaymentMethod, PaymentMethodType } from '../../types';
 
 interface PaymentMethodSelectorProps {
   selectedId: string | undefined;
-  onSelect: (id: string) => void;
+  onSelect: (id: string, type: PaymentMethodType) => void;
 }
 
 const METHOD_ICONS: Record<PaymentMethodType, LucideIcon> = {
@@ -36,7 +36,7 @@ export function PaymentMethodSelector({
         // Auto-select default if none selected
         if (!selectedId) {
           const defaultMethod = data.find((m) => m.is_default);
-          if (defaultMethod) onSelect(defaultMethod.id);
+          if (defaultMethod) onSelect(defaultMethod.id, defaultMethod.type);
         }
       })
       .catch(() => setMethods([]))
@@ -116,7 +116,7 @@ export function PaymentMethodSelector({
                     isSelected ? 'bg-primaryLight/30' : ''
                   }`}
                   onPress={() => {
-                    onSelect(item.id);
+                    onSelect(item.id, item.type);
                     setShowSheet(false);
                   }}
                 >

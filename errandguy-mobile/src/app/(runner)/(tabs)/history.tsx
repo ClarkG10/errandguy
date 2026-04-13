@@ -116,19 +116,19 @@ export default function HistoryScreen() {
 
           <View className="flex-row items-start gap-2 mb-1">
             <MapPin size={12} color="#22C55E" />
-            <Text className="text-xs font-montserrat text-textSecondary flex-1" numberOfLines={1}>
+            <Text className="text-xs font-montserrat text-textTertiary flex-1" numberOfLines={1}>
               {item.pickup_address}
             </Text>
           </View>
           <View className="flex-row items-start gap-2 mb-2">
             <Navigation size={12} color="#EF4444" />
-            <Text className="text-xs font-montserrat text-textSecondary flex-1" numberOfLines={1}>
+            <Text className="text-xs font-montserrat text-textTertiary flex-1" numberOfLines={1}>
               {item.dropoff_address}
             </Text>
           </View>
 
           <View className="flex-row items-center justify-between">
-            <Text className="text-xs font-montserrat text-textSecondary">
+            <Text className="text-xs font-montserrat text-textTertiary">
               {new Date(item.completed_at ?? item.created_at).toLocaleDateString([], {
                 month: 'short',
                 day: 'numeric',
@@ -159,13 +159,13 @@ export default function HistoryScreen() {
 
   return (
     <SafeAreaView className="flex-1 bg-background" edges={['top']}>
-      <View className="px-5 py-4">
+      <View className="px-5 pt-4 pb-2">
         <Text className="text-lg font-montserrat-bold text-textPrimary">Errand History</Text>
       </View>
 
       {/* Search Bar */}
       <View className="px-5 mb-3">
-        <View className="flex-row items-center bg-surface border border-divider rounded-xl px-3 gap-2">
+        <View className="flex-row items-center bg-surface rounded-2xl px-4 gap-2" style={{ shadowColor: '#0F172A', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.04, shadowRadius: 8, elevation: 1 }}>
           <Search size={18} color="#94A3B8" />
           <TextInput
             className="flex-1 py-2.5 text-sm font-montserrat text-textPrimary"
@@ -184,12 +184,13 @@ export default function HistoryScreen() {
             key={s}
             onPress={() => setStatusFilter(s)}
             className={`px-4 py-1.5 rounded-full ${
-              statusFilter === s ? 'bg-primary' : 'bg-surface border border-divider'
+              statusFilter === s ? 'bg-primary' : 'bg-surface'
             }`}
+            style={statusFilter !== s ? { shadowColor: '#0F172A', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.04, shadowRadius: 6, elevation: 1 } : undefined}
           >
             <Text
-              className={`text-xs font-montserrat-bold ${
-                statusFilter === s ? 'text-white' : 'text-textSecondary'
+              className={`text-xs font-montserrat-semi ${
+                statusFilter === s ? 'text-white' : 'text-textTertiary'
               }`}
             >
               {s === 'all' ? 'All' : s === 'completed' ? 'Completed' : 'Cancelled'}

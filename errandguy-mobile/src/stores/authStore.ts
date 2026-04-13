@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import * as SecureStore from 'expo-secure-store';
+import { secureStorage } from '../utils/storage';
 import type { User, UserRole } from '../types';
 
 interface AuthState {
@@ -32,15 +32,15 @@ export const useAuthStore = create<AuthState>((set, get) => ({
 
   setToken: async (token) => {
     if (token) {
-      await SecureStore.setItemAsync('auth_token', token);
+      await secureStorage.set('auth_token', token);
     } else {
-      await SecureStore.deleteItemAsync('auth_token');
+      await secureStorage.remove('auth_token');
     }
     set({ token });
   },
 
   logout: async () => {
-    await SecureStore.deleteItemAsync('auth_token');
+    await secureStorage.remove('auth_token');
     set({
       user: null,
       token: null,
@@ -51,7 +51,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
 
   loadFromStorage: async () => {
     set({ isLoading: true });
-    const token = await SecureStore.getItemAsync('auth_token');
+    const token = await secureStorage.get('auth_token');
     set({
       token,
       isAuthenticated: !!token,

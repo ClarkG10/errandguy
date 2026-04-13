@@ -34,34 +34,47 @@ export function VehicleTypeSelector({
   return (
     <View className="mb-4">
       <Text className="text-sm font-montserrat-bold text-textPrimary mb-2">
-        Vehicle Type
+        Select Vehicle
       </Text>
-      <View className="flex-row gap-2">
+      <View className="flex-row gap-3">
         {options.map((opt) => {
           const Icon = opt.icon;
           const isSelected = selectedKey === opt.key;
           return (
             <Pressable
               key={opt.key}
-              className={`flex-1 rounded-xl border p-3 items-center ${
+              className={`flex-1 rounded-2xl p-3 items-center ${
                 isSelected
-                  ? 'bg-primaryLight border-primary'
-                  : 'bg-surface border-divider'
+                  ? 'bg-primaryLight border-2 border-primary'
+                  : 'bg-surface border-2 border-transparent'
               }`}
+              style={{
+                shadowColor: '#0F172A',
+                shadowOffset: { width: 0, height: 2 },
+                shadowOpacity: isSelected ? 0.1 : 0.04,
+                shadowRadius: 8,
+                elevation: isSelected ? 3 : 1,
+              }}
               onPress={() => onSelect(opt.key)}
             >
-              <Icon
-                size={24}
-                color={isSelected ? '#2563EB' : '#475569'}
-              />
+              <View className={`w-11 h-11 rounded-xl items-center justify-center mb-2 ${
+                isSelected ? 'bg-primary' : 'bg-divider'
+              }`}>
+                <Icon
+                  size={20}
+                  color={isSelected ? '#FFFFFF' : '#475569'}
+                />
+              </View>
               <Text
-                className={`text-xs font-montserrat-bold mt-1 ${
+                className={`text-xs font-montserrat-bold ${
                   isSelected ? 'text-primary' : 'text-textPrimary'
                 }`}
               >
                 {opt.label}
               </Text>
-              <Text className="text-[10px] font-montserrat text-textSecondary mt-0.5">
+              <Text className={`text-sm font-montserrat-bold mt-0.5 ${
+                isSelected ? 'text-primary' : 'text-textSecondary'
+              }`}>
                 {formatCurrency(opt.estimatedTotal)}
               </Text>
               {opt.eta && (

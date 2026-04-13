@@ -132,12 +132,20 @@ export default function RunnerHomeScreen() {
   return (
     <SafeAreaView className="flex-1 bg-background" edges={['top']}>
       {/* Header */}
-      <View className="flex-row items-center justify-between px-5 py-4">
-        <Text className="text-lg font-montserrat-bold text-textPrimary">
-          ErrandGuy Runner
-        </Text>
-        <Pressable onPress={() => router.push('/(runner)/settings/notifications' as any)}>
-          <Bell size={24} color="#0F172A" />
+      <View className="flex-row items-center justify-between px-5 pt-4 pb-2">
+        <View>
+          <Text className="text-xs font-montserrat text-textTertiary">
+            Dashboard
+          </Text>
+          <Text className="text-lg font-montserrat-bold text-textPrimary">
+            ErrandGuy Runner
+          </Text>
+        </View>
+        <Pressable
+          className="w-10 h-10 rounded-full bg-primary50 items-center justify-center"
+          onPress={() => router.push('/(runner)/settings/notifications' as any)}
+        >
+          <Bell size={20} color="#2563EB" strokeWidth={1.8} />
         </Pressable>
       </View>
 
@@ -168,7 +176,7 @@ export default function RunnerHomeScreen() {
 
         {/* Today's Stats */}
         <View className="px-5 mb-4">
-          <Text className="text-sm font-montserrat-bold text-textSecondary mb-2">
+          <Text className="text-xs font-montserrat-bold text-textTertiary uppercase tracking-wider mb-2 ml-0.5">
             Today's Stats
           </Text>
           <View className="flex-row gap-3">
@@ -198,7 +206,7 @@ export default function RunnerHomeScreen() {
           <View className="px-5 mb-4">
             <View className="flex-row items-center gap-2 mb-2">
               <Handshake size={16} color="#2563EB" />
-              <Text className="text-sm font-montserrat-bold text-textSecondary">
+              <Text className="text-xs font-montserrat-bold text-textTertiary uppercase tracking-wider">
                 Negotiate Offers ({negotiateOffers.length})
               </Text>
             </View>
@@ -214,13 +222,15 @@ export default function RunnerHomeScreen() {
 
         {/* Recent Errands */}
         <View className="px-5">
-          <Text className="text-sm font-montserrat-bold text-textSecondary mb-2">
+          <Text className="text-xs font-montserrat-bold text-textTertiary uppercase tracking-wider mb-2 ml-0.5">
             Recent Errands
           </Text>
           {recentErrands.length === 0 ? (
             <Card className="items-center py-8">
-              <Package size={40} color="#94A3B8" />
-              <Text className="text-sm font-montserrat text-textSecondary mt-2">
+              <View className="w-14 h-14 rounded-2xl bg-primary50 items-center justify-center mb-2">
+                <Package size={22} color="#2563EB" />
+              </View>
+              <Text className="text-sm font-montserrat text-textTertiary mt-1">
                 {isOnline
                   ? 'No recent errands yet.'
                   : 'Go online to start earning!'}
@@ -235,14 +245,14 @@ export default function RunnerHomeScreen() {
                       <Text className="text-sm font-montserrat-bold text-textPrimary">
                         {errand.errand_type?.name ?? 'Errand'}
                       </Text>
-                      <Text className="text-xs font-montserrat text-textSecondary">
+                      <Text className="text-xs font-montserrat text-textTertiary">
                         •
                       </Text>
                       <Text className="text-sm font-montserrat-bold text-primary">
                         {formatCurrency(errand.runner_payout ?? errand.total_amount)}
                       </Text>
                     </View>
-                    <Text className="text-xs font-montserrat text-textSecondary">
+                    <Text className="text-xs font-montserrat text-textTertiary">
                       {errand.distance_km ? `${errand.distance_km} km` : ''}
                     </Text>
                   </View>

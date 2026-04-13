@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { View, Text, ScrollView, Alert, KeyboardAvoidingView, Platform } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
-import { ArrowLeft, User, Phone, Mail } from 'lucide-react-native';
+import { ArrowLeft } from 'lucide-react-native';
 import { Pressable } from 'react-native';
 import { Input } from '../../../components/ui/Input';
 import { Button } from '../../../components/ui/Button';
@@ -46,8 +46,12 @@ export default function EditProfileScreen() {
     <SafeAreaView className="flex-1 bg-background" edges={['top']}>
       {/* Header */}
       <View className="flex-row items-center gap-3 px-5 py-4">
-        <Pressable onPress={() => router.back()}>
-          <ArrowLeft size={24} color="#0F172A" />
+        <Pressable
+          onPress={() => router.back()}
+          className="w-9 h-9 rounded-xl bg-surface items-center justify-center"
+          style={{ shadowColor: '#0F172A', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.04, shadowRadius: 6, elevation: 1 }}
+        >
+          <ArrowLeft size={20} color="#0F172A" />
         </Pressable>
         <Text className="text-lg font-montserrat-bold text-textPrimary">Edit Profile</Text>
       </View>
@@ -67,7 +71,6 @@ export default function EditProfileScreen() {
               value={fullName}
               onChangeText={setFullName}
               placeholder="Enter your full name"
-              leftIcon={User}
               autoCapitalize="words"
             />
 
@@ -76,7 +79,6 @@ export default function EditProfileScreen() {
               value={phone}
               onChangeText={setPhone}
               placeholder="09XX XXX XXXX"
-              leftIcon={Phone}
               keyboardType="phone-pad"
               maxLength={13}
             />
@@ -86,7 +88,6 @@ export default function EditProfileScreen() {
               value={email}
               onChangeText={setEmail}
               placeholder="you@example.com"
-              leftIcon={Mail}
               keyboardType="email-address"
               autoCapitalize="none"
             />

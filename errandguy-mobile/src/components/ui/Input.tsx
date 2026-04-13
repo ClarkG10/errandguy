@@ -1,11 +1,12 @@
-import React, { useState } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import {
   View,
   TextInput,
   Text,
   Pressable,
+  Animated,
+  StyleSheet,
   type TextInputProps,
-  type KeyboardTypeOptions,
 } from 'react-native';
 import { Eye, EyeOff } from 'lucide-react-native';
 import type { LucideIcon } from 'lucide-react-native';
@@ -32,54 +33,135 @@ export function Input({
   numberOfLines,
   ...rest
 }: InputProps) {
+  const [focused, setFocused] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
   const isPassword = secureTextEntry !== undefined;
 
+  const floated = focused || (value != null && value.length > 0);
+  const anim = useRef(new Animated.Value(floated ? 1 : 0)).current;
+
+  useEffect(() => {
+    Animated.timing(anim, {
+      toValue: floated ? 1 : 0,
+      duration: 150,
+      useNativeDriver: false,
+    }).start();
+  }, [floated, anim]);
+
+  const labelTop = anim.interpolate({
+    inputRange: [0, 1],
+    outputRange: [multiline ? 14 : 16, 6],
+  });
+  const labelSize = anim.interpolate({
+    inputRange: [0, 1],
+    outputRange: [14, 11],
+  });
+
+  const borderColor = error ? '#EF4444' : focused ? '#2563EB' : '#E2E8F0';
+
   return (
-    <View className="mb-4">
-      {label && (
-        <Text className="text-sm font-montserrat-bold text-textPrimary mb-1.5">
-          {label}
-        </Text>
-      )}
-      <View
-        className={`flex-row items-center border rounded-lg px-4 ${
-          error ? 'border-danger' : 'border-divider'
-        } ${multiline ? 'min-h-[100px] items-start' : 'h-12'} bg-surface`}
+    <View style={fs.wrapper}>
+      <Pressable
+        style={[
+          fs.container,
+          { borderColor },
+          multiline && fs.multiline,
+        ]}
+        onPress={() => {}}
       >
-        {LeftIcon && (
-          <LeftIcon size={20} color="#475569" style={{ marginRight: 8 }} />
+        {label && (
+          <Animated.Text
+            style={[
+              fs.label,
+              {
+                top: labelTop,
+                fontSize: labelSize,
+                color: error ? '#EF4444' : focused ? '#2563EB' : '#94A3B8',
+              },
+            ]}
+          >
+            {label}
+          </Animated.Text>
         )}
         <TextInput
-          className="flex-1 text-base font-montserrat text-textPrimary"
+          style={[
+            fs.input,
+            label ? fs.inputWithLabel : null,
+            multiline && fs.inputMultiline,
+          ]}
           value={value}
           onChangeText={onChangeText}
-          placeholder={placeholder}
-          placeholderTextColor="#94A3B8"
+          placeholder={floated || !label ? placeholder : ''}
+          placeholderTextColor="#CBD5E1"
           secureTextEntry={isPassword && !showPassword}
           keyboardType={keyboardType}
           maxLength={maxLength}
           multiline={multiline}
           numberOfLines={numberOfLines}
           textAlignVertical={multiline ? 'top' : 'center'}
+          onFocus={() => setFocused(true)}
+          onBlur={() => setFocused(false)}
           {...rest}
         />
         {isPassword && (
-          <Pressable onPress={() => setShowPassword(!showPassword)}>
+          <Pressable style={fs.toggle} onPress={() => setShowPassword(!showPassword)}>
             {showPassword ? (
-              <EyeOff size={20} color="#475569" />
+              <EyeOff size={18} color="#94A3B8" />
             ) : (
-              <Eye size={20} color="#475569" />
+              <Eye size={18} color="#94A3B8" />
             )}
           </Pressable>
         )}
         {RightIcon && !isPassword && (
-          <RightIcon size={20} color="#475569" style={{ marginLeft: 8 }} />
+          <RightIcon size={18} color="#94A3B8" style={fs.rightIcon} />
         )}
-      </View>
-      {error && (
-        <Text className="text-xs text-danger mt-1 font-montserrat">{error}</Text>
-      )}
+      </Pressable>
+      {error && <Text style={fs.error}>{error}</Text>}
     </View>
   );
 }
+
+const fs = StyleSheet.create({
+  wrapper: { marginBottom: 16 },
+  container: {
+    borderWidth: 1.5,
+    borderRadius: 16,
+    backgroundColor: '#FFFFFF',
+    minHeight: 56,
+    justifyContent: 'center',
+    paddingHorizontal: 16,
+  },
+  multiline: { minHeight: 110, alignItems: 'flex-start' },
+  label: {
+    position: 'absolute',
+    left: 16,
+    fontFamily: 'Outfit_400Regular',
+    backgroundColor: '#FFFFFF',
+    paddingHorizontal: 4,
+    zIndex: 1,
+  },
+  input: {
+    flex: 1,
+    fontSize: 15,
+    fontFamily: 'Outfit_400Regular',
+    color: '#0F172A',
+    paddingVertical: 0,
+    paddingTop: 0,
+  },
+  inputWithLabel: {
+    paddingTop: 12,
+  },
+  inputMultiline: {
+    paddingTop: 20,
+    minHeight: 80,
+  },
+  toggle: { position: 'absolute', right: 16, top: 18 },
+  rightIcon: { position: 'absolute', right: 16, top: 18 },
+  error: {
+    fontSize: 12,
+    fontFamily: 'Outfit_400Regular',
+    color: '#EF4444',
+    marginTop: 4,
+    marginLeft: 4,
+  },
+});

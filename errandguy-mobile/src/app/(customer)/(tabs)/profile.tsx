@@ -66,24 +66,24 @@ export default function ProfileScreen() {
 
   return (
     <SafeAreaView className="flex-1 bg-background" edges={['top']}>
-      <ScrollView className="flex-1" showsVerticalScrollIndicator={false}>
+      <ScrollView className="flex-1" showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: 100 }}>
         {/* Profile Header */}
-        <View className="items-center pt-6 pb-4">
+        <View className="items-center pt-6 pb-5">
           <Avatar
             uri={user?.avatar_url}
             name={user?.full_name}
             size="xl"
           />
-          <Text className="text-xl font-montserrat-bold text-textPrimary mt-3">
+          <Text className="text-lg font-montserrat-bold text-textPrimary mt-3">
             {user?.full_name}
           </Text>
           {user?.email && (
-            <Text className="text-sm font-montserrat text-textSecondary mt-0.5">
+            <Text className="text-xs font-montserrat text-textTertiary mt-0.5">
               {user.email}
             </Text>
           )}
           {user?.phone && (
-            <Text className="text-sm font-montserrat text-textSecondary mt-0.5">
+            <Text className="text-xs font-montserrat text-textTertiary mt-0.5">
               {user.phone}
             </Text>
           )}
@@ -99,7 +99,7 @@ export default function ProfileScreen() {
 
         {/* Account Section */}
         <View className="px-5 mb-4">
-          <Text className="text-xs font-montserrat-bold text-textSecondary uppercase mb-2">
+          <Text className="text-[11px] font-montserrat-bold text-textTertiary uppercase tracking-wider mb-2 ml-1">
             Account
           </Text>
           <Card>
@@ -108,13 +108,13 @@ export default function ProfileScreen() {
               label="Edit Profile"
               onPress={() => setShowEditModal(true)}
             />
-            <View className="h-px bg-divider" />
+            <View className="h-px bg-divider mx-1" />
             <ProfileMenuItem
               icon={MapPin}
               label="Saved Addresses"
               onPress={() => router.push('/(customer)/addresses' as any)}
             />
-            <View className="h-px bg-divider" />
+            <View className="h-px bg-divider mx-1" />
             <ProfileMenuItem
               icon={Users}
               label="Trusted Contacts"
@@ -125,7 +125,7 @@ export default function ProfileScreen() {
 
         {/* Payment Section */}
         <View className="px-5 mb-4">
-          <Text className="text-xs font-montserrat-bold text-textSecondary uppercase mb-2">
+          <Text className="text-[11px] font-montserrat-bold text-textTertiary uppercase tracking-wider mb-2 ml-1">
             Payment
           </Text>
           <Card>
@@ -134,7 +134,7 @@ export default function ProfileScreen() {
               label="Payment Methods"
               onPress={() => router.push('/(customer)/wallet' as any)}
             />
-            <View className="h-px bg-divider" />
+            <View className="h-px bg-divider mx-1" />
             <ProfileMenuItem
               icon={Wallet}
               label={`Wallet (${formatCurrency(user?.wallet_balance ?? 0)})`}
@@ -145,7 +145,7 @@ export default function ProfileScreen() {
 
         {/* Support Section */}
         <View className="px-5 mb-4">
-          <Text className="text-xs font-montserrat-bold text-textSecondary uppercase mb-2">
+          <Text className="text-[11px] font-montserrat-bold text-textTertiary uppercase tracking-wider mb-2 ml-1">
             Support
           </Text>
           <Card>
@@ -154,7 +154,7 @@ export default function ProfileScreen() {
               label="Help Center"
               onPress={() => {}}
             />
-            <View className="h-px bg-divider" />
+            <View className="h-px bg-divider mx-1" />
             <ProfileMenuItem
               icon={AlertTriangle}
               label="Report an Issue"
@@ -165,7 +165,7 @@ export default function ProfileScreen() {
 
         {/* Account Actions */}
         <View className="px-5 mb-8">
-          <Text className="text-xs font-montserrat-bold text-textSecondary uppercase mb-2">
+          <Text className="text-[11px] font-montserrat-bold text-textTertiary uppercase tracking-wider mb-2 ml-1">
             Account Actions
           </Text>
           <Card>
@@ -175,7 +175,7 @@ export default function ProfileScreen() {
               danger
               onPress={handleLogout}
             />
-            <View className="h-px bg-divider" />
+            <View className="h-px bg-divider mx-1" />
             <ProfileMenuItem
               icon={Trash2}
               label="Delete Account"

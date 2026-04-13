@@ -11,7 +11,7 @@ import {
 import { useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useForm, Controller } from 'react-hook-form';
-import { ArrowLeft, User, Smartphone, Mail, Lock, Camera, MapPin } from 'lucide-react-native';
+import { ArrowLeft, Camera } from 'lucide-react-native';
 import { Input } from '../../components/ui/Input';
 import { Button } from '../../components/ui/Button';
 import { Toast } from '../../components/ui/Toast';
@@ -128,7 +128,7 @@ export default function RegisterScreen() {
   };
 
   return (
-    <SafeAreaView className="flex-1 bg-surface">
+    <SafeAreaView className="flex-1 bg-background">
       <Toast
         message={toast.message}
         variant={toast.variant}
@@ -145,27 +145,31 @@ export default function RegisterScreen() {
           contentContainerStyle={{ paddingHorizontal: 24, paddingBottom: 40 }}
           keyboardShouldPersistTaps="handled"
         >
-          <Pressable className="mt-2 mb-6" onPress={() => router.back()}>
-            <ArrowLeft size={24} color="#0F172A" />
+          <Pressable
+            className="mt-2 mb-6 w-9 h-9 rounded-xl bg-surface items-center justify-center"
+            style={{ shadowColor: '#0F172A', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.04, shadowRadius: 6, elevation: 1 }}
+            onPress={() => router.back()}
+          >
+            <ArrowLeft size={20} color="#0F172A" />
           </Pressable>
 
-          <Text className="text-2xl font-montserrat-bold text-textPrimary mb-1">
+          <Text className="text-xl font-montserrat-bold text-textPrimary mb-1">
             Create your account
           </Text>
-          <Text className="text-base font-montserrat text-textSecondary mb-6">
+          <Text className="text-sm font-montserrat text-textTertiary mb-6">
             Let's set up your profile
           </Text>
 
           {/* Avatar Upload */}
           <Pressable className="self-center mb-6" onPress={pickImage}>
-            <View className="w-24 h-24 rounded-full bg-primaryLight items-center justify-center overflow-hidden border-2 border-primary">
+            <View className="w-24 h-24 rounded-full bg-primary50 items-center justify-center overflow-hidden border-2 border-primary">
               {image ? (
                 <Image source={{ uri: image.uri }} className="w-full h-full" />
               ) : (
-                <Camera size={32} color="#2563EB" />
+                <Camera size={28} color="#2563EB" />
               )}
             </View>
-            <Text className="text-xs font-montserrat text-primary text-center mt-1">
+            <Text className="text-xs font-montserrat-semi text-primary text-center mt-1">
               Add Photo
             </Text>
           </Pressable>
@@ -184,7 +188,6 @@ export default function RegisterScreen() {
                 value={value}
                 onChangeText={onChange}
                 placeholder="Juan Dela Cruz"
-                leftIcon={User}
                 error={errors.full_name?.message}
               />
             )}
@@ -207,7 +210,6 @@ export default function RegisterScreen() {
                 onChangeText={onChange}
                 placeholder="09XXXXXXXXX"
                 keyboardType="phone-pad"
-                leftIcon={Smartphone}
                 error={errors.phone?.message}
               />
             )}
@@ -231,7 +233,6 @@ export default function RegisterScreen() {
                 placeholder="you@example.com"
                 keyboardType="email-address"
                 autoCapitalize="none"
-                leftIcon={Mail}
                 error={errors.email?.message}
               />
             )}
@@ -260,7 +261,6 @@ export default function RegisterScreen() {
                   onChangeText={onChange}
                   placeholder="Create a strong password"
                   secureTextEntry
-                  leftIcon={Lock}
                   error={errors.password?.message}
                 />
                 <PasswordStrengthIndicator password={value} />
@@ -283,7 +283,6 @@ export default function RegisterScreen() {
                 onChangeText={onChange}
                 placeholder="Confirm your password"
                 secureTextEntry
-                leftIcon={Lock}
                 error={errors.confirm_password?.message}
               />
             )}
@@ -298,7 +297,6 @@ export default function RegisterScreen() {
                 value={value}
                 onChangeText={onChange}
                 placeholder="Enter your address"
-                leftIcon={MapPin}
               />
             )}
           />

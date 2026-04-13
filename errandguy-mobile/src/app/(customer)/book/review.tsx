@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useState } from 'react';
-import { View, Text, ScrollView, Pressable, Alert } from 'react-native';
+import { View, Text, ScrollView, Pressable, Alert, StyleSheet } from 'react-native';
 import { useRouter } from 'expo-router';
-import { ArrowLeft, MapPin, ArrowRight, Footprints, Bike, Truck, Car } from 'lucide-react-native';
+import { ArrowLeft, MapPin, ArrowRight, Footprints, Bike, Truck, Car, CircleDot, Navigation } from 'lucide-react-native';
 import type { LucideIcon } from 'lucide-react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useBookingStore } from '../../../stores/bookingStore';
@@ -50,6 +50,7 @@ export default function ReviewScreen() {
   const [vehicleType, setVehicleType] = useState<string>(
     draftBooking.vehicle_type_rate ?? 'motorcycle',
   );
+  const [paymentMethodType, setPaymentMethodType] = useState<string | undefined>();
   const [promoDiscount, setPromoDiscount] = useState(0);
   const [offerPrice, setOfferPrice] = useState(
     draftBooking.customer_offer ?? 100,
@@ -140,16 +141,24 @@ export default function ReviewScreen() {
         pickup_address: draftBooking.pickup_address!,
         pickup_lat: draftBooking.pickup_lat!,
         pickup_lng: draftBooking.pickup_lng!,
+        pickup_contact_name: draftBooking.pickup_contact_name,
+        pickup_contact_phone: draftBooking.pickup_contact_phone,
         dropoff_address: draftBooking.dropoff_address,
         dropoff_lat: draftBooking.dropoff_lat,
         dropoff_lng: draftBooking.dropoff_lng,
-        instructions: draftBooking.description,
+        dropoff_contact_name: draftBooking.dropoff_contact_name,
+        dropoff_contact_phone: draftBooking.dropoff_contact_phone,
+        description: draftBooking.description,
+        special_instructions: draftBooking.special_instructions,
+        estimated_item_value: draftBooking.estimated_item_value,
         pricing_mode: pricingMode,
+        vehicle_type_rate: pricingMode === 'fixed' ? vehicleType : undefined,
+        customer_offer: pricingMode === 'negotiate' ? offerPrice : undefined,
         schedule_type: draftBooking.schedule_type ?? ('now' as const),
         scheduled_at: draftBooking.scheduled_at,
-        offered_price:
-          pricingMode === 'negotiate' ? offerPrice : undefined,
+        payment_method: paymentMethodType ?? 'cash',
         payment_method_id: draftBooking.payment_method_id,
+        promo_code: draftBooking.promo_code,
       };
 
       const res = await bookingService.createBooking(payload);
@@ -168,7 +177,9 @@ export default function ReviewScreen() {
   }, [
     draftBooking,
     pricingMode,
+    vehicleType,
     offerPrice,
+    paymentMethodType,
     setActiveBooking,
     clearDraft,
     router,
@@ -177,99 +188,121 @@ export default function ReviewScreen() {
   return (
     <SafeAreaView className="flex-1 bg-background" edges={['top']}>
       {/* Header */}
-      <View className="flex-row items-center px-5 py-4">
-        <Pressable onPress={() => router.back()} className="mr-3">
-          <ArrowLeft size={24} color="#0F172A" />
+      <View className="flex-row items-center px-5 py-3">
+        <Pressable
+          onPress={() => router.back()}
+          className="w-10 h-10 rounded-full bg-surface items-center justify-center mr-3"
+          style={reviewStyles.shadow}
+        >
+          <ArrowLeft size={20} color="#0F172A" />
         </Pressable>
-        <Text className="text-xl font-montserrat-bold text-textPrimary">
-          Review & Pay
+        <Text className="text-lg font-montserrat-bold text-textPrimary flex-1">
+          Review Booking
         </Text>
       </View>
 
-      {/* Step Indicator */}
-      <View className="flex-row px-5 mb-4">
+      {/* Step Progress Bar */}
+      <View className="flex-row items-center px-5 mb-4">
         {STEP_LABELS.map((label, i) => (
-          <View key={label} className="flex-1 items-center">
-            <View className="w-8 h-8 rounded-full items-center justify-center bg-primary">
-              <Text className="text-xs font-montserrat-bold text-white">
-                {i + 1}
+          <React.Fragment key={label}>
+            <View className="items-center">
+              <View
+                className={`w-7 h-7 rounded-full items-center justify-center ${
+                  i <= 3 ? 'bg-primary' : 'bg-divider'
+                }`}
+              >
+                <Text className="text-[10px] font-montserrat-bold text-white">
+                  {i + 1}
+                </Text>
+              </View>
+              <Text className="text-[9px] font-montserrat text-textSecondary mt-1">
+                {label}
               </Text>
             </View>
-            <Text className="text-[10px] font-montserrat text-textSecondary mt-1">
-              {label}
-            </Text>
-          </View>
+            {i < STEP_LABELS.length - 1 && (
+              <View className={`flex-1 h-0.5 mx-1 mt-[-8px] ${i < 3 ? 'bg-primary' : 'bg-divider'}`} />
+            )}
+          </React.Fragment>
         ))}
       </View>
 
       <ScrollView className="flex-1 px-5" showsVerticalScrollIndicator={false}>
-        {/* Route Summary */}
-        <View className="bg-surface border border-divider rounded-xl p-4 mb-4">
-          <View className="flex-row items-center mb-2">
-            <MapPin size={14} color="#2563EB" />
-            <Text
-              className="text-sm font-montserrat text-textPrimary ml-2 flex-1"
-              numberOfLines={1}
-            >
-              {draftBooking.pickup_address ?? 'Pickup'}
-            </Text>
-          </View>
-          <View className="flex-row items-center">
-            <MapPin size={14} color="#EF4444" />
-            <Text
-              className="text-sm font-montserrat text-textPrimary ml-2 flex-1"
-              numberOfLines={1}
-            >
-              {draftBooking.dropoff_address ?? 'Dropoff'}
-            </Text>
+        {/* Route Card */}
+        <View className="bg-surface rounded-2xl p-4 mb-4" style={reviewStyles.shadow}>
+          <View className="flex-row">
+            {/* Route dots */}
+            <View className="items-center mr-3 pt-0.5">
+              <CircleDot size={14} color="#2563EB" />
+              <View className="w-0.5 h-6 bg-divider my-1" />
+              <Navigation size={14} color="#EF4444" />
+            </View>
+            {/* Addresses */}
+            <View className="flex-1">
+              <View className="mb-3">
+                <Text className="text-[10px] font-montserrat-semi text-primary mb-0.5">
+                  PICKUP
+                </Text>
+                <Text className="text-sm font-montserrat text-textPrimary" numberOfLines={2}>
+                  {draftBooking.pickup_address ?? 'Pickup location'}
+                </Text>
+              </View>
+              <View>
+                <Text className="text-[10px] font-montserrat-semi text-danger mb-0.5">
+                  DROPOFF
+                </Text>
+                <Text className="text-sm font-montserrat text-textPrimary" numberOfLines={2}>
+                  {draftBooking.dropoff_address ?? 'Dropoff location'}
+                </Text>
+              </View>
+            </View>
           </View>
           {estimate?.distance_km != null && (
-            <Text className="text-xs font-montserrat text-textSecondary mt-2">
-              Distance: {estimate.distance_km.toFixed(1)} km
-            </Text>
+            <View className="mt-3 pt-3 border-t border-divider">
+              <Text className="text-xs font-montserrat-semi text-textSecondary">
+                Estimated Distance: {estimate.distance_km.toFixed(1)} km
+              </Text>
+            </View>
           )}
         </View>
 
         {/* Pricing Mode Toggle */}
-        <View className="flex-row bg-divider rounded-lg p-1 mb-4">
-          <Pressable
-            className={`flex-1 py-2 rounded-md items-center ${
-              pricingMode === 'fixed' ? 'bg-surface' : ''
-            }`}
-            onPress={() => {
-              setPricingMode('fixed');
-              updateDraft({ pricing_mode: 'fixed' });
-            }}
-          >
-            <Text
-              className={`text-sm font-montserrat-bold ${
-                pricingMode === 'fixed'
-                  ? 'text-textPrimary'
-                  : 'text-textSecondary'
+        <View className="bg-surface rounded-2xl p-1.5 mb-4" style={reviewStyles.shadow}>
+          <View className="flex-row">
+            <Pressable
+              className={`flex-1 py-2.5 rounded-xl items-center ${
+                pricingMode === 'fixed' ? 'bg-primary' : ''
               }`}
+              onPress={() => {
+                setPricingMode('fixed');
+                updateDraft({ pricing_mode: 'fixed' });
+              }}
             >
-              Fixed Price
-            </Text>
-          </Pressable>
-          <Pressable
-            className={`flex-1 py-2 rounded-md items-center ${
-              pricingMode === 'negotiate' ? 'bg-surface' : ''
-            }`}
-            onPress={() => {
-              setPricingMode('negotiate');
-              updateDraft({ pricing_mode: 'negotiate' });
-            }}
-          >
-            <Text
-              className={`text-sm font-montserrat-bold ${
-                pricingMode === 'negotiate'
-                  ? 'text-textPrimary'
-                  : 'text-textSecondary'
+              <Text
+                className={`text-sm font-montserrat-bold ${
+                  pricingMode === 'fixed' ? 'text-white' : 'text-textSecondary'
+                }`}
+              >
+                Fixed Price
+              </Text>
+            </Pressable>
+            <Pressable
+              className={`flex-1 py-2.5 rounded-xl items-center ${
+                pricingMode === 'negotiate' ? 'bg-primary' : ''
               }`}
+              onPress={() => {
+                setPricingMode('negotiate');
+                updateDraft({ pricing_mode: 'negotiate' });
+              }}
             >
-              Make an Offer
-            </Text>
-          </Pressable>
+              <Text
+                className={`text-sm font-montserrat-bold ${
+                  pricingMode === 'negotiate' ? 'text-white' : 'text-textSecondary'
+                }`}
+              >
+                Make an Offer
+              </Text>
+            </Pressable>
+          </View>
         </View>
 
         {pricingMode === 'fixed' ? (
@@ -286,7 +319,10 @@ export default function ReviewScreen() {
 
             {/* Price Breakdown */}
             {currentVehicleEstimate && (
-              <View className="bg-surface border border-divider rounded-xl p-4 mb-4">
+              <View className="bg-surface rounded-2xl p-4 mb-4" style={reviewStyles.shadow}>
+                <Text className="text-sm font-montserrat-bold text-textPrimary mb-3">
+                  Price Breakdown
+                </Text>
                 <PriceBreakdown
                   items={priceItems}
                   total={totalAmount}
@@ -327,18 +363,21 @@ export default function ReviewScreen() {
         {/* Payment Method */}
         <PaymentMethodSelector
           selectedId={draftBooking.payment_method_id}
-          onSelect={(id) => updateDraft({ payment_method_id: id })}
+          onSelect={(id, type) => {
+            updateDraft({ payment_method_id: id });
+            setPaymentMethodType(type);
+          }}
         />
 
-        <View className="h-24" />
+        <View className="h-28" />
       </ScrollView>
 
       {/* Bottom CTA */}
-      <View className="absolute bottom-0 left-0 right-0 bg-background border-t border-divider px-5 py-4 pb-8">
+      <View className="absolute bottom-0 left-0 right-0 bg-surface px-5 py-4 pb-8" style={reviewStyles.bottomShadow}>
         <Button
           title={
             pricingMode === 'fixed'
-              ? `Confirm & Book ${totalAmount > 0 ? formatCurrency(totalAmount) : ''}`
+              ? `Confirm Booking ${totalAmount > 0 ? formatCurrency(totalAmount) : ''}`
               : `Send Offer ${formatCurrency(offerPrice)}`
           }
           onPress={handleSubmit}
@@ -349,3 +388,20 @@ export default function ReviewScreen() {
     </SafeAreaView>
   );
 }
+
+const reviewStyles = StyleSheet.create({
+  shadow: {
+    shadowColor: '#0F172A',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.06,
+    shadowRadius: 8,
+    elevation: 2,
+  },
+  bottomShadow: {
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: -4 },
+    shadowOpacity: 0.08,
+    shadowRadius: 12,
+    elevation: 8,
+  },
+});

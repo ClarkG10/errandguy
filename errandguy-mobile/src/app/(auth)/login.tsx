@@ -6,13 +6,12 @@ import {
   ScrollView,
   KeyboardAvoidingView,
   Platform,
-  ActivityIndicator,
   StyleSheet,
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useForm, Controller } from 'react-hook-form';
-import { ArrowLeft, Smartphone, Mail, Lock } from 'lucide-react-native';
+import { ArrowLeft } from 'lucide-react-native';
 import { Input } from '../../components/ui/Input';
 import { Button } from '../../components/ui/Button';
 import { Toast } from '../../components/ui/Toast';
@@ -28,10 +27,9 @@ interface LoginFormData {
 
 export default function LoginScreen() {
   const router = useRouter();
-  const { login, socialLogin } = useAuth();
+  const { login } = useAuth();
   const [mode, setMode] = useState<LoginMode>('phone');
   const [loading, setLoading] = useState(false);
-  const [socialLoading, setSocialLoading] = useState<'google' | 'facebook' | null>(null);
   const [toast, setToast] = useState<{ visible: boolean; message: string; variant: 'success' | 'error' | 'info' | 'warning' }>({ visible: false, message: '', variant: 'error' });
 
   const {
@@ -51,34 +49,31 @@ export default function LoginScreen() {
           : { email: data.email, password: data.password };
       await login(loginData);
     } catch (error: any) {
-      const message =
-        error?.response?.data?.message ||
-        error?.response?.data?.errors?.credentials?.[0] ||
-        error?.response?.data?.errors?.status?.[0] ||
-        'Login failed. Please try again.';
+      const status = error?.response?.status;
+      let message: string;
+
+      if (!error?.response) {
+        message = 'Unable to reach the server. Check your internet connection.';
+      } else if (status === 405) {
+        message = 'Service temporarily unavailable. Please try again later.';
+      } else if (status === 500) {
+        message = 'Something went wrong on our end. Please try again later.';
+      } else if (status === 429) {
+        message = 'Too many attempts. Please wait a few minutes and try again.';
+      } else if (status === 422) {
+        message =
+          error.response.data?.message ||
+          error.response.data?.errors?.credentials?.[0] ||
+          error.response.data?.errors?.status?.[0] ||
+          'Invalid credentials. Please check and try again.';
+      } else {
+        message =
+          error.response?.data?.message || 'Login failed. Please try again.';
+      }
+
       setToast({ visible: true, message, variant: 'error' });
     } finally {
       setLoading(false);
-    }
-  };
-
-  const handleSocialLogin = async (provider: 'google' | 'facebook') => {
-    setSocialLoading(provider);
-    try {
-      // TODO: Integrate Google/Facebook SDK to get token
-      setToast({
-        visible: true,
-        message: `${provider} login will be available soon.`,
-        variant: 'info',
-      });
-    } catch (error: any) {
-      setToast({
-        visible: true,
-        message: `${provider} login failed. Please try again.`,
-        variant: 'error',
-      });
-    } finally {
-      setSocialLoading(null);
     }
   };
 
@@ -106,13 +101,13 @@ export default function LoginScreen() {
             activeOpacity={0.6}
             onPress={() => router.back()}
           >
-            <ArrowLeft size={24} color="#0F172A" />
+            <ArrowLeft size={20} color="#0F172A" />
           </TouchableOpacity>
 
-          <Text className="text-2xl font-montserrat-bold text-textPrimary mb-1">
+          <Text className="text-xl font-montserrat-bold text-textPrimary mb-1">
             Welcome back
           </Text>
-          <Text className="text-base font-montserrat text-textSecondary mb-6">
+          <Text className="text-sm font-montserrat text-textTertiary mb-6">
             Log in to your account
           </Text>
 
@@ -164,7 +159,6 @@ export default function LoginScreen() {
                   onChangeText={onChange}
                   placeholder="09XXXXXXXXX"
                   keyboardType="phone-pad"
-                  leftIcon={Smartphone}
                   error={errors.phone?.message}
                 />
               )}
@@ -188,7 +182,6 @@ export default function LoginScreen() {
                   placeholder="you@example.com"
                   keyboardType="email-address"
                   autoCapitalize="none"
-                  leftIcon={Mail}
                   error={errors.email?.message}
                 />
               )}
@@ -209,7 +202,6 @@ export default function LoginScreen() {
                 onChangeText={onChange}
                 placeholder="Enter your password"
                 secureTextEntry
-                leftIcon={Lock}
                 error={errors.password?.message}
               />
             )}
@@ -234,45 +226,6 @@ export default function LoginScreen() {
             onPress={handleSubmit(onSubmit)}
           />
 
-          {/* Divider */}
-          <View className="flex-row items-center my-6">
-            <View className="flex-1 h-px bg-divider" />
-            <Text className="mx-4 text-sm font-montserrat text-textSecondary">
-              or continue with
-            </Text>
-            <View className="flex-1 h-px bg-divider" />
-          </View>
-
-          {/* Social Login — icon-only */}
-          <View style={s.socialRow}>
-            <TouchableOpacity
-              cssInterop={false}
-              style={s.socialBtn}
-              activeOpacity={0.7}
-              onPress={() => handleSocialLogin('google')}
-              disabled={socialLoading === 'google'}
-            >
-              {socialLoading === 'google' ? (
-                <ActivityIndicator size="small" color="#475569" />
-              ) : (
-                <Text cssInterop={false} style={s.googleLetter}>G</Text>
-              )}
-            </TouchableOpacity>
-            <TouchableOpacity
-              cssInterop={false}
-              style={[s.socialBtn, s.fbBtn]}
-              activeOpacity={0.7}
-              onPress={() => handleSocialLogin('facebook')}
-              disabled={socialLoading === 'facebook'}
-            >
-              {socialLoading === 'facebook' ? (
-                <ActivityIndicator size="small" color="#fff" />
-              ) : (
-                <Text cssInterop={false} style={s.fbLetter}>f</Text>
-              )}
-            </TouchableOpacity>
-          </View>
-
           <TouchableOpacity
             cssInterop={false}
             style={s.signupLink}
@@ -291,69 +244,49 @@ export default function LoginScreen() {
 }
 
 const s = StyleSheet.create({
-  backBtn: { marginTop: 8, marginBottom: 24, alignSelf: 'flex-start', padding: 4 },
+  backBtn: {
+    marginTop: 8,
+    marginBottom: 24,
+    alignSelf: 'flex-start',
+    width: 36,
+    height: 36,
+    borderRadius: 12,
+    backgroundColor: '#F8FAFC',
+    alignItems: 'center',
+    justifyContent: 'center',
+    shadowColor: '#0F172A',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.04,
+    shadowRadius: 6,
+    elevation: 1,
+  },
   toggleRow: {
     flexDirection: 'row',
-    backgroundColor: '#F8FAFC',
-    borderRadius: 12,
+    backgroundColor: '#F1F5F9',
+    borderRadius: 16,
     padding: 4,
     marginBottom: 24,
   },
   tab: {
     flex: 1,
     paddingVertical: 10,
-    borderRadius: 8,
+    borderRadius: 12,
     alignItems: 'center',
   },
   tabActive: {
-    backgroundColor: '#FFFFFF',
-    shadowColor: '#000',
-    shadowOpacity: 0.06,
-    shadowRadius: 4,
-    shadowOffset: { width: 0, height: 1 },
-    elevation: 2,
+    backgroundColor: '#2563EB',
   },
   tabText: {
     fontSize: 14,
-    fontFamily: 'Lato_700Bold',
-    color: '#475569',
+    fontFamily: 'Outfit_700Bold',
+    color: '#64748B',
   },
   tabTextActive: {
-    color: '#2563EB',
-  },
-  forgotBtn: { alignSelf: 'flex-end', marginBottom: 24, padding: 4 },
-  forgotText: { fontSize: 14, fontFamily: 'Lato_400Regular', color: '#2563EB' },
-  socialRow: {
-    flexDirection: 'row',
-    justifyContent: 'center',
-    gap: 16,
-    marginBottom: 24,
-  },
-  socialBtn: {
-    width: 56,
-    height: 56,
-    borderRadius: 28,
-    borderWidth: 1,
-    borderColor: '#E2E8F0',
-    backgroundColor: '#FFFFFF',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  fbBtn: {
-    backgroundColor: '#1877F2',
-    borderColor: '#1877F2',
-  },
-  googleLetter: {
-    fontSize: 22,
-    fontFamily: 'Lato_700Bold',
-    color: '#4285F4',
-  },
-  fbLetter: {
-    fontSize: 22,
-    fontFamily: 'Lato_700Bold',
     color: '#FFFFFF',
   },
-  signupLink: { alignItems: 'center', marginBottom: 32, padding: 8 },
-  signupText: { fontSize: 14, fontFamily: 'Lato_400Regular', color: '#475569' },
-  signupBold: { color: '#2563EB', fontFamily: 'Lato_700Bold' },
+  forgotBtn: { alignSelf: 'flex-end', marginBottom: 24, padding: 4 },
+  forgotText: { fontSize: 14, fontFamily: 'Outfit_600SemiBold', color: '#2563EB' },
+  signupLink: { alignItems: 'center', marginTop: 24, marginBottom: 32, padding: 8 },
+  signupText: { fontSize: 14, fontFamily: 'Outfit_400Regular', color: '#64748B' },
+  signupBold: { color: '#2563EB', fontFamily: 'Outfit_700Bold' },
 });

@@ -27,7 +27,7 @@ interface ButtonProps {
 const variantStyles: Record<ButtonVariant, ViewStyle> = {
   primary: { backgroundColor: '#2563EB' },
   secondary: { backgroundColor: '#DBEAFE' },
-  outline: { backgroundColor: 'transparent', borderWidth: 1, borderColor: '#2563EB' },
+  outline: { backgroundColor: 'transparent', borderWidth: 1.5, borderColor: '#2563EB' },
   danger: { backgroundColor: '#EF4444' },
   ghost: { backgroundColor: 'transparent' },
 };
@@ -41,9 +41,9 @@ const variantTextColors: Record<ButtonVariant, string> = {
 };
 
 const sizePadding: Record<ButtonSize, ViewStyle> = {
-  sm: { paddingVertical: 8, paddingHorizontal: 16 },
-  md: { paddingVertical: 12, paddingHorizontal: 24 },
-  lg: { paddingVertical: 16, paddingHorizontal: 32 },
+  sm: { paddingVertical: 10, paddingHorizontal: 20 },
+  md: { paddingVertical: 14, paddingHorizontal: 28 },
+  lg: { paddingVertical: 18, paddingHorizontal: 36 },
 };
 
 const sizeTextSizes: Record<ButtonSize, number> = {
@@ -123,9 +123,9 @@ const bs = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    borderRadius: 14,
+    borderRadius: 9999,
   },
   full: { width: '100%' },
   disabled: { opacity: 0.5 },
-  text: { fontFamily: 'Lato_700Bold' },
+  text: { fontFamily: 'Outfit_700Bold' },
 });

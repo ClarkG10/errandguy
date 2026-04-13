@@ -1,5 +1,6 @@
 import { Tabs } from 'expo-router';
 import { Home, ClipboardList, Bell, User } from 'lucide-react-native';
+import { View, Platform, StyleSheet } from 'react-native';
 import { useNotificationStore } from '../../../stores/notificationStore';
 
 export default function CustomerTabsLayout() {
@@ -10,15 +11,39 @@ export default function CustomerTabsLayout() {
       screenOptions={{
         headerShown: false,
         tabBarActiveTintColor: '#2563EB',
-        tabBarInactiveTintColor: '#475569',
+        tabBarInactiveTintColor: '#94A3B8',
+        tabBarShowLabel: true,
         tabBarLabelStyle: {
-          fontFamily: 'Lato_400Regular',
-          fontSize: 11,
+          fontFamily: 'Outfit_600SemiBold',
+          fontSize: 10,
+          marginTop: 2,
         },
         tabBarStyle: {
+          position: 'absolute',
+          bottom: Platform.OS === 'ios' ? 24 : 16,
+          left: 20,
+          right: 20,
           backgroundColor: '#FFFFFF',
-          borderTopWidth: 0.5,
-          borderTopColor: '#E2E8F0',
+          borderRadius: 24,
+          height: 64,
+          borderTopWidth: 0,
+          paddingBottom: 0,
+          ...Platform.select({
+            ios: {
+              shadowColor: '#0F172A',
+              shadowOffset: { width: 0, height: 8 },
+              shadowOpacity: 0.12,
+              shadowRadius: 24,
+            },
+            android: { elevation: 12 },
+          }),
+        },
+        tabBarItemStyle: {
+          paddingTop: 10,
+          paddingBottom: 8,
+        },
+        tabBarIconStyle: {
+          marginBottom: 0,
         },
       }}
     >
@@ -26,33 +51,84 @@ export default function CustomerTabsLayout() {
         name="index"
         options={{
           title: 'Home',
-          tabBarIcon: ({ color, size }) => <Home size={size} color={color} />,
+          tabBarIcon: ({ color, focused }) => (
+            <View style={styles.iconWrap}>
+              <Home size={22} color={color} strokeWidth={focused ? 2.5 : 1.8} />
+              {focused && <View style={styles.activeIndicator} />}
+            </View>
+          ),
         }}
       />
       <Tabs.Screen
         name="activity"
         options={{
           title: 'Activity',
-          tabBarIcon: ({ color, size }) => (
-            <ClipboardList size={size} color={color} />
+          tabBarIcon: ({ color, focused }) => (
+            <View style={styles.iconWrap}>
+              <ClipboardList size={22} color={color} strokeWidth={focused ? 2.5 : 1.8} />
+              {focused && <View style={styles.activeIndicator} />}
+            </View>
           ),
         }}
       />
       <Tabs.Screen
         name="notifications"
         options={{
-          title: 'Notifications',
-          tabBarIcon: ({ color, size }) => <Bell size={size} color={color} />,
-          tabBarBadge: unreadCount > 0 ? unreadCount : undefined,
+          title: 'Alerts',
+          tabBarIcon: ({ color, focused }) => (
+            <View style={styles.iconWrap}>
+              <Bell size={22} color={color} strokeWidth={focused ? 2.5 : 1.8} />
+              {focused && <View style={styles.activeIndicator} />}
+              {unreadCount > 0 && (
+                <View style={styles.badge}>
+                  <View style={styles.badgeDot} />
+                </View>
+              )}
+            </View>
+          ),
         }}
       />
       <Tabs.Screen
         name="profile"
         options={{
           title: 'Profile',
-          tabBarIcon: ({ color, size }) => <User size={size} color={color} />,
+          tabBarIcon: ({ color, focused }) => (
+            <View style={styles.iconWrap}>
+              <User size={22} color={color} strokeWidth={focused ? 2.5 : 1.8} />
+              {focused && <View style={styles.activeIndicator} />}
+            </View>
+          ),
         }}
       />
     </Tabs>
   );
 }
+
+const styles = StyleSheet.create({
+  iconWrap: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    position: 'relative',
+  },
+  activeIndicator: {
+    position: 'absolute',
+    bottom: -8,
+    width: 4,
+    height: 4,
+    borderRadius: 2,
+    backgroundColor: '#2563EB',
+  },
+  badge: {
+    position: 'absolute',
+    top: -2,
+    right: -6,
+  },
+  badgeDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    backgroundColor: '#EF4444',
+    borderWidth: 1.5,
+    borderColor: '#FFFFFF',
+  },
+});

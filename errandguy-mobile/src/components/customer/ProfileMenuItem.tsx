@@ -20,18 +20,23 @@ export function ProfileMenuItem({
 }: ProfileMenuItemProps) {
   return (
     <Pressable
-      className="flex-row items-center py-3.5 px-4"
+      className="flex-row items-center py-3.5 px-1"
       onPress={onPress}
     >
-      <Icon size={20} color={danger ? '#EF4444' : '#475569'} />
+      <View
+        className="w-9 h-9 rounded-xl items-center justify-center mr-3"
+        style={{ backgroundColor: danger ? '#FEF2F2' : '#EFF6FF' }}
+      >
+        <Icon size={18} color={danger ? '#EF4444' : '#2563EB'} />
+      </View>
       <Text
-        className={`text-sm font-montserrat flex-1 ml-3 ${
+        className={`text-sm font-montserrat flex-1 ${
           danger ? 'text-danger' : 'text-textPrimary'
         }`}
       >
         {label}
       </Text>
-      {rightElement ?? <ChevronRight size={18} color="#94A3B8" />}
+      {rightElement ?? <ChevronRight size={16} color="#CBD5E1" />}
     </Pressable>
   );
 }

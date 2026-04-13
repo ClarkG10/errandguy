@@ -1,6 +1,6 @@
 import { Tabs } from 'expo-router';
 import { Home, DollarSign, Clock, User } from 'lucide-react-native';
-import { View } from 'react-native';
+import { View, Platform, StyleSheet } from 'react-native';
 import { useRunnerStore } from '../../../stores/runnerStore';
 
 export default function RunnerTabsLayout() {
@@ -11,15 +11,36 @@ export default function RunnerTabsLayout() {
       screenOptions={{
         headerShown: false,
         tabBarActiveTintColor: '#2563EB',
-        tabBarInactiveTintColor: '#475569',
+        tabBarInactiveTintColor: '#94A3B8',
+        tabBarShowLabel: true,
         tabBarLabelStyle: {
-          fontFamily: 'Lato_400Regular',
-          fontSize: 11,
+          fontFamily: 'Outfit_600SemiBold',
+          fontSize: 10,
+          marginTop: 2,
         },
         tabBarStyle: {
+          position: 'absolute',
+          bottom: Platform.OS === 'ios' ? 24 : 16,
+          left: 20,
+          right: 20,
           backgroundColor: '#FFFFFF',
-          borderTopWidth: 0.5,
-          borderTopColor: '#E2E8F0',
+          borderRadius: 24,
+          height: 64,
+          borderTopWidth: 0,
+          paddingBottom: 0,
+          ...Platform.select({
+            ios: {
+              shadowColor: '#0F172A',
+              shadowOffset: { width: 0, height: 8 },
+              shadowOpacity: 0.12,
+              shadowRadius: 24,
+            },
+            android: { elevation: 12 },
+          }),
+        },
+        tabBarItemStyle: {
+          paddingTop: 10,
+          paddingBottom: 8,
         },
       }}
     >
@@ -27,23 +48,12 @@ export default function RunnerTabsLayout() {
         name="index"
         options={{
           title: 'Home',
-          tabBarIcon: ({ color, size }) => (
-            <View>
-              <Home size={size} color={color} />
+          tabBarIcon: ({ color, focused }) => (
+            <View style={rs.iconWrap}>
+              <Home size={22} color={color} strokeWidth={focused ? 2.5 : 1.8} />
+              {focused && <View style={rs.activeIndicator} />}
               {isOnline && (
-                <View
-                  style={{
-                    position: 'absolute',
-                    top: -2,
-                    right: -4,
-                    width: 8,
-                    height: 8,
-                    borderRadius: 4,
-                    backgroundColor: '#22C55E',
-                    borderWidth: 1.5,
-                    borderColor: '#FFFFFF',
-                  }}
-                />
+                <View style={rs.onlineDot} />
               )}
             </View>
           ),
@@ -53,8 +63,11 @@ export default function RunnerTabsLayout() {
         name="earnings"
         options={{
           title: 'Earnings',
-          tabBarIcon: ({ color, size }) => (
-            <DollarSign size={size} color={color} />
+          tabBarIcon: ({ color, focused }) => (
+            <View style={rs.iconWrap}>
+              <DollarSign size={22} color={color} strokeWidth={focused ? 2.5 : 1.8} />
+              {focused && <View style={rs.activeIndicator} />}
+            </View>
           ),
         }}
       />
@@ -62,16 +75,53 @@ export default function RunnerTabsLayout() {
         name="history"
         options={{
           title: 'History',
-          tabBarIcon: ({ color, size }) => <Clock size={size} color={color} />,
+          tabBarIcon: ({ color, focused }) => (
+            <View style={rs.iconWrap}>
+              <Clock size={22} color={color} strokeWidth={focused ? 2.5 : 1.8} />
+              {focused && <View style={rs.activeIndicator} />}
+            </View>
+          ),
         }}
       />
       <Tabs.Screen
         name="profile"
         options={{
           title: 'Profile',
-          tabBarIcon: ({ color, size }) => <User size={size} color={color} />,
+          tabBarIcon: ({ color, focused }) => (
+            <View style={rs.iconWrap}>
+              <User size={22} color={color} strokeWidth={focused ? 2.5 : 1.8} />
+              {focused && <View style={rs.activeIndicator} />}
+            </View>
+          ),
         }}
       />
     </Tabs>
   );
 }
+
+const rs = StyleSheet.create({
+  iconWrap: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    position: 'relative',
+  },
+  activeIndicator: {
+    position: 'absolute',
+    bottom: -8,
+    width: 4,
+    height: 4,
+    borderRadius: 2,
+    backgroundColor: '#2563EB',
+  },
+  onlineDot: {
+    position: 'absolute',
+    top: -2,
+    right: -4,
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    backgroundColor: '#22C55E',
+    borderWidth: 1.5,
+    borderColor: '#FFFFFF',
+  },
+});
