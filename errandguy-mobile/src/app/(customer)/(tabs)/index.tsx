@@ -53,7 +53,7 @@ const ICON_MAP: Record<string, LucideIcon> = {
 export default function CustomerHomeScreen() {
   const router = useRouter();
   const user = useAuthStore((s) => s.user);
-  const { activeBooking, setActiveBooking } = useBookingStore();
+  const { activeBooking, setActiveBooking, clearDraft } = useBookingStore();
   const unreadCount = useNotificationStore((s) => s.unreadCount);
 
   const [errandTypes, setErrandTypes] = useState<ErrandType[]>([]);
@@ -190,7 +190,7 @@ export default function CustomerHomeScreen() {
         <Pressable
           className="mx-5 mt-3 flex-row items-center bg-surface rounded-2xl px-4 h-12"
           style={hs.card}
-          onPress={() => router.push('/(customer)/book/type')}
+          onPress={() => { clearDraft(); router.push('/(customer)/book/type'); }}
         >
           <Search size={18} color="#94A3B8" strokeWidth={1.8} />
           <Text className="ml-3 text-sm font-montserrat text-textTertiary flex-1">
@@ -274,6 +274,7 @@ export default function CustomerHomeScreen() {
                     className="bg-surface rounded-2xl items-center justify-center py-4 px-2"
                     style={[hs.serviceCard, hs.card]}
                     onPress={() => {
+                      clearDraft();
                       router.push({
                         pathname: '/(customer)/book/type',
                         params: { preselected: type.id },

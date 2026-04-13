@@ -138,7 +138,7 @@ const fs = StyleSheet.create({
     justifyContent: 'center',
     paddingHorizontal: 16,
   },
-  multiline: { minHeight: 110, alignItems: 'flex-start' },
+  multiline: { minHeight: 96, alignItems: 'flex-start' },
   label: {
     position: 'absolute',
     left: 16,
@@ -149,7 +149,7 @@ const fs = StyleSheet.create({
   },
   input: {
     flex: 1,
-    fontSize: 15,
+    fontSize: 14,
     fontFamily: 'Poppins_400Regular',
     color: '#0F172A',
     paddingVertical: 0,
