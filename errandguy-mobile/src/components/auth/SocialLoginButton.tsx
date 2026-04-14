@@ -1,8 +1,8 @@
 import React from 'react';
-import { Pressable, Text, ActivityIndicator } from 'react-native';
+import { Pressable, Text, View, ActivityIndicator, StyleSheet } from 'react-native';
 
 interface SocialLoginButtonProps {
-  provider: 'google' | 'facebook' | 'apple';
+  provider: 'google' | 'facebook';
   onPress: () => void;
   loading?: boolean;
 }
@@ -11,23 +11,12 @@ const providerConfig = {
   google: {
     label: 'Google',
     letter: 'G',
-    letterColor: '#4285F4',
-    borderColor: '#E2E8F0',
-    bg: '#FFFFFF',
+    accentColor: '#4285F4',
   },
   facebook: {
     label: 'Facebook',
     letter: 'f',
-    letterColor: '#FFFFFF',
-    borderColor: '#1877F2',
-    bg: '#1877F2',
-  },
-  apple: {
-    label: 'Apple',
-    letter: '\uF8FF',
-    letterColor: '#FFFFFF',
-    borderColor: '#000000',
-    bg: '#000000',
+    accentColor: '#1877F2',
   },
 };
 
@@ -40,24 +29,53 @@ export function SocialLoginButton({
 
   return (
     <Pressable
-      className="w-14 h-14 rounded-2xl items-center justify-center border"
-      style={{
-        backgroundColor: config.bg,
-        borderColor: config.borderColor,
-      }}
+      style={styles.button}
       onPress={onPress}
       disabled={loading}
     >
       {loading ? (
-        <ActivityIndicator size="small" color={config.letterColor} />
+        <ActivityIndicator size="small" color="#64748B" />
       ) : (
-        <Text
-          className="text-xl font-montserrat-bold"
-          style={{ color: config.letterColor }}
-        >
-          {provider === 'apple' ? '🍎' : config.letter}
-        </Text>
+        <>
+          <View style={[styles.letterCircle, { backgroundColor: config.accentColor + '12' }]}>
+            <Text style={[styles.letter, { color: config.accentColor }]}>
+              {config.letter}
+            </Text>
+          </View>
+          <Text style={styles.label}>{config.label}</Text>
+        </>
       )}
     </Pressable>
   );
 }
+
+const styles = StyleSheet.create({
+  button: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    height: 52,
+    backgroundColor: '#FFFFFF',
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    gap: 8,
+  },
+  letterCircle: {
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  letter: {
+    fontSize: 15,
+    fontFamily: 'Inter_600SemiBold',
+  },
+  label: {
+    fontSize: 14,
+    fontFamily: 'Inter_500Medium',
+    color: '#0F172A',
+  },
+});

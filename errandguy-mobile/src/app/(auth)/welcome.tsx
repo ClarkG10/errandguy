@@ -121,7 +121,7 @@ export default function WelcomeScreen() {
           accessibilityRole="button"
         >
           <Text cssInterop={false} style={ws.loginText}>
-            Already have an account?{' '}
+            Have an account?{' '}
             <Text cssInterop={false} style={ws.loginBold}>Login</Text>
           </Text>
         </TouchableOpacity>
@@ -134,6 +134,6 @@ const ws = StyleSheet.create({
   skipBtn: { padding: 8 },
   skipText: { fontSize: 14, fontFamily: 'Inter_500Medium', color: '#2563EB' },
   loginLink: { marginTop: 16, alignItems: 'center', padding: 8 },
-  loginText: { fontSize: 14, fontFamily: 'Inter_400Regular', color: '#64748B' },
-  loginBold: { color: '#2563EB', fontFamily: 'Inter_600SemiBold' },
+  loginText: { fontSize: 14, fontFamily: 'Inter_400Regular', color: '#94A3B8' },
+  loginBold: { color: '#0F172A', fontFamily: 'Inter_600SemiBold' },
 });

@@ -7,6 +7,8 @@ import {
   KeyboardAvoidingView,
   Platform,
   Image,
+  StyleSheet,
+  TouchableOpacity,
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -138,7 +140,7 @@ export default function RegisterScreen() {
   };
 
   return (
-    <SafeAreaView className="flex-1 bg-background">
+    <SafeAreaView className="flex-1 bg-surface">
       <Toast
         message={toast.message}
         variant={toast.variant}
@@ -341,17 +343,44 @@ export default function RegisterScreen() {
             onPress={handleSubmit(onSubmit)}
           />
 
-          <Pressable
-            className="items-center mt-4 mb-8"
-            onPress={() => router.push('/(auth)/login')}
-          >
-            <Text className="text-sm font-montserrat text-textSecondary">
-              Already have an account?{' '}
-              <Text className="text-primary font-montserrat-semi">Login</Text>
-            </Text>
-          </Pressable>
+          <View style={rs.loginRow}>
+            <Text style={rs.loginText}>Have an account?</Text>
+            <TouchableOpacity
+              activeOpacity={0.6}
+              onPress={() => router.push('/(auth)/login')}
+              style={rs.loginBtn}
+            >
+              <Text style={rs.loginBtnText}>Login</Text>
+            </TouchableOpacity>
+          </View>
         </ScrollView>
       </KeyboardAvoidingView>
     </SafeAreaView>
   );
 }
+
+const rs = StyleSheet.create({
+  loginRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    marginTop: 16,
+    marginBottom: 32,
+    paddingVertical: 8,
+  },
+  loginText: {
+    fontSize: 14,
+    fontFamily: 'Inter_400Regular',
+    color: '#94A3B8',
+  },
+  loginBtn: {
+    paddingVertical: 2,
+    paddingHorizontal: 2,
+  },
+  loginBtnText: {
+    fontSize: 14,
+    fontFamily: 'Inter_600SemiBold',
+    color: '#0F172A',
+  },
+});

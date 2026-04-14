@@ -5,6 +5,8 @@ import {
   Pressable,
   KeyboardAvoidingView,
   Platform,
+  StyleSheet,
+  TouchableOpacity,
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -136,17 +138,43 @@ export default function ForgotPasswordScreen() {
             onPress={handleSubmit(onSubmit)}
           />
 
-          <Pressable
-            className="items-center mt-6"
-            onPress={() => router.replace('/(auth)/login')}
-          >
-            <Text className="text-sm font-montserrat text-textSecondary">
-              Remember your password?{' '}
-              <Text className="text-primary font-montserrat-semi">Back to Login</Text>
-            </Text>
-          </Pressable>
+          <View style={fs.linkRow}>
+            <Text style={fs.linkText}>Remember your password?</Text>
+            <TouchableOpacity
+              activeOpacity={0.6}
+              onPress={() => router.replace('/(auth)/login')}
+              style={fs.linkBtn}
+            >
+              <Text style={fs.linkBtnText}>Login</Text>
+            </TouchableOpacity>
+          </View>
         </KeyboardAvoidingView>
       )}
     </SafeAreaView>
   );
 }
+
+const fs = StyleSheet.create({
+  linkRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    marginTop: 24,
+    paddingVertical: 8,
+  },
+  linkText: {
+    fontSize: 14,
+    fontFamily: 'Inter_400Regular',
+    color: '#94A3B8',
+  },
+  linkBtn: {
+    paddingVertical: 2,
+    paddingHorizontal: 2,
+  },
+  linkBtnText: {
+    fontSize: 14,
+    fontFamily: 'Inter_600SemiBold',
+    color: '#0F172A',
+  },
+});

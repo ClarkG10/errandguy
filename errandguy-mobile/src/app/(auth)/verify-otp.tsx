@@ -88,7 +88,7 @@ export default function VerifyOTPScreen() {
   };
 
   return (
-    <SafeAreaView className="flex-1 bg-surface px-6">
+    <SafeAreaView className="flex-1 bg-surface">
       <Toast
         message={toast.message}
         variant={toast.variant}
@@ -97,13 +97,14 @@ export default function VerifyOTPScreen() {
       />
 
       <Pressable
-        className="mt-2 mb-8 w-10 h-10 rounded-full items-center justify-center"
+        className="mt-2 ml-6 mb-8 w-10 h-10 rounded-full items-center justify-center"
         onPress={() => router.back()}
       >
         <ChevronLeft size={24} color="#0F172A" strokeWidth={2} />
       </Pressable>
 
-      <Text className="text-[24px] font-montserrat-bold text-textPrimary mb-1 tracking-tight">
+      <View className="px-6">
+      <Text className="text-[24px] font-montserrat-semi text-textPrimary mb-1 tracking-tight">
         Verify your {phone ? 'number' : 'email'}
       </Text>
       <Text className="text-[15px] font-montserrat text-textTertiary mb-10">
@@ -137,12 +138,14 @@ export default function VerifyOTPScreen() {
 
       <Button
         title="Verify"
+        loadingTitle="Verifying.."
         fullWidth
         size="lg"
         loading={loading}
         disabled={code.length !== 6 || attemptsRemaining === 0}
         onPress={handleVerify}
       />
+      </View>
     </SafeAreaView>
   );
 }

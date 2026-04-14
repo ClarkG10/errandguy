@@ -189,23 +189,22 @@ export default function LoginScreen() {
           <View style={s.socialRow}>
             <SocialLoginButton provider="google" onPress={() => {}} />
             <SocialLoginButton provider="facebook" onPress={() => {}} />
-            <SocialLoginButton provider="apple" onPress={() => {}} />
           </View>
 
           {/* Spacer pushes signup link toward bottom */}
           <View style={{ flex: 1 }} />
 
-          <TouchableOpacity
-            cssInterop={false}
-            style={s.signupLink}
-            activeOpacity={0.6}
-            onPress={() => router.push('/(auth)/register')}
-          >
-            <Text cssInterop={false} style={s.signupText}>
-              Don't have an account?{' '}
-              <Text cssInterop={false} style={s.signupBold}>Sign Up</Text>
-            </Text>
-          </TouchableOpacity>
+          <View style={s.signupRow}>
+            <Text cssInterop={false} style={s.signupText}>New here?</Text>
+            <TouchableOpacity
+              cssInterop={false}
+              activeOpacity={0.6}
+              onPress={() => router.push('/(auth)/register')}
+              style={s.signupBtn}
+            >
+              <Text cssInterop={false} style={s.signupBtnText}>Create account</Text>
+            </TouchableOpacity>
+          </View>
         </ScrollView>
       </KeyboardAvoidingView>
     </SafeAreaView>
@@ -240,11 +239,29 @@ const s = StyleSheet.create({
   },
   socialRow: {
     flexDirection: 'row',
-    justifyContent: 'center',
-    gap: 16,
+    gap: 12,
     marginBottom: 8,
   },
-  signupLink: { alignItems: 'center', marginBottom: 32, padding: 8 },
-  signupText: { fontSize: 14, fontFamily: 'Inter_400Regular', color: '#64748B' },
-  signupBold: { color: '#2563EB', fontFamily: 'Inter_600SemiBold' },
+  signupRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    marginBottom: 32,
+    paddingVertical: 8,
+  },
+  signupText: {
+    fontSize: 14,
+    fontFamily: 'Inter_400Regular',
+    color: '#94A3B8',
+  },
+  signupBtn: {
+    paddingVertical: 2,
+    paddingHorizontal: 2,
+  },
+  signupBtnText: {
+    fontSize: 14,
+    fontFamily: 'Inter_600SemiBold',
+    color: '#0F172A',
+  },
 });
