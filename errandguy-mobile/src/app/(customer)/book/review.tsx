@@ -194,7 +194,7 @@ export default function ReviewScreen() {
       {/* Header */}
       <View className="flex-row items-center px-5 py-3">
         <Pressable
-          onPress={() => router.back()}
+          onPress={() => router.canGoBack() ? router.back() : router.replace('/(customer)/(tabs)')}
           className="w-10 h-10 rounded-full bg-surface items-center justify-center mr-3"
           style={reviewStyles.shadow}
         >

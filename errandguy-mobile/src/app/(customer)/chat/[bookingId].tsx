@@ -161,7 +161,7 @@ export default function ChatScreen() {
       {/* Header */}
       <View className="flex-row items-center px-5 py-3 border-b border-divider">
         <Pressable
-          onPress={() => router.back()}
+          onPress={() => router.canGoBack() ? router.back() : router.replace('/(customer)/(tabs)/activity')}
           className="mr-3 w-9 h-9 rounded-xl bg-surface items-center justify-center"
           style={{ shadowColor: '#0F172A', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.04, shadowRadius: 6, elevation: 1 }}
         >

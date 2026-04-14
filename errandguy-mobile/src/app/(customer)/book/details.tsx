@@ -317,7 +317,7 @@ export default function TaskDetailsScreen() {
         dropoff_lat: undefined,
         dropoff_lng: undefined,
       });
-      router.back();
+      router.canGoBack() ? router.back() : router.replace('/(customer)/(tabs)');
     } else if (phase === 'dropoff') {
       // Clear pickup so user can re-select
       updateDraft({

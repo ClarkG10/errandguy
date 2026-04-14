@@ -159,7 +159,7 @@ export default function RegisterScreen() {
         >
           <Pressable
             className="mt-2 mb-8 w-10 h-10 rounded-full items-center justify-center"
-            onPress={() => router.back()}
+            onPress={() => router.canGoBack() ? router.back() : router.replace('/(auth)/login')}
           >
             <ChevronLeft size={24} color="#0F172A" strokeWidth={2} />
           </Pressable>

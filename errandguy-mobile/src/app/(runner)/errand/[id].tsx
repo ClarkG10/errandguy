@@ -56,7 +56,7 @@ export default function ActiveErrandScreen() {
     return (
       <SafeAreaView className="flex-1 bg-background items-center justify-center" edges={['top']}>
         <Text className="text-sm font-montserrat text-textSecondary">No active errand</Text>
-        <Button title="Go Back" variant="outline" onPress={() => router.back()} />
+        <Button title="Go Back" variant="outline" onPress={() => router.canGoBack() ? router.back() : router.replace('/(runner)/(tabs)')} />
       </SafeAreaView>
     );
   }
@@ -149,7 +149,7 @@ export default function ActiveErrandScreen() {
       {/* Header */}
       <View className="flex-row items-center justify-between px-5 py-4">
         <Pressable
-          onPress={() => router.back()}
+          onPress={() => router.canGoBack() ? router.back() : router.replace('/(runner)/(tabs)')}
           className="w-9 h-9 rounded-xl bg-surface items-center justify-center"
           style={{ shadowColor: '#0F172A', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.04, shadowRadius: 6, elevation: 1 }}
         >

@@ -103,7 +103,7 @@ export default function LoginScreen() {
               cssInterop={false}
               style={s.backBtn}
               activeOpacity={0.6}
-              onPress={() => router.back()}
+              onPress={() => router.canGoBack() ? router.back() : router.replace('/(auth)/welcome')}
             >
               <ChevronLeft size={24} color="#0F172A" strokeWidth={2} />
             </TouchableOpacity>

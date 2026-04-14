@@ -35,7 +35,7 @@ export default function VehicleScreen() {
       });
       setRunnerProfile(res.data.data);
       Alert.alert('Success', 'Vehicle information updated');
-      router.back();
+      if (router.canGoBack()) router.back(); else router.replace('/(runner)/(tabs)');
     } catch (err: any) {
       Alert.alert('Error', err?.response?.data?.message ?? 'Failed to update vehicle');
     } finally {
@@ -48,7 +48,7 @@ export default function VehicleScreen() {
       {/* Header */}
       <View className="flex-row items-center gap-3 px-5 py-4">
         <Pressable
-          onPress={() => router.back()}
+          onPress={() => router.canGoBack() ? router.back() : router.replace('/(runner)/(tabs)')}
           className="w-9 h-9 rounded-xl bg-surface items-center justify-center"
           style={{ shadowColor: '#0F172A', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.04, shadowRadius: 6, elevation: 1 }}
         >

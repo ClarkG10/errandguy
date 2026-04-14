@@ -261,7 +261,7 @@ export default function TrackingScreen() {
         <SafeAreaView edges={['top']}>
           <View className="flex-row items-center px-5 py-2">
             <Pressable
-              onPress={() => router.back()}
+              onPress={() => router.canGoBack() ? router.back() : router.replace('/(customer)/(tabs)')}
               className="w-10 h-10 rounded-full bg-white/90 items-center justify-center mr-3 shadow-sm"
             >
               <ArrowLeft size={20} color="#0F172A" />

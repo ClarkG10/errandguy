@@ -44,7 +44,7 @@ export default function TopUpScreen() {
         addTransaction(tx);
       }
       Alert.alert('Success', `${formatCurrency(displayAmount)} added to wallet`, [
-        { text: 'OK', onPress: () => router.back() },
+        { text: 'OK', onPress: () => router.canGoBack() ? router.back() : router.replace('/(customer)/wallet') },
       ]);
     } catch (err: any) {
       Alert.alert(
@@ -61,7 +61,7 @@ export default function TopUpScreen() {
       {/* Header */}
       <View className="flex-row items-center px-5 py-4">
         <Pressable
-          onPress={() => router.back()}
+          onPress={() => router.canGoBack() ? router.back() : router.replace('/(customer)/wallet')}
           className="mr-3 w-9 h-9 rounded-xl bg-surface items-center justify-center"
           style={{ shadowColor: '#0F172A', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.04, shadowRadius: 6, elevation: 1 }}
         >
