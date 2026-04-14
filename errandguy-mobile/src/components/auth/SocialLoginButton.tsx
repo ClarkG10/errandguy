@@ -1,22 +1,33 @@
 import React from 'react';
-import { Pressable, Text, ActivityIndicator, View } from 'react-native';
+import { Pressable, Text, ActivityIndicator } from 'react-native';
 
 interface SocialLoginButtonProps {
-  provider: 'google' | 'facebook';
+  provider: 'google' | 'facebook' | 'apple';
   onPress: () => void;
   loading?: boolean;
 }
 
 const providerConfig = {
   google: {
-    label: 'Continue with Google',
+    label: 'Google',
     letter: 'G',
     letterColor: '#4285F4',
+    borderColor: '#E2E8F0',
+    bg: '#FFFFFF',
   },
   facebook: {
-    label: 'Continue with Facebook',
+    label: 'Facebook',
     letter: 'f',
-    letterColor: '#1877F2',
+    letterColor: '#FFFFFF',
+    borderColor: '#1877F2',
+    bg: '#1877F2',
+  },
+  apple: {
+    label: 'Apple',
+    letter: '\uF8FF',
+    letterColor: '#FFFFFF',
+    borderColor: '#000000',
+    bg: '#000000',
   },
 };
 
@@ -29,26 +40,23 @@ export function SocialLoginButton({
 
   return (
     <Pressable
-      className="flex-1 flex-row items-center justify-center border border-divider rounded-xl h-12 bg-surface"
+      className="w-14 h-14 rounded-2xl items-center justify-center border"
+      style={{
+        backgroundColor: config.bg,
+        borderColor: config.borderColor,
+      }}
       onPress={onPress}
       disabled={loading}
     >
       {loading ? (
-        <ActivityIndicator size="small" color="#475569" />
+        <ActivityIndicator size="small" color={config.letterColor} />
       ) : (
-        <>
-          <View className="w-6 h-6 items-center justify-center mr-2">
-            <Text
-              className="text-lg font-montserrat-bold"
-              style={{ color: config.letterColor }}
-            >
-              {config.letter}
-            </Text>
-          </View>
-          <Text className="text-sm font-montserrat text-textPrimary">
-            {config.label}
-          </Text>
-        </>
+        <Text
+          className="text-xl font-montserrat-bold"
+          style={{ color: config.letterColor }}
+        >
+          {provider === 'apple' ? '🍎' : config.letter}
+        </Text>
       )}
     </Pressable>
   );

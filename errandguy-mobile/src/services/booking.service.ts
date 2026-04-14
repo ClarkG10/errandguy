@@ -10,15 +10,24 @@ export const bookingService = {
     pickup_address: string;
     pickup_lat: number;
     pickup_lng: number;
+    pickup_contact_name?: string;
+    pickup_contact_phone?: string;
     dropoff_address?: string;
     dropoff_lat?: number;
     dropoff_lng?: number;
-    instructions?: string;
+    dropoff_contact_name?: string;
+    dropoff_contact_phone?: string;
+    description?: string;
+    special_instructions?: string;
+    estimated_item_value?: number;
     pricing_mode: 'fixed' | 'negotiate';
+    vehicle_type_rate?: string;
+    customer_offer?: number;
     schedule_type: 'now' | 'scheduled';
     scheduled_at?: string;
-    offered_price?: number;
+    payment_method?: string;
     payment_method_id?: string;
+    promo_code?: string;
     items?: Array<{ name: string; quantity: number; estimated_price?: number }>;
   }) {
     return api.post('/bookings', data);

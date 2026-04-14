@@ -3,10 +3,10 @@ import { Slot, useRouter, useSegments } from 'expo-router';
 import * as SplashScreen from 'expo-splash-screen';
 import {
   useFonts,
-  Poppins_400Regular,
-  Poppins_600SemiBold,
-  Poppins_700Bold,
-} from '@expo-google-fonts/poppins';
+  Inter_400Regular,
+  Inter_500Medium,
+  Inter_600SemiBold,
+} from '@expo-google-fonts/inter';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { configureReanimatedLogger, ReanimatedLogLevel } from 'react-native-reanimated';
 import { Platform } from 'react-native';
@@ -34,12 +34,12 @@ SplashScreen.preventAutoHideAsync();
 
 export default function RootLayout() {
   const [fontsLoaded] = useFonts({
-    Poppins_400Regular,
-    Poppins_600SemiBold,
-    Poppins_700Bold,
+    Inter_400Regular,
+    Inter_500Medium,
+    Inter_600SemiBold,
   });
 
-  const { isAuthenticated, isLoading, role, token, loadFromStorage, setUser, logout } =
+  const { isAuthenticated, isLoading, role, token, onboardingSeen, loadFromStorage, setUser, logout } =
     useAuthStore();
   const segments = useSegments();
   const router = useRouter();
@@ -74,17 +74,29 @@ export default function RootLayout() {
     if (isLoading || !fontsLoaded) return;
 
     const inAuthGroup = segments[0] === '(auth)';
+    const currentAuthScreen = segments[1] as string;
+
+    // Screens authenticated users must stay on to finish registration
+    const registrationFlowScreens = ['register', 'verify-otp', 'role-select', 'permissions', 'contacts-permission'];
 
     if (!isAuthenticated && !inAuthGroup) {
-      router.replace('/(auth)/welcome');
-    } else if (isAuthenticated && inAuthGroup) {
-      if (role === 'runner') {
-        router.replace('/(runner)/(tabs)');
+      // Skip onboarding carousel for returning users
+      if (onboardingSeen) {
+        router.replace('/(auth)/login');
       } else {
-        router.replace('/(customer)/(tabs)');
+        router.replace('/(auth)/welcome');
+      }
+    } else if (isAuthenticated && inAuthGroup) {
+      // Let user finish registration flow before redirecting to home
+      if (!registrationFlowScreens.includes(currentAuthScreen)) {
+        if (role === 'runner') {
+          router.replace('/(runner)/(tabs)');
+        } else {
+          router.replace('/(customer)/(tabs)');
+        }
       }
     }
-  }, [isAuthenticated, isLoading, role, segments, fontsLoaded, router]);
+  }, [isAuthenticated, isLoading, role, segments, fontsLoaded, onboardingSeen, router]);
 
   if (!fontsLoaded || isLoading) {
     return null;

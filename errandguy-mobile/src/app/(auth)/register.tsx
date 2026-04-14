@@ -11,7 +11,7 @@ import {
 import { useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useForm, Controller } from 'react-hook-form';
-import { ArrowLeft, Camera } from 'lucide-react-native';
+import { ChevronLeft, Camera } from 'lucide-react-native';
 import { Input } from '../../components/ui/Input';
 import { Button } from '../../components/ui/Button';
 import { Toast } from '../../components/ui/Toast';
@@ -75,7 +75,6 @@ export default function RegisterScreen() {
         phone: data.phone || undefined,
         email: data.email || undefined,
         password: data.password,
-        role: 'customer', // Temporary — role-select screen will update
       });
 
       // Upload avatar if selected
@@ -157,17 +156,16 @@ export default function RegisterScreen() {
           keyboardShouldPersistTaps="handled"
         >
           <Pressable
-            className="mt-2 mb-6 w-9 h-9 rounded-xl bg-surface items-center justify-center"
-            style={{ shadowColor: '#0F172A', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.04, shadowRadius: 6, elevation: 1 }}
+            className="mt-2 mb-8 w-10 h-10 rounded-full items-center justify-center"
             onPress={() => router.back()}
           >
-            <ArrowLeft size={20} color="#0F172A" />
+            <ChevronLeft size={24} color="#0F172A" strokeWidth={2} />
           </Pressable>
 
-          <Text className="text-xl font-montserrat-bold text-textPrimary mb-1">
+          <Text className="text-[28px] font-montserrat-bold text-textPrimary mb-1 tracking-tight">
             Create your account
           </Text>
-          <Text className="text-sm font-montserrat text-textTertiary mb-6">
+          <Text className="text-[15px] font-montserrat text-textTertiary mb-8">
             Let's set up your profile
           </Text>
 
@@ -335,6 +333,7 @@ export default function RegisterScreen() {
 
           <Button
             title="Create Account"
+            loadingTitle="Creating.."
             fullWidth
             size="lg"
             loading={loading}
@@ -348,7 +347,7 @@ export default function RegisterScreen() {
           >
             <Text className="text-sm font-montserrat text-textSecondary">
               Already have an account?{' '}
-              <Text className="text-primary font-montserrat-bold">Log In</Text>
+              <Text className="text-primary font-montserrat-semi">Login</Text>
             </Text>
           </Pressable>
         </ScrollView>

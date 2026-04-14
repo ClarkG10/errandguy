@@ -40,7 +40,7 @@ class RegisterRequest extends FormRequest
                     ->symbols(),
             ],
             'full_name' => ['required', 'string', 'max:100'],
-            'role' => ['required', 'string', 'in:customer,runner'],
+            'role' => ['nullable', 'string', 'in:customer,runner'],
         ];
     }
 

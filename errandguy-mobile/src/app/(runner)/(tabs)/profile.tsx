@@ -165,7 +165,7 @@ export default function RunnerProfileScreen() {
 
         {/* Performance */}
         <View className="px-5 mb-4">
-          <Text className="text-[11px] font-montserrat-bold text-textTertiary uppercase tracking-wider mb-3 ml-0.5">Performance</Text>
+          <Text className="text-[11px] font-montserrat-semi text-textTertiary uppercase tracking-wider mb-3 ml-0.5">Performance</Text>
           <Card className="p-4">
             <View className="flex-row gap-3 mb-3">
               <PerformanceMetric
@@ -205,7 +205,7 @@ export default function RunnerProfileScreen() {
 
         {/* Account Menu */}
         <View className="px-5 mb-4">
-          <Text className="text-[11px] font-montserrat-bold text-textTertiary uppercase tracking-wider mb-1 ml-0.5">Account</Text>
+          <Text className="text-[11px] font-montserrat-semi text-textTertiary uppercase tracking-wider mb-1 ml-0.5">Account</Text>
           <Card className="px-4">
             {accountMenu.map((item, idx, arr) => (
               <View key={item.label}>
@@ -218,7 +218,7 @@ export default function RunnerProfileScreen() {
 
         {/* Settings Menu */}
         <View className="px-5 mb-6">
-          <Text className="text-[11px] font-montserrat-bold text-textTertiary uppercase tracking-wider mb-1 ml-0.5">Settings</Text>
+          <Text className="text-[11px] font-montserrat-semi text-textTertiary uppercase tracking-wider mb-1 ml-0.5">Settings</Text>
           <Card className="px-4">
             {settingsMenu.map((item, idx, arr) => (
               <View key={item.label}>
@@ -238,7 +238,7 @@ export default function RunnerProfileScreen() {
           >
             <View className="flex-row items-center gap-2">
               <LogOut size={18} color="#475569" />
-              <Text className="text-sm font-montserrat-bold text-textTertiary">Log Out</Text>
+              <Text className="text-sm font-montserrat-semi text-textTertiary">Log Out</Text>
             </View>
           </Pressable>
         </View>
@@ -281,7 +281,7 @@ export default function RunnerProfileScreen() {
                 placeholder="DELETE"
                 placeholderTextColor="#CBD5E1"
                 autoCapitalize="characters"
-                style={{ fontFamily: 'Poppins_400Regular', fontSize: 15, color: '#0F172A' }}
+                style={{ fontFamily: 'Inter_400Regular', fontSize: 15, color: '#0F172A' }}
               />
             </View>
             <Button

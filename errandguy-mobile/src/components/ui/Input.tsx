@@ -142,7 +142,7 @@ const fs = StyleSheet.create({
   label: {
     position: 'absolute',
     left: 16,
-    fontFamily: 'Poppins_400Regular',
+    fontFamily: 'Inter_400Regular',
     backgroundColor: '#FFFFFF',
     paddingHorizontal: 4,
     zIndex: 1,
@@ -150,7 +150,7 @@ const fs = StyleSheet.create({
   input: {
     flex: 1,
     fontSize: 14,
-    fontFamily: 'Poppins_400Regular',
+    fontFamily: 'Inter_400Regular',
     color: '#0F172A',
     paddingVertical: 0,
     paddingTop: 0,
@@ -166,7 +166,7 @@ const fs = StyleSheet.create({
   rightIcon: { position: 'absolute', right: 16, top: 18 },
   error: {
     fontSize: 12,
-    fontFamily: 'Poppins_400Regular',
+    fontFamily: 'Inter_400Regular',
     color: '#EF4444',
     marginTop: 4,
     marginLeft: 4,

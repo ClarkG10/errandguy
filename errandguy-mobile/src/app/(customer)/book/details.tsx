@@ -543,12 +543,42 @@ export default function TaskDetailsScreen() {
   }, [draftBooking, setStep, router]);
 
   /* ── Initial camera center ── */
+  const [userLocation, setUserLocation] = useState<[number, number] | null>(null);
+
   const initialCenter = useMemo(() => {
     if (draftBooking.pickup_lat && phase !== 'pickup') {
       return [draftBooking.pickup_lng!, draftBooking.pickup_lat!] as [number, number];
     }
     return DEFAULT_CENTER;
   }, []);
+
+  /* ── Auto-fill current location on pickup phase ── */
+  useEffect(() => {
+    if (phase !== 'pickup' || draftBooking.pickup_lat) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const { status } = await Location.requestForegroundPermissionsAsync();
+        if (status !== 'granted' || cancelled) return;
+        const loc = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
+        if (cancelled) return;
+        const coord: [number, number] = [loc.coords.longitude, loc.coords.latitude];
+        setUserLocation(coord);
+        setCurrentCoord(coord);
+        skipNextGeocode.current = true;
+        cameraRef.current?.setCamera({
+          centerCoordinate: coord,
+          zoomLevel: 16,
+          animationDuration: 800,
+        });
+        const addr = await reverseGeocode(coord[0], coord[1]);
+        if (!cancelled) setCurrentAddress(addr);
+      } catch {
+        // Location unavailable — keep default center
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [phase]);
 
   /* ── Render ── */
   return (
@@ -945,11 +975,11 @@ const st = StyleSheet.create({
   },
   pillActive: { backgroundColor: '#2563EB' },
   pillInactive: { backgroundColor: '#FFF', borderWidth: 1.5, borderColor: '#E2E8F0' },
-  pillText: { fontSize: 11, fontFamily: 'Poppins_700Bold', color: '#94A3B8' },
+  pillText: { fontSize: 11, fontFamily: 'Inter_600SemiBold', color: '#94A3B8' },
   pillTextActive: { color: '#FFF' },
   phaseTitle: {
     fontSize: 16,
-    fontFamily: 'Poppins_600SemiBold',
+    fontFamily: 'Inter_500Medium',
     color: '#0F172A',
     marginLeft: 12,
   },
@@ -973,7 +1003,7 @@ const st = StyleSheet.create({
   searchInput: {
     flex: 1,
     fontSize: 14,
-    fontFamily: 'Poppins_400Regular',
+    fontFamily: 'Inter_400Regular',
     color: '#0F172A',
     marginLeft: 10,
   },
@@ -1007,7 +1037,7 @@ const st = StyleSheet.create({
   searchResultText: {
     flex: 1,
     fontSize: 13,
-    fontFamily: 'Poppins_400Regular',
+    fontFamily: 'Inter_400Regular',
     color: '#0F172A',
   },
   myLocationBtn: {
@@ -1049,7 +1079,7 @@ const st = StyleSheet.create({
   },
   cardTitle: {
     fontSize: 17,
-    fontFamily: 'Poppins_600SemiBold',
+    fontFamily: 'Inter_500Medium',
     color: '#0F172A',
     marginBottom: 14,
   },
@@ -1074,7 +1104,7 @@ const st = StyleSheet.create({
   addressText: {
     flex: 1,
     fontSize: 14,
-    fontFamily: 'Poppins_400Regular',
+    fontFamily: 'Inter_400Regular',
     color: '#0F172A',
   },
   quickActions: {
@@ -1092,7 +1122,7 @@ const st = StyleSheet.create({
   },
   quickBtnText: {
     fontSize: 12,
-    fontFamily: 'Poppins_600SemiBold',
+    fontFamily: 'Inter_500Medium',
     color: '#2563EB',
     marginLeft: 6,
   },
@@ -1127,12 +1157,12 @@ const st = StyleSheet.create({
   routeAddr: {
     flex: 1,
     fontSize: 13,
-    fontFamily: 'Poppins_400Regular',
+    fontFamily: 'Inter_400Regular',
     color: '#0F172A',
   },
   changeLink: {
     fontSize: 11,
-    fontFamily: 'Poppins_600SemiBold',
+    fontFamily: 'Inter_500Medium',
     color: '#2563EB',
     marginLeft: 8,
   },
@@ -1150,7 +1180,7 @@ const st = StyleSheet.create({
   },
   contactToggleText: {
     fontSize: 12,
-    fontFamily: 'Poppins_600SemiBold',
+    fontFamily: 'Inter_500Medium',
     color: '#2563EB',
     marginLeft: 6,
     marginRight: 2,
@@ -1163,7 +1193,7 @@ const st = StyleSheet.create({
   },
   errorText: {
     fontSize: 12,
-    fontFamily: 'Poppins_400Regular',
+    fontFamily: 'Inter_400Regular',
     color: '#EF4444',
     marginBottom: 8,
   },

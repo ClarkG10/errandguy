@@ -5,7 +5,8 @@ export default function BookFlowLayout() {
     <Stack
       screenOptions={{
         headerShown: false,
-        animation: 'slide_from_right',
+        animation: 'fade_from_bottom',
+        animationDuration: 200,
       }}
     >
       <Stack.Screen name="type" />

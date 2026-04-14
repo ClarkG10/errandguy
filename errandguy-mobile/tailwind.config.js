@@ -1,5 +1,6 @@
 /** @type {import('tailwindcss').Config} */
 module.exports = {
+  darkMode: 'class',
   content: [
     './App.tsx',
     './src/**/*.{js,jsx,ts,tsx}',
@@ -56,9 +57,9 @@ module.exports = {
         dividerDark: '#1E293B',
       },
       fontFamily: {
-        montserrat: ['Poppins_400Regular'],
-        'montserrat-semi': ['Poppins_600SemiBold'],
-        'montserrat-bold': ['Poppins_700Bold'],
+        montserrat: ['Inter_400Regular'],
+        'montserrat-semi': ['Inter_500Medium'],
+        'montserrat-bold': ['Inter_600SemiBold'],
       },
       borderRadius: {
         sm: '8px',

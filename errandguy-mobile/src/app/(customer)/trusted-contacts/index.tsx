@@ -20,6 +20,7 @@ import {
   X,
 } from 'lucide-react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { userService } from '../../../services/user.service';
 import { Button } from '../../../components/ui/Button';
 import { Input } from '../../../components/ui/Input';
@@ -30,6 +31,7 @@ import type { TrustedContact } from '../../../types';
 
 const RELATIONSHIPS = ['Parent', 'Spouse', 'Sibling', 'Friend', 'Other'];
 const MAX_CONTACTS = 5;
+const CACHE_KEY = '@trusted_contacts_cache';
 
 export default function TrustedContactsScreen() {
   const router = useRouter();
@@ -44,20 +46,54 @@ export default function TrustedContactsScreen() {
   const [formPhone, setFormPhone] = useState('');
   const [formRelationship, setFormRelationship] = useState('Friend');
 
-  const fetchContacts = useCallback(async () => {
+  const saveCache = async (data: TrustedContact[]) => {
+    try {
+      await AsyncStorage.setItem(CACHE_KEY, JSON.stringify(data));
+    } catch {
+      // Non-critical
+    }
+  };
+
+  const loadCache = async (): Promise<TrustedContact[] | null> => {
+    try {
+      const raw = await AsyncStorage.getItem(CACHE_KEY);
+      return raw ? JSON.parse(raw) : null;
+    } catch {
+      return null;
+    }
+  };
+
+  const fetchContacts = useCallback(async (background = false) => {
+    if (!background) setLoading(true);
     try {
       const res = await userService.getTrustedContacts();
       const data = res.data.data ?? res.data ?? [];
-      setContacts(Array.isArray(data) ? data.sort((a: TrustedContact, b: TrustedContact) => a.priority - b.priority) : []);
+      const sorted = Array.isArray(data)
+        ? data.sort((a: TrustedContact, b: TrustedContact) => a.priority - b.priority)
+        : [];
+      setContacts(sorted);
+      await saveCache(sorted);
     } catch {
       // Handle error
     } finally {
-      setLoading(false);
+      if (!background) setLoading(false);
     }
   }, []);
 
   useEffect(() => {
-    fetchContacts();
+    // Load cached data instantly, then sync in background
+    const init = async () => {
+      const cached = await loadCache();
+      if (cached) {
+        setContacts(cached);
+        setLoading(false);
+        // Sync in background without showing skeleton
+        await fetchContacts(true);
+      } else {
+        await fetchContacts(false);
+      }
+    };
+    init();
   }, [fetchContacts]);
 
   const openAddModal = () => {
@@ -119,7 +155,7 @@ export default function TrustedContactsScreen() {
         await userService.addTrustedContact(payload);
       }
       setModalVisible(false);
-      await fetchContacts();
+      await fetchContacts(true);
     } catch (err: any) {
       Alert.alert('Error', err?.response?.data?.message ?? 'Failed to save contact');
     } finally {
@@ -139,7 +175,7 @@ export default function TrustedContactsScreen() {
           onPress: async () => {
             try {
               await userService.deleteTrustedContact(contact.id);
-              await fetchContacts();
+              await fetchContacts(true);
             } catch {
               Alert.alert('Error', 'Failed to remove contact');
             }

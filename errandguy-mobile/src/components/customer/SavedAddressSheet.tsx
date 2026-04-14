@@ -34,7 +34,7 @@ export function SavedAddressSheet({
     <BottomSheet isVisible={isVisible} onClose={onClose} snapPoints={[0.5]}>
       <View className="px-5 pb-6">
         <View className="flex-row items-center justify-between mb-4">
-          <Text className="text-lg font-montserrat-bold text-textPrimary">
+          <Text className="text-lg font-montserrat-semi text-textPrimary">
             Saved Addresses
           </Text>
           <Pressable onPress={onClose}>
@@ -73,7 +73,7 @@ export function SavedAddressSheet({
                   )}
                 </View>
                 <View className="flex-1">
-                  <Text className="text-sm font-montserrat-bold text-textPrimary">
+                  <Text className="text-sm font-montserrat-semi text-textPrimary">
                     {item.label}
                   </Text>
                   <Text

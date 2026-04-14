@@ -10,11 +10,12 @@ export default function CustomerTabsLayout() {
     <Tabs
       screenOptions={{
         headerShown: false,
+        animation: 'shift',
         tabBarActiveTintColor: '#2563EB',
         tabBarInactiveTintColor: '#94A3B8',
         tabBarShowLabel: true,
         tabBarLabelStyle: {
-          fontFamily: 'Poppins_600SemiBold',
+          fontFamily: 'Inter_500Medium',
           fontSize: 11,
           marginTop: 2,
         },

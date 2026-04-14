@@ -134,6 +134,10 @@ export default function ReviewScreen() {
     : 0;
 
   const handleSubmit = useCallback(async () => {
+    if (!draftBooking.errand_type_id || !draftBooking.pickup_address) {
+      Alert.alert('Missing Info', 'Please go back and complete all booking steps.');
+      return;
+    }
     setIsSubmitting(true);
     try {
       const payload = {
@@ -196,7 +200,7 @@ export default function ReviewScreen() {
         >
           <ArrowLeft size={20} color="#0F172A" />
         </Pressable>
-        <Text className="text-lg font-montserrat-bold text-textPrimary flex-1">
+        <Text className="text-lg font-montserrat-semi text-textPrimary flex-1">
           Review Booking
         </Text>
       </View>
@@ -320,7 +324,7 @@ export default function ReviewScreen() {
             {/* Price Breakdown */}
             {currentVehicleEstimate && (
               <View className="bg-surface rounded-2xl p-4 mb-4" style={reviewStyles.shadow}>
-                <Text className="text-sm font-montserrat-bold text-textPrimary mb-3">
+                <Text className="text-sm font-montserrat-semi text-textPrimary mb-3">
                   Price Breakdown
                 </Text>
                 <PriceBreakdown

@@ -66,7 +66,7 @@ export function BookingDetailSheet({
       <ScrollView className="px-5 pb-6" showsVerticalScrollIndicator={false}>
         {/* Header */}
         <View className="flex-row items-center justify-between mb-4">
-          <Text className="text-lg font-montserrat-bold text-textPrimary">
+          <Text className="text-lg font-montserrat-semi text-textPrimary">
             Booking Details
           </Text>
           <View
@@ -94,7 +94,7 @@ export function BookingDetailSheet({
               {formatTime(booking.created_at)}
             </Text>
           </View>
-          <Text className="text-sm font-montserrat-bold text-textPrimary mt-2">
+          <Text className="text-sm font-montserrat-semi text-textPrimary mt-2">
             {booking.errand_type?.name ?? 'Errand'}
           </Text>
         </View>
@@ -123,7 +123,7 @@ export function BookingDetailSheet({
 
         {/* Payment */}
         <View className="bg-surface border border-divider rounded-xl p-3 mb-4">
-          <Text className="text-sm font-montserrat-bold text-textPrimary mb-2">
+          <Text className="text-sm font-montserrat-semi text-textPrimary mb-2">
             Payment
           </Text>
           <PriceBreakdown items={priceItems} total={booking.total_amount} />

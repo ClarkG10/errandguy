@@ -6,7 +6,6 @@ export const authService = {
     email?: string;
     password: string;
     full_name: string;
-    role: 'customer' | 'runner';
   }) {
     return api.post('/auth/register', data);
   },

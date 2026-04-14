@@ -5,7 +5,6 @@ import {
   FlatList,
   RefreshControl,
   Pressable,
-  ScrollView,
 } from 'react-native';
 import { ClipboardList } from 'lucide-react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -94,37 +93,32 @@ export default function ActivityScreen() {
   return (
     <SafeAreaView className="flex-1 bg-background" edges={['top']}>
       <View className="px-5 pt-4 pb-2">
-        <Text className="text-lg font-montserrat-bold text-textPrimary">
+        <Text className="text-lg font-montserrat-semi text-textPrimary">
           Activity
         </Text>
       </View>
 
       {/* Filters */}
-      <ScrollView
-        horizontal
-        showsHorizontalScrollIndicator={false}
-        className="px-5 mb-3"
-        contentContainerStyle={{ gap: 8 }}
-      >
+      <View className="flex-row px-5 mb-3" style={{ gap: 6 }}>
         {FILTERS.map((f) => (
           <Pressable
             key={f.key}
-            className={`px-4 py-2 rounded-full ${
+            className={`px-3 py-1 rounded-lg ${
               filter === f.key ? 'bg-primary' : 'bg-surface'
             }`}
-            style={filter !== f.key ? { shadowColor: '#0F172A', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.04, shadowRadius: 6, elevation: 1 } : undefined}
+            style={filter !== f.key ? { borderWidth: 1, borderColor: '#E2E8F0' } : undefined}
             onPress={() => setFilter(f.key)}
           >
             <Text
-              className={`text-sm font-montserrat-semi ${
-                filter === f.key ? 'text-white' : 'text-textTertiary'
+              className={`text-xs font-montserrat-semi ${
+                filter === f.key ? 'text-white' : 'text-textSecondary'
               }`}
             >
               {f.label}
             </Text>
           </Pressable>
         ))}
-      </ScrollView>
+      </View>
 
       {/* Booking List */}
       <FlatList

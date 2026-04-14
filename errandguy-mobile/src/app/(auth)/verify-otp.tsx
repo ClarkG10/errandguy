@@ -2,7 +2,7 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { View, Text, Pressable } from 'react-native';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { ArrowLeft } from 'lucide-react-native';
+import { ChevronLeft } from 'lucide-react-native';
 import { OTPInput } from '../../components/ui/OTPInput';
 import { Button } from '../../components/ui/Button';
 import { Toast } from '../../components/ui/Toast';
@@ -97,17 +97,16 @@ export default function VerifyOTPScreen() {
       />
 
       <Pressable
-        className="mt-2 mb-6 w-9 h-9 rounded-xl bg-surface items-center justify-center"
-        style={{ shadowColor: '#0F172A', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.04, shadowRadius: 6, elevation: 1 }}
+        className="mt-2 mb-8 w-10 h-10 rounded-full items-center justify-center"
         onPress={() => router.back()}
       >
-        <ArrowLeft size={20} color="#0F172A" />
+        <ChevronLeft size={24} color="#0F172A" strokeWidth={2} />
       </Pressable>
 
-      <Text className="text-xl font-montserrat-bold text-textPrimary mb-1">
+      <Text className="text-[24px] font-montserrat-bold text-textPrimary mb-1 tracking-tight">
         Verify your {phone ? 'number' : 'email'}
       </Text>
-      <Text className="text-sm font-montserrat text-textTertiary mb-8">
+      <Text className="text-[15px] font-montserrat text-textTertiary mb-10">
         We sent a 6-digit code to {maskedIdentifier}
       </Text>
 
@@ -122,7 +121,7 @@ export default function VerifyOTPScreen() {
           <Pressable onPress={handleResend}>
             <Text className="text-sm font-montserrat text-textSecondary">
               Didn't receive it?{' '}
-              <Text className="text-primary font-montserrat-bold">Resend</Text>
+              <Text className="text-primary font-montserrat-semi">Resend</Text>
             </Text>
           </Pressable>
         )}

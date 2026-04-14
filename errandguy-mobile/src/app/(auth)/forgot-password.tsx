@@ -9,7 +9,7 @@ import {
 import { useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useForm, Controller } from 'react-hook-form';
-import { ArrowLeft, CheckCircle } from 'lucide-react-native';
+import { ChevronLeft } from 'lucide-react-native';
 import { Input } from '../../components/ui/Input';
 import { Button } from '../../components/ui/Button';
 import { Toast } from '../../components/ui/Toast';
@@ -61,7 +61,7 @@ export default function ForgotPasswordScreen() {
   };
 
   return (
-    <SafeAreaView className="flex-1 bg-surface px-6">
+    <SafeAreaView className="flex-1 bg-surface">
       <Toast
         message={toast.message}
         variant={toast.variant}
@@ -70,22 +70,19 @@ export default function ForgotPasswordScreen() {
       />
 
       <Pressable
-        className="mt-2 mb-6 w-9 h-9 rounded-xl bg-surface items-center justify-center"
-        style={{ shadowColor: '#0F172A', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.04, shadowRadius: 6, elevation: 1 }}
+        className="mt-2 ml-4 w-10 h-10 rounded-full items-center justify-center"
         onPress={() => router.back()}
       >
-        <ArrowLeft size={20} color="#0F172A" />
+        <ChevronLeft size={24} color="#0F172A" strokeWidth={2} />
       </Pressable>
 
       {sent ? (
-        <View className="flex-1 justify-center items-center">
-          <View className="w-16 h-16 rounded-2xl bg-primary50 items-center justify-center mb-4">
-            <CheckCircle size={28} color="#2563EB" />
-          </View>
-          <Text className="text-xl font-montserrat-bold text-textPrimary mb-2 text-center">
+        <View className="flex-1 justify-center items-center px-8">
+          <Text style={{ fontSize: 56, marginBottom: 20 }}>✉️</Text>
+          <Text className="text-2xl font-montserrat-semi text-textPrimary mb-2 text-center">
             Check your email
           </Text>
-          <Text className="text-sm font-montserrat text-textTertiary text-center mb-8">
+          <Text className="text-sm font-montserrat text-textTertiary text-center mb-10">
             We've sent a password reset link to your email. Please check your inbox.
           </Text>
           <Button
@@ -97,13 +94,13 @@ export default function ForgotPasswordScreen() {
         </View>
       ) : (
         <KeyboardAvoidingView
-          className="flex-1"
+          className="flex-1 px-6 pt-4"
           behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
         >
-          <Text className="text-xl font-montserrat-bold text-textPrimary mb-1">
+          <Text className="text-[24px] font-montserrat-semi text-textPrimary mb-1 tracking-tight">
             Reset password
           </Text>
-          <Text className="text-sm font-montserrat text-textTertiary mb-6">
+          <Text className="text-[15px] font-montserrat text-textTertiary mb-8">
             Enter your email and we'll send you a reset link.
           </Text>
 
@@ -132,6 +129,7 @@ export default function ForgotPasswordScreen() {
 
           <Button
             title="Send Reset Link"
+            loadingTitle="Sending.."
             fullWidth
             size="lg"
             loading={loading}
@@ -144,7 +142,7 @@ export default function ForgotPasswordScreen() {
           >
             <Text className="text-sm font-montserrat text-textSecondary">
               Remember your password?{' '}
-              <Text className="text-primary font-montserrat-bold">Back to Login</Text>
+              <Text className="text-primary font-montserrat-semi">Back to Login</Text>
             </Text>
           </Pressable>
         </KeyboardAvoidingView>

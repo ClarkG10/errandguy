@@ -7,6 +7,7 @@ interface DateTimePickerProps {
   onChange: (isoString: string) => void;
 }
 
+// 30-min intervals from 6:00 AM to 10:00 PM
 const TIME_SLOTS = Array.from({ length: 33 }, (_, i) => {
   const hour = 6 + Math.floor(i / 2);
   const minute = i % 2 === 0 ? '00' : '30';
@@ -16,10 +17,11 @@ const TIME_SLOTS = Array.from({ length: 33 }, (_, i) => {
 export function DateTimePicker({ value, onChange }: DateTimePickerProps) {
   const selectedDate = value ? dayjs(value) : null;
 
+  // Show 14 days ahead for more flexibility
   const dates = useMemo(() => {
     const result: dayjs.Dayjs[] = [];
-    for (let i = 1; i <= 7; i++) {
-      result.push(dayjs().add(i, 'day'));
+    for (let i = 0; i <= 13; i++) {
+      result.push(dayjs().add(i + 1, 'day'));
     }
     return result;
   }, []);
@@ -54,14 +56,14 @@ export function DateTimePicker({ value, onChange }: DateTimePickerProps) {
   return (
     <View>
       {/* Date Selection */}
-      <Text className="text-sm font-montserrat-bold text-textPrimary mb-2">
+      <Text className="text-sm font-montserrat-semi text-textPrimary mb-2">
         Select Date
       </Text>
       <ScrollView
         horizontal
         showsHorizontalScrollIndicator={false}
-        className="mb-4"
-        contentContainerStyle={{ gap: 10 }}
+        className="mb-5"
+        contentContainerStyle={{ gap: 8 }}
       >
         {dates.map((date) => {
           const isSelected =
@@ -69,22 +71,22 @@ export function DateTimePicker({ value, onChange }: DateTimePickerProps) {
           return (
             <Pressable
               key={date.format('YYYY-MM-DD')}
-              className={`px-4 py-3 rounded-xl border items-center min-w-[70px] ${
+              className={`px-3 py-2.5 rounded-xl items-center min-w-[60px] ${
                 isSelected
-                  ? 'bg-primary border-primary'
-                  : 'bg-surface border-divider'
+                  ? 'bg-primary'
+                  : 'bg-surface border border-divider'
               }`}
               onPress={() => handleDateSelect(date)}
             >
               <Text
                 className={`text-[10px] font-montserrat ${
-                  isSelected ? 'text-white/80' : 'text-textSecondary'
+                  isSelected ? 'text-white/70' : 'text-textTertiary'
                 }`}
               >
                 {date.format('ddd')}
               </Text>
               <Text
-                className={`text-lg font-montserrat-bold ${
+                className={`text-base font-montserrat-semi ${
                   isSelected ? 'text-white' : 'text-textPrimary'
                 }`}
               >
@@ -92,7 +94,7 @@ export function DateTimePicker({ value, onChange }: DateTimePickerProps) {
               </Text>
               <Text
                 className={`text-[10px] font-montserrat ${
-                  isSelected ? 'text-white/80' : 'text-textSecondary'
+                  isSelected ? 'text-white/70' : 'text-textTertiary'
                 }`}
               >
                 {date.format('MMM')}
@@ -103,40 +105,43 @@ export function DateTimePicker({ value, onChange }: DateTimePickerProps) {
       </ScrollView>
 
       {/* Time Selection */}
-      <Text className="text-sm font-montserrat-bold text-textPrimary mb-2">
+      <Text className="text-sm font-montserrat-semi text-textPrimary mb-2">
         Select Time
       </Text>
-      <View className="flex-row flex-wrap gap-2">
-        {TIME_SLOTS.map((time) => {
-          const isSelected = pickedTime === time;
-          return (
-            <Pressable
-              key={time}
-              className={`px-3 py-2 rounded-lg border ${
-                isSelected
-                  ? 'bg-primary border-primary'
-                  : 'bg-surface border-divider'
-              }`}
-              onPress={() => handleTimeSelect(time)}
-            >
-              <Text
-                className={`text-xs font-montserrat ${
-                  isSelected ? 'text-white' : 'text-textPrimary'
+      <ScrollView style={{ maxHeight: 240 }} showsVerticalScrollIndicator={false}>
+        <View className="flex-row flex-wrap" style={{ gap: 8 }}>
+          {TIME_SLOTS.map((time) => {
+            const isSelected = pickedTime === time;
+            return (
+              <Pressable
+                key={time}
+                className={`rounded-lg items-center justify-center ${
+                  isSelected
+                    ? 'bg-primary'
+                    : 'bg-surface border border-divider'
                 }`}
+                style={{ paddingHorizontal: 12, paddingVertical: 8, minWidth: 76 }}
+                onPress={() => handleTimeSelect(time)}
               >
-                {dayjs().hour(parseInt(time.split(':')[0], 10)).minute(parseInt(time.split(':')[1], 10)).format('h:mm A')}
-              </Text>
-            </Pressable>
-          );
-        })}
-      </View>
+                <Text
+                  className={`text-xs font-montserrat ${
+                    isSelected ? 'text-white' : 'text-textPrimary'
+                  }`}
+                >
+                  {dayjs().hour(parseInt(time.split(':')[0], 10)).minute(parseInt(time.split(':')[1], 10)).format('h:mm A')}
+                </Text>
+              </Pressable>
+            );
+          })}
+        </View>
+      </ScrollView>
 
       {/* Summary */}
       {pickedDate && pickedTime && (
         <View className="mt-4 p-3 bg-primaryLight rounded-xl">
           <Text className="text-sm font-montserrat text-primary text-center">
             Scheduled for{' '}
-            <Text className="font-montserrat-bold">
+            <Text className="font-montserrat-semi">
               {pickedDate.format('MMMM D, YYYY')} at{' '}
               {dayjs()
                 .hour(parseInt(pickedTime.split(':')[0], 10))

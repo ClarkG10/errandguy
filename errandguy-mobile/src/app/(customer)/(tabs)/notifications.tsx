@@ -137,43 +137,47 @@ export default function NotificationsScreen() {
 
       return (
         <Pressable
-          className={`flex-row px-5 py-3.5 ${
-            !item.is_read ? 'bg-primary50' : ''
-          }`}
+          className="mx-5 mb-2 rounded-2xl bg-surface px-4 py-3.5"
+          style={{
+            borderWidth: 1,
+            borderColor: !item.is_read ? '#DBEAFE' : '#F1F5F9',
+          }}
           onPress={() => handleNotificationPress(item)}
         >
-          {/* Unread dot */}
-          {!item.is_read && (
-            <View className="w-2 h-2 rounded-full bg-primary mt-2 mr-2" />
-          )}
-          {item.is_read && <View className="w-2 mr-2" />}
-
-          {/* Icon */}
-          <View
-            className="w-10 h-10 rounded-xl items-center justify-center mr-3"
-            style={{ backgroundColor: color + '15' }}
-          >
-            <Icon size={18} color={color} />
-          </View>
-
-          {/* Content */}
-          <View className="flex-1">
-            <Text
-              className={`text-sm font-montserrat${
-                !item.is_read ? '-bold' : ''
-              } text-textPrimary`}
+          <View className="flex-row">
+            {/* Icon */}
+            <View
+              className="w-9 h-9 rounded-full items-center justify-center mr-3"
+              style={{ backgroundColor: color + '12' }}
             >
-              {item.title}
-            </Text>
-            <Text
-              className="text-xs font-montserrat text-textTertiary mt-0.5"
-              numberOfLines={2}
-            >
-              {item.body}
-            </Text>
-            <Text className="text-[10px] font-montserrat text-textTertiary mt-1">
-              {formatRelativeTime(item.created_at)}
-            </Text>
+              <Icon size={16} color={color} />
+            </View>
+
+            {/* Content */}
+            <View className="flex-1">
+              <View className="flex-row items-center justify-between mb-0.5">
+                <Text
+                  className={`text-[13px] ${
+                    !item.is_read ? 'font-montserrat-semi' : 'font-montserrat'
+                  } text-textPrimary flex-1 mr-2`}
+                  numberOfLines={1}
+                >
+                  {item.title}
+                </Text>
+                {!item.is_read && (
+                  <View className="w-2 h-2 rounded-full bg-primary" />
+                )}
+              </View>
+              <Text
+                className="text-xs font-montserrat text-textTertiary leading-4"
+                numberOfLines={2}
+              >
+                {item.body}
+              </Text>
+              <Text className="text-[10px] font-montserrat text-textTertiary mt-1.5 opacity-60">
+                {formatRelativeTime(item.created_at)}
+              </Text>
+            </View>
           </View>
         </Pressable>
       );
@@ -184,13 +188,13 @@ export default function NotificationsScreen() {
   return (
     <SafeAreaView className="flex-1 bg-background" edges={['top']}>
       {/* Header */}
-      <View className="flex-row items-center justify-between px-5 pt-4 pb-2">
-        <Text className="text-lg font-montserrat-bold text-textPrimary">
+      <View className="flex-row items-center justify-between px-5 pt-4 pb-3">
+        <Text className="text-lg font-montserrat-semi text-textPrimary">
           Notifications
         </Text>
         {notifications.length > 0 && (
-          <Pressable onPress={handleMarkAllRead}>
-            <Text className="text-xs font-montserrat-semi text-primary">
+          <Pressable onPress={handleMarkAllRead} className="px-3 py-1.5 rounded-lg bg-primary50">
+            <Text className="text-[11px] font-montserrat-semi text-primary">
               Mark all read
             </Text>
           </Pressable>
@@ -208,6 +212,7 @@ export default function NotificationsScreen() {
         maxToRenderPerBatch={10}
         windowSize={5}
         removeClippedSubviews={true}
+        contentContainerStyle={{ paddingTop: 4, paddingBottom: 100 }}
         ListEmptyComponent={
           <EmptyState
             icon={Bell}

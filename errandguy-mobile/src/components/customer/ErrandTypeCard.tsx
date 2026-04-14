@@ -29,7 +29,7 @@ export const ErrandTypeCard = memo(function ErrandTypeCard({
     >
       <Icon size={28} color={selected ? '#2563EB' : '#475569'} />
       <Text
-        className={`text-xs font-montserrat-bold mt-2 text-center ${
+        className={`text-xs font-montserrat-semi mt-2 text-center ${
           selected ? 'text-primary' : 'text-textPrimary'
         }`}
         numberOfLines={2}

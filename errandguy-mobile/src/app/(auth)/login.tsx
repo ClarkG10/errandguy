@@ -11,24 +11,26 @@ import {
 import { useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useForm, Controller } from 'react-hook-form';
-import { ArrowLeft } from 'lucide-react-native';
+import { ChevronLeft } from 'lucide-react-native';
 import { Input } from '../../components/ui/Input';
 import { Button } from '../../components/ui/Button';
 import { Toast } from '../../components/ui/Toast';
+import { SocialLoginButton } from '../../components/auth/SocialLoginButton';
 import { useAuth } from '../../hooks/useAuth';
-
-type LoginMode = 'phone' | 'email';
+import { useAuthStore } from '../../stores/authStore';
 
 interface LoginFormData {
-  phone: string;
-  email: string;
+  identifier: string;
   password: string;
 }
+
+const isPhone = (val: string) => /^(\+63|0)9\d{9}$/.test(val.trim());
+const isEmail = (val: string) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(val.trim());
 
 export default function LoginScreen() {
   const router = useRouter();
   const { login } = useAuth();
-  const [mode, setMode] = useState<LoginMode>('phone');
+  const onboardingSeen = useAuthStore((s) => s.onboardingSeen);
   const [loading, setLoading] = useState(false);
   const [toast, setToast] = useState<{ visible: boolean; message: string; variant: 'success' | 'error' | 'info' | 'warning' }>({ visible: false, message: '', variant: 'error' });
 
@@ -37,16 +39,16 @@ export default function LoginScreen() {
     handleSubmit,
     formState: { errors },
   } = useForm<LoginFormData>({
-    defaultValues: { phone: '', email: '', password: '' },
+    defaultValues: { identifier: '', password: '' },
   });
 
   const onSubmit = async (data: LoginFormData) => {
     setLoading(true);
     try {
-      const loginData =
-        mode === 'phone'
-          ? { phone: data.phone, password: data.password }
-          : { email: data.email, password: data.password };
+      const id = data.identifier.trim();
+      const loginData = isPhone(id)
+        ? { phone: id, password: data.password }
+        : { email: id, password: data.password };
       await login(loginData);
     } catch (error: any) {
       const status = error?.response?.status;
@@ -92,108 +94,58 @@ export default function LoginScreen() {
       >
         <ScrollView
           className="flex-1"
-          contentContainerStyle={{ paddingHorizontal: 24 }}
+          contentContainerStyle={{ flexGrow: 1, paddingHorizontal: 24 }}
           keyboardShouldPersistTaps="handled"
         >
-          <TouchableOpacity
-            cssInterop={false}
-            style={s.backBtn}
-            activeOpacity={0.6}
-            onPress={() => router.back()}
-          >
-            <ArrowLeft size={20} color="#0F172A" />
-          </TouchableOpacity>
+          {/* Back — only show if onboarding not yet completed */}
+          {!onboardingSeen && (
+            <TouchableOpacity
+              cssInterop={false}
+              style={s.backBtn}
+              activeOpacity={0.6}
+              onPress={() => router.back()}
+            >
+              <ChevronLeft size={24} color="#0F172A" strokeWidth={2} />
+            </TouchableOpacity>
+          )}
+          {onboardingSeen && <View style={{ height: 48 }} />}
 
-          <Text className="text-xl font-montserrat-bold text-textPrimary mb-1">
+          {/* Header */}
+          <Text className="text-[28px] font-montserrat-bold text-textPrimary mb-1 tracking-tight">
             Welcome back
           </Text>
-          <Text className="text-sm font-montserrat text-textTertiary mb-6">
-            Log in to your account
+          <Text className="text-[15px] font-montserrat text-textTertiary mb-10">
+            Sign in with your phone number or email
           </Text>
 
-          {/* Mode toggle */}
-          <View style={s.toggleRow}>
-            <TouchableOpacity
-              cssInterop={false}
-              style={[s.tab, mode === 'phone' && s.tabActive]}
-              activeOpacity={0.7}
-              onPress={() => setMode('phone')}
-            >
-              <Text
-                cssInterop={false}
-                style={[s.tabText, mode === 'phone' && s.tabTextActive]}
-              >
-                Phone
-              </Text>
-            </TouchableOpacity>
-            <TouchableOpacity
-              cssInterop={false}
-              style={[s.tab, mode === 'email' && s.tabActive]}
-              activeOpacity={0.7}
-              onPress={() => setMode('email')}
-            >
-              <Text
-                cssInterop={false}
-                style={[s.tabText, mode === 'email' && s.tabTextActive]}
-              >
-                Email
-              </Text>
-            </TouchableOpacity>
-          </View>
-
-          {mode === 'phone' ? (
-            <Controller
-              control={control}
-              name="phone"
-              rules={{
-                required: 'Phone number is required',
-                pattern: {
-                  value: /^(\+63|0)9\d{9}$/,
-                  message: 'Enter a valid PH phone number',
-                },
-              }}
-              render={({ field: { onChange, value } }) => (
-                <Input
-                  label="Phone Number"
-                  value={value}
-                  onChangeText={onChange}
-                  placeholder="09XXXXXXXXX"
-                  keyboardType="phone-pad"
-                  error={errors.phone?.message}
-                />
-              )}
-            />
-          ) : (
-            <Controller
-              control={control}
-              name="email"
-              rules={{
-                required: 'Email is required',
-                pattern: {
-                  value: /^[^\s@]+@[^\s@]+\.[^\s@]+$/,
-                  message: 'Enter a valid email',
-                },
-              }}
-              render={({ field: { onChange, value } }) => (
-                <Input
-                  label="Email"
-                  value={value}
-                  onChangeText={onChange}
-                  placeholder="you@example.com"
-                  keyboardType="email-address"
-                  autoCapitalize="none"
-                  error={errors.email?.message}
-                />
-              )}
-            />
-          )}
+          {/* Identifier — auto-detects phone or email */}
+          <Controller
+            control={control}
+            name="identifier"
+            rules={{
+              required: 'Phone or email is required',
+              validate: (val) =>
+                isPhone(val) || isEmail(val) || 'Enter a valid phone or email',
+            }}
+            render={({ field: { onChange, value } }) => (
+              <Input
+                label="Phone or Email"
+                value={value}
+                onChangeText={onChange}
+                placeholder="09XXXXXXXXX or you@email.com"
+                keyboardType="email-address"
+                autoCapitalize="none"
+                error={errors.identifier?.message}
+              />
+            )}
+          />
 
           <Controller
             control={control}
             name="password"
             rules={{
               required: 'Password is required',
-              minLength: { value: 8, message: 'Password must be at least 8 characters' },
+              minLength: { value: 8, message: 'At least 8 characters' },
             }}
             render={({ field: { onChange, value } }) => (
               <Input
@@ -219,12 +171,29 @@ export default function LoginScreen() {
           </TouchableOpacity>
 
           <Button
-            title="Log In"
+            title="Login"
+            loadingTitle="Logging in.."
             fullWidth
             size="lg"
             loading={loading}
             onPress={handleSubmit(onSubmit)}
           />
+
+          {/* Social Login */}
+          <View style={s.dividerRow}>
+            <View style={s.dividerLine} />
+            <Text cssInterop={false} style={s.dividerText}>or</Text>
+            <View style={s.dividerLine} />
+          </View>
+
+          <View style={s.socialRow}>
+            <SocialLoginButton provider="google" onPress={() => {}} />
+            <SocialLoginButton provider="facebook" onPress={() => {}} />
+            <SocialLoginButton provider="apple" onPress={() => {}} />
+          </View>
+
+          {/* Spacer pushes signup link toward bottom */}
+          <View style={{ flex: 1 }} />
 
           <TouchableOpacity
             cssInterop={false}
@@ -246,47 +215,36 @@ export default function LoginScreen() {
 const s = StyleSheet.create({
   backBtn: {
     marginTop: 8,
-    marginBottom: 24,
+    marginBottom: 32,
     alignSelf: 'flex-start',
-    width: 36,
-    height: 36,
-    borderRadius: 12,
-    backgroundColor: '#F8FAFC',
+    width: 40,
+    height: 40,
+    borderRadius: 20,
     alignItems: 'center',
     justifyContent: 'center',
-    shadowColor: '#0F172A',
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.04,
-    shadowRadius: 6,
-    elevation: 1,
   },
-  toggleRow: {
+  forgotBtn: { alignSelf: 'flex-end', marginBottom: 28, padding: 4 },
+  forgotText: { fontSize: 14, fontFamily: 'Inter_500Medium', color: '#2563EB' },
+  dividerRow: {
     flexDirection: 'row',
-    backgroundColor: '#F1F5F9',
-    borderRadius: 16,
-    padding: 4,
+    alignItems: 'center',
+    marginTop: 24,
     marginBottom: 24,
   },
-  tab: {
-    flex: 1,
-    paddingVertical: 10,
-    borderRadius: 12,
-    alignItems: 'center',
+  dividerLine: { flex: 1, height: 1, backgroundColor: '#E2E8F0' },
+  dividerText: {
+    fontSize: 13,
+    fontFamily: 'Inter_400Regular',
+    color: '#94A3B8',
+    marginHorizontal: 16,
   },
-  tabActive: {
-    backgroundColor: '#2563EB',
+  socialRow: {
+    flexDirection: 'row',
+    justifyContent: 'center',
+    gap: 16,
+    marginBottom: 8,
   },
-  tabText: {
-    fontSize: 14,
-    fontFamily: 'Poppins_700Bold',
-    color: '#64748B',
-  },
-  tabTextActive: {
-    color: '#FFFFFF',
-  },
-  forgotBtn: { alignSelf: 'flex-end', marginBottom: 24, padding: 4 },
-  forgotText: { fontSize: 14, fontFamily: 'Poppins_600SemiBold', color: '#2563EB' },
-  signupLink: { alignItems: 'center', marginTop: 24, marginBottom: 32, padding: 8 },
-  signupText: { fontSize: 14, fontFamily: 'Poppins_400Regular', color: '#64748B' },
-  signupBold: { color: '#2563EB', fontFamily: 'Poppins_700Bold' },
+  signupLink: { alignItems: 'center', marginBottom: 32, padding: 8 },
+  signupText: { fontSize: 14, fontFamily: 'Inter_400Regular', color: '#64748B' },
+  signupBold: { color: '#2563EB', fontFamily: 'Inter_600SemiBold' },
 });

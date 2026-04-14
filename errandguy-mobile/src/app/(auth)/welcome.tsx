@@ -3,7 +3,6 @@ import { View, Text, FlatList, TouchableOpacity, useWindowDimensions, StyleSheet
 import { useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import * as Location from 'expo-location';
 import * as Haptics from 'expo-haptics';
 import { OnboardingSlide } from '../../components/auth/OnboardingSlide';
 import { DotIndicator } from '../../components/auth/DotIndicator';
@@ -42,16 +41,14 @@ export default function WelcomeScreen() {
   const handleSkip = useCallback(async () => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     await AsyncStorage.setItem('@onboarding_seen', 'true');
-    await Location.requestForegroundPermissionsAsync();
-    router.push('/(auth)/login');
+    router.push('/(auth)/permissions');
   }, [router]);
 
   const handleNext = useCallback(async () => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     if (activeIndex === slides.length - 1) {
       await AsyncStorage.setItem('@onboarding_seen', 'true');
-      await Location.requestForegroundPermissionsAsync();
-      router.push('/(auth)/login');
+      router.push('/(auth)/permissions');
     } else {
       flatListRef.current?.scrollToIndex({ index: activeIndex + 1 });
     }
@@ -125,7 +122,7 @@ export default function WelcomeScreen() {
         >
           <Text cssInterop={false} style={ws.loginText}>
             Already have an account?{' '}
-            <Text cssInterop={false} style={ws.loginBold}>Log In</Text>
+            <Text cssInterop={false} style={ws.loginBold}>Login</Text>
           </Text>
         </TouchableOpacity>
       </View>
@@ -135,8 +132,8 @@ export default function WelcomeScreen() {
 
 const ws = StyleSheet.create({
   skipBtn: { padding: 8 },
-  skipText: { fontSize: 14, fontFamily: 'Poppins_600SemiBold', color: '#2563EB' },
+  skipText: { fontSize: 14, fontFamily: 'Inter_500Medium', color: '#2563EB' },
   loginLink: { marginTop: 16, alignItems: 'center', padding: 8 },
-  loginText: { fontSize: 14, fontFamily: 'Poppins_400Regular', color: '#64748B' },
-  loginBold: { color: '#2563EB', fontFamily: 'Poppins_700Bold' },
+  loginText: { fontSize: 14, fontFamily: 'Inter_400Regular', color: '#64748B' },
+  loginBold: { color: '#2563EB', fontFamily: 'Inter_600SemiBold' },
 });

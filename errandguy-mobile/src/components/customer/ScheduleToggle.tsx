@@ -25,7 +25,7 @@ export function ScheduleToggle({ value, onChange }: ScheduleToggleProps) {
           fill={value === 'now' ? '#2563EB' : 'transparent'}
         />
         <Text
-          className={`text-base font-montserrat-bold mt-3 ${
+          className={`text-base font-montserrat-semi mt-3 ${
             value === 'now' ? 'text-primary' : 'text-textPrimary'
           }`}
         >
@@ -49,7 +49,7 @@ export function ScheduleToggle({ value, onChange }: ScheduleToggleProps) {
           color={value === 'scheduled' ? '#2563EB' : '#94A3B8'}
         />
         <Text
-          className={`text-base font-montserrat-bold mt-3 ${
+          className={`text-base font-montserrat-semi mt-3 ${
             value === 'scheduled' ? 'text-primary' : 'text-textPrimary'
           }`}
         >

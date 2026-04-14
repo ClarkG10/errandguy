@@ -1,4 +1,5 @@
 import { create } from 'zustand';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { secureStorage } from '../utils/storage';
 import type { User, UserRole } from '../types';
 
@@ -8,6 +9,7 @@ interface AuthState {
   isAuthenticated: boolean;
   isLoading: boolean;
   role: UserRole | null;
+  onboardingSeen: boolean;
 
   setUser: (user: User | null) => void;
   setToken: (token: string | null) => Promise<void>;
@@ -22,6 +24,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
   isAuthenticated: false,
   isLoading: true,
   role: null,
+  onboardingSeen: false,
 
   setUser: (user) =>
     set({
@@ -51,10 +54,14 @@ export const useAuthStore = create<AuthState>((set, get) => ({
 
   loadFromStorage: async () => {
     set({ isLoading: true });
-    const token = await secureStorage.get('auth_token');
+    const [token, onboardingSeen] = await Promise.all([
+      secureStorage.get('auth_token'),
+      AsyncStorage.getItem('@onboarding_seen'),
+    ]);
     set({
       token,
       isAuthenticated: !!token,
+      onboardingSeen: onboardingSeen === 'true',
       isLoading: false,
     });
   },

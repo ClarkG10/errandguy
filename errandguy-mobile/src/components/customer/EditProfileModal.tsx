@@ -69,7 +69,7 @@ export function EditProfileModal({ visible, onClose }: EditProfileModalProps) {
     <Modal visible={visible} animationType="slide" presentationStyle="pageSheet">
       <View className="flex-1 bg-background">
         <View className="flex-row items-center justify-between px-5 py-4 border-b border-divider">
-          <Text className="text-lg font-montserrat-bold text-textPrimary">
+          <Text className="text-lg font-montserrat-semi text-textPrimary">
             Edit Profile
           </Text>
           <Pressable onPress={onClose}>

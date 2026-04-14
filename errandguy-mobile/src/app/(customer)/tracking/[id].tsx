@@ -223,7 +223,7 @@ export default function TrackingScreen() {
   if (!booking) {
     return (
       <SafeAreaView className="flex-1 bg-background items-center justify-center px-8">
-        <Text className="text-lg font-montserrat-bold text-textPrimary">
+        <Text className="text-lg font-montserrat-semi text-textPrimary">
           Booking not found
         </Text>
         <View className="mt-4">
@@ -267,7 +267,7 @@ export default function TrackingScreen() {
               <ArrowLeft size={20} color="#0F172A" />
             </Pressable>
             <View className="flex-1 bg-white/90 rounded-full px-4 py-2 shadow-sm">
-              <Text className="text-sm font-montserrat-bold text-textPrimary" numberOfLines={1}>
+              <Text className="text-sm font-montserrat-semi text-textPrimary" numberOfLines={1}>
                 {STATUS_LABELS[booking.status]}
               </Text>
               <Text className="text-[10px] font-montserrat text-textSecondary">

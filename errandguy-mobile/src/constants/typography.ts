@@ -1,7 +1,7 @@
 export const FontFamily = {
-  regular: 'Poppins_400Regular',
-  semi: 'Poppins_600SemiBold',
-  bold: 'Poppins_700Bold',
+  regular: 'Inter_400Regular',
+  semi: 'Inter_500Medium',
+  bold: 'Inter_600SemiBold',
 } as const;
 
 export const FontSize = {

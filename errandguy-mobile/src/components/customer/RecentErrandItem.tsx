@@ -25,7 +25,7 @@ export const RecentErrandItem = memo(function RecentErrandItem({ booking, onPres
         <Package size={18} color="#2563EB" />
       </View>
       <View className="flex-1">
-        <Text className="text-sm font-montserrat-bold text-textPrimary" numberOfLines={1}>
+        <Text className="text-sm font-montserrat-semi text-textPrimary" numberOfLines={1}>
           {booking.errand_type?.name ?? 'Errand'}
         </Text>
         <Text className="text-[11px] font-montserrat text-textTertiary mt-0.5">

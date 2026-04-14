@@ -41,7 +41,6 @@ export function useAuth() {
       email?: string;
       password: string;
       full_name: string;
-      role: 'customer' | 'runner';
     }) => {
       const response = await authService.register(data);
       const { user: userData, token: authToken } = response.data;

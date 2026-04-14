@@ -13,11 +13,11 @@
     "postinstall": "npx patch-package"
   },
   "dependencies": {
+    "@expo-google-fonts/inter": "^0.4.2",
     "@expo-google-fonts/lato": "^0.4.1",
     "@expo-google-fonts/montserrat": "^0.4.2",
     "@expo-google-fonts/nunito": "^0.4.2",
     "@expo-google-fonts/outfit": "^0.4.3",
-    "@expo-google-fonts/poppins": "^0.4.1",
     "@expo/metro-runtime": "~55.0.9",
     "@react-native-async-storage/async-storage": "2.2.0",
     "@react-native-community/slider": "5.1.2",
@@ -27,6 +27,7 @@
     "dayjs": "^1.11.20",
     "expo": "~55.0.8",
     "expo-camera": "~55.0.11",
+    "expo-contacts": "~55.0.13",
     "expo-crypto": "~55.0.10",
     "expo-dev-client": "~55.0.23",
     "expo-device": "~55.0.10",

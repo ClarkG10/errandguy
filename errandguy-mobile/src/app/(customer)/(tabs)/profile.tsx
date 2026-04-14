@@ -15,6 +15,7 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import * as Haptics from 'expo-haptics';
 import { useAuthStore } from '../../../stores/authStore';
+import { useAuth } from '../../../hooks/useAuth';
 import { userService } from '../../../services/user.service';
 import { Avatar } from '../../../components/ui/Avatar';
 import { Card } from '../../../components/ui/Card';
@@ -25,7 +26,8 @@ import { formatCurrency } from '../../../utils/formatCurrency';
 
 export default function ProfileScreen() {
   const router = useRouter();
-  const { user, logout } = useAuthStore();
+  const { user } = useAuthStore();
+  const { logout } = useAuth();
   const [showEditModal, setShowEditModal] = useState(false);
   const [showDeleteModal, setShowDeleteModal] = useState(false);
   const [deleteConfirmText, setDeleteConfirmText] = useState('');
@@ -38,15 +40,12 @@ export default function ProfileScreen() {
         text: 'Logout',
         style: 'destructive',
         onPress: async () => {
-          try {
-            await logout();
-          } finally {
-            router.replace('/(auth)/welcome');
-          }
+          await logout();
+          // Root layout will auto-redirect to auth when isAuthenticated becomes false
         },
       },
     ]);
-  }, [logout, router]);
+  }, [logout]);
 
   const handleDeleteAccount = useCallback(async () => {
     if (deleteConfirmText !== 'DELETE') return;
@@ -75,7 +74,7 @@ export default function ProfileScreen() {
             name={user?.full_name}
             size="xl"
           />
-          <Text className="text-lg font-montserrat-bold text-textPrimary mt-3">
+          <Text className="text-lg font-montserrat-semi text-textPrimary mt-3">
             {user?.full_name}
           </Text>
           {user?.email && (
@@ -100,7 +99,7 @@ export default function ProfileScreen() {
 
         {/* Account Section */}
         <View className="px-5 mb-4">
-          <Text className="text-[11px] font-montserrat-bold text-textTertiary uppercase tracking-wider mb-2 ml-1">
+          <Text className="text-[11px] font-montserrat-semi text-textTertiary uppercase tracking-wider mb-2 ml-1">
             Account
           </Text>
           <Card>
@@ -126,7 +125,7 @@ export default function ProfileScreen() {
 
         {/* Payment Section */}
         <View className="px-5 mb-4">
-          <Text className="text-[11px] font-montserrat-bold text-textTertiary uppercase tracking-wider mb-2 ml-1">
+          <Text className="text-[11px] font-montserrat-semi text-textTertiary uppercase tracking-wider mb-2 ml-1">
             Payment
           </Text>
           <Card>
@@ -146,7 +145,7 @@ export default function ProfileScreen() {
 
         {/* Support Section */}
         <View className="px-5 mb-4">
-          <Text className="text-[11px] font-montserrat-bold text-textTertiary uppercase tracking-wider mb-2 ml-1">
+          <Text className="text-[11px] font-montserrat-semi text-textTertiary uppercase tracking-wider mb-2 ml-1">
             Support
           </Text>
           <Card>
@@ -198,13 +197,13 @@ export default function ProfileScreen() {
             onPress={() => {}}
           >
             <View className="w-10 h-1 rounded-full bg-divider self-center mb-5" />
-            <Text className="text-base font-montserrat-bold text-textPrimary mb-1">
+            <Text className="text-base font-montserrat-semi text-textPrimary mb-1">
               Delete your account?
             </Text>
             <Text className="text-sm font-montserrat text-textTertiary mb-5">
               This can't be undone. Your bookings, wallet, and data will be permanently removed.
             </Text>
-            <Text className="text-xs font-montserrat-bold text-textSecondary mb-2">
+            <Text className="text-xs font-montserrat-semi text-textSecondary mb-2">
               Type DELETE to confirm
             </Text>
             <View className="border border-divider rounded-xl px-4 h-12 justify-center mb-5 bg-background">
@@ -214,7 +213,7 @@ export default function ProfileScreen() {
                 placeholder="DELETE"
                 placeholderTextColor="#CBD5E1"
                 autoCapitalize="characters"
-                style={{ fontFamily: 'Poppins_400Regular', fontSize: 15, color: '#0F172A' }}
+                style={{ fontFamily: 'Inter_400Regular', fontSize: 15, color: '#0F172A' }}
               />
             </View>
             <Button
@@ -229,7 +228,7 @@ export default function ProfileScreen() {
               className="mt-3 py-3 items-center"
               onPress={() => { setShowDeleteModal(false); setDeleteConfirmText(''); }}
             >
-              <Text className="text-sm font-montserrat-bold text-textTertiary">Cancel</Text>
+              <Text className="text-sm font-montserrat-semi text-textTertiary">Cancel</Text>
             </Pressable>
           </Pressable>
         </Pressable>

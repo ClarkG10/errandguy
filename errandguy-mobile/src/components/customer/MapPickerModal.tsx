@@ -124,7 +124,7 @@ export function MapPickerModal({
           <Pressable onPress={onClose} className="w-10 h-10 items-center justify-center">
             <X size={22} color="#0F172A" />
           </Pressable>
-          <Text className="flex-1 text-lg font-montserrat-bold text-textPrimary text-center mr-10">
+          <Text className="flex-1 text-lg font-montserrat-semi text-textPrimary text-center mr-10">
             {title}
           </Text>
         </View>
@@ -229,7 +229,7 @@ export function MapPickerModal({
               <Text className="text-xs font-montserrat text-textSecondary mb-1">
                 Selected Location
               </Text>
-              <Text className="text-sm font-montserrat-bold text-textPrimary" numberOfLines={2}>
+              <Text className="text-sm font-montserrat-semi text-textPrimary" numberOfLines={2}>
                 {address}
               </Text>
             </View>

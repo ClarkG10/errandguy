@@ -32,7 +32,7 @@ const ICON_MAP: Record<string, LucideIcon> = {
 export default function TypeSelectionScreen() {
   const router = useRouter();
   const params = useLocalSearchParams<{ preselected?: string }>();
-  const { draftBooking, updateDraft, setStep } = useBookingStore();
+  const { draftBooking, updateDraft, clearDraft, setStep } = useBookingStore();
 
   const [errandTypes, setErrandTypes] = useState<ErrandType[]>([]);
   const [selectedId, setSelectedId] = useState<string | undefined>(
@@ -54,23 +54,34 @@ export default function TypeSelectionScreen() {
 
   const handleContinue = useCallback(() => {
     if (!selectedId) return;
+    // If errand type changed, reset the rest of the draft
+    if (draftBooking.errand_type_id && draftBooking.errand_type_id !== selectedId) {
+      clearDraft();
+    }
     updateDraft({ errand_type_id: selectedId });
     setStep(1);
     router.push('/(customer)/book/details');
-  }, [selectedId, updateDraft, setStep, router]);
+  }, [selectedId, draftBooking.errand_type_id, updateDraft, clearDraft, setStep, router]);
 
   return (
     <SafeAreaView className="flex-1 bg-background" edges={['top']}>
       {/* Header */}
       <View className="flex-row items-center px-5 py-4">
         <Pressable
-          onPress={() => router.back()}
+          onPress={() => {
+            clearDraft();
+            if (router.canGoBack()) {
+              router.back();
+            } else {
+              router.replace('/(customer)/(tabs)');
+            }
+          }}
           className="mr-3 w-9 h-9 rounded-xl bg-surface items-center justify-center"
           style={{ shadowColor: '#0F172A', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.04, shadowRadius: 6, elevation: 1 }}
         >
           <ArrowLeft size={20} color="#0F172A" />
         </Pressable>
-        <Text className="text-lg font-montserrat-bold text-textPrimary">
+        <Text className="text-lg font-montserrat-semi text-textPrimary">
           What do you need?
         </Text>
       </View>
@@ -106,7 +117,7 @@ export default function TypeSelectionScreen() {
                   )}
                 </View>
                 <Text
-                  className={`text-sm font-montserrat-bold mb-1 ${
+                  className={`text-sm font-montserrat-semi mb-1 ${
                     isSelected ? 'text-primary' : 'text-textPrimary'
                   }`}
                 >

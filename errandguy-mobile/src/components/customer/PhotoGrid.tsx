@@ -20,7 +20,7 @@ export function PhotoGrid({
 
   return (
     <View className="mb-4">
-      <Text className="text-sm font-montserrat-bold text-textPrimary mb-2">
+      <Text className="text-sm font-montserrat-semi text-textPrimary mb-2">
         Item Photos ({photos.length}/{maxPhotos})
       </Text>
       <View className="flex-row flex-wrap gap-3">

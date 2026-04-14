@@ -33,7 +33,7 @@ export function VehicleTypeSelector({
 }: VehicleTypeSelectorProps) {
   return (
     <View className="mb-4">
-      <Text className="text-sm font-montserrat-bold text-textPrimary mb-2">
+      <Text className="text-sm font-montserrat-semi text-textPrimary mb-2">
         Select Vehicle
       </Text>
       <View className="flex-row gap-3">
@@ -66,17 +66,19 @@ export function VehicleTypeSelector({
                 />
               </View>
               <Text
-                className={`text-xs font-montserrat-bold ${
+                className={`text-xs font-montserrat-semi ${
                   isSelected ? 'text-primary' : 'text-textPrimary'
                 }`}
               >
                 {opt.label}
               </Text>
-              <Text className={`text-sm font-montserrat-bold mt-0.5 ${
-                isSelected ? 'text-primary' : 'text-textSecondary'
-              }`}>
-                {formatCurrency(opt.estimatedTotal)}
-              </Text>
+              {opt.estimatedTotal > 0 && (
+                <Text className={`text-sm font-montserrat-semi mt-0.5 ${
+                  isSelected ? 'text-primary' : 'text-textSecondary'
+                }`}>
+                  {formatCurrency(opt.estimatedTotal)}
+                </Text>
+              )}
               {opt.eta && (
                 <Text className="text-[10px] font-montserrat text-textSecondary">
                   ~{opt.eta}

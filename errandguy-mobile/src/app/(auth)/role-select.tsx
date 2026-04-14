@@ -1,8 +1,8 @@
 import React, { useState } from 'react';
-import { View, Text, Pressable } from 'react-native';
+import { View, Text, Pressable, StyleSheet } from 'react-native';
 import { useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { Package, Bike } from 'lucide-react-native';
+import { Package, Bike, Check } from 'lucide-react-native';
 import { Button } from '../../components/ui/Button';
 import { Toast } from '../../components/ui/Toast';
 import { useAuth } from '../../hooks/useAuth';
@@ -13,26 +13,24 @@ type RoleOption = {
   role: UserRole;
   icon: typeof Package;
   title: string;
-  label: string;
-  description: string;
-  note?: string;
+  subtitle: string;
+  features: string[];
 };
 
 const roles: RoleOption[] = [
   {
     role: 'customer',
     icon: Package,
-    title: 'I need errands done',
-    label: 'Customer',
-    description: 'Post tasks, track runners, and get things done.',
+    title: 'Customer',
+    subtitle: 'I need errands done',
+    features: ['Post any errand', 'Track runners live', 'Secure payments'],
   },
   {
     role: 'runner',
     icon: Bike,
-    title: 'I want to earn money',
-    label: 'Errand Runner',
-    description: 'Accept errands, complete them, and earn on your own time.',
-    note: 'Verification required',
+    title: 'Errand Runner',
+    subtitle: 'I want to earn money',
+    features: ['Accept errands nearby', 'Earn on your schedule', 'Instant payouts'],
   },
 ];
 
@@ -74,55 +72,59 @@ export default function RoleSelectScreen() {
         onDismiss={() => setToast((prev) => ({ ...prev, visible: false }))}
       />
 
-      <View className="flex-1 justify-center">
-        <Text className="text-2xl font-montserrat-bold text-textPrimary mb-1">
-          How will you use ErrandGuy?
+      <View style={{ flex: 1, justifyContent: 'center' }}>
+        <Text className="text-[28px] font-montserrat-bold text-textPrimary mb-2 text-center tracking-tight">
+          How will you use{'\n'}ErrandGuy?
         </Text>
-        <Text className="text-base font-montserrat text-textSecondary mb-8">
-          You can always switch later.
+        <Text className="text-[15px] font-montserrat text-textTertiary text-center mb-10">
+          Choose your role. You can switch anytime.
         </Text>
 
-        {roles.map((item) => {
-          const Icon = item.icon;
-          const isSelected = selectedRole === item.role;
+        <View style={{ gap: 14 }}>
+          {roles.map((item) => {
+            const Icon = item.icon;
+            const isSelected = selectedRole === item.role;
 
-          return (
-            <Pressable
-              key={item.role}
-              className={`border rounded-[14px] p-5 mb-4 ${
-                isSelected
-                  ? 'border-primary border-2 bg-primaryLight'
-                  : 'border-divider bg-surface'
-              }`}
-              onPress={() => setSelectedRole(item.role)}
-            >
-              <View className="flex-row items-center mb-2">
-                <View className="w-12 h-12 rounded-full bg-primaryLight items-center justify-center mr-3">
-                  <Icon size={24} color="#2563EB" />
+            return (
+              <Pressable
+                key={item.role}
+                style={[s.card, isSelected && s.cardSelected]}
+                onPress={() => setSelectedRole(item.role)}
+              >
+                {/* Selected indicator */}
+                <View style={[s.radio, isSelected && s.radioSelected]}>
+                  {isSelected && <Check size={14} color="#fff" strokeWidth={3} />}
                 </View>
-                <View className="flex-1">
-                  <Text className="text-lg font-montserrat-bold text-textPrimary">
-                    {item.title}
-                  </Text>
-                  <Text className="text-sm font-montserrat text-primary">
-                    {item.label}
-                  </Text>
+
+                <View style={s.cardHeader}>
+                  <Icon size={28} color={isSelected ? '#2563EB' : '#64748B'} />
+                  <View style={{ flex: 1 }}>
+                    <Text className="text-[18px] font-montserrat-semi text-textPrimary">
+                      {item.title}
+                    </Text>
+                    <Text className="text-[13px] font-montserrat text-textTertiary mt-0.5">
+                      {item.subtitle}
+                    </Text>
+                  </View>
                 </View>
-              </View>
-              <Text className="text-sm font-montserrat text-textSecondary">
-                {item.description}
-              </Text>
-              {item.note && (
-                <Text className="text-xs font-montserrat text-primary mt-1">
-                  {item.note}
-                </Text>
-              )}
-            </Pressable>
-          );
-        })}
+
+                <View style={s.features}>
+                  {item.features.map((f) => (
+                    <View key={f} style={s.featureRow}>
+                      <View style={[s.featureDot, isSelected && s.featureDotSelected]} />
+                      <Text className="text-[13px] font-montserrat text-textSecondary">
+                        {f}
+                      </Text>
+                    </View>
+                  ))}
+                </View>
+              </Pressable>
+            );
+          })}
+        </View>
       </View>
 
-      <View className="pb-6">
+      <View style={{ paddingBottom: 24 }}>
         <Button
           title="Continue"
           fullWidth
@@ -135,3 +137,58 @@ export default function RoleSelectScreen() {
     </SafeAreaView>
   );
 }
+
+const s = StyleSheet.create({
+  card: {
+    borderRadius: 20,
+    padding: 20,
+    borderWidth: 2,
+    borderColor: '#E2E8F0',
+    backgroundColor: '#FAFBFC',
+    position: 'relative',
+  },
+  cardSelected: {
+    borderColor: '#2563EB',
+    backgroundColor: '#EFF6FF',
+  },
+  radio: {
+    position: 'absolute',
+    top: 16,
+    right: 16,
+    width: 24,
+    height: 24,
+    borderRadius: 12,
+    borderWidth: 2,
+    borderColor: '#CBD5E1',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  radioSelected: {
+    borderColor: '#2563EB',
+    backgroundColor: '#2563EB',
+  },
+  cardHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 14,
+    marginBottom: 14,
+  },
+  features: {
+    gap: 8,
+    paddingLeft: 42,
+  },
+  featureRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+  },
+  featureDot: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+    backgroundColor: '#CBD5E1',
+  },
+  featureDotSelected: {
+    backgroundColor: '#2563EB',
+  },
+});

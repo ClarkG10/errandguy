@@ -102,7 +102,7 @@ export function AddressInput({
   return (
     <View className="mb-4">
       {label ? (
-        <Text className="text-sm font-montserrat-bold text-textPrimary mb-1.5">
+        <Text className="text-sm font-montserrat-semi text-textPrimary mb-1.5">
           {label}
         </Text>
       ) : null}
