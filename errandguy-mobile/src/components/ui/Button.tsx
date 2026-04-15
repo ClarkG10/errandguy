@@ -2,19 +2,18 @@ import React from 'react';
 import {
   TouchableOpacity,
   Text,
-  ActivityIndicator,
   StyleSheet,
   type ViewStyle,
 } from 'react-native';
 import * as Haptics from 'expo-haptics';
 import type { LucideIcon } from 'lucide-react-native';
+import { ErrandLoader } from './ErrandLoader';
 
 type ButtonVariant = 'primary' | 'secondary' | 'outline' | 'danger' | 'ghost';
 type ButtonSize = 'sm' | 'md' | 'lg';
 
 interface ButtonProps {
   title: string;
-  loadingTitle?: string;
   variant?: ButtonVariant;
   size?: ButtonSize;
   loading?: boolean;
@@ -50,8 +49,8 @@ const sizePadding: Record<ButtonSize, ViewStyle> = {
 
 const sizeTextSizes: Record<ButtonSize, number> = {
   sm: 12,
-  md: 14,
-  lg: 16,
+  md: 13,
+  lg: 15,
 };
 
 const iconSizes: Record<ButtonSize, number> = {
@@ -62,7 +61,6 @@ const iconSizes: Record<ButtonSize, number> = {
 
 export function Button({
   title,
-  loadingTitle,
   variant = 'primary',
   size = 'md',
   loading = false,
@@ -97,29 +95,31 @@ export function Button({
       disabled={disabled || loading}
       onPress={handlePress}
     >
-      {Icon && !loading && (
-        <Icon
-          size={iconSizes[size]}
+      {loading ? (
+        <ErrandLoader
+          size={size === 'sm' ? 5 : size === 'md' ? 6 : 7}
           color={variant === 'primary' || variant === 'danger' ? '#fff' : '#2563EB'}
-          style={{ marginRight: 8 }}
         />
+      ) : (
+        <>
+          {Icon && (
+            <Icon
+              size={iconSizes[size]}
+              color={variant === 'primary' || variant === 'danger' ? '#fff' : '#2563EB'}
+              style={{ marginRight: 8 }}
+            />
+          )}
+          <Text
+            cssInterop={false}
+            style={[
+              bs.text,
+              { fontSize: sizeTextSizes[size], color: variantTextColors[variant] },
+            ]}
+          >
+            {title}
+          </Text>
+        </>
       )}
-      {loading && (
-        <ActivityIndicator
-          size="small"
-          color={variant === 'primary' || variant === 'danger' ? '#fff' : '#2563EB'}
-          style={{ marginRight: 8 }}
-        />
-      )}
-      <Text
-        cssInterop={false}
-        style={[
-          bs.text,
-          { fontSize: sizeTextSizes[size], color: variantTextColors[variant] },
-        ]}
-      >
-        {loading && loadingTitle ? loadingTitle : title}
-      </Text>
     </TouchableOpacity>
   );
 }
@@ -133,5 +133,5 @@ const bs = StyleSheet.create({
   },
   full: { width: '100%' },
   disabled: { opacity: 0.5 },
-  text: { fontFamily: 'Inter_600SemiBold' },
+  text: { fontFamily: 'Quicksand_600SemiBold' },
 });

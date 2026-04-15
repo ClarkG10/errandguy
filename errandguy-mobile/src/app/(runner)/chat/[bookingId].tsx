@@ -11,48 +11,79 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter, useLocalSearchParams } from 'expo-router';
-import { ArrowLeft, Send } from 'lucide-react-native';
+import { ArrowLeft, Send, Camera } from 'lucide-react-native';
 import { useAuthStore } from '../../../stores/authStore';
+import { useChat } from '../../../hooks/useChat';
+import { ImagePickerModal } from '../../../components/ui/ImagePickerModal';
 import { RUNNER_QUICK_MESSAGES } from '../../../constants/quickMessages';
 import type { Message } from '../../../types';
+import { toast } from '../../../stores/toastStore';
 
 export default function RunnerChatScreen() {
   const router = useRouter();
   const { bookingId } = useLocalSearchParams<{ bookingId: string }>();
   const user = useAuthStore((s) => s.user);
 
-  const [messages, setMessages] = useState<Message[]>([]);
+  const {
+    messages,
+    fetchMessages,
+    sendMessage: chatSendMessage,
+    markAsRead,
+  } = useChat(bookingId ?? '');
+
   const [input, setInput] = useState('');
+  const [sending, setSending] = useState(false);
+  const [imagePickerVisible, setImagePickerVisible] = useState(false);
   const flatListRef = useRef<FlatList<Message>>(null);
 
-  // TODO: Replace with real-time messaging (WebSocket/Pusher) in Phase 9
+  // Fetch initial messages and mark as read
   useEffect(() => {
-    // Fetch initial messages
-  }, [bookingId]);
+    if (!bookingId) return;
+    fetchMessages().catch(() => {});
+    markAsRead().catch(() => {});
+  }, [bookingId, fetchMessages, markAsRead]);
 
-  const handleSend = useCallback(() => {
-    if (!input.trim()) return;
-    const newMessage: Message = {
-      id: Date.now().toString(),
-      booking_id: bookingId ?? '',
-      sender_id: user?.id ?? '',
-      content: input.trim(),
-      image_url: null,
-      is_system: false,
-      read_at: null,
-      created_at: new Date().toISOString(),
-    };
-    setMessages((prev) => [...prev, newMessage]);
-    setInput('');
-    setTimeout(() => flatListRef.current?.scrollToEnd({ animated: true }), 100);
-  }, [input, bookingId, user]);
+  const handleSend = useCallback(async () => {
+    if (!input.trim() || sending) return;
+    setSending(true);
+    try {
+      await chatSendMessage(input.trim());
+      setInput('');
+      setTimeout(() => flatListRef.current?.scrollToEnd({ animated: true }), 100);
+    } catch {
+      toast.error('Failed to send message');
+    } finally {
+      setSending(false);
+    }
+  }, [input, sending, chatSendMessage]);
 
   const handleQuickMessage = useCallback(
-    (msg: string) => {
-      setInput(msg);
+    async (msg: string) => {
+      setSending(true);
+      try {
+        await chatSendMessage(msg);
+        setTimeout(() => flatListRef.current?.scrollToEnd({ animated: true }), 100);
+      } catch {
+        toast.error('Failed to send message');
+      } finally {
+        setSending(false);
+      }
     },
-    [],
+    [chatSendMessage],
   );
+
+  const handleImageSend = useCallback(async (uri: string) => {
+    setImagePickerVisible(false);
+    setSending(true);
+    try {
+      await chatSendMessage(undefined, uri);
+      setTimeout(() => flatListRef.current?.scrollToEnd({ animated: true }), 100);
+    } catch {
+      toast.error('Failed to send image');
+    } finally {
+      setSending(false);
+    }
+  }, [chatSendMessage]);
 
   const renderMessage = useCallback(
     ({ item }: { item: Message }) => {
@@ -165,6 +196,9 @@ export default function RunnerChatScreen() {
 
         {/* Input */}
         <View className="flex-row items-center gap-2 px-5 py-3 pb-6 border-t border-divider bg-background">
+          <Pressable onPress={() => setImagePickerVisible(true)}>
+            <Camera size={24} color="#475569" />
+          </Pressable>
           <TextInput
             className="flex-1 bg-surface border border-divider rounded-full px-4 py-2.5 text-sm font-montserrat text-textPrimary"
             placeholder="Type a message..."
@@ -185,6 +219,14 @@ export default function RunnerChatScreen() {
           </Pressable>
         </View>
       </KeyboardAvoidingView>
+
+      <ImagePickerModal
+        visible={imagePickerVisible}
+        onClose={() => setImagePickerVisible(false)}
+        onConfirm={handleImageSend}
+        title="Send Photo"
+        subtitle="Share a photo in the chat"
+      />
     </SafeAreaView>
   );
 }

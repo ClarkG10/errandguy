@@ -7,6 +7,7 @@ use App\Http\Requests\Runner\UploadDocumentRequest;
 use App\Http\Resources\RunnerDocumentResource;
 use App\Models\Notification;
 use App\Models\RunnerDocument;
+use App\Models\RunnerProfile;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Support\Facades\Storage;
 
@@ -17,9 +18,10 @@ class RunnerDocumentController extends Controller
         $profile = $request->user()->runnerProfile;
 
         if (!$profile) {
-            return response()->json([
-                'message' => 'Runner profile not found.',
-            ], 404);
+            $profile = RunnerProfile::create([
+                'user_id' => $request->user()->id,
+                'verification_status' => 'pending',
+            ]);
         }
 
         $validated = $request->validated();

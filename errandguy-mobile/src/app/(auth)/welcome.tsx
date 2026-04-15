@@ -8,27 +8,29 @@ import { OnboardingSlide } from '../../components/auth/OnboardingSlide';
 import { DotIndicator } from '../../components/auth/DotIndicator';
 import { Button } from '../../components/ui/Button';
 
+const MASCOT = require('../../../assets/mascot.png');
+
 const slides = [
   {
     id: '1',
     title: 'Book Any Errand',
     description:
       'From deliveries to rides, get things done with a tap. Post any errand and let a trusted runner handle it.',
-    image: require('../../../assets/icon.png'),
+    image: MASCOT,
   },
   {
     id: '2',
     title: 'Real-Time Tracking',
     description:
       'Know exactly where your runner is. Track every step of your errand on a live map in real time.',
-    image: require('../../../assets/icon.png'),
+    image: MASCOT,
   },
   {
     id: '3',
     title: 'Safe & Secure',
     description:
       'All runners are verified. Enjoy cashless payments, SOS alerts, and trip sharing with trusted contacts.',
-    image: require('../../../assets/icon.png'),
+    image: MASCOT,
   },
 ];
 
@@ -132,8 +134,8 @@ export default function WelcomeScreen() {
 
 const ws = StyleSheet.create({
   skipBtn: { padding: 8 },
-  skipText: { fontSize: 14, fontFamily: 'Inter_500Medium', color: '#2563EB' },
+  skipText: { fontSize: 14, fontFamily: 'Quicksand_500Medium', color: '#2563EB' },
   loginLink: { marginTop: 16, alignItems: 'center', padding: 8 },
-  loginText: { fontSize: 14, fontFamily: 'Inter_400Regular', color: '#94A3B8' },
-  loginBold: { color: '#0F172A', fontFamily: 'Inter_600SemiBold' },
+  loginText: { fontSize: 14, fontFamily: 'Quicksand_400Regular', color: '#94A3B8' },
+  loginBold: { color: '#0F172A', fontFamily: 'Quicksand_600SemiBold' },
 });

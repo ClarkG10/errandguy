@@ -1,7 +1,7 @@
 export const FontFamily = {
-  regular: 'Inter_400Regular',
-  semi: 'Inter_500Medium',
-  bold: 'Inter_600SemiBold',
+  regular: 'Quicksand_400Regular',
+  semi: 'Quicksand_500Medium',
+  bold: 'Quicksand_600SemiBold',
 } as const;
 
 export const FontSize = {

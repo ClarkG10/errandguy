@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { View, Text, ScrollView, Pressable, Alert, RefreshControl } from 'react-native';
+import { View, Text, ScrollView, Pressable, RefreshControl } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import { ArrowLeft, Check } from 'lucide-react-native';
@@ -7,6 +7,7 @@ import { Card } from '../../../components/ui/Card';
 import { Button } from '../../../components/ui/Button';
 import { useRunnerStore } from '../../../stores/runnerStore';
 import { runnerService } from '../../../services/runner.service';
+import { toast } from '../../../stores/toastStore';
 
 interface ErrandTypeOption {
   id: string;
@@ -52,18 +53,18 @@ export default function PreferredTypesScreen() {
   const handleSave = async () => {
     const selected = types.filter((t) => t.selected).map((t) => t.slug);
     if (selected.length === 0) {
-      Alert.alert('Required', 'Please select at least one errand type.');
+      toast.warning('Please select at least one errand type.');
       return;
     }
 
     setSaving(true);
     try {
       await runnerService.updateRunnerProfile({ preferred_types: selected });
-      Alert.alert('Success', 'Preferred errand types updated');
+      toast.success('Preferred errand types updated');
       const res = await runnerService.getRunnerProfile();
       setRunnerProfile(res.data.data);
     } catch (err: any) {
-      Alert.alert('Error', err?.response?.data?.message ?? 'Failed to update');
+      toast.error(err?.response?.data?.message ?? 'Failed to update');
     } finally {
       setSaving(false);
     }

@@ -1,6 +1,5 @@
 import React from 'react';
 import { View, Text, Pressable } from 'react-native';
-import { Zap, Clock } from 'lucide-react-native';
 import type { ScheduleType } from '../../types';
 
 interface ScheduleToggleProps {
@@ -19,13 +18,8 @@ export function ScheduleToggle({ value, onChange }: ScheduleToggleProps) {
         }`}
         onPress={() => onChange('now')}
       >
-        <Zap
-          size={32}
-          color={value === 'now' ? '#2563EB' : '#94A3B8'}
-          fill={value === 'now' ? '#2563EB' : 'transparent'}
-        />
         <Text
-          className={`text-base font-montserrat-semi mt-3 ${
+          className={`text-base font-montserrat-semi ${
             value === 'now' ? 'text-primary' : 'text-textPrimary'
           }`}
         >
@@ -44,12 +38,8 @@ export function ScheduleToggle({ value, onChange }: ScheduleToggleProps) {
         }`}
         onPress={() => onChange('scheduled')}
       >
-        <Clock
-          size={32}
-          color={value === 'scheduled' ? '#2563EB' : '#94A3B8'}
-        />
         <Text
-          className={`text-base font-montserrat-semi mt-3 ${
+          className={`text-base font-montserrat-semi ${
             value === 'scheduled' ? 'text-primary' : 'text-textPrimary'
           }`}
         >

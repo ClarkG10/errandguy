@@ -1,8 +1,9 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   View,
   Text,
   TouchableOpacity,
+  Pressable,
   ScrollView,
   KeyboardAvoidingView,
   Platform,
@@ -11,13 +12,13 @@ import {
 import { useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useForm, Controller } from 'react-hook-form';
-import { ChevronLeft } from 'lucide-react-native';
+import { ChevronLeft, Check } from 'lucide-react-native';
 import { Input } from '../../components/ui/Input';
 import { Button } from '../../components/ui/Button';
-import { Toast } from '../../components/ui/Toast';
 import { SocialLoginButton } from '../../components/auth/SocialLoginButton';
 import { useAuth } from '../../hooks/useAuth';
 import { useAuthStore } from '../../stores/authStore';
+import { toast } from '../../stores/toastStore';
 
 interface LoginFormData {
   identifier: string;
@@ -31,16 +32,29 @@ export default function LoginScreen() {
   const router = useRouter();
   const { login } = useAuth();
   const onboardingSeen = useAuthStore((s) => s.onboardingSeen);
+  const rememberedCredentials = useAuthStore((s) => s.rememberedCredentials);
+  const setRememberedCredentials = useAuthStore((s) => s.setRememberedCredentials);
   const [loading, setLoading] = useState(false);
-  const [toast, setToast] = useState<{ visible: boolean; message: string; variant: 'success' | 'error' | 'info' | 'warning' }>({ visible: false, message: '', variant: 'error' });
+  const [rememberMe, setRememberMe] = useState(!!rememberedCredentials);
 
   const {
     control,
     handleSubmit,
     formState: { errors },
+    reset,
   } = useForm<LoginFormData>({
     defaultValues: { identifier: '', password: '' },
   });
+
+  // Pre-fill remembered credentials
+  useEffect(() => {
+    if (rememberedCredentials) {
+      reset({
+        identifier: rememberedCredentials.identifier,
+        password: rememberedCredentials.password,
+      });
+    }
+  }, [rememberedCredentials, reset]);
 
   const onSubmit = async (data: LoginFormData) => {
     setLoading(true);
@@ -50,30 +64,38 @@ export default function LoginScreen() {
         ? { phone: id, password: data.password }
         : { email: id, password: data.password };
       await login(loginData);
+
+      // Save or clear remembered credentials
+      if (rememberMe) {
+        await setRememberedCredentials({ identifier: id, password: data.password });
+      } else {
+        await setRememberedCredentials(null);
+      }
     } catch (error: any) {
-      const status = error?.response?.status;
+      const status = error?.status;
       let message: string;
 
-      if (!error?.response) {
+      if (!status) {
         message = 'Unable to reach the server. Check your internet connection.';
+      } else if (status === 401) {
+        message = 'Incorrect credentials. Please check and try again.';
       } else if (status === 405) {
         message = 'Service temporarily unavailable. Please try again later.';
-      } else if (status === 500) {
+      } else if (status >= 500) {
         message = 'Something went wrong on our end. Please try again later.';
       } else if (status === 429) {
         message = 'Too many attempts. Please wait a few minutes and try again.';
       } else if (status === 422) {
         message =
-          error.response.data?.message ||
-          error.response.data?.errors?.credentials?.[0] ||
-          error.response.data?.errors?.status?.[0] ||
+          error.errors?.credentials?.[0] ||
+          error.errors?.status?.[0] ||
+          error.message ||
           'Invalid credentials. Please check and try again.';
       } else {
-        message =
-          error.response?.data?.message || 'Login failed. Please try again.';
+        message = error.message || 'Login failed. Please try again.';
       }
 
-      setToast({ visible: true, message, variant: 'error' });
+      toast.error(message);
     } finally {
       setLoading(false);
     }
@@ -81,13 +103,6 @@ export default function LoginScreen() {
 
   return (
     <SafeAreaView className="flex-1 bg-surface">
-      <Toast
-        message={toast.message}
-        variant={toast.variant}
-        visible={toast.visible}
-        onDismiss={() => setToast((prev) => ({ ...prev, visible: false }))}
-      />
-
       <KeyboardAvoidingView
         className="flex-1"
         behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
@@ -159,20 +174,32 @@ export default function LoginScreen() {
             )}
           />
 
-          <TouchableOpacity
-            cssInterop={false}
-            style={s.forgotBtn}
-            activeOpacity={0.6}
-            onPress={() => router.push('/(auth)/forgot-password')}
-          >
-            <Text cssInterop={false} style={s.forgotText}>
-              Forgot password?
-            </Text>
-          </TouchableOpacity>
+          {/* Remember Me + Forgot Password row */}
+          <View style={s.rememberRow}>
+            <Pressable
+              style={s.rememberBtn}
+              onPress={() => setRememberMe(!rememberMe)}
+              hitSlop={8}
+            >
+              <View style={[s.checkbox, rememberMe && s.checkboxChecked]}>
+                {rememberMe && <Check size={12} color="#fff" strokeWidth={3} />}
+              </View>
+              <Text cssInterop={false} style={s.rememberText}>Remember me</Text>
+            </Pressable>
+            <TouchableOpacity
+              cssInterop={false}
+              activeOpacity={0.6}
+              onPress={() => router.push('/(auth)/forgot-password')}
+            >
+              <Text cssInterop={false} style={s.forgotText}>
+                Forgot password?
+              </Text>
+            </TouchableOpacity>
+          </View>
 
           <Button
             title="Login"
-            loadingTitle="Logging in.."
+
             fullWidth
             size="lg"
             loading={loading}
@@ -222,8 +249,38 @@ const s = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  forgotBtn: { alignSelf: 'flex-end', marginBottom: 28, padding: 4 },
-  forgotText: { fontSize: 14, fontFamily: 'Inter_500Medium', color: '#2563EB' },
+  forgotText: { fontSize: 13, fontFamily: 'Quicksand_500Medium', color: '#2563EB' },
+  rememberRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 28,
+    marginTop: 4,
+  },
+  rememberBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  checkbox: {
+    width: 20,
+    height: 20,
+    borderRadius: 6,
+    borderWidth: 1.5,
+    borderColor: '#CBD5E1',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#fff',
+  },
+  checkboxChecked: {
+    backgroundColor: '#2563EB',
+    borderColor: '#2563EB',
+  },
+  rememberText: {
+    fontSize: 13,
+    fontFamily: 'Quicksand_400Regular',
+    color: '#64748B',
+  },
   dividerRow: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -233,7 +290,7 @@ const s = StyleSheet.create({
   dividerLine: { flex: 1, height: 1, backgroundColor: '#E2E8F0' },
   dividerText: {
     fontSize: 13,
-    fontFamily: 'Inter_400Regular',
+    fontFamily: 'Quicksand_400Regular',
     color: '#94A3B8',
     marginHorizontal: 16,
   },
@@ -252,7 +309,7 @@ const s = StyleSheet.create({
   },
   signupText: {
     fontSize: 14,
-    fontFamily: 'Inter_400Regular',
+    fontFamily: 'Quicksand_400Regular',
     color: '#94A3B8',
   },
   signupBtn: {
@@ -261,7 +318,7 @@ const s = StyleSheet.create({
   },
   signupBtnText: {
     fontSize: 14,
-    fontFamily: 'Inter_600SemiBold',
+    fontFamily: 'Quicksand_600SemiBold',
     color: '#0F172A',
   },
 });

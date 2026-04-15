@@ -14,6 +14,7 @@ import { RecentErrandItem } from '../../../components/customer/RecentErrandItem'
 import { BookingDetailSheet } from '../../../components/customer/BookingDetailSheet';
 import { ActivitySkeleton } from '../../../components/ui/Skeleton';
 import type { Booking, BookingStatus } from '../../../types';
+import { toast } from '../../../stores/toastStore';
 
 type FilterKey = 'all' | 'active' | 'completed' | 'cancelled';
 
@@ -59,6 +60,7 @@ export default function ActivityScreen() {
         setPage(pageNum);
       } catch {
         if (reset) setBookings([]);
+        toast.error('Failed to load bookings. Pull down to retry.');
       } finally {
         setLoading(false);
       }

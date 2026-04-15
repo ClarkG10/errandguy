@@ -17,6 +17,7 @@ import { formatCurrency } from '../../../utils/formatCurrency';
 import { useDebounce } from '../../../hooks/useDebounce';
 import { HistorySkeleton } from '../../../components/ui/Skeleton';
 import type { Booking } from '../../../types';
+import { toast } from '../../../stores/toastStore';
 
 export default function HistoryScreen() {
   const [errands, setErrands] = useState<Booking[]>([]);
@@ -48,7 +49,7 @@ export default function HistoryScreen() {
         }
         setHasMore(data.length >= 15);
       } catch {
-        // silent
+        toast.error('Failed to load history');
       } finally {
         setInitialLoading(false);
       }
@@ -204,6 +205,7 @@ export default function HistoryScreen() {
         data={filteredErrands}
         renderItem={renderItem}
         keyExtractor={(item) => item.id}
+        contentContainerStyle={{ paddingBottom: 100 }}
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
         onEndReached={onEndReached}
         onEndReachedThreshold={0.3}

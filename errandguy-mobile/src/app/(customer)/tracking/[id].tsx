@@ -20,6 +20,7 @@ import Mapbox from '@rnmapbox/maps';
 import { useBookingStore } from '../../../stores/bookingStore';
 import { bookingService } from '../../../services/booking.service';
 import { useRunnerTracking } from '../../../hooks/useRunnerTracking';
+import { useBookingStatus } from '../../../hooks/useBookingStatus';
 import { TrackingSkeleton } from '../../../components/ui/Skeleton';
 import { Avatar } from '../../../components/ui/Avatar';
 import { RatingStars } from '../../../components/ui/RatingStars';
@@ -27,7 +28,9 @@ import { StatusTimeline } from '../../../components/ui/StatusTimeline';
 import { Button } from '../../../components/ui/Button';
 import { formatTime } from '../../../utils/formatDate';
 import { STATUS_LABELS } from '../../../constants/statusLabels';
+import { MAP_STYLE_URL } from '../../../constants/map';
 import type { Booking, BookingStatus, BookingStatusLog } from '../../../types';
+import { toast } from '../../../stores/toastStore';
 
 const MAPBOX_TOKEN = process.env.EXPO_PUBLIC_MAPBOX_TOKEN ?? '';
 
@@ -55,13 +58,16 @@ export default function TrackingScreen() {
   const [loading, setLoading] = useState(true);
   const [sosActive, setSosActive] = useState(false);
   const [routeCoords, setRouteCoords] = useState<[number, number][]>([]);
-  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const [isCancelling, setIsCancelling] = useState(false);
   const cameraRef = useRef<Mapbox.Camera>(null);
 
   // Live runner location via Supabase Realtime
   const { runnerLocation, isConnected } = useRunnerTracking(
     booking?.runner_id ? (id ?? null) : null,
   );
+
+  // Live booking status updates via Supabase Realtime
+  const { isConnected: statusConnected } = useBookingStatus(id ?? null);
 
   // Fetch booking data
   useEffect(() => {
@@ -97,27 +103,19 @@ export default function TrackingScreen() {
       .catch(() => {});
   }, [booking]);
 
-  // Poll for booking status updates
+  // React to realtime booking status updates from useBookingStatus
+  const activeBooking = useBookingStore((s) => s.activeBooking);
   useEffect(() => {
-    if (!id) return;
-    pollRef.current = setInterval(async () => {
-      try {
-        const [bookingRes, trackRes] = await Promise.all([
-          bookingService.getBooking(id),
-          bookingService.trackBooking(id),
-        ]);
-        const b = bookingRes.data.data;
-        setBooking(b);
-        setActiveBooking(b);
-        setStatusLogs(trackRes.data.data?.status_logs ?? []);
-        if (b?.status === 'completed') {
-          if (pollRef.current) clearInterval(pollRef.current);
-          router.replace(`/(customer)/rate/${id}`);
-        }
-      } catch {}
-    }, 10000);
-    return () => { if (pollRef.current) clearInterval(pollRef.current); };
-  }, [id, router, setActiveBooking]);
+    if (!activeBooking || !id) return;
+    setBooking(activeBooking);
+    // Refresh status logs when status changes
+    bookingService.trackBooking(id).then((trackRes) => {
+      setStatusLogs(trackRes.data.data?.status_logs ?? []);
+    }).catch(() => {});
+    if (activeBooking.status === 'completed') {
+      router.replace(`/(customer)/rate/${id}`);
+    }
+  }, [activeBooking?.status]);
 
   // Route GeoJSON
   const routeGeoJSON = useMemo(() => {
@@ -156,19 +154,23 @@ export default function TrackingScreen() {
   }, [booking, runnerLocation]);
 
   const handleCancel = useCallback(() => {
-    if (!id) return;
+    if (!id || isCancelling) return;
     Alert.alert('Cancel Booking', 'Are you sure you want to cancel?', [
       { text: 'No', style: 'cancel' },
       {
         text: 'Yes, Cancel',
         style: 'destructive',
         onPress: async () => {
+          if (isCancelling) return;
+          setIsCancelling(true);
           try {
             await bookingService.cancelBooking(id);
             setActiveBooking(null);
             router.replace('/(customer)/(tabs)');
           } catch {
-            Alert.alert('Error', 'Failed to cancel booking');
+            toast.error('Failed to cancel booking');
+          } finally {
+            setIsCancelling(false);
           }
         },
       },
@@ -190,7 +192,7 @@ export default function TrackingScreen() {
               await bookingService.triggerSOS(id);
               setSosActive(true);
             } catch {
-              Alert.alert('Error', 'Failed to trigger SOS');
+              toast.error('Failed to trigger SOS');
             }
           },
         },
@@ -206,9 +208,9 @@ export default function TrackingScreen() {
     if (!id) return;
     try {
       await bookingService.shareTrip(id);
-      Alert.alert('Trip Shared', 'Trip sharing link has been generated');
+      toast.success('Trip sharing link has been generated');
     } catch {
-      Alert.alert('Error', 'Failed to share trip');
+      toast.error('Failed to share trip');
     }
   }, [id]);
 
@@ -282,7 +284,7 @@ export default function TrackingScreen() {
       <View className="h-[45%]">
         <Mapbox.MapView
           style={{ flex: 1 }}
-          styleURL={Mapbox.StyleURL.Street}
+          styleURL={MAP_STYLE_URL}
           logoEnabled={false}
           attributionEnabled={false}
           compassEnabled={false}
@@ -441,7 +443,7 @@ export default function TrackingScreen() {
             </View>
           )}
           {canCancel && (
-            <Button title="Cancel Errand" variant="outline" onPress={handleCancel} fullWidth />
+            <Button title={isCancelling ? 'Cancelling...' : 'Cancel Errand'} variant="outline" onPress={handleCancel} disabled={isCancelling} fullWidth />
           )}
         </View>
       </ScrollView>

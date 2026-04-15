@@ -1,5 +1,5 @@
 import React, { useState, useCallback, useRef } from 'react';
-import { View, Text, ScrollView, TextInput, Alert, RefreshControl, Pressable } from 'react-native';
+import { View, Text, ScrollView, TextInput, RefreshControl, Pressable } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import {
@@ -25,6 +25,7 @@ import { runnerService } from '../../../services/runner.service';
 import { STATUS_LABELS } from '../../../constants/statusLabels';
 import { formatCurrency } from '../../../utils/formatCurrency';
 import type { BookingStatus } from '../../../types';
+import { toast } from '../../../stores/toastStore';
 
 const TIMELINE_STEPS: BookingStatus[] = [
   'accepted',
@@ -98,7 +99,7 @@ export default function ActiveErrandScreen() {
         setShowRate(true);
       }
     } catch (err: any) {
-      Alert.alert('Error', err?.response?.data?.message ?? 'Failed to update status');
+      toast.error(err?.response?.data?.message ?? 'Failed to update status');
     } finally {
       setLoading(false);
     }
@@ -128,7 +129,7 @@ export default function ActiveErrandScreen() {
       await runnerService.updateErrandStatus(booking.id, 'verify_pin');
       setPinVerified(true);
     } catch (err: any) {
-      Alert.alert('Invalid PIN', err?.response?.data?.message ?? 'Please try again');
+      toast.error(err?.response?.data?.message ?? 'Please try again');
       setPinInput('');
     }
   };

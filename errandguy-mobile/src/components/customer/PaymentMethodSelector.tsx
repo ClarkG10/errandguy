@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { View, Text, Pressable, ActivityIndicator } from 'react-native';
 import { CreditCard, Wallet, Smartphone, X, Check, Banknote } from 'lucide-react-native';
 import type { LucideIcon } from 'lucide-react-native';
@@ -26,8 +26,13 @@ export function PaymentMethodSelector({
   const [methods, setMethods] = useState<PaymentMethod[]>([]);
   const [loading, setLoading] = useState(true);
   const [showSheet, setShowSheet] = useState(false);
+  const fetched = useRef(false);
+  const onSelectRef = useRef(onSelect);
+  onSelectRef.current = onSelect;
 
   useEffect(() => {
+    if (fetched.current) return;
+    fetched.current = true;
     paymentService
       .getPaymentMethods()
       .then((res) => {
@@ -36,12 +41,12 @@ export function PaymentMethodSelector({
         // Auto-select default if none selected
         if (!selectedId) {
           const defaultMethod = data.find((m) => m.is_default);
-          if (defaultMethod) onSelect(defaultMethod.id, defaultMethod.type);
+          if (defaultMethod) onSelectRef.current(defaultMethod.id, defaultMethod.type);
         }
       })
       .catch(() => setMethods([]))
       .finally(() => setLoading(false));
-  }, [selectedId, onSelect]);
+  }, []);
 
   const selectedMethod = methods.find((m) => m.id === selectedId);
   const Icon = selectedMethod

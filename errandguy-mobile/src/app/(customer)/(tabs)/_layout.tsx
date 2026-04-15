@@ -1,10 +1,13 @@
 import { Tabs } from 'expo-router';
 import { Home, ClipboardList, Bell, User } from 'lucide-react-native';
 import { View, Platform, StyleSheet } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useNotificationStore } from '../../../stores/notificationStore';
 
 export default function CustomerTabsLayout() {
   const unreadCount = useNotificationStore((s) => s.unreadCount);
+  const insets = useSafeAreaInsets();
+  const bottomOffset = Math.max(insets.bottom, 16);
 
   return (
     <Tabs
@@ -15,13 +18,13 @@ export default function CustomerTabsLayout() {
         tabBarInactiveTintColor: '#94A3B8',
         tabBarShowLabel: true,
         tabBarLabelStyle: {
-          fontFamily: 'Inter_500Medium',
+          fontFamily: 'Quicksand_500Medium',
           fontSize: 11,
           marginTop: 2,
         },
         tabBarStyle: {
           position: 'absolute',
-          bottom: Platform.OS === 'ios' ? 24 : 16,
+          bottom: bottomOffset,
           left: 16,
           right: 16,
           backgroundColor: '#FFFFFF',

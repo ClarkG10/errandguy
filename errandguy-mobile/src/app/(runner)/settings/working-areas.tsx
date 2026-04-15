@@ -1,5 +1,5 @@
 import React, { useState, useCallback, useMemo } from 'react';
-import { View, Text, ScrollView, Alert, RefreshControl, Pressable } from 'react-native';
+import { View, Text, ScrollView, RefreshControl, Pressable } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import { ArrowLeft, MapPin } from 'lucide-react-native';
@@ -10,6 +10,8 @@ import { Button } from '../../../components/ui/Button';
 import { useRunnerStore } from '../../../stores/runnerStore';
 import { useLocationStore } from '../../../stores/locationStore';
 import { runnerService } from '../../../services/runner.service';
+import { toast } from '../../../stores/toastStore';
+import { MAP_STYLE_URL } from '../../../constants/map';
 
 export default function WorkingAreasScreen() {
   const router = useRouter();
@@ -35,7 +37,7 @@ export default function WorkingAreasScreen() {
 
   const handleSave = async () => {
     if (!lat || !lng) {
-      Alert.alert('Location Required', 'Please enable location services to set your working area.');
+      toast.warning('Please enable location services to set your working area.');
       return;
     }
 
@@ -48,11 +50,11 @@ export default function WorkingAreasScreen() {
           radius,
         }),
       });
-      Alert.alert('Success', 'Working area updated');
+      toast.success('Working area updated');
       const res = await runnerService.getRunnerProfile();
       setRunnerProfile(res.data.data);
     } catch (err: any) {
-      Alert.alert('Error', err?.response?.data?.message ?? 'Failed to update');
+      toast.error(err?.response?.data?.message ?? 'Failed to update');
     } finally {
       setSaving(false);
     }
@@ -104,7 +106,7 @@ export default function WorkingAreasScreen() {
           {lat && lng ? (
             <Mapbox.MapView
               style={{ flex: 1 }}
-              styleURL={Mapbox.StyleURL.Street}
+              styleURL={MAP_STYLE_URL}
               logoEnabled={false}
               attributionEnabled={false}
               compassEnabled={false}

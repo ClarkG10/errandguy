@@ -8,6 +8,7 @@ export const runnerService = {
 
   updateRunnerProfile(data: {
     vehicle_type?: string;
+    vehicle_plate?: string;
     preferred_types?: string[];
     working_area?: string;
     bank_name?: string;

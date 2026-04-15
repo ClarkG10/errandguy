@@ -29,6 +29,7 @@ class UpdateProfileRequest extends FormRequest
                 'regex:/^(\+63|0)9\d{9}$/',
                 Rule::unique('users', 'phone')->ignore($userId),
             ],
+            'role' => ['sometimes', 'string', 'in:customer,runner'],
             'default_lat' => ['sometimes', 'numeric', 'between:-90,90'],
             'default_lng' => ['sometimes', 'numeric', 'between:-180,180'],
         ];

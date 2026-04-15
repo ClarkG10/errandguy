@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect } from 'react';
-import { View, Pressable, Dimensions, StyleSheet } from 'react-native';
+import { View, Pressable, Dimensions, StyleSheet, ScrollView } from 'react-native';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import Animated, {
   useSharedValue,
@@ -17,6 +17,7 @@ interface BottomSheetProps {
   onClose: () => void;
   snapPoints?: number[];
   children: React.ReactNode;
+  scrollable?: boolean;
 }
 
 export function BottomSheet({
@@ -24,6 +25,7 @@ export function BottomSheet({
   onClose,
   snapPoints = [0.5],
   children,
+  scrollable = true,
 }: BottomSheetProps) {
   const translateY = useSharedValue(SCREEN_HEIGHT);
   const context = useSharedValue(0);
@@ -77,7 +79,17 @@ export function BottomSheet({
           <View className="items-center pt-3 pb-2">
             <View className="w-10 h-1 rounded-full bg-divider" />
           </View>
-          <View className="flex-1 px-4 pb-6">{children}</View>
+          {scrollable ? (
+            <ScrollView
+              className="flex-1 px-4 pb-6"
+              showsVerticalScrollIndicator={false}
+              bounces={false}
+            >
+              {children}
+            </ScrollView>
+          ) : (
+            <View className="flex-1 px-4 pb-6">{children}</View>
+          )}
         </Animated.View>
       </GestureDetector>
     </View>

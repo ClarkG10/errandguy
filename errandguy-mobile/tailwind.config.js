@@ -57,9 +57,9 @@ module.exports = {
         dividerDark: '#1E293B',
       },
       fontFamily: {
-        montserrat: ['Inter_400Regular'],
-        'montserrat-semi': ['Inter_500Medium'],
-        'montserrat-bold': ['Inter_600SemiBold'],
+        montserrat: ['Quicksand_400Regular'],
+        'montserrat-semi': ['Quicksand_500Medium'],
+        'montserrat-bold': ['Quicksand_700Bold'],
       },
       borderRadius: {
         sm: '8px',

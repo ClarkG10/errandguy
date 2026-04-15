@@ -36,6 +36,7 @@ export function Input({
   const [focused, setFocused] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
   const isPassword = secureTextEntry !== undefined;
+  const inputRef = useRef<TextInput>(null);
 
   const floated = focused || (value != null && value.length > 0);
   const anim = useRef(new Animated.Value(floated ? 1 : 0)).current;
@@ -67,7 +68,7 @@ export function Input({
           { borderColor },
           multiline && fs.multiline,
         ]}
-        onPress={() => {}}
+        onPress={() => inputRef.current?.focus()}
       >
         {label && (
           <Animated.Text
@@ -84,6 +85,7 @@ export function Input({
           </Animated.Text>
         )}
         <TextInput
+          ref={inputRef}
           accessibilityLabel={label || placeholder}
           accessibilityState={{ disabled: rest.editable === false }}
           style={[
@@ -142,7 +144,7 @@ const fs = StyleSheet.create({
   label: {
     position: 'absolute',
     left: 16,
-    fontFamily: 'Inter_400Regular',
+    fontFamily: 'Quicksand_400Regular',
     backgroundColor: '#FFFFFF',
     paddingHorizontal: 4,
     zIndex: 1,
@@ -150,7 +152,7 @@ const fs = StyleSheet.create({
   input: {
     flex: 1,
     fontSize: 14,
-    fontFamily: 'Inter_400Regular',
+    fontFamily: 'Quicksand_400Regular',
     color: '#0F172A',
     paddingVertical: 0,
     paddingTop: 0,
@@ -166,7 +168,7 @@ const fs = StyleSheet.create({
   rightIcon: { position: 'absolute', right: 16, top: 18 },
   error: {
     fontSize: 12,
-    fontFamily: 'Inter_400Regular',
+    fontFamily: 'Quicksand_400Regular',
     color: '#EF4444',
     marginTop: 4,
     marginLeft: 4,

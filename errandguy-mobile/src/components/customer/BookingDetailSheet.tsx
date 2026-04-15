@@ -37,7 +37,7 @@ export function BookingDetailSheet({
   const priceItems = [
     { label: 'Base Fee', amount: booking.base_fee },
     { label: 'Distance Fee', amount: booking.distance_fee },
-    { label: 'Service Fee', amount: booking.service_fee },
+    { label: 'Convenience Fee', amount: booking.service_fee },
     { label: 'Surcharge', amount: booking.surcharge },
     ...(booking.promo_discount > 0
       ? [{ label: 'Promo Discount', amount: -booking.promo_discount }]

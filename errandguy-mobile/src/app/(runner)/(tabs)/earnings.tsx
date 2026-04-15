@@ -8,6 +8,7 @@ import { useRunnerStore } from '../../../stores/runnerStore';
 import { runnerService } from '../../../services/runner.service';
 import { formatCurrency } from '../../../utils/formatCurrency';
 import type { Booking } from '../../../types';
+import { toast } from '../../../stores/toastStore';
 
 type Period = 'today' | 'week' | 'month';
 
@@ -35,7 +36,7 @@ export default function EarningsScreen() {
       setEarningsData(summaryRes.data.data);
       setEarningsList(historyRes.data.data ?? []);
     } catch {
-      // silent
+      toast.error('Failed to load earnings');
     }
   }, [period]);
 
@@ -171,7 +172,7 @@ export default function EarningsScreen() {
         {/* Payout Button */}
         <View className="px-5 mb-4">
           <Button
-            title="Request Payout →"
+            title="Request Payout"
             variant="outline"
             onPress={() => router.push('/(runner)/payout' as any)}
             fullWidth

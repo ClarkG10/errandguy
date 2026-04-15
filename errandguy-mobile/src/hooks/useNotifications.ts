@@ -15,7 +15,7 @@ Notifications.setNotificationHandler({
   }),
 });
 
-export function useNotifications() {
+export function useNotifications(enabled = true) {
   const [expoPushToken, setExpoPushToken] = useState<string | null>(null);
   const notificationListener = useRef<Notifications.EventSubscription>(null);
   const responseListener = useRef<Notifications.EventSubscription>(null);
@@ -44,16 +44,24 @@ export function useNotifications() {
         importance: Notifications.AndroidImportance.MAX,
         vibrationPattern: [0, 250, 250, 250],
         lightColor: '#2563EB',
-        sound: 'default',
       });
     }
 
-    const tokenData = await Notifications.getExpoPushTokenAsync();
-    setExpoPushToken(tokenData.data);
-    return tokenData.data;
+    try {
+      const tokenData = await Notifications.getExpoPushTokenAsync({
+        projectId: '1684a4bc-4b59-47f4-a87e-3b3262438098',
+      });
+      setExpoPushToken(tokenData.data);
+      return tokenData.data;
+    } catch {
+      // Firebase not initialized in dev — push tokens only work in EAS builds
+      return null;
+    }
   }, []);
 
   useEffect(() => {
+    if (!enabled) return;
+
     registerForPush().then((token) => {
       if (token) {
         userService.updateFCMToken(token).catch(() => {});
@@ -78,7 +86,7 @@ export function useNotifications() {
         responseListener.current.remove();
       }
     };
-  }, [registerForPush]);
+  }, [enabled, registerForPush]);
 
   return {
     expoPushToken,

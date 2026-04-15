@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Runner;
 use App\Http\Controllers\Controller;
 use App\Http\Resources\BookingResource;
 use App\Http\Resources\EarningsResource;
+use App\Models\RunnerProfile;
 use App\Models\SystemConfig;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -17,9 +18,10 @@ class RunnerEarningsController extends Controller
         $profile = $user->runnerProfile;
 
         if (!$profile) {
-            return response()->json([
-                'message' => 'Runner profile not found.',
-            ], 404);
+            $profile = RunnerProfile::create([
+                'user_id' => $user->id,
+                'verification_status' => 'pending',
+            ]);
         }
 
         $period = $request->input('period', 'today');

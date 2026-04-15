@@ -13,9 +13,7 @@ class RunnerOnlineController extends Controller
         $profile = $request->user()->runnerProfile;
 
         if (!$profile) {
-            return response()->json([
-                'message' => 'Runner profile not found.',
-            ], 404);
+            return response()->json(['message' => 'Runner profile not found. Please complete onboarding.'], 404);
         }
 
         $validated = $request->validated();

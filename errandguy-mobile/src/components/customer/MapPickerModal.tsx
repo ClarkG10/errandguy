@@ -5,6 +5,7 @@ import { X, MapPin, Crosshair } from 'lucide-react-native';
 import Mapbox from '@rnmapbox/maps';
 import * as Location from 'expo-location';
 import { Button } from '../ui/Button';
+import { MAP_STYLE_URL } from '../../constants/map';
 
 const MAPBOX_TOKEN = process.env.EXPO_PUBLIC_MAPBOX_TOKEN ?? '';
 
@@ -133,7 +134,7 @@ export function MapPickerModal({
         <View className="flex-1">
           <Mapbox.MapView
             style={{ flex: 1 }}
-            styleURL={Mapbox.StyleURL.Street}
+            styleURL={MAP_STYLE_URL}
             logoEnabled={false}
             attributionEnabled={false}
             onPress={handleMapPress}

@@ -1,7 +1,8 @@
-import React, { useEffect, useState, useCallback } from 'react';
-import { View, Text, ScrollView, RefreshControl, FlatList, Pressable, Alert } from 'react-native';
+import React, { useEffect, useState, useCallback, useRef } from 'react';
+import { View, Text, ScrollView, RefreshControl, FlatList, Pressable } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
+import * as Location from 'expo-location';
 import { Bell, Package, Handshake } from 'lucide-react-native';
 import { DollarSign, CheckCircle, Star } from 'lucide-react-native';
 import { OnlineToggle } from '../../../components/runner/OnlineToggle';
@@ -17,7 +18,10 @@ import { useAuthStore } from '../../../stores/authStore';
 import { runnerService } from '../../../services/runner.service';
 import { formatCurrency } from '../../../utils/formatCurrency';
 import { RunnerHomeSkeleton } from '../../../components/ui/Skeleton';
+import { CacheService, CacheTTL, CacheKeys } from '../../../services/cache.service';
+import { useIncomingRequest } from '../../../hooks/useIncomingRequest';
 import type { Booking } from '../../../types';
+import { toast } from '../../../stores/toastStore';
 
 export default function RunnerHomeScreen() {
   const router = useRouter();
@@ -37,35 +41,69 @@ export default function RunnerHomeScreen() {
   } = useRunnerStore();
   const { startTracking, stopTracking } = useLocationStore();
 
+  // Subscribe to incoming booking requests via Supabase Realtime
+  useIncomingRequest(isOnline && user?.id ? user.id : null);
+
   const [refreshing, setRefreshing] = useState(false);
   const [initialLoading, setInitialLoading] = useState(true);
   const [negotiateOffers, setNegotiateOffers] = useState<Booking[]>([]);
   const [recentErrands, setRecentErrands] = useState<Booking[]>([]);
+  const hasCacheLoaded = useRef(false);
 
-  const fetchDashboardData = useCallback(async () => {
+  const fetchDashboardData = useCallback(async (isRefresh = false) => {
+    const userId = user?.id ?? 'anon';
+
+    // Load cached data first to skip skeleton on revisit
+    if (!hasCacheLoaded.current && !isRefresh) {
+      const [cachedProfile, cachedHistory] = await Promise.all([
+        CacheService.get<any>(CacheKeys.runnerProfile(userId)),
+        CacheService.get<Booking[]>(`runner:${userId}:history`),
+      ]);
+      if (cachedProfile) setRunnerProfile(cachedProfile);
+      if (cachedHistory) setRecentErrands(cachedHistory);
+      if (cachedProfile || cachedHistory) {
+        hasCacheLoaded.current = true;
+        setInitialLoading(false);
+      }
+    }
+
     try {
-      const [profileRes, earningsRes, historyRes] = await Promise.all([
+      const results = await Promise.allSettled([
         runnerService.getRunnerProfile(),
         runnerService.getEarnings('today'),
         runnerService.getErrandHistory({ page: 1, per_page: 5 }),
       ]);
-      setRunnerProfile(profileRes.data.data);
-      setEarnings({
-        ...earnings,
-        today: earningsRes.data.data?.total_earnings ?? 0,
-      });
-      setRecentErrands(historyRes.data.data ?? []);
+
+      if (results[0].status === 'fulfilled') {
+        const profile = results[0].value.data.data;
+        setRunnerProfile(profile);
+        CacheService.set(CacheKeys.runnerProfile(userId), profile, CacheTTL.MEDIUM);
+      }
+      if (results[1].status === 'fulfilled') {
+        setEarnings({
+          ...earnings,
+          today: results[1].value.data.data?.total_earnings ?? 0,
+        });
+      }
+      if (results[2].status === 'fulfilled') {
+        const history = results[2].value.data.data ?? [];
+        setRecentErrands(history);
+        CacheService.set(`runner:${userId}:history`, history, CacheTTL.MEDIUM);
+      }
 
       if (isOnline) {
-        const offersRes = await runnerService.getAvailableErrands();
-        setNegotiateOffers(offersRes.data.data ?? []);
+        try {
+          const offersRes = await runnerService.getAvailableErrands();
+          setNegotiateOffers(offersRes.data.data ?? []);
+        } catch {}
       }
     } catch {
       // silent fail - dashboard data is non-critical
     } finally {
+      hasCacheLoaded.current = true;
       setInitialLoading(false);
     }
-  }, [isOnline]);
+  }, [isOnline, user?.id]);
 
   useEffect(() => {
     fetchDashboardData();
@@ -79,13 +117,24 @@ export default function RunnerHomeScreen() {
 
   const onRefresh = useCallback(async () => {
     setRefreshing(true);
-    await fetchDashboardData();
+    await fetchDashboardData(true);
     setRefreshing(false);
   }, [fetchDashboardData]);
 
   const handleToggleOnline = async (value: boolean) => {
     try {
-      await runnerService.toggleOnline(value);
+      let coords: { lat: number; lng: number } | undefined;
+      if (value) {
+        const { currentLocation } = useLocationStore.getState();
+        if (currentLocation) {
+          coords = { lat: currentLocation.lat, lng: currentLocation.lng };
+        } else {
+          // Request location before going online
+          const loc = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.High });
+          coords = { lat: loc.coords.latitude, lng: loc.coords.longitude };
+        }
+      }
+      await runnerService.toggleOnline(value, coords);
       toggleOnline(value);
       if (value) {
         await startTracking();
@@ -94,7 +143,7 @@ export default function RunnerHomeScreen() {
         setNegotiateOffers([]);
       }
     } catch (err: any) {
-      Alert.alert('Error', err?.response?.data?.message ?? 'Failed to toggle status');
+      toast.error(err?.response?.data?.message ?? 'Failed to toggle status');
     }
   };
 
@@ -104,7 +153,7 @@ export default function RunnerHomeScreen() {
       await runnerService.acceptErrand(incomingRequest.booking.id);
       acceptErrand(incomingRequest.booking);
     } catch (err: any) {
-      Alert.alert('Error', err?.response?.data?.message ?? 'Failed to accept errand');
+      toast.error(err?.response?.data?.message ?? 'Failed to accept errand');
       clearIncomingRequest();
     }
   };
@@ -194,7 +243,7 @@ export default function RunnerHomeScreen() {
             />
             <StatCard
               icon={Star}
-              value={user?.avg_rating?.toFixed(1) ?? '0.0'}
+              value={Number(user?.avg_rating ?? 0).toFixed(1)}
               label="Rating"
               color="#F59E0B"
             />

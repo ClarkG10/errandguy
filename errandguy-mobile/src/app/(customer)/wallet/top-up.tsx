@@ -9,6 +9,7 @@ import { Button } from '../../../components/ui/Button';
 import { Input } from '../../../components/ui/Input';
 import { PaymentMethodSelector } from '../../../components/customer/PaymentMethodSelector';
 import { formatCurrency } from '../../../utils/formatCurrency';
+import { toast } from '../../../stores/toastStore';
 
 const QUICK_AMOUNTS = [100, 200, 500, 1000];
 
@@ -25,11 +26,11 @@ export default function TopUpScreen() {
 
   const handleTopUp = useCallback(async () => {
     if (displayAmount <= 0) {
-      Alert.alert('Error', 'Please enter a valid amount');
+      toast.error('Please enter a valid amount');
       return;
     }
     if (!paymentMethodId) {
-      Alert.alert('Error', 'Please select a payment method');
+      toast.error('Please select a payment method');
       return;
     }
 
@@ -47,10 +48,7 @@ export default function TopUpScreen() {
         { text: 'OK', onPress: () => router.canGoBack() ? router.back() : router.replace('/(customer)/wallet') },
       ]);
     } catch (err: any) {
-      Alert.alert(
-        'Error',
-        err?.response?.data?.message ?? 'Failed to top up wallet',
-      );
+      toast.error(err?.response?.data?.message ?? 'Failed to top up wallet');
     } finally {
       setLoading(false);
     }

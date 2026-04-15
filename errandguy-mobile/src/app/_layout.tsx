@@ -7,16 +7,32 @@ import {
   Inter_500Medium,
   Inter_600SemiBold,
 } from '@expo-google-fonts/inter';
+import {
+  Quicksand_400Regular,
+  Quicksand_500Medium,
+  Quicksand_600SemiBold,
+  Quicksand_700Bold,
+} from '@expo-google-fonts/quicksand';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
+import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { configureReanimatedLogger, ReanimatedLogLevel } from 'react-native-reanimated';
 import { Platform } from 'react-native';
 import Mapbox from '@rnmapbox/maps';
+import * as NavigationBar from 'expo-navigation-bar';
 import { useAuthStore } from '../stores/authStore';
 import { userService } from '../services/user.service';
+import { useNotifications } from '../hooks/useNotifications';
+import { ToastProvider } from '../components/ui/ToastProvider';
 import '../../global.css';
 
 // Initialize Mapbox
 Mapbox.setAccessToken(process.env.EXPO_PUBLIC_MAPBOX_TOKEN ?? '');
+
+// Hide Android system navigation bar (immersive mode — swipe up to reveal)
+if (Platform.OS === 'android') {
+  NavigationBar.setVisibilityAsync('hidden');
+  NavigationBar.setBehaviorAsync('overlay-swipe');
+}
 
 // Prevent ExpoKeepAwake.activate crash when activity is destroyed
 if (__DEV__ && Platform.OS !== 'web') {
@@ -37,12 +53,19 @@ export default function RootLayout() {
     Inter_400Regular,
     Inter_500Medium,
     Inter_600SemiBold,
+    Quicksand_400Regular,
+    Quicksand_500Medium,
+    Quicksand_600SemiBold,
+    Quicksand_700Bold,
   });
 
   const { isAuthenticated, isLoading, role, token, onboardingSeen, loadFromStorage, setUser, logout } =
     useAuthStore();
   const segments = useSegments();
   const router = useRouter();
+
+  // Register push notifications and FCM token
+  useNotifications(isAuthenticated);
 
   useEffect(() => {
     loadFromStorage();
@@ -103,8 +126,11 @@ export default function RootLayout() {
   }
 
   return (
-    <GestureHandlerRootView style={{ flex: 1 }}>
-      <Slot />
-    </GestureHandlerRootView>
+    <SafeAreaProvider>
+      <GestureHandlerRootView style={{ flex: 1 }}>
+        <Slot />
+        <ToastProvider />
+      </GestureHandlerRootView>
+    </SafeAreaProvider>
   );
 }

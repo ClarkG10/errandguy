@@ -78,6 +78,7 @@ api.interceptors.response.use(
         status,
         message: data.message || 'An error occurred',
         errors: data.errors || {},
+        ...('attempts_remaining' in (data || {}) && { attempts_remaining: data.attempts_remaining }),
       });
     }
 

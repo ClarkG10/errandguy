@@ -28,6 +28,7 @@ import { Badge } from '../../../components/ui/Badge';
 import { EmptyState } from '../../../components/ui/EmptyState';
 import { ContactsSkeleton } from '../../../components/ui/Skeleton';
 import type { TrustedContact } from '../../../types';
+import { toast } from '../../../stores/toastStore';
 
 const RELATIONSHIPS = ['Parent', 'Spouse', 'Sibling', 'Friend', 'Other'];
 const MAX_CONTACTS = 5;
@@ -118,7 +119,7 @@ export default function TrustedContactsScreen() {
 
   const handleSave = async () => {
     if (!formName.trim() || !formPhone.trim()) {
-      Alert.alert('Error', 'Name and phone are required');
+      toast.error('Name and phone are required');
       return;
     }
 
@@ -133,7 +134,7 @@ export default function TrustedContactsScreen() {
     }
 
     if (!/^(0)9\d{9}$/.test(phone)) {
-      Alert.alert('Error', 'Please enter a valid Philippine phone number (e.g., 09XXXXXXXXX)');
+      toast.error('Please enter a valid Philippine phone number (e.g., 09XXXXXXXXX)');
       return;
     }
 
@@ -157,7 +158,7 @@ export default function TrustedContactsScreen() {
       setModalVisible(false);
       await fetchContacts(true);
     } catch (err: any) {
-      Alert.alert('Error', err?.response?.data?.message ?? 'Failed to save contact');
+      toast.error(err?.response?.data?.message ?? 'Failed to save contact');
     } finally {
       setSaving(false);
     }
@@ -177,7 +178,7 @@ export default function TrustedContactsScreen() {
               await userService.deleteTrustedContact(contact.id);
               await fetchContacts(true);
             } catch {
-              Alert.alert('Error', 'Failed to remove contact');
+              toast.error('Failed to remove contact');
             }
           },
         },

@@ -2,36 +2,15 @@ import React, { useState, useEffect } from 'react';
 import { View, Text, StyleSheet } from 'react-native';
 import { useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import * as Contacts from 'expo-contacts';
-import Svg, { Path, Circle as SvgCircle } from 'react-native-svg';
+import { Users, CheckCircle } from 'lucide-react-native';
 import { Button } from '../../components/ui/Button';
 
-function ContactsIcon({ size = 72 }: { size?: number }) {
-  return (
-    <Svg width={size} height={size} viewBox="0 0 64 64" fill="none">
-      {/* Outer ring */}
-      <SvgCircle cx="32" cy="32" r="28" stroke="#2563EB" strokeWidth="2" opacity={0.12} />
-      <SvgCircle cx="32" cy="32" r="20" stroke="#2563EB" strokeWidth="1.5" opacity={0.08} />
-      {/* Person left */}
-      <SvgCircle cx="24" cy="24" r="5" fill="#2563EB" opacity={0.7} />
-      <Path
-        d="M14 40c0-5.52 4.48-8 10-8s10 2.48 10 8"
-        stroke="#2563EB"
-        strokeWidth="2.5"
-        strokeLinecap="round"
-        fill="none"
-      />
-      {/* Person right */}
-      <SvgCircle cx="40" cy="24" r="5" fill="#2563EB" />
-      <Path
-        d="M30 40c0-5.52 4.48-8 10-8s10 2.48 10 8"
-        stroke="#2563EB"
-        strokeWidth="2.5"
-        strokeLinecap="round"
-        fill="none"
-      />
-    </Svg>
-  );
+// expo-contacts requires a native build and is not available in Expo Go.
+let Contacts: typeof import('expo-contacts') | null = null;
+try {
+  Contacts = require('expo-contacts');
+} catch {
+  // Native module unavailable (e.g. Expo Go)
 }
 
 export default function ContactsPermissionScreen() {
@@ -39,6 +18,7 @@ export default function ContactsPermissionScreen() {
   const [granted, setGranted] = useState(false);
 
   useEffect(() => {
+    if (!Contacts) return;
     (async () => {
       const { status } = await Contacts.getPermissionsAsync();
       if (status === 'granted') setGranted(true);
@@ -46,9 +26,15 @@ export default function ContactsPermissionScreen() {
   }, []);
 
   const handleAllow = async () => {
-    const { status } = await Contacts.requestPermissionsAsync();
-    if (status === 'granted') setGranted(true);
-    router.push('/(auth)/login');
+    if (Contacts) {
+      const { status } = await Contacts.requestPermissionsAsync();
+      if (status === 'granted') {
+        setGranted(true);
+        return; // stay on screen to show success, user will tap Continue
+      }
+    }
+    // If contacts module not available, just proceed
+    if (!Contacts) router.push('/(auth)/login');
   };
 
   const handleSkip = () => {
@@ -59,7 +45,9 @@ export default function ContactsPermissionScreen() {
     <SafeAreaView className="flex-1 bg-surface" style={s.container}>
       <View style={s.content}>
         <View style={s.illustration}>
-          <ContactsIcon size={80} />
+          <View style={s.iconCircle}>
+            <Users size={36} color="#2563EB" />
+          </View>
         </View>
 
         <Text className="text-[26px] font-montserrat-semi text-textPrimary text-center" style={s.title}>
@@ -74,6 +62,7 @@ export default function ContactsPermissionScreen() {
         {granted ? (
           <>
             <View style={s.grantedBadge}>
+              <CheckCircle size={20} color="#22C55E" style={{ marginRight: 6 }} />
               <Text className="text-[14px] font-montserrat-semi text-success">
                 Contacts access enabled
               </Text>
@@ -119,6 +108,14 @@ const s = StyleSheet.create({
   illustration: {
     marginBottom: 32,
   },
+  iconCircle: {
+    width: 80,
+    height: 80,
+    borderRadius: 40,
+    backgroundColor: '#EFF6FF',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
   title: {
     marginBottom: 12,
     lineHeight: 32,
@@ -132,7 +129,9 @@ const s = StyleSheet.create({
     gap: 16,
   },
   grantedBadge: {
+    flexDirection: 'row',
     alignItems: 'center',
+    justifyContent: 'center',
     paddingVertical: 12,
   },
   skipText: {

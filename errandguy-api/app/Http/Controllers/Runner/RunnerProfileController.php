@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Runner;
 use App\Http\Controllers\Controller;
 use App\Http\Requests\Runner\UpdateRunnerProfileRequest;
 use App\Http\Resources\RunnerProfileResource;
+use App\Models\RunnerProfile;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 
@@ -14,10 +15,12 @@ class RunnerProfileController extends Controller
     {
         $profile = $request->user()->runnerProfile;
 
+        // Auto-create runner profile if the user is a runner but profile is missing
         if (!$profile) {
-            return response()->json([
-                'message' => 'Runner profile not found.',
-            ], 404);
+            $profile = RunnerProfile::create([
+                'user_id' => $request->user()->id,
+                'verification_status' => 'pending',
+            ]);
         }
 
         $profile->load('documents');
@@ -32,9 +35,10 @@ class RunnerProfileController extends Controller
         $profile = $request->user()->runnerProfile;
 
         if (!$profile) {
-            return response()->json([
-                'message' => 'Runner profile not found.',
-            ], 404);
+            $profile = RunnerProfile::create([
+                'user_id' => $request->user()->id,
+                'verification_status' => 'pending',
+            ]);
         }
 
         $profile->update($request->validated());

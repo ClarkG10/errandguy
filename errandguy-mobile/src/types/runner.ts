@@ -36,6 +36,7 @@ export interface RunnerProfile {
   approved_at: string | null;
   created_at: string;
   updated_at: string;
+  documents?: RunnerDocument[];
 }
 
 export interface RunnerDocument {

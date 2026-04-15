@@ -18,6 +18,7 @@ import { Button } from '../../../components/ui/Button';
 import { Badge } from '../../../components/ui/Badge';
 import { formatCurrency } from '../../../utils/formatCurrency';
 import type { ErrandType } from '../../../types';
+import { toast } from '../../../stores/toastStore';
 
 const ICON_MAP: Record<string, LucideIcon> = {
   Package,
@@ -43,6 +44,8 @@ export default function TypeSelectionScreen() {
     configService.getErrandTypes().then((res) => {
       const types: ErrandType[] = res.data.data ?? [];
       setErrandTypes(types.filter((t) => t.is_active));
+    }).catch(() => {
+      toast.error('Failed to load errand types. Please try again.');
     });
   }, []);
 

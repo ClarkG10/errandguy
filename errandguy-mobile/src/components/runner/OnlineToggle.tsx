@@ -1,5 +1,5 @@
 import React from 'react';
-import { View, Text, Pressable } from 'react-native';
+import { View, Text, Pressable, Alert } from 'react-native';
 
 interface OnlineToggleProps {
   isOnline: boolean;
@@ -8,15 +8,27 @@ interface OnlineToggleProps {
 }
 
 export function OnlineToggle({ isOnline, onToggle, disabled }: OnlineToggleProps) {
+  const handlePress = () => {
+    if (disabled) {
+      Alert.alert(
+        'Verification Required',
+        'Your account needs to be verified before you can go online. Please submit your documents for review.',
+      );
+      return;
+    }
+    onToggle(!isOnline);
+  };
+
   return (
     <Pressable
-      onPress={() => !disabled && onToggle(!isOnline)}
+      onPress={handlePress}
       className={`flex-row items-center justify-between px-5 py-4 rounded-2xl border ${
         isOnline
           ? 'bg-green-50 border-green-300'
+          : disabled
+          ? 'bg-surface border-divider opacity-60'
           : 'bg-surface border-divider'
       }`}
-      disabled={disabled}
     >
       <View className="flex-row items-center gap-3">
         <View
@@ -29,7 +41,11 @@ export function OnlineToggle({ isOnline, onToggle, disabled }: OnlineToggleProps
             {isOnline ? "You're Online" : "You're Offline"}
           </Text>
           <Text className="text-xs font-montserrat text-textSecondary">
-            {isOnline ? 'Receiving errand requests' : 'Tap to start accepting errands'}
+            {isOnline
+              ? 'Receiving errand requests'
+              : disabled
+              ? 'Complete verification to go online'
+              : 'Tap to start accepting errands'}
           </Text>
         </View>
       </View>

@@ -80,6 +80,7 @@ Route::prefix('v1')->group(function () {
 
             Route::get('/addresses', [SavedAddressController::class, 'index']);
             Route::post('/addresses', [SavedAddressController::class, 'store']);
+            Route::put('/addresses/{id}', [SavedAddressController::class, 'update']);
             Route::delete('/addresses/{id}', [SavedAddressController::class, 'destroy']);
 
             Route::get('/trusted-contacts', [TrustedContactController::class, 'index']);
@@ -165,6 +166,58 @@ Route::prefix('v1')->group(function () {
                     \App\Models\SystemConfig::pluck('value', 'key')
                 ),
             ]);
+        });
+
+        // Promo code validation
+        Route::get('/promos/validate/{code}', function (string $code) {
+            $promo = \App\Models\PromoCode::where('code', $code)
+                ->where('is_active', true)
+                ->where('valid_from', '<=', now())
+                ->where('valid_until', '>=', now())
+                ->first();
+
+            if (!$promo) {
+                return response()->json(['message' => 'Invalid or expired promo code.'], 404);
+            }
+
+            if ($promo->usage_limit && $promo->used_count >= $promo->usage_limit) {
+                return response()->json(['message' => 'This promo code has reached its usage limit.'], 422);
+            }
+
+            return response()->json([
+                'data' => [
+                    'id' => $promo->id,
+                    'code' => $promo->code,
+                    'discount_type' => $promo->discount_type,
+                    'discount_value' => $promo->discount_value,
+                    'max_discount' => $promo->max_discount,
+                    'min_order' => $promo->min_order,
+                    'description' => $promo->description,
+                ],
+            ]);
+        });
+
+        // Support report
+        Route::post('/support/report', function (\Illuminate\Http\Request $request) {
+            $validated = $request->validate([
+                'booking_id' => ['nullable', 'uuid', 'exists:bookings,id'],
+                'subject' => ['required', 'string', 'max:200'],
+                'description' => ['required', 'string', 'max:2000'],
+                'category' => ['required', 'string', 'max:50'],
+            ]);
+
+            $ticket = \App\Models\DisputeTicket::create([
+                'booking_id' => $validated['booking_id'] ?? null,
+                'reported_by' => $request->user()->id,
+                'category' => $validated['category'],
+                'description' => "[{$validated['subject']}] {$validated['description']}",
+                'status' => 'open',
+            ]);
+
+            return response()->json([
+                'data' => $ticket,
+                'message' => 'Report submitted successfully.',
+            ], 201);
         });
     });
 

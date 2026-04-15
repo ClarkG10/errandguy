@@ -24,6 +24,7 @@ import { EmptyState } from '../../../components/ui/EmptyState';
 import { formatCurrency } from '../../../utils/formatCurrency';
 import { formatRelativeTime } from '../../../utils/formatDate';
 import type { WalletTransaction, WalletTransactionType } from '../../../types';
+import { toast } from '../../../stores/toastStore';
 
 const TX_ICONS: Record<WalletTransactionType, { icon: LucideIcon; color: string }> = {
   top_up: { icon: ArrowUpCircle, color: '#22C55E' },
@@ -48,7 +49,7 @@ export default function WalletScreen() {
       setBalance(balRes.data.data?.balance ?? 0);
       setTransactions(txRes.data.data ?? []);
     } catch {
-      // Handle error
+      toast.error('Failed to load wallet data.');
     }
   }, [setBalance, setTransactions]);
 

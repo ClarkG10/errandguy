@@ -14,8 +14,8 @@ import { useForm, Controller } from 'react-hook-form';
 import { ChevronLeft } from 'lucide-react-native';
 import { Input } from '../../components/ui/Input';
 import { Button } from '../../components/ui/Button';
-import { Toast } from '../../components/ui/Toast';
 import { authService } from '../../services/auth.service';
+import { toast } from '../../stores/toastStore';
 
 interface ForgotPasswordFormData {
   email: string;
@@ -25,7 +25,6 @@ export default function ForgotPasswordScreen() {
   const router = useRouter();
   const [loading, setLoading] = useState(false);
   const [sent, setSent] = useState(false);
-  const [toast, setToast] = useState({ visible: false, message: '', variant: 'error' as const });
 
   const {
     control,
@@ -41,22 +40,21 @@ export default function ForgotPasswordScreen() {
       await authService.forgotPassword(data.email);
       setSent(true);
     } catch (error: any) {
-      const status = error?.response?.status ?? error?.status;
+      const status = error?.status;
       let message: string;
-      if (!error?.response && !error?.status) {
+      if (!status) {
         message = 'Unable to reach the server. Check your internet connection.';
       } else if (status === 429) {
         message = 'Too many attempts. Please wait a few minutes and try again.';
-      } else if (status === 500 || (status && status >= 500)) {
+      } else if (status >= 500) {
         message = 'Something went wrong on our end. Please try again later.';
       } else {
         message =
-          error?.response?.data?.message ||
-          error?.response?.data?.errors?.email?.[0] ||
+          error?.errors?.email?.[0] ||
           error?.message ||
           'Something went wrong. Please try again.';
       }
-      setToast({ visible: true, message, variant: 'error' });
+      toast.error(message);
     } finally {
       setLoading(false);
     }
@@ -64,13 +62,6 @@ export default function ForgotPasswordScreen() {
 
   return (
     <SafeAreaView className="flex-1 bg-surface">
-      <Toast
-        message={toast.message}
-        variant={toast.variant}
-        visible={toast.visible}
-        onDismiss={() => setToast((prev) => ({ ...prev, visible: false }))}
-      />
-
       <Pressable
         className="mt-2 ml-4 w-10 h-10 rounded-full items-center justify-center"
         onPress={() => router.canGoBack() ? router.back() : router.replace('/(auth)/login')}
@@ -131,7 +122,7 @@ export default function ForgotPasswordScreen() {
 
           <Button
             title="Send Reset Link"
-            loadingTitle="Sending.."
+
             fullWidth
             size="lg"
             loading={loading}
@@ -165,7 +156,7 @@ const fs = StyleSheet.create({
   },
   linkText: {
     fontSize: 14,
-    fontFamily: 'Inter_400Regular',
+    fontFamily: 'Quicksand_400Regular',
     color: '#94A3B8',
   },
   linkBtn: {
@@ -174,7 +165,7 @@ const fs = StyleSheet.create({
   },
   linkBtnText: {
     fontSize: 14,
-    fontFamily: 'Inter_600SemiBold',
+    fontFamily: 'Quicksand_600SemiBold',
     color: '#0F172A',
   },
 });

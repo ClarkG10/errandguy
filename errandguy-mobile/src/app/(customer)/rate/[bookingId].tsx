@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useState } from 'react';
-import { View, Text, ScrollView, Pressable, Alert } from 'react-native';
+import { View, Text, ScrollView, Pressable } from 'react-native';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import { CheckCircle } from 'lucide-react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -13,6 +13,7 @@ import { Input } from '../../../components/ui/Input';
 import { formatCurrency } from '../../../utils/formatCurrency';
 import { formatDateTime } from '../../../utils/formatDate';
 import type { Booking } from '../../../types';
+import { toast } from '../../../stores/toastStore';
 
 const TIP_OPTIONS = [20, 50, 100];
 
@@ -47,10 +48,7 @@ export default function RateScreen() {
       setActiveBooking(null);
       router.replace('/(customer)/(tabs)');
     } catch (err: any) {
-      Alert.alert(
-        'Error',
-        err?.response?.data?.message ?? 'Failed to submit review',
-      );
+      toast.error(err?.message ?? 'Failed to submit review');
     } finally {
       setIsSubmitting(false);
     }
@@ -65,7 +63,7 @@ export default function RateScreen() {
     ? [
         { label: 'Base Fee', amount: booking.base_fee },
         { label: 'Distance Fee', amount: booking.distance_fee },
-        { label: 'Service Fee', amount: booking.service_fee },
+        { label: 'Convenience Fee', amount: booking.service_fee },
         { label: 'Surcharge', amount: booking.surcharge },
         ...(booking.promo_discount > 0
           ? [{ label: 'Promo Discount', amount: -booking.promo_discount }]

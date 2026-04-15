@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useState } from 'react';
-import { View, Text, ScrollView, Pressable, Alert, StyleSheet } from 'react-native';
+import { View, Text, ScrollView, Pressable, StyleSheet } from 'react-native';
 import { useRouter } from 'expo-router';
-import { ArrowLeft, MapPin, ArrowRight, Footprints, Bike, Truck, Car, CircleDot, Navigation } from 'lucide-react-native';
+import { ArrowLeft, Footprints, Bike, Truck, Car, MapPin, Clock, Route } from 'lucide-react-native';
 import type { LucideIcon } from 'lucide-react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useBookingStore } from '../../../stores/bookingStore';
@@ -17,14 +17,13 @@ import { PaymentMethodSelector } from '../../../components/customer/PaymentMetho
 import { OfferSlider } from '../../../components/customer/OfferSlider';
 import { formatCurrency } from '../../../utils/formatCurrency';
 import type { PricingMode } from '../../../types';
-
-const STEP_LABELS = ['Type', 'Details', 'Schedule', 'Review'];
+import { toast } from '../../../stores/toastStore';
 
 interface EstimateResult {
-  walk?: { total: number; distance_fee: number; base_fee: number; service_fee: number; surcharge: number };
-  bicycle?: { total: number; distance_fee: number; base_fee: number; service_fee: number; surcharge: number };
-  motorcycle?: { total: number; distance_fee: number; base_fee: number; service_fee: number; surcharge: number };
-  car?: { total: number; distance_fee: number; base_fee: number; service_fee: number; surcharge: number };
+  walk?: { total_amount: number; distance_fee: number; base_fee: number; service_fee: number; surcharge: number };
+  bicycle?: { total_amount: number; distance_fee: number; base_fee: number; service_fee: number; surcharge: number };
+  motorcycle?: { total_amount: number; distance_fee: number; base_fee: number; service_fee: number; surcharge: number };
+  car?: { total_amount: number; distance_fee: number; base_fee: number; service_fee: number; surcharge: number };
   distance_km?: number;
   min_negotiate_fee?: number;
   recommended_min?: number;
@@ -88,41 +87,41 @@ export default function ReviewScreen() {
       label: 'Walk',
       icon: VEHICLE_ICONS.walk,
       perKm: 0,
-      estimatedTotal: estimate?.walk?.total ?? 0,
+      estimatedTotal: estimate?.walk?.total_amount ?? 0,
     },
     {
       key: 'bicycle',
       label: 'Bicycle',
       icon: VEHICLE_ICONS.bicycle,
       perKm: 0,
-      estimatedTotal: estimate?.bicycle?.total ?? 0,
+      estimatedTotal: estimate?.bicycle?.total_amount ?? 0,
     },
     {
       key: 'motorcycle',
       label: 'Motorcycle',
       icon: VEHICLE_ICONS.motorcycle,
       perKm: 0,
-      estimatedTotal: estimate?.motorcycle?.total ?? 0,
+      estimatedTotal: estimate?.motorcycle?.total_amount ?? 0,
     },
     {
       key: 'car',
       label: 'Car',
       icon: VEHICLE_ICONS.car,
       perKm: 0,
-      estimatedTotal: estimate?.car?.total ?? 0,
+      estimatedTotal: estimate?.car?.total_amount ?? 0,
     },
   ];
 
   const currentVehicleEstimate = estimate?.[vehicleType as keyof EstimateResult] as
-    | { total: number; distance_fee: number; base_fee: number; service_fee: number; surcharge: number }
+    | { total_amount: number; distance_fee: number; base_fee: number; service_fee: number; surcharge: number }
     | undefined;
 
   const priceItems = currentVehicleEstimate
     ? [
-        { label: 'Base Fee', amount: currentVehicleEstimate.base_fee },
-        { label: 'Distance Fee', amount: currentVehicleEstimate.distance_fee },
-        { label: 'Service Fee', amount: currentVehicleEstimate.service_fee },
-        { label: 'Surcharge', amount: currentVehicleEstimate.surcharge },
+        { label: 'Base Fee', amount: currentVehicleEstimate.base_fee ?? 0 },
+        { label: 'Distance Fee', amount: currentVehicleEstimate.distance_fee ?? 0 },
+        { label: 'Convenience Fee', amount: currentVehicleEstimate.service_fee ?? 0 },
+        { label: 'Surcharge', amount: currentVehicleEstimate.surcharge ?? 0 },
         ...(promoDiscount > 0
           ? [{ label: 'Promo Discount', amount: -promoDiscount }]
           : []),
@@ -130,12 +129,24 @@ export default function ReviewScreen() {
     : [];
 
   const totalAmount = currentVehicleEstimate
-    ? currentVehicleEstimate.total - promoDiscount
+    ? (currentVehicleEstimate.total_amount ?? 0) - promoDiscount
     : 0;
+
+  // Approximate travel time based on vehicle type and distance
+  const getEstimatedTime = () => {
+    if (!estimate?.distance_km) return null;
+    const km = estimate.distance_km;
+    const speeds: Record<string, number> = { walk: 5, bicycle: 15, motorcycle: 35, car: 30 };
+    const speed = speeds[vehicleType] ?? 30;
+    const minutes = Math.round((km / speed) * 60);
+    if (minutes < 1) return '< 1 min';
+    if (minutes >= 60) return `${Math.floor(minutes / 60)}h ${minutes % 60}m`;
+    return `${minutes} min`;
+  };
 
   const handleSubmit = useCallback(async () => {
     if (!draftBooking.errand_type_id || !draftBooking.pickup_address) {
-      Alert.alert('Missing Info', 'Please go back and complete all booking steps.');
+      toast.warning('Please go back and complete all booking steps.');
       return;
     }
     setIsSubmitting(true);
@@ -171,10 +182,7 @@ export default function ReviewScreen() {
       clearDraft();
       router.replace(`/(customer)/book/confirm?bookingId=${booking.id}`);
     } catch (err: any) {
-      Alert.alert(
-        'Booking Error',
-        err?.response?.data?.message ?? 'Failed to create booking',
-      );
+      toast.error(err?.message ?? 'Failed to create booking');
     } finally {
       setIsSubmitting(false);
     }
@@ -195,85 +203,67 @@ export default function ReviewScreen() {
       <View className="flex-row items-center px-5 py-3">
         <Pressable
           onPress={() => router.canGoBack() ? router.back() : router.replace('/(customer)/(tabs)')}
-          className="w-10 h-10 rounded-full bg-surface items-center justify-center mr-3"
-          style={reviewStyles.shadow}
+          className="w-9 h-9 rounded-xl bg-surface items-center justify-center mr-3"
         >
-          <ArrowLeft size={20} color="#0F172A" />
+          <ArrowLeft size={18} color="#0F172A" />
         </Pressable>
-        <Text className="text-lg font-montserrat-semi text-textPrimary flex-1">
-          Review Booking
+        <Text className="text-lg font-montserrat-bold text-textPrimary">
+          Review
         </Text>
       </View>
 
-      {/* Step Progress Bar */}
-      <View className="flex-row items-center px-5 mb-4">
-        {STEP_LABELS.map((label, i) => (
-          <React.Fragment key={label}>
-            <View className="items-center">
-              <View
-                className={`w-7 h-7 rounded-full items-center justify-center ${
-                  i <= 3 ? 'bg-primary' : 'bg-divider'
-                }`}
-              >
-                <Text className="text-[10px] font-montserrat-bold text-white">
-                  {i + 1}
-                </Text>
-              </View>
-              <Text className="text-[9px] font-montserrat text-textSecondary mt-1">
-                {label}
-              </Text>
-            </View>
-            {i < STEP_LABELS.length - 1 && (
-              <View className={`flex-1 h-0.5 mx-1 mt-[-8px] ${i < 3 ? 'bg-primary' : 'bg-divider'}`} />
-            )}
-          </React.Fragment>
-        ))}
-      </View>
-
       <ScrollView className="flex-1 px-5" showsVerticalScrollIndicator={false}>
-        {/* Route Card */}
-        <View className="bg-surface rounded-2xl p-4 mb-4" style={reviewStyles.shadow}>
-          <View className="flex-row">
-            {/* Route dots */}
-            <View className="items-center mr-3 pt-0.5">
-              <CircleDot size={14} color="#2563EB" />
-              <View className="w-0.5 h-6 bg-divider my-1" />
-              <Navigation size={14} color="#EF4444" />
+        {/* Route Summary */}
+        <View className="mb-4">
+          <View className="flex-row items-start mb-2.5">
+            <View className="w-5 h-5 rounded-full bg-primary/10 items-center justify-center mt-0.5 mr-2.5">
+              <MapPin size={11} color="#2563EB" />
             </View>
-            {/* Addresses */}
             <View className="flex-1">
-              <View className="mb-3">
-                <Text className="text-[10px] font-montserrat-semi text-primary mb-0.5">
-                  PICKUP
-                </Text>
-                <Text className="text-sm font-montserrat text-textPrimary" numberOfLines={2}>
-                  {draftBooking.pickup_address ?? 'Pickup location'}
-                </Text>
-              </View>
-              <View>
-                <Text className="text-[10px] font-montserrat-semi text-danger mb-0.5">
-                  DROPOFF
-                </Text>
-                <Text className="text-sm font-montserrat text-textPrimary" numberOfLines={2}>
-                  {draftBooking.dropoff_address ?? 'Dropoff location'}
-                </Text>
-              </View>
+              <Text className="text-[10px] font-montserrat-semi text-textTertiary uppercase tracking-wider">Pickup</Text>
+              <Text className="text-sm font-montserrat text-textPrimary" numberOfLines={1}>
+                {draftBooking.pickup_address ?? 'Pickup location'}
+              </Text>
             </View>
           </View>
-          {estimate?.distance_km != null && (
-            <View className="mt-3 pt-3 border-t border-divider">
-              <Text className="text-xs font-montserrat-semi text-textSecondary">
-                Estimated Distance: {estimate.distance_km.toFixed(1)} km
+          <View className="flex-row items-start">
+            <View className="w-5 h-5 rounded-full bg-danger/10 items-center justify-center mt-0.5 mr-2.5">
+              <MapPin size={11} color="#EF4444" />
+            </View>
+            <View className="flex-1">
+              <Text className="text-[10px] font-montserrat-semi text-textTertiary uppercase tracking-wider">Dropoff</Text>
+              <Text className="text-sm font-montserrat text-textPrimary" numberOfLines={1}>
+                {draftBooking.dropoff_address ?? 'Dropoff location'}
               </Text>
             </View>
-          )}
+          </View>
         </View>
 
+        {/* Distance & Time Badges */}
+        {estimate?.distance_km != null && (
+          <View className="flex-row gap-3 mb-5">
+            <View className="flex-row items-center bg-surface rounded-lg px-3 py-2">
+              <Route size={14} color="#64748B" />
+              <Text className="text-xs font-montserrat-semi text-textSecondary ml-1.5">
+                {estimate.distance_km.toFixed(1)} km
+              </Text>
+            </View>
+            {getEstimatedTime() && (
+              <View className="flex-row items-center bg-surface rounded-lg px-3 py-2">
+                <Clock size={14} color="#64748B" />
+                <Text className="text-xs font-montserrat-semi text-textSecondary ml-1.5">
+                  ~{getEstimatedTime()}
+                </Text>
+              </View>
+            )}
+          </View>
+        )}
+
         {/* Pricing Mode Toggle */}
-        <View className="bg-surface rounded-2xl p-1.5 mb-4" style={reviewStyles.shadow}>
+        <View className="bg-surface rounded-xl p-1 mb-4">
           <View className="flex-row">
             <Pressable
-              className={`flex-1 py-2.5 rounded-xl items-center ${
+              className={`flex-1 py-2.5 rounded-lg items-center ${
                 pricingMode === 'fixed' ? 'bg-primary' : ''
               }`}
               onPress={() => {
@@ -282,7 +272,7 @@ export default function ReviewScreen() {
               }}
             >
               <Text
-                className={`text-sm font-montserrat-bold ${
+                className={`text-sm font-montserrat-semi ${
                   pricingMode === 'fixed' ? 'text-white' : 'text-textSecondary'
                 }`}
               >
@@ -290,7 +280,7 @@ export default function ReviewScreen() {
               </Text>
             </Pressable>
             <Pressable
-              className={`flex-1 py-2.5 rounded-xl items-center ${
+              className={`flex-1 py-2.5 rounded-lg items-center ${
                 pricingMode === 'negotiate' ? 'bg-primary' : ''
               }`}
               onPress={() => {
@@ -299,7 +289,7 @@ export default function ReviewScreen() {
               }}
             >
               <Text
-                className={`text-sm font-montserrat-bold ${
+                className={`text-sm font-montserrat-semi ${
                   pricingMode === 'negotiate' ? 'text-white' : 'text-textSecondary'
                 }`}
               >
@@ -311,7 +301,6 @@ export default function ReviewScreen() {
 
         {pricingMode === 'fixed' ? (
           <>
-            {/* Vehicle Type */}
             <VehicleTypeSelector
               options={vehicleOptions}
               selectedKey={vehicleType}
@@ -321,12 +310,8 @@ export default function ReviewScreen() {
               }}
             />
 
-            {/* Price Breakdown */}
             {currentVehicleEstimate && (
-              <View className="bg-surface rounded-2xl p-4 mb-4" style={reviewStyles.shadow}>
-                <Text className="text-sm font-montserrat-semi text-textPrimary mb-3">
-                  Price Breakdown
-                </Text>
+              <View className="mb-4">
                 <PriceBreakdown
                   items={priceItems}
                   total={totalAmount}
@@ -335,20 +320,17 @@ export default function ReviewScreen() {
             )}
           </>
         ) : (
-          <>
-            {/* Offer Slider */}
-            <OfferSlider
-              value={offerPrice}
-              min={estimate?.min_negotiate_fee ?? 50}
-              max={estimate?.recommended_max ?? 500}
-              recommendedMin={estimate?.recommended_min}
-              recommendedMax={estimate?.recommended_max}
-              onChange={(val) => {
-                setOfferPrice(val);
-                updateDraft({ customer_offer: val });
-              }}
-            />
-          </>
+          <OfferSlider
+            value={offerPrice}
+            min={estimate?.min_negotiate_fee ?? 50}
+            max={estimate?.recommended_max ?? 500}
+            recommendedMin={estimate?.recommended_min}
+            recommendedMax={estimate?.recommended_max}
+            onChange={(val) => {
+              setOfferPrice(val);
+              updateDraft({ customer_offer: val });
+            }}
+          />
         )}
 
         {/* Promo Code */}
@@ -377,11 +359,11 @@ export default function ReviewScreen() {
       </ScrollView>
 
       {/* Bottom CTA */}
-      <View className="absolute bottom-0 left-0 right-0 bg-surface px-5 py-4 pb-8" style={reviewStyles.bottomShadow}>
+      <View className="absolute bottom-0 left-0 right-0 bg-background px-5 py-4 pb-8 border-t border-divider">
         <Button
           title={
             pricingMode === 'fixed'
-              ? `Confirm Booking ${totalAmount > 0 ? formatCurrency(totalAmount) : ''}`
+              ? `Confirm ${totalAmount > 0 ? formatCurrency(totalAmount) : ''}`
               : `Send Offer ${formatCurrency(offerPrice)}`
           }
           onPress={handleSubmit}
@@ -393,19 +375,4 @@ export default function ReviewScreen() {
   );
 }
 
-const reviewStyles = StyleSheet.create({
-  shadow: {
-    shadowColor: '#0F172A',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.06,
-    shadowRadius: 8,
-    elevation: 2,
-  },
-  bottomShadow: {
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: -4 },
-    shadowOpacity: 0.08,
-    shadowRadius: 12,
-    elevation: 8,
-  },
-});
+const reviewStyles = StyleSheet.create({});

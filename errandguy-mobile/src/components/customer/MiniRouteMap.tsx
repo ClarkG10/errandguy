@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { View, Text } from 'react-native';
 import { MapPin } from 'lucide-react-native';
 import Mapbox from '@rnmapbox/maps';
+import { MAP_STYLE_URL } from '../../constants/map';
 
 const MAPBOX_TOKEN = process.env.EXPO_PUBLIC_MAPBOX_TOKEN ?? '';
 
@@ -92,7 +93,7 @@ export function MiniRouteMap({
       <View className="h-40 rounded-xl overflow-hidden">
         <Mapbox.MapView
           style={{ flex: 1 }}
-          styleURL={Mapbox.StyleURL.Street}
+          styleURL={MAP_STYLE_URL}
           logoEnabled={false}
           attributionEnabled={false}
           compassEnabled={false}

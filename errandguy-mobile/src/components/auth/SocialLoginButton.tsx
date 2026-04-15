@@ -71,11 +71,11 @@ const styles = StyleSheet.create({
   },
   letter: {
     fontSize: 15,
-    fontFamily: 'Inter_600SemiBold',
+    fontFamily: 'Quicksand_600SemiBold',
   },
   label: {
     fontSize: 14,
-    fontFamily: 'Inter_500Medium',
+    fontFamily: 'Quicksand_500Medium',
     color: '#0F172A',
   },
 });

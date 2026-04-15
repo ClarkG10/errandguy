@@ -28,6 +28,7 @@ import type { LucideIcon } from 'lucide-react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useAuthStore } from '../../../stores/authStore';
 import { useBookingStore } from '../../../stores/bookingStore';
+import { toast } from '../../../stores/toastStore';
 import { useNotificationStore } from '../../../stores/notificationStore';
 import { bookingService } from '../../../services/booking.service';
 import { configService } from '../../../services/config.service';
@@ -53,6 +54,7 @@ const ICON_MAP: Record<string, LucideIcon> = {
 export default function CustomerHomeScreen() {
   const router = useRouter();
   const user = useAuthStore((s) => s.user);
+  const role = useAuthStore((s) => s.role);
   const { activeBooking, setActiveBooking, clearDraft } = useBookingStore();
   const unreadCount = useNotificationStore((s) => s.unreadCount);
 
@@ -64,6 +66,10 @@ export default function CustomerHomeScreen() {
   const hasCacheLoaded = useRef(false);
 
   const fetchData = useCallback(async (isRefresh = false) => {
+    // Don't fetch customer data if the user is a runner — this screen
+    // may briefly mount before the layout guard redirects.
+    if (role !== 'customer') return;
+
     setError(null);
 
     // On first load, try cache first to avoid skeleton
@@ -107,14 +113,16 @@ export default function CustomerHomeScreen() {
       const allFailed = results.every((r) => r.status === 'rejected');
       if (allFailed) {
         setError('Unable to load data. Please check your connection.');
+        toast.error('Unable to load data. Please check your connection.');
       }
     } catch {
       setError('Something went wrong. Pull down to retry.');
+      toast.error('Something went wrong. Pull down to retry.');
     }
 
     hasCacheLoaded.current = true;
     setInitialLoading(false);
-  }, [setActiveBooking, user?.id]);
+  }, [setActiveBooking, user?.id, role]);
 
   useRefreshOnFocus(fetchData);
 
@@ -178,7 +186,7 @@ export default function CustomerHomeScreen() {
             <Bell size={20} color="#2563EB" strokeWidth={1.8} />
             {unreadCount > 0 && (
               <View className="absolute -top-0.5 -right-0.5 rounded-full items-center justify-center" style={{ width: 18, height: 18, backgroundColor: '#EF4444' }}>
-                <Text style={{ fontSize: 9, fontFamily: 'Inter_600SemiBold', color: '#FFF' }}>
+                <Text style={{ fontSize: 9, fontFamily: 'Quicksand_600SemiBold', color: '#FFF' }}>
                   {unreadCount > 9 ? '9+' : unreadCount}
                 </Text>
               </View>
@@ -226,7 +234,7 @@ export default function CustomerHomeScreen() {
                   </Text>
                 </View>
                 <View className="bg-white/15 rounded-full px-2.5 py-1">
-                  <Text style={{ fontSize: 10, fontFamily: 'Inter_600SemiBold', color: '#FFF' }}>
+                  <Text style={{ fontSize: 10, fontFamily: 'Quicksand_600SemiBold', color: '#FFF' }}>
                     {STATUS_LABELS[activeBooking.status] ?? activeBooking.status}
                   </Text>
                 </View>
@@ -248,7 +256,7 @@ export default function CustomerHomeScreen() {
                   {formatCurrency(activeBooking.total_amount)}
                 </Text>
                 <View className="flex-row items-center bg-white rounded-full px-3.5 py-1.5">
-                  <Text style={{ fontSize: 12, fontFamily: 'Inter_600SemiBold', color: '#2563EB' }}>
+                  <Text style={{ fontSize: 12, fontFamily: 'Quicksand_600SemiBold', color: '#2563EB' }}>
                     Track
                   </Text>
                   <ArrowRight size={14} color="#2563EB" style={{ marginLeft: 4 }} />
@@ -360,7 +368,7 @@ export default function CustomerHomeScreen() {
                         style={{ backgroundColor: statusColor + '15' }}
                       >
                         <Text
-                          style={{ fontSize: 10, fontFamily: 'Inter_500Medium', color: statusColor }}
+                          style={{ fontSize: 10, fontFamily: 'Quicksand_500Medium', color: statusColor }}
                         >
                           {STATUS_LABELS[booking.status] ?? booking.status}
                         </Text>

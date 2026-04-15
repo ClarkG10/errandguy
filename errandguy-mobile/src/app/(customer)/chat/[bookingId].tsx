@@ -14,60 +14,37 @@ import { useRouter, useLocalSearchParams } from 'expo-router';
 import { ArrowLeft, Send, Camera, Phone } from 'lucide-react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useAuthStore } from '../../../stores/authStore';
-import { useChatStore } from '../../../stores/chatStore';
-import { chatService } from '../../../services/chat.service';
-import { useImagePicker } from '../../../hooks/useImagePicker';
+import { useChat } from '../../../hooks/useChat';
 import { Avatar } from '../../../components/ui/Avatar';
+import { ImagePickerModal } from '../../../components/ui/ImagePickerModal';
 import { formatTime } from '../../../utils/formatDate';
 import { CUSTOMER_QUICK_MESSAGES } from '../../../constants/quickMessages';
 import type { Message } from '../../../types';
+import { toast } from '../../../stores/toastStore';
 
 export default function ChatScreen() {
   const router = useRouter();
   const { bookingId } = useLocalSearchParams<{ bookingId: string }>();
   const user = useAuthStore((s) => s.user);
-  const { messages: allMessages, setMessages, addMessage } = useChatStore();
-  const { pickImage } = useImagePicker();
+
+  const {
+    messages,
+    fetchMessages,
+    sendMessage: chatSendMessage,
+    markAsRead,
+  } = useChat(bookingId ?? '');
 
   const [inputText, setInputText] = useState('');
   const [sending, setSending] = useState(false);
+  const [imagePickerVisible, setImagePickerVisible] = useState(false);
   const flatListRef = useRef<FlatList<Message>>(null);
-  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
-  const messages = allMessages[bookingId ?? ''] ?? [];
-
-  // Fetch initial messages
+  // Fetch initial messages and mark as read
   useEffect(() => {
     if (!bookingId) return;
-
-    chatService
-      .getMessages(bookingId)
-      .then((res) => {
-        setMessages(bookingId, res.data.data ?? []);
-      })
-      .catch(() => {});
-
-    chatService.markAsRead(bookingId).catch(() => {});
-  }, [bookingId, setMessages]);
-
-  // Poll for new messages (Supabase Realtime placeholder)
-  useEffect(() => {
-    if (!bookingId) return;
-
-    pollRef.current = setInterval(async () => {
-      try {
-        const res = await chatService.getMessages(bookingId);
-        setMessages(bookingId, res.data.data ?? []);
-        chatService.markAsRead(bookingId).catch(() => {});
-      } catch {
-        // Retry silently
-      }
-    }, 5000);
-
-    return () => {
-      if (pollRef.current) clearInterval(pollRef.current);
-    };
-  }, [bookingId, setMessages]);
+    fetchMessages().catch(() => {});
+    markAsRead().catch(() => {});
+  }, [bookingId, fetchMessages, markAsRead]);
 
   const handleSend = useCallback(
     async (content?: string, imageUrl?: string) => {
@@ -77,30 +54,22 @@ export default function ChatScreen() {
 
       setSending(true);
       try {
-        const res = await chatService.sendMessage(bookingId, {
-          content: text || undefined,
-          image_url: imageUrl,
-        });
-        const newMessage: Message = res.data.data;
-        addMessage(bookingId, newMessage);
+        await chatSendMessage(text || undefined, imageUrl);
         setInputText('');
         flatListRef.current?.scrollToEnd({ animated: true });
       } catch {
-        // Error handled silently
+        toast.error('Failed to send message');
       } finally {
         setSending(false);
       }
     },
-    [bookingId, inputText, addMessage],
+    [bookingId, inputText, chatSendMessage],
   );
 
-  const handleImageSend = useCallback(async () => {
-    const result = await pickImage();
-    if (result) {
-      // In production: upload to Supabase Storage, get URL, then send
-      await handleSend(undefined, result.uri);
-    }
-  }, [pickImage, handleSend]);
+  const handleImageSend = useCallback(async (uri: string) => {
+    setImagePickerVisible(false);
+    await handleSend(undefined, uri);
+  }, [handleSend]);
 
   const renderMessage = useCallback(
     ({ item }: { item: Message }) => {
@@ -219,7 +188,7 @@ export default function ChatScreen() {
 
         {/* Input Area */}
         <View className="flex-row items-center px-4 py-3 border-t border-divider bg-surface">
-          <Pressable className="mr-2" onPress={handleImageSend}>
+          <Pressable className="mr-2" onPress={() => setImagePickerVisible(true)}>
             <Camera size={24} color="#475569" />
           </Pressable>
           <TextInput
@@ -240,6 +209,14 @@ export default function ChatScreen() {
           </Pressable>
         </View>
       </KeyboardAvoidingView>
+
+      <ImagePickerModal
+        visible={imagePickerVisible}
+        onClose={() => setImagePickerVisible(false)}
+        onConfirm={handleImageSend}
+        title="Send Photo"
+        subtitle="Share a photo in the chat"
+      />
     </SafeAreaView>
   );
 }

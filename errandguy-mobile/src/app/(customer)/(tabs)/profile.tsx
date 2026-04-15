@@ -23,6 +23,7 @@ import { Button } from '../../../components/ui/Button';
 import { ProfileMenuItem } from '../../../components/customer/ProfileMenuItem';
 import { EditProfileModal } from '../../../components/customer/EditProfileModal';
 import { formatCurrency } from '../../../utils/formatCurrency';
+import { toast } from '../../../stores/toastStore';
 
 export default function ProfileScreen() {
   const router = useRouter();
@@ -56,7 +57,7 @@ export default function ProfileScreen() {
       await logout();
       router.replace('/(auth)/welcome');
     } catch {
-      Alert.alert('Error', 'Failed to delete account. Please try again.');
+      toast.error('Failed to delete account. Please try again.');
     } finally {
       setDeleting(false);
       setShowDeleteModal(false);
@@ -213,7 +214,7 @@ export default function ProfileScreen() {
                 placeholder="DELETE"
                 placeholderTextColor="#CBD5E1"
                 autoCapitalize="characters"
-                style={{ fontFamily: 'Inter_400Regular', fontSize: 15, color: '#0F172A' }}
+                style={{ fontFamily: 'Quicksand_400Regular', fontSize: 15, color: '#0F172A' }}
               />
             </View>
             <Button

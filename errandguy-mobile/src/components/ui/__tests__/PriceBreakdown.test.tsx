@@ -5,7 +5,7 @@ import { PriceBreakdown } from '../PriceBreakdown';
 const items = [
   { label: 'Base Fee', amount: 50 },
   { label: 'Distance Fee', amount: 30 },
-  { label: 'Service Fee', amount: 12 },
+  { label: 'Convenience Fee', amount: 12 },
 ];
 
 describe('PriceBreakdown', () => {
@@ -13,7 +13,7 @@ describe('PriceBreakdown', () => {
     const { getByText } = render(<PriceBreakdown items={items} total={92} />);
     expect(getByText('Base Fee')).toBeTruthy();
     expect(getByText('Distance Fee')).toBeTruthy();
-    expect(getByText('Service Fee')).toBeTruthy();
+    expect(getByText('Convenience Fee')).toBeTruthy();
   });
 
   it('renders total correctly', () => {

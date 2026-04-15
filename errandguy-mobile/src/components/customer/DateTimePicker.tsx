@@ -1,5 +1,5 @@
-import React, { useMemo, useState } from 'react';
-import { View, Text, Pressable, ScrollView } from 'react-native';
+import React, { useMemo, useState, useRef, useCallback, useEffect } from 'react';
+import { View, Text, Pressable, ScrollView, StyleSheet, type NativeScrollEvent, type NativeSyntheticEvent } from 'react-native';
 import dayjs from 'dayjs';
 
 interface DateTimePickerProps {
@@ -7,20 +7,90 @@ interface DateTimePickerProps {
   onChange: (isoString: string) => void;
 }
 
-// 30-min intervals from 6:00 AM to 10:00 PM
-const TIME_SLOTS = Array.from({ length: 33 }, (_, i) => {
-  const hour = 6 + Math.floor(i / 2);
-  const minute = i % 2 === 0 ? '00' : '30';
-  return `${String(hour).padStart(2, '0')}:${minute}`;
-});
+const HOURS = Array.from({ length: 24 }, (_, i) => i);
+const MINUTES = Array.from({ length: 60 }, (_, i) => i);
+const ITEM_HEIGHT = 44;
+const VISIBLE_ITEMS = 5;
+const PICKER_HEIGHT = ITEM_HEIGHT * VISIBLE_ITEMS;
+
+function WheelPicker({
+  data,
+  selected,
+  onSelect,
+  format,
+}: {
+  data: number[];
+  selected: number;
+  onSelect: (val: number) => void;
+  format: (val: number) => string;
+}) {
+  const scrollRef = useRef<ScrollView>(null);
+  const initialIndex = data.indexOf(selected);
+  const mounted = useRef(false);
+
+  useEffect(() => {
+    if (!mounted.current) {
+      mounted.current = true;
+      setTimeout(() => {
+        scrollRef.current?.scrollTo({
+          y: initialIndex * ITEM_HEIGHT,
+          animated: false,
+        });
+      }, 50);
+    }
+  }, [initialIndex]);
+
+  const handleMomentumEnd = useCallback(
+    (e: NativeSyntheticEvent<NativeScrollEvent>) => {
+      const offsetY = e.nativeEvent.contentOffset.y;
+      const index = Math.round(offsetY / ITEM_HEIGHT);
+      const clamped = Math.max(0, Math.min(index, data.length - 1));
+      onSelect(data[clamped]);
+    },
+    [data, onSelect],
+  );
+
+  return (
+    <View style={[ps.wheelContainer, { height: PICKER_HEIGHT }]}>
+      <View style={ps.highlight} pointerEvents="none" />
+      <ScrollView
+        ref={scrollRef}
+        nestedScrollEnabled
+        showsVerticalScrollIndicator={false}
+        snapToInterval={ITEM_HEIGHT}
+        decelerationRate="fast"
+        contentContainerStyle={{
+          paddingVertical: ITEM_HEIGHT * Math.floor(VISIBLE_ITEMS / 2),
+        }}
+        onMomentumScrollEnd={handleMomentumEnd}
+      >
+        {data.map((item) => {
+          const isSelected = item === selected;
+          return (
+            <View key={item} style={ps.wheelItem}>
+              <Text
+                style={[
+                  ps.wheelText,
+                  isSelected && ps.wheelTextSelected,
+                ]}
+              >
+                {format(item)}
+              </Text>
+            </View>
+          );
+        })}
+      </ScrollView>
+    </View>
+  );
+}
 
 export function DateTimePicker({ value, onChange }: DateTimePickerProps) {
   const selectedDate = value ? dayjs(value) : null;
 
-  // Show 14 days ahead for more flexibility
+  // Show 30 days ahead
   const dates = useMemo(() => {
     const result: dayjs.Dayjs[] = [];
-    for (let i = 0; i <= 13; i++) {
+    for (let i = 0; i <= 29; i++) {
       result.push(dayjs().add(i + 1, 'day'));
     }
     return result;
@@ -29,28 +99,44 @@ export function DateTimePicker({ value, onChange }: DateTimePickerProps) {
   const [pickedDate, setPickedDate] = useState<dayjs.Dayjs | null>(
     selectedDate ? dayjs(selectedDate).startOf('day') : null,
   );
-  const [pickedTime, setPickedTime] = useState<string | null>(
-    selectedDate ? selectedDate.format('HH:mm') : null,
+  const [pickedHour, setPickedHour] = useState<number>(
+    selectedDate ? selectedDate.hour() : 9,
+  );
+  const [pickedMinute, setPickedMinute] = useState<number>(
+    selectedDate ? selectedDate.minute() : 0,
+  );
+
+  const emitChange = useCallback(
+    (date: dayjs.Dayjs | null, hour: number, minute: number) => {
+      if (date) {
+        const combined = date.hour(hour).minute(minute).second(0);
+        onChange(combined.toISOString());
+      }
+    },
+    [onChange],
   );
 
   const handleDateSelect = (date: dayjs.Dayjs) => {
     setPickedDate(date);
-    if (pickedTime) {
-      const [h, m] = pickedTime.split(':');
-      const combined = date.hour(parseInt(h, 10)).minute(parseInt(m, 10));
-      onChange(combined.toISOString());
-    }
+    emitChange(date, pickedHour, pickedMinute);
   };
 
-  const handleTimeSelect = (time: string) => {
-    setPickedTime(time);
-    if (pickedDate) {
-      const [h, m] = time.split(':');
-      const combined = pickedDate
-        .hour(parseInt(h, 10))
-        .minute(parseInt(m, 10));
-      onChange(combined.toISOString());
-    }
+  const handleHourSelect = (hour: number) => {
+    setPickedHour(hour);
+    emitChange(pickedDate, hour, pickedMinute);
+  };
+
+  const handleMinuteSelect = (minute: number) => {
+    setPickedMinute(minute);
+    emitChange(pickedDate, pickedHour, minute);
+  };
+
+  const formatDisplay = () => {
+    if (!pickedDate) return null;
+    const h = pickedHour % 12 || 12;
+    const ampm = pickedHour >= 12 ? 'PM' : 'AM';
+    const m = String(pickedMinute).padStart(2, '0');
+    return `${pickedDate.format('MMMM D, YYYY')} at ${h}:${m} ${ampm}`;
   };
 
   return (
@@ -104,53 +190,86 @@ export function DateTimePicker({ value, onChange }: DateTimePickerProps) {
         })}
       </ScrollView>
 
-      {/* Time Selection */}
+      {/* Time Selection — Hour/Minute wheels */}
       <Text className="text-sm font-montserrat-semi text-textPrimary mb-2">
         Select Time
       </Text>
-      <ScrollView style={{ maxHeight: 240 }} showsVerticalScrollIndicator={false}>
-        <View className="flex-row flex-wrap" style={{ gap: 8 }}>
-          {TIME_SLOTS.map((time) => {
-            const isSelected = pickedTime === time;
-            return (
-              <Pressable
-                key={time}
-                className={`rounded-lg items-center justify-center ${
-                  isSelected
-                    ? 'bg-primary'
-                    : 'bg-surface border border-divider'
-                }`}
-                style={{ paddingHorizontal: 12, paddingVertical: 8, minWidth: 76 }}
-                onPress={() => handleTimeSelect(time)}
-              >
-                <Text
-                  className={`text-xs font-montserrat ${
-                    isSelected ? 'text-white' : 'text-textPrimary'
-                  }`}
-                >
-                  {dayjs().hour(parseInt(time.split(':')[0], 10)).minute(parseInt(time.split(':')[1], 10)).format('h:mm A')}
-                </Text>
-              </Pressable>
-            );
-          })}
-        </View>
-      </ScrollView>
+      <View style={ps.timeRow}>
+        <WheelPicker
+          data={HOURS}
+          selected={pickedHour}
+          onSelect={handleHourSelect}
+          format={(h) => {
+            const hr = h % 12 || 12;
+            const ampm = h >= 12 ? 'PM' : 'AM';
+            return `${hr} ${ampm}`;
+          }}
+        />
+        <Text style={ps.separator}>:</Text>
+        <WheelPicker
+          data={MINUTES}
+          selected={pickedMinute}
+          onSelect={handleMinuteSelect}
+          format={(m) => String(m).padStart(2, '0')}
+        />
+      </View>
 
       {/* Summary */}
-      {pickedDate && pickedTime && (
+      {pickedDate && (
         <View className="mt-4 p-3 bg-primaryLight rounded-xl">
           <Text className="text-sm font-montserrat text-primary text-center">
             Scheduled for{' '}
-            <Text className="font-montserrat-semi">
-              {pickedDate.format('MMMM D, YYYY')} at{' '}
-              {dayjs()
-                .hour(parseInt(pickedTime.split(':')[0], 10))
-                .minute(parseInt(pickedTime.split(':')[1], 10))
-                .format('h:mm A')}
-            </Text>
+            <Text className="font-montserrat-semi">{formatDisplay()}</Text>
           </Text>
         </View>
       )}
     </View>
   );
 }
+
+const ps = StyleSheet.create({
+  timeRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+  },
+  separator: {
+    fontSize: 22,
+    fontFamily: 'Quicksand_600SemiBold',
+    color: '#0F172A',
+  },
+  wheelContainer: {
+    width: 100,
+    overflow: 'hidden',
+    borderRadius: 12,
+    backgroundColor: '#F8FAFC',
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+  },
+  highlight: {
+    position: 'absolute',
+    top: ITEM_HEIGHT * Math.floor(VISIBLE_ITEMS / 2),
+    left: 4,
+    right: 4,
+    height: ITEM_HEIGHT,
+    backgroundColor: '#DBEAFE',
+    borderRadius: 8,
+    zIndex: 1,
+  },
+  wheelItem: {
+    height: ITEM_HEIGHT,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  wheelText: {
+    fontSize: 15,
+    fontFamily: 'Quicksand_500Medium',
+    color: '#334155',
+  },
+  wheelTextSelected: {
+    fontFamily: 'Quicksand_700Bold',
+    color: '#1D4ED8',
+    fontSize: 17,
+  },
+});

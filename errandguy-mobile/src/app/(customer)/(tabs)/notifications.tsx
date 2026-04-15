@@ -23,6 +23,7 @@ import { notificationService } from '../../../services/notification.service';
 import { EmptyState } from '../../../components/ui/EmptyState';
 import { formatRelativeTime } from '../../../utils/formatDate';
 import type { AppNotification, NotificationType } from '../../../types';
+import { toast } from '../../../stores/toastStore';
 
 const TYPE_ICONS: Record<NotificationType, LucideIcon> = {
   booking_update: Package,

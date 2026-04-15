@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { View, Text, ScrollView, Alert, KeyboardAvoidingView, Platform } from 'react-native';
+import { View, Text, ScrollView, KeyboardAvoidingView, Platform } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import { ArrowLeft } from 'lucide-react-native';
@@ -7,7 +7,8 @@ import { Pressable } from 'react-native';
 import { Input } from '../../../components/ui/Input';
 import { Button } from '../../../components/ui/Button';
 import { useAuthStore } from '../../../stores/authStore';
-import api from '../../../services/api';
+import { userService } from '../../../services/user.service';
+import { toast } from '../../../stores/toastStore';
 
 export default function EditProfileScreen() {
   const router = useRouter();
@@ -21,22 +22,22 @@ export default function EditProfileScreen() {
 
   const handleSave = async () => {
     if (!fullName.trim()) {
-      Alert.alert('Error', 'Full name is required');
+      toast.error('Full name is required');
       return;
     }
 
     setLoading(true);
     try {
-      const res = await api.put('/user/profile', {
+      const res = await userService.updateProfile({
         full_name: fullName.trim(),
-        phone: phone.trim() || null,
-        email: email.trim() || null,
+        phone: phone.trim() || undefined,
+        email: email.trim() || undefined,
       });
       updateProfile(res.data.data);
-      Alert.alert('Success', 'Profile updated successfully');
+      toast.success('Profile updated successfully');
       if (router.canGoBack()) router.back(); else router.replace('/(runner)/(tabs)');
     } catch (err: any) {
-      Alert.alert('Error', err?.response?.data?.message ?? 'Failed to update profile');
+      toast.error(err?.response?.data?.message ?? 'Failed to update profile');
     } finally {
       setLoading(false);
     }

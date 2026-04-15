@@ -1,15 +1,16 @@
 import React, { useEffect, useState, useCallback } from 'react';
-import { View, Text, ScrollView, RefreshControl, Alert, Platform } from 'react-native';
+import { View, Text, ScrollView, RefreshControl, Platform } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import { ArrowLeft, CheckCircle, Clock, XCircle } from 'lucide-react-native';
 import { Pressable } from 'react-native';
 import { Card } from '../../../components/ui/Card';
 import { DocumentUploadCard } from '../../../components/runner/DocumentUploadCard';
+import { ImagePickerModal } from '../../../components/ui/ImagePickerModal';
 import { useRunnerStore } from '../../../stores/runnerStore';
 import { runnerService } from '../../../services/runner.service';
-import { useImagePicker } from '../../../hooks/useImagePicker';
 import type { RunnerDocument, DocumentType } from '../../../types';
+import { toast } from '../../../stores/toastStore';
 
 interface DocConfig {
   type: DocumentType;
@@ -27,10 +28,11 @@ const DOCUMENT_TYPES: DocConfig[] = [
 export default function DocumentsScreen() {
   const router = useRouter();
   const { runnerProfile, setRunnerProfile } = useRunnerStore();
-  const { pickImage, takePhoto } = useImagePicker();
   const [documents, setDocuments] = useState<RunnerDocument[]>([]);
   const [refreshing, setRefreshing] = useState(false);
   const [uploading, setUploading] = useState<string | null>(null);
+  const [pickerVisible, setPickerVisible] = useState(false);
+  const [activeDocType, setActiveDocType] = useState<DocumentType | null>(null);
 
   const fetchProfile = useCallback(async () => {
     try {
@@ -51,24 +53,16 @@ export default function DocumentsScreen() {
     setRefreshing(false);
   }, [fetchProfile]);
 
-  const handleUpload = async (docType: DocumentType) => {
-    Alert.alert('Upload Document', 'Choose a method', [
-      {
-        text: 'Camera',
-        onPress: async () => {
-          const result = await takePhoto();
-          if (result) await uploadFile(docType, result.uri);
-        },
-      },
-      {
-        text: 'Gallery',
-        onPress: async () => {
-          const result = await pickImage();
-          if (result) await uploadFile(docType, result.uri);
-        },
-      },
-      { text: 'Cancel', style: 'cancel' },
-    ]);
+  const handleUpload = (docType: DocumentType) => {
+    setActiveDocType(docType);
+    setPickerVisible(true);
+  };
+
+  const handleImageConfirm = async (uri: string) => {
+    if (!activeDocType) return;
+    setPickerVisible(false);
+    await uploadFile(activeDocType, uri);
+    setActiveDocType(null);
   };
 
   const uploadFile = async (docType: DocumentType, uri: string) => {
@@ -84,9 +78,9 @@ export default function DocumentsScreen() {
 
       await runnerService.uploadDocument(formData);
       await fetchProfile();
-      Alert.alert('Success', 'Document uploaded successfully');
+      toast.success('Document uploaded successfully');
     } catch (err: any) {
-      Alert.alert('Error', err?.response?.data?.message ?? 'Failed to upload document');
+      toast.error(err?.response?.data?.message ?? 'Failed to upload document');
     } finally {
       setUploading(null);
     }
@@ -180,6 +174,21 @@ export default function DocumentsScreen() {
           })}
         </View>
       </ScrollView>
+
+      <ImagePickerModal
+        visible={pickerVisible}
+        onClose={() => {
+          setPickerVisible(false);
+          setActiveDocType(null);
+        }}
+        onConfirm={handleImageConfirm}
+        title={
+          activeDocType
+            ? `Upload ${DOCUMENT_TYPES.find((d) => d.type === activeDocType)?.label ?? 'Document'}`
+            : 'Upload Document'
+        }
+        uploading={!!uploading}
+      />
     </SafeAreaView>
   );
 }

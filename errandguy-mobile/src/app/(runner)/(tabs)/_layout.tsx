@@ -1,10 +1,13 @@
 import { Tabs } from 'expo-router';
 import { Home, DollarSign, Clock, User } from 'lucide-react-native';
 import { View, Platform, StyleSheet } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRunnerStore } from '../../../stores/runnerStore';
 
 export default function RunnerTabsLayout() {
   const isOnline = useRunnerStore((s) => s.isOnline);
+  const insets = useSafeAreaInsets();
+  const bottomOffset = Math.max(insets.bottom, 16);
 
   return (
     <Tabs
@@ -14,13 +17,13 @@ export default function RunnerTabsLayout() {
         tabBarInactiveTintColor: '#94A3B8',
         tabBarShowLabel: true,
         tabBarLabelStyle: {
-          fontFamily: 'Inter_500Medium',
+          fontFamily: 'Quicksand_500Medium',
           fontSize: 11,
           marginTop: 2,
         },
         tabBarStyle: {
           position: 'absolute',
-          bottom: Platform.OS === 'ios' ? 24 : 16,
+          bottom: bottomOffset,
           left: 16,
           right: 16,
           backgroundColor: '#FFFFFF',

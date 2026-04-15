@@ -32,8 +32,11 @@ import { useDebounce } from '../../../hooks/useDebounce';
 import { Button } from '../../../components/ui/Button';
 import { Input } from '../../../components/ui/Input';
 import { PhotoGrid } from '../../../components/customer/PhotoGrid';
+import { ImagePickerModal } from '../../../components/ui/ImagePickerModal';
 import { SavedAddressSheet } from '../../../components/customer/SavedAddressSheet';
+import { MAP_STYLE_URL } from '../../../constants/map';
 import type { SavedAddress } from '../../../types';
+import { toast } from '../../../stores/toastStore';
 
 const MAPBOX_TOKEN = process.env.EXPO_PUBLIC_MAPBOX_TOKEN ?? '';
 const DEFAULT_CENTER: [number, number] = [121.0, 14.6];
@@ -171,6 +174,7 @@ export default function TaskDetailsScreen() {
   const [isMoving, setIsMoving] = useState(false);
   const [currentCoord, setCurrentCoord] = useState<[number, number] | null>(null);
   const [showSavedSheet, setShowSavedSheet] = useState(false);
+  const [photoPickerVisible, setPhotoPickerVisible] = useState(false);
 
   // Search
   const [searchQuery, setSearchQuery] = useState('');
@@ -405,7 +409,7 @@ export default function TaskDetailsScreen() {
       const addr = await reverseGeocode(coords[0], coords[1]);
       setCurrentAddress(addr);
     } catch {
-      Alert.alert('Error', 'Could not get your location.');
+      toast.error('Could not get your location.');
     }
   }, [reverseGeocode]);
 
@@ -494,33 +498,19 @@ export default function TaskDetailsScreen() {
   }, []);
 
   /* ── Photos ── */
-  const handleAddPhoto = useCallback(async () => {
-    Alert.alert('Add Photo', 'Choose source', [
-      {
-        text: 'Camera',
-        onPress: async () => {
-          const result = await takePhoto();
-          if (result) {
-            const updated = [...photos, result.uri];
-            setPhotos(updated);
-            updateDraft({ item_photos: updated });
-          }
-        },
-      },
-      {
-        text: 'Gallery',
-        onPress: async () => {
-          const result = await pickImage();
-          if (result) {
-            const updated = [...photos, result.uri];
-            setPhotos(updated);
-            updateDraft({ item_photos: updated });
-          }
-        },
-      },
-      { text: 'Cancel', style: 'cancel' },
-    ]);
-  }, [photos, takePhoto, pickImage, updateDraft]);
+  const handleAddPhoto = useCallback(() => {
+    setPhotoPickerVisible(true);
+  }, []);
+
+  const handlePhotoConfirm = useCallback(
+    (uri: string) => {
+      setPhotoPickerVisible(false);
+      const updated = [...photos, uri];
+      setPhotos(updated);
+      updateDraft({ item_photos: updated });
+    },
+    [photos, updateDraft],
+  );
 
   const handleRemovePhoto = useCallback(
     (index: number) => {
@@ -587,7 +577,7 @@ export default function TaskDetailsScreen() {
       <View style={phase === 'details' ? { height: SCREEN_HEIGHT * 0.36 } : { flex: 1 }}>
         <Mapbox.MapView
           style={{ flex: 1 }}
-          styleURL={Mapbox.StyleURL.Street}
+          styleURL={MAP_STYLE_URL}
           logoEnabled={false}
           attributionEnabled={false}
           onRegionWillChange={handleRegionWillChange}
@@ -924,6 +914,15 @@ export default function TaskDetailsScreen() {
         onClose={() => setShowSavedSheet(false)}
         onSelect={handleSavedAddressSelect}
       />
+
+      {/* Image Picker Modal */}
+      <ImagePickerModal
+        visible={photoPickerVisible}
+        onClose={() => setPhotoPickerVisible(false)}
+        onConfirm={handlePhotoConfirm}
+        title="Add Item Photo"
+        subtitle="Help the runner identify your item"
+      />
     </View>
   );
 }
@@ -975,11 +974,11 @@ const st = StyleSheet.create({
   },
   pillActive: { backgroundColor: '#2563EB' },
   pillInactive: { backgroundColor: '#FFF', borderWidth: 1.5, borderColor: '#E2E8F0' },
-  pillText: { fontSize: 11, fontFamily: 'Inter_600SemiBold', color: '#94A3B8' },
+  pillText: { fontSize: 11, fontFamily: 'Quicksand_600SemiBold', color: '#94A3B8' },
   pillTextActive: { color: '#FFF' },
   phaseTitle: {
     fontSize: 16,
-    fontFamily: 'Inter_500Medium',
+    fontFamily: 'Quicksand_500Medium',
     color: '#0F172A',
     marginLeft: 12,
   },
@@ -1003,7 +1002,7 @@ const st = StyleSheet.create({
   searchInput: {
     flex: 1,
     fontSize: 14,
-    fontFamily: 'Inter_400Regular',
+    fontFamily: 'Quicksand_400Regular',
     color: '#0F172A',
     marginLeft: 10,
   },
@@ -1037,7 +1036,7 @@ const st = StyleSheet.create({
   searchResultText: {
     flex: 1,
     fontSize: 13,
-    fontFamily: 'Inter_400Regular',
+    fontFamily: 'Quicksand_400Regular',
     color: '#0F172A',
   },
   myLocationBtn: {
@@ -1079,7 +1078,7 @@ const st = StyleSheet.create({
   },
   cardTitle: {
     fontSize: 17,
-    fontFamily: 'Inter_500Medium',
+    fontFamily: 'Quicksand_500Medium',
     color: '#0F172A',
     marginBottom: 14,
   },
@@ -1104,7 +1103,7 @@ const st = StyleSheet.create({
   addressText: {
     flex: 1,
     fontSize: 14,
-    fontFamily: 'Inter_400Regular',
+    fontFamily: 'Quicksand_400Regular',
     color: '#0F172A',
   },
   quickActions: {
@@ -1122,7 +1121,7 @@ const st = StyleSheet.create({
   },
   quickBtnText: {
     fontSize: 12,
-    fontFamily: 'Inter_500Medium',
+    fontFamily: 'Quicksand_500Medium',
     color: '#2563EB',
     marginLeft: 6,
   },
@@ -1157,12 +1156,12 @@ const st = StyleSheet.create({
   routeAddr: {
     flex: 1,
     fontSize: 13,
-    fontFamily: 'Inter_400Regular',
+    fontFamily: 'Quicksand_400Regular',
     color: '#0F172A',
   },
   changeLink: {
     fontSize: 11,
-    fontFamily: 'Inter_500Medium',
+    fontFamily: 'Quicksand_500Medium',
     color: '#2563EB',
     marginLeft: 8,
   },
@@ -1180,7 +1179,7 @@ const st = StyleSheet.create({
   },
   contactToggleText: {
     fontSize: 12,
-    fontFamily: 'Inter_500Medium',
+    fontFamily: 'Quicksand_500Medium',
     color: '#2563EB',
     marginLeft: 6,
     marginRight: 2,
@@ -1193,7 +1192,7 @@ const st = StyleSheet.create({
   },
   errorText: {
     fontSize: 12,
-    fontFamily: 'Inter_400Regular',
+    fontFamily: 'Quicksand_400Regular',
     color: '#EF4444',
     marginBottom: 8,
   },

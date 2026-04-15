@@ -6,6 +6,7 @@ use App\Http\Controllers\Controller;
 use App\Http\Requests\UpdateProfileRequest;
 use App\Http\Requests\UploadAvatarRequest;
 use App\Http\Resources\UserResource;
+use App\Models\RunnerProfile;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Storage;
@@ -16,7 +17,7 @@ class ProfileController extends Controller
     public function show(Request $request): JsonResponse
     {
         return response()->json([
-            'data' => new UserResource($request->user()->load('runnerProfile')),
+            'data' => new UserResource($request->user()->load('runnerProfile.documents')),
         ]);
     }
 
@@ -25,8 +26,16 @@ class ProfileController extends Controller
         $user = $request->user();
         $user->update($request->validated());
 
+        // Auto-create runner profile when role is changed to runner
+        if ($request->validated('role') === 'runner' && !$user->runnerProfile) {
+            RunnerProfile::create([
+                'user_id' => $user->id,
+                'verification_status' => 'pending',
+            ]);
+        }
+
         return response()->json([
-            'data' => new UserResource($user->fresh()->load('runnerProfile')),
+            'data' => new UserResource($user->fresh()->load('runnerProfile.documents')),
             'message' => 'Profile updated successfully.',
         ]);
     }

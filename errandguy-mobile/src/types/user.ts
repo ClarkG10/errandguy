@@ -1,3 +1,5 @@
+import type { RunnerProfile } from './runner';
+
 export type UserRole = 'customer' | 'runner';
 
 export type UserStatus = 'active' | 'suspended' | 'banned' | 'deleted';
@@ -22,4 +24,5 @@ export interface User {
   deleted_at: string | null;
   created_at: string;
   updated_at: string;
+  runner_profile?: RunnerProfile | null;
 }

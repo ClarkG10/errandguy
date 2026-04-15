@@ -5,10 +5,10 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { ChevronLeft } from 'lucide-react-native';
 import { OTPInput } from '../../components/ui/OTPInput';
 import { Button } from '../../components/ui/Button';
-import { Toast } from '../../components/ui/Toast';
 import { useCountdown } from '../../hooks/useCountdown';
 import { authService } from '../../services/auth.service';
 import { useAuthStore } from '../../stores/authStore';
+import { toast } from '../../stores/toastStore';
 
 export default function VerifyOTPScreen() {
   const router = useRouter();
@@ -22,7 +22,6 @@ export default function VerifyOTPScreen() {
   const [code, setCode] = useState('');
   const [loading, setLoading] = useState(false);
   const [attemptsRemaining, setAttemptsRemaining] = useState(5);
-  const [toast, setToast] = useState<{ visible: boolean; message: string; variant: 'success' | 'error' | 'info' | 'warning' }>({ visible: false, message: '', variant: 'error' });
 
   const { seconds, isExpired, start, reset, formatted } = useCountdown(300, true);
 
@@ -52,13 +51,12 @@ export default function VerifyOTPScreen() {
         // Login flow — user + token already set, root layout will redirect
       }
     } catch (error: any) {
-      const remaining = error?.response?.data?.attempts_remaining;
+      const remaining = error?.attempts_remaining;
       if (remaining !== undefined) {
         setAttemptsRemaining(remaining);
       }
-      const message =
-        error?.response?.data?.message || 'Verification failed. Please try again.';
-      setToast({ visible: true, message, variant: 'error' });
+      const message = error?.message || 'Verification failed. Please try again.';
+      toast.error(message);
       setCode('');
     } finally {
       setLoading(false);
@@ -79,23 +77,15 @@ export default function VerifyOTPScreen() {
       reset(300);
       start();
       setAttemptsRemaining(5);
-      setToast({ visible: true, message: 'Code resent successfully.', variant: 'success' });
+      toast.success('Code resent successfully.');
     } catch (error: any) {
-      const message =
-        error?.response?.data?.message || 'Failed to resend code. Please try again later.';
-      setToast({ visible: true, message, variant: 'error' });
+      const message = error?.message || 'Failed to resend code. Please try again later.';
+      toast.error(message);
     }
   };
 
   return (
     <SafeAreaView className="flex-1 bg-surface">
-      <Toast
-        message={toast.message}
-        variant={toast.variant}
-        visible={toast.visible}
-        onDismiss={() => setToast((prev) => ({ ...prev, visible: false }))}
-      />
-
       <Pressable
         className="mt-2 ml-6 mb-8 w-10 h-10 rounded-full items-center justify-center"
         onPress={() => router.canGoBack() ? router.back() : router.replace('/(auth)/login')}
@@ -138,7 +128,7 @@ export default function VerifyOTPScreen() {
 
       <Button
         title="Verify"
-        loadingTitle="Verifying.."
+
         fullWidth
         size="lg"
         loading={loading}

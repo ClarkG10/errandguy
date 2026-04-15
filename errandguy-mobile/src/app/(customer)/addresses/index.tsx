@@ -8,7 +8,9 @@ import { Button } from '../../../components/ui/Button';
 import { Skeleton } from '../../../components/ui/Skeleton';
 import { useDebounce } from '../../../hooks/useDebounce';
 import { userService } from '../../../services/user.service';
+import { MAP_STYLE_URL } from '../../../constants/map';
 import type { SavedAddress } from '../../../types';
+import { toast } from '../../../stores/toastStore';
 
 type AddressLabel = 'home' | 'work' | 'other';
 
@@ -172,7 +174,7 @@ export default function AddressesScreen() {
       setEditingId(null);
       fetchAddresses();
     } catch {
-      Alert.alert('Error', 'Failed to save address');
+      toast.error('Failed to save address');
     } finally {
       setSaving(false);
     }
@@ -205,7 +207,7 @@ export default function AddressesScreen() {
             await userService.deleteAddress(id);
             setAddresses((prev) => prev.filter((a) => a.id !== id));
           } catch {
-            Alert.alert('Error', 'Failed to delete address');
+            toast.error('Failed to delete address');
           }
         },
       },
@@ -265,7 +267,7 @@ export default function AddressesScreen() {
               <View style={{ height: 180 }}>
                 <Mapbox.MapView
                   style={{ flex: 1 }}
-                  styleURL={Mapbox.StyleURL.Street}
+                  styleURL={MAP_STYLE_URL}
                   onRegionDidChange={handleMapRegionDidChange}
                   attributionEnabled={false}
                   logoEnabled={false}

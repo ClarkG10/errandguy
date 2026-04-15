@@ -49,6 +49,29 @@ class SavedAddressController extends Controller
         ], 201);
     }
 
+    public function update(SavedAddressRequest $request, string $id): JsonResponse
+    {
+        $address = SavedAddress::findOrFail($id);
+
+        $this->authorize('update', $address);
+
+        $data = $request->validated();
+
+        // If marking as default, unset other defaults
+        if (!empty($data['is_default'])) {
+            $request->user()->savedAddresses()
+                ->where('id', '!=', $id)
+                ->update(['is_default' => false]);
+        }
+
+        $address->update($data);
+
+        return response()->json([
+            'data' => $address->fresh(),
+            'message' => 'Address updated successfully.',
+        ]);
+    }
+
     public function destroy(Request $request, string $id): JsonResponse
     {
         $address = SavedAddress::findOrFail($id);

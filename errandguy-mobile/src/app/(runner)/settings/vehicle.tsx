@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { View, Text, ScrollView, Alert, Pressable } from 'react-native';
+import { View, Text, ScrollView, Pressable } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import { ArrowLeft, Check } from 'lucide-react-native';
@@ -9,6 +9,7 @@ import { Card } from '../../../components/ui/Card';
 import { useRunnerStore } from '../../../stores/runnerStore';
 import { runnerService } from '../../../services/runner.service';
 import type { VehicleType } from '../../../types';
+import { toast } from '../../../stores/toastStore';
 
 const VEHICLE_OPTIONS: { type: VehicleType; label: string; emoji: string }[] = [
   { type: 'walk', label: 'Walking', emoji: '🚶' },
@@ -30,14 +31,18 @@ export default function VehicleScreen() {
   const handleSave = async () => {
     setLoading(true);
     try {
-      const res = await runnerService.updateRunnerProfile({
+      const data: Record<string, string> = {
         vehicle_type: vehicleType,
-      });
+      };
+      if (vehicleType === 'motorcycle' || vehicleType === 'car') {
+        data.vehicle_plate = plate;
+      }
+      const res = await runnerService.updateRunnerProfile(data);
       setRunnerProfile(res.data.data);
-      Alert.alert('Success', 'Vehicle information updated');
+      toast.success('Vehicle information updated');
       if (router.canGoBack()) router.back(); else router.replace('/(runner)/(tabs)');
     } catch (err: any) {
-      Alert.alert('Error', err?.response?.data?.message ?? 'Failed to update vehicle');
+      toast.error(err?.response?.data?.message ?? 'Failed to update vehicle');
     } finally {
       setLoading(false);
     }

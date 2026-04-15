@@ -28,6 +28,7 @@ import { useAuthStore } from '../../../stores/authStore';
 import { runnerService } from '../../../services/runner.service';
 import { userService } from '../../../services/user.service';
 import type { LucideIcon } from 'lucide-react-native';
+import { toast } from '../../../stores/toastStore';
 
 interface MenuItem {
   icon: LucideIcon;
@@ -83,7 +84,7 @@ export default function RunnerProfileScreen() {
       await logout();
       router.replace('/(auth)/welcome' as any);
     } catch {
-      Alert.alert('Error', 'Failed to delete account. Please try again.');
+      toast.error('Failed to delete account. Please try again.');
     } finally {
       setDeleting(false);
       setShowDeleteModal(false);
@@ -154,7 +155,7 @@ export default function RunnerProfileScreen() {
             {user?.full_name ?? 'Runner'}
           </Text>
           <Text className="text-xs font-montserrat text-textTertiary mt-0.5">
-            ★ {user?.avg_rating?.toFixed(1) ?? '0.0'} • {runnerProfile?.total_errands ?? 0} errands
+            ★ {Number(user?.avg_rating ?? 0).toFixed(1)} • {runnerProfile?.total_errands ?? 0} errands
           </Text>
           {isVerified && (
             <View className="mt-2">
@@ -183,7 +184,7 @@ export default function RunnerProfileScreen() {
                 }
               />
               <PerformanceMetric
-                value={parseFloat(user?.avg_rating?.toFixed(1) ?? '0')}
+                value={Number(user?.avg_rating ?? 0).toFixed(1)}
                 label="Rating"
                 color="#F59E0B"
                 suffix="★"
@@ -281,7 +282,7 @@ export default function RunnerProfileScreen() {
                 placeholder="DELETE"
                 placeholderTextColor="#CBD5E1"
                 autoCapitalize="characters"
-                style={{ fontFamily: 'Inter_400Regular', fontSize: 15, color: '#0F172A' }}
+                style={{ fontFamily: 'Quicksand_400Regular', fontSize: 15, color: '#0F172A' }}
               />
             </View>
             <Button

@@ -16,12 +16,12 @@ import { useForm, Controller } from 'react-hook-form';
 import { ChevronLeft, Camera } from 'lucide-react-native';
 import { Input } from '../../components/ui/Input';
 import { Button } from '../../components/ui/Button';
-import { Toast } from '../../components/ui/Toast';
 import { PasswordStrengthIndicator } from '../../components/auth/PasswordStrengthIndicator';
 import { useAuth } from '../../hooks/useAuth';
 import { useImagePicker } from '../../hooks/useImagePicker';
 import { userService } from '../../services/user.service';
 import { authService } from '../../services/auth.service';
+import { toast } from '../../stores/toastStore';
 
 interface RegisterFormData {
   full_name: string;
@@ -39,7 +39,6 @@ export default function RegisterScreen() {
   const { image, pickImage } = useImagePicker();
   const [loading, setLoading] = useState(false);
   const [termsAccepted, setTermsAccepted] = useState(false);
-  const [toast, setToast] = useState({ visible: false, message: '', variant: 'error' as const });
 
   const {
     control,
@@ -62,11 +61,7 @@ export default function RegisterScreen() {
 
   const onSubmit = async (data: RegisterFormData) => {
     if (!termsAccepted) {
-      setToast({
-        visible: true,
-        message: 'Please accept the Terms of Service and Privacy Policy.',
-        variant: 'error',
-      });
+      toast.error('Please accept the Terms of Service and Privacy Policy.');
       return;
     }
 
@@ -109,30 +104,34 @@ export default function RegisterScreen() {
         router.replace('/(auth)/role-select');
       }
     } catch (error: any) {
-      const status = error?.response?.status ?? error?.status;
-      const serverErrors = error?.response?.data?.errors ?? error?.errors;
+      const status = error?.status;
+      const serverErrors = error?.errors;
 
       if (serverErrors && typeof serverErrors === 'object') {
+        let hasFieldError = false;
         for (const [field, messages] of Object.entries(serverErrors)) {
           if (field === 'phone' || field === 'email' || field === 'full_name' || field === 'password') {
             setError(field as keyof RegisterFormData, {
               message: (messages as string[])[0],
             });
+            hasFieldError = true;
           }
+        }
+        if (!hasFieldError) {
+          toast.error(error?.message || 'Registration failed. Please try again.');
         }
       } else {
         let message: string;
-        if (!error?.response && !error?.status) {
+        if (!status) {
           message = 'Unable to reach the server. Check your internet connection.';
         } else if (status === 429) {
           message = 'Too many attempts. Please wait a few minutes and try again.';
-        } else if (status === 500 || status >= 500) {
+        } else if (status >= 500) {
           message = 'Something went wrong on our end. Please try again later.';
         } else {
-          message =
-            error?.response?.data?.message ?? error?.message ?? 'Registration failed. Please try again.';
+          message = error?.message || 'Registration failed. Please try again.';
         }
-        setToast({ visible: true, message, variant: 'error' });
+        toast.error(message);
       }
     } finally {
       setLoading(false);
@@ -141,13 +140,6 @@ export default function RegisterScreen() {
 
   return (
     <SafeAreaView className="flex-1 bg-surface">
-      <Toast
-        message={toast.message}
-        variant={toast.variant}
-        visible={toast.visible}
-        onDismiss={() => setToast((prev) => ({ ...prev, visible: false }))}
-      />
-
       <KeyboardAvoidingView
         className="flex-1"
         behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
@@ -335,7 +327,7 @@ export default function RegisterScreen() {
 
           <Button
             title="Create Account"
-            loadingTitle="Creating.."
+
             fullWidth
             size="lg"
             loading={loading}
@@ -371,7 +363,7 @@ const rs = StyleSheet.create({
   },
   loginText: {
     fontSize: 14,
-    fontFamily: 'Inter_400Regular',
+    fontFamily: 'Quicksand_400Regular',
     color: '#94A3B8',
   },
   loginBtn: {
@@ -380,7 +372,7 @@ const rs = StyleSheet.create({
   },
   loginBtnText: {
     fontSize: 14,
-    fontFamily: 'Inter_600SemiBold',
+    fontFamily: 'Quicksand_600SemiBold',
     color: '#0F172A',
   },
 });

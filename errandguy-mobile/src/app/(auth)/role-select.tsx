@@ -4,9 +4,9 @@ import { useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Package, Bike, Check } from 'lucide-react-native';
 import { Button } from '../../components/ui/Button';
-import { Toast } from '../../components/ui/Toast';
 import { useAuth } from '../../hooks/useAuth';
 import { userService } from '../../services/user.service';
+import { toast } from '../../stores/toastStore';
 import type { UserRole } from '../../types';
 
 type RoleOption = {
@@ -39,25 +39,24 @@ export default function RoleSelectScreen() {
   const { updateProfile } = useAuth();
   const [selectedRole, setSelectedRole] = useState<UserRole | null>(null);
   const [loading, setLoading] = useState(false);
-  const [toast, setToast] = useState({ visible: false, message: '', variant: 'error' as const });
 
   const handleContinue = async () => {
     if (!selectedRole) return;
 
     setLoading(true);
     try {
-      await userService.updateProfile({ role: selectedRole } as any);
+      await userService.updateProfile({ role: selectedRole });
       updateProfile({ role: selectedRole });
 
       if (selectedRole === 'runner') {
-        router.replace('/(runner)/(tabs)');
+        router.replace('/(runner)/onboarding');
       } else {
         router.replace('/(customer)/(tabs)');
       }
     } catch (error: any) {
       const message =
-        error?.response?.data?.message || 'Something went wrong. Please try again.';
-      setToast({ visible: true, message, variant: 'error' });
+        error?.message || 'Something went wrong. Please try again.';
+      toast.error(message);
     } finally {
       setLoading(false);
     }
@@ -65,13 +64,6 @@ export default function RoleSelectScreen() {
 
   return (
     <SafeAreaView className="flex-1 bg-surface px-6">
-      <Toast
-        message={toast.message}
-        variant={toast.variant}
-        visible={toast.visible}
-        onDismiss={() => setToast((prev) => ({ ...prev, visible: false }))}
-      />
-
       <View style={{ flex: 1, justifyContent: 'center' }}>
         <Text className="text-[28px] font-montserrat-bold text-textPrimary mb-2 text-center tracking-tight">
           How will you use{'\n'}ErrandGuy?

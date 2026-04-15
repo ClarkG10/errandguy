@@ -1,5 +1,5 @@
 import { Stack } from 'expo-router';
 
 export default function RateLayout() {
-  return <Stack screenOptions={{ headerShown: false }} />;
+  return <Stack screenOptions={{ headerShown: false, animation: 'fade_from_bottom' }} />;
 }

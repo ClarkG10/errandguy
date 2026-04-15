@@ -8,6 +8,7 @@ import { Button } from '../../../components/ui/Button';
 import { useRunnerStore } from '../../../stores/runnerStore';
 import { runnerService } from '../../../services/runner.service';
 import { formatCurrency } from '../../../utils/formatCurrency';
+import { toast } from '../../../stores/toastStore';
 
 export default function PayoutScreen() {
   const router = useRouter();
@@ -44,10 +45,10 @@ export default function PayoutScreen() {
         bank_name: bankName || undefined,
         bank_account_number: bankAccount || undefined,
       });
-      Alert.alert('Success', 'Payout information updated');
+      toast.success('Payout information updated');
       await onRefresh();
     } catch (err: any) {
-      Alert.alert('Error', err?.response?.data?.message ?? 'Failed to update');
+      toast.error(err?.response?.data?.message ?? 'Failed to update');
     } finally {
       setSaving(false);
     }
@@ -62,10 +63,10 @@ export default function PayoutScreen() {
           setRequesting(true);
           try {
             await runnerService.requestPayout(balance);
-            Alert.alert('Success', 'Payout request submitted');
+            toast.success('Payout request submitted');
             await onRefresh();
           } catch (err: any) {
-            Alert.alert('Error', err?.response?.data?.message ?? 'Failed to request payout');
+            toast.error(err?.response?.data?.message ?? 'Failed to request payout');
           } finally {
             setRequesting(false);
           }

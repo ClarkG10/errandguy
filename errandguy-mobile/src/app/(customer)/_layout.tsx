@@ -1,10 +1,14 @@
 import { useEffect } from 'react';
 import { Slot, useRouter } from 'expo-router';
 import { useAuthStore } from '../../stores/authStore';
+import { useRealtimeNotifications } from '../../hooks/useRealtimeNotifications';
 
 export default function CustomerLayout() {
-  const { isAuthenticated, role } = useAuthStore();
+  const { isAuthenticated, role, user } = useAuthStore();
   const router = useRouter();
+
+  // Subscribe to realtime notifications for the current user
+  useRealtimeNotifications(user?.id ?? null);
 
   useEffect(() => {
     if (!isAuthenticated) {

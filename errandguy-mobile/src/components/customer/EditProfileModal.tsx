@@ -3,8 +3,8 @@ import { View, Text, Modal, Pressable, Alert, ScrollView } from 'react-native';
 import { X } from 'lucide-react-native';
 import { useAuthStore } from '../../stores/authStore';
 import { userService } from '../../services/user.service';
-import { useImagePicker } from '../../hooks/useImagePicker';
 import { Avatar } from '../ui/Avatar';
+import { ImagePickerModal } from '../ui/ImagePickerModal';
 import { Input } from '../ui/Input';
 import { Button } from '../ui/Button';
 
@@ -15,11 +15,12 @@ interface EditProfileModalProps {
 
 export function EditProfileModal({ visible, onClose }: EditProfileModalProps) {
   const { user, updateProfile } = useAuthStore();
-  const { pickImage } = useImagePicker();
 
   const [fullName, setFullName] = useState(user?.full_name ?? '');
   const [email, setEmail] = useState(user?.email ?? '');
   const [saving, setSaving] = useState(false);
+  const [avatarPickerVisible, setAvatarPickerVisible] = useState(false);
+  const [uploadingAvatar, setUploadingAvatar] = useState(false);
 
   const handleSave = async () => {
     setSaving(true);
@@ -43,13 +44,13 @@ export function EditProfileModal({ visible, onClose }: EditProfileModalProps) {
     }
   };
 
-  const handleAvatarUpload = async () => {
-    const result = await pickImage();
-    if (!result) return;
+  const handleAvatarUpload = async (uri: string) => {
+    setAvatarPickerVisible(false);
+    setUploadingAvatar(true);
 
     const formData = new FormData();
     formData.append('avatar', {
-      uri: result.uri,
+      uri,
       type: 'image/jpeg',
       name: 'avatar.jpg',
     } as any);
@@ -62,6 +63,8 @@ export function EditProfileModal({ visible, onClose }: EditProfileModalProps) {
       }
     } catch {
       Alert.alert('Error', 'Failed to upload avatar');
+    } finally {
+      setUploadingAvatar(false);
     }
   };
 
@@ -79,14 +82,14 @@ export function EditProfileModal({ visible, onClose }: EditProfileModalProps) {
 
         <ScrollView className="flex-1 px-5 pt-6">
           <View className="items-center mb-6">
-            <Pressable onPress={handleAvatarUpload}>
+            <Pressable onPress={() => setAvatarPickerVisible(true)}>
               <Avatar
                 uri={user?.avatar_url}
                 name={user?.full_name}
                 size="xl"
               />
               <Text className="text-xs font-montserrat text-primary mt-2 text-center">
-                Change Photo
+                {uploadingAvatar ? 'Uploading…' : 'Change Photo'}
               </Text>
             </Pressable>
           </View>
@@ -114,6 +117,15 @@ export function EditProfileModal({ visible, onClose }: EditProfileModalProps) {
             />
           </View>
         </ScrollView>
+
+        <ImagePickerModal
+          visible={avatarPickerVisible}
+          onClose={() => setAvatarPickerVisible(false)}
+          onConfirm={handleAvatarUpload}
+          title="Profile Photo"
+          subtitle="Choose a photo for your profile"
+          uploading={uploadingAvatar}
+        />
       </View>
     </Modal>
   );
