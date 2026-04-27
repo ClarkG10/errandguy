@@ -15,6 +15,21 @@ class CreateBookingRequest extends FormRequest
 
     public function rules(): array
     {
+        // Errand types that fulfill at a single location and don't have
+        // a separate dropoff (the runner does the task on-site).
+        // Must stay in sync with mobile errandTypeRules.ts singleLocation flag
+        // and RunnerErrandController::SINGLE_LOCATION_SLUGS.
+        $singleLocationSlugs = ['queue', 'bills_payment'];
+        $errandType = $this->input('errand_type_id')
+            ? ErrandType::find($this->input('errand_type_id'))
+            : null;
+        $isSingleLocation = $errandType && in_array($errandType->slug, $singleLocationSlugs, true);
+        $dropoffRule = $isSingleLocation ? 'nullable' : 'required';
+
+        // Errand types where the runner buys items on the customer's behalf.
+        $shoppingSlugs = ['food', 'grocery', 'purchase'];
+        $isShopping = $errandType && in_array($errandType->slug, $shoppingSlugs, true);
+
         return [
             'errand_type_id' => [
                 'required',
@@ -26,9 +41,9 @@ class CreateBookingRequest extends FormRequest
             'pickup_lng' => ['required', 'numeric', 'between:-180,180'],
             'pickup_contact_name' => ['nullable', 'string', 'max:100'],
             'pickup_contact_phone' => ['nullable', 'string', 'regex:/^(\+63|0)9\d{9}$/'],
-            'dropoff_address' => ['required', 'string'],
-            'dropoff_lat' => ['required', 'numeric', 'between:-90,90'],
-            'dropoff_lng' => ['required', 'numeric', 'between:-180,180'],
+            'dropoff_address' => [$dropoffRule, 'string'],
+            'dropoff_lat' => [$dropoffRule, 'numeric', 'between:-90,90'],
+            'dropoff_lng' => [$dropoffRule, 'numeric', 'between:-180,180'],
             'dropoff_contact_name' => ['nullable', 'string', 'max:100'],
             'dropoff_contact_phone' => ['nullable', 'string', 'regex:/^(\+63|0)9\d{9}$/'],
             'description' => ['nullable', 'string', 'max:500'],
@@ -36,6 +51,14 @@ class CreateBookingRequest extends FormRequest
             'item_photos' => ['nullable', 'array', 'max:5'],
             'item_photos.*' => ['image', 'max:5120'],
             'estimated_item_value' => ['nullable', 'numeric', 'min:0'],
+            // Shopping budget is required for food/grocery/purchase so the
+            // runner has a spending cap before placing the order.
+            'shopping_budget' => [
+                $isShopping ? 'required' : 'nullable',
+                'numeric',
+                'min:1',
+                'max:50000',
+            ],
             'schedule_type' => ['required', Rule::in(['now', 'scheduled'])],
             'scheduled_at' => ['required_if:schedule_type,scheduled', 'nullable', 'date', 'after:+30 minutes'],
             'pricing_mode' => ['required', Rule::in(['fixed', 'negotiate'])],

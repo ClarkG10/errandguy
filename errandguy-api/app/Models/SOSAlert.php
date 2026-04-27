@@ -19,6 +19,8 @@ class SOSAlert extends Model
         'booking_id',
         'customer_id',
         'runner_id',
+        'triggered_by',
+        'triggered_by_role',
         'triggered_at',
         'customer_lat',
         'customer_lng',

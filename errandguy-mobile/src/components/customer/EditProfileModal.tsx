@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { View, Text, Modal, Pressable, Alert, ScrollView } from 'react-native';
+import { View, Text, Modal, Pressable, ScrollView } from 'react-native';
 import { X } from 'lucide-react-native';
 import { useAuthStore } from '../../stores/authStore';
 import { userService } from '../../services/user.service';
@@ -7,6 +7,7 @@ import { Avatar } from '../ui/Avatar';
 import { ImagePickerModal } from '../ui/ImagePickerModal';
 import { Input } from '../ui/Input';
 import { Button } from '../ui/Button';
+import { toast } from '../../stores/toastStore';
 
 interface EditProfileModalProps {
   visible: boolean;
@@ -35,10 +36,7 @@ export function EditProfileModal({ visible, onClose }: EditProfileModalProps) {
       });
       onClose();
     } catch (err: any) {
-      Alert.alert(
-        'Error',
-        err?.response?.data?.message ?? 'Failed to update profile',
-      );
+      toast.error(err?.response?.data?.message ?? 'Failed to update profile');
     } finally {
       setSaving(false);
     }
@@ -62,7 +60,7 @@ export function EditProfileModal({ visible, onClose }: EditProfileModalProps) {
         updateProfile({ avatar_url: avatarUrl });
       }
     } catch {
-      Alert.alert('Error', 'Failed to upload avatar');
+      toast.error('Failed to upload avatar');
     } finally {
       setUploadingAvatar(false);
     }

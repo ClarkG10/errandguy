@@ -204,7 +204,7 @@ export default function RunnerHomeScreen() {
         refreshControl={
           <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
         }
-        contentContainerStyle={{ paddingBottom: 100 }}
+        contentContainerStyle={{ paddingBottom: 24 }}
       >
         {/* Verification Banner */}
         {verificationStatus !== 'approved' && (

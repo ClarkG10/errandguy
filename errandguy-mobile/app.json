@@ -20,7 +20,8 @@
         "NSLocationAlwaysAndWhenInUseUsageDescription": "ErrandGuy uses your location in the background to update your position while on an active errand.",
         "NSCameraUsageDescription": "ErrandGuy needs camera access to take photos of items and delivery proofs.",
         "NSPhotoLibraryUsageDescription": "ErrandGuy needs photo library access to upload item photos.",
-        "NSMicrophoneUsageDescription": "ErrandGuy needs microphone access for in-app calls."
+        "NSMicrophoneUsageDescription": "ErrandGuy needs microphone access for in-app calls.",
+        "ITSAppUsesNonExemptEncryption": false
       }
     },
     "android": {
@@ -44,7 +45,12 @@
       ]
     },
     "plugins": [
-      ["expo-router", { "root": "./src/app" }],
+      [
+        "expo-router",
+        {
+          "root": "./src/app"
+        }
+      ],
       "expo-secure-store",
       "expo-location",
       "expo-camera",

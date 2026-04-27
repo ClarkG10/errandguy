@@ -9,12 +9,15 @@ use App\Http\Requests\Booking\CancelBookingRequest;
 use App\Http\Requests\Booking\CreateBookingRequest;
 use App\Http\Requests\Booking\EstimateRequest;
 use App\Http\Resources\BookingResource;
+use App\Jobs\AutoCancelBookingJob;
 use App\Jobs\BroadcastToRunnersJob;
+use App\Jobs\ExpireNegotiateBookingJob;
 use App\Jobs\MatchRunnerJob;
 use App\Models\Booking;
 use App\Models\BookingStatusLog;
 use App\Models\ErrandType;
 use App\Models\RunnerLocation;
+use App\Services\CancellationPolicy;
 use App\Services\PricingService;
 use App\Services\PromoService;
 use Carbon\Carbon;
@@ -65,14 +68,19 @@ class BookingController extends Controller
         $user = $request->user();
         $errandType = ErrandType::findOrFail($validated['errand_type_id']);
 
+        // Single-location errands fall back to pickup as dropoff for tracking/pricing.
+        $dropoffLat = $validated['dropoff_lat'] ?? $validated['pickup_lat'];
+        $dropoffLng = $validated['dropoff_lng'] ?? $validated['pickup_lng'];
+        $dropoffAddress = $validated['dropoff_address'] ?? $validated['pickup_address'];
+
         // Calculate pricing
         $vehicleType = $validated['vehicle_type_rate'] ?? 'motorcycle';
         $pricing = $this->pricingService->calculate(
             $validated['errand_type_id'],
             $validated['pickup_lat'],
             $validated['pickup_lng'],
-            $validated['dropoff_lat'],
-            $validated['dropoff_lng'],
+            $dropoffLat,
+            $dropoffLng,
             $vehicleType,
             $validated['schedule_type']
         );
@@ -113,14 +121,15 @@ class BookingController extends Controller
             'pickup_lng' => $validated['pickup_lng'],
             'pickup_contact_name' => $validated['pickup_contact_name'] ?? null,
             'pickup_contact_phone' => $validated['pickup_contact_phone'] ?? null,
-            'dropoff_address' => $validated['dropoff_address'],
-            'dropoff_lat' => $validated['dropoff_lat'],
-            'dropoff_lng' => $validated['dropoff_lng'],
+            'dropoff_address' => $dropoffAddress,
+            'dropoff_lat' => $dropoffLat,
+            'dropoff_lng' => $dropoffLng,
             'dropoff_contact_name' => $validated['dropoff_contact_name'] ?? null,
             'dropoff_contact_phone' => $validated['dropoff_contact_phone'] ?? null,
             'description' => $validated['description'] ?? null,
             'special_instructions' => $validated['special_instructions'] ?? null,
             'estimated_item_value' => $validated['estimated_item_value'] ?? null,
+            'shopping_budget' => $validated['shopping_budget'] ?? null,
             'schedule_type' => $validated['schedule_type'],
             'scheduled_at' => $validated['scheduled_at'] ?? null,
             'pricing_mode' => $validated['pricing_mode'],
@@ -165,8 +174,19 @@ class BookingController extends Controller
         // Dispatch matching job based on pricing mode
         if ($validated['pricing_mode'] === 'fixed') {
             MatchRunnerJob::dispatch($booking->id);
+            // Auto-cancel if no runner accepts within the system timeout.
+            $autoCancelMinutes = (int) \App\Models\SystemConfig::getValue('auto_cancel_timeout_minutes', '30');
+            AutoCancelBookingJob::dispatch($booking->id)
+                ->delay(now()->addMinutes($autoCancelMinutes));
         } else {
+            // Negotiate mode: broadcast offer + set expiry per spec (5 minutes).
+            $negotiateMinutes = (int) \App\Models\SystemConfig::getValue('negotiate_timeout_minutes', '5');
+            $booking->update([
+                'negotiate_expires_at' => now()->addMinutes($negotiateMinutes),
+            ]);
             BroadcastToRunnersJob::dispatch($booking->id);
+            ExpireNegotiateBookingJob::dispatch($booking->id)
+                ->delay(now()->addMinutes($negotiateMinutes));
         }
 
         // Fire booking created event
@@ -198,10 +218,11 @@ class BookingController extends Controller
 
         $this->authorize('cancel', $booking);
 
-        // Check booking is in a cancellable state
-        if (!in_array($booking->status, ['pending', 'matched', 'accepted'])) {
+        $policy = CancellationPolicy::preview($booking);
+
+        if (! $policy['cancellable']) {
             return response()->json([
-                'message' => 'This booking can no longer be cancelled.',
+                'message' => $policy['reason'],
             ], 422);
         }
 
@@ -210,6 +231,7 @@ class BookingController extends Controller
             'cancelled_at' => now(),
             'cancelled_by' => $request->user()->id,
             'cancellation_reason' => $request->validated('reason'),
+            'cancellation_fee' => $policy['fee'],
         ]);
 
         BookingStatusLog::create([
@@ -225,7 +247,20 @@ class BookingController extends Controller
 
         return response()->json([
             'data' => new BookingResource($booking),
-            'message' => 'Booking cancelled successfully.',
+            'cancellation' => $policy,
+            'message' => $policy['fee'] > 0
+                ? 'Booking cancelled. A ₱'.number_format($policy['fee'], 2).' cancellation fee was applied.'
+                : 'Booking cancelled successfully.',
+        ]);
+    }
+
+    public function cancelPreview(Request $request, string $id): JsonResponse
+    {
+        $booking = Booking::findOrFail($id);
+        $this->authorize('cancel', $booking);
+
+        return response()->json([
+            'data' => CancellationPolicy::preview($booking),
         ]);
     }
 

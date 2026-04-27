@@ -151,7 +151,7 @@ export default function ActivityScreen() {
             />
           ) : null
         }
-        contentContainerStyle={{ paddingBottom: 100 }}
+        contentContainerStyle={{ paddingBottom: 24 }}
       />
 
       {/* Booking Detail Sheet */}

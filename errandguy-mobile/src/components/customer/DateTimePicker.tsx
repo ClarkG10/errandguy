@@ -4,7 +4,7 @@ import dayjs from 'dayjs';
 
 interface DateTimePickerProps {
   value: string | undefined;
-  onChange: (isoString: string) => void;
+  onChange: (isoString: string | undefined) => void;
 }
 
 const HOURS = Array.from({ length: 24 }, (_, i) => i);
@@ -87,11 +87,13 @@ function WheelPicker({
 export function DateTimePicker({ value, onChange }: DateTimePickerProps) {
   const selectedDate = value ? dayjs(value) : null;
 
-  // Show 30 days ahead
+  // Show today + next 29 days. Today is allowed only if some time today is
+  // still >30 minutes away from now (backend requires `after:+30 minutes`).
   const dates = useMemo(() => {
     const result: dayjs.Dayjs[] = [];
-    for (let i = 0; i <= 29; i++) {
-      result.push(dayjs().add(i + 1, 'day'));
+    const start = dayjs().add(31, 'minute').isAfter(dayjs().endOf('day')) ? 1 : 0;
+    for (let i = start; i <= 29 + start; i++) {
+      result.push(dayjs().add(i, 'day').startOf('day'));
     }
     return result;
   }, []);
@@ -110,6 +112,12 @@ export function DateTimePicker({ value, onChange }: DateTimePickerProps) {
     (date: dayjs.Dayjs | null, hour: number, minute: number) => {
       if (date) {
         const combined = date.hour(hour).minute(minute).second(0);
+        // Backend requires scheduled_at > now + 30 minutes — guard at the
+        // edge so an invalid combo never leaves the picker.
+        if (combined.isBefore(dayjs().add(30, 'minute'))) {
+          onChange(undefined);
+          return;
+        }
         onChange(combined.toISOString());
       }
     },
@@ -169,7 +177,7 @@ export function DateTimePicker({ value, onChange }: DateTimePickerProps) {
                   isSelected ? 'text-white/70' : 'text-textTertiary'
                 }`}
               >
-                {date.format('ddd')}
+                {date.isSame(dayjs(), 'day') ? 'Today' : date.format('ddd')}
               </Text>
               <Text
                 className={`text-base font-montserrat-semi ${

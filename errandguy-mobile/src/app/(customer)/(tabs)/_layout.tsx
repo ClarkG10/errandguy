@@ -1,54 +1,95 @@
 import { Tabs } from 'expo-router';
 import { Home, ClipboardList, Bell, User } from 'lucide-react-native';
-import { View, Platform, StyleSheet } from 'react-native';
+import { View, Text, Platform, StyleSheet } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useNotificationStore } from '../../../stores/notificationStore';
+
+const ACTIVE = '#2563EB';
+const INACTIVE = '#94A3B8';
+const BAR_HEIGHT = 56;
+
+/** Modern attached tab bar item with optional badge.
+ *  Replaces the previous floating/rounded bar — now a clean,
+ *  edge-to-edge bar with a thin top divider and a soft pill
+ *  highlight on the active item (no jarring movement). */
+function TabItem({
+  Icon,
+  label,
+  color,
+  focused,
+  badgeCount,
+  showOnlineDot,
+}: {
+  Icon: typeof Home;
+  label: string;
+  color: string;
+  focused: boolean;
+  badgeCount?: number;
+  showOnlineDot?: boolean;
+}) {
+  return (
+    <View style={styles.itemWrap}>
+      <View
+        style={[
+          styles.iconPill,
+          focused && { backgroundColor: '#EFF4FF' },
+        ]}
+      >
+        <Icon size={20} color={color} strokeWidth={focused ? 2.4 : 1.9} />
+        {!!badgeCount && badgeCount > 0 && (
+          <View style={styles.badge}>
+            <Text style={styles.badgeText}>
+              {badgeCount > 9 ? '9+' : String(badgeCount)}
+            </Text>
+          </View>
+        )}
+        {showOnlineDot && <View style={styles.onlineDot} />}
+      </View>
+      <Text
+        numberOfLines={1}
+        style={[
+          styles.label,
+          { color },
+          focused && styles.labelFocused,
+        ]}
+      >
+        {label}
+      </Text>
+    </View>
+  );
+}
 
 export default function CustomerTabsLayout() {
   const unreadCount = useNotificationStore((s) => s.unreadCount);
   const insets = useSafeAreaInsets();
-  const bottomOffset = Math.max(insets.bottom, 16);
 
   return (
     <Tabs
       screenOptions={{
         headerShown: false,
         animation: 'shift',
-        tabBarActiveTintColor: '#2563EB',
-        tabBarInactiveTintColor: '#94A3B8',
-        tabBarShowLabel: true,
-        tabBarLabelStyle: {
-          fontFamily: 'Quicksand_500Medium',
-          fontSize: 11,
-          marginTop: 2,
-        },
+        tabBarActiveTintColor: ACTIVE,
+        tabBarInactiveTintColor: INACTIVE,
+        tabBarShowLabel: false,
         tabBarStyle: {
-          position: 'absolute',
-          bottom: bottomOffset,
-          left: 16,
-          right: 16,
           backgroundColor: '#FFFFFF',
-          borderRadius: 24,
-          height: 68,
-          borderTopWidth: 0,
-          paddingBottom: 0,
+          borderTopWidth: StyleSheet.hairlineWidth,
+          borderTopColor: '#E2E8F0',
+          height: BAR_HEIGHT + insets.bottom,
+          paddingTop: 6,
+          paddingBottom: insets.bottom,
+          // Subtle elevation only — no detached/floating shadow.
           ...Platform.select({
             ios: {
               shadowColor: '#0F172A',
-              shadowOffset: { width: 0, height: 8 },
-              shadowOpacity: 0.12,
-              shadowRadius: 24,
+              shadowOffset: { width: 0, height: -1 },
+              shadowOpacity: 0.04,
+              shadowRadius: 4,
             },
-            android: { elevation: 12 },
+            android: { elevation: 4 },
           }),
         },
-        tabBarItemStyle: {
-          paddingTop: 10,
-          paddingBottom: 8,
-        },
-        tabBarIconStyle: {
-          marginBottom: 0,
-        },
+        tabBarItemStyle: { height: BAR_HEIGHT },
       }}
     >
       <Tabs.Screen
@@ -56,10 +97,7 @@ export default function CustomerTabsLayout() {
         options={{
           title: 'Home',
           tabBarIcon: ({ color, focused }) => (
-            <View style={styles.iconWrap}>
-              <Home size={22} color={color} strokeWidth={focused ? 2.5 : 1.8} />
-              {focused && <View style={styles.activeIndicator} />}
-            </View>
+            <TabItem Icon={Home} label="Home" color={color} focused={focused} />
           ),
         }}
       />
@@ -68,10 +106,12 @@ export default function CustomerTabsLayout() {
         options={{
           title: 'Activity',
           tabBarIcon: ({ color, focused }) => (
-            <View style={styles.iconWrap}>
-              <ClipboardList size={22} color={color} strokeWidth={focused ? 2.5 : 1.8} />
-              {focused && <View style={styles.activeIndicator} />}
-            </View>
+            <TabItem
+              Icon={ClipboardList}
+              label="Activity"
+              color={color}
+              focused={focused}
+            />
           ),
         }}
       />
@@ -80,15 +120,13 @@ export default function CustomerTabsLayout() {
         options={{
           title: 'Alerts',
           tabBarIcon: ({ color, focused }) => (
-            <View style={styles.iconWrap}>
-              <Bell size={22} color={color} strokeWidth={focused ? 2.5 : 1.8} />
-              {focused && <View style={styles.activeIndicator} />}
-              {unreadCount > 0 && (
-                <View style={styles.badge}>
-                  <View style={styles.badgeDot} />
-                </View>
-              )}
-            </View>
+            <TabItem
+              Icon={Bell}
+              label="Alerts"
+              color={color}
+              focused={focused}
+              badgeCount={unreadCount}
+            />
           ),
         }}
       />
@@ -97,10 +135,7 @@ export default function CustomerTabsLayout() {
         options={{
           title: 'Profile',
           tabBarIcon: ({ color, focused }) => (
-            <View style={styles.iconWrap}>
-              <User size={22} color={color} strokeWidth={focused ? 2.5 : 1.8} />
-              {focused && <View style={styles.activeIndicator} />}
-            </View>
+            <TabItem Icon={User} label="Profile" color={color} focused={focused} />
           ),
         }}
       />
@@ -109,30 +144,58 @@ export default function CustomerTabsLayout() {
 }
 
 const styles = StyleSheet.create({
-  iconWrap: {
+  itemWrap: {
+    width: 64,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  iconPill: {
+    width: 48,
+    height: 28,
+    borderRadius: 14,
     alignItems: 'center',
     justifyContent: 'center',
     position: 'relative',
   },
-  activeIndicator: {
-    position: 'absolute',
-    bottom: -8,
-    width: 4,
-    height: 4,
-    borderRadius: 2,
-    backgroundColor: '#2563EB',
+  label: {
+    fontFamily: 'Quicksand_500Medium',
+    fontSize: 11,
+    marginTop: 2,
+    lineHeight: 13,
+  },
+  labelFocused: {
+    fontFamily: 'Quicksand_700Bold',
   },
   badge: {
     position: 'absolute',
     top: -2,
-    right: -6,
+    right: 6,
+    minWidth: 16,
+    height: 16,
+    paddingHorizontal: 4,
+    borderRadius: 8,
+    backgroundColor: '#EF4444',
+    borderWidth: 1.5,
+    borderColor: '#FFFFFF',
+    alignItems: 'center',
+    justifyContent: 'center',
   },
-  badgeDot: {
+  badgeText: {
+    color: '#FFFFFF',
+    fontSize: 9,
+    fontFamily: 'Quicksand_700Bold',
+    lineHeight: 11,
+  },
+  onlineDot: {
+    position: 'absolute',
+    top: 2,
+    right: 8,
     width: 8,
     height: 8,
     borderRadius: 4,
-    backgroundColor: '#EF4444',
+    backgroundColor: '#22C55E',
     borderWidth: 1.5,
     borderColor: '#FFFFFF',
   },
 });
+

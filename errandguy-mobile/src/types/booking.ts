@@ -2,6 +2,7 @@ export type BookingStatus =
   | 'pending'
   | 'matched'
   | 'accepted'
+  | 'no_runner'
   | 'heading_to_pickup'
   | 'arrived_at_pickup'
   | 'picked_up'
@@ -45,15 +46,21 @@ export interface Booking {
   pickup_lng: number;
   pickup_contact_name: string | null;
   pickup_contact_phone: string | null;
-  dropoff_address: string;
-  dropoff_lat: number;
-  dropoff_lng: number;
+  // Dropoff is optional for single-location errands (queue / bills payment / on-site documents).
+  dropoff_address: string | null;
+  dropoff_lat: number | null;
+  dropoff_lng: number | null;
   dropoff_contact_name: string | null;
   dropoff_contact_phone: string | null;
   description: string | null;
   special_instructions: string | null;
   item_photos: string[];
   estimated_item_value: number | null;
+  /** Pre-authorized maximum the runner may spend on items. */
+  shopping_budget: number | null;
+  /** Actual cost reported by runner from receipt. */
+  actual_item_cost: number | null;
+  receipt_photo_url: string | null;
   schedule_type: ScheduleType;
   scheduled_at: string | null;
   pricing_mode: PricingMode;
@@ -91,6 +98,21 @@ export interface Booking {
   updated_at: string;
   // Relations (optional, populated when included)
   errand_type?: ErrandType;
+  /** Loaded after a runner is matched to the booking. */
+  runner?: {
+    id: string;
+    full_name: string;
+    phone?: string | null;
+    avatar_url?: string | null;
+  } | null;
+  /** Loaded for the runner-facing endpoints so the runner can fall back
+   *  to the customer's account phone when no pickup/dropoff contact is set. */
+  customer?: {
+    id: string;
+    full_name: string;
+    phone?: string | null;
+    avatar_url?: string | null;
+  } | null;
 }
 
 export interface BookingStatusLog {

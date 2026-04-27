@@ -5,6 +5,9 @@ export const ERRAND_TYPES = [
   { slug: 'document', name: 'Document Delivery', icon: 'FileText' },
   { slug: 'laundry', name: 'Laundry', icon: 'Shirt' },
   { slug: 'transportation', name: 'Transportation', icon: 'Car' },
+  { slug: 'bills_payment', name: 'Bills Payment', icon: 'Receipt' },
+  { slug: 'queue', name: 'Queue / Line', icon: 'Users' },
+  { slug: 'purchase', name: 'Purchase & Deliver', icon: 'ShoppingBag' },
   { slug: 'custom', name: 'Custom Errand', icon: 'PenTool' },
 ] as const;
 

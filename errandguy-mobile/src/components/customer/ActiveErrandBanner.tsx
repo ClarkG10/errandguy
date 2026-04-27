@@ -40,13 +40,17 @@ export function ActiveErrandBanner({ booking, onTrack }: ActiveErrandBannerProps
         >
           {booking.pickup_address}
         </Text>
-        <ArrowRight size={14} color="#94A3B8" className="mx-1" />
-        <Text
-          className="text-sm font-montserrat text-textPrimary flex-1"
-          numberOfLines={1}
-        >
-          {booking.dropoff_address}
-        </Text>
+        {booking.dropoff_address && booking.dropoff_address !== booking.pickup_address && (
+          <>
+            <ArrowRight size={14} color="#94A3B8" className="mx-1" />
+            <Text
+              className="text-sm font-montserrat text-textPrimary flex-1"
+              numberOfLines={1}
+            >
+              {booking.dropoff_address}
+            </Text>
+          </>
+        )}
       </View>
 
       <Button title="Track" size="sm" onPress={onTrack} fullWidth />

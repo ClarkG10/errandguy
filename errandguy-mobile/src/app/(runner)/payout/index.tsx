@@ -1,10 +1,11 @@
 import React, { useState, useCallback, useEffect } from 'react';
-import { View, Text, ScrollView, TextInput, Alert, RefreshControl, Pressable } from 'react-native';
+import { View, Text, ScrollView, TextInput, RefreshControl, Pressable } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import { ArrowLeft, Wallet, CreditCard, Smartphone } from 'lucide-react-native';
 import { Card } from '../../../components/ui/Card';
 import { Button } from '../../../components/ui/Button';
+import { ConfirmModal } from '../../../components/ui/ConfirmModal';
 import { useRunnerStore } from '../../../stores/runnerStore';
 import { runnerService } from '../../../services/runner.service';
 import { formatCurrency } from '../../../utils/formatCurrency';
@@ -16,6 +17,7 @@ export default function PayoutScreen() {
 
   const [refreshing, setRefreshing] = useState(false);
   const [requesting, setRequesting] = useState(false);
+  const [showRequestModal, setShowRequestModal] = useState(false);
   const [bankName, setBankName] = useState(runnerProfile?.bank_name ?? '');
   const [bankAccount, setBankAccount] = useState(runnerProfile?.bank_account_number ?? '');
   const [ewalletNumber, setEwalletNumber] = useState(runnerProfile?.ewallet_number ?? '');
@@ -54,25 +56,22 @@ export default function PayoutScreen() {
     }
   };
 
-  const handleRequestPayout = async () => {
-    Alert.alert('Request Payout', 'Are you sure you want to request a payout?', [
-      { text: 'Cancel', style: 'cancel' },
-      {
-        text: 'Request',
-        onPress: async () => {
-          setRequesting(true);
-          try {
-            await runnerService.requestPayout(balance);
-            toast.success('Payout request submitted');
-            await onRefresh();
-          } catch (err: any) {
-            toast.error(err?.response?.data?.message ?? 'Failed to request payout');
-          } finally {
-            setRequesting(false);
-          }
-        },
-      },
-    ]);
+  const handleRequestPayout = () => {
+    setShowRequestModal(true);
+  };
+
+  const confirmRequestPayout = async () => {
+    setRequesting(true);
+    try {
+      await runnerService.requestPayout(balance);
+      toast.success('Payout request submitted');
+      setShowRequestModal(false);
+      await onRefresh();
+    } catch (err: any) {
+      toast.error(err?.response?.data?.message ?? 'Failed to request payout');
+    } finally {
+      setRequesting(false);
+    }
   };
 
   const balance = runnerProfile?.total_earnings ?? 0;
@@ -182,6 +181,17 @@ export default function PayoutScreen() {
           />
         </View>
       </ScrollView>
+
+      <ConfirmModal
+        visible={showRequestModal}
+        title="Request payout?"
+        message={`Submit a payout request for ${formatCurrency(balance)}? Funds will be transferred to your saved account within 1–3 business days.`}
+        confirmLabel="Request"
+        cancelLabel="Cancel"
+        loading={requesting}
+        onConfirm={confirmRequestPayout}
+        onCancel={() => setShowRequestModal(false)}
+      />
     </SafeAreaView>
   );
 }

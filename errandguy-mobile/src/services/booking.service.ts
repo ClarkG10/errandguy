@@ -20,6 +20,7 @@ export const bookingService = {
     description?: string;
     special_instructions?: string;
     estimated_item_value?: number;
+    shopping_budget?: number;
     pricing_mode: 'fixed' | 'negotiate';
     vehicle_type_rate?: string;
     customer_offer?: number;
@@ -39,6 +40,17 @@ export const bookingService = {
 
   cancelBooking(id: string, reason?: string) {
     return api.post(`/bookings/${id}/cancel`, { reason });
+  },
+
+  cancelPreview(id: string) {
+    return api.get<{
+      data: {
+        fee: number;
+        tier: 'free' | 'flat' | 'percentage';
+        reason: string;
+        cancellable: boolean;
+      };
+    }>(`/bookings/${id}/cancel-preview`);
   },
 
   trackBooking(id: string) {

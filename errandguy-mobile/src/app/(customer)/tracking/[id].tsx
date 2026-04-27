@@ -3,9 +3,10 @@ import {
   View,
   Text,
   Pressable,
-  Alert,
   ScrollView,
   Image,
+  StyleSheet,
+  Linking,
 } from 'react-native';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import {
@@ -18,6 +19,7 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import Mapbox from '@rnmapbox/maps';
 import { useBookingStore } from '../../../stores/bookingStore';
+import { useChatStore } from '../../../stores/chatStore';
 import { bookingService } from '../../../services/booking.service';
 import { useRunnerTracking } from '../../../hooks/useRunnerTracking';
 import { useBookingStatus } from '../../../hooks/useBookingStatus';
@@ -26,23 +28,17 @@ import { Avatar } from '../../../components/ui/Avatar';
 import { RatingStars } from '../../../components/ui/RatingStars';
 import { StatusTimeline } from '../../../components/ui/StatusTimeline';
 import { Button } from '../../../components/ui/Button';
+import { ConfirmModal } from '../../../components/ui/ConfirmModal';
+import { ExpandableSheet } from '../../../components/ui/ExpandableSheet';
 import { formatTime } from '../../../utils/formatDate';
+import { formatCurrency } from '../../../utils/formatCurrency';
 import { STATUS_LABELS } from '../../../constants/statusLabels';
 import { MAP_STYLE_URL } from '../../../constants/map';
+import { getErrandTypeRule } from '../../../constants/errandTypeRules';
 import type { Booking, BookingStatus, BookingStatusLog } from '../../../types';
 import { toast } from '../../../stores/toastStore';
 
 const MAPBOX_TOKEN = process.env.EXPO_PUBLIC_MAPBOX_TOKEN ?? '';
-
-const STANDARD_STEPS: BookingStatus[] = [
-  'pending', 'matched', 'accepted', 'heading_to_pickup', 'arrived_at_pickup',
-  'picked_up', 'in_transit', 'arrived_at_dropoff', 'delivered', 'completed',
-];
-
-const TRANSPORT_STEPS: BookingStatus[] = [
-  'pending', 'matched', 'accepted', 'heading_to_pickup', 'arrived_at_pickup',
-  'picked_up', 'in_transit', 'arrived_at_dropoff', 'completed',
-];
 
 const CAN_CANCEL_STATUSES: BookingStatus[] = [
   'pending', 'matched', 'accepted', 'heading_to_pickup',
@@ -52,6 +48,10 @@ export default function TrackingScreen() {
   const router = useRouter();
   const { id } = useLocalSearchParams<{ id: string }>();
   const { setActiveBooking } = useBookingStore();
+  const refreshUnread = useChatStore((s) => s.refreshUnread);
+  const unreadForBooking = useChatStore(
+    (s) => (id ? s.unreadByBooking[id] ?? 0 : 0),
+  );
 
   const [booking, setBooking] = useState<Booking | null>(null);
   const [statusLogs, setStatusLogs] = useState<BookingStatusLog[]>([]);
@@ -59,6 +59,15 @@ export default function TrackingScreen() {
   const [sosActive, setSosActive] = useState(false);
   const [routeCoords, setRouteCoords] = useState<[number, number][]>([]);
   const [isCancelling, setIsCancelling] = useState(false);
+  const [showCancelModal, setShowCancelModal] = useState(false);
+  const [cancelPreview, setCancelPreview] = useState<{
+    fee: number;
+    tier: 'free' | 'flat' | 'percentage';
+    reason: string;
+    cancellable: boolean;
+  } | null>(null);
+  const [previewLoading, setPreviewLoading] = useState(false);
+  const [showSOSModal, setShowSOSModal] = useState(false);
   const cameraRef = useRef<Mapbox.Camera>(null);
 
   // Live runner location via Supabase Realtime
@@ -86,6 +95,14 @@ export default function TrackingScreen() {
       .catch(() => {})
       .finally(() => setLoading(false));
   }, [id, setActiveBooking]);
+
+  // Poll chat unread counts every 15s while on the tracking screen so the
+  // chat badge updates without a websocket. Refresh once on mount too.
+  useEffect(() => {
+    refreshUnread();
+    const t = setInterval(refreshUnread, 15000);
+    return () => clearInterval(t);
+  }, [refreshUnread]);
 
   // Fetch route line
   useEffect(() => {
@@ -155,54 +172,54 @@ export default function TrackingScreen() {
 
   const handleCancel = useCallback(() => {
     if (!id || isCancelling) return;
-    Alert.alert('Cancel Booking', 'Are you sure you want to cancel?', [
-      { text: 'No', style: 'cancel' },
-      {
-        text: 'Yes, Cancel',
-        style: 'destructive',
-        onPress: async () => {
-          if (isCancelling) return;
-          setIsCancelling(true);
-          try {
-            await bookingService.cancelBooking(id);
-            setActiveBooking(null);
-            router.replace('/(customer)/(tabs)');
-          } catch {
-            toast.error('Failed to cancel booking');
-          } finally {
-            setIsCancelling(false);
-          }
-        },
-      },
-    ]);
+    setShowCancelModal(true);
+    setPreviewLoading(true);
+    bookingService
+      .cancelPreview(id)
+      .then((res) => setCancelPreview(res.data.data))
+      .catch(() => setCancelPreview(null))
+      .finally(() => setPreviewLoading(false));
+  }, [id, isCancelling]);
+
+  const confirmCancel = useCallback(async () => {
+    if (!id) return;
+    setIsCancelling(true);
+    try {
+      await bookingService.cancelBooking(id);
+      setActiveBooking(null);
+      setShowCancelModal(false);
+      router.replace('/(customer)/(tabs)');
+    } catch {
+      toast.error('Failed to cancel booking');
+    } finally {
+      setIsCancelling(false);
+    }
   }, [id, setActiveBooking, router]);
 
   const handleSOS = useCallback(() => {
     if (!id) return;
-    Alert.alert(
-      'Emergency SOS',
-      'This will alert your trusted contacts and our support team. Continue?',
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Confirm SOS',
-          style: 'destructive',
-          onPress: async () => {
-            try {
-              await bookingService.triggerSOS(id);
-              setSosActive(true);
-            } catch {
-              toast.error('Failed to trigger SOS');
-            }
-          },
-        },
-      ],
-    );
+    setShowSOSModal(true);
+  }, [id]);
+
+  const confirmSOS = useCallback(async () => {
+    if (!id) return;
+    try {
+      await bookingService.triggerSOS(id);
+      setSosActive(true);
+      setShowSOSModal(false);
+    } catch {
+      toast.error('Failed to trigger SOS');
+    }
   }, [id]);
 
   const handleCall = useCallback(() => {
-    Alert.alert('Call Runner', 'Phone call feature coming soon');
-  }, []);
+    const phone = booking?.runner?.phone ?? null;
+    if (phone) {
+      Linking.openURL(`tel:${phone}`).catch(() => toast.error('Could not start call'));
+    } else {
+      toast.error('Runner phone not available yet');
+    }
+  }, [booking]);
 
   const handleShareTrip = useCallback(async () => {
     if (!id) return;
@@ -236,9 +253,17 @@ export default function TrackingScreen() {
   }
 
   const isTransportation = booking.is_transportation;
-  const steps = isTransportation ? TRANSPORT_STEPS : STANDARD_STEPS;
+  const errandRule = getErrandTypeRule(booking.errand_type?.slug);
+  // Use the per-type flow so single-location errands (queue / bills /
+  // document) don't show dropoff stages they will never reach.
+  const steps = errandRule.statusFlow as unknown as BookingStatus[];
   const currentStatusIndex = steps.indexOf(booking.status);
-  const canCancel = CAN_CANCEL_STATUSES.includes(booking.status);
+  const isShopping = errandRule.requiresShoppingBudget;
+  // Once a shopping runner has picked up (paid for) the items, the customer
+  // can no longer self-cancel — they would still owe the spent amount.
+  const canCancel =
+    CAN_CANCEL_STATUSES.includes(booking.status) &&
+    !(isShopping && !!booking.picked_up_at);
 
   const timelineSteps = steps.map((status, index) => {
     const log = statusLogs.find((l) => l.status === status);
@@ -257,31 +282,9 @@ export default function TrackingScreen() {
     : [121.0, 14.6]; // Manila default
 
   return (
-    <SafeAreaView className="flex-1 bg-background" edges={['top']}>
-      {/* Header (absolute over map) */}
-      <View className="absolute top-0 left-0 right-0 z-10">
-        <SafeAreaView edges={['top']}>
-          <View className="flex-row items-center px-5 py-2">
-            <Pressable
-              onPress={() => router.canGoBack() ? router.back() : router.replace('/(customer)/(tabs)')}
-              className="w-10 h-10 rounded-full bg-white/90 items-center justify-center mr-3 shadow-sm"
-            >
-              <ArrowLeft size={20} color="#0F172A" />
-            </Pressable>
-            <View className="flex-1 bg-white/90 rounded-full px-4 py-2 shadow-sm">
-              <Text className="text-sm font-montserrat-semi text-textPrimary" numberOfLines={1}>
-                {STATUS_LABELS[booking.status]}
-              </Text>
-              <Text className="text-[10px] font-montserrat text-textSecondary">
-                {booking.booking_number}
-              </Text>
-            </View>
-          </View>
-        </SafeAreaView>
-      </View>
-
-      {/* Live Map */}
-      <View className="h-[45%]">
+    <View style={{ flex: 1, backgroundColor: '#fff' }}>
+      {/* Live Map — fills the entire screen so the user can view it as a whole */}
+      <View style={StyleSheet.absoluteFill}>
         <Mapbox.MapView
           style={{ flex: 1 }}
           styleURL={MAP_STYLE_URL}
@@ -376,8 +379,54 @@ export default function TrackingScreen() {
         )}
       </View>
 
-      {/* Bottom Panel */}
-      <ScrollView className="flex-1 px-5 pt-4" showsVerticalScrollIndicator={false}>
+      {/* Floating header — sits above the map and the sheet */}
+      <SafeAreaView edges={['top']} pointerEvents="box-none">
+        <View className="flex-row items-center px-5 py-2" pointerEvents="box-none">
+          <Pressable
+            onPress={() => router.canGoBack() ? router.back() : router.replace('/(customer)/(tabs)')}
+            className="w-10 h-10 rounded-full bg-white items-center justify-center mr-3"
+            style={styles.floatingShadow}
+          >
+            <ArrowLeft size={20} color="#0F172A" />
+          </Pressable>
+          <View className="flex-1 bg-white rounded-full px-4 py-2" style={styles.floatingShadow}>
+            <Text className="text-sm font-montserrat-semi text-textPrimary" numberOfLines={1}>
+              {STATUS_LABELS[booking.status]}
+            </Text>
+            <Text className="text-[10px] font-montserrat text-textSecondary">
+              {booking.booking_number}
+            </Text>
+          </View>
+        </View>
+      </SafeAreaView>
+
+      {/* Draggable bottom sheet — peek/half/full so the customer can collapse it
+          for an unobstructed map view, or expand for full details. */}
+      <ExpandableSheet
+        initial="half"
+        renderHandle={() => (
+          <View className="px-5 pt-1 pb-2">
+            <View className="flex-row items-center justify-between">
+              <Text className="text-sm font-montserrat-bold text-textPrimary">
+                {STATUS_LABELS[booking.status]}
+              </Text>
+              {booking.runner_id && (
+                <View className="flex-row items-center">
+                  <View className={`w-2 h-2 rounded-full mr-1.5 ${isConnected ? 'bg-success' : 'bg-gray-400'}`} />
+                  <Text className="text-[10px] font-montserrat text-textSecondary">
+                    {isConnected ? 'Live tracking' : 'Connecting…'}
+                  </Text>
+                </View>
+              )}
+            </View>
+          </View>
+        )}
+      >
+        <ScrollView
+          className="flex-1 px-5 pt-2"
+          showsVerticalScrollIndicator={false}
+          contentContainerStyle={{ paddingBottom: 40 }}
+        >
         {/* Transportation PIN */}
         {isTransportation && booking.ride_pin && (
           <View className="bg-warning/10 border border-warning rounded-xl p-4 mb-4 items-center">
@@ -404,6 +453,13 @@ export default function TrackingScreen() {
                 onPress={() => router.push(`/(customer)/chat/${booking.id}`)}
               >
                 <MessageCircle size={18} color="#2563EB" />
+                {unreadForBooking > 0 && (
+                  <View className="absolute top-0 right-0 min-w-[16px] h-4 px-1 bg-danger rounded-full items-center justify-center border-[1.5px] border-white">
+                    <Text className="text-[9px] text-white font-montserrat-bold leading-[11px]">
+                      {unreadForBooking > 9 ? '9+' : String(unreadForBooking)}
+                    </Text>
+                  </View>
+                )}
               </Pressable>
               <Pressable
                 className="w-10 h-10 rounded-full bg-primaryLight items-center justify-center"
@@ -418,6 +474,80 @@ export default function TrackingScreen() {
                 <Share2 size={18} color="#2563EB" />
               </Pressable>
             </View>
+          </View>
+        )}
+
+        {/* Shopping reconciliation card — visible whenever a shopping budget
+            was pre-authorized so the customer can see what was approved
+            and, after pickup, exactly what the runner spent. */}
+        {isShopping && booking.shopping_budget != null && (
+          <View className="bg-primary/5 border border-primary/30 rounded-xl p-4 mb-4">
+            <Text className="text-xs font-montserrat-bold text-primary uppercase mb-2">
+              Shopping summary
+            </Text>
+            <View className="flex-row items-center justify-between mb-1.5">
+              <Text className="text-sm font-montserrat text-textSecondary">
+                Pre-authorized budget
+              </Text>
+              <Text className="text-sm font-montserrat-bold text-textPrimary">
+                {formatCurrency(booking.shopping_budget)}
+              </Text>
+            </View>
+            {booking.actual_item_cost != null ? (
+              <>
+                <View className="flex-row items-center justify-between mb-1.5">
+                  <Text className="text-sm font-montserrat text-textSecondary">
+                    Actual receipt amount
+                  </Text>
+                  <Text className="text-sm font-montserrat-bold text-textPrimary">
+                    {formatCurrency(booking.actual_item_cost)}
+                  </Text>
+                </View>
+                <View className="h-px bg-divider my-2" />
+                <View className="flex-row items-center justify-between">
+                  <Text className="text-sm font-montserrat-semi text-textPrimary">
+                    {booking.actual_item_cost <= booking.shopping_budget
+                      ? 'Refund to wallet'
+                      : 'Additional due'}
+                  </Text>
+                  <Text
+                    className={`text-base font-montserrat-bold ${
+                      booking.actual_item_cost <= booking.shopping_budget
+                        ? 'text-success'
+                        : 'text-warning'
+                    }`}
+                  >
+                    {formatCurrency(
+                      Math.abs(booking.shopping_budget - booking.actual_item_cost),
+                    )}
+                  </Text>
+                </View>
+                {booking.receipt_photo_url && (
+                  <Pressable
+                    onPress={() =>
+                      booking.receipt_photo_url &&
+                      Linking.openURL(booking.receipt_photo_url).catch(() =>
+                        toast.error('Could not open receipt'),
+                      )
+                    }
+                    className="mt-3 flex-row items-center"
+                  >
+                    <Image
+                      source={{ uri: booking.receipt_photo_url }}
+                      className="w-12 h-12 rounded-lg mr-2 bg-divider"
+                    />
+                    <Text className="text-xs font-montserrat-semi text-primary">
+                      View receipt
+                    </Text>
+                  </Pressable>
+                )}
+              </>
+            ) : (
+              <Text className="text-xs font-montserrat text-textTertiary mt-1">
+                The runner will upload a receipt at pickup so you can see the
+                exact amount spent.
+              </Text>
+            )}
           </View>
         )}
 
@@ -445,8 +575,66 @@ export default function TrackingScreen() {
           {canCancel && (
             <Button title={isCancelling ? 'Cancelling...' : 'Cancel Errand'} variant="outline" onPress={handleCancel} disabled={isCancelling} fullWidth />
           )}
+          {isShopping && booking.picked_up_at && CAN_CANCEL_STATUSES.includes(booking.status) === false && booking.status !== 'completed' && booking.status !== 'cancelled' && (
+            <View className="bg-warning/10 border border-warning/40 rounded-xl p-3">
+              <Text className="text-xs font-montserrat-semi text-warning text-center">
+                Your runner already paid for the items. Cancel is no longer available.
+              </Text>
+            </View>
+          )}
         </View>
       </ScrollView>
-    </SafeAreaView>
+      </ExpandableSheet>
+
+      {/* Cancel confirmation */}
+      <ConfirmModal
+        visible={showCancelModal}
+        title="Cancel booking?"
+        message={
+          previewLoading
+            ? 'Checking cancellation policy…'
+            : cancelPreview
+              ? cancelPreview.fee > 0
+                ? `${cancelPreview.reason}\n\nCancellation fee: ₱${cancelPreview.fee.toFixed(2)}`
+                : cancelPreview.reason
+              : "The runner will be notified. This action can't be undone."
+        }
+        confirmLabel={
+          cancelPreview && cancelPreview.fee > 0
+            ? `Cancel & pay ₱${cancelPreview.fee.toFixed(2)}`
+            : 'Yes, cancel'
+        }
+        cancelLabel="Keep booking"
+        destructive
+        loading={isCancelling}
+        onConfirm={confirmCancel}
+        onCancel={() => {
+          setShowCancelModal(false);
+          setCancelPreview(null);
+        }}
+      />
+
+      {/* SOS confirmation */}
+      <ConfirmModal
+        visible={showSOSModal}
+        title="Emergency SOS"
+        message="This will alert your trusted contacts and our support team. Continue?"
+        confirmLabel="Trigger SOS"
+        cancelLabel="Cancel"
+        destructive
+        onConfirm={confirmSOS}
+        onCancel={() => setShowSOSModal(false)}
+      />
+    </View>
   );
 }
+
+const styles = StyleSheet.create({
+  floatingShadow: {
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.12,
+    shadowRadius: 8,
+    elevation: 4,
+  },
+});

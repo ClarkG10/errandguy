@@ -1,5 +1,5 @@
 import React, { useCallback, useState } from 'react';
-import { View, Text, Pressable, Alert, ScrollView } from 'react-native';
+import { View, Text, Pressable, ScrollView } from 'react-native';
 import { useRouter } from 'expo-router';
 import { ArrowLeft } from 'lucide-react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -44,9 +44,12 @@ export default function TopUpScreen() {
       if (tx) {
         addTransaction(tx);
       }
-      Alert.alert('Success', `${formatCurrency(displayAmount)} added to wallet`, [
-        { text: 'OK', onPress: () => router.canGoBack() ? router.back() : router.replace('/(customer)/wallet') },
-      ]);
+      toast.success(`${formatCurrency(displayAmount)} added to wallet`);
+      if (router.canGoBack()) {
+        router.back();
+      } else {
+        router.replace('/(customer)/wallet');
+      }
     } catch (err: any) {
       toast.error(err?.response?.data?.message ?? 'Failed to top up wallet');
     } finally {

@@ -1,5 +1,5 @@
 import React, { useState, useCallback } from 'react';
-import { View, Text, ScrollView, Alert, TextInput, Modal, Pressable } from 'react-native';
+import { View, Text, ScrollView, TextInput, Modal, Pressable } from 'react-native';
 import { useRouter } from 'expo-router';
 import {
   User,
@@ -22,6 +22,7 @@ import { Card } from '../../../components/ui/Card';
 import { Button } from '../../../components/ui/Button';
 import { ProfileMenuItem } from '../../../components/customer/ProfileMenuItem';
 import { EditProfileModal } from '../../../components/customer/EditProfileModal';
+import { ConfirmModal } from '../../../components/ui/ConfirmModal';
 import { formatCurrency } from '../../../utils/formatCurrency';
 import { toast } from '../../../stores/toastStore';
 
@@ -30,22 +31,18 @@ export default function ProfileScreen() {
   const { user } = useAuthStore();
   const { logout } = useAuth();
   const [showEditModal, setShowEditModal] = useState(false);
+  const [showLogoutModal, setShowLogoutModal] = useState(false);
   const [showDeleteModal, setShowDeleteModal] = useState(false);
   const [deleteConfirmText, setDeleteConfirmText] = useState('');
   const [deleting, setDeleting] = useState(false);
 
   const handleLogout = useCallback(() => {
-    Alert.alert('Logout', 'Are you sure you want to logout?', [
-      { text: 'Cancel', style: 'cancel' },
-      {
-        text: 'Logout',
-        style: 'destructive',
-        onPress: async () => {
-          await logout();
-          // Root layout will auto-redirect to auth when isAuthenticated becomes false
-        },
-      },
-    ]);
+    setShowLogoutModal(true);
+  }, []);
+
+  const confirmLogout = useCallback(async () => {
+    setShowLogoutModal(false);
+    await logout();
   }, [logout]);
 
   const handleDeleteAccount = useCallback(async () => {
@@ -67,7 +64,7 @@ export default function ProfileScreen() {
 
   return (
     <SafeAreaView className="flex-1 bg-background" edges={['top']}>
-      <ScrollView className="flex-1" showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: 100 }}>
+      <ScrollView className="flex-1" showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: 24 }}>
         {/* Profile Header */}
         <View className="items-center pt-6 pb-5">
           <Avatar
@@ -238,6 +235,17 @@ export default function ProfileScreen() {
       <EditProfileModal
         visible={showEditModal}
         onClose={() => setShowEditModal(false)}
+      />
+
+      <ConfirmModal
+        visible={showLogoutModal}
+        title="Log out?"
+        message="You'll need to sign in again to access your account."
+        confirmLabel="Log out"
+        cancelLabel="Stay signed in"
+        destructive
+        onConfirm={confirmLogout}
+        onCancel={() => setShowLogoutModal(false)}
       />
     </SafeAreaView>
   );

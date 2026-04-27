@@ -8,11 +8,13 @@ import {
   KeyboardAvoidingView,
   Platform,
   ScrollView,
+  Linking,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter, useLocalSearchParams } from 'expo-router';
-import { ArrowLeft, Send, Camera } from 'lucide-react-native';
+import { ArrowLeft, Send, Camera, Phone } from 'lucide-react-native';
 import { useAuthStore } from '../../../stores/authStore';
+import { useRunnerStore } from '../../../stores/runnerStore';
 import { useChat } from '../../../hooks/useChat';
 import { ImagePickerModal } from '../../../components/ui/ImagePickerModal';
 import { RUNNER_QUICK_MESSAGES } from '../../../constants/quickMessages';
@@ -23,6 +25,25 @@ export default function RunnerChatScreen() {
   const router = useRouter();
   const { bookingId } = useLocalSearchParams<{ bookingId: string }>();
   const user = useAuthStore((s) => s.user);
+  const currentErrand = useRunnerStore((s) => s.currentErrand);
+
+  const customerPhone =
+    currentErrand?.id === bookingId
+      ? currentErrand?.dropoff_contact_phone ??
+        currentErrand?.pickup_contact_phone ??
+        currentErrand?.customer?.phone ??
+        null
+      : null;
+
+  const handleCallCustomer = useCallback(() => {
+    if (!customerPhone) {
+      toast.error('Customer phone is not available');
+      return;
+    }
+    Linking.openURL(`tel:${customerPhone}`).catch(() =>
+      toast.error('Could not start call'),
+    );
+  }, [customerPhone]);
 
   const {
     messages,
@@ -148,6 +169,14 @@ export default function RunnerChatScreen() {
             Booking #{bookingId?.slice(0, 8)}
           </Text>
         </View>
+        <Pressable
+          className="p-2"
+          onPress={handleCallCustomer}
+          disabled={!customerPhone}
+          hitSlop={8}
+        >
+          <Phone size={20} color={customerPhone ? '#2563EB' : '#94A3B8'} />
+        </Pressable>
       </View>
 
       <KeyboardAvoidingView
@@ -187,17 +216,22 @@ export default function RunnerChatScreen() {
             <Pressable
               key={msg}
               onPress={() => handleQuickMessage(msg)}
-              className="bg-primaryLight px-3 py-1.5 rounded-full mr-2"
+              disabled={sending}
+              className={`px-3 py-1.5 rounded-full mr-2 ${sending ? 'bg-gray-100' : 'bg-primaryLight'}`}
             >
-              <Text className="text-xs font-montserrat text-primary">{msg}</Text>
+              <Text className={`text-xs font-montserrat ${sending ? 'text-textTertiary' : 'text-primary'}`}>{msg}</Text>
             </Pressable>
           ))}
         </ScrollView>
 
         {/* Input */}
         <View className="flex-row items-center gap-2 px-5 py-3 pb-6 border-t border-divider bg-background">
-          <Pressable onPress={() => setImagePickerVisible(true)}>
-            <Camera size={24} color="#475569" />
+          <Pressable
+            onPress={() => setImagePickerVisible(true)}
+            disabled={sending}
+            hitSlop={8}
+          >
+            <Camera size={24} color={sending ? '#94A3B8' : '#475569'} />
           </Pressable>
           <TextInput
             className="flex-1 bg-surface border border-divider rounded-full px-4 py-2.5 text-sm font-montserrat text-textPrimary"
@@ -207,15 +241,16 @@ export default function RunnerChatScreen() {
             onChangeText={setInput}
             onSubmitEditing={handleSend}
             returnKeyType="send"
+            editable={!sending}
           />
           <Pressable
             onPress={handleSend}
             className={`w-10 h-10 rounded-full items-center justify-center ${
-              input.trim() ? 'bg-primary' : 'bg-gray-200'
+              !input.trim() || sending ? 'bg-gray-200' : 'bg-primary'
             }`}
-            disabled={!input.trim()}
+            disabled={!input.trim() || sending}
           >
-            <Send size={18} color={input.trim() ? '#FFFFFF' : '#94A3B8'} />
+            <Send size={18} color={!input.trim() || sending ? '#94A3B8' : '#FFFFFF'} />
           </Pressable>
         </View>
       </KeyboardAvoidingView>

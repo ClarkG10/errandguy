@@ -73,6 +73,47 @@ class ChatController extends Controller
         ]);
     }
 
+    /**
+     * Returns the per-booking and total unread chat-message counts for the
+     * current user. Used to drive the chat icon badge on the runner errand
+     * screen and the customer tracking screen.
+     */
+    public function unreadCount(Request $request): JsonResponse
+    {
+        $userId = $request->user()->id;
+
+        // Active bookings the user is a participant of.
+        $bookingIds = Booking::query()
+            ->where(function ($q) use ($userId) {
+                $q->where('customer_id', $userId)->orWhere('runner_id', $userId);
+            })
+            ->whereNotIn('status', ['completed', 'cancelled', 'no_runner'])
+            ->pluck('id');
+
+        if ($bookingIds->isEmpty()) {
+            return response()->json([
+                'data' => ['total' => 0, 'by_booking' => (object) []],
+            ]);
+        }
+
+        $rows = Message::query()
+            ->whereIn('booking_id', $bookingIds)
+            ->where('sender_id', '!=', $userId)
+            ->whereNull('read_at')
+            ->selectRaw('booking_id, COUNT(*) as unread')
+            ->groupBy('booking_id')
+            ->get();
+
+        $byBooking = $rows->mapWithKeys(fn ($r) => [(string) $r->booking_id => (int) $r->unread]);
+
+        return response()->json([
+            'data' => [
+                'total' => (int) $rows->sum('unread'),
+                'by_booking' => $byBooking->isEmpty() ? (object) [] : $byBooking,
+            ],
+        ]);
+    }
+
     private function authorizeBookingParticipant($user, Booking $booking): void
     {
         if ($user->id !== $booking->customer_id && $user->id !== $booking->runner_id) {

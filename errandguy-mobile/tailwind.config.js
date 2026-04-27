@@ -57,9 +57,19 @@ module.exports = {
         dividerDark: '#1E293B',
       },
       fontFamily: {
+        // UI / friendly text — Quicksand. Aliased as `montserrat*` for
+        // historical reasons; safe to keep so existing classNames don't
+        // need touching.
         montserrat: ['Quicksand_400Regular'],
         'montserrat-semi': ['Quicksand_500Medium'],
         'montserrat-bold': ['Quicksand_700Bold'],
+        // Data-dense / numeric / monospaced-feeling info — Inter. Use
+        // these for prices, currency, fare breakdowns, distances, ETAs,
+        // PIN codes, booking numbers, and any tabular display where
+        // legibility at small sizes matters more than warmth.
+        inter: ['Inter_400Regular'],
+        'inter-medium': ['Inter_500Medium'],
+        'inter-semi': ['Inter_600SemiBold'],
       },
       borderRadius: {
         sm: '8px',

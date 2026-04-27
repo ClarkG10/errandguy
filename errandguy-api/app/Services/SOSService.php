@@ -15,16 +15,35 @@ class SOSService
         private RealtimeService $realtimeService,
     ) {}
 
-    public function triggerSOS(string $bookingId, string $userId): SOSAlert
+    /**
+     * Trigger an SOS alert for a booking.
+     *
+     * @param  string  $bookingId
+     * @param  string  $triggeredBy  user-id of the person pulling the alarm
+     * @param  string  $role         'customer' or 'runner'
+     */
+    public function triggerSOS(string $bookingId, string $triggeredBy, string $role = 'customer'): SOSAlert
     {
         $booking = Booking::with(['runner.runnerProfile'])->findOrFail($bookingId);
 
         $runnerProfile = $booking->runner?->runnerProfile;
 
+        // Idempotency — if there's already an active alert for this booking,
+        // return it instead of stacking duplicates.
+        $existing = SOSAlert::where('booking_id', $bookingId)
+            ->where('status', 'active')
+            ->latest('triggered_at')
+            ->first();
+        if ($existing) {
+            return $existing;
+        }
+
         $alert = SOSAlert::create([
             'booking_id' => $bookingId,
-            'customer_id' => $userId,
+            'customer_id' => $booking->customer_id,
             'runner_id' => $booking->runner_id,
+            'triggered_by' => $triggeredBy,
+            'triggered_by_role' => $role,
             'triggered_at' => now(),
             'customer_lat' => $booking->dropoff_lat,
             'customer_lng' => $booking->dropoff_lng,
@@ -35,7 +54,8 @@ class SOSService
             'status' => 'active',
         ]);
 
-        $contacts = TrustedContact::where('user_id', $userId)
+        // Notify the trusted contacts of whoever triggered the alarm.
+        $contacts = TrustedContact::where('user_id', $triggeredBy)
             ->orderBy('created_at')
             ->get();
 
@@ -45,22 +65,29 @@ class SOSService
         $liveLink = config('app.url') . "/trip/{$alert->live_link_token}";
 
         foreach ($contacts as $contact) {
-            $this->notifySMSContact($contact, $userId, $liveLink, $booking);
+            $this->notifySMSContact($contact, $triggeredBy, $liveLink, $booking);
         }
 
         $booking->update(['sos_triggered' => true]);
 
-        $this->realtimeService->broadcastSOSAlert($bookingId, $userId, [
+        $this->realtimeService->broadcastSOSAlert($bookingId, $triggeredBy, [
             'alert_id' => $alert->id,
             'status' => 'active',
             'live_link' => $liveLink,
+            'triggered_by_role' => $role,
         ]);
 
-        $this->notificationService->sendToTopic('admin_safety', '🚨 SOS Alert', "Emergency triggered for booking #{$booking->booking_number}", [
-            'type' => 'sos',
-            'booking_id' => $bookingId,
-            'alert_id' => $alert->id,
-        ]);
+        $this->notificationService->sendToTopic(
+            'admin_safety',
+            '🚨 SOS Alert',
+            "Emergency triggered by {$role} for booking #{$booking->booking_number}",
+            [
+                'type' => 'sos',
+                'booking_id' => $bookingId,
+                'alert_id' => $alert->id,
+                'triggered_by_role' => $role,
+            ]
+        );
 
         return $alert;
     }

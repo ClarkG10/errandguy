@@ -9,6 +9,10 @@ import {
   FileText,
   Shirt,
   PenTool,
+  Receipt,
+  Users,
+  ShoppingBag,
+  Clipboard,
 } from 'lucide-react-native';
 import type { LucideIcon } from 'lucide-react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -28,6 +32,10 @@ const ICON_MAP: Record<string, LucideIcon> = {
   Shirt,
   Car,
   PenTool,
+  Receipt,
+  Users,
+  ShoppingBag,
+  Clipboard,
 };
 
 export default function TypeSelectionScreen() {
@@ -57,14 +65,18 @@ export default function TypeSelectionScreen() {
 
   const handleContinue = useCallback(() => {
     if (!selectedId) return;
+    const selectedType = errandTypes.find((t) => t.id === selectedId);
     // If errand type changed, reset the rest of the draft
     if (draftBooking.errand_type_id && draftBooking.errand_type_id !== selectedId) {
       clearDraft();
     }
-    updateDraft({ errand_type_id: selectedId });
+    updateDraft({
+      errand_type_id: selectedId,
+      errand_type_slug: selectedType?.slug,
+    });
     setStep(1);
     router.push('/(customer)/book/details');
-  }, [selectedId, draftBooking.errand_type_id, updateDraft, clearDraft, setStep, router]);
+  }, [selectedId, errandTypes, draftBooking.errand_type_id, updateDraft, clearDraft, setStep, router]);
 
   return (
     <SafeAreaView className="flex-1 bg-background" edges={['top']}>

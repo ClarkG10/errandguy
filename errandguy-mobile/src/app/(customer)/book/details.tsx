@@ -5,7 +5,6 @@ import {
   ScrollView,
   Pressable,
   TextInput,
-  Alert,
   Animated,
   StyleSheet,
   Dimensions,
@@ -35,6 +34,7 @@ import { PhotoGrid } from '../../../components/customer/PhotoGrid';
 import { ImagePickerModal } from '../../../components/ui/ImagePickerModal';
 import { SavedAddressSheet } from '../../../components/customer/SavedAddressSheet';
 import { MAP_STYLE_URL } from '../../../constants/map';
+import { getErrandTypeRule } from '../../../constants/errandTypeRules';
 import type { SavedAddress } from '../../../types';
 import { toast } from '../../../stores/toastStore';
 
@@ -162,8 +162,14 @@ export default function TaskDetailsScreen() {
   const { draftBooking, updateDraft, setStep } = useBookingStore();
   const { pickImage, takePhoto } = useImagePicker();
 
+  // Per-errand-type UX rules (which fields to show, labels, etc.)
+  const rule = useMemo(
+    () => getErrandTypeRule(draftBooking.errand_type_slug),
+    [draftBooking.errand_type_slug],
+  );
+
   const initialPhase =
-    draftBooking.pickup_lat && draftBooking.dropoff_lat
+    draftBooking.pickup_lat && (rule.singleLocation || draftBooking.dropoff_lat)
       ? ('details' as const)
       : draftBooking.pickup_lat
         ? ('dropoff' as const)
@@ -193,6 +199,47 @@ export default function TaskDetailsScreen() {
     !!(draftBooking.dropoff_contact_name || draftBooking.dropoff_contact_phone),
   );
   const [errors, setErrors] = useState<Record<string, string>>({});
+
+  // Clear hidden-field values when switching to an errand type that
+  // doesn't use them, so we don't submit stale data.
+  useEffect(() => {
+    const patch: Record<string, undefined> = {};
+    if (!rule.showPhotos && (draftBooking.item_photos?.length ?? 0) > 0) {
+      patch.item_photos = undefined;
+      setPhotos([]);
+    }
+    if (!rule.showItemValue && draftBooking.estimated_item_value != null) {
+      patch.estimated_item_value = undefined;
+    }
+    if (!rule.requiresShoppingBudget && draftBooking.shopping_budget != null) {
+      patch.shopping_budget = undefined;
+    }
+    if (rule.singleLocation && draftBooking.dropoff_address) {
+      patch.dropoff_address = undefined;
+      patch.dropoff_lat = undefined;
+      patch.dropoff_lng = undefined;
+    }
+    if (
+      !rule.showPickupContact &&
+      (draftBooking.pickup_contact_name || draftBooking.pickup_contact_phone)
+    ) {
+      patch.pickup_contact_name = undefined;
+      patch.pickup_contact_phone = undefined;
+      setShowPickupContact(false);
+    }
+    if (
+      !rule.showDropoffContact &&
+      (draftBooking.dropoff_contact_name || draftBooking.dropoff_contact_phone)
+    ) {
+      patch.dropoff_contact_name = undefined;
+      patch.dropoff_contact_phone = undefined;
+      setShowDropoffContact(false);
+    }
+    if (Object.keys(patch).length > 0) {
+      updateDraft(patch as any);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [rule]);
 
   // Route
   const [routeCoords, setRouteCoords] = useState<[number, number][]>([]);
@@ -300,14 +347,19 @@ export default function TaskDetailsScreen() {
     const [lng, lat] = currentCoord;
     if (phase === 'pickup') {
       updateDraft({ pickup_address: currentAddress, pickup_lat: lat, pickup_lng: lng });
-      setPhase('dropoff');
-      setCurrentAddress('');
-      setCurrentCoord(null);
+      // Single-location errands have no separate dropoff — skip to details.
+      if (rule.singleLocation) {
+        setPhase('details');
+      } else {
+        setPhase('dropoff');
+        setCurrentAddress('');
+        setCurrentCoord(null);
+      }
     } else if (phase === 'dropoff') {
       updateDraft({ dropoff_address: currentAddress, dropoff_lat: lat, dropoff_lng: lng });
       setPhase('details');
     }
-  }, [phase, currentCoord, currentAddress, updateDraft]);
+  }, [phase, currentCoord, currentAddress, updateDraft, rule.singleLocation]);
 
   /* ── Back ── */
   const handleBack = useCallback(() => {
@@ -333,18 +385,27 @@ export default function TaskDetailsScreen() {
       setCurrentAddress('');
       setCurrentCoord(null);
     } else {
-      // details → dropoff: clear dropoff so user can re-select
-      updateDraft({
-        dropoff_address: undefined,
-        dropoff_lat: undefined,
-        dropoff_lng: undefined,
-      });
-      setPhase('dropoff');
+      // details → (single-location: pickup, otherwise: dropoff)
+      if (rule.singleLocation) {
+        updateDraft({
+          pickup_address: undefined,
+          pickup_lat: undefined,
+          pickup_lng: undefined,
+        });
+        setPhase('pickup');
+      } else {
+        updateDraft({
+          dropoff_address: undefined,
+          dropoff_lat: undefined,
+          dropoff_lng: undefined,
+        });
+        setPhase('dropoff');
+      }
       setRouteCoords([]);
       setCurrentAddress('');
       setCurrentCoord(null);
     }
-  }, [phase, router, updateDraft]);
+  }, [phase, router, updateDraft, rule.singleLocation]);
 
   /* ── Change a confirmed location (tapped from details phase) ── */
   const handleChangeLocation = useCallback(
@@ -394,7 +455,7 @@ export default function TaskDetailsScreen() {
     try {
       const { status } = await Location.requestForegroundPermissionsAsync();
       if (status !== 'granted') {
-        Alert.alert('Permission Required', 'Please enable location permissions.');
+        toast.warning('Please enable location permissions to use this feature.');
         return;
       }
       const loc = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.High });
@@ -525,12 +586,23 @@ export default function TaskDetailsScreen() {
   const handleContinue = useCallback(() => {
     const newErrors: Record<string, string> = {};
     if (!draftBooking.pickup_address) newErrors.pickup = 'Pickup location is required';
-    if (!draftBooking.dropoff_address) newErrors.dropoff = 'Dropoff location is required';
+    if (!rule.singleLocation && !draftBooking.dropoff_address) {
+      newErrors.dropoff = 'Dropoff location is required';
+    }
+    if (rule.descriptionRequired && !draftBooking.description?.trim()) {
+      newErrors.description = `${rule.descriptionLabel} is required`;
+    }
+    if (rule.requiresShoppingBudget) {
+      const budget = draftBooking.shopping_budget;
+      if (budget == null || budget <= 0) {
+        newErrors.shopping_budget = 'Shopping budget is required';
+      }
+    }
     setErrors(newErrors);
     if (Object.keys(newErrors).length > 0) return;
     setStep(2);
     router.push('/(customer)/book/schedule');
-  }, [draftBooking, setStep, router]);
+  }, [draftBooking, rule, setStep, router]);
 
   /* ── Initial camera center ── */
   const [userLocation, setUserLocation] = useState<[number, number] | null>(null);
@@ -664,7 +736,9 @@ export default function TaskDetailsScreen() {
                 <TextInput
                   style={st.searchInput}
                   placeholder={
-                    phase === 'pickup' ? 'Search pickup location...' : 'Search dropoff location...'
+                    phase === 'pickup'
+                      ? `Search ${rule.pickupLabel.toLowerCase()}...`
+                      : `Search ${rule.dropoffLabel.toLowerCase()}...`
                   }
                   placeholderTextColor="#94A3B8"
                   value={searchQuery}
@@ -727,7 +801,7 @@ export default function TaskDetailsScreen() {
         <View style={st.bottomCard}>
           <View style={st.dragHandle} />
           <Text style={st.cardTitle}>
-            {phase === 'pickup' ? 'Set pickup location' : 'Set dropoff location'}
+            {phase === 'pickup' ? `Set ${rule.pickupLabel.toLowerCase()}` : `Set ${rule.dropoffLabel.toLowerCase()}`}
           </Text>
 
           <View style={st.addressRow}>
@@ -754,7 +828,7 @@ export default function TaskDetailsScreen() {
           </View>
 
           <Button
-            title={phase === 'pickup' ? 'Confirm Pickup' : 'Confirm Dropoff'}
+            title={phase === 'pickup' ? `Confirm ${rule.pickupLabel}` : `Confirm ${rule.dropoffLabel}`}
             onPress={handleConfirmLocation}
             disabled={!currentAddress || isMoving}
             fullWidth
@@ -774,14 +848,18 @@ export default function TaskDetailsScreen() {
               </Text>
               <Text style={st.changeLink}>Change</Text>
             </Pressable>
-            <View style={st.routeConnector} />
-            <Pressable style={st.routePoint} onPress={() => handleChangeLocation('dropoff')}>
-              <View style={[st.routeDot, { backgroundColor: '#EF4444' }]} />
-              <Text style={st.routeAddr} numberOfLines={1}>
-                {draftBooking.dropoff_address}
-              </Text>
-              <Text style={st.changeLink}>Change</Text>
-            </Pressable>
+            {!rule.singleLocation && (
+              <>
+                <View style={st.routeConnector} />
+                <Pressable style={st.routePoint} onPress={() => handleChangeLocation('dropoff')}>
+                  <View style={[st.routeDot, { backgroundColor: '#EF4444' }]} />
+                  <Text style={st.routeAddr} numberOfLines={1}>
+                    {draftBooking.dropoff_address}
+                  </Text>
+                  <Text style={st.changeLink}>Change</Text>
+                </Pressable>
+              </>
+            )}
           </View>
 
           <ScrollView
@@ -790,15 +868,28 @@ export default function TaskDetailsScreen() {
             contentContainerStyle={{ paddingBottom: 100 }}
             keyboardShouldPersistTaps="handled"
           >
-            <Input
-              label="What do you need done?"
-              value={draftBooking.description ?? ''}
-              onChangeText={(v) => updateDraft({ description: v })}
-              placeholder="Describe your errand..."
-              multiline
-              numberOfLines={3}
-              maxLength={500}
-            />
+            {rule.helperNote && (
+              <View style={st.helperNote}>
+                <Text style={st.helperNoteText}>{rule.helperNote}</Text>
+              </View>
+            )}
+            {rule.showDescription && (
+              <Input
+                label={`${rule.descriptionLabel}${rule.descriptionRequired ? ' *' : ''}`}
+                value={draftBooking.description ?? ''}
+                onChangeText={(v) => {
+                  updateDraft({ description: v });
+                  if (errors.description && v.trim()) {
+                    setErrors((e) => ({ ...e, description: '' }));
+                  }
+                }}
+                placeholder={rule.descriptionPlaceholder}
+                multiline
+                numberOfLines={3}
+                maxLength={500}
+                error={errors.description}
+              />
+            )}
             <Input
               label="Special Instructions (optional)"
               value={draftBooking.special_instructions ?? ''}
@@ -809,91 +900,124 @@ export default function TaskDetailsScreen() {
               maxLength={300}
             />
 
-            <PhotoGrid
-              photos={photos}
-              maxPhotos={5}
-              onAdd={handleAddPhoto}
-              onRemove={handleRemovePhoto}
-            />
+            {rule.showPhotos && (
+              <PhotoGrid
+                photos={photos}
+                maxPhotos={5}
+                onAdd={handleAddPhoto}
+                onRemove={handleRemovePhoto}
+              />
+            )}
 
-            <Input
-              label="Estimated Item Value (optional)"
-              value={
-                draftBooking.estimated_item_value != null
-                  ? String(draftBooking.estimated_item_value)
-                  : ''
-              }
-              onChangeText={(v) => {
-                const num = parseFloat(v);
-                updateDraft({ estimated_item_value: isNaN(num) ? undefined : num });
-              }}
-              placeholder="₱0.00"
-              keyboardType="numeric"
-            />
+            {rule.showItemValue && (
+              <Input
+                label="Estimated Item Value (optional)"
+                value={
+                  draftBooking.estimated_item_value != null
+                    ? String(draftBooking.estimated_item_value)
+                    : ''
+                }
+                onChangeText={(v) => {
+                  const num = parseFloat(v);
+                  updateDraft({ estimated_item_value: isNaN(num) ? undefined : num });
+                }}
+                placeholder="₱0.00"
+                keyboardType="numeric"
+              />
+            )}
+
+            {rule.requiresShoppingBudget && (
+              <Input
+                label="Shopping Budget *"
+                value={
+                  draftBooking.shopping_budget != null
+                    ? String(draftBooking.shopping_budget)
+                    : ''
+                }
+                onChangeText={(v) => {
+                  const num = parseFloat(v);
+                  updateDraft({ shopping_budget: isNaN(num) ? undefined : num });
+                  if (errors.shopping_budget && !isNaN(num) && num > 0) {
+                    setErrors((e) => ({ ...e, shopping_budget: '' }));
+                  }
+                }}
+                placeholder="₱ Maximum amount the runner may spend"
+                keyboardType="numeric"
+                error={errors.shopping_budget}
+              />
+            )}
 
             {/* Pickup contact */}
-            <Pressable
-              style={st.contactToggle}
-              onPress={() => setShowPickupContact(!showPickupContact)}
-            >
-              <UserPlus size={14} color="#2563EB" />
-              <Text style={st.contactToggleText}>
-                {showPickupContact ? 'Hide' : 'Add'} pickup contact
-              </Text>
-              {showPickupContact ? (
-                <ChevronUp size={14} color="#2563EB" />
-              ) : (
-                <ChevronDown size={14} color="#2563EB" />
-              )}
-            </Pressable>
-            {showPickupContact && (
+            {rule.showPickupContact && (
               <>
-                <Input
-                  label="Contact Name"
-                  value={draftBooking.pickup_contact_name ?? ''}
-                  onChangeText={(v) => updateDraft({ pickup_contact_name: v })}
-                  placeholder="Person at pickup"
-                />
-                <Input
-                  label="Contact Phone"
-                  value={draftBooking.pickup_contact_phone ?? ''}
-                  onChangeText={(v) => updateDraft({ pickup_contact_phone: v })}
-                  placeholder="Phone number"
-                  keyboardType="phone-pad"
-                />
+                <Pressable
+                  style={st.contactToggle}
+                  onPress={() => setShowPickupContact(!showPickupContact)}
+                >
+                  <UserPlus size={14} color="#2563EB" />
+                  <Text style={st.contactToggleText}>
+                    {showPickupContact ? 'Hide' : 'Add'} {rule.pickupLabel.toLowerCase()} contact
+                  </Text>
+                  {showPickupContact ? (
+                    <ChevronUp size={14} color="#2563EB" />
+                  ) : (
+                    <ChevronDown size={14} color="#2563EB" />
+                  )}
+                </Pressable>
+                {showPickupContact && (
+                  <>
+                    <Input
+                      label="Contact Name"
+                      value={draftBooking.pickup_contact_name ?? ''}
+                      onChangeText={(v) => updateDraft({ pickup_contact_name: v })}
+                      placeholder={`Person at ${rule.pickupLabel.toLowerCase()}`}
+                    />
+                    <Input
+                      label="Contact Phone"
+                      value={draftBooking.pickup_contact_phone ?? ''}
+                      onChangeText={(v) => updateDraft({ pickup_contact_phone: v })}
+                      placeholder="Phone number"
+                      keyboardType="phone-pad"
+                    />
+                  </>
+                )}
               </>
             )}
 
             {/* Dropoff contact */}
-            <Pressable
-              style={st.contactToggle}
-              onPress={() => setShowDropoffContact(!showDropoffContact)}
-            >
-              <UserPlus size={14} color="#2563EB" />
-              <Text style={st.contactToggleText}>
-                {showDropoffContact ? 'Hide' : 'Add'} dropoff contact
-              </Text>
-              {showDropoffContact ? (
-                <ChevronUp size={14} color="#2563EB" />
-              ) : (
-                <ChevronDown size={14} color="#2563EB" />
-              )}
-            </Pressable>
-            {showDropoffContact && (
+            {rule.showDropoffContact && (
               <>
-                <Input
-                  label="Contact Name"
-                  value={draftBooking.dropoff_contact_name ?? ''}
-                  onChangeText={(v) => updateDraft({ dropoff_contact_name: v })}
-                  placeholder="Person at dropoff"
-                />
-                <Input
-                  label="Contact Phone"
-                  value={draftBooking.dropoff_contact_phone ?? ''}
-                  onChangeText={(v) => updateDraft({ dropoff_contact_phone: v })}
-                  placeholder="Phone number"
-                  keyboardType="phone-pad"
-                />
+                <Pressable
+                  style={st.contactToggle}
+                  onPress={() => setShowDropoffContact(!showDropoffContact)}
+                >
+                  <UserPlus size={14} color="#2563EB" />
+                  <Text style={st.contactToggleText}>
+                    {showDropoffContact ? 'Hide' : 'Add'} {rule.dropoffLabel.toLowerCase()} contact
+                  </Text>
+                  {showDropoffContact ? (
+                    <ChevronUp size={14} color="#2563EB" />
+                  ) : (
+                    <ChevronDown size={14} color="#2563EB" />
+                  )}
+                </Pressable>
+                {showDropoffContact && (
+                  <>
+                    <Input
+                      label="Contact Name"
+                      value={draftBooking.dropoff_contact_name ?? ''}
+                      onChangeText={(v) => updateDraft({ dropoff_contact_name: v })}
+                      placeholder={`Person at ${rule.dropoffLabel.toLowerCase()}`}
+                    />
+                    <Input
+                      label="Contact Phone"
+                      value={draftBooking.dropoff_contact_phone ?? ''}
+                      onChangeText={(v) => updateDraft({ dropoff_contact_phone: v })}
+                      placeholder="Phone number"
+                      keyboardType="phone-pad"
+                    />
+                  </>
+                )}
               </>
             )}
           </ScrollView>
@@ -1176,6 +1300,18 @@ const st = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     marginBottom: 12,
+  },
+  helperNote: {
+    backgroundColor: '#EFF6FF',
+    borderRadius: 12,
+    padding: 12,
+    marginBottom: 14,
+  },
+  helperNoteText: {
+    fontSize: 12,
+    fontFamily: 'Quicksand_500Medium',
+    color: '#1D4ED8',
+    lineHeight: 17,
   },
   contactToggleText: {
     fontSize: 12,

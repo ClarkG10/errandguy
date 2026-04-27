@@ -1,8 +1,9 @@
 <?php
 
-namespace App\Http\Controllers\Customer;
+namespace App\Http\Controllers\Runner;
 
 use App\Http\Controllers\Controller;
+use App\Models\Booking;
 use App\Services\SOSService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -13,14 +14,17 @@ class SOSController extends Controller
         private SOSService $sosService,
     ) {}
 
+    /**
+     * Trigger SOS while a runner is on an active errand. The runner must
+     * own the booking and the booking must still be in-flight.
+     */
     public function trigger(Request $request, string $id): JsonResponse
     {
-        $booking = \App\Models\Booking::where('customer_id', $request->user()->id)
-            ->where('status', '!=', 'completed')
-            ->where('status', '!=', 'cancelled')
+        $booking = Booking::where('runner_id', $request->user()->id)
+            ->whereNotIn('status', ['completed', 'cancelled', 'no_runner'])
             ->findOrFail($id);
 
-        $alert = $this->sosService->triggerSOS($booking->id, $request->user()->id, 'customer');
+        $alert = $this->sosService->triggerSOS($booking->id, $request->user()->id, 'runner');
 
         return response()->json([
             'data' => $alert,
@@ -30,7 +34,7 @@ class SOSController extends Controller
 
     public function deactivate(Request $request, string $id): JsonResponse
     {
-        \App\Models\Booking::where('customer_id', $request->user()->id)->findOrFail($id);
+        Booking::where('runner_id', $request->user()->id)->findOrFail($id);
 
         $this->sosService->deactivateSOS($id);
 

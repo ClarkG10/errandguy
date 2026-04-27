@@ -213,7 +213,7 @@ export default function NotificationsScreen() {
         maxToRenderPerBatch={10}
         windowSize={5}
         removeClippedSubviews={true}
-        contentContainerStyle={{ paddingTop: 4, paddingBottom: 100 }}
+        contentContainerStyle={{ paddingTop: 4, paddingBottom: 24 }}
         ListEmptyComponent={
           <EmptyState
             icon={Bell}

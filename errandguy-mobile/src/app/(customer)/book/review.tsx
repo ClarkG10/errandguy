@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { View, Text, ScrollView, Pressable, StyleSheet } from 'react-native';
 import { useRouter } from 'expo-router';
 import { ArrowLeft, Footprints, Bike, Truck, Car, MapPin, Clock, Route } from 'lucide-react-native';
@@ -16,6 +16,7 @@ import { PromoCodeInput } from '../../../components/customer/PromoCodeInput';
 import { PaymentMethodSelector } from '../../../components/customer/PaymentMethodSelector';
 import { OfferSlider } from '../../../components/customer/OfferSlider';
 import { formatCurrency } from '../../../utils/formatCurrency';
+import { getErrandTypeRule, type VehicleKey } from '../../../constants/errandTypeRules';
 import type { PricingMode } from '../../../types';
 import { toast } from '../../../stores/toastStore';
 
@@ -46,9 +47,30 @@ export default function ReviewScreen() {
   const [pricingMode, setPricingMode] = useState<PricingMode>(
     draftBooking.pricing_mode ?? 'fixed',
   );
-  const [vehicleType, setVehicleType] = useState<string>(
-    draftBooking.vehicle_type_rate ?? 'motorcycle',
+
+  // Per-errand-type rule (allowed vehicles, default vehicle, etc.)
+  const rule = useMemo(
+    () => getErrandTypeRule(draftBooking.errand_type_slug),
+    [draftBooking.errand_type_slug],
   );
+
+  const initialVehicle = useMemo<VehicleKey>(() => {
+    const stored = draftBooking.vehicle_type_rate as VehicleKey | undefined;
+    if (stored && rule.allowedVehicles.includes(stored)) return stored;
+    return rule.defaultVehicle;
+  }, [draftBooking.vehicle_type_rate, rule]);
+
+  const [vehicleType, setVehicleType] = useState<string>(initialVehicle);
+
+  // If the rule changes (e.g. user changed errand type) and the current
+  // vehicle is no longer allowed, snap back to the rule's default.
+  useEffect(() => {
+    if (!rule.allowedVehicles.includes(vehicleType as VehicleKey)) {
+      setVehicleType(rule.defaultVehicle);
+      updateDraft({ vehicle_type_rate: rule.defaultVehicle });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [rule]);
   const [paymentMethodType, setPaymentMethodType] = useState<string | undefined>();
   const [promoDiscount, setPromoDiscount] = useState(0);
   const [offerPrice, setOfferPrice] = useState(
@@ -81,7 +103,7 @@ export default function ReviewScreen() {
     }
   }, [draftBooking.errand_type_id, draftBooking.pickup_lat, draftBooking.pickup_lng, draftBooking.dropoff_lat, draftBooking.dropoff_lng]);
 
-  const vehicleOptions: VehicleOption[] = [
+  const allVehicleOptions: VehicleOption[] = [
     {
       key: 'walk',
       label: 'Walk',
@@ -111,6 +133,11 @@ export default function ReviewScreen() {
       estimatedTotal: estimate?.car?.total_amount ?? 0,
     },
   ];
+
+  // Hide vehicles this errand type doesn't support (e.g. walk/bicycle for transportation).
+  const vehicleOptions = allVehicleOptions.filter((opt) =>
+    rule.allowedVehicles.includes(opt.key as VehicleKey),
+  );
 
   const currentVehicleEstimate = estimate?.[vehicleType as keyof EstimateResult] as
     | { total_amount: number; distance_fee: number; base_fee: number; service_fee: number; surcharge: number }
@@ -166,6 +193,7 @@ export default function ReviewScreen() {
         description: draftBooking.description,
         special_instructions: draftBooking.special_instructions,
         estimated_item_value: draftBooking.estimated_item_value,
+        shopping_budget: draftBooking.shopping_budget,
         pricing_mode: pricingMode,
         vehicle_type_rate: pricingMode === 'fixed' ? vehicleType : undefined,
         customer_offer: pricingMode === 'negotiate' ? offerPrice : undefined,

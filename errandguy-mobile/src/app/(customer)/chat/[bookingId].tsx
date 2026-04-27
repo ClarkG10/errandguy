@@ -8,12 +8,14 @@ import {
   KeyboardAvoidingView,
   Platform,
   ScrollView,
+  Linking,
 } from 'react-native';
 import { Image } from 'expo-image';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import { ArrowLeft, Send, Camera, Phone } from 'lucide-react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useAuthStore } from '../../../stores/authStore';
+import { useBookingStore } from '../../../stores/bookingStore';
 import { useChat } from '../../../hooks/useChat';
 import { Avatar } from '../../../components/ui/Avatar';
 import { ImagePickerModal } from '../../../components/ui/ImagePickerModal';
@@ -26,6 +28,7 @@ export default function ChatScreen() {
   const router = useRouter();
   const { bookingId } = useLocalSearchParams<{ bookingId: string }>();
   const user = useAuthStore((s) => s.user);
+  const activeBooking = useBookingStore((s) => s.activeBooking);
 
   const {
     messages,
@@ -38,6 +41,22 @@ export default function ChatScreen() {
   const [sending, setSending] = useState(false);
   const [imagePickerVisible, setImagePickerVisible] = useState(false);
   const flatListRef = useRef<FlatList<Message>>(null);
+
+  // Runner contact (only available once a runner is matched on the active booking).
+  const runnerName =
+    activeBooking?.id === bookingId ? activeBooking?.runner?.full_name ?? 'Runner' : 'Runner';
+  const runnerPhone =
+    activeBooking?.id === bookingId ? activeBooking?.runner?.phone ?? null : null;
+
+  const handleCallRunner = useCallback(() => {
+    if (!runnerPhone) {
+      toast.error('Runner phone is not available yet');
+      return;
+    }
+    Linking.openURL(`tel:${runnerPhone}`).catch(() =>
+      toast.error('Could not start call'),
+    );
+  }, [runnerPhone]);
 
   // Fetch initial messages and mark as read
   useEffect(() => {
@@ -138,10 +157,15 @@ export default function ChatScreen() {
         </Pressable>
         <Avatar size="sm" />
         <Text className="text-base font-montserrat-bold text-textPrimary ml-3 flex-1">
-          Runner
+          {runnerName}
         </Text>
-        <Pressable className="p-2">
-          <Phone size={20} color="#2563EB" />
+        <Pressable
+          className="p-2"
+          onPress={handleCallRunner}
+          disabled={!runnerPhone}
+          hitSlop={8}
+        >
+          <Phone size={20} color={runnerPhone ? '#2563EB' : '#94A3B8'} />
         </Pressable>
       </View>
 
@@ -176,10 +200,11 @@ export default function ChatScreen() {
           {CUSTOMER_QUICK_MESSAGES.map((msg) => (
             <Pressable
               key={msg}
-              className="bg-primaryLight px-3 py-1.5 rounded-full"
+              className={`px-3 py-1.5 rounded-full ${sending ? 'bg-gray-100' : 'bg-primaryLight'}`}
               onPress={() => handleSend(msg)}
+              disabled={sending}
             >
-              <Text className="text-xs font-montserrat text-primary">
+              <Text className={`text-xs font-montserrat ${sending ? 'text-textTertiary' : 'text-primary'}`}>
                 {msg}
               </Text>
             </Pressable>
@@ -188,8 +213,13 @@ export default function ChatScreen() {
 
         {/* Input Area */}
         <View className="flex-row items-center px-4 py-3 border-t border-divider bg-surface">
-          <Pressable className="mr-2" onPress={() => setImagePickerVisible(true)}>
-            <Camera size={24} color="#475569" />
+          <Pressable
+            className="mr-2"
+            onPress={() => setImagePickerVisible(true)}
+            disabled={sending}
+            hitSlop={8}
+          >
+            <Camera size={24} color={sending ? '#94A3B8' : '#475569'} />
           </Pressable>
           <TextInput
             className="flex-1 bg-background border border-divider rounded-full px-4 h-10 text-sm font-montserrat text-textPrimary"
@@ -199,9 +229,12 @@ export default function ChatScreen() {
             placeholderTextColor="#94A3B8"
             returnKeyType="send"
             onSubmitEditing={() => handleSend()}
+            editable={!sending}
           />
           <Pressable
-            className="ml-2 w-10 h-10 rounded-full bg-primary items-center justify-center"
+            className={`ml-2 w-10 h-10 rounded-full items-center justify-center ${
+              sending || !inputText.trim() ? 'bg-gray-300' : 'bg-primary'
+            }`}
             onPress={() => handleSend()}
             disabled={sending || !inputText.trim()}
           >

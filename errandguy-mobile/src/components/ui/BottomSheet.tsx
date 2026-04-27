@@ -1,16 +1,20 @@
-import React, { useCallback, useEffect } from 'react';
+import React, { useEffect } from 'react';
 import { View, Pressable, Dimensions, StyleSheet, ScrollView } from 'react-native';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import Animated, {
   useSharedValue,
   useAnimatedStyle,
+  withSpring,
   withTiming,
   Easing,
   runOnJS,
 } from 'react-native-reanimated';
 
 const { height: SCREEN_HEIGHT } = Dimensions.get('window');
-const TIMING_CONFIG = { duration: 300, easing: Easing.out(Easing.cubic) };
+// Spring config for the snappy "bouncy" slide-up the user asked for.
+const SPRING_IN = { damping: 18, stiffness: 180, mass: 0.9 } as const;
+// Closing — quick & deterministic, no overshoot.
+const TIMING_OUT = { duration: 220, easing: Easing.in(Easing.cubic) } as const;
 
 interface BottomSheetProps {
   isVisible: boolean;
@@ -34,9 +38,9 @@ export function BottomSheet({
 
   useEffect(() => {
     if (isVisible) {
-      translateY.value = withTiming(SCREEN_HEIGHT - maxSnap, TIMING_CONFIG);
+      translateY.value = withSpring(SCREEN_HEIGHT - maxSnap, SPRING_IN);
     } else {
-      translateY.value = withTiming(SCREEN_HEIGHT, TIMING_CONFIG);
+      translateY.value = withTiming(SCREEN_HEIGHT, TIMING_OUT);
     }
   }, [isVisible, maxSnap, translateY]);
 
@@ -52,10 +56,10 @@ export function BottomSheet({
     })
     .onEnd((event) => {
       if (event.translationY > 100) {
-        translateY.value = withTiming(SCREEN_HEIGHT, TIMING_CONFIG);
+        translateY.value = withTiming(SCREEN_HEIGHT, TIMING_OUT);
         runOnJS(onClose)();
       } else {
-        translateY.value = withTiming(SCREEN_HEIGHT - maxSnap, TIMING_CONFIG);
+        translateY.value = withSpring(SCREEN_HEIGHT - maxSnap, SPRING_IN);
       }
     });
 

@@ -1,5 +1,5 @@
 import React, { useState, useCallback, useEffect } from 'react';
-import { View, Text, ScrollView, Alert, Pressable, Image } from 'react-native';
+import { View, Text, ScrollView, Pressable, Image } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import {
@@ -14,6 +14,7 @@ import {
 } from 'lucide-react-native';
 import { Card } from '../../components/ui/Card';
 import { Button } from '../../components/ui/Button';
+import { ConfirmModal } from '../../components/ui/ConfirmModal';
 import { ImagePickerModal } from '../../components/ui/ImagePickerModal';
 import { useAuthStore } from '../../stores/authStore';
 import { useRunnerStore } from '../../stores/runnerStore';
@@ -92,6 +93,7 @@ export default function RunnerOnboardingScreen() {
   const [activeDocType, setActiveDocType] = useState<DocumentType | null>(null);
   const [previewUri, setPreviewUri] = useState<string | null>(null);
   const [previewVisible, setPreviewVisible] = useState(false);
+  const [showLogoutModal, setShowLogoutModal] = useState(false);
 
   const fetchProfile = useCallback(async () => {
     try {
@@ -265,17 +267,13 @@ export default function RunnerOnboardingScreen() {
   );
 
   const handleLogout = useCallback(() => {
-    Alert.alert('Logout', 'Are you sure you want to logout?', [
-      { text: 'Cancel', style: 'cancel' },
-      {
-        text: 'Logout',
-        style: 'destructive',
-        onPress: async () => {
-          await logout();
-          router.replace('/(auth)/welcome');
-        },
-      },
-    ]);
+    setShowLogoutModal(true);
+  }, []);
+
+  const confirmLogout = useCallback(async () => {
+    setShowLogoutModal(false);
+    await logout();
+    router.replace('/(auth)/welcome');
   }, [logout, router]);
 
   const handleSkip = useCallback(async () => {
@@ -413,6 +411,17 @@ export default function RunnerOnboardingScreen() {
           </Text>
         </Pressable>
       )}
+
+      <ConfirmModal
+        visible={showLogoutModal}
+        title="Log out?"
+        message="You'll need to sign in again to continue your runner application."
+        confirmLabel="Log out"
+        cancelLabel="Stay"
+        destructive
+        onConfirm={confirmLogout}
+        onCancel={() => setShowLogoutModal(false)}
+      />
     </SafeAreaView>
   );
 }

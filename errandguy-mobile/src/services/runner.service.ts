@@ -52,6 +52,28 @@ export const runnerService = {
     return api.post(`/runner/errand/${id}/status`, { status });
   },
 
+  /**
+   * Picked-up update for shopping errands (food / grocery / purchase / bills_payment).
+   * Sends actual_item_cost and a receipt photo as multipart/form-data so the backend
+   * can reconcile against the customer's pre-authorized shopping_budget.
+   */
+  submitPickedUpWithReceipt(
+    id: string,
+    params: { actualCost: number; receiptUri: string },
+  ) {
+    const form = new FormData();
+    form.append('status', 'picked_up');
+    form.append('actual_item_cost', String(params.actualCost));
+    form.append('receipt_photo', {
+      uri: params.receiptUri,
+      type: 'image/jpeg',
+      name: 'receipt.jpg',
+    } as any);
+    return api.post(`/runner/errand/${id}/status`, form, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+    });
+  },
+
   getEarnings(period?: 'today' | 'week' | 'month') {
     return api.get('/runner/earnings', { params: { period } });
   },
@@ -70,5 +92,13 @@ export const runnerService = {
 
   requestPayout(amount: number) {
     return api.post('/runner/payout/request', { amount });
+  },
+
+  triggerSOS(bookingId: string) {
+    return api.post(`/runner/errand/${bookingId}/sos`);
+  },
+
+  deactivateSOS(bookingId: string) {
+    return api.delete(`/runner/errand/${bookingId}/sos`);
   },
 };

@@ -1,5 +1,5 @@
 import React, { useCallback, useState } from 'react';
-import { View, Text, ScrollView, Pressable, Alert, RefreshControl, Modal, TextInput } from 'react-native';
+import { View, Text, ScrollView, Pressable, RefreshControl, Modal, TextInput } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import {
@@ -22,6 +22,7 @@ import { Avatar } from '../../../components/ui/Avatar';
 import { Badge } from '../../../components/ui/Badge';
 import { Card } from '../../../components/ui/Card';
 import { Button } from '../../../components/ui/Button';
+import { ConfirmModal } from '../../../components/ui/ConfirmModal';
 import { PerformanceMetric } from '../../../components/runner/PerformanceMetric';
 import { useRunnerStore } from '../../../stores/runnerStore';
 import { useAuthStore } from '../../../stores/authStore';
@@ -46,6 +47,7 @@ export default function RunnerProfileScreen() {
   const { runnerProfile, setRunnerProfile } = useRunnerStore();
   const [refreshing, setRefreshing] = useState(false);
   const [showDeleteModal, setShowDeleteModal] = useState(false);
+  const [showLogoutModal, setShowLogoutModal] = useState(false);
   const [deleteConfirmText, setDeleteConfirmText] = useState('');
   const [deleting, setDeleting] = useState(false);
 
@@ -59,20 +61,16 @@ export default function RunnerProfileScreen() {
   }, []);
 
   const handleLogout = () => {
-    Alert.alert('Log Out', 'Are you sure you want to log out?', [
-      { text: 'Cancel', style: 'cancel' },
-      {
-        text: 'Log Out',
-        style: 'destructive',
-        onPress: async () => {
-          try {
-            await logout();
-          } finally {
-            router.replace('/(auth)/welcome' as any);
-          }
-        },
-      },
-    ]);
+    setShowLogoutModal(true);
+  };
+
+  const confirmLogout = async () => {
+    setShowLogoutModal(false);
+    try {
+      await logout();
+    } finally {
+      router.replace('/(auth)/welcome' as any);
+    }
   };
 
   const handleDeleteAccount = useCallback(async () => {
@@ -146,7 +144,7 @@ export default function RunnerProfileScreen() {
         className="flex-1"
         showsVerticalScrollIndicator={false}
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
-        contentContainerStyle={{ paddingBottom: 100 }}
+        contentContainerStyle={{ paddingBottom: 24 }}
       >
         {/* Profile Header */}
         <View className="items-center px-5 mb-6">
@@ -302,6 +300,17 @@ export default function RunnerProfileScreen() {
           </Pressable>
         </Pressable>
       </Modal>
+
+      <ConfirmModal
+        visible={showLogoutModal}
+        title="Log out?"
+        message="You'll go offline immediately and stop receiving errand requests."
+        confirmLabel="Log out"
+        cancelLabel="Stay signed in"
+        destructive
+        onConfirm={confirmLogout}
+        onCancel={() => setShowLogoutModal(false)}
+      />
     </SafeAreaView>
   );
 }

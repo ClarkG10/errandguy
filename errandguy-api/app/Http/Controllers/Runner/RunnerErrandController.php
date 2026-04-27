@@ -30,6 +30,40 @@ class RunnerErrandController extends Controller
         'completed',
     ];
 
+    /**
+     * Transportation rides skip the "delivered" handover stage — the
+     * passenger has already arrived when the ride is completed.
+     */
+    private const TRANSPORT_STATUS_ORDER = [
+        'accepted',
+        'heading_to_pickup',
+        'arrived_at_pickup',
+        'picked_up',
+        'in_transit',
+        'arrived_at_dropoff',
+        'completed',
+    ];
+
+    /**
+     * Single-location errands (queue, bills payment, on-site documents)
+     * complete at the pickup location — there is no transit / dropoff /
+     * delivered stage. Runner: accepted → heading → arrived → picked_up
+     * (action done) → completed.
+     */
+    private const SINGLE_LOCATION_STATUS_ORDER = [
+        'accepted',
+        'heading_to_pickup',
+        'arrived_at_pickup',
+        'picked_up',
+        'completed',
+    ];
+
+    /**
+     * Errand type slugs that finish at a single location.
+     * Must stay in sync with mobile errandTypeRules.ts singleLocation flag.
+     */
+    private const SINGLE_LOCATION_SLUGS = ['queue', 'bills_payment'];
+
     public function __construct(
         private MatchingService $matchingService,
         private LocationService $locationService,
@@ -189,7 +223,7 @@ class RunnerErrandController extends Controller
 
     public function updateStatus(UpdateErrandStatusRequest $request, string $id): JsonResponse
     {
-        $booking = Booking::findOrFail($id);
+        $booking = Booking::with('errandType')->findOrFail($id);
         $user = $request->user();
 
         if ($user->id !== $booking->runner_id) {
@@ -202,10 +236,10 @@ class RunnerErrandController extends Controller
         $newStatus = $validated['status'];
         $oldStatus = $booking->status;
 
-        // Validate status transition order
-        if (!$this->isValidTransition($oldStatus, $newStatus)) {
+        // Validate status transition order (per errand type)
+        if (!$this->isValidTransition($oldStatus, $newStatus, $booking)) {
             return response()->json([
-                'message' => "Invalid status transition from '{$oldStatus}' to '{$newStatus}'.",
+                'message' => "Invalid status transition from '{$oldStatus}' to '{$newStatus}' for this errand type.",
             ], 422);
         }
 
@@ -218,6 +252,30 @@ class RunnerErrandController extends Controller
                 'public'
             );
             $updateData['pickup_photo_url'] = Storage::disk('public')->url($path);
+            $updateData['picked_up_at'] = now();
+        }
+
+        // Receipt + actual cost reconciliation for shopping errands
+        // (food / grocery / purchase / bills_payment).
+        if ($newStatus === 'picked_up' && $request->hasFile('receipt_photo')) {
+            $path = $request->file('receipt_photo')->store(
+                "booking-photos/{$booking->id}",
+                'public'
+            );
+            $updateData['receipt_photo_url'] = Storage::disk('public')->url($path);
+        }
+        if ($newStatus === 'picked_up' && $request->filled('actual_item_cost')) {
+            $updateData['actual_item_cost'] = $validated['actual_item_cost'];
+        }
+        // Defensive: if shopping_budget is set, hard-cap actual_item_cost server-side.
+        if (isset($updateData['actual_item_cost']) && $booking->shopping_budget !== null
+            && (float) $updateData['actual_item_cost'] > (float) $booking->shopping_budget) {
+            return response()->json([
+                'message' => 'Reported amount exceeds the customer’s pre-authorized budget.',
+            ], 422);
+        }
+        // Mark picked_up_at even when there is no pickup_photo (e.g. transportation, queue, bills).
+        if ($newStatus === 'picked_up' && !isset($updateData['picked_up_at'])) {
             $updateData['picked_up_at'] = now();
         }
 
@@ -235,6 +293,10 @@ class RunnerErrandController extends Controller
                 'public'
             );
             $updateData['signature_url'] = Storage::disk('public')->url($path);
+        }
+        // Always stamp completed_at on completion — single-location and transportation
+        // errands finish without a signature, so the timestamp must not depend on the upload.
+        if ($newStatus === 'completed') {
             $updateData['completed_at'] = now();
         }
 
@@ -348,17 +410,36 @@ class RunnerErrandController extends Controller
     /**
      * Check if a status transition is valid (must follow the defined order).
      */
-    private function isValidTransition(string $current, string $next): bool
+    private function isValidTransition(string $current, string $next, Booking $booking): bool
     {
-        $currentIndex = array_search($current, self::STATUS_ORDER);
-        $nextIndex = array_search($next, self::STATUS_ORDER);
+        $order = $this->statusOrderFor($booking);
+        $currentIndex = array_search($current, $order, true);
+        $nextIndex = array_search($next, $order, true);
 
         if ($currentIndex === false || $nextIndex === false) {
             return false;
         }
 
-        // Next status must be exactly the next step
+        // Next status must be exactly the next step in the per-type flow
         return $nextIndex === $currentIndex + 1;
+    }
+
+    /**
+     * Pick the status flow for a booking based on its errand type.
+     * Falls back to the standard flow if the errand type isn't loaded.
+     */
+    private function statusOrderFor(Booking $booking): array
+    {
+        if ($booking->is_transportation) {
+            return self::TRANSPORT_STATUS_ORDER;
+        }
+
+        $slug = $booking->errandType?->slug;
+        if ($slug && in_array($slug, self::SINGLE_LOCATION_SLUGS, true)) {
+            return self::SINGLE_LOCATION_STATUS_ORDER;
+        }
+
+        return self::STATUS_ORDER;
     }
 
     /**

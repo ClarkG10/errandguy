@@ -4,7 +4,6 @@ import {
   Text,
   FlatList,
   Pressable,
-  Alert,
   Modal,
   ScrollView,
 } from 'react-native';
@@ -27,6 +26,7 @@ import { Input } from '../../../components/ui/Input';
 import { Badge } from '../../../components/ui/Badge';
 import { EmptyState } from '../../../components/ui/EmptyState';
 import { ContactsSkeleton } from '../../../components/ui/Skeleton';
+import { ConfirmModal } from '../../../components/ui/ConfirmModal';
 import type { TrustedContact } from '../../../types';
 import { toast } from '../../../stores/toastStore';
 
@@ -46,6 +46,8 @@ export default function TrustedContactsScreen() {
   const [formName, setFormName] = useState('');
   const [formPhone, setFormPhone] = useState('');
   const [formRelationship, setFormRelationship] = useState('Friend');
+  const [pendingDelete, setPendingDelete] = useState<TrustedContact | null>(null);
+  const [deletingContact, setDeletingContact] = useState(false);
 
   const saveCache = async (data: TrustedContact[]) => {
     try {
@@ -99,7 +101,7 @@ export default function TrustedContactsScreen() {
 
   const openAddModal = () => {
     if (contacts.length >= MAX_CONTACTS) {
-      Alert.alert('Limit Reached', `You can only add up to ${MAX_CONTACTS} trusted contacts.`);
+      toast.warning(`You can only add up to ${MAX_CONTACTS} trusted contacts.`);
       return;
     }
     setEditingId(null);
@@ -165,25 +167,21 @@ export default function TrustedContactsScreen() {
   };
 
   const handleDelete = (contact: TrustedContact) => {
-    Alert.alert(
-      'Remove Contact',
-      `Remove ${contact.name} from your trusted contacts?`,
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Remove',
-          style: 'destructive',
-          onPress: async () => {
-            try {
-              await userService.deleteTrustedContact(contact.id);
-              await fetchContacts(true);
-            } catch {
-              toast.error('Failed to remove contact');
-            }
-          },
-        },
-      ],
-    );
+    setPendingDelete(contact);
+  };
+
+  const confirmDelete = async () => {
+    if (!pendingDelete) return;
+    setDeletingContact(true);
+    try {
+      await userService.deleteTrustedContact(pendingDelete.id);
+      await fetchContacts(true);
+      setPendingDelete(null);
+    } catch {
+      toast.error('Failed to remove contact');
+    } finally {
+      setDeletingContact(false);
+    }
   };
 
   const maskPhone = (phone: string) => {
@@ -368,6 +366,18 @@ export default function TrustedContactsScreen() {
           </View>
         </View>
       </Modal>
+
+      <ConfirmModal
+        visible={!!pendingDelete}
+        title="Remove contact?"
+        message={pendingDelete ? `Remove ${pendingDelete.name} from your trusted contacts?` : ''}
+        confirmLabel="Remove"
+        cancelLabel="Keep"
+        destructive
+        loading={deletingContact}
+        onConfirm={confirmDelete}
+        onCancel={() => setPendingDelete(null)}
+      />
     </SafeAreaView>
   );
 }

@@ -21,6 +21,10 @@ class BookingResource extends JsonResource
                 $this->relationLoaded('runner') && $this->runner,
                 fn () => new UserResource($this->runner),
             ),
+            'customer' => $this->when(
+                $this->relationLoaded('customer') && $this->customer,
+                fn () => new UserResource($this->customer),
+            ),
             'pickup_address' => $this->pickup_address,
             'pickup_lat' => $this->pickup_lat,
             'pickup_lng' => $this->pickup_lng,
@@ -35,6 +39,9 @@ class BookingResource extends JsonResource
             'special_instructions' => $this->special_instructions,
             'item_photos' => $this->item_photos,
             'estimated_item_value' => $this->estimated_item_value,
+            'shopping_budget' => $this->shopping_budget,
+            'actual_item_cost' => $this->actual_item_cost,
+            'receipt_photo_url' => $this->receipt_photo_url,
             'schedule_type' => $this->schedule_type,
             'scheduled_at' => $this->scheduled_at,
             'pricing_mode' => $this->pricing_mode,
@@ -64,6 +71,7 @@ class BookingResource extends JsonResource
             'completed_at' => $this->completed_at,
             'cancelled_at' => $this->cancelled_at,
             'cancellation_reason' => $this->cancellation_reason,
+            'cancellation_fee' => $this->cancellation_fee,
             'trip_share_active' => $this->trip_share_active,
             'trip_share_token' => $this->when(
                 $this->trip_share_active && $this->isParticipant(),

@@ -15,4 +15,10 @@ export const chatService = {
   markAsRead(bookingId: string) {
     return api.post(`/chat/${bookingId}/read`);
   },
+
+  getUnreadCount() {
+    return api.get<{
+      data: { total: number; by_booking: Record<string, number> };
+    }>('/chat/unread-count');
+  },
 };

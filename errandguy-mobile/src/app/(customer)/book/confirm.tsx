@@ -96,10 +96,27 @@ export default function ConfirmScreen() {
   );
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
+  // Countdown until we give up waiting for a runner.
+  // Fixed price → 60s (matches matching window). Negotiate → 5 minutes (per spec).
+  const totalSeconds = activeBooking?.pricing_mode === 'negotiate' ? 300 : 60;
+  const [secondsLeft, setSecondsLeft] = useState(totalSeconds);
+
   // Get pickup coords from booking or draft
   const pickupLng = activeBooking?.pickup_lng ?? draftBooking?.pickup_lng ?? 121.0;
   const pickupLat = activeBooking?.pickup_lat ?? draftBooking?.pickup_lat ?? 14.6;
   const center: [number, number] = [pickupLng, pickupLat];
+
+  // Countdown ticker — only runs while we're still searching.
+  useEffect(() => {
+    if (state !== 'searching') return;
+    if (secondsLeft <= 0) {
+      setState('no_runner');
+      if (pollRef.current) clearInterval(pollRef.current);
+      return;
+    }
+    const id = setTimeout(() => setSecondsLeft((s) => s - 1), 1000);
+    return () => clearTimeout(id);
+  }, [state, secondsLeft]);
 
   // Poll for status updates
   useEffect(() => {
@@ -123,17 +140,20 @@ export default function ConfirmScreen() {
           setActiveBooking(booking);
           setTimeout(() => {
             router.replace(`/(customer)/tracking/${bookingId}`);
-          }, 2000);
+          }, 1200);
           if (pollRef.current) clearInterval(pollRef.current);
         } else if (status === 'cancelled') {
           setState('cancelled');
           setActiveBooking(null);
           if (pollRef.current) clearInterval(pollRef.current);
+        } else if ((status as string) === 'no_runner') {
+          setState('no_runner');
+          if (pollRef.current) clearInterval(pollRef.current);
         }
       } catch {
         // Silently retry
       }
-    }, 5000);
+    }, 3000);
 
     return () => {
       if (pollRef.current) clearInterval(pollRef.current);
@@ -160,6 +180,15 @@ export default function ConfirmScreen() {
       setIsCancelling(false);
     }
   }, [bookingId, setActiveBooking, router]);
+
+  const handleRetry = useCallback(() => {
+    setSecondsLeft(totalSeconds);
+    setState('searching');
+  }, [totalSeconds]);
+
+  const mm = Math.floor(secondsLeft / 60).toString().padStart(2, '0');
+  const ss = (secondsLeft % 60).toString().padStart(2, '0');
+  const progress = Math.max(0, Math.min(1, secondsLeft / totalSeconds));
 
   return (
     <View style={{ flex: 1 }}>
@@ -200,6 +229,20 @@ export default function ConfirmScreen() {
                   Your offer is visible to runners
                 </Text>
               )}
+
+              {/* Countdown */}
+              <View style={cs.countdownWrap}>
+                <Text style={cs.countdownTime}>{mm}:{ss}</Text>
+                <Text style={cs.countdownLabel}>
+                  {activeBooking?.pricing_mode === 'negotiate'
+                    ? 'Time left for runners to accept your offer'
+                    : 'Time left to find a runner'}
+                </Text>
+                <View style={cs.progressTrack}>
+                  <View style={[cs.progressFill, { width: `${progress * 100}%` }]} />
+                </View>
+              </View>
+
               {bookingNumber ? (
                 <Text className="text-xs font-montserrat text-textTertiary mt-2 text-center">
                   Booking: {bookingNumber}
@@ -210,6 +253,7 @@ export default function ConfirmScreen() {
                   title="Cancel Booking"
                   variant="outline"
                   onPress={handleCancel}
+                  disabled={isCancelling}
                   fullWidth
                 />
               </View>
@@ -238,7 +282,7 @@ export default function ConfirmScreen() {
                 Try again in a few minutes
               </Text>
               <View className="mt-5 w-full gap-3">
-                <Button title="Try Again" onPress={() => setState('searching')} fullWidth />
+                <Button title="Try Again" onPress={handleRetry} fullWidth />
                 <Button
                   title="Go Home"
                   variant="outline"
@@ -270,7 +314,7 @@ export default function ConfirmScreen() {
       <ConfirmModal
         visible={showCancelModal}
         title="Cancel Booking"
-        message="Are you sure you want to cancel this booking?"
+        message="No fee will be charged — a runner hasn't accepted yet."
         confirmLabel="Yes, Cancel"
         cancelLabel="No, Keep"
         destructive
@@ -316,5 +360,36 @@ const cs = StyleSheet.create({
     shadowOpacity: 0.1,
     shadowRadius: 12,
     elevation: 10,
+  },
+  countdownWrap: {
+    marginTop: 18,
+    alignItems: 'center',
+  },
+  countdownTime: {
+    fontSize: 36,
+    fontFamily: 'Inter_600SemiBold',
+    color: '#0F172A',
+    letterSpacing: 1,
+    fontVariant: ['tabular-nums'],
+  },
+  countdownLabel: {
+    fontSize: 12,
+    fontFamily: 'Quicksand_500Medium',
+    color: '#64748B',
+    marginTop: 4,
+    textAlign: 'center',
+  },
+  progressTrack: {
+    width: '100%',
+    height: 6,
+    borderRadius: 3,
+    backgroundColor: '#E2E8F0',
+    marginTop: 12,
+    overflow: 'hidden',
+  },
+  progressFill: {
+    height: '100%',
+    backgroundColor: '#2563EB',
+    borderRadius: 3,
   },
 });

@@ -66,7 +66,7 @@ export default function EarningsScreen() {
         className="flex-1"
         showsVerticalScrollIndicator={false}
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
-        contentContainerStyle={{ paddingBottom: 100 }}
+        contentContainerStyle={{ paddingBottom: 24 }}
       >
         {/* Hero Card */}
         <View className="mx-5 mb-4 bg-primary rounded-2xl p-6 items-center">

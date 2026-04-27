@@ -203,7 +203,7 @@ export function ImagePickerModal({
                 <MotiView
                   from={{ scale: 0.9, opacity: 0 }}
                   animate={{ scale: 1, opacity: 1 }}
-                  transition={{ type: 'spring', damping: 15 }}
+                  transition={{ type: 'spring', damping: 22, stiffness: 220 }}
                   className="rounded-2xl overflow-hidden mb-5"
                   style={{
                     width: PREVIEW_SIZE,

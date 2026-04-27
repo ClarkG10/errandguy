@@ -1,10 +1,11 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { View, Text, ScrollView, Pressable, Alert, RefreshControl, TextInput, Keyboard } from 'react-native';
+import { View, Text, ScrollView, Pressable, RefreshControl, TextInput, Keyboard } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import { ChevronLeft, Plus, MapPin, Trash2, Pencil, Home, Briefcase, Star, X, Search } from 'lucide-react-native';
 import Mapbox from '@rnmapbox/maps';
 import { Button } from '../../../components/ui/Button';
+import { ConfirmModal } from '../../../components/ui/ConfirmModal';
 import { Skeleton } from '../../../components/ui/Skeleton';
 import { useDebounce } from '../../../hooks/useDebounce';
 import { userService } from '../../../services/user.service';
@@ -46,6 +47,8 @@ export default function AddressesScreen() {
   const [refreshing, setRefreshing] = useState(false);
   const [showAdd, setShowAdd] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
+  const [pendingDeleteId, setPendingDeleteId] = useState<string | null>(null);
+  const [deletingAddress, setDeletingAddress] = useState(false);
   const [newLabel, setNewLabel] = useState<AddressLabel>('home');
   const [customLabel, setCustomLabel] = useState('');
   const [newAddress, setNewAddress] = useState('');
@@ -197,21 +200,21 @@ export default function AddressesScreen() {
   };
 
   const handleDelete = (id: string) => {
-    Alert.alert('Delete Address', 'Remove this saved address?', [
-      { text: 'Cancel', style: 'cancel' },
-      {
-        text: 'Delete',
-        style: 'destructive',
-        onPress: async () => {
-          try {
-            await userService.deleteAddress(id);
-            setAddresses((prev) => prev.filter((a) => a.id !== id));
-          } catch {
-            toast.error('Failed to delete address');
-          }
-        },
-      },
-    ]);
+    setPendingDeleteId(id);
+  };
+
+  const confirmDeleteAddress = async () => {
+    if (!pendingDeleteId) return;
+    setDeletingAddress(true);
+    try {
+      await userService.deleteAddress(pendingDeleteId);
+      setAddresses((prev) => prev.filter((a) => a.id !== pendingDeleteId));
+      setPendingDeleteId(null);
+    } catch {
+      toast.error('Failed to delete address');
+    } finally {
+      setDeletingAddress(false);
+    }
   };
 
   const resetForm = () => {
@@ -431,6 +434,18 @@ export default function AddressesScreen() {
           )}
         </ScrollView>
       )}
+
+      <ConfirmModal
+        visible={!!pendingDeleteId}
+        title="Delete address?"
+        message="Remove this saved address from your account?"
+        confirmLabel="Delete"
+        cancelLabel="Keep"
+        destructive
+        loading={deletingAddress}
+        onConfirm={confirmDeleteAddress}
+        onCancel={() => setPendingDeleteId(null)}
+      />
     </SafeAreaView>
   );
 }

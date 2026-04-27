@@ -1,5 +1,6 @@
 import React from 'react';
-import { View, Text, Pressable, Alert } from 'react-native';
+import { View, Text, Pressable } from 'react-native';
+import { toast } from '../../stores/toastStore';
 
 interface OnlineToggleProps {
   isOnline: boolean;
@@ -10,9 +11,8 @@ interface OnlineToggleProps {
 export function OnlineToggle({ isOnline, onToggle, disabled }: OnlineToggleProps) {
   const handlePress = () => {
     if (disabled) {
-      Alert.alert(
-        'Verification Required',
-        'Your account needs to be verified before you can go online. Please submit your documents for review.',
+      toast.warning(
+        'Your account needs verification before you can go online. Submit your documents for review.',
       );
       return;
     }

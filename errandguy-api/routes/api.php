@@ -19,6 +19,7 @@ use App\Http\Controllers\Runner\RunnerLocationController;
 use App\Http\Controllers\Runner\RunnerOnlineController;
 use App\Http\Controllers\Runner\RunnerPayoutController;
 use App\Http\Controllers\Runner\RunnerProfileController;
+use App\Http\Controllers\Runner\SOSController as RunnerSOSController;
 use App\Http\Controllers\Chat\ChatController;
 use App\Http\Controllers\Notification\NotificationController;
 use App\Http\Controllers\Customer\SOSController;
@@ -96,6 +97,7 @@ Route::prefix('v1')->group(function () {
             Route::get('/active', [BookingController::class, 'active']);
             Route::post('/estimate', [BookingController::class, 'estimate']);
             Route::get('/{id}', [BookingController::class, 'show']);
+            Route::get('/{id}/cancel-preview', [BookingController::class, 'cancelPreview']);
             Route::post('/{id}/cancel', [BookingController::class, 'cancel']);
             Route::get('/{id}/track', [BookingController::class, 'track']);
             Route::post('/{id}/review', [ReviewController::class, 'store']);
@@ -125,10 +127,15 @@ Route::prefix('v1')->group(function () {
             Route::get('/earnings/history', [RunnerEarningsController::class, 'history']);
             Route::get('/errands/history', [RunnerErrandHistoryController::class, 'index']);
             Route::post('/payout/request', [RunnerPayoutController::class, 'requestPayout']);
+
+            // Runner-side SOS (only valid while owning an in-flight booking)
+            Route::post('/errand/{id}/sos', [RunnerSOSController::class, 'trigger']);
+            Route::delete('/errand/{id}/sos', [RunnerSOSController::class, 'deactivate']);
         });
 
         // Chat routes
         Route::prefix('chat')->group(function () {
+            Route::get('/unread-count', [ChatController::class, 'unreadCount']);
             Route::get('/{bookingId}/messages', [ChatController::class, 'index']);
             Route::post('/{bookingId}/messages', [ChatController::class, 'store']);
             Route::post('/{bookingId}/read', [ChatController::class, 'markAsRead']);

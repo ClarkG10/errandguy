@@ -3,6 +3,8 @@ import type { Booking, BookingStatus } from '../types';
 
 export interface DraftBooking {
   errand_type_id?: string;
+  /** Slug of the selected errand type (e.g. 'transportation', 'food'). */
+  errand_type_slug?: string;
   pickup_address?: string;
   pickup_lat?: number;
   pickup_lng?: number;
@@ -17,6 +19,8 @@ export interface DraftBooking {
   special_instructions?: string;
   item_photos?: string[];
   estimated_item_value?: number;
+  /** Pre-authorized maximum the runner may spend on items (food/grocery/purchase/bills). */
+  shopping_budget?: number;
   pricing_mode?: 'fixed' | 'negotiate';
   schedule_type?: 'now' | 'scheduled';
   scheduled_at?: string;
