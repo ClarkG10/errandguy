@@ -82,14 +82,49 @@ class CreateBookingRequest extends FormRequest
     public function withValidator($validator): void
     {
         $validator->after(function ($validator) {
+            $errandType = ErrandType::find($this->input('errand_type_id'));
+
             // Validate customer_offer against min_negotiate_fee
             if ($this->input('pricing_mode') === 'negotiate' && $this->input('customer_offer')) {
-                $errandType = ErrandType::find($this->input('errand_type_id'));
                 if ($errandType && $this->input('customer_offer') < (float) $errandType->min_negotiate_fee) {
                     $validator->errors()->add(
                         'customer_offer',
                         "Minimum offer is ₱{$errandType->min_negotiate_fee}."
                     );
+                }
+            }
+
+            // Per-type vehicle restrictions. Mirrors mobile errandTypeRules.ts
+            // allowedVehicles. Prevents e.g. a "walk" transportation request
+            // or a "walk" food run reaching the matching engine.
+            $allowed = match ($errandType?->slug) {
+                'transportation' => ['motorcycle', 'car'],
+                'food' => ['bicycle', 'motorcycle', 'car'],
+                default => ['walk', 'bicycle', 'motorcycle', 'car'],
+            };
+            $vehicle = $this->input('vehicle_type_rate');
+            if ($vehicle && ! in_array($vehicle, $allowed, true)) {
+                $validator->errors()->add(
+                    'vehicle_type_rate',
+                    'This vehicle is not available for the selected errand type.',
+                );
+            }
+
+            // Block scheduling a single-location errand with no scheduled_at
+            // edge case where the client sets schedule_type=scheduled but
+            // forgets the time (already covered by required_if, but double
+            // check that scheduled time is reasonable: not >30 days out).
+            if ($this->input('schedule_type') === 'scheduled' && $this->input('scheduled_at')) {
+                try {
+                    $when = \Carbon\Carbon::parse($this->input('scheduled_at'));
+                    if ($when->diffInDays(now()) > 30) {
+                        $validator->errors()->add(
+                            'scheduled_at',
+                            'Bookings can only be scheduled up to 30 days in advance.',
+                        );
+                    }
+                } catch (\Throwable $e) {
+                    // The base date rule already covers parse failures.
                 }
             }
         });

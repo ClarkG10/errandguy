@@ -102,8 +102,8 @@ Route::prefix('v1')->group(function () {
             Route::get('/{id}/track', [BookingController::class, 'track']);
             Route::post('/{id}/review', [ReviewController::class, 'store']);
             Route::post('/{id}/rebook', [BookingController::class, 'rebook']);
-            Route::post('/{id}/sos', [SOSController::class, 'trigger']);
-            Route::delete('/{id}/sos', [SOSController::class, 'deactivate']);
+            Route::post('/{id}/sos', [SOSController::class, 'trigger'])->middleware('throttle:6,1');
+            Route::delete('/{id}/sos', [SOSController::class, 'deactivate'])->middleware('throttle:10,1');
             Route::post('/{id}/share-trip', [TripShareController::class, 'share']);
             Route::delete('/{id}/share-trip', [TripShareController::class, 'revoke']);
         });
@@ -114,7 +114,7 @@ Route::prefix('v1')->group(function () {
             Route::put('/profile', [RunnerProfileController::class, 'update']);
             Route::post('/documents', [RunnerDocumentController::class, 'store']);
             Route::put('/online', [RunnerOnlineController::class, 'toggle']);
-            Route::post('/location', [RunnerLocationController::class, 'store']);
+            Route::post('/location', [RunnerLocationController::class, 'store'])->middleware('throttle:120,1');
 
             Route::get('/errand/current', [RunnerErrandController::class, 'current']);
             Route::post('/errand/{id}/accept', [RunnerErrandController::class, 'accept']);
@@ -129,15 +129,15 @@ Route::prefix('v1')->group(function () {
             Route::post('/payout/request', [RunnerPayoutController::class, 'requestPayout']);
 
             // Runner-side SOS (only valid while owning an in-flight booking)
-            Route::post('/errand/{id}/sos', [RunnerSOSController::class, 'trigger']);
-            Route::delete('/errand/{id}/sos', [RunnerSOSController::class, 'deactivate']);
+            Route::post('/errand/{id}/sos', [RunnerSOSController::class, 'trigger'])->middleware('throttle:6,1');
+            Route::delete('/errand/{id}/sos', [RunnerSOSController::class, 'deactivate'])->middleware('throttle:10,1');
         });
 
         // Chat routes
         Route::prefix('chat')->group(function () {
             Route::get('/unread-count', [ChatController::class, 'unreadCount']);
             Route::get('/{bookingId}/messages', [ChatController::class, 'index']);
-            Route::post('/{bookingId}/messages', [ChatController::class, 'store']);
+            Route::post('/{bookingId}/messages', [ChatController::class, 'store'])->middleware('throttle:60,1');
             Route::post('/{bookingId}/read', [ChatController::class, 'markAsRead']);
         });
 

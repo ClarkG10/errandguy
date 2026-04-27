@@ -9,18 +9,23 @@ class PricingService
 {
     /**
      * Calculate price breakdown for a booking.
+     *
+     * Dropoff coordinates are optional: single-location errands (queue,
+     * bills_payment) have no dropoff and the distance fee collapses to 0.
      */
     public function calculate(
         string $errandTypeId,
         float $pickupLat,
         float $pickupLng,
-        float $dropoffLat,
-        float $dropoffLng,
+        ?float $dropoffLat,
+        ?float $dropoffLng,
         string $vehicleType,
         string $scheduleType = 'now'
     ): array {
         $errandType = ErrandType::findOrFail($errandTypeId);
-        $distanceKm = $this->haversineDistance($pickupLat, $pickupLng, $dropoffLat, $dropoffLng);
+        $distanceKm = ($dropoffLat !== null && $dropoffLng !== null)
+            ? $this->haversineDistance($pickupLat, $pickupLng, $dropoffLat, $dropoffLng)
+            : 0.0;
 
         $baseFee = (float) $errandType->base_fee;
         $perKmRate = $this->getPerKmRate($errandType, $vehicleType);
@@ -32,8 +37,12 @@ class PricingService
 
         $surcharge = (float) $errandType->surcharge;
 
-        $totalAmount = $subtotal + $serviceFee + $surcharge;
-        $runnerPayout = round($subtotal + $surcharge - $serviceFee, 2);
+        // Customer pays gross + platform service fee.
+        $totalAmount = round($subtotal + $serviceFee + $surcharge, 2);
+        // Runner receives the gross (everything customer pays minus the
+        // platform's service fee). Previous formula subtracted the fee
+        // twice, shortchanging runners.
+        $runnerPayout = round($totalAmount - $serviceFee, 2);
 
         return [
             'base_fee' => $baseFee,
@@ -41,7 +50,7 @@ class PricingService
             'distance_fee' => $distanceFee,
             'service_fee' => $serviceFee,
             'surcharge' => $surcharge,
-            'total_amount' => round($totalAmount, 2),
+            'total_amount' => $totalAmount,
             'runner_payout' => max(0, $runnerPayout),
             'vehicle_type' => $vehicleType,
         ];
@@ -54,10 +63,16 @@ class PricingService
         string $errandTypeId,
         float $pickupLat,
         float $pickupLng,
-        float $dropoffLat,
-        float $dropoffLng
+        ?float $dropoffLat,
+        ?float $dropoffLng
     ): array {
-        $vehicleTypes = ['walk', 'bicycle', 'motorcycle', 'car'];
+        // Per-type vehicle restrictions (mirror mobile errandTypeRules.ts).
+        $errandType = ErrandType::find($errandTypeId);
+        $vehicleTypes = match ($errandType?->slug) {
+            'transportation' => ['motorcycle', 'car'],
+            'food' => ['bicycle', 'motorcycle', 'car'],
+            default => ['walk', 'bicycle', 'motorcycle', 'car'],
+        };
         $estimates = [];
 
         foreach ($vehicleTypes as $type) {

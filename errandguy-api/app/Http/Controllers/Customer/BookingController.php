@@ -171,22 +171,40 @@ class BookingController extends Controller
             $this->promoService->redeem($promoCodeId, $booking->id);
         }
 
-        // Dispatch matching job based on pricing mode
+        // Dispatch matching job based on pricing mode.
+        // For SCHEDULED bookings we defer the broadcast/match until ~15
+        // minutes before the scheduled time so a runner isn't sent to
+        // pickup hours early.
+        $isScheduled = ($validated['schedule_type'] ?? 'now') === 'scheduled'
+            && !empty($validated['scheduled_at']);
+        $scheduledAt = $isScheduled ? \Carbon\Carbon::parse($validated['scheduled_at']) : null;
+        $matchAt = $scheduledAt
+            ? $scheduledAt->copy()->subMinutes(15)
+            : null;
+
         if ($validated['pricing_mode'] === 'fixed') {
-            MatchRunnerJob::dispatch($booking->id);
+            $job = MatchRunnerJob::dispatch($booking->id);
+            if ($matchAt && $matchAt->isFuture()) {
+                $job->delay($matchAt);
+            }
             // Auto-cancel if no runner accepts within the system timeout.
             $autoCancelMinutes = (int) \App\Models\SystemConfig::getValue('auto_cancel_timeout_minutes', '30');
-            AutoCancelBookingJob::dispatch($booking->id)
-                ->delay(now()->addMinutes($autoCancelMinutes));
+            $autoCancelAt = ($matchAt && $matchAt->isFuture() ? $matchAt : now())
+                ->copy()->addMinutes($autoCancelMinutes);
+            AutoCancelBookingJob::dispatch($booking->id)->delay($autoCancelAt);
         } else {
             // Negotiate mode: broadcast offer + set expiry per spec (5 minutes).
             $negotiateMinutes = (int) \App\Models\SystemConfig::getValue('negotiate_timeout_minutes', '5');
+            $broadcastAt = $matchAt && $matchAt->isFuture() ? $matchAt : now();
             $booking->update([
-                'negotiate_expires_at' => now()->addMinutes($negotiateMinutes),
+                'negotiate_expires_at' => $broadcastAt->copy()->addMinutes($negotiateMinutes),
             ]);
-            BroadcastToRunnersJob::dispatch($booking->id);
+            $broadcastJob = BroadcastToRunnersJob::dispatch($booking->id);
+            if ($matchAt && $matchAt->isFuture()) {
+                $broadcastJob->delay($matchAt);
+            }
             ExpireNegotiateBookingJob::dispatch($booking->id)
-                ->delay(now()->addMinutes($negotiateMinutes));
+                ->delay($broadcastAt->copy()->addMinutes($negotiateMinutes));
         }
 
         // Fire booking created event

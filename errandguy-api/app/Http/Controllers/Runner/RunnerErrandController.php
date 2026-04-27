@@ -85,7 +85,6 @@ class RunnerErrandController extends Controller
 
     public function accept(Request $request, string $id): JsonResponse
     {
-        $booking = Booking::findOrFail($id);
         $user = $request->user();
         $profile = $user->runnerProfile;
 
@@ -95,31 +94,44 @@ class RunnerErrandController extends Controller
             ], 422);
         }
 
-        if (!in_array($booking->status, ['pending', 'matched'])) {
+        // Atomically claim the booking to prevent two runners from accepting
+        // the same offer (lockForUpdate serialises competing acceptors).
+        try {
+            $booking = DB::transaction(function () use ($id, $user) {
+                $booking = Booking::whereKey($id)->lockForUpdate()->firstOrFail();
+
+                if (!in_array($booking->status, ['pending', 'matched'])) {
+                    throw new \RuntimeException('unavailable');
+                }
+                if ($booking->runner_id && $booking->runner_id !== $user->id) {
+                    throw new \RuntimeException('unavailable');
+                }
+
+                $hasActive = $user->runnerBookings()
+                    ->whereNotIn('status', ['completed', 'cancelled', 'pending'])
+                    ->exists();
+                if ($hasActive) {
+                    throw new \RuntimeException('has_active');
+                }
+
+                $booking->update([
+                    'runner_id' => $user->id,
+                    'status' => 'accepted',
+                    'matched_at' => now(),
+                    'accepted_at' => now(),
+                ]);
+
+                return $booking;
+            });
+        } catch (\RuntimeException $e) {
             return response()->json([
-                'message' => 'This booking is no longer available.',
+                'message' => $e->getMessage() === 'has_active'
+                    ? 'You already have an active errand. Complete it first.'
+                    : 'This booking is no longer available.',
             ], 422);
         }
 
-        // Check runner doesn't already have an active errand
-        $hasActive = $user->runnerBookings()
-            ->whereNotIn('status', ['completed', 'cancelled', 'pending'])
-            ->exists();
-
-        if ($hasActive) {
-            return response()->json([
-                'message' => 'You already have an active errand. Complete it first.',
-            ], 422);
-        }
-
-        $oldStatus = $booking->status;
-
-        $booking->update([
-            'runner_id' => $user->id,
-            'status' => 'accepted',
-            'matched_at' => now(),
-            'accepted_at' => now(),
-        ]);
+        $oldStatus = 'pending';
 
         BookingStatusLog::create([
             'booking_id' => $booking->id,
