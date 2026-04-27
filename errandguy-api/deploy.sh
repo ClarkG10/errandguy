@@ -2,17 +2,27 @@
 # ErrandGuy API — Laravel Forge Deployment Script
 # $FORGE_SITE_PATH resolves to the root directory you set in Forge (includes /errandguy-api)
 
+set -e
+
 cd $FORGE_SITE_PATH
 
 git pull origin $FORGE_SITE_BRANCH
 
 $FORGE_COMPOSER install --no-dev --no-interaction --prefer-dist --optimize-autoloader
 
-$FORGE_PHP artisan optimize
-$FORGE_PHP artisan storage:link
-$FORGE_PHP artisan migrate --force
+# --no-interaction (-n) prevents Laravel's "APPLICATION IN PRODUCTION"
+# confirmation from cancelling the deploy if any sub-command forgets
+# --force.
+$FORGE_PHP artisan optimize --no-interaction
+$FORGE_PHP artisan storage:link --no-interaction || true
+$FORGE_PHP artisan migrate --force --no-interaction
+
+# Idempotent seeders only (ErrandTypeSeeder uses updateOrCreate, so it's
+# safe to run on every deploy).
+$FORGE_PHP artisan db:seed --class=ErrandTypeSeeder --force --no-interaction
 
 $FORGE_PHP artisan queue:restart
 
 ( flock -w 10 9 || exit 1
     sudo -S service $FORGE_PHP_FPM reload ) 9>/tmp/fpmrestart.lock
+
