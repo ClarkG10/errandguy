@@ -11,6 +11,11 @@ class PublicTripController extends Controller
     {
         $booking = Booking::where('trip_share_token', $token)
             ->where('trip_share_active', true)
+            // PRIVACY: Auto-expire shared links once the trip is over so the
+            // recipient can't keep watching the runner / customer addresses
+            // indefinitely. The customer can still re-share if they reopen
+            // (rebook) the errand.
+            ->whereNotIn('status', ['completed', 'cancelled', 'no_runner'])
             ->with(['runner', 'runner.runnerProfile'])
             ->firstOrFail();
 
@@ -33,7 +38,10 @@ class PublicTripController extends Controller
                 'dropoff_lng' => $booking->dropoff_lng,
                 'errand_type' => $booking->errand_type_id,
                 'runner' => $runner ? [
-                    'name' => $runner->full_name,
+                    // Only first name + initial of surname so a stranger
+                    // tracking the link can identify the runner without
+                    // getting their full identity from a forwarded URL.
+                    'name' => $this->shortenName($runner->full_name),
                     'avatar_url' => $runner->avatar_url,
                     'rating' => $runner->avg_rating,
                     'vehicle_type' => $profile?->vehicle_type,
@@ -46,5 +54,25 @@ class PublicTripController extends Controller
                 ] : null,
             ],
         ]);
+    }
+
+    /**
+     * Returns "Juan D." from "Juan Dela Cruz" so shared trip links don't
+     * leak the runner's full surname to whoever the customer forwards
+     * the link to.
+     */
+    private function shortenName(?string $fullName): string
+    {
+        if (! $fullName) {
+            return 'Runner';
+        }
+        $parts = preg_split('/\s+/', trim($fullName)) ?: [];
+        if (count($parts) === 1) {
+            return $parts[0];
+        }
+        $first = $parts[0];
+        $lastInitial = mb_substr($parts[count($parts) - 1], 0, 1);
+
+        return "{$first} {$lastInitial}.";
     }
 }

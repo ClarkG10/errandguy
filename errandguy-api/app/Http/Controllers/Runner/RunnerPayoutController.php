@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Runner;
 use App\Http\Controllers\Controller;
 use App\Http\Requests\Runner\PayoutRequest;
 use App\Models\SystemConfig;
+use App\Models\User;
 use App\Models\WalletTransaction;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Support\Facades\DB;
@@ -31,7 +32,6 @@ class RunnerPayoutController extends Controller
 
         $amount = (float) $request->validated('amount');
         $minPayout = (float) SystemConfig::getValue('min_payout_amount', '100');
-        $walletBalance = (float) $user->wallet_balance;
 
         if ($amount < $minPayout) {
             return response()->json([
@@ -39,27 +39,38 @@ class RunnerPayoutController extends Controller
             ], 422);
         }
 
-        if ($amount > $walletBalance) {
+        // Atomic balance check + debit. Re-reading the balance INSIDE the
+        // transaction with lockForUpdate prevents two concurrent payout
+        // requests from both passing a stale balance check and draining
+        // the wallet below zero.
+        try {
+            $transaction = DB::transaction(function () use ($user, $amount) {
+                $locked = User::whereKey($user->id)->lockForUpdate()->firstOrFail();
+                $balance = (float) $locked->wallet_balance;
+
+                if ($amount > $balance) {
+                    throw new \RuntimeException('insufficient');
+                }
+
+                $newBalance = $balance - $amount;
+
+                $tx = WalletTransaction::create([
+                    'user_id' => $locked->id,
+                    'type' => 'payout',
+                    'amount' => -$amount,
+                    'balance_after' => $newBalance,
+                    'description' => 'Payout request',
+                ]);
+
+                $locked->update(['wallet_balance' => $newBalance]);
+
+                return $tx;
+            });
+        } catch (\RuntimeException $e) {
             return response()->json([
                 'message' => 'Insufficient wallet balance.',
             ], 422);
         }
-
-        $transaction = DB::transaction(function () use ($user, $amount, $walletBalance) {
-            $newBalance = $walletBalance - $amount;
-
-            $transaction = WalletTransaction::create([
-                'user_id' => $user->id,
-                'type' => 'payout',
-                'amount' => -$amount,
-                'balance_after' => $newBalance,
-                'description' => 'Payout request',
-            ]);
-
-            $user->update(['wallet_balance' => $newBalance]);
-
-            return $transaction;
-        });
 
         return response()->json([
             'data' => $transaction,

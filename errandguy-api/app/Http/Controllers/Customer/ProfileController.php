@@ -86,6 +86,30 @@ class ProfileController extends Controller
     {
         $user = $request->user();
 
+        // Block deletion while there's an in-flight booking on either side
+        // (customer or runner). Letting an account vanish mid-errand
+        // strands the counterparty and orphans the GPS / chat / payout.
+        $hasActive = \App\Models\Booking::where(function ($q) use ($user) {
+                $q->where('customer_id', $user->id)
+                  ->orWhere('runner_id', $user->id);
+            })
+            ->whereNotIn('status', ['completed', 'cancelled', 'no_runner'])
+            ->exists();
+
+        if ($hasActive) {
+            return response()->json([
+                'message' => 'You have an active errand in progress. Please complete or cancel it before deleting your account.',
+            ], 422);
+        }
+
+        // Block deletion if runner has an unpaid wallet balance > 0 — they
+        // need to request a payout first or the funds become unrecoverable.
+        if ((float) $user->wallet_balance > 0) {
+            return response()->json([
+                'message' => 'Your wallet balance is ₱'.number_format((float) $user->wallet_balance, 2).'. Please withdraw it before deleting your account.',
+            ], 422);
+        }
+
         // Anonymize PII
         $user->update([
             'full_name' => 'Deleted User',

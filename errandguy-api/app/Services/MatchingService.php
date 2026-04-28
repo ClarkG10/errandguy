@@ -75,6 +75,19 @@ class MatchingService
             ->where('verification_status', 'approved')
             ->whereNotNull('current_lat')
             ->whereNotNull('current_lng')
+            // Reject runners whose last GPS ping is older than 5 minutes —
+            // their phone is likely dead/in-tunnel and dispatching to them
+            // wastes the broadcast slot and frustrates the customer.
+            ->where(function ($q) {
+                $q->where('last_location_at', '>=', now()->subMinutes(5))
+                  ->orWhereNull('last_location_at'); // legacy rows; haversine still applies
+            })
+            // Exclude runners who already hold an active errand. Without
+            // this they can be re-broadcast to and accidentally accept
+            // two errands in parallel.
+            ->whereDoesntHave('user.runnerBookings', function ($q) {
+                $q->whereNotIn('status', ['pending', 'completed', 'cancelled', 'no_runner']);
+            })
             ->with('user')
             ->get();
 
