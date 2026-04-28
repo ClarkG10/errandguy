@@ -13,7 +13,11 @@ class RunnerErrandHistoryController extends Controller
     {
         $query = $request->user()
             ->runnerBookings()
-            ->with(['errandType', 'customer', 'review'])
+            ->with([
+                'errandType',
+                'customer:id,phone,email,full_name,avatar_url,role,status,email_verified,phone_verified,wallet_balance,avg_rating,total_ratings,created_at',
+                'review',
+            ])
             ->whereIn('status', ['completed', 'cancelled'])
             ->orderByDesc('created_at');
 
@@ -26,11 +30,11 @@ class RunnerErrandHistoryController extends Controller
         }
 
         if ($request->filled('date_from')) {
-            $query->whereDate('created_at', '>=', $request->input('date_from'));
+            $query->where('created_at', '>=', \Carbon\Carbon::parse($request->input('date_from'))->startOfDay());
         }
 
         if ($request->filled('date_to')) {
-            $query->whereDate('created_at', '<=', $request->input('date_to'));
+            $query->where('created_at', '<=', \Carbon\Carbon::parse($request->input('date_to'))->endOfDay());
         }
 
         if ($request->filled('search')) {

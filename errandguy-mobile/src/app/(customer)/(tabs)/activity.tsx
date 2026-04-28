@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   View,
   Text,
@@ -9,6 +9,9 @@ import {
 import { ClipboardList } from 'lucide-react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { bookingService } from '../../../services/booking.service';
+import { useQuery } from '../../../hooks/useQuery';
+import { CacheTTL } from '../../../services/cache.service';
+import { useAuthStore } from '../../../stores/authStore';
 import { EmptyState } from '../../../components/ui/EmptyState';
 import { RecentErrandItem } from '../../../components/customer/RecentErrandItem';
 import { BookingDetailSheet } from '../../../components/customer/BookingDetailSheet';
@@ -33,56 +36,76 @@ const FILTER_STATUS_MAP: Record<FilterKey, string | undefined> = {
 };
 
 export default function ActivityScreen() {
-  const [bookings, setBookings] = useState<Booking[]>([]);
+  const userId = useAuthStore((s) => s.user?.id ?? 'anon');
   const [filter, setFilter] = useState<FilterKey>('all');
+  const [selectedBooking, setSelectedBooking] = useState<Booking | null>(null);
+
+  // Page 1 cached per filter; subsequent pages live in local state.
+  const page1Q = useQuery<Booking[]>(
+    ['bookings', 'activity', filter, userId],
+    async () => {
+      const res = await bookingService.getBookings({
+        status: FILTER_STATUS_MAP[filter],
+        page: 1,
+        per_page: 15,
+      });
+      return (res.data.data ?? []) as Booking[];
+    },
+    { staleTime: 30_000, ttl: CacheTTL.LONG },
+  );
+
+  const [extraPages, setExtraPages] = useState<Booking[]>([]);
   const [page, setPage] = useState(1);
   const [hasMore, setHasMore] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
-  const [loading, setLoading] = useState(true);
-  const [selectedBooking, setSelectedBooking] = useState<Booking | null>(null);
+  const [loadingMore, setLoadingMore] = useState(false);
 
-  const fetchBookings = useCallback(
-    async (pageNum: number, reset = false) => {
-      try {
-        setLoading(true);
-        const res = await bookingService.getBookings({
-          status: FILTER_STATUS_MAP[filter],
-          page: pageNum,
-          per_page: 15,
-        });
-        const data: Booking[] = res.data.data ?? [];
-        if (reset) {
-          setBookings(data);
-        } else {
-          setBookings((prev) => [...prev, ...data]);
-        }
-        setHasMore(data.length === 15);
-        setPage(pageNum);
-      } catch {
-        if (reset) setBookings([]);
-        toast.error('Failed to load bookings. Pull down to retry.');
-      } finally {
-        setLoading(false);
-      }
-    },
-    [filter],
-  );
+  // Reset pagination when filter changes.
+  useEffect(() => {
+    setExtraPages([]);
+    setPage(1);
+    setHasMore(true);
+  }, [filter]);
 
   useEffect(() => {
-    fetchBookings(1, true);
-  }, [fetchBookings]);
+    if (page1Q.data) setHasMore((page1Q.data.length ?? 0) >= 15);
+  }, [page1Q.data]);
+
+  const bookings = useMemo(
+    () => [...(page1Q.data ?? []), ...extraPages],
+    [page1Q.data, extraPages],
+  );
+  const loading = page1Q.loading && !page1Q.data;
 
   const onRefresh = useCallback(async () => {
     setRefreshing(true);
-    await fetchBookings(1, true);
+    setExtraPages([]);
+    setPage(1);
+    setHasMore(true);
+    await page1Q.refresh();
     setRefreshing(false);
-  }, [fetchBookings]);
+  }, [page1Q]);
 
-  const onEndReached = useCallback(() => {
-    if (hasMore && !loading) {
-      fetchBookings(page + 1);
+  const onEndReached = useCallback(async () => {
+    if (!hasMore || loadingMore) return;
+    setLoadingMore(true);
+    const nextPage = page + 1;
+    try {
+      const res = await bookingService.getBookings({
+        status: FILTER_STATUS_MAP[filter],
+        page: nextPage,
+        per_page: 15,
+      });
+      const data: Booking[] = res.data.data ?? [];
+      setExtraPages((prev) => [...prev, ...data]);
+      setPage(nextPage);
+      setHasMore(data.length >= 15);
+    } catch {
+      toast.error('Failed to load more.');
+    } finally {
+      setLoadingMore(false);
     }
-  }, [hasMore, loading, page, fetchBookings]);
+  }, [hasMore, loadingMore, page, filter]);
 
   if (loading && bookings.length === 0) {
     return (

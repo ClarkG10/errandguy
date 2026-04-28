@@ -16,15 +16,26 @@ interface MiniRouteMapProps {
 }
 
 export function MiniRouteMap({
-  pickupLat,
-  pickupLng,
-  dropoffLat,
-  dropoffLng,
+  pickupLat: pickupLatRaw,
+  pickupLng: pickupLngRaw,
+  dropoffLat: dropoffLatRaw,
+  dropoffLng: dropoffLngRaw,
   pickupAddress,
   dropoffAddress,
 }: MiniRouteMapProps) {
-  const hasPickup = pickupLat != null && pickupLng != null;
-  const hasDropoff = dropoffLat != null && dropoffLng != null;
+  // API may return decimal columns as strings; coerce to numbers because
+  // @rnmapbox/maps strictly requires Double for coordinates.
+  const pickupLat = pickupLatRaw != null ? Number(pickupLatRaw) : undefined;
+  const pickupLng = pickupLngRaw != null ? Number(pickupLngRaw) : undefined;
+  const dropoffLat = dropoffLatRaw != null ? Number(dropoffLatRaw) : undefined;
+  const dropoffLng = dropoffLngRaw != null ? Number(dropoffLngRaw) : undefined;
+
+  const hasPickup =
+    pickupLat != null && pickupLng != null &&
+    Number.isFinite(pickupLat) && Number.isFinite(pickupLng);
+  const hasDropoff =
+    dropoffLat != null && dropoffLng != null &&
+    Number.isFinite(dropoffLat) && Number.isFinite(dropoffLng);
   const hasBoth = hasPickup && hasDropoff;
 
   const [routeCoords, setRouteCoords] = useState<[number, number][]>([]);

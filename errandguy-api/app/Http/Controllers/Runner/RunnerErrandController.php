@@ -73,7 +73,11 @@ class RunnerErrandController extends Controller
     {
         $booking = $request->user()
             ->runnerBookings()
-            ->with(['errandType', 'customer', 'statusLogs'])
+            ->with([
+                'errandType',
+                'customer:id,phone,email,full_name,avatar_url,role,status,email_verified,phone_verified,wallet_balance,avg_rating,total_ratings,created_at',
+                'statusLogs',
+            ])
             ->whereNotIn('status', ['completed', 'cancelled'])
             ->orderByDesc('created_at')
             ->first();
@@ -151,7 +155,11 @@ class RunnerErrandController extends Controller
 
         event(new BookingStatusChanged($booking, $oldStatus, 'accepted'));
 
-        $booking->load(['errandType', 'customer', 'statusLogs']);
+        $booking->load([
+            'errandType',
+            'customer:id,phone,email,full_name,avatar_url,role,status,email_verified,phone_verified,wallet_balance,avg_rating,total_ratings,created_at',
+            'statusLogs',
+        ]);
 
         return response()->json([
             'data' => new BookingResource($booking),
@@ -194,7 +202,10 @@ class RunnerErrandController extends Controller
         }
 
         // Negotiate-mode bookings still open
-        $bookings = Booking::with(['errandType', 'customer'])
+        $bookings = Booking::with([
+                'errandType',
+                'customer:id,phone,email,full_name,avatar_url,role,status,email_verified,phone_verified,wallet_balance,avg_rating,total_ratings,created_at',
+            ])
             ->where('status', 'pending')
             ->where('pricing_mode', 'negotiate')
             ->where('negotiate_expires_at', '>', now())

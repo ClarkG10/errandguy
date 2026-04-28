@@ -1,4 +1,4 @@
-import axios from 'axios';
+import axios, { AxiosRequestConfig, AxiosResponse } from 'axios';
 import { secureStorage } from '../utils/storage';
 
 const api = axios.create({
@@ -9,6 +9,47 @@ const api = axios.create({
     Accept: 'application/json',
   },
 });
+
+/**
+ * ── Performance layer ──────────────────────────────────────────────────────
+ * Two coalescing mechanisms applied to GET requests only:
+ *
+ *  1. In-flight request dedupe — if the same GET is already pending, return
+ *     the same promise instead of firing a second network call. Eliminates
+ *     bursts like "GET /bookings/{id} ×4" caused by overlapping useEffect
+ *     re-runs and focus refetches.
+ *
+ *  2. Micro-cache (default 1.5s) — repeated GETs within the window resolve
+ *     synchronously from the last response. Screens that mount/unmount
+ *     rapidly (tab switches, navigation) no longer hammer the API.
+ *
+ * Mutations (POST/PUT/PATCH/DELETE) bypass both and additionally invalidate
+ * cache entries that share their URL prefix to keep reads fresh after writes.
+ *
+ * Per-request opt-out: pass `{ noDedupe: true }` or `{ noCache: true }` in
+ * the axios config (e.g., `api.get(url, { noDedupe: true } as any)`).
+ */
+type ExtraConfig = AxiosRequestConfig & { noDedupe?: boolean; noCache?: boolean; cacheTtlMs?: number };
+
+const DEFAULT_GET_CACHE_MS = 1500;
+const inflight = new Map<string, Promise<AxiosResponse<any>>>();
+const microCache = new Map<string, { ts: number; response: AxiosResponse<any> }>();
+
+const cacheKey = (config: AxiosRequestConfig): string => {
+  const params = config.params ? JSON.stringify(config.params) : '';
+  return `${(config.method ?? 'get').toLowerCase()}:${config.url ?? ''}:${params}`;
+};
+
+const invalidateRelated = (url?: string) => {
+  if (!url) return;
+  // Drop any cache entry whose URL starts with the same resource prefix
+  // (e.g., POST /bookings/{id}/cancel invalidates GET /bookings/{id} and /bookings).
+  const root = url.split('?')[0].split('/').slice(0, 3).join('/'); // /bookings/{id}
+  const parent = url.split('?')[0].split('/').slice(0, 2).join('/'); // /bookings
+  for (const k of Array.from(microCache.keys())) {
+    if (k.includes(root) || k.includes(parent)) microCache.delete(k);
+  }
+};
 
 // ── Request logging ──
 api.interceptors.request.use(
@@ -89,5 +130,59 @@ api.interceptors.response.use(
     });
   },
 );
+
+// ── GET dedupe + micro-cache wrapper ──
+const rawRequest = api.request.bind(api);
+api.request = function patchedRequest<T = any, R = AxiosResponse<T>, D = any>(
+  config: ExtraConfig & { data?: D },
+): Promise<R> {
+  const method = (config.method ?? 'get').toString().toLowerCase();
+  const isGet = method === 'get';
+  const key = cacheKey(config);
+
+  // Mutations bypass and invalidate related cache entries
+  if (!isGet) {
+    invalidateRelated(config.url);
+    return rawRequest(config) as Promise<R>;
+  }
+
+  if (!config.noCache) {
+    const ttl = config.cacheTtlMs ?? DEFAULT_GET_CACHE_MS;
+    const hit = microCache.get(key);
+    if (hit && Date.now() - hit.ts < ttl) {
+      return Promise.resolve(hit.response as unknown as R);
+    }
+  }
+
+  if (!config.noDedupe) {
+    const pending = inflight.get(key);
+    if (pending) return pending as unknown as Promise<R>;
+  }
+
+  const promise = rawRequest(config)
+    .then((res) => {
+      if (!config.noCache) microCache.set(key, { ts: Date.now(), response: res });
+      return res;
+    })
+    .finally(() => {
+      inflight.delete(key);
+    });
+
+  if (!config.noDedupe) inflight.set(key, promise as Promise<AxiosResponse<any>>);
+  return promise as Promise<R>;
+};
+
+// Provide a manual flush hook (e.g., on logout / pull-to-refresh)
+export const apiCache = {
+  clear() {
+    microCache.clear();
+    inflight.clear();
+  },
+  invalidate(urlPrefix: string) {
+    for (const k of Array.from(microCache.keys())) {
+      if (k.includes(urlPrefix)) microCache.delete(k);
+    }
+  },
+};
 
 export default api;

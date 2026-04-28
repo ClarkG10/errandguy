@@ -28,6 +28,8 @@ import { RunnerActiveMap } from '../../../components/runner/RunnerActiveMap';
 import { useRunnerStore } from '../../../stores/runnerStore';
 import { useChatStore } from '../../../stores/chatStore';
 import { useLocationStore } from '../../../stores/locationStore';
+import { useForegroundInterval } from '../../../hooks/useForegroundInterval';
+import { useBackGuard, confirmLeaveErrand } from '../../../hooks/useBackGuard';
 import { runnerService } from '../../../services/runner.service';
 import { STATUS_LABELS } from '../../../constants/statusLabels';
 import { getErrandTypeRule } from '../../../constants/errandTypeRules';
@@ -62,11 +64,8 @@ export default function ActiveErrandScreen() {
     (s) => (id ? s.unreadByBooking[id] ?? 0 : 0),
   );
 
-  useEffect(() => {
-    refreshUnread();
-    const t = setInterval(refreshUnread, 15000);
-    return () => clearInterval(t);
-  }, [refreshUnread]);
+  // Refresh unread chat counts every 30s, paused when backgrounded.
+  useForegroundInterval(refreshUnread, 30000);
 
   // Make sure GPS streaming is running while there's an active errand,
   // even if the runner toggled offline elsewhere. Stops nothing on
@@ -105,6 +104,11 @@ export default function ActiveErrandScreen() {
   const errandRule = getErrandTypeRule(errandSlug);
   const isShoppingErrand = errandRule.requiresShoppingBudget;
   const isSingleLocation = errandRule.singleLocation;
+  // Active = anything other than terminal/closed states. Used to gate the
+  // back-button confirmation so completed errands let the user leave freely.
+  const isErrandActive = !['completed', 'cancelled', 'no_runner'].includes(booking.status);
+  // Android hardware-back guard: require two presses while errand is active.
+  useBackGuard(isErrandActive);
   // Use the per-type flow so single-location errands (queue / bills /
   // document) don't render dropoff stages they will never reach.
   const timelineSteps = errandRule.statusFlow as unknown as BookingStatus[];
@@ -261,7 +265,15 @@ export default function ActiveErrandScreen() {
       {/* Header */}
       <View className="flex-row items-center justify-between px-5 py-4">
         <Pressable
-          onPress={() => router.canGoBack() ? router.back() : router.replace('/(runner)/(tabs)')}
+          onPress={() => {
+            if (isErrandActive) {
+              confirmLeaveErrand(() => {
+                router.canGoBack() ? router.back() : router.replace('/(runner)/(tabs)');
+              });
+            } else {
+              router.canGoBack() ? router.back() : router.replace('/(runner)/(tabs)');
+            }
+          }}
           className="w-9 h-9 rounded-xl bg-surface items-center justify-center"
           style={{ shadowColor: '#0F172A', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.04, shadowRadius: 6, elevation: 1 }}
         >

@@ -329,14 +329,20 @@ export default function ReviewScreen() {
 
         {pricingMode === 'fixed' ? (
           <>
-            <VehicleTypeSelector
-              options={vehicleOptions}
-              selectedKey={vehicleType}
-              onSelect={(key) => {
-                setVehicleType(key);
-                updateDraft({ vehicle_type_rate: key });
-              }}
-            />
+            {/* Single-location errands (queue, bills_payment) have no
+                travel distance, so vehicle pricing is identical for every
+                option. Hide the selector to avoid the confusing "all
+                vehicles cost the same" UX. */}
+            {!rule.singleLocation && vehicleOptions.length > 1 && (
+              <VehicleTypeSelector
+                options={vehicleOptions}
+                selectedKey={vehicleType}
+                onSelect={(key) => {
+                  setVehicleType(key);
+                  updateDraft({ vehicle_type_rate: key });
+                }}
+              />
+            )}
 
             {currentVehicleEstimate && (
               <View className="mb-4">

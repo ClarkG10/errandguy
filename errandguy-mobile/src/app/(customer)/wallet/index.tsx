@@ -18,7 +18,10 @@ import {
 import type { LucideIcon } from 'lucide-react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useWalletStore } from '../../../stores/walletStore';
+import { useAuthStore } from '../../../stores/authStore';
 import { paymentService } from '../../../services/payment.service';
+import { useQuery } from '../../../hooks/useQuery';
+import { CacheTTL } from '../../../services/cache.service';
 import { Button } from '../../../components/ui/Button';
 import { EmptyState } from '../../../components/ui/EmptyState';
 import { formatCurrency } from '../../../utils/formatCurrency';
@@ -38,30 +41,48 @@ export default function WalletScreen() {
   const router = useRouter();
   const { balance, transactions, setBalance, setTransactions } =
     useWalletStore();
+  const userId = useAuthStore((s) => s.user?.id ?? 'anon');
   const [refreshing, setRefreshing] = useState(false);
 
-  const fetchData = useCallback(async () => {
-    try {
-      const [balRes, txRes] = await Promise.all([
-        paymentService.getWalletBalance(),
-        paymentService.getWalletTransactions(),
-      ]);
-      setBalance(balRes.data.data?.balance ?? 0);
-      setTransactions(txRes.data.data ?? []);
-    } catch {
+  const balanceQ = useQuery<number>(
+    ['wallet', 'balance', userId],
+    async () => {
+      const r = await paymentService.getWalletBalance();
+      return r.data.data?.balance ?? 0;
+    },
+    { staleTime: 30_000, ttl: CacheTTL.MEDIUM },
+  );
+
+  const txQ = useQuery<WalletTransaction[]>(
+    ['wallet', 'transactions', userId],
+    async () => {
+      const r = await paymentService.getWalletTransactions();
+      return (r.data.data ?? []) as WalletTransaction[];
+    },
+    { staleTime: 30_000, ttl: CacheTTL.MEDIUM },
+  );
+
+  // Mirror into the store so other components reading from the store stay
+  // in sync (e.g., header balance pill).
+  useEffect(() => {
+    if (balanceQ.data != null) setBalance(balanceQ.data);
+  }, [balanceQ.data, setBalance]);
+  useEffect(() => {
+    if (txQ.data) setTransactions(txQ.data);
+  }, [txQ.data, setTransactions]);
+
+  // Show error toast only when both queries failed and we have no cache.
+  useEffect(() => {
+    if (balanceQ.error && txQ.error && balanceQ.data == null && txQ.data == null) {
       toast.error('Failed to load wallet data.');
     }
-  }, [setBalance, setTransactions]);
-
-  useEffect(() => {
-    fetchData();
-  }, [fetchData]);
+  }, [balanceQ.error, txQ.error, balanceQ.data, txQ.data]);
 
   const onRefresh = useCallback(async () => {
     setRefreshing(true);
-    await fetchData();
+    await Promise.all([balanceQ.refresh(), txQ.refresh()]);
     setRefreshing(false);
-  }, [fetchData]);
+  }, [balanceQ, txQ]);
 
   const renderTransaction = useCallback(
     ({ item }: { item: WalletTransaction }) => {
@@ -87,14 +108,14 @@ export default function WalletScreen() {
           </View>
           <View className="items-end">
             <Text
-              className={`text-sm font-montserrat-bold ${
+              className={`text-sm font-inter-semi tabular-nums ${
                 isPositive ? 'text-success' : 'text-danger'
               }`}
             >
               {isPositive ? '+' : '-'}
               {formatCurrency(Math.abs(item.amount))}
             </Text>
-            <Text className="text-[10px] font-montserrat text-textSecondary mt-0.5">
+            <Text className="text-[10px] font-inter tabular-nums text-textSecondary mt-0.5">
               Bal: {formatCurrency(item.balance_after)}
             </Text>
           </View>
@@ -125,7 +146,7 @@ export default function WalletScreen() {
         <Text className="text-sm font-montserrat text-white/80">
           Available Balance
         </Text>
-        <Text className="text-3xl font-montserrat-bold text-white mt-1">
+        <Text className="text-3xl font-inter-semi tabular-nums text-white mt-1">
           {formatCurrency(balance)}
         </Text>
         <View className="mt-4">

@@ -13,6 +13,7 @@ import Animated, {
 } from 'react-native-reanimated';
 import Mapbox from '@rnmapbox/maps';
 import { useBookingStore } from '../../../stores/bookingStore';
+import { useBookingStatus } from '../../../hooks/useBookingStatus';
 import { bookingService } from '../../../services/booking.service';
 import { Button } from '../../../components/ui/Button';
 import { ConfirmModal } from '../../../components/ui/ConfirmModal';
@@ -85,7 +86,9 @@ function PulseOverlay() {
 export default function ConfirmScreen() {
   const router = useRouter();
   const params = useLocalSearchParams<{ bookingId?: string }>();
-  const { activeBooking, setActiveBooking, draftBooking } = useBookingStore();
+  const activeBooking = useBookingStore((s) => s.activeBooking);
+  const setActiveBooking = useBookingStore((s) => s.setActiveBooking);
+  const draftBooking = useBookingStore((s) => s.draftBooking);
 
   const bookingId = params.bookingId ?? activeBooking?.id;
   const [state, setState] = useState<SearchState>('searching');
@@ -94,71 +97,95 @@ export default function ConfirmScreen() {
   const [bookingNumber, setBookingNumber] = useState(
     activeBooking?.booking_number ?? '',
   );
-  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  // Single safety-net poll. Primary source of truth is realtime via
+  // useBookingStatus below — polling is only a fallback in case the
+  // socket ever drops.
+  const safetyPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   // Countdown until we give up waiting for a runner.
   // Fixed price → 60s (matches matching window). Negotiate → 5 minutes (per spec).
   const totalSeconds = activeBooking?.pricing_mode === 'negotiate' ? 300 : 60;
   const [secondsLeft, setSecondsLeft] = useState(totalSeconds);
 
-  // Get pickup coords from booking or draft
-  const pickupLng = activeBooking?.pickup_lng ?? draftBooking?.pickup_lng ?? 121.0;
-  const pickupLat = activeBooking?.pickup_lat ?? draftBooking?.pickup_lat ?? 14.6;
-  const center: [number, number] = [pickupLng, pickupLat];
+  // Get pickup coords from booking or draft.
+  // IMPORTANT: Laravel casts decimal columns to strings (e.g. "8.94120787");
+  // Mapbox.Camera.centerCoordinate decodes via Codable as Double and silently
+  // falls back to the globe view when it sees a string. Coerce with Number().
+  const pickupLng = Number(activeBooking?.pickup_lng ?? draftBooking?.pickup_lng ?? 121.0);
+  const pickupLat = Number(activeBooking?.pickup_lat ?? draftBooking?.pickup_lat ?? 14.6);
+  const center: [number, number] =
+    Number.isFinite(pickupLng) && Number.isFinite(pickupLat)
+      ? [pickupLng, pickupLat]
+      : [121.0, 14.6];
 
   // Countdown ticker — only runs while we're still searching.
   useEffect(() => {
     if (state !== 'searching') return;
     if (secondsLeft <= 0) {
       setState('no_runner');
-      if (pollRef.current) clearInterval(pollRef.current);
+      if (safetyPollRef.current) clearInterval(safetyPollRef.current);
       return;
     }
     const id = setTimeout(() => setSecondsLeft((s) => s - 1), 1000);
     return () => clearTimeout(id);
   }, [state, secondsLeft]);
 
-  // Poll for status updates
-  useEffect(() => {
-    if (!bookingId) return;
+  // ── Realtime status updates ──
+  // Subscribes to Supabase Realtime; reacts to status transitions instantly
+  // instead of polling every 3s. We still keep one fallback fetch every 30s
+  // in case the socket disconnects (handled below).
+  useBookingStatus(bookingId ?? null);
 
-    pollRef.current = setInterval(async () => {
+  const reactToStatus = useCallback(
+    (booking: any) => {
+      if (!booking) return;
+      setBookingNumber(booking.booking_number ?? '');
+      const status: BookingStatus = booking.status;
+      if (
+        status === 'matched' ||
+        status === 'accepted' ||
+        status === 'heading_to_pickup'
+      ) {
+        setState('matched');
+        setActiveBooking(booking);
+        setTimeout(() => {
+          if (bookingId) router.replace(`/(customer)/tracking/${bookingId}`);
+        }, 1200);
+        if (safetyPollRef.current) clearInterval(safetyPollRef.current);
+      } else if (status === 'cancelled') {
+        setState('cancelled');
+        setActiveBooking(null);
+        if (safetyPollRef.current) clearInterval(safetyPollRef.current);
+      } else if ((status as string) === 'no_runner') {
+        setState('no_runner');
+        if (safetyPollRef.current) clearInterval(safetyPollRef.current);
+      }
+    },
+    [bookingId, router, setActiveBooking],
+  );
+
+  // Mirror activeBooking changes (which the realtime hook updates) into UI
+  useEffect(() => {
+    if (activeBooking?.id === bookingId) reactToStatus(activeBooking);
+  }, [activeBooking, bookingId, reactToStatus]);
+
+  // Fallback safety-net poll every 30s — only fires if realtime didn't
+  // already transition us out of "searching". The axios layer dedupes any
+  // bursts, so this is effectively at most 2 requests per minute.
+  useEffect(() => {
+    if (!bookingId || state !== 'searching') return;
+    safetyPollRef.current = setInterval(async () => {
       try {
         const res = await bookingService.getBooking(bookingId);
-        const booking = res.data.data;
-        if (!booking) return;
-
-        setBookingNumber(booking.booking_number);
-        const status: BookingStatus = booking.status;
-
-        if (
-          status === 'matched' ||
-          status === 'accepted' ||
-          status === 'heading_to_pickup'
-        ) {
-          setState('matched');
-          setActiveBooking(booking);
-          setTimeout(() => {
-            router.replace(`/(customer)/tracking/${bookingId}`);
-          }, 1200);
-          if (pollRef.current) clearInterval(pollRef.current);
-        } else if (status === 'cancelled') {
-          setState('cancelled');
-          setActiveBooking(null);
-          if (pollRef.current) clearInterval(pollRef.current);
-        } else if ((status as string) === 'no_runner') {
-          setState('no_runner');
-          if (pollRef.current) clearInterval(pollRef.current);
-        }
+        reactToStatus(res.data.data);
       } catch {
-        // Silently retry
+        // ignore — realtime will catch up
       }
-    }, 3000);
-
+    }, 30000);
     return () => {
-      if (pollRef.current) clearInterval(pollRef.current);
+      if (safetyPollRef.current) clearInterval(safetyPollRef.current);
     };
-  }, [bookingId, router, setActiveBooking]);
+  }, [bookingId, state, reactToStatus]);
 
   const handleCancel = useCallback(() => {
     setShowCancelModal(true);
@@ -171,7 +198,7 @@ export default function ConfirmScreen() {
       await bookingService.cancelBooking(bookingId, 'Customer cancelled');
       setState('cancelled');
       setActiveBooking(null);
-      if (pollRef.current) clearInterval(pollRef.current);
+      if (safetyPollRef.current) clearInterval(safetyPollRef.current);
       setShowCancelModal(false);
       router.replace('/(customer)/(tabs)');
     } catch {

@@ -28,29 +28,38 @@ class RunnerEarningsController extends Controller
 
         $query = $user->runnerBookings()->completed();
 
+        // Use date-range comparisons (sargable) instead of whereDate /
+        // whereMonth which wrap the column in a function and prevent
+        // index usage on completed_at.
         switch ($period) {
             case 'today':
-                $query->whereDate('completed_at', today());
+                $start = now()->startOfDay();
+                $end = now()->copy()->addDay()->startOfDay();
+                $query->where('completed_at', '>=', $start)
+                      ->where('completed_at', '<', $end);
                 break;
             case 'this_week':
-                $query->whereBetween('completed_at', [now()->startOfWeek(), now()->endOfWeek()]);
+                $query->where('completed_at', '>=', now()->startOfWeek())
+                      ->where('completed_at', '<=', now()->endOfWeek());
                 break;
             case 'this_month':
-                $query->whereMonth('completed_at', now()->month)
-                      ->whereYear('completed_at', now()->year);
+                $query->where('completed_at', '>=', now()->startOfMonth())
+                      ->where('completed_at', '<', now()->copy()->startOfMonth()->addMonth());
                 break;
             case 'custom':
                 if ($request->filled('date_from')) {
-                    $query->whereDate('completed_at', '>=', $request->input('date_from'));
+                    $query->where('completed_at', '>=', \Carbon\Carbon::parse($request->input('date_from'))->startOfDay());
                 }
                 if ($request->filled('date_to')) {
-                    $query->whereDate('completed_at', '<=', $request->input('date_to'));
+                    $query->where('completed_at', '<=', \Carbon\Carbon::parse($request->input('date_to'))->endOfDay());
                 }
                 break;
         }
 
-        $totalEarnings = (float) $query->sum('runner_payout');
-        $totalErrands = $query->count();
+        // Single aggregate query instead of separate sum() + count().
+        $agg = $query->selectRaw('COALESCE(SUM(runner_payout), 0) as sum_payout, COUNT(*) as cnt')->first();
+        $totalEarnings = (float) ($agg->sum_payout ?? 0);
+        $totalErrands = (int) ($agg->cnt ?? 0);
         $avgPerErrand = $totalErrands > 0 ? round($totalEarnings / $totalErrands, 2) : 0;
 
         $data = [
@@ -73,7 +82,10 @@ class RunnerEarningsController extends Controller
         $query = $request->user()
             ->runnerBookings()
             ->completed()
-            ->with(['errandType', 'customer'])
+            ->with([
+                'errandType',
+                'customer:id,phone,email,full_name,avatar_url,role,status,email_verified,phone_verified,wallet_balance,avg_rating,total_ratings,created_at',
+            ])
             ->orderByDesc('completed_at');
 
         if ($request->filled('errand_type_id')) {
@@ -81,11 +93,11 @@ class RunnerEarningsController extends Controller
         }
 
         if ($request->filled('date_from')) {
-            $query->whereDate('completed_at', '>=', $request->input('date_from'));
+            $query->where('completed_at', '>=', \Carbon\Carbon::parse($request->input('date_from'))->startOfDay());
         }
 
         if ($request->filled('date_to')) {
-            $query->whereDate('completed_at', '<=', $request->input('date_to'));
+            $query->where('completed_at', '<=', \Carbon\Carbon::parse($request->input('date_to'))->endOfDay());
         }
 
         $bookings = $query->paginate($request->integer('per_page', 15));

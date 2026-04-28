@@ -13,6 +13,9 @@ import { Search, MapPin, Navigation, CheckCircle, XCircle } from 'lucide-react-n
 import { Card } from '../../../components/ui/Card';
 import { Badge } from '../../../components/ui/Badge';
 import { runnerService } from '../../../services/runner.service';
+import { useQuery } from '../../../hooks/useQuery';
+import { CacheTTL } from '../../../services/cache.service';
+import { useAuthStore } from '../../../stores/authStore';
 import { formatCurrency } from '../../../utils/formatCurrency';
 import { useDebounce } from '../../../hooks/useDebounce';
 import { HistorySkeleton } from '../../../components/ui/Skeleton';
@@ -20,63 +23,74 @@ import type { Booking } from '../../../types';
 import { toast } from '../../../stores/toastStore';
 
 export default function HistoryScreen() {
-  const [errands, setErrands] = useState<Booking[]>([]);
-  const [search, setSearch] = useState('');
+  const userId = useAuthStore((s) => s.user?.id ?? 'anon');
   const [statusFilter, setStatusFilter] = useState<'all' | 'completed' | 'cancelled'>('all');
+  const [search, setSearch] = useState('');
+  const debouncedSearch = useDebounce(search, 300);
+
+  // Page 1 is cached via useQuery (cache-first); subsequent pages append.
+  const page1Q = useQuery<Booking[]>(
+    ['runner', 'errands', 'history', statusFilter, userId],
+    async () => {
+      const params: Record<string, any> = { page: 1, per_page: 15 };
+      if (statusFilter !== 'all') params.status = statusFilter;
+      const res = await runnerService.getErrandHistory(params);
+      return (res.data.data ?? []) as Booking[];
+    },
+    { staleTime: 60_000, ttl: CacheTTL.LONG },
+  );
+
+  const [extraPages, setExtraPages] = useState<Booking[]>([]);
   const [page, setPage] = useState(1);
   const [hasMore, setHasMore] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
-  const [initialLoading, setInitialLoading] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
-  const debouncedSearch = useDebounce(search, 300);
 
-  const fetchErrands = useCallback(
-    async (pageNum: number, replace = false) => {
-      try {
-        const params: Record<string, any> = {
-          page: pageNum,
-          per_page: 15,
-        };
-        if (statusFilter !== 'all') params.status = statusFilter;
-
-        const res = await runnerService.getErrandHistory(params);
-        const data: Booking[] = res.data.data ?? [];
-
-        if (replace) {
-          setErrands(data);
-        } else {
-          setErrands((prev) => [...prev, ...data]);
-        }
-        setHasMore(data.length >= 15);
-      } catch {
-        toast.error('Failed to load history');
-      } finally {
-        setInitialLoading(false);
-      }
-    },
-    [statusFilter],
-  );
-
+  // Reset pagination when filter changes.
   useEffect(() => {
+    setExtraPages([]);
     setPage(1);
-    fetchErrands(1, true);
+    setHasMore(true);
   }, [statusFilter]);
+
+  // Sync hasMore based on page-1 size.
+  useEffect(() => {
+    if (page1Q.data) setHasMore((page1Q.data.length ?? 0) >= 15);
+  }, [page1Q.data]);
+
+  const errands = useMemo(
+    () => [...(page1Q.data ?? []), ...extraPages],
+    [page1Q.data, extraPages],
+  );
+  const initialLoading = page1Q.loading && !page1Q.data;
 
   const onRefresh = useCallback(async () => {
     setRefreshing(true);
+    setExtraPages([]);
     setPage(1);
-    await fetchErrands(1, true);
+    setHasMore(true);
+    await page1Q.refresh();
     setRefreshing(false);
-  }, [fetchErrands]);
+  }, [page1Q]);
 
   const onEndReached = useCallback(async () => {
     if (!hasMore || loadingMore) return;
     setLoadingMore(true);
     const nextPage = page + 1;
-    setPage(nextPage);
-    await fetchErrands(nextPage);
-    setLoadingMore(false);
-  }, [hasMore, loadingMore, page, fetchErrands]);
+    try {
+      const params: Record<string, any> = { page: nextPage, per_page: 15 };
+      if (statusFilter !== 'all') params.status = statusFilter;
+      const res = await runnerService.getErrandHistory(params);
+      const data: Booking[] = res.data.data ?? [];
+      setExtraPages((prev) => [...prev, ...data]);
+      setPage(nextPage);
+      setHasMore(data.length >= 15);
+    } catch {
+      toast.error('Failed to load more history');
+    } finally {
+      setLoadingMore(false);
+    }
+  }, [hasMore, loadingMore, page, statusFilter]);
 
   const filteredErrands = useMemo(() => {
     if (!debouncedSearch.trim()) return errands;
@@ -221,7 +235,7 @@ export default function HistoryScreen() {
         }
         ListFooterComponent={
           loadingMore ? (
-            <View className="py-4">
+            <View className="py-4 items-center justify-center">
               <ActivityIndicator color="#2563EB" />
             </View>
           ) : null

@@ -1,9 +1,18 @@
 import api from './api';
+import { invalidateQuery } from '../hooks/useQuery';
 import type { Coordinate } from '../types';
+
+const invalidateRunnerProfile = () => invalidateQuery(['runner', 'profile']);
+const invalidateRunnerErrands = () => {
+  invalidateQuery(['runner', 'errand']);
+  invalidateQuery(['runner', 'errands']);
+  invalidateQuery(['bookings']);
+};
+const invalidateEarnings = () => invalidateQuery(['runner', 'earnings']);
 
 export const runnerService = {
   getRunnerProfile() {
-    return api.get('/runner/profile');
+    return api.get('/runner/profile', { cacheTtlMs: 30_000 } as any);
   },
 
   updateRunnerProfile(data: {
@@ -15,17 +24,23 @@ export const runnerService = {
     bank_account_number?: string;
     bank_account_name?: string;
   }) {
-    return api.put('/runner/profile', data);
+    const p = api.put('/runner/profile', data);
+    p.then(invalidateRunnerProfile).catch(() => {});
+    return p;
   },
 
   uploadDocument(data: FormData) {
-    return api.post('/runner/documents', data, {
+    const p = api.post('/runner/documents', data, {
       headers: { 'Content-Type': 'multipart/form-data' },
     });
+    p.then(invalidateRunnerProfile).catch(() => {});
+    return p;
   },
 
   toggleOnline(status: boolean, coords?: { lat: number; lng: number }) {
-    return api.put('/runner/online', { is_online: status, ...coords });
+    const p = api.put('/runner/online', { is_online: status, ...coords });
+    p.then(invalidateRunnerProfile).catch(() => {});
+    return p;
   },
 
   updateLocation(coords: Coordinate & { heading?: number; speed?: number }) {
@@ -33,23 +48,29 @@ export const runnerService = {
   },
 
   getCurrentErrand() {
-    return api.get('/runner/errand/current');
+    return api.get('/runner/errand/current', { cacheTtlMs: 5_000 } as any);
   },
 
   acceptErrand(id: string) {
-    return api.post(`/runner/errand/${id}/accept`);
+    const p = api.post(`/runner/errand/${id}/accept`);
+    p.then(invalidateRunnerErrands).catch(() => {});
+    return p;
   },
 
   declineErrand(id: string) {
-    return api.post(`/runner/errand/${id}/decline`);
+    const p = api.post(`/runner/errand/${id}/decline`);
+    p.then(invalidateRunnerErrands).catch(() => {});
+    return p;
   },
 
   getAvailableErrands() {
-    return api.get('/runner/errand/available');
+    return api.get('/runner/errand/available', { cacheTtlMs: 5_000 } as any);
   },
 
   updateErrandStatus(id: string, status: string) {
-    return api.post(`/runner/errand/${id}/status`, { status });
+    const p = api.post(`/runner/errand/${id}/status`, { status });
+    p.then(invalidateRunnerErrands).catch(() => {});
+    return p;
   },
 
   /**
@@ -75,11 +96,11 @@ export const runnerService = {
   },
 
   getEarnings(period?: 'today' | 'week' | 'month') {
-    return api.get('/runner/earnings', { params: { period } });
+    return api.get('/runner/earnings', { params: { period }, cacheTtlMs: 15_000 } as any);
   },
 
   getEarningsHistory(params?: { page?: number; per_page?: number }) {
-    return api.get('/runner/earnings/history', { params });
+    return api.get('/runner/earnings/history', { params, cacheTtlMs: 10_000 } as any);
   },
 
   getErrandHistory(params?: {
@@ -87,11 +108,16 @@ export const runnerService = {
     per_page?: number;
     status?: string;
   }) {
-    return api.get('/runner/errands/history', { params });
+    return api.get('/runner/errands/history', { params, cacheTtlMs: 10_000 } as any);
   },
 
   requestPayout(amount: number) {
-    return api.post('/runner/payout/request', { amount });
+    const p = api.post('/runner/payout/request', { amount });
+    p.then(() => {
+      invalidateEarnings();
+      invalidateQuery(['wallet']);
+    }).catch(() => {});
+    return p;
   },
 
   triggerSOS(bookingId: string) {

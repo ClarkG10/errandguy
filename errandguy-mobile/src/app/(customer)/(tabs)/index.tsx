@@ -1,4 +1,4 @@
-import React, { useCallback, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   View,
   Text,
@@ -32,8 +32,8 @@ import { toast } from '../../../stores/toastStore';
 import { useNotificationStore } from '../../../stores/notificationStore';
 import { bookingService } from '../../../services/booking.service';
 import { configService } from '../../../services/config.service';
-import { CacheService, CacheTTL, CacheKeys } from '../../../services/cache.service';
-import { useRefreshOnFocus } from '../../../hooks/useRefreshOnFocus';
+import { useQuery } from '../../../hooks/useQuery';
+import { CacheTTL } from '../../../services/cache.service';
 import { Avatar } from '../../../components/ui/Avatar';
 import { HomeSkeleton } from '../../../components/ui/Skeleton';
 import { STATUS_LABELS, STATUS_COLORS } from '../../../constants/statusLabels';
@@ -55,82 +55,70 @@ export default function CustomerHomeScreen() {
   const router = useRouter();
   const user = useAuthStore((s) => s.user);
   const role = useAuthStore((s) => s.role);
-  const { activeBooking, setActiveBooking, clearDraft } = useBookingStore();
+  const activeBooking = useBookingStore((s) => s.activeBooking);
+  const setActiveBooking = useBookingStore((s) => s.setActiveBooking);
+  const clearDraft = useBookingStore((s) => s.clearDraft);
   const unreadCount = useNotificationStore((s) => s.unreadCount);
 
-  const [errandTypes, setErrandTypes] = useState<ErrandType[]>([]);
-  const [recentBookings, setRecentBookings] = useState<Booking[]>([]);
+  const enabled = role === 'customer';
+
+  // ── SWR-style queries ──
+  // Each query reads from AsyncStorage on mount (instant render with last
+  // known data), then revalidates in the background only if the cache is
+  // older than `staleTime`. Mutations elsewhere (createBooking, cancel…)
+  // invalidate the relevant cache so users always see fresh data without
+  // an explicit refetch on every mount.
+  const errandTypesQ = useQuery<ErrandType[]>(
+    ['errand-types'],
+    async () => {
+      const res = await configService.getErrandTypes();
+      const t = res.data?.data;
+      return Array.isArray(t) ? t : [];
+    },
+    { staleTime: 60 * 60 * 1000, ttl: CacheTTL.STATIC, enabled },
+  );
+
+  const recentBookingsQ = useQuery<Booking[]>(
+    ['bookings', 'recent', user?.id ?? 'anon'],
+    async () => {
+      const res = await bookingService.getBookings({ per_page: 3 });
+      const b = res.data?.data;
+      return Array.isArray(b) ? b : [];
+    },
+    { staleTime: 60_000, ttl: CacheTTL.LONG, enabled: enabled && !!user?.id },
+  );
+
+  const activeBookingQ = useQuery<Booking | null>(
+    ['booking', 'active', user?.id ?? 'anon'],
+    async () => {
+      const res = await bookingService.getActiveBooking();
+      return (res.data?.data ?? null) as Booking | null;
+    },
+    { staleTime: 30_000, ttl: CacheTTL.SHORT, enabled: enabled && !!user?.id },
+  );
+
+  const errandTypes = errandTypesQ.data ?? [];
+  const recentBookings = recentBookingsQ.data ?? [];
+  const initialLoading =
+    enabled && (errandTypesQ.loading || recentBookingsQ.loading) &&
+    errandTypes.length === 0 && recentBookings.length === 0;
+  const error: string | null = null;
+
+  // Sync active booking into the global store whenever the query updates.
+  useEffect(() => {
+    setActiveBooking(activeBookingQ.data ?? null);
+  }, [activeBookingQ.data, setActiveBooking]);
+
   const [refreshing, setRefreshing] = useState(false);
-  const [initialLoading, setInitialLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-  const hasCacheLoaded = useRef(false);
-
-  const fetchData = useCallback(async (isRefresh = false) => {
-    // Don't fetch customer data if the user is a runner — this screen
-    // may briefly mount before the layout guard redirects.
-    if (role !== 'customer') return;
-
-    setError(null);
-
-    // On first load, try cache first to avoid skeleton
-    if (!hasCacheLoaded.current && !isRefresh) {
-      const [cachedTypes, cachedBookings] = await Promise.all([
-        CacheService.get<ErrandType[]>(CacheKeys.errandTypes()),
-        CacheService.get<Booking[]>(CacheKeys.bookingHistory(user?.id ?? 'anon')),
-      ]);
-      if (cachedTypes) setErrandTypes(cachedTypes);
-      if (cachedBookings) setRecentBookings(cachedBookings);
-      if (cachedTypes || cachedBookings) {
-        hasCacheLoaded.current = true;
-        setInitialLoading(false);
-      }
-    }
-
-    try {
-      const results = await Promise.allSettled([
-        bookingService.getActiveBooking(),
-        configService.getErrandTypes(),
-        bookingService.getBookings({ per_page: 3 }),
-      ]);
-
-      if (results[0].status === 'fulfilled') {
-        setActiveBooking(results[0].value.data.data ?? null);
-      }
-      if (results[1].status === 'fulfilled') {
-        const types = results[1].value.data?.data;
-        const typesArray = Array.isArray(types) ? types : [];
-        setErrandTypes(typesArray);
-        CacheService.set(CacheKeys.errandTypes(), typesArray, CacheTTL.STATIC);
-      }
-      if (results[2].status === 'fulfilled') {
-        const bookings = results[2].value.data?.data;
-        const bookingsArray = Array.isArray(bookings) ? bookings : [];
-        setRecentBookings(bookingsArray);
-        CacheService.set(CacheKeys.bookingHistory(user?.id ?? 'anon'), bookingsArray, CacheTTL.SHORT);
-      }
-
-      // If all failed, show error
-      const allFailed = results.every((r) => r.status === 'rejected');
-      if (allFailed) {
-        setError('Unable to load data. Please check your connection.');
-        toast.error('Unable to load data. Please check your connection.');
-      }
-    } catch {
-      setError('Something went wrong. Pull down to retry.');
-      toast.error('Something went wrong. Pull down to retry.');
-    }
-
-    hasCacheLoaded.current = true;
-    setInitialLoading(false);
-  }, [setActiveBooking, user?.id, role]);
-
-  useRefreshOnFocus(fetchData);
-
   const onRefresh = useCallback(async () => {
     setRefreshing(true);
-    await fetchData(true);
+    await Promise.all([
+      errandTypesQ.refresh(),
+      recentBookingsQ.refresh(),
+      activeBookingQ.refresh(),
+    ]);
     setRefreshing(false);
-  }, [fetchData]);
+  }, [errandTypesQ, recentBookingsQ, activeBookingQ]);
 
   const getGreeting = () => {
     const hour = new Date().getHours();

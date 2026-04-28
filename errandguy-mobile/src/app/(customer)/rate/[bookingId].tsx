@@ -20,7 +20,7 @@ const TIP_OPTIONS = [20, 50, 100];
 export default function RateScreen() {
   const router = useRouter();
   const { bookingId } = useLocalSearchParams<{ bookingId: string }>();
-  const { setActiveBooking } = useBookingStore();
+  const setActiveBooking = useBookingStore((s) => s.setActiveBooking);
 
   const [booking, setBooking] = useState<Booking | null>(null);
   const [rating, setRating] = useState(0);

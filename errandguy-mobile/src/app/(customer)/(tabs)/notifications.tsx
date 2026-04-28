@@ -19,7 +19,10 @@ import {
 import type { LucideIcon } from 'lucide-react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useNotificationStore } from '../../../stores/notificationStore';
+import { useAuthStore } from '../../../stores/authStore';
 import { notificationService } from '../../../services/notification.service';
+import { useQuery } from '../../../hooks/useQuery';
+import { CacheTTL } from '../../../services/cache.service';
 import { EmptyState } from '../../../components/ui/EmptyState';
 import { formatRelativeTime } from '../../../utils/formatDate';
 import type { AppNotification, NotificationType } from '../../../types';
@@ -47,38 +50,40 @@ const TYPE_COLORS: Record<NotificationType, string> = {
 
 export default function NotificationsScreen() {
   const router = useRouter();
-  const {
-    notifications,
-    setNotifications,
-    markRead,
-    markAllRead,
-    setUnreadCount,
-  } = useNotificationStore();
+  // Per-key selectors so unrelated store updates don't recreate the
+  // setter references (which would re-fire `useEffect`s that depend on
+  // them and trigger redundant fetches / store writes).
+  const notifications = useNotificationStore((s) => s.notifications);
+  const setNotifications = useNotificationStore((s) => s.setNotifications);
+  const markRead = useNotificationStore((s) => s.markRead);
+  const markAllRead = useNotificationStore((s) => s.markAllRead);
+  const setUnreadCount = useNotificationStore((s) => s.setUnreadCount);
+  const userId = useAuthStore((s) => s.user?.id);
 
   const [refreshing, setRefreshing] = useState(false);
 
-  const fetchNotifications = useCallback(async () => {
-    try {
-      const [notifRes, countRes] = await Promise.all([
-        notificationService.getNotifications(),
-        notificationService.getUnreadCount(),
-      ]);
-      setNotifications(notifRes.data.data ?? []);
-      setUnreadCount(countRes.data.data?.count ?? 0);
-    } catch {
-      // Silently handle
-    }
-  }, [setNotifications, setUnreadCount]);
+  const notifQ = useQuery<AppNotification[]>(
+    ['notifications', userId ?? 'anon'],
+    async () => {
+      const r = await notificationService.getNotifications();
+      return (r.data.data ?? []) as AppNotification[];
+    },
+    { staleTime: 30_000, ttl: CacheTTL.MEDIUM },
+  );
 
+  // Sync into the global store as the query updates.
   useEffect(() => {
-    fetchNotifications();
-  }, [fetchNotifications]);
+    if (notifQ.data) {
+      setNotifications(notifQ.data);
+      setUnreadCount(notifQ.data.filter((n) => !n.is_read).length);
+    }
+  }, [notifQ.data, setNotifications, setUnreadCount]);
 
   const onRefresh = useCallback(async () => {
     setRefreshing(true);
-    await fetchNotifications();
+    await notifQ.refresh();
     setRefreshing(false);
-  }, [fetchNotifications]);
+  }, [notifQ]);
 
   const handleMarkAllRead = useCallback(async () => {
     try {

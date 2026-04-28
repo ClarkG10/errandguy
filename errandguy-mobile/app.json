@@ -55,7 +55,6 @@
       "expo-location",
       "expo-camera",
       "expo-image-picker",
-      "expo-notifications",
       "expo-font",
       "@rnmapbox/maps",
       "expo-image"

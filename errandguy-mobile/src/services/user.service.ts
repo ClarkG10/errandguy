@@ -1,9 +1,16 @@
 import api from './api';
+import { invalidateQuery } from '../hooks/useQuery';
 import type { SavedAddress, TrustedContact } from '../types';
+
+const invalidateProfile = () => invalidateQuery(['user', 'profile']);
+const invalidateAddresses = () => invalidateQuery(['user', 'addresses']);
+const invalidateContacts = () => invalidateQuery(['user', 'contacts']);
 
 export const userService = {
   getProfile() {
-    return api.get('/user/profile');
+    // Profile is read on every screen mount and rarely changes \u2014 cache for 30s.
+    // Mutations below explicitly invalidate the persisted query cache.
+    return api.get('/user/profile', { cacheTtlMs: 30_000 } as any);
   },
 
   updateProfile(data: {
@@ -13,13 +20,17 @@ export const userService = {
     avatar_url?: string;
     role?: string;
   }) {
-    return api.put('/user/profile', data);
+    const p = api.put('/user/profile', data);
+    p.then(invalidateProfile).catch(() => {});
+    return p;
   },
 
   uploadAvatar(file: FormData) {
-    return api.post('/user/avatar', file, {
+    const p = api.post('/user/avatar', file, {
       headers: { 'Content-Type': 'multipart/form-data' },
     });
+    p.then(invalidateProfile).catch(() => {});
+    return p;
   },
 
   updateFCMToken(token: string) {
@@ -31,37 +42,49 @@ export const userService = {
   },
 
   getAddresses() {
-    return api.get('/user/addresses');
+    return api.get('/user/addresses', { cacheTtlMs: 60_000 } as any);
   },
 
   addAddress(data: Omit<SavedAddress, 'id' | 'user_id'>) {
-    return api.post('/user/addresses', data);
+    const p = api.post('/user/addresses', data);
+    p.then(invalidateAddresses).catch(() => {});
+    return p;
   },
 
   updateAddress(id: string, data: Partial<SavedAddress>) {
-    return api.put(`/user/addresses/${id}`, data);
+    const p = api.put(`/user/addresses/${id}`, data);
+    p.then(invalidateAddresses).catch(() => {});
+    return p;
   },
 
   deleteAddress(id: string) {
-    return api.delete(`/user/addresses/${id}`);
+    const p = api.delete(`/user/addresses/${id}`);
+    p.then(invalidateAddresses).catch(() => {});
+    return p;
   },
 
   getTrustedContacts() {
-    return api.get('/user/trusted-contacts');
+    return api.get('/user/trusted-contacts', { cacheTtlMs: 60_000 } as any);
   },
 
   addTrustedContact(data: Omit<TrustedContact, 'id' | 'user_id'>) {
-    return api.post('/user/trusted-contacts', data);
+    const p = api.post('/user/trusted-contacts', data);
+    p.then(invalidateContacts).catch(() => {});
+    return p;
   },
 
   updateTrustedContact(
     id: string,
     data: Partial<Omit<TrustedContact, 'id' | 'user_id'>>,
   ) {
-    return api.put(`/user/trusted-contacts/${id}`, data);
+    const p = api.put(`/user/trusted-contacts/${id}`, data);
+    p.then(invalidateContacts).catch(() => {});
+    return p;
   },
 
   deleteTrustedContact(id: string) {
-    return api.delete(`/user/trusted-contacts/${id}`);
+    const p = api.delete(`/user/trusted-contacts/${id}`);
+    p.then(invalidateContacts).catch(() => {});
+    return p;
   },
 };

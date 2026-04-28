@@ -23,6 +23,8 @@ import { useChatStore } from '../../../stores/chatStore';
 import { bookingService } from '../../../services/booking.service';
 import { useRunnerTracking } from '../../../hooks/useRunnerTracking';
 import { useBookingStatus } from '../../../hooks/useBookingStatus';
+import { useForegroundInterval } from '../../../hooks/useForegroundInterval';
+import { useBackGuard } from '../../../hooks/useBackGuard';
 import { TrackingSkeleton } from '../../../components/ui/Skeleton';
 import { Avatar } from '../../../components/ui/Avatar';
 import { RatingStars } from '../../../components/ui/RatingStars';
@@ -47,15 +49,29 @@ const CAN_CANCEL_STATUSES: BookingStatus[] = [
 export default function TrackingScreen() {
   const router = useRouter();
   const { id } = useLocalSearchParams<{ id: string }>();
-  const { setActiveBooking } = useBookingStore();
+  // IMPORTANT: select with a getter so the reference stays stable across
+  // unrelated state changes. `useBookingStore()` (no selector) returns the
+  // entire store snapshot on every render, which made `setActiveBooking`
+  // a fresh reference every time and re-fired the fetch effect — causing
+  // 3-4 redundant /bookings/{id} + /track requests per visit.
+  const setActiveBooking = useBookingStore((s) => s.setActiveBooking);
+  // Read the booking already in the store (set by home's activeBookingQ)
+  // so we can render instantly while the fresh /bookings/{id} fetch
+  // revalidates in the background. Avoids the skeleton flash when the
+  // user taps the active booking card on the home screen.
+  const cachedBooking = useBookingStore((s) =>
+    s.activeBooking && s.activeBooking.id === id ? s.activeBooking : null,
+  );
   const refreshUnread = useChatStore((s) => s.refreshUnread);
   const unreadForBooking = useChatStore(
     (s) => (id ? s.unreadByBooking[id] ?? 0 : 0),
   );
 
-  const [booking, setBooking] = useState<Booking | null>(null);
-  const [statusLogs, setStatusLogs] = useState<BookingStatusLog[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [booking, setBooking] = useState<Booking | null>(cachedBooking);
+  const [statusLogs, setStatusLogs] = useState<BookingStatusLog[]>(
+    cachedBooking?.status_logs ?? [],
+  );
+  const [loading, setLoading] = useState(!cachedBooking);
   const [sosActive, setSosActive] = useState(false);
   const [routeCoords, setRouteCoords] = useState<[number, number][]>([]);
   const [isCancelling, setIsCancelling] = useState(false);
@@ -69,6 +85,10 @@ export default function TrackingScreen() {
   const [previewLoading, setPreviewLoading] = useState(false);
   const [showSOSModal, setShowSOSModal] = useState(false);
   const cameraRef = useRef<Mapbox.Camera>(null);
+  // Tracks the last booking status we have already loaded statusLogs for.
+  // Used to skip redundant /track refetches when realtime UPDATEs come in
+  // for unrelated fields. Declared before the fetch effect that seeds it.
+  const lastSyncedStatusRef = useRef<BookingStatus | null>(null);
 
   // Live runner location via Supabase Realtime
   const { runnerLocation, isConnected } = useRunnerTracking(
@@ -78,36 +98,47 @@ export default function TrackingScreen() {
   // Live booking status updates via Supabase Realtime
   const { isConnected: statusConnected } = useBookingStatus(id ?? null);
 
-  // Fetch booking data
+  // Fetch booking data.
+  // The /bookings/{id} response already includes statusLogs (loaded by
+  // BookingController::show), so we DO NOT also call /track here — that
+  // would double the network round-trips on every mount. /track is only
+  // useful for the latest runner_location, which we get via realtime
+  // (useRunnerTracking) in steady state.
   useEffect(() => {
     if (!id) return;
-    setLoading(true);
-    Promise.all([
-      bookingService.getBooking(id),
-      bookingService.trackBooking(id),
-    ])
-      .then(([bookingRes, trackRes]) => {
+    // Only show the skeleton if we don't already have a cached snapshot.
+    if (!cachedBooking) setLoading(true);
+    bookingService
+      .getBooking(id)
+      .then((bookingRes) => {
         const b = bookingRes.data.data;
         setBooking(b);
         setActiveBooking(b);
-        setStatusLogs(trackRes.data.data?.status_logs ?? []);
+        setStatusLogs(b?.status_logs ?? []);
+        // Seed the realtime guard so the very first realtime UPDATE
+        // (which carries the same status we just loaded) does not
+        // trigger a redundant /track refetch.
+        lastSyncedStatusRef.current = b?.status ?? null;
       })
       .catch(() => {})
       .finally(() => setLoading(false));
+    // cachedBooking intentionally omitted — we only want to fire the fetch
+    // when the route id changes, not when the store updates afterwards.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id, setActiveBooking]);
 
-  // Poll chat unread counts every 15s while on the tracking screen so the
-  // chat badge updates without a websocket. Refresh once on mount too.
-  useEffect(() => {
-    refreshUnread();
-    const t = setInterval(refreshUnread, 15000);
-    return () => clearInterval(t);
-  }, [refreshUnread]);
+  // Poll chat unread counts every 30s while on the tracking screen so the
+  // chat badge stays fresh without a websocket. Refresh once on mount too.
+  // Pauses automatically when the app is backgrounded.
+  useForegroundInterval(refreshUnread, 30000);
 
   // Fetch route line
   useEffect(() => {
     if (!booking || !MAPBOX_TOKEN) return;
-    const { pickup_lng, pickup_lat, dropoff_lng, dropoff_lat } = booking;
+    const pickup_lng = Number(booking.pickup_lng);
+    const pickup_lat = Number(booking.pickup_lat);
+    const dropoff_lng = Number(booking.dropoff_lng);
+    const dropoff_lat = Number(booking.dropoff_lat);
     if (!pickup_lng || !pickup_lat || !dropoff_lng || !dropoff_lat) return;
 
     const url = `https://api.mapbox.com/directions/v5/mapbox/driving/${pickup_lng},${pickup_lat};${dropoff_lng},${dropoff_lat}?geometries=geojson&overview=full&access_token=${MAPBOX_TOKEN}`;
@@ -125,14 +156,18 @@ export default function TrackingScreen() {
   useEffect(() => {
     if (!activeBooking || !id) return;
     setBooking(activeBooking);
-    // Refresh status logs when status changes
-    bookingService.trackBooking(id).then((trackRes) => {
-      setStatusLogs(trackRes.data.data?.status_logs ?? []);
-    }).catch(() => {});
+    // Only refresh status logs when the status actually changed — otherwise
+    // every minor field update on the booking row would refetch /track.
+    if (activeBooking.status !== lastSyncedStatusRef.current) {
+      lastSyncedStatusRef.current = activeBooking.status;
+      bookingService.trackBooking(id).then((trackRes) => {
+        setStatusLogs(trackRes.data.data?.status_logs ?? []);
+      }).catch(() => {});
+    }
     if (activeBooking.status === 'completed') {
       router.replace(`/(customer)/rate/${id}`);
     }
-  }, [activeBooking?.status]);
+  }, [activeBooking, id, router]);
 
   // Route GeoJSON
   const routeGeoJSON = useMemo(() => {
@@ -149,13 +184,13 @@ export default function TrackingScreen() {
     if (!booking) return undefined;
     const points: [number, number][] = [];
     if (booking.pickup_lng && booking.pickup_lat) {
-      points.push([booking.pickup_lng, booking.pickup_lat]);
+      points.push([Number(booking.pickup_lng), Number(booking.pickup_lat)]);
     }
     if (booking.dropoff_lng && booking.dropoff_lat) {
-      points.push([booking.dropoff_lng, booking.dropoff_lat]);
+      points.push([Number(booking.dropoff_lng), Number(booking.dropoff_lat)]);
     }
     if (runnerLocation) {
-      points.push([runnerLocation.lng, runnerLocation.lat]);
+      points.push([Number(runnerLocation.lng), Number(runnerLocation.lat)]);
     }
     if (points.length < 2) return undefined;
     const lngs = points.map((p) => p[0]);
@@ -259,6 +294,10 @@ export default function TrackingScreen() {
   const steps = errandRule.statusFlow as unknown as BookingStatus[];
   const currentStatusIndex = steps.indexOf(booking.status);
   const isShopping = errandRule.requiresShoppingBudget;
+  // Active = anything other than terminal states. Used to gate the Android
+  // back-button guard so completed/cancelled bookings let the user leave freely.
+  const isLiveBooking = !['completed', 'cancelled', 'no_runner'].includes(booking.status);
+  useBackGuard(isLiveBooking, 'Tracking your errand — tap back again to leave');
   // Once a shopping runner has picked up (paid for) the items, the customer
   // can no longer self-cancel — they would still owe the spent amount.
   const canCancel =
@@ -278,7 +317,7 @@ export default function TrackingScreen() {
   });
 
   const mapCenter: [number, number] = booking.pickup_lng && booking.pickup_lat
-    ? [booking.pickup_lng, booking.pickup_lat]
+    ? [Number(booking.pickup_lng), Number(booking.pickup_lat)]
     : [121.0, 14.6]; // Manila default
 
   return (
@@ -306,7 +345,7 @@ export default function TrackingScreen() {
           {booking.pickup_lng && booking.pickup_lat && (
             <Mapbox.PointAnnotation
               id="pickup"
-              coordinate={[booking.pickup_lng, booking.pickup_lat]}
+              coordinate={[Number(booking.pickup_lng), Number(booking.pickup_lat)]}
             >
               <View className="items-center">
                 <View className="w-8 h-8 rounded-full bg-primary items-center justify-center border-2 border-white shadow-md">
@@ -320,7 +359,7 @@ export default function TrackingScreen() {
           {booking.dropoff_lng && booking.dropoff_lat && (
             <Mapbox.PointAnnotation
               id="dropoff"
-              coordinate={[booking.dropoff_lng, booking.dropoff_lat]}
+              coordinate={[Number(booking.dropoff_lng), Number(booking.dropoff_lat)]}
             >
               <View className="items-center">
                 <View className="w-8 h-8 rounded-full bg-danger items-center justify-center border-2 border-white shadow-md">
@@ -334,7 +373,7 @@ export default function TrackingScreen() {
           {runnerLocation && (
             <Mapbox.MarkerView
               id="runner"
-              coordinate={[runnerLocation.lng, runnerLocation.lat]}
+              coordinate={[Number(runnerLocation.lng), Number(runnerLocation.lat)]}
               anchor={{ x: 0.5, y: 0.5 }}
             >
               <View className="items-center">

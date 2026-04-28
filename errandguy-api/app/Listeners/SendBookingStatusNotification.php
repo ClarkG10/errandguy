@@ -4,8 +4,9 @@ namespace App\Listeners;
 
 use App\Events\BookingStatusChanged;
 use App\Services\NotificationService;
+use Illuminate\Contracts\Queue\ShouldQueue;
 
-class SendBookingStatusNotification
+class SendBookingStatusNotification implements ShouldQueue
 {
     public function __construct(
         private NotificationService $notificationService,

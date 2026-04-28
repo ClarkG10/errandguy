@@ -1,14 +1,16 @@
-import React, { useState, useCallback, useEffect } from 'react';
+import React, { useState, useCallback } from 'react';
 import { View, Text, ScrollView, RefreshControl, Pressable } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import { Card } from '../../../components/ui/Card';
 import { Button } from '../../../components/ui/Button';
 import { useRunnerStore } from '../../../stores/runnerStore';
+import { useAuthStore } from '../../../stores/authStore';
 import { runnerService } from '../../../services/runner.service';
+import { useQuery } from '../../../hooks/useQuery';
+import { CacheTTL } from '../../../services/cache.service';
 import { formatCurrency } from '../../../utils/formatCurrency';
 import type { Booking } from '../../../types';
-import { toast } from '../../../stores/toastStore';
 
 type Period = 'today' | 'week' | 'month';
 
@@ -21,34 +23,30 @@ interface EarningsData {
 export default function EarningsScreen() {
   const router = useRouter();
   const { earnings, setEarnings } = useRunnerStore();
+  const userId = useAuthStore((s) => s.user?.id ?? 'anon');
 
   const [period, setPeriod] = useState<Period>('week');
-  const [earningsData, setEarningsData] = useState<EarningsData | null>(null);
-  const [earningsList, setEarningsList] = useState<Booking[]>([]);
   const [refreshing, setRefreshing] = useState(false);
 
-  const fetchEarnings = useCallback(async () => {
-    try {
-      const [summaryRes, historyRes] = await Promise.all([
-        runnerService.getEarnings(period),
-        runnerService.getEarningsHistory({ page: 1, per_page: 10 }),
-      ]);
-      setEarningsData(summaryRes.data.data);
-      setEarningsList(historyRes.data.data ?? []);
-    } catch {
-      toast.error('Failed to load earnings');
-    }
-  }, [period]);
+  const summaryQ = useQuery<EarningsData>(
+    ['runner', 'earnings', period, userId],
+    async () => (await runnerService.getEarnings(period)).data.data,
+    { staleTime: 60_000, ttl: CacheTTL.MEDIUM },
+  );
+  const historyQ = useQuery<Booking[]>(
+    ['runner', 'earnings', 'history', userId],
+    async () => ((await runnerService.getEarningsHistory({ page: 1, per_page: 10 })).data.data ?? []) as Booking[],
+    { staleTime: 60_000, ttl: CacheTTL.LONG },
+  );
 
-  useEffect(() => {
-    fetchEarnings();
-  }, [fetchEarnings]);
+  const earningsData = summaryQ.data ?? null;
+  const earningsList = historyQ.data ?? [];
 
   const onRefresh = useCallback(async () => {
     setRefreshing(true);
-    await fetchEarnings();
+    await Promise.all([summaryQ.refresh(), historyQ.refresh()]);
     setRefreshing(false);
-  }, [fetchEarnings]);
+  }, [summaryQ, historyQ]);
 
   const periodLabel: Record<Period, string> = {
     today: "Today's Earnings",
@@ -70,7 +68,7 @@ export default function EarningsScreen() {
       >
         {/* Hero Card */}
         <View className="mx-5 mb-4 bg-primary rounded-2xl p-6 items-center">
-          <Text className="text-3xl font-montserrat-bold text-white">
+          <Text className="text-3xl font-inter-semi tabular-nums text-white">
             {formatCurrency(earningsData?.total_earnings ?? 0)}
           </Text>
           <Text className="text-sm font-montserrat text-white/70 mt-1">
@@ -105,19 +103,19 @@ export default function EarningsScreen() {
           <Card className="p-4">
             <View className="flex-row items-center justify-between mb-2">
               <Text className="text-sm font-montserrat text-textTertiary">Total Errands</Text>
-              <Text className="text-sm font-montserrat-bold text-textPrimary">
+              <Text className="text-sm font-inter-semi tabular-nums text-textPrimary">
                 {earningsData?.total_errands ?? 0}
               </Text>
             </View>
             <View className="flex-row items-center justify-between mb-2">
               <Text className="text-sm font-montserrat text-textTertiary">Avg per Errand</Text>
-              <Text className="text-sm font-montserrat-bold text-textPrimary">
+              <Text className="text-sm font-inter-semi tabular-nums text-textPrimary">
                 {formatCurrency(earningsData?.avg_per_errand ?? 0)}
               </Text>
             </View>
             <View className="border-t border-divider pt-2 mt-1 flex-row items-center justify-between">
               <Text className="text-sm font-montserrat-bold text-textPrimary">Total</Text>
-              <Text className="text-base font-montserrat-bold text-primary">
+              <Text className="text-base font-inter-semi tabular-nums text-primary">
                 {formatCurrency(earningsData?.total_earnings ?? 0)}
               </Text>
             </View>
@@ -160,7 +158,7 @@ export default function EarningsScreen() {
                       })}
                     </Text>
                   </View>
-                  <Text className="text-sm font-montserrat-bold text-primary">
+                  <Text className="text-sm font-inter-semi tabular-nums text-primary">
                     {formatCurrency(errand.runner_payout ?? errand.total_amount)}
                   </Text>
                 </View>

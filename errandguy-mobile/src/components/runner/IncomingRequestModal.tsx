@@ -139,7 +139,7 @@ export function IncomingRequestModal({
             <Text className="text-xs font-montserrat text-amber-800 flex-1">
               Customer budget cap
             </Text>
-            <Text className="text-sm font-montserrat-bold text-amber-900">
+            <Text className="text-sm font-inter-semi tabular-nums text-amber-900">
               {formatCurrency(booking.shopping_budget)}
             </Text>
           </View>
@@ -149,13 +149,13 @@ export function IncomingRequestModal({
         <View className="flex-row items-center justify-between mb-4 bg-primaryLight rounded-xl p-3">
           <View className="flex-row items-center gap-1">
             <Truck size={14} color="#2563EB" />
-            <Text className="text-xs font-montserrat text-primary">
+            <Text className="text-xs font-inter tabular-nums text-primary">
               {booking.distance_km != null && booking.distance_km > 0
                 ? `${booking.distance_km} km`
                 : 'On-site'}
             </Text>
           </View>
-          <Text className="text-xl font-montserrat-bold text-primary">
+          <Text className="text-xl font-inter-semi tabular-nums text-primary">
             {formatCurrency(booking.runner_payout ?? booking.total_amount)}
           </Text>
         </View>

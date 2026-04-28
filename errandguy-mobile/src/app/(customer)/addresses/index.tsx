@@ -8,6 +8,9 @@ import { Button } from '../../../components/ui/Button';
 import { ConfirmModal } from '../../../components/ui/ConfirmModal';
 import { Skeleton } from '../../../components/ui/Skeleton';
 import { useDebounce } from '../../../hooks/useDebounce';
+import { useQuery } from '../../../hooks/useQuery';
+import { useAuthStore } from '../../../stores/authStore';
+import { CacheTTL } from '../../../services/cache.service';
 import { userService } from '../../../services/user.service';
 import { MAP_STYLE_URL } from '../../../constants/map';
 import type { SavedAddress } from '../../../types';
@@ -42,8 +45,17 @@ function AddressSkeleton() {
 
 export default function AddressesScreen() {
   const router = useRouter();
-  const [addresses, setAddresses] = useState<SavedAddress[]>([]);
-  const [loading, setLoading] = useState(true);
+  const userId = useAuthStore((s) => s.user?.id ?? 'anon');
+  const addressesQ = useQuery<SavedAddress[]>(
+    ['user', 'addresses', userId],
+    async () => {
+      const r = await userService.getAddresses();
+      return (r.data.data ?? []) as SavedAddress[];
+    },
+    { staleTime: 60_000, ttl: CacheTTL.LONG },
+  );
+  const addresses = addressesQ.data ?? [];
+  const loading = addressesQ.loading && !addressesQ.data;
   const [refreshing, setRefreshing] = useState(false);
   const [showAdd, setShowAdd] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -64,25 +76,14 @@ export default function AddressesScreen() {
   const geocodeTimeout = useRef<ReturnType<typeof setTimeout>>(undefined);
 
   const fetchAddresses = useCallback(async () => {
-    try {
-      const res = await userService.getAddresses();
-      setAddresses(res.data.data ?? []);
-    } catch {
-      // ignore
-    } finally {
-      setLoading(false);
-      setRefreshing(false);
-    }
-  }, []);
+    await addressesQ.refresh();
+  }, [addressesQ]);
 
-  useEffect(() => {
-    fetchAddresses();
-  }, [fetchAddresses]);
-
-  const onRefresh = useCallback(() => {
+  const onRefresh = useCallback(async () => {
     setRefreshing(true);
-    fetchAddresses();
-  }, [fetchAddresses]);
+    await addressesQ.refresh();
+    setRefreshing(false);
+  }, [addressesQ]);
 
   /* ── Reverse geocode ── */
   const reverseGeocode = useCallback(async (lng: number, lat: number): Promise<string> => {

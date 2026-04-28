@@ -86,6 +86,17 @@ class PricingService
             );
         }
 
+        // Top-level metadata so the mobile app can show distance / time
+        // badges and seed the negotiate slider without hunting through
+        // each per-vehicle entry.
+        $distanceKm = ($dropoffLat !== null && $dropoffLng !== null)
+            ? round($this->haversineDistance($pickupLat, $pickupLng, $dropoffLat, $dropoffLng), 2)
+            : 0.0;
+        $estimates['distance_km'] = $distanceKm;
+        if ($errandType) {
+            $estimates['min_negotiate_fee'] = (float) $errandType->min_negotiate_fee;
+        }
+
         return $estimates;
     }
 

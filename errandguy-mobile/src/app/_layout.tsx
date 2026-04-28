@@ -23,10 +23,15 @@ import { useAuthStore } from '../stores/authStore';
 import { userService } from '../services/user.service';
 import { useNotifications } from '../hooks/useNotifications';
 import { ToastProvider } from '../components/ui/ToastProvider';
+import { applySystemFontOnIOS } from '../utils/systemFont';
 import '../../global.css';
 
 // Initialize Mapbox
 Mapbox.setAccessToken(process.env.EXPO_PUBLIC_MAPBOX_TOKEN ?? '');
+
+// On iOS, render all text with San Francisco (SF Pro) by remapping the
+// Quicksand/Inter family names to `System` + an explicit fontWeight.
+applySystemFontOnIOS();
 
 // Hide Android system navigation bar (immersive mode — swipe up to reveal)
 if (Platform.OS === 'android') {
@@ -59,8 +64,19 @@ export default function RootLayout() {
     Quicksand_700Bold,
   });
 
-  const { isAuthenticated, isLoading, role, token, onboardingSeen, loadFromStorage, setUser, logout } =
-    useAuthStore();
+  // Use individual selectors to avoid re-rendering the whole tree (and
+  // re-firing the validateSession effect) on every unrelated zustand
+  // update. Destructuring `useAuthStore()` returns a fresh object snapshot
+  // on every render, which made `setUser` / `logout` look "new" and
+  // re-triggered the /user/profile fetch on every render.
+  const isAuthenticated = useAuthStore((s) => s.isAuthenticated);
+  const isLoading = useAuthStore((s) => s.isLoading);
+  const role = useAuthStore((s) => s.role);
+  const token = useAuthStore((s) => s.token);
+  const onboardingSeen = useAuthStore((s) => s.onboardingSeen);
+  const loadFromStorage = useAuthStore((s) => s.loadFromStorage);
+  const setUser = useAuthStore((s) => s.setUser);
+  const logout = useAuthStore((s) => s.logout);
   const segments = useSegments();
   const router = useRouter();
 

@@ -36,7 +36,11 @@ class BookingController extends Controller
     {
         $query = $request->user()
             ->customerBookings()
-            ->with(['errandType', 'runner', 'review'])
+            ->with([
+                'errandType',
+                'runner:id,phone,email,full_name,avatar_url,role,status,email_verified,phone_verified,wallet_balance,avg_rating,total_ratings,created_at',
+                'review',
+            ])
             ->orderByDesc('created_at');
 
         if ($request->filled('status')) {
@@ -48,11 +52,11 @@ class BookingController extends Controller
         }
 
         if ($request->filled('date_from')) {
-            $query->whereDate('created_at', '>=', $request->input('date_from'));
+            $query->where('created_at', '>=', Carbon::parse($request->input('date_from'))->startOfDay());
         }
 
         if ($request->filled('date_to')) {
-            $query->whereDate('created_at', '<=', $request->input('date_to'));
+            $query->where('created_at', '<=', Carbon::parse($request->input('date_to'))->endOfDay());
         }
 
         $bookings = $query->paginate($request->integer('per_page', 15));
@@ -220,8 +224,13 @@ class BookingController extends Controller
 
     public function show(Request $request, string $id): JsonResponse
     {
-        $booking = Booking::with(['errandType', 'runner', 'statusLogs', 'payment', 'review'])
-            ->findOrFail($id);
+        $booking = Booking::with([
+            'errandType',
+            'runner:id,phone,email,full_name,avatar_url,role,status,email_verified,phone_verified,wallet_balance,avg_rating,total_ratings,created_at',
+            'statusLogs',
+            'payment',
+            'review',
+        ])->findOrFail($id);
 
         $this->authorize('view', $booking);
 
@@ -284,8 +293,11 @@ class BookingController extends Controller
 
     public function track(Request $request, string $id): JsonResponse
     {
-        $booking = Booking::with(['errandType', 'runner', 'statusLogs'])
-            ->findOrFail($id);
+        $booking = Booking::with([
+            'errandType',
+            'runner:id,phone,email,full_name,avatar_url,role,status,email_verified,phone_verified,wallet_balance,avg_rating,total_ratings,created_at',
+            'statusLogs',
+        ])->findOrFail($id);
 
         $this->authorize('track', $booking);
 
@@ -315,7 +327,11 @@ class BookingController extends Controller
     {
         $booking = $request->user()
             ->customerBookings()
-            ->with(['errandType', 'runner', 'statusLogs'])
+            ->with([
+                'errandType',
+                'runner:id,phone,email,full_name,avatar_url,role,status,email_verified,phone_verified,wallet_balance,avg_rating,total_ratings,created_at',
+                'statusLogs',
+            ])
             ->active()
             ->orderByDesc('created_at')
             ->first();
@@ -333,8 +349,8 @@ class BookingController extends Controller
             $validated['errand_type_id'],
             $validated['pickup_lat'],
             $validated['pickup_lng'],
-            $validated['dropoff_lat'],
-            $validated['dropoff_lng']
+            $validated['dropoff_lat'] ?? null,
+            $validated['dropoff_lng'] ?? null
         );
 
         return response()->json([

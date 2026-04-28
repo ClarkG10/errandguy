@@ -18,7 +18,8 @@ export default function VerifyOTPScreen() {
     purpose?: string;
   }>();
 
-  const { setUser, setToken } = useAuthStore();
+  const setUser = useAuthStore((s) => s.setUser);
+  const setToken = useAuthStore((s) => s.setToken);
   const [code, setCode] = useState('');
   const [loading, setLoading] = useState(false);
   const [attemptsRemaining, setAttemptsRemaining] = useState(5);

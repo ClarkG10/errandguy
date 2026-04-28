@@ -4,7 +4,9 @@ import { useAuthStore } from '../../stores/authStore';
 import { useRealtimeNotifications } from '../../hooks/useRealtimeNotifications';
 
 export default function CustomerLayout() {
-  const { isAuthenticated, role, user } = useAuthStore();
+  const isAuthenticated = useAuthStore((s) => s.isAuthenticated);
+  const role = useAuthStore((s) => s.role);
+  const user = useAuthStore((s) => s.user);
   const router = useRouter();
 
   // Subscribe to realtime notifications for the current user

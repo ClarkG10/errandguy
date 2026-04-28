@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useCallback, useRef } from 'react';
+import React, { useEffect, useState, useCallback } from 'react';
 import { View, Text, ScrollView, RefreshControl, FlatList, Pressable } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
@@ -18,7 +18,8 @@ import { useAuthStore } from '../../../stores/authStore';
 import { runnerService } from '../../../services/runner.service';
 import { formatCurrency } from '../../../utils/formatCurrency';
 import { RunnerHomeSkeleton } from '../../../components/ui/Skeleton';
-import { CacheService, CacheTTL, CacheKeys } from '../../../services/cache.service';
+import { useQuery } from '../../../hooks/useQuery';
+import { CacheTTL } from '../../../services/cache.service';
 import { useIncomingRequest } from '../../../hooks/useIncomingRequest';
 import type { Booking } from '../../../types';
 import { toast } from '../../../stores/toastStore';
@@ -44,82 +45,60 @@ export default function RunnerHomeScreen() {
   // Subscribe to incoming booking requests via Supabase Realtime
   useIncomingRequest(isOnline && user?.id ? user.id : null);
 
+  const userId = user?.id ?? 'anon';
+  const role = useAuthStore((s) => s.role);
+  const enabled = role === 'runner';
+
+  // ── SWR queries (cache-first) ──
+  const profileQ = useQuery<any>(
+    ['runner', 'profile', userId],
+    async () => (await runnerService.getRunnerProfile()).data.data,
+    { staleTime: 60_000, ttl: CacheTTL.LONG, enabled },
+  );
+  const earningsTodayQ = useQuery<number>(
+    ['runner', 'earnings', 'today', userId],
+    async () => (await runnerService.getEarnings('today')).data.data?.total_earnings ?? 0,
+    { staleTime: 60_000, ttl: CacheTTL.MEDIUM, enabled },
+  );
+  const historyQ = useQuery<Booking[]>(
+    ['runner', 'errands', 'recent', userId],
+    async () => ((await runnerService.getErrandHistory({ page: 1, per_page: 5 })).data.data ?? []) as Booking[],
+    { staleTime: 60_000, ttl: CacheTTL.LONG, enabled },
+  );
+  const offersQ = useQuery<Booking[]>(
+    ['runner', 'errand', 'available', userId],
+    async () => ((await runnerService.getAvailableErrands()).data.data ?? []) as Booking[],
+    { staleTime: 15_000, ttl: CacheTTL.SHORT, enabled: enabled && isOnline },
+  );
+
+  const recentErrands = historyQ.data ?? [];
+  const negotiateOffers = offersQ.data ?? [];
+
+  // Mirror into the global store so other screens see fresh data.
+  useEffect(() => {
+    if (profileQ.data) setRunnerProfile(profileQ.data);
+  }, [profileQ.data, setRunnerProfile]);
+  useEffect(() => {
+    if (earningsTodayQ.data != null) {
+      setEarnings({ ...earnings, today: earningsTodayQ.data });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [earningsTodayQ.data]);
+
+  const initialLoading =
+    enabled && profileQ.loading && historyQ.loading && !profileQ.data && !historyQ.data;
+
   const [refreshing, setRefreshing] = useState(false);
-  const [initialLoading, setInitialLoading] = useState(true);
-  const [negotiateOffers, setNegotiateOffers] = useState<Booking[]>([]);
-  const [recentErrands, setRecentErrands] = useState<Booking[]>([]);
-  const hasCacheLoaded = useRef(false);
-
-  const fetchDashboardData = useCallback(async (isRefresh = false) => {
-    const userId = user?.id ?? 'anon';
-
-    // Load cached data first to skip skeleton on revisit
-    if (!hasCacheLoaded.current && !isRefresh) {
-      const [cachedProfile, cachedHistory] = await Promise.all([
-        CacheService.get<any>(CacheKeys.runnerProfile(userId)),
-        CacheService.get<Booking[]>(`runner:${userId}:history`),
-      ]);
-      if (cachedProfile) setRunnerProfile(cachedProfile);
-      if (cachedHistory) setRecentErrands(cachedHistory);
-      if (cachedProfile || cachedHistory) {
-        hasCacheLoaded.current = true;
-        setInitialLoading(false);
-      }
-    }
-
-    try {
-      const results = await Promise.allSettled([
-        runnerService.getRunnerProfile(),
-        runnerService.getEarnings('today'),
-        runnerService.getErrandHistory({ page: 1, per_page: 5 }),
-      ]);
-
-      if (results[0].status === 'fulfilled') {
-        const profile = results[0].value.data.data;
-        setRunnerProfile(profile);
-        CacheService.set(CacheKeys.runnerProfile(userId), profile, CacheTTL.MEDIUM);
-      }
-      if (results[1].status === 'fulfilled') {
-        setEarnings({
-          ...earnings,
-          today: results[1].value.data.data?.total_earnings ?? 0,
-        });
-      }
-      if (results[2].status === 'fulfilled') {
-        const history = results[2].value.data.data ?? [];
-        setRecentErrands(history);
-        CacheService.set(`runner:${userId}:history`, history, CacheTTL.MEDIUM);
-      }
-
-      if (isOnline) {
-        try {
-          const offersRes = await runnerService.getAvailableErrands();
-          setNegotiateOffers(offersRes.data.data ?? []);
-        } catch {}
-      }
-    } catch {
-      // silent fail - dashboard data is non-critical
-    } finally {
-      hasCacheLoaded.current = true;
-      setInitialLoading(false);
-    }
-  }, [isOnline, user?.id]);
-
-  useEffect(() => {
-    fetchDashboardData();
-  }, [fetchDashboardData]);
-
-  useEffect(() => {
-    if (currentErrand) {
-      router.push(`/(runner)/errand/${currentErrand.id}`);
-    }
-  }, [currentErrand]);
-
   const onRefresh = useCallback(async () => {
     setRefreshing(true);
-    await fetchDashboardData(true);
+    await Promise.all([
+      profileQ.refresh(),
+      earningsTodayQ.refresh(),
+      historyQ.refresh(),
+      isOnline ? offersQ.refresh() : Promise.resolve(),
+    ]);
     setRefreshing(false);
-  }, [fetchDashboardData]);
+  }, [profileQ, earningsTodayQ, historyQ, offersQ, isOnline]);
 
   const handleToggleOnline = async (value: boolean) => {
     try {
@@ -140,7 +119,7 @@ export default function RunnerHomeScreen() {
         await startTracking();
       } else {
         stopTracking();
-        setNegotiateOffers([]);
+        offersQ.mutate(() => []);
       }
     } catch (err: any) {
       toast.error(err?.response?.data?.message ?? 'Failed to toggle status');

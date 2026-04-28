@@ -5,9 +5,10 @@ namespace App\Listeners;
 use App\Events\RideDurationAlert;
 use App\Events\RouteDeviationAlert;
 use App\Services\NotificationService;
+use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Support\Facades\Log;
 
-class SendSafetyAlertNotification
+class SendSafetyAlertNotification implements ShouldQueue
 {
     public function __construct(
         private NotificationService $notificationService,
