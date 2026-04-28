@@ -26,12 +26,23 @@ class WalletController extends Controller
 
     public function topUp(Request $request): JsonResponse
     {
+        $user = $request->user();
+
         $validated = $request->validate([
             'amount' => ['required', 'numeric', 'min:50', 'max:50000'],
-            'payment_method_id' => ['required', 'string', 'exists:payment_methods,id'],
+            'payment_method_id' => [
+                'required',
+                'string',
+                // SECURITY: scope payment_method_id to the requesting user
+                // so an attacker can't reference someone else's saved
+                // payment method (or trigger the top-up with a method
+                // that has been deleted).
+                \Illuminate\Validation\Rule::exists('payment_methods', 'id')
+                    ->where(fn ($q) => $q->where('user_id', $user->id)),
+            ],
+        ], [
+            'payment_method_id.exists' => 'Selected payment method is not available on your account.',
         ]);
-
-        $user = $request->user();
 
         $transaction = $this->walletService->topUp(
             $user->id,

@@ -2,7 +2,9 @@ import React from 'react';
 import { View, Text } from 'react-native';
 
 interface PerformanceMetricProps {
-  value: number;
+  /** Number for raw metrics (auto-rounded for percentages); string for
+   *  pre-formatted values like ratings ("4.8"). */
+  value: number | string;
   label: string;
   color?: string;
   suffix?: string;
@@ -14,7 +16,12 @@ export function PerformanceMetric({
   color = '#2563EB',
   suffix = '%',
 }: PerformanceMetricProps) {
-  const displayValue = suffix === '%' ? Math.round(value) : value;
+  const displayValue =
+    typeof value === 'string'
+      ? value
+      : suffix === '%'
+        ? Math.round(value)
+        : value;
 
   return (
     <View className="flex-1 items-center">

@@ -209,7 +209,9 @@ export default function AddressesScreen() {
     setDeletingAddress(true);
     try {
       await userService.deleteAddress(pendingDeleteId);
-      setAddresses((prev) => prev.filter((a) => a.id !== pendingDeleteId));
+      // Refresh from source so the cached query stays consistent across
+      // screens (the previous local setState lost on the next refetch).
+      await addressesQ.refresh();
       setPendingDeleteId(null);
     } catch {
       toast.error('Failed to delete address');

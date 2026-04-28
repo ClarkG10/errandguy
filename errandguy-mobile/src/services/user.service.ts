@@ -67,7 +67,7 @@ export const userService = {
     return api.get('/user/trusted-contacts', { cacheTtlMs: 60_000 } as any);
   },
 
-  addTrustedContact(data: Omit<TrustedContact, 'id' | 'user_id'>) {
+  addTrustedContact(data: Omit<TrustedContact, 'id' | 'user_id' | 'created_at' | 'updated_at'>) {
     const p = api.post('/user/trusted-contacts', data);
     p.then(invalidateContacts).catch(() => {});
     return p;
@@ -75,7 +75,7 @@ export const userService = {
 
   updateTrustedContact(
     id: string,
-    data: Partial<Omit<TrustedContact, 'id' | 'user_id'>>,
+    data: Partial<Omit<TrustedContact, 'id' | 'user_id' | 'created_at' | 'updated_at'>>,
   ) {
     const p = api.put(`/user/trusted-contacts/${id}`, data);
     p.then(invalidateContacts).catch(() => {});

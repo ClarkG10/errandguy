@@ -113,7 +113,10 @@ export default function RootLayout() {
     if (isLoading || !fontsLoaded) return;
 
     const inAuthGroup = segments[0] === '(auth)';
-    const currentAuthScreen = segments[1] as string;
+    // Cast through unknown — expo-router strictly types segments as
+    // single-element tuples for top-level groups even though the runtime
+    // value is the full path.
+    const currentAuthScreen = ((segments as unknown as string[])[1] ?? '') as string;
 
     // Screens authenticated users must stay on to finish registration
     const registrationFlowScreens = ['register', 'verify-otp', 'role-select', 'permissions', 'contacts-permission'];

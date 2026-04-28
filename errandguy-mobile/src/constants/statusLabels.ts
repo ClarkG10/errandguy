@@ -12,6 +12,7 @@ export const STATUS_LABELS: Record<BookingStatus, string> = {
   delivered: 'Delivered',
   completed: 'Completed',
   cancelled: 'Cancelled',
+  no_runner: 'No Runner Available',
 };
 
 export const STATUS_COLORS: Record<BookingStatus, string> = {
@@ -26,4 +27,5 @@ export const STATUS_COLORS: Record<BookingStatus, string> = {
   delivered: '#22C55E',
   completed: '#22C55E',
   cancelled: '#EF4444',
+  no_runner: '#9CA3AF',
 };

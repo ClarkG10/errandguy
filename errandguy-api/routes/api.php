@@ -93,7 +93,9 @@ Route::prefix('v1')->group(function () {
         // Customer booking routes
         Route::middleware(['role:customer'])->prefix('bookings')->group(function () {
             Route::get('/', [BookingController::class, 'index']);
-            Route::post('/', [BookingController::class, 'store']);
+            // Cap booking creation to deter spam/scripted floods. Real users
+            // never need more than a handful per minute.
+            Route::post('/', [BookingController::class, 'store'])->middleware('throttle:15,1');
             Route::get('/active', [BookingController::class, 'active']);
             Route::post('/estimate', [BookingController::class, 'estimate']);
             Route::get('/{id}', [BookingController::class, 'show']);
@@ -154,7 +156,9 @@ Route::prefix('v1')->group(function () {
         // Wallet routes
         Route::prefix('wallet')->group(function () {
             Route::get('/balance', [WalletController::class, 'balance']);
-            Route::post('/top-up', [WalletController::class, 'topUp']);
+            // Financial endpoint — strict rate-limit on top-up to deter
+            // abuse / accidental double-tap charges.
+            Route::post('/top-up', [WalletController::class, 'topUp'])->middleware('throttle:5,1');
             Route::get('/transactions', [WalletController::class, 'transactions']);
         });
 

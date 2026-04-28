@@ -113,6 +113,13 @@ export interface Booking {
     phone?: string | null;
     avatar_url?: string | null;
   } | null;
+  /** Status timeline; populated by /bookings/{id} and the active-booking
+   *  preload so the tracking screen can render instantly without a
+   *  follow-up /track call. */
+  status_logs?: BookingStatusLog[];
+  /** Fee charged at cancellation time (server-computed via
+   *  CancellationPolicy). Null until the booking is cancelled. */
+  cancellation_fee?: number | null;
 }
 
 export interface BookingStatusLog {
