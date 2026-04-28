@@ -201,10 +201,13 @@ class RunnerErrandController extends Controller
             return response()->json(['data' => []]);
         }
 
-        // Negotiate-mode bookings still open
+        // Negotiate-mode bookings still open. Only the minimal customer
+        // fields are eager-loaded; the runner has not been matched yet
+        // and must not be able to harvest the customer's phone / email
+        // by browsing — and tapping decline on — every broadcast.
         $bookings = Booking::with([
                 'errandType',
-                'customer:id,phone,email,full_name,avatar_url,role,status,email_verified,phone_verified,wallet_balance,avg_rating,total_ratings,created_at',
+                'customer:id,full_name,avatar_url,role,avg_rating,total_ratings,created_at',
             ])
             ->where('status', 'pending')
             ->where('pricing_mode', 'negotiate')

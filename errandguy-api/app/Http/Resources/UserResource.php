@@ -9,17 +9,26 @@ class UserResource extends JsonResource
 {
     public function toArray(Request $request): array
     {
+        // PII / financial fields are only revealed to the user themself.
+        // Otherwise, when this resource is nested inside a BookingResource
+        // (so the customer sees the runner, or the runner sees the
+        // customer), email / wallet_balance would leak across accounts.
+        $isSelf = $request->user()?->id === $this->id;
+
         return [
             'id' => $this->id,
+            // Phone stays visible to the counterparty so they can call /
+            // SMS during the errand — it's the whole point of the tracking
+            // screen's "Call" button.
             'phone' => $this->phone,
-            'email' => $this->email,
+            'email' => $this->when($isSelf, $this->email),
             'full_name' => $this->full_name,
             'avatar_url' => $this->avatar_url,
             'role' => $this->role,
-            'status' => $this->status,
-            'email_verified' => $this->email_verified,
-            'phone_verified' => $this->phone_verified,
-            'wallet_balance' => $this->wallet_balance,
+            'status' => $this->when($isSelf, $this->status),
+            'email_verified' => $this->when($isSelf, $this->email_verified),
+            'phone_verified' => $this->when($isSelf, $this->phone_verified),
+            'wallet_balance' => $this->when($isSelf, $this->wallet_balance),
             'avg_rating' => $this->avg_rating,
             'total_ratings' => $this->total_ratings,
             'created_at' => $this->created_at,

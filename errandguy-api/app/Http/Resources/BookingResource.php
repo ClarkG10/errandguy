@@ -9,6 +9,15 @@ class BookingResource extends JsonResource
 {
     public function toArray(Request $request): array
     {
+        // If the viewer isn't yet a participant (e.g. an online runner
+        // browsing the broadcast list before accepting), hide pickup /
+        // dropoff contact phone + name so a runner can't harvest leads
+        // by tapping "decline" on every job. Same for receipts /
+        // signatures / item photos.
+        $isParticipant = $this->isParticipant();
+        $isAdmin = $request->user() instanceof \App\Models\AdminUser;
+        $canSeeContacts = $isParticipant || $isAdmin;
+
         return [
             'id' => $this->id,
             'booking_number' => $this->booking_number,
@@ -28,13 +37,13 @@ class BookingResource extends JsonResource
             'pickup_address' => $this->pickup_address,
             'pickup_lat' => $this->pickup_lat,
             'pickup_lng' => $this->pickup_lng,
-            'pickup_contact_name' => $this->pickup_contact_name,
-            'pickup_contact_phone' => $this->pickup_contact_phone,
+            'pickup_contact_name' => $this->when($canSeeContacts, $this->pickup_contact_name),
+            'pickup_contact_phone' => $this->when($canSeeContacts, $this->pickup_contact_phone),
             'dropoff_address' => $this->dropoff_address,
             'dropoff_lat' => $this->dropoff_lat,
             'dropoff_lng' => $this->dropoff_lng,
-            'dropoff_contact_name' => $this->dropoff_contact_name,
-            'dropoff_contact_phone' => $this->dropoff_contact_phone,
+            'dropoff_contact_name' => $this->when($canSeeContacts, $this->dropoff_contact_name),
+            'dropoff_contact_phone' => $this->when($canSeeContacts, $this->dropoff_contact_phone),
             'description' => $this->description,
             'special_instructions' => $this->special_instructions,
             'item_photos' => $this->item_photos,
