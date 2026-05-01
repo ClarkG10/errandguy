@@ -292,26 +292,8 @@ export default function ActiveErrandScreen() {
     }
   }, [booking, sosLoading]);
 
-  if (!booking) {
-    if (fetchedQ.loading) {
-      return (
-        <SafeAreaView className="flex-1 bg-background items-center justify-center" edges={['top']}>
-          <Text className="text-sm font-montserrat text-textSecondary">Loading errand…</Text>
-        </SafeAreaView>
-      );
-    }
-    return (
-      <SafeAreaView className="flex-1 bg-background items-center justify-center px-8" edges={['top']}>
-        <Text className="text-base font-montserrat-bold text-textPrimary mb-1">Errand unavailable</Text>
-        <Text className="text-xs font-montserrat text-textSecondary text-center mb-4">
-          This errand is no longer accessible. It may have been reassigned or removed.
-        </Text>
-        <Button title="Go Back" variant="outline" onPress={() => router.canGoBack() ? router.back() : router.replace('/(runner)/(tabs)')} />
-      </SafeAreaView>
-    );
-  }
-
   const handleStatusUpdate = async () => {
+    if (!booking) return;
     const nextStatus = getNextStatus(booking.status, errandSlug);
     if (!nextStatus) return;
 
@@ -499,6 +481,30 @@ export default function ActiveErrandScreen() {
       },
     }),
   ).current;
+
+  // ── Early-return guard MUST stay below every hook above so the hook
+  // call order is identical between the loading and resolved renders.
+  // Putting this gate higher caused the “Rendered more hooks than during
+  // the previous render” crash when fetchedQ.data flipped from null to a
+  // resolved booking object.
+  if (!booking) {
+    if (fetchedQ.loading) {
+      return (
+        <SafeAreaView className="flex-1 bg-background items-center justify-center" edges={['top']}>
+          <Text className="text-sm font-montserrat text-textSecondary">Loading errand…</Text>
+        </SafeAreaView>
+      );
+    }
+    return (
+      <SafeAreaView className="flex-1 bg-background items-center justify-center px-8" edges={['top']}>
+        <Text className="text-base font-montserrat-bold text-textPrimary mb-1">Errand unavailable</Text>
+        <Text className="text-xs font-montserrat text-textSecondary text-center mb-4">
+          This errand is no longer accessible. It may have been reassigned or removed.
+        </Text>
+        <Button title="Go Back" variant="outline" onPress={() => router.canGoBack() ? router.back() : router.replace('/(runner)/(tabs)')} />
+      </SafeAreaView>
+    );
+  }
 
   return (
     <SafeAreaView className="flex-1 bg-background" edges={[]}>

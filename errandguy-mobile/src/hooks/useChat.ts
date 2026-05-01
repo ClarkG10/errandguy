@@ -258,7 +258,12 @@ export function useChat(bookingId: string) {
 
     const tick = async () => {
       try {
-        const response = await chatService.getMessages(bookingId, { limit: 50 });
+        // Bypass the GET micro-cache — the whole point of this tick is
+        // to discover messages we don't yet have. Without `noCache` the
+        // 10s response cache on `getMessages` would short-circuit every
+        // poll for up to 10 seconds, so receivers could wait that long
+        // to see a freshly-sent message (and its image).
+        const response = await chatService.getMessages(bookingId, { limit: 50, noCache: true } as any);
         if (cancelled) return;
         const fresh: Message[] = response.data?.data ?? [];
         if (fresh.length === 0) return;

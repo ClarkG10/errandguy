@@ -11,8 +11,26 @@ import {
 import { Image } from 'expo-image';
 import { Download, X } from 'lucide-react-native';
 import * as FileSystem from 'expo-file-system/legacy';
-import * as MediaLibrary from 'expo-media-library';
 import { toast } from '../../stores/toastStore';
+
+/**
+ * `expo-media-library` is a native module — importing it eagerly crashes
+ * the JS bundle on dev clients that haven't been rebuilt since we added
+ * the dependency. Resolve it lazily so the rest of the chat keeps working
+ * and we can fall back to a friendly toast that tells the user to rebuild.
+ */
+type MediaLibraryModule = typeof import('expo-media-library');
+let mediaLibraryCache: MediaLibraryModule | null | undefined;
+function tryRequireMediaLibrary(): MediaLibraryModule | null {
+  if (mediaLibraryCache !== undefined) return mediaLibraryCache;
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    mediaLibraryCache = require('expo-media-library') as MediaLibraryModule;
+  } catch {
+    mediaLibraryCache = null;
+  }
+  return mediaLibraryCache;
+}
 
 interface ImageLightboxProps {
   /** Remote (CDN) image URL. Required to render anything. */
@@ -34,6 +52,13 @@ export function ImageLightbox({ uri, visible, onClose }: ImageLightboxProps) {
 
   const handleDownload = async () => {
     if (!uri || downloading) return;
+    const MediaLibrary = tryRequireMediaLibrary();
+    if (!MediaLibrary) {
+      // The native module isn't linked yet — happens after pulling fresh
+      // code into a dev client built before expo-media-library landed.
+      toast.error('Save unavailable. Please rebuild the app to enable downloads.');
+      return;
+    }
     setDownloading(true);
     try {
       const { status } = await MediaLibrary.requestPermissionsAsync();

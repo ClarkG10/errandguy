@@ -11,14 +11,18 @@ const invalidateChat = (bookingId?: string) => {
 export const chatService = {
   getMessages(
     bookingId: string,
-    params?: { before?: string; limit?: number },
+    params?: { before?: string; limit?: number; noCache?: boolean },
   ) {
     // Realtime channel pushes new messages, so we can cache aggressively.
     // NOTE: do not cache cursor-paginated requests — only the head page.
+    // `noCache` lets the polling fallback bypass the micro-cache so it
+    // can actually discover newly-arrived messages on every tick.
     const isHeadPage = !params?.before;
+    const { noCache, ...query } = params ?? {};
     return api.get(`/chat/${bookingId}/messages`, {
-      params,
-      ...(isHeadPage ? { cacheTtlMs: 10_000 } : {}),
+      params: query,
+      ...(isHeadPage && !noCache ? { cacheTtlMs: 10_000 } : {}),
+      ...(noCache ? { noCache: true } : {}),
     } as any);
   },
 
