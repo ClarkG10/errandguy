@@ -16,9 +16,22 @@ class UpdateLocationRequest extends FormRequest
         return [
             'lat' => ['required', 'numeric', 'between:-90,90'],
             'lng' => ['required', 'numeric', 'between:-180,180'],
+            // iOS / Android GPS use -1 to mean "unknown" for heading/speed.
+            // We accept any numeric here and sanitize in prepareForValidation
+            // so callers don't have to special-case the sentinel value.
             'heading' => ['nullable', 'numeric'],
-            'speed' => ['nullable', 'numeric', 'min:0'],
+            'speed' => ['nullable', 'numeric'],
             'accuracy' => ['nullable', 'numeric', 'min:0'],
         ];
+    }
+
+    protected function prepareForValidation(): void
+    {
+        $speed = $this->input('speed');
+        $heading = $this->input('heading');
+        $this->merge([
+            'speed' => is_numeric($speed) && $speed < 0 ? null : $speed,
+            'heading' => is_numeric($heading) && $heading < 0 ? null : $heading,
+        ]);
     }
 }

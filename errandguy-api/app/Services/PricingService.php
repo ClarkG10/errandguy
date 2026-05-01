@@ -136,7 +136,7 @@ class PricingService
                 $vehicleTypes,
             );
             $maxTotal = empty($totals) ? 0 : max($totals);
-            $minTotal = empty($totals) ? 0 : min(array_filter($totals)) ?: $minNegotiate;
+            $minTotal = empty($totals) ? 0 : (min(array_filter($totals)) ?: $minNegotiate);
             $estimates['recommended_min'] = max($minNegotiate, round($minTotal, 2));
             $estimates['recommended_max'] = max(1000.0, round($maxTotal * 3, 2));
         }

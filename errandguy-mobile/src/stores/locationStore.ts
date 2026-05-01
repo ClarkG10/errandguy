@@ -62,11 +62,16 @@ export const useLocationStore = create<LocationState>((set, get) => ({
         const acc = location.coords.accuracy;
         if (typeof acc === 'number' && acc > 75) return;
 
+        const rawHeading = location.coords.heading;
+        const rawSpeed = location.coords.speed;
         const coords = {
           lat: location.coords.latitude,
           lng: location.coords.longitude,
-          heading: location.coords.heading ?? undefined,
-          speed: location.coords.speed ?? undefined,
+          // iOS/Android emit -1 when heading/speed are unknown; treat
+          // those as "no data" instead of forwarding nonsense to the API.
+          heading:
+            typeof rawHeading === 'number' && rawHeading >= 0 ? rawHeading : undefined,
+          speed: typeof rawSpeed === 'number' && rawSpeed >= 0 ? rawSpeed : undefined,
         };
 
         // Heartbeat: always send if 30s have passed since the last push,
