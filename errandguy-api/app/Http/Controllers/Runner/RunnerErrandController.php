@@ -266,9 +266,15 @@ class RunnerErrandController extends Controller
         // Filter by runner's location and preferred types
         $preferredTypes = $profile->preferred_types ?? [];
         $filtered = $bookings->filter(function (Booking $booking) use ($profile, $preferredTypes) {
-            // Filter by preferred types
-            if (!empty($preferredTypes) && !in_array($booking->errand_type_id, $preferredTypes)) {
-                return false;
+            // Filter by preferred types — preferred_types stores errand-type
+            // slugs (e.g. "delivery"), not UUIDs. Compare against the eager-
+            // loaded errandType->slug, otherwise every booking is filtered
+            // out and the runner sees an empty list.
+            if (!empty($preferredTypes)) {
+                $slug = $booking->errandType?->slug;
+                if (!$slug || !in_array($slug, $preferredTypes, true)) {
+                    return false;
+                }
             }
 
             // Filter by distance (within working area or 10km default)
