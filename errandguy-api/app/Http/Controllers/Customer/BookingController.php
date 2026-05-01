@@ -187,9 +187,16 @@ class BookingController extends Controller
             : null;
 
         if ($validated['pricing_mode'] === 'fixed') {
-            $job = MatchRunnerJob::dispatch($booking->id);
             if ($matchAt && $matchAt->isFuture()) {
-                $job->delay($matchAt);
+                // Scheduled bookings: defer to the queue at $matchAt.
+                MatchRunnerJob::dispatch($booking->id)->delay($matchAt);
+            } else {
+                // Immediate bookings: run matching synchronously inside the
+                // request so the customer doesn't depend on a queue worker
+                // being healthy. The matching call is read-mostly and
+                // typically finishes in well under a second; the booking
+                // row is updated in the same DB transaction the job uses.
+                MatchRunnerJob::dispatchSync($booking->id);
             }
             // Auto-cancel if no runner accepts within the system timeout.
             $autoCancelMinutes = (int) \App\Models\SystemConfig::getValue('auto_cancel_timeout_minutes', '30');
@@ -203,9 +210,12 @@ class BookingController extends Controller
             $booking->update([
                 'negotiate_expires_at' => $broadcastAt->copy()->addMinutes($negotiateMinutes),
             ]);
-            $broadcastJob = BroadcastToRunnersJob::dispatch($booking->id);
+            // Run the broadcast inline for immediate bookings (same reasoning
+            // as fixed-mode above — don't block on a queue worker).
             if ($matchAt && $matchAt->isFuture()) {
-                $broadcastJob->delay($matchAt);
+                BroadcastToRunnersJob::dispatch($booking->id)->delay($matchAt);
+            } else {
+                BroadcastToRunnersJob::dispatchSync($booking->id);
             }
             ExpireNegotiateBookingJob::dispatch($booking->id)
                 ->delay($broadcastAt->copy()->addMinutes($negotiateMinutes));
