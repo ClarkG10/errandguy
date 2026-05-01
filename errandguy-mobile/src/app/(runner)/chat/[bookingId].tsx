@@ -14,6 +14,7 @@ import {
   type AppStateStatus,
 } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
+import { Image } from 'expo-image';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import { Send, Camera, Phone, Check, CheckCheck, Clock, AlertCircle, RotateCw } from 'lucide-react-native';
 import { BackButton } from '../../../components/ui/BackButton';
@@ -21,6 +22,7 @@ import { useAuthStore } from '../../../stores/authStore';
 import { useRunnerStore } from '../../../stores/runnerStore';
 import { useChat } from '../../../hooks/useChat';
 import { ImagePickerModal } from '../../../components/ui/ImagePickerModal';
+import { ImageLightbox } from '../../../components/ui/ImageLightbox';
 import { RUNNER_QUICK_MESSAGES } from '../../../constants/quickMessages';
 import type { Message } from '../../../types';
 import { toast } from '../../../stores/toastStore';
@@ -65,6 +67,7 @@ export default function RunnerChatScreen() {
   const [input, setInput] = useState('');
   const [sending, setSending] = useState(false);
   const [imagePickerVisible, setImagePickerVisible] = useState(false);
+  const [previewUri, setPreviewUri] = useState<string | null>(null);
   const flatListRef = useRef<FlatList<Message>>(null);
 
   // Fetch initial messages and mark as read
@@ -185,13 +188,29 @@ export default function RunnerChatScreen() {
             }`}
             style={isMine && item.pending ? { opacity: 0.75 } : undefined}
           >
-            <Text
-              className={`text-sm font-montserrat ${
-                isMine ? 'text-white' : 'text-textPrimary'
-              }`}
-            >
-              {item.content}
-            </Text>
+            {item.image_url ? (
+              <Pressable
+                onPress={() => setPreviewUri(item.image_url!)}
+                accessibilityRole="imagebutton"
+                accessibilityLabel="View image full screen"
+              >
+                <Image
+                  source={{ uri: item.image_url }}
+                  style={{ width: 192, height: 192, borderRadius: 12, marginBottom: item.content ? 6 : 0 }}
+                  contentFit="cover"
+                  transition={150}
+                />
+              </Pressable>
+            ) : null}
+            {item.content ? (
+              <Text
+                className={`text-sm font-montserrat ${
+                  isMine ? 'text-white' : 'text-textPrimary'
+                }`}
+              >
+                {item.content}
+              </Text>
+            ) : null}
           </View>
           {/* Meta row: timestamp + delivery indicator. The indicator only
               appears on the runner's own messages; for failed sends the
@@ -415,6 +434,12 @@ export default function RunnerChatScreen() {
         onConfirm={handleImageSend}
         title="Send Photo"
         subtitle="Share a photo in the chat"
+      />
+
+      <ImageLightbox
+        uri={previewUri}
+        visible={previewUri !== null}
+        onClose={() => setPreviewUri(null)}
       />
     </SafeAreaView>
   );

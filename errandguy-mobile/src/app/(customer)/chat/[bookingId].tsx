@@ -22,6 +22,7 @@ import { useBookingStore } from '../../../stores/bookingStore';
 import { useChat } from '../../../hooks/useChat';
 import { Avatar } from '../../../components/ui/Avatar';
 import { ImagePickerModal } from '../../../components/ui/ImagePickerModal';
+import { ImageLightbox } from '../../../components/ui/ImageLightbox';
 import { formatTime } from '../../../utils/formatDate';
 import { CUSTOMER_QUICK_MESSAGES } from '../../../constants/quickMessages';
 import type { Message } from '../../../types';
@@ -49,6 +50,7 @@ export default function ChatScreen() {
   const [inputText, setInputText] = useState('');
   const [sending, setSending] = useState(false);
   const [imagePickerVisible, setImagePickerVisible] = useState(false);
+  const [previewUri, setPreviewUri] = useState<string | null>(null);
   const flatListRef = useRef<FlatList<Message>>(null);
 
   // Runner contact (only available once a runner is matched on the active booking).
@@ -178,11 +180,17 @@ export default function ChatScreen() {
             style={isMe && item.pending ? { opacity: 0.75 } : undefined}
           >
             {item.image_url && (
-              <Image
-                source={{ uri: item.image_url }}
-                className="w-48 h-48 rounded-lg mb-1"
-                contentFit="cover"
-              />
+              <Pressable
+                onPress={() => setPreviewUri(item.image_url!)}
+                accessibilityRole="imagebutton"
+                accessibilityLabel="View image full screen"
+              >
+                <Image
+                  source={{ uri: item.image_url }}
+                  className="w-48 h-48 rounded-lg mb-1"
+                  contentFit="cover"
+                />
+              </Pressable>
             )}
             {item.content && (
               <Text
@@ -429,6 +437,12 @@ export default function ChatScreen() {
         onConfirm={handleImageSend}
         title="Send Photo"
         subtitle="Share a photo in the chat"
+      />
+
+      <ImageLightbox
+        uri={previewUri}
+        visible={previewUri !== null}
+        onClose={() => setPreviewUri(null)}
       />
     </SafeAreaView>
   );

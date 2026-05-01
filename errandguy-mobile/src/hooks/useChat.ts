@@ -1,4 +1,5 @@
 import { useEffect, useCallback, useState, useRef } from 'react';
+import { AppState, type AppStateStatus } from 'react-native';
 import { useChatStore } from '../stores/chatStore';
 import { chatService } from '../services/chat.service';
 import { CacheService, CacheTTL } from '../services/cache.service';
@@ -241,16 +242,20 @@ export function useChat(bookingId: string) {
     };
   }, [bookingId, addMessage]);
 
-  // Polling fallback for new messages. Realtime above is the primary
-  // path but it can drop silently (cellular handoff, RLS misconfig,
-  // table not in publication). Re-fetching the head every 6s while
-  // the screen is mounted means a dropped websocket adds at most ~6s
-  // of latency instead of stalling the conversation forever. We dedup
-  // by id and only `addMessage` for ids the store hasn't seen, so
-  // pagination state and the user's scroll position are untouched.
+  // Realtime fallback. The Supabase postgres_changes channel above is
+  // the primary push path, but it depends on the realtime publication
+  // delivering rows under RLS — if the mobile client doesn't carry a
+  // Supabase JWT (we authenticate via Laravel Sanctum), the SELECT
+  // policy on `messages` blocks the subscription and pushes silently
+  // never arrive. Polling closes that gap. While the screen is in the
+  // foreground we tail the conversation every 2s; when the app is
+  // backgrounded we stop entirely and refetch once on resume so we
+  // don't burn battery or rate-limit while the user is elsewhere.
   useEffect(() => {
     if (!bookingId) return;
     let cancelled = false;
+    let intervalId: ReturnType<typeof setInterval> | null = null;
+
     const tick = async () => {
       try {
         const response = await chatService.getMessages(bookingId, { limit: 50 });
@@ -266,10 +271,32 @@ export function useChat(bookingId: string) {
         /* ignore — next tick will retry */
       }
     };
-    const id = setInterval(tick, 6_000);
+
+    const start = () => {
+      if (intervalId) return;
+      // Tick immediately so resume-from-background doesn't wait 2s for
+      // the next interval edge to surface anything new.
+      tick();
+      intervalId = setInterval(tick, 2_000);
+    };
+    const stop = () => {
+      if (intervalId) {
+        clearInterval(intervalId);
+        intervalId = null;
+      }
+    };
+
+    if (AppState.currentState === 'active') start();
+
+    const sub = AppState.addEventListener('change', (state: AppStateStatus) => {
+      if (state === 'active') start();
+      else stop();
+    });
+
     return () => {
       cancelled = true;
-      clearInterval(id);
+      stop();
+      sub.remove();
     };
   }, [bookingId, addMessage]);
 

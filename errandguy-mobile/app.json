@@ -20,6 +20,7 @@
         "NSLocationAlwaysAndWhenInUseUsageDescription": "ErrandGuy uses your location in the background to update your position while on an active errand.",
         "NSCameraUsageDescription": "ErrandGuy needs camera access to take photos of items and delivery proofs.",
         "NSPhotoLibraryUsageDescription": "ErrandGuy needs photo library access to upload item photos.",
+        "NSPhotoLibraryAddUsageDescription": "ErrandGuy saves chat images to your photo library when you tap Save.",
         "NSMicrophoneUsageDescription": "ErrandGuy needs microphone access for in-app calls.",
         "ITSAppUsesNonExemptEncryption": false
       }
@@ -57,6 +58,14 @@
       "expo-location",
       "expo-camera",
       "expo-image-picker",
+      [
+        "expo-media-library",
+        {
+          "photosPermission": "ErrandGuy needs photo library access to upload item photos.",
+          "savePhotosPermission": "ErrandGuy saves chat images to your photo library when you tap Save.",
+          "isAccessMediaLocationEnabled": false
+        }
+      ],
       "expo-font",
       "@rnmapbox/maps",
       "expo-image"
