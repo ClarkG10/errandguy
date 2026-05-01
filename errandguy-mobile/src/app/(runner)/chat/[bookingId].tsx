@@ -23,6 +23,7 @@ import { useRunnerStore } from '../../../stores/runnerStore';
 import { useChat } from '../../../hooks/useChat';
 import { ImagePickerModal } from '../../../components/ui/ImagePickerModal';
 import { ImageLightbox } from '../../../components/ui/ImageLightbox';
+import { resolveImageUrl } from '../../../utils/resolveImageUrl';
 import { RUNNER_QUICK_MESSAGES } from '../../../constants/quickMessages';
 import type { Message } from '../../../types';
 import { toast } from '../../../stores/toastStore';
@@ -190,15 +191,16 @@ export default function RunnerChatScreen() {
           >
             {item.image_url ? (
               <Pressable
-                onPress={() => setPreviewUri(item.image_url!)}
+                onPress={() => setPreviewUri(resolveImageUrl(item.image_url))}
                 accessibilityRole="imagebutton"
                 accessibilityLabel="View image full screen"
               >
                 <Image
-                  source={{ uri: item.image_url }}
+                  source={{ uri: resolveImageUrl(item.image_url)! }}
                   style={{ width: 192, height: 192, borderRadius: 12, marginBottom: item.content ? 6 : 0 }}
                   contentFit="cover"
                   transition={150}
+                  cachePolicy="memory-disk"
                 />
               </Pressable>
             ) : null}

@@ -10,26 +10,40 @@ import {
 } from 'react-native';
 import { Image } from 'expo-image';
 import { Download, X } from 'lucide-react-native';
-import * as FileSystem from 'expo-file-system/legacy';
 import { toast } from '../../stores/toastStore';
 
 /**
- * `expo-media-library` is a native module — importing it eagerly crashes
- * the JS bundle on dev clients that haven't been rebuilt since we added
- * the dependency. Resolve it lazily so the rest of the chat keeps working
- * and we can fall back to a friendly toast that tells the user to rebuild.
+ * Both `expo-media-library` and `expo-file-system` are native modules.
+ * If the dev client hasn't been rebuilt since they were added (or version-
+ * bumped), `import` and even Metro-static `require()` will crash the
+ * entire JS bundle at module evaluation. We resolve them through a
+ * fully-opaque indirection (an array index + spread) so Metro's static
+ * analyzer can't pre-bundle the dependency, and any failure is caught
+ * by the try/catch — falling back to a friendly toast.
  */
-type MediaLibraryModule = typeof import('expo-media-library');
-let mediaLibraryCache: MediaLibraryModule | null | undefined;
-function tryRequireMediaLibrary(): MediaLibraryModule | null {
-  if (mediaLibraryCache !== undefined) return mediaLibraryCache;
+function tryRequire<T = any>(moduleName: string): T | null {
   try {
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    mediaLibraryCache = require('expo-media-library') as MediaLibraryModule;
+    // Indirect access prevents Metro from statically resolving the
+    // dependency; the require call only fires when the user taps Save.
+    const req = (globalThis as any).require ?? (() => null);
+    return req(moduleName) as T;
   } catch {
-    mediaLibraryCache = null;
+    return null;
   }
+}
+
+let mediaLibraryCache: any | null | undefined;
+let fileSystemCache: any | null | undefined;
+function getMediaLibrary(): any | null {
+  if (mediaLibraryCache !== undefined) return mediaLibraryCache;
+  mediaLibraryCache = tryRequire('expo-media-library');
   return mediaLibraryCache;
+}
+function getFileSystem(): any | null {
+  if (fileSystemCache !== undefined) return fileSystemCache;
+  // The legacy submodule has the imperative downloadAsync we need.
+  fileSystemCache = tryRequire('expo-file-system/legacy');
+  return fileSystemCache;
 }
 
 interface ImageLightboxProps {
@@ -52,8 +66,9 @@ export function ImageLightbox({ uri, visible, onClose }: ImageLightboxProps) {
 
   const handleDownload = async () => {
     if (!uri || downloading) return;
-    const MediaLibrary = tryRequireMediaLibrary();
-    if (!MediaLibrary) {
+    const MediaLibrary = getMediaLibrary();
+    const FileSystem = getFileSystem();
+    if (!MediaLibrary || !FileSystem) {
       // The native module isn't linked yet — happens after pulling fresh
       // code into a dev client built before expo-media-library landed.
       toast.error('Save unavailable. Please rebuild the app to enable downloads.');
