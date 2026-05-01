@@ -48,7 +48,7 @@ export function RateCustomerModal({
               keyboardShouldPersistTaps="handled"
               showsVerticalScrollIndicator={false}
             >
-              <View className="bg-background rounded-3xl p-6 w-full max-w-sm">
+              <View className="bg-background rounded-2xl p-6 w-full max-w-sm">
                 <View className="items-center mb-4">
                   <Avatar uri={customerAvatar} name={customerName} size="xl" />
                   <Text className="text-base font-montserrat-bold text-textPrimary mt-2">

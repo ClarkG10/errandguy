@@ -698,14 +698,27 @@ export default function TrackingScreen() {
             </Mapbox.MarkerView>
           )}
 
-          {/* Route line */}
+          {/* Route line — cased so the polyline stays legible over
+              busy map tiles. Dark casing + bright fill is the same
+              treatment used on the runner navigator and matches the
+              pattern Mapbox/Google use for active routes. */}
           {routeGeoJSON && (
             <Mapbox.ShapeSource id="routeLine" shape={routeGeoJSON}>
               <Mapbox.LineLayer
+                id="routeLineCasing"
+                style={{
+                  lineColor: '#1E3A8A',
+                  lineWidth: 8,
+                  lineCap: 'round',
+                  lineJoin: 'round',
+                  lineOpacity: 0.95,
+                }}
+              />
+              <Mapbox.LineLayer
                 id="routeLineLayer"
                 style={{
-                  lineColor: '#2563EB',
-                  lineWidth: 4,
+                  lineColor: '#3B82F6',
+                  lineWidth: 5,
                   lineCap: 'round',
                   lineJoin: 'round',
                 }}

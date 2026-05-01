@@ -244,14 +244,27 @@ export function RunnerActiveMap({
           </Mapbox.MarkerView>
         )}
 
-        {/* Route line runner → active destination */}
+        {/* Route line runner → active destination.
+            Cased layer (dark outline + bright fill) keeps the polyline
+            legible on busy/satellite tiles where a single solid line
+            would disappear into the underlying road geometry. */}
         {routeGeoJSON && (
           <Mapbox.ShapeSource id="r-route" shape={routeGeoJSON}>
             <Mapbox.LineLayer
+              id="r-route-casing"
+              style={{
+                lineColor: inPickupPhase ? '#1E3A8A' : '#7F1D1D',
+                lineWidth: 8,
+                lineCap: 'round',
+                lineJoin: 'round',
+                lineOpacity: 0.95,
+              }}
+            />
+            <Mapbox.LineLayer
               id="r-route-line"
               style={{
-                lineColor: inPickupPhase ? '#2563EB' : '#DC2626',
-                lineWidth: 4,
+                lineColor: inPickupPhase ? '#3B82F6' : '#EF4444',
+                lineWidth: 5,
                 lineCap: 'round',
                 lineJoin: 'round',
               }}

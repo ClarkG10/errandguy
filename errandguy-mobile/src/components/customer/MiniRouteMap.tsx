@@ -137,14 +137,25 @@ export function MiniRouteMap({
             </Mapbox.MarkerView>
           )}
 
-          {/* Route line */}
+          {/* Route line — cased so the polyline stays visible over
+              dense road tiles in the booking review preview. */}
           {routeGeoJSON && (
             <Mapbox.ShapeSource id="routeLine" shape={routeGeoJSON}>
               <Mapbox.LineLayer
+                id="routeLineCasing"
+                style={{
+                  lineColor: '#1E3A8A',
+                  lineWidth: 7,
+                  lineCap: 'round',
+                  lineJoin: 'round',
+                  lineOpacity: 0.95,
+                }}
+              />
+              <Mapbox.LineLayer
                 id="routeLineLayer"
                 style={{
-                  lineColor: '#2563EB',
-                  lineWidth: 4,
+                  lineColor: '#3B82F6',
+                  lineWidth: 4.5,
                   lineCap: 'round',
                   lineJoin: 'round',
                 }}

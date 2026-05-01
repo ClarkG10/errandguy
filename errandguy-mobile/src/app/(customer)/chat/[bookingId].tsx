@@ -16,7 +16,7 @@ import { Image } from 'expo-image';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import { ArrowLeft, Send, Camera, Phone } from 'lucide-react-native';
 import { ActivityIndicator } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useAuthStore } from '../../../stores/authStore';
 import { useBookingStore } from '../../../stores/bookingStore';
 import { useChat } from '../../../hooks/useChat';
@@ -32,6 +32,7 @@ export default function ChatScreen() {
   const { bookingId } = useLocalSearchParams<{ bookingId: string }>();
   const user = useAuthStore((s) => s.user);
   const activeBooking = useBookingStore((s) => s.activeBooking);
+  const insets = useSafeAreaInsets();
 
   const {
     messages,
@@ -114,15 +115,16 @@ export default function ChatScreen() {
       const text = content ?? inputText.trim();
       if (!text && !imageUrl) return;
 
-      setSending(true);
+      // Clear the input + scroll BEFORE awaiting so the message appears
+      // instantly. The optimistic bubble inside chatSendMessage gives
+      // the "sent" feedback while the API settles in the background.
+      if (!content) setInputText('');
+      setTimeout(() => flatListRef.current?.scrollToEnd({ animated: true }), 30);
       try {
         await chatSendMessage(text || undefined, imageUrl);
-        setInputText('');
-        flatListRef.current?.scrollToEnd({ animated: true });
       } catch {
         toast.error('Failed to send message');
-      } finally {
-        setSending(false);
+        if (!content) setInputText((prev) => (prev ? prev : text));
       }
     },
     [bookingId, inputText, chatSendMessage],
@@ -229,14 +231,13 @@ export default function ChatScreen() {
 
       <KeyboardAvoidingView
         className="flex-1"
-        // 'padding' on iOS, 'height' on Android. Previously we passed
-        // `undefined` on Android which meant the IME would slide UP and
-        // the system gesture/IME bar would still cover the bottom row
-        // — user couldn't tap the send button or even the bottom of
-        // the text input. Combined with `softwareKeyboardLayoutMode:
-        // "resize"` in app.json (was 'pan'), the layout actually
-        // shrinks so the input stays visible above the keyboard.
-        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+        // 'padding' on iOS keeps the input above the IME. On Android we
+        // pass `undefined` and rely on `softwareKeyboardLayoutMode:
+        // "resize"` (see app.json) — the OS shrinks our window so the
+        // composer naturally floats above the keyboard. Crucially, we
+        // also pad the input by the bottom safe-area inset below so the
+        // gesture/nav bar can't cover the send button.
+        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
         // The header above is ~56pt tall + the safe-area top inset. Without
         // an offset the input row hides BEHIND the keyboard on notched
         // iPhones because KAV measures from the screen edge, not from the
@@ -295,13 +296,20 @@ export default function ChatScreen() {
         <ScrollView
           horizontal
           showsHorizontalScrollIndicator={false}
+          // Explicit fixed height + flexShrink/flexGrow=0 so the strip
+          // never stretches to fill leftover vertical space (an Android
+          // flex quirk would otherwise turn each pill into a tall capsule).
+          style={{ height: 46, flexGrow: 0, flexShrink: 0 }}
           className="border-t border-divider"
-          contentContainerStyle={{ paddingHorizontal: 16, paddingVertical: 8, gap: 8 }}
+          contentContainerStyle={{ paddingHorizontal: 12, paddingVertical: 6, gap: 8, alignItems: 'center' }}
         >
           {CUSTOMER_QUICK_MESSAGES.map((msg) => (
             <Pressable
               key={msg}
-              className={`px-3 py-1.5 rounded-full ${sending ? 'bg-gray-100' : 'bg-primaryLight'}`}
+              // Explicit height keeps the pill from stretching to fill
+              // the ScrollView's cross-axis when a parent flex bounds it.
+              style={{ height: 32 }}
+              className={`px-3 items-center justify-center rounded-full ${sending ? 'bg-gray-100' : 'bg-primaryLight'}`}
               onPress={() => handleSend(msg)}
               disabled={sending}
             >
@@ -312,8 +320,12 @@ export default function ChatScreen() {
           ))}
         </ScrollView>
 
-        {/* Input Area */}
-        <View className="flex-row items-end px-4 py-3 border-t border-divider bg-surface">
+        {/* Input Area — bottom padding tracks the system inset so the
+            Android gesture/nav bar never overlaps the send button. */}
+        <View
+          className="flex-row items-end px-4 pt-3 border-t border-divider bg-surface"
+          style={{ paddingBottom: Math.max(insets.bottom, 12) }}
+        >
           <Pressable
             className="mr-2 mb-1.5"
             onPress={() => setImagePickerVisible(true)}
@@ -325,7 +337,7 @@ export default function ChatScreen() {
             <Camera size={24} color={sending ? '#94A3B8' : '#475569'} />
           </Pressable>
           <TextInput
-            className="flex-1 bg-background border border-divider rounded-3xl px-4 py-2.5 text-sm font-montserrat text-textPrimary"
+            className="flex-1 bg-background border border-divider rounded-2xl px-4 py-2.5 text-sm font-montserrat text-textPrimary"
             style={{ maxHeight: 120, minHeight: 40 }}
             value={inputText}
             onChangeText={setInputText}

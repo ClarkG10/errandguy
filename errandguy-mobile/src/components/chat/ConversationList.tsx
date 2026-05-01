@@ -61,7 +61,10 @@ export function ConversationList({ chatHrefPrefix, fallbackHref }: Props) {
       const res = await chatService.getConversations();
       return res.data?.data ?? [];
     },
-    { staleTime: 15_000, ttl: CacheTTL.SHORT },
+    // Hydrate from disk immediately (TTL MEDIUM = 5min) so the inbox
+    // paints instantly on every navigation; the network refetch in the
+    // background still updates with fresh state once it lands.
+    { staleTime: 30_000, ttl: CacheTTL.MEDIUM },
   );
 
   const conversations = conversationsQ.data ?? [];
@@ -100,7 +103,7 @@ export function ConversationList({ chatHrefPrefix, fallbackHref }: Props) {
       return (
         <Pressable
           onPress={() => router.push(`${chatHrefPrefix}/${item.booking_id}` as any)}
-          className="flex-row items-center px-5 py-3 active:bg-surface"
+          className="flex-row items-center px-4 py-2.5 active:bg-surface"
           accessibilityRole="button"
           accessibilityLabel={`Open chat with ${item.counterparty?.full_name ?? 'participant'}`}
           accessibilityHint={
@@ -192,9 +195,9 @@ export function ConversationList({ chatHrefPrefix, fallbackHref }: Props) {
 
   return (
     <SafeAreaView className="flex-1 bg-background" edges={['top']}>
-      <View className="flex-row items-center px-5 pt-2 pb-3">
+      <View className="flex-row items-center px-4 py-2">
         <BackButton fallbackHref={fallbackHref} />
-        <Text className="text-lg font-montserrat-semi text-textPrimary ml-2">
+        <Text className="text-base font-montserrat-semi text-textPrimary ml-1">
           Messages
         </Text>
       </View>

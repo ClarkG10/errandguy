@@ -11,6 +11,13 @@ interface ChatState {
   isTyping: boolean;
 
   addMessage: (bookingId: string, message: Message) => void;
+  /** Swap a placeholder message (matched by id) for the server
+   *  copy. Used by the optimistic send path so the bubble appears
+   *  instantly and is rewritten when the API responds. */
+  replaceMessage: (bookingId: string, tempId: string, message: Message) => void;
+  /** Remove a placeholder message (matched by id). Used to roll back
+   *  an optimistic send when the network call fails. */
+  removeMessage: (bookingId: string, messageId: string) => void;
   setMessages: (bookingId: string, messages: Message[]) => void;
   markRead: (bookingId: string) => void;
   clearChat: (bookingId: string) => void;
@@ -49,6 +56,31 @@ export const useChatStore = create<ChatState>((set, get) => ({
         [bookingId]: messages,
       },
     })),
+
+  replaceMessage: (bookingId, tempId, message) =>
+    set((state) => {
+      const list = state.messages[bookingId] || [];
+      // If the real message already arrived (e.g. via Realtime push
+      // before our HTTP response), drop the temp instead of duplicating.
+      const realAlready = message?.id && list.some((m) => m.id === message.id);
+      const next = list
+        .filter((m) => m.id !== tempId)
+        .concat(realAlready ? [] : [message]);
+      return {
+        messages: { ...state.messages, [bookingId]: next },
+      };
+    }),
+
+  removeMessage: (bookingId, messageId) =>
+    set((state) => {
+      const list = state.messages[bookingId] || [];
+      return {
+        messages: {
+          ...state.messages,
+          [bookingId]: list.filter((m) => m.id !== messageId),
+        },
+      };
+    }),
 
   markRead: (bookingId) => {
     const msgs = get().messages[bookingId];

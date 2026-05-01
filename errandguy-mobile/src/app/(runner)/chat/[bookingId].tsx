@@ -13,7 +13,7 @@ import {
   AppState,
   type AppStateStatus,
 } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import { Send, Camera, Phone } from 'lucide-react-native';
 import { BackButton } from '../../../components/ui/BackButton';
@@ -30,6 +30,7 @@ export default function RunnerChatScreen() {
   const { bookingId } = useLocalSearchParams<{ bookingId: string }>();
   const user = useAuthStore((s) => s.user);
   const currentErrand = useRunnerStore((s) => s.currentErrand);
+  const insets = useSafeAreaInsets();
 
   const customerPhone =
     currentErrand?.id === bookingId
@@ -99,29 +100,30 @@ export default function RunnerChatScreen() {
   }, [bookingId, markAsRead]);
 
   const handleSend = useCallback(async () => {
-    if (!input.trim() || sending) return;
-    setSending(true);
+    const text = input.trim();
+    if (!text || sending) return;
+    // Clear the input + scroll IMMEDIATELY so the runner sees their
+    // message land in the thread on the same frame as the keypress.
+    // The optimistic bubble (added inside chatSendMessage) provides the
+    // "sent" feedback while the API call settles in the background.
+    setInput('');
+    setTimeout(() => flatListRef.current?.scrollToEnd({ animated: true }), 30);
     try {
-      await chatSendMessage(input.trim());
-      setInput('');
-      setTimeout(() => flatListRef.current?.scrollToEnd({ animated: true }), 100);
+      await chatSendMessage(text);
     } catch {
       toast.error('Failed to send message');
-    } finally {
-      setSending(false);
+      // Restore the text so the runner can retry without retyping.
+      setInput((prev) => (prev ? prev : text));
     }
   }, [input, sending, chatSendMessage]);
 
   const handleQuickMessage = useCallback(
     async (msg: string) => {
-      setSending(true);
+      setTimeout(() => flatListRef.current?.scrollToEnd({ animated: true }), 30);
       try {
         await chatSendMessage(msg);
-        setTimeout(() => flatListRef.current?.scrollToEnd({ animated: true }), 100);
       } catch {
         toast.error('Failed to send message');
-      } finally {
-        setSending(false);
       }
     },
     [chatSendMessage],
@@ -187,7 +189,7 @@ export default function RunnerChatScreen() {
   return (
     <SafeAreaView className="flex-1 bg-background" edges={['top']}>
       {/* Header */}
-      <View className="flex-row items-center gap-3 px-5 py-4 border-b border-divider">
+      <View className="flex-row items-center gap-3 px-5 py-3 border-b border-divider bg-surface">
         <BackButton
           fallbackHref="/(runner)/(tabs)"
           accessibilityLabel="Back to home"
@@ -212,11 +214,12 @@ export default function RunnerChatScreen() {
 
       <KeyboardAvoidingView
         className="flex-1"
-        // See customer chat for rationale: 'undefined' on Android made
-        // the IME cover the input row + send button. 'height' lets the
-        // KAV resize the available area, and we paired this with
-        // softwareKeyboardLayoutMode: 'resize' in app.json.
-        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+        // 'padding' on iOS keeps the input above the IME without
+        // shrinking the message list. On Android we deliberately use
+        // `undefined` and rely on `softwareKeyboardLayoutMode: 'resize'`
+        // (see app.json) PLUS the bottom safe-area padding below — this
+        // avoids the system gesture bar covering the send button.
+        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
         keyboardVerticalOffset={Platform.OS === 'ios' ? 90 : 0}
       >
         {/* Messages */}
@@ -269,23 +272,36 @@ export default function RunnerChatScreen() {
         <ScrollView
           horizontal
           showsHorizontalScrollIndicator={false}
+          // Explicit fixed height + flexShrink/flexGrow=0 so the strip
+          // never stretches to fill leftover vertical space (an Android
+          // flex quirk would otherwise turn each pill into a tall capsule).
+          style={{ height: 46, flexGrow: 0, flexShrink: 0 }}
           className="border-t border-divider"
-          contentContainerStyle={{ paddingHorizontal: 16, paddingVertical: 8 }}
+          contentContainerStyle={{ paddingHorizontal: 12, paddingVertical: 6, alignItems: 'center' }}
         >
           {RUNNER_QUICK_MESSAGES.map((msg) => (
             <Pressable
               key={msg}
               onPress={() => handleQuickMessage(msg)}
               disabled={sending}
-              className={`px-3 py-1.5 rounded-full mr-2 ${sending ? 'bg-gray-100' : 'bg-primaryLight'}`}
+              // Explicit height so the pill stays a compact capsule even
+              // when the surrounding ScrollView ends up taller than its
+              // intrinsic content (cross-axis stretch in some Android
+              // flex configurations).
+              style={{ height: 32, marginRight: 8 }}
+              className={`px-3 items-center justify-center rounded-full ${sending ? 'bg-gray-100' : 'bg-primaryLight'}`}
             >
               <Text className={`text-xs font-montserrat ${sending ? 'text-textTertiary' : 'text-primary'}`}>{msg}</Text>
             </Pressable>
           ))}
         </ScrollView>
 
-        {/* Input */}
-        <View className="flex-row items-end gap-2 px-5 py-3 pb-6 border-t border-divider bg-background">
+        {/* Input — pad the bottom by the system inset so the Android
+            gesture/nav bar can't sit on top of the send button. */}
+        <View
+          className="flex-row items-end gap-2 px-5 pt-3 border-t border-divider bg-background"
+          style={{ paddingBottom: Math.max(insets.bottom, 12) }}
+        >
           <Pressable
             onPress={() => setImagePickerVisible(true)}
             disabled={sending}
@@ -297,7 +313,7 @@ export default function RunnerChatScreen() {
             <Camera size={24} color={sending ? '#94A3B8' : '#475569'} />
           </Pressable>
           <TextInput
-            className="flex-1 bg-surface border border-divider rounded-3xl px-4 py-2.5 text-sm font-montserrat text-textPrimary"
+            className="flex-1 bg-surface border border-divider rounded-2xl px-4 py-2.5 text-sm font-montserrat text-textPrimary"
             style={{ maxHeight: 120, minHeight: 40 }}
             placeholder="Type a message..."
             placeholderTextColor="#94A3B8"

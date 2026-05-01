@@ -1,12 +1,26 @@
 import { useEffect, useCallback, useState, useRef } from 'react';
 import { useChatStore } from '../stores/chatStore';
 import { chatService } from '../services/chat.service';
+import { CacheService, CacheTTL } from '../services/cache.service';
 import { supabase } from '../services/supabase';
+import { useAuthStore } from '../stores/authStore';
 import type { Message } from '../types';
 
+/** Per-booking cache key for the most recent page of messages. */
+const cacheKey = (bookingId: string) => `chat:messages:${bookingId}`;
+
 export function useChat(bookingId: string) {
-  const { messages, unreadCount, isTyping, addMessage, setMessages, markRead, setIsTyping } =
-    useChatStore();
+  const {
+    messages,
+    unreadCount,
+    isTyping,
+    addMessage,
+    replaceMessage,
+    removeMessage,
+    setMessages,
+    markRead,
+    setIsTyping,
+  } = useChatStore();
 
   const bookingMessages = messages[bookingId] || [];
 
@@ -16,6 +30,29 @@ export function useChat(bookingId: string) {
   const [loadingOlder, setLoadingOlder] = useState(false);
   const cursorRef = useRef<string | null>(null);
 
+  // ── Cache hydration ──
+  // Paint the most recent page from disk on mount so re-opening a chat
+  // shows the conversation instantly. The network refresh below then
+  // overwrites with the latest server state. Without this, every
+  // navigation back into a chat blanked the screen for ~300ms.
+  useEffect(() => {
+    if (!bookingId) return;
+    let cancelled = false;
+    (async () => {
+      const cached = await CacheService.get<Message[]>(cacheKey(bookingId));
+      if (cancelled || !cached || cached.length === 0) return;
+      // Only hydrate if the store doesn't already have something for
+      // this booking — otherwise we'd clobber freshly streamed messages.
+      const current = useChatStore.getState().messages[bookingId] ?? [];
+      if (current.length === 0) {
+        setMessages(bookingId, cached);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [bookingId, setMessages]);
+
   const fetchMessages = useCallback(async () => {
     const response = await chatService.getMessages(bookingId, { limit: 50 });
     const data = response.data?.data ?? [];
@@ -23,6 +60,8 @@ export function useChat(bookingId: string) {
     setMessages(bookingId, data);
     setHasMore(!!meta.has_more);
     cursorRef.current = meta.next_before ?? null;
+    // Persist the latest page so the next mount can hydrate instantly.
+    CacheService.set(cacheKey(bookingId), data, CacheTTL.LONG);
   }, [bookingId, setMessages]);
 
   /**
@@ -56,13 +95,37 @@ export function useChat(bookingId: string) {
 
   const sendMessage = useCallback(
     async (content?: string, image_url?: string) => {
-      const response = await chatService.sendMessage(bookingId, {
-        content,
-        image_url,
-      });
-      addMessage(bookingId, response.data.data);
+      // Optimistic send — paint the bubble in <16ms with a temporary id
+      // so the conversation feels instant. When the API responds we
+      // swap the temp for the canonical message; on failure we roll back.
+      const tempId = `tmp-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+      const senderId = useAuthStore.getState().user?.id ?? '';
+      const placeholder: Message = {
+        id: tempId,
+        booking_id: bookingId,
+        sender_id: senderId,
+        content: content ?? null,
+        image_url: image_url ?? null,
+        is_system: false,
+        created_at: new Date().toISOString(),
+        read_at: null,
+        // Hint to the renderer that this is in-flight. Existing renderers
+        // ignore unknown fields, so this is forward-compatible.
+        pending: true,
+      } as unknown as Message;
+      addMessage(bookingId, placeholder);
+      try {
+        const response = await chatService.sendMessage(bookingId, {
+          content,
+          image_url,
+        });
+        replaceMessage(bookingId, tempId, response.data.data);
+      } catch (err) {
+        removeMessage(bookingId, tempId);
+        throw err;
+      }
     },
-    [bookingId, addMessage],
+    [bookingId, addMessage, replaceMessage, removeMessage],
   );
 
   /**
@@ -73,13 +136,34 @@ export function useChat(bookingId: string) {
    */
   const sendMessageWithImage = useCallback(
     async (imageUri: string, content?: string) => {
-      const response = await chatService.sendMessageWithImage(bookingId, {
-        imageUri,
-        content,
-      });
-      addMessage(bookingId, response.data.data);
+      const tempId = `tmp-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+      const senderId = useAuthStore.getState().user?.id ?? '';
+      const placeholder: Message = {
+        id: tempId,
+        booking_id: bookingId,
+        sender_id: senderId,
+        content: content ?? null,
+        // Show the local file URI so the runner sees the photo while the
+        // upload completes — the canonical CDN URL replaces it on success.
+        image_url: imageUri,
+        is_system: false,
+        created_at: new Date().toISOString(),
+        read_at: null,
+        pending: true,
+      } as unknown as Message;
+      addMessage(bookingId, placeholder);
+      try {
+        const response = await chatService.sendMessageWithImage(bookingId, {
+          imageUri,
+          content,
+        });
+        replaceMessage(bookingId, tempId, response.data.data);
+      } catch (err) {
+        removeMessage(bookingId, tempId);
+        throw err;
+      }
     },
-    [bookingId, addMessage],
+    [bookingId, addMessage, replaceMessage, removeMessage],
   );
 
   const markAsRead = useCallback(async () => {
@@ -151,6 +235,24 @@ export function useChat(bookingId: string) {
       clearInterval(id);
     };
   }, [bookingId, addMessage]);
+
+  // Persist the live store to disk whenever the message list changes.
+  // Throttled by trailing-edge effect debounce: we only write when the
+  // length stops changing for ~600ms so a burst of incoming pushes
+  // collapses into a single AsyncStorage write.
+  useEffect(() => {
+    if (!bookingId) return;
+    const handle = setTimeout(() => {
+      const list = useChatStore.getState().messages[bookingId];
+      if (!list || list.length === 0) return;
+      // Cap the cached page so the on-disk payload stays small. The
+      // hydration path only needs the most recent window — older history
+      // is fetched on-demand via loadOlder().
+      const window = list.slice(-100);
+      CacheService.set(cacheKey(bookingId), window, CacheTTL.LONG);
+    }, 600);
+    return () => clearTimeout(handle);
+  }, [bookingId, bookingMessages.length]);
 
   return {
     messages: bookingMessages,

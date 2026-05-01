@@ -264,7 +264,7 @@ export default function RunnerProfileScreen() {
             onPress={() => { setShowDeleteModal(false); setDeleteConfirmText(''); }}
           >
             <Pressable
-              className="bg-surface rounded-t-3xl px-6 pt-5 pb-10"
+              className="bg-surface rounded-t-2xl px-6 pt-5 pb-10"
               onPress={() => {}}
             >
               <View className="w-10 h-1 rounded-full bg-divider self-center mb-5" />

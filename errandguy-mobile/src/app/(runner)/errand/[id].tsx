@@ -1,5 +1,5 @@
-import React, { useState, useCallback, useRef, useEffect } from 'react';
-import { View, Text, ScrollView, TextInput, RefreshControl, Pressable, Linking, KeyboardAvoidingView, Platform, Dimensions } from 'react-native';
+import React, { useState, useCallback, useRef, useEffect, useMemo } from 'react';
+import { View, Text, ScrollView, TextInput, RefreshControl, Pressable, Linking, KeyboardAvoidingView, Platform, Dimensions, Animated, PanResponder } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import {
@@ -428,17 +428,83 @@ export default function ActiveErrandScreen() {
     router.replace('/(runner)/(tabs)' as any);
   };
 
-  // Sheet height \u2014 ~55% of the window. Using a flex-based split (map
-  // grows, sheet stays a fixed slice) instead of absolute positioning
-  // because the previous absolute+maxHeight layout collapsed the inner
-  // ScrollView to zero and pushed the sticky action button off-screen.
-  const SHEET_HEIGHT = Math.round(Dimensions.get('window').height * 0.55);
+  // Sheet height snap points. The sheet is now an absolutely-positioned
+  // overlay on top of the full-screen map (instead of a flex sibling),
+  // so the runner can drag it up to read details or down to peek the
+  // map. Snap targets keep gestures predictable; intermediate heights
+  // are interpolated continuously while the finger is down.
+  const WIN_H = Dimensions.get('window').height;
+  const SNAP_COLLAPSED = 220;                       // header + sticky CTA
+  const SNAP_MID = Math.round(WIN_H * 0.55);        // default
+  const SNAP_EXPANDED = Math.round(WIN_H * 0.88);   // near full-screen
+  const SNAPS = useMemo(() => [SNAP_COLLAPSED, SNAP_MID, SNAP_EXPANDED], [SNAP_COLLAPSED, SNAP_MID, SNAP_EXPANDED]);
+
+  const sheetHeight = useRef(new Animated.Value(SNAP_MID)).current;
+  const sheetHeightStartRef = useRef<number>(SNAP_MID);
+  const currentSheetHeightRef = useRef<number>(SNAP_MID);
+  const [sheetTop, setSheetTop] = useState<number>(WIN_H - SNAP_MID);
+
+  // Mirror the animated value into a ref + state so the Navigate FAB
+  // can sit just above the sheet's current top edge. We throttle the
+  // state setter through the listener to one update per ~60ms so
+  // dragging stays smooth.
+  useEffect(() => {
+    let lastTs = 0;
+    const id = sheetHeight.addListener(({ value }) => {
+      currentSheetHeightRef.current = value;
+      const now = Date.now();
+      if (now - lastTs > 60) {
+        lastTs = now;
+        setSheetTop(WIN_H - value);
+      }
+    });
+    return () => sheetHeight.removeListener(id);
+  }, [sheetHeight, WIN_H]);
+
+  const snapTo = useCallback((target: number) => {
+    Animated.spring(sheetHeight, {
+      toValue: target,
+      useNativeDriver: false,
+      bounciness: 4,
+      speed: 14,
+    }).start(() => {
+      currentSheetHeightRef.current = target;
+      setSheetTop(WIN_H - target);
+    });
+  }, [sheetHeight, WIN_H]);
+
+  const panResponder = useRef(
+    PanResponder.create({
+      // Only claim the gesture for vertical drags so the sticky CTA
+      // and inner ScrollView still work normally.
+      onMoveShouldSetPanResponder: (_e, g) => Math.abs(g.dy) > 6 && Math.abs(g.dy) > Math.abs(g.dx),
+      onPanResponderGrant: () => {
+        sheetHeightStartRef.current = currentSheetHeightRef.current;
+      },
+      onPanResponderMove: (_e, g) => {
+        // Drag UP increases height (dy negative); DOWN decreases.
+        const next = Math.max(SNAP_COLLAPSED, Math.min(SNAP_EXPANDED, sheetHeightStartRef.current - g.dy));
+        sheetHeight.setValue(next);
+      },
+      onPanResponderRelease: (_e, g) => {
+        const projected = sheetHeightStartRef.current - g.dy - g.vy * 80;
+        // Snap to the nearest snap point.
+        let nearest = SNAPS[0];
+        let bestDelta = Infinity;
+        for (const s of SNAPS) {
+          const d = Math.abs(s - projected);
+          if (d < bestDelta) { bestDelta = d; nearest = s; }
+        }
+        snapTo(nearest);
+      },
+    }),
+  ).current;
 
   return (
     <SafeAreaView className="flex-1 bg-background" edges={[]}>
-      <View style={{ flex: 1 }}>
-        {/* ── Map area (top half, fills remaining space) ────────── */}
-        <View style={{ flex: 1, position: 'relative' }}>
+      <View style={{ flex: 1, position: 'relative' }}>
+        {/* ── Map fills the entire screen as the background ────── */}
+        <View style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0 }}>
           <RunnerActiveMap
             variant="fill"
             pickupLat={booking.pickup_lat}
@@ -449,99 +515,79 @@ export default function ActiveErrandScreen() {
             singleLocation={isSingleLocation}
             etaMinutes={runnerEta.minutes}
           />
-
-          {/* Floating top bar */}
-          <SafeAreaView
-            edges={['top']}
-            pointerEvents="box-none"
-            style={{ position: 'absolute', top: 0, left: 0, right: 0 }}
-          >
-            <View
-              className="flex-row items-center justify-between px-4 py-2"
-              pointerEvents="box-none"
-            >
-              <View className="w-11 h-11 rounded-full bg-white items-center justify-center shadow-md">
-                <BackButton
-                  fallbackHref="/(runner)/(tabs)"
-                  accessibilityHint={isErrandActive ? 'Confirms before leaving the active errand' : undefined}
-                  onPress={() => {
-                    const goBack = () =>
-                      router.canGoBack() ? router.back() : router.replace('/(runner)/(tabs)');
-                    if (isErrandActive) confirmLeaveErrand(goBack);
-                    else goBack();
-                  }}
-                />
-              </View>
-              <View className="bg-white px-4 py-2 rounded-full shadow-md">
-                <Text className="text-sm font-montserrat-bold text-textPrimary">
-                  {isTransportation ? 'Passenger Ride' : 'Active Errand'}
-                </Text>
-              </View>
-              <Pressable
-                onPress={() => router.push(`/(runner)/chat/${booking.id}` as any)}
-                className="w-11 h-11 rounded-full bg-white items-center justify-center shadow-md"
-                accessibilityRole="button"
-                accessibilityLabel="Open chat with customer"
-              >
-                <MessageCircle size={20} color="#0F172A" />
-                {unreadForBooking > 0 && (
-                  <View className="absolute -top-0.5 -right-0.5 min-w-[16px] h-[16px] px-1 bg-danger rounded-full items-center justify-center border-[1.5px] border-white">
-                    <Text className="text-[9px] text-white font-montserrat-bold leading-[12px]">
-                      {unreadForBooking > 9 ? '9+' : String(unreadForBooking)}
-                    </Text>
-                  </View>
-                )}
-              </Pressable>
-            </View>
-          </SafeAreaView>
-
-          {/* In-app Navigate FAB \u2014 opens the runner's full-screen
-              turn-by-turn navigation (course-up Mapbox view with a
-              maneuver banner). This is the in-system navigator: no
-              hand-off to Google/Apple Maps, so location pings and
-              status updates keep flowing to the backend the entire
-              time the runner is following directions. */}
-          {!isReadOnly && isErrandActive && (
-            <Pressable
-              onPress={() => router.push(`/(runner)/navigate/${booking.id}` as any)}
-              accessibilityRole="button"
-              accessibilityLabel="Open turn-by-turn navigation"
-              className="absolute right-4 bottom-4 px-4 h-12 rounded-full bg-primary flex-row items-center"
-              style={{
-                shadowColor: '#000',
-                shadowOpacity: 0.25,
-                shadowRadius: 10,
-                shadowOffset: { width: 0, height: 4 },
-                elevation: 8,
-              }}
-            >
-              <Navigation size={18} color="#FFFFFF" />
-              <Text className="text-white text-sm font-montserrat-bold ml-2">
-                Navigate
-              </Text>
-            </Pressable>
-          )}
         </View>
 
-        {/* ── Bottom sheet (fixed slice with proper flex column) ── */}
+        {/* Floating top bar */}
+        <SafeAreaView
+          edges={['top']}
+          pointerEvents="box-none"
+          style={{ position: 'absolute', top: 0, left: 0, right: 0 }}
+        >
+          <View
+            className="flex-row items-center justify-between px-4 py-2"
+            pointerEvents="box-none"
+          >
+            <View className="w-11 h-11 rounded-full bg-white items-center justify-center shadow-md">
+              <BackButton
+                fallbackHref="/(runner)/(tabs)"
+                accessibilityHint={isErrandActive ? 'Confirms before leaving the active errand' : undefined}
+                onPress={() => {
+                  const goBack = () =>
+                    router.canGoBack() ? router.back() : router.replace('/(runner)/(tabs)');
+                  if (isErrandActive) confirmLeaveErrand(goBack);
+                  else goBack();
+                }}
+              />
+            </View>
+            <View className="bg-white px-4 py-2 rounded-full shadow-md">
+              <Text className="text-sm font-montserrat-bold text-textPrimary">
+                {isTransportation ? 'Passenger Ride' : 'Active Errand'}
+              </Text>
+            </View>
+            <Pressable
+              onPress={() => router.push(`/(runner)/chat/${booking.id}` as any)}
+              className="w-11 h-11 rounded-full bg-white items-center justify-center shadow-md"
+              accessibilityRole="button"
+              accessibilityLabel="Open chat with customer"
+            >
+              <MessageCircle size={20} color="#0F172A" />
+              {unreadForBooking > 0 && (
+                <View className="absolute -top-0.5 -right-0.5 min-w-[16px] h-[16px] px-1 bg-danger rounded-full items-center justify-center border-[1.5px] border-white">
+                  <Text className="text-[9px] text-white font-montserrat-bold leading-[12px]">
+                    {unreadForBooking > 9 ? '9+' : String(unreadForBooking)}
+                  </Text>
+                </View>
+              )}
+            </Pressable>
+          </View>
+        </SafeAreaView>
+
+        {/* ── Draggable bottom sheet (absolute overlay) ────────── */}
         <KeyboardAvoidingView
           behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
           keyboardVerticalOffset={0}
+          style={{ position: 'absolute', left: 0, right: 0, bottom: 0 }}
         >
-          <View
-            className="bg-white rounded-t-3xl"
+          <Animated.View
+            className="bg-white rounded-t-2xl"
             style={{
-              height: SHEET_HEIGHT,
+              height: sheetHeight,
               shadowColor: '#000',
-              shadowOpacity: 0.1,
+              shadowOpacity: 0.12,
               shadowRadius: 12,
               shadowOffset: { width: 0, height: -2 },
               elevation: 12,
             }}
           >
-            {/* Drag handle */}
-            <View className="items-center pt-2 pb-1">
-              <View className="w-10 h-1 rounded-full bg-gray-300" />
+            {/* Drag handle \u2014 expand the touch target above + below the
+                pill so the runner doesn't have to hit a 4px line. */}
+            <View
+              {...panResponder.panHandlers}
+              className="items-center pt-2 pb-3"
+              accessibilityRole="adjustable"
+              accessibilityLabel="Drag to resize details panel"
+            >
+              <View className="w-12 h-1 rounded-full bg-gray-300" />
             </View>
 
             {/* Header line \u2014 always visible */}
@@ -787,9 +833,43 @@ export default function ActiveErrandScreen() {
                 </Text>
               </View>
             )}
-          </View>
+          </Animated.View>
           <SafeAreaView edges={['bottom']} style={{ backgroundColor: 'white' }} />
         </KeyboardAvoidingView>
+
+        {/* In-app Navigate FAB — rendered AFTER the sheet so it always
+            wins z-order on both iOS (paint order) and Android (elevation).
+            Anchored just above the sheet's current top edge so the two
+            never overlap regardless of snap position. */}
+        {!isReadOnly && isErrandActive && (
+          <Pressable
+            onPress={() => router.push(`/(runner)/navigate/${booking.id}` as any)}
+            accessibilityRole="button"
+            accessibilityLabel="Open turn-by-turn navigation"
+            style={{
+              position: 'absolute',
+              right: 16,
+              top: Math.max(96, sheetTop - 60),
+              paddingHorizontal: 16,
+              height: 48,
+              borderRadius: 24,
+              backgroundColor: '#2563EB',
+              flexDirection: 'row',
+              alignItems: 'center',
+              shadowColor: '#000',
+              shadowOpacity: 0.28,
+              shadowRadius: 10,
+              shadowOffset: { width: 0, height: 4 },
+              elevation: 20,
+              zIndex: 20,
+            }}
+          >
+            <Navigation size={18} color="#FFFFFF" />
+            <Text className="text-white text-sm font-montserrat-bold ml-2">
+              Navigate
+            </Text>
+          </Pressable>
+        )}
       </View>
 
 

@@ -55,7 +55,7 @@ export function CompletionModal({
         from={{ translateY: 60, opacity: 0 }}
         animate={{ translateY: 0, opacity: 1 }}
         transition={{ type: 'spring', damping: 22, stiffness: 220, mass: 0.8 }}
-        className="bg-background rounded-t-3xl px-6 pt-6 pb-10"
+        className="bg-background rounded-t-2xl px-6 pt-6 pb-10"
         style={{ maxHeight: '85%' }}
       >
         {/* Header */}

@@ -68,7 +68,7 @@ export function ReceiptCaptureModal({
             from={{ translateY: 500, opacity: 0 }}
             animate={{ translateY: 0, opacity: 1 }}
             transition={{ type: 'spring', damping: 22, stiffness: 220, mass: 0.8 }}
-            className="bg-background rounded-t-3xl px-6 pt-4 pb-10"
+            className="bg-background rounded-t-2xl px-6 pt-4 pb-10"
             style={{ maxHeight: '92%' }}
           >
             <View className="items-center pb-3">

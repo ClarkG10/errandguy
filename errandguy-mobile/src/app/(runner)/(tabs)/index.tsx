@@ -329,12 +329,12 @@ export default function RunnerHomeScreen() {
   return (
     <SafeAreaView className="flex-1 bg-background" edges={['top']}>
       {/* Header */}
-      <View className="flex-row items-center justify-between px-5 pt-4 pb-2">
+      <View className="flex-row items-center justify-between px-5 pt-2 pb-1">
         <View>
-          <Text className="text-xs font-montserrat text-textTertiary">
+          <Text className="text-[11px] font-montserrat text-textTertiary">
             Dashboard
           </Text>
-          <Text className="text-lg font-montserrat-bold text-textPrimary">
+          <Text className="text-base font-montserrat-bold text-textPrimary">
             ErrandGuy Runner
           </Text>
         </View>
@@ -380,7 +380,7 @@ export default function RunnerHomeScreen() {
         )}
 
         {/* Online Button — the big primary CTA */}
-        <View className="px-5 mb-4">
+        <View className="px-5 mb-6 my-12">
           <OnlineButton
             isOnline={isOnline}
             loading={togglingOnline}

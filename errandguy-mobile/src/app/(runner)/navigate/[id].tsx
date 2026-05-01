@@ -507,7 +507,7 @@ export default function NavigateScreen() {
 
       {/* Bottom ETA / actions bar \u2014 always visible. */}
       <View
-        className="absolute left-0 right-0 bottom-0 bg-white rounded-t-3xl px-5 pt-4"
+        className="absolute left-0 right-0 bottom-0 bg-white rounded-t-2xl px-5 pt-4"
         style={{
           shadowColor: '#000',
           shadowOpacity: 0.18,

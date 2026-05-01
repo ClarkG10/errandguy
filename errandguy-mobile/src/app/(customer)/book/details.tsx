@@ -727,17 +727,26 @@ export default function TaskDetailsScreen() {
             </Mapbox.MarkerView>
           )}
 
-          {/* Route polyline */}
+          {/* Route polyline \u2014 cased for visibility over busy tiles. */}
           {routeGeoJSON && (
             <Mapbox.ShapeSource id="routeLine" shape={routeGeoJSON}>
               <Mapbox.LineLayer
+                id="routeLineCasing"
+                style={{
+                  lineColor: '#1E3A8A',
+                  lineWidth: 8,
+                  lineCap: 'round',
+                  lineJoin: 'round',
+                  lineOpacity: 0.95,
+                }}
+              />
+              <Mapbox.LineLayer
                 id="routeLineLayer"
                 style={{
-                  lineColor: '#2563EB',
+                  lineColor: '#3B82F6',
                   lineWidth: 5,
                   lineCap: 'round',
                   lineJoin: 'round',
-                  lineOpacity: 0.8,
                 }}
               />
             </Mapbox.ShapeSource>

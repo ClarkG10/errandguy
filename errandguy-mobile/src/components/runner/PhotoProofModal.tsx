@@ -54,7 +54,7 @@ export function PhotoProofModal({ type, onConfirm, onClose }: PhotoProofModalPro
             from={{ translateY: 400, opacity: 0 }}
             animate={{ translateY: 0, opacity: 1 }}
             transition={{ type: 'spring', damping: 22, stiffness: 220, mass: 0.8 }}
-            className="bg-background rounded-t-3xl p-6 pb-10"
+            className="bg-background rounded-t-2xl p-6 pb-10"
           >
             {/* Handle */}
             <View className="items-center pb-3">
