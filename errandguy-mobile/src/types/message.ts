@@ -14,6 +14,20 @@ export interface Message {
   is_system: boolean;
   read_at: string | null;
   created_at: string;
+  // ── Client-side delivery flags (never sent by the server) ──
+  // Set to true by the optimistic-send path so the bubble can render a
+  // "Sending…" indicator. Cleared when the server confirms.
+  pending?: boolean;
+  // Set to true if the optimistic send failed; the bubble renders a
+  // "Failed · Tap to retry" affordance and keeps the original payload
+  // so retry can re-issue the same request.
+  failed?: boolean;
+  // Original payload kept around so the retry button can re-send the
+  // same message after a transient failure.
+  retry_payload?: {
+    content?: string;
+    image_uri?: string;
+  };
 }
 
 /** Inbox row returned by GET /chat/conversations. */

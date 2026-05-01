@@ -14,7 +14,7 @@ import {
 } from 'react-native';
 import { Image } from 'expo-image';
 import { useRouter, useLocalSearchParams } from 'expo-router';
-import { ArrowLeft, Send, Camera, Phone } from 'lucide-react-native';
+import { ArrowLeft, Send, Camera, Phone, Check, CheckCheck, Clock, AlertCircle, RotateCw } from 'lucide-react-native';
 import { ActivityIndicator } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useAuthStore } from '../../../stores/authStore';
@@ -39,6 +39,7 @@ export default function ChatScreen() {
     fetchMessages,
     sendMessage: chatSendMessage,
     sendMessageWithImage: chatSendImage,
+    retryMessage: chatRetryMessage,
     markAsRead,
     loadOlder,
     hasMore,
@@ -168,8 +169,13 @@ export default function ChatScreen() {
         >
           <View
             className={`max-w-[80%] rounded-2xl px-4 py-2 ${
-              isMe ? 'bg-primary rounded-br-sm' : 'bg-divider rounded-bl-sm'
+              isMe
+                ? item.failed
+                  ? 'bg-danger rounded-br-sm'
+                  : 'bg-primary rounded-br-sm'
+                : 'bg-divider rounded-bl-sm'
             }`}
+            style={isMe && item.pending ? { opacity: 0.75 } : undefined}
           >
             {item.image_url && (
               <Image
@@ -195,10 +201,58 @@ export default function ChatScreen() {
               {formatTime(item.created_at)}
             </Text>
           </View>
+          {/* Delivery indicator under own messages. Failed bubbles are
+              tappable to retry the original payload. */}
+          {isMe && (
+            <Pressable
+              onPress={
+                item.failed
+                  ? () => {
+                      chatRetryMessage(item.id).catch(() =>
+                        toast.error('Still couldn’t send. Check your connection.'),
+                      );
+                    }
+                  : undefined
+              }
+              hitSlop={6}
+              className="flex-row items-center mt-0.5 px-1"
+            >
+              {item.pending ? (
+                <>
+                  <Clock size={10} color="#94A3B8" />
+                  <Text className="text-[10px] font-montserrat text-textSecondary ml-1">
+                    Sending
+                  </Text>
+                </>
+              ) : item.failed ? (
+                <>
+                  <AlertCircle size={11} color="#DC2626" />
+                  <Text className="text-[10px] font-montserrat-semi text-danger ml-1">
+                    Failed · Tap to retry
+                  </Text>
+                  <RotateCw size={10} color="#DC2626" style={{ marginLeft: 4 }} />
+                </>
+              ) : item.read_at ? (
+                <>
+                  <CheckCheck size={11} color="#2563EB" />
+                  <Text className="text-[10px] font-montserrat text-primary ml-0.5">
+                    Read
+                  </Text>
+                </>
+              ) : (
+                <>
+                  <Check size={11} color="#94A3B8" />
+                  <Text className="text-[10px] font-montserrat text-textSecondary ml-0.5">
+                    Sent
+                  </Text>
+                </>
+              )}
+            </Pressable>
+          )}
         </View>
       );
     },
-    [user?.id],
+    [user?.id, chatRetryMessage],
   );
 
   return (

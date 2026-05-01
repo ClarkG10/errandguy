@@ -15,7 +15,7 @@ import {
 } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter, useLocalSearchParams } from 'expo-router';
-import { Send, Camera, Phone } from 'lucide-react-native';
+import { Send, Camera, Phone, Check, CheckCheck, Clock, AlertCircle, RotateCw } from 'lucide-react-native';
 import { BackButton } from '../../../components/ui/BackButton';
 import { useAuthStore } from '../../../stores/authStore';
 import { useRunnerStore } from '../../../stores/runnerStore';
@@ -54,6 +54,8 @@ export default function RunnerChatScreen() {
     messages,
     fetchMessages,
     sendMessage: chatSendMessage,
+    sendMessageWithImage: chatSendImage,
+    retryMessage: chatRetryMessage,
     markAsRead,
     loadOlder,
     hasMore,
@@ -133,14 +135,26 @@ export default function RunnerChatScreen() {
     setImagePickerVisible(false);
     setSending(true);
     try {
-      await chatSendMessage(undefined, uri);
+      // Multipart upload — the server stores the file and returns the
+      // canonical URL on the message row. Sending the raw `file://` URI
+      // through the JSON `image_url` field would 422 (must be a valid URL).
+      await chatSendImage(uri);
       setTimeout(() => flatListRef.current?.scrollToEnd({ animated: true }), 100);
     } catch {
       toast.error('Failed to send image');
     } finally {
       setSending(false);
     }
-  }, [chatSendMessage]);
+  }, [chatSendImage]);
+
+  const handleRetry = useCallback(
+    (id: string) => {
+      chatRetryMessage(id).catch(() => {
+        toast.error('Still couldn’t send. Check your connection.');
+      });
+    },
+    [chatRetryMessage],
+  );
 
   const renderMessage = useCallback(
     ({ item }: { item: Message }) => {
@@ -163,8 +177,13 @@ export default function RunnerChatScreen() {
         >
           <View
             className={`max-w-[75%] rounded-2xl px-4 py-2.5 ${
-              isMine ? 'bg-primary rounded-br-sm' : 'bg-surface border border-divider rounded-bl-sm'
+              isMine
+                ? item.failed
+                  ? 'bg-danger rounded-br-sm'
+                  : 'bg-primary rounded-br-sm'
+                : 'bg-surface border border-divider rounded-bl-sm'
             }`}
+            style={isMine && item.pending ? { opacity: 0.75 } : undefined}
           >
             <Text
               className={`text-sm font-montserrat ${
@@ -174,16 +193,64 @@ export default function RunnerChatScreen() {
               {item.content}
             </Text>
           </View>
-          <Text className="text-[10px] font-montserrat text-textSecondary mt-0.5 px-1">
-            {new Date(item.created_at).toLocaleTimeString([], {
-              hour: '2-digit',
-              minute: '2-digit',
-            })}
-          </Text>
+          {/* Meta row: timestamp + delivery indicator. The indicator only
+              appears on the runner's own messages; for failed sends the
+              entire row becomes a tap target that retries the request. */}
+          {isMine ? (
+            <Pressable
+              onPress={item.failed ? () => handleRetry(item.id) : undefined}
+              hitSlop={6}
+              className="flex-row items-center mt-0.5 px-1"
+            >
+              <Text className="text-[10px] font-montserrat text-textSecondary mr-1">
+                {new Date(item.created_at).toLocaleTimeString([], {
+                  hour: '2-digit',
+                  minute: '2-digit',
+                })}
+              </Text>
+              {item.pending ? (
+                <>
+                  <Clock size={10} color="#94A3B8" />
+                  <Text className="text-[10px] font-montserrat text-textSecondary ml-1">
+                    Sending
+                  </Text>
+                </>
+              ) : item.failed ? (
+                <>
+                  <AlertCircle size={11} color="#DC2626" />
+                  <Text className="text-[10px] font-montserrat-semi text-danger ml-1">
+                    Failed · Tap to retry
+                  </Text>
+                  <RotateCw size={10} color="#DC2626" style={{ marginLeft: 4 }} />
+                </>
+              ) : item.read_at ? (
+                <>
+                  <CheckCheck size={11} color="#2563EB" />
+                  <Text className="text-[10px] font-montserrat text-primary ml-0.5">
+                    Read
+                  </Text>
+                </>
+              ) : (
+                <>
+                  <Check size={11} color="#94A3B8" />
+                  <Text className="text-[10px] font-montserrat text-textSecondary ml-0.5">
+                    Sent
+                  </Text>
+                </>
+              )}
+            </Pressable>
+          ) : (
+            <Text className="text-[10px] font-montserrat text-textSecondary mt-0.5 px-1">
+              {new Date(item.created_at).toLocaleTimeString([], {
+                hour: '2-digit',
+                minute: '2-digit',
+              })}
+            </Text>
+          )}
         </View>
       );
     },
-    [user],
+    [user, handleRetry],
   );
 
   return (

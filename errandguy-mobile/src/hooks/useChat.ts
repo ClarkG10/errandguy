@@ -97,7 +97,9 @@ export function useChat(bookingId: string) {
     async (content?: string, image_url?: string) => {
       // Optimistic send — paint the bubble in <16ms with a temporary id
       // so the conversation feels instant. When the API responds we
-      // swap the temp for the canonical message; on failure we roll back.
+      // swap the temp for the canonical message; on failure we mark the
+      // placeholder as `failed` (preserving the original payload) so the
+      // bubble stays put and the user can tap to retry.
       const tempId = `tmp-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
       const senderId = useAuthStore.getState().user?.id ?? '';
       const placeholder: Message = {
@@ -109,10 +111,9 @@ export function useChat(bookingId: string) {
         is_system: false,
         created_at: new Date().toISOString(),
         read_at: null,
-        // Hint to the renderer that this is in-flight. Existing renderers
-        // ignore unknown fields, so this is forward-compatible.
         pending: true,
-      } as unknown as Message;
+        retry_payload: { content, image_uri: undefined },
+      };
       addMessage(bookingId, placeholder);
       try {
         const response = await chatService.sendMessage(bookingId, {
@@ -121,11 +122,17 @@ export function useChat(bookingId: string) {
         });
         replaceMessage(bookingId, tempId, response.data.data);
       } catch (err) {
-        removeMessage(bookingId, tempId);
+        // Convert the placeholder into a "failed" bubble instead of
+        // removing it so the user can tap retry without retyping.
+        replaceMessage(bookingId, tempId, {
+          ...placeholder,
+          pending: false,
+          failed: true,
+        });
         throw err;
       }
     },
-    [bookingId, addMessage, replaceMessage, removeMessage],
+    [bookingId, addMessage, replaceMessage],
   );
 
   /**
@@ -143,14 +150,15 @@ export function useChat(bookingId: string) {
         booking_id: bookingId,
         sender_id: senderId,
         content: content ?? null,
-        // Show the local file URI so the runner sees the photo while the
+        // Show the local file URI so the user sees the photo while the
         // upload completes — the canonical CDN URL replaces it on success.
         image_url: imageUri,
         is_system: false,
         created_at: new Date().toISOString(),
         read_at: null,
         pending: true,
-      } as unknown as Message;
+        retry_payload: { content, image_uri: imageUri },
+      };
       addMessage(bookingId, placeholder);
       try {
         const response = await chatService.sendMessageWithImage(bookingId, {
@@ -159,11 +167,40 @@ export function useChat(bookingId: string) {
         });
         replaceMessage(bookingId, tempId, response.data.data);
       } catch (err) {
-        removeMessage(bookingId, tempId);
+        replaceMessage(bookingId, tempId, {
+          ...placeholder,
+          pending: false,
+          failed: true,
+        });
         throw err;
       }
     },
-    [bookingId, addMessage, replaceMessage, removeMessage],
+    [bookingId, addMessage, replaceMessage],
+  );
+
+  /**
+   * Re-send a previously-failed message. Drops the old failed bubble
+   * and dispatches the original payload through the normal optimistic
+   * pipeline so it gets a fresh `pending` state.
+   */
+  const retryMessage = useCallback(
+    async (failedId: string) => {
+      const list = useChatStore.getState().messages[bookingId] ?? [];
+      const target = list.find((m) => m.id === failedId);
+      if (!target || !target.failed) return;
+      removeMessage(bookingId, failedId);
+      const payload = target.retry_payload ?? {};
+      try {
+        if (payload.image_uri) {
+          await sendMessageWithImage(payload.image_uri, payload.content);
+        } else {
+          await sendMessage(payload.content);
+        }
+      } catch {
+        /* the send helpers re-add their own failed placeholder */
+      }
+    },
+    [bookingId, removeMessage, sendMessage, sendMessageWithImage],
   );
 
   const markAsRead = useCallback(async () => {
@@ -264,6 +301,7 @@ export function useChat(bookingId: string) {
     loadingOlder,
     sendMessage,
     sendMessageWithImage,
+    retryMessage,
     markAsRead,
     setIsTyping,
   };
