@@ -179,6 +179,40 @@ export default function TrackingScreen() {
   // Pauses automatically when the app is backgrounded.
   useForegroundInterval(refreshUnread, 30000);
 
+  // Polling fallback for the runner's live position. Supabase Realtime
+  // is the primary path (useRunnerTracking) but a silent websocket
+  // disconnect would otherwise freeze the runner pin on the customer's
+  // map. Re-fetching /track every 10s when realtime is reportedly down
+  // keeps the dot moving in the worst case. Pause when the realtime
+  // channel is healthy to avoid wasting bandwidth.
+  useForegroundInterval(
+    () => {
+      if (!id || !booking?.runner_id) return;
+      bookingService
+        .trackBooking(id)
+        .then((res) => {
+          const loc = res.data?.data?.runner_location;
+          if (loc?.lat != null && loc?.lng != null) {
+            setRunnerLocation({
+              id: 'poll',
+              booking_id: id,
+              runner_id: booking.runner_id ?? '',
+              lat: Number(loc.lat),
+              lng: Number(loc.lng),
+              heading: loc.heading ?? null,
+              speed: loc.speed ?? null,
+              accuracy: null,
+              created_at: loc.updated_at ?? new Date().toISOString(),
+            });
+          }
+        })
+        .catch(() => {});
+    },
+    10_000,
+    !!id && !!booking?.runner_id && !isConnected,
+    false,
+  );
+
   // Phase-aware route target. While the runner is heading to the
   // pickup, drawing a static pickup→dropoff polyline is misleading —
   // the customer cares about runner→pickup. Once the parcel is in

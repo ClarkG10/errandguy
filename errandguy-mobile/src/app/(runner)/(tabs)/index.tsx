@@ -21,6 +21,7 @@ import { RunnerHomeSkeleton } from '../../../components/ui/Skeleton';
 import { useQuery } from '../../../hooks/useQuery';
 import { CacheTTL } from '../../../services/cache.service';
 import { useIncomingRequest } from '../../../hooks/useIncomingRequest';
+import { useForegroundInterval } from '../../../hooks/useForegroundInterval';
 import type { Booking } from '../../../types';
 import { toast } from '../../../stores/toastStore';
 
@@ -107,6 +108,43 @@ export default function RunnerHomeScreen() {
   // Prefer the realtime store value (already updated by acceptErrand /
   // status pushes) when available; fall back to the cached fetch result.
   const activeErrand = currentErrand ?? currentErrandQ.data ?? null;
+
+  // Polling fallback for the match handshake. Supabase Realtime is the
+  // primary path (useIncomingRequest below) but it can silently drop —
+  // RLS misconfig, websocket eviction on cellular handoff, table not
+  // in the realtime publication, etc. — and a runner who never sees
+  // their match is the worst possible failure mode here. Re-fetching
+  // /runner/errand/current every 8s while online catches anything the
+  // realtime channel missed.
+  useForegroundInterval(
+    () => {
+      if (!enabled || !isOnline) return;
+      currentErrandQ.refresh();
+    },
+    8_000,
+    enabled && isOnline,
+    false,
+  );
+
+  // When the polled current-errand reveals a fresh match the runner
+  // hasn't been told about yet, surface it as an incoming request so
+  // the IncomingRequestModal opens. Guarded so we don't re-pop after
+  // the runner accepts (status flips to 'accepted') or after a manual
+  // dismiss within the same booking id.
+  const lastSeenMatchIdRef = React.useRef<string | null>(null);
+  useEffect(() => {
+    const fresh = currentErrandQ.data;
+    if (!fresh) return;
+    if (fresh.status !== 'matched') return;
+    if (currentErrand?.id === fresh.id) return; // already accepted in store
+    if (incomingRequest?.booking?.id === fresh.id) return;
+    if (lastSeenMatchIdRef.current === fresh.id) return;
+    lastSeenMatchIdRef.current = fresh.id;
+    useRunnerStore.getState().setIncomingRequest({
+      booking: fresh,
+      expiresAt: Date.now() + 30_000,
+    });
+  }, [currentErrandQ.data, currentErrand?.id, incomingRequest?.booking?.id]);
 
   // Mirror into the global store so other screens see fresh data.
   useEffect(() => {
