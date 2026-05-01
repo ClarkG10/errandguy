@@ -3,8 +3,7 @@ import { View, Text } from 'react-native';
 import { MapPin } from 'lucide-react-native';
 import Mapbox from '@rnmapbox/maps';
 import { MAP_STYLE_URL } from '../../constants/map';
-
-const MAPBOX_TOKEN = process.env.EXPO_PUBLIC_MAPBOX_TOKEN ?? '';
+import { routeService } from '../../services/route.service';
 
 interface MiniRouteMapProps {
   pickupLat?: number;
@@ -40,24 +39,22 @@ export function MiniRouteMap({
 
   const [routeCoords, setRouteCoords] = useState<[number, number][]>([]);
 
-  // Fetch directions from Mapbox
+  // Fetch directions via shared cached service. The mini route map is
+  // rendered inside booking history list rows and confirm screens — the
+  // same coordinate pair often gets requested many times per session,
+  // so the AsyncStorage layer is a real bandwidth + cost win.
   useEffect(() => {
-    if (!hasBoth || !MAPBOX_TOKEN) return;
-
+    if (!hasBoth) return;
     let cancelled = false;
-    const url = `https://api.mapbox.com/directions/v5/mapbox/driving/${pickupLng},${pickupLat};${dropoffLng},${dropoffLat}?geometries=geojson&overview=full&access_token=${MAPBOX_TOKEN}`;
-
-    fetch(url)
-      .then((r) => r.json())
-      .then((data) => {
-        if (cancelled) return;
-        const coords = data.routes?.[0]?.geometry?.coordinates;
-        if (Array.isArray(coords)) {
-          setRouteCoords(coords);
-        }
-      })
-      .catch(() => {});
-
+    routeService
+      .getRoute(
+        { lng: pickupLng!, lat: pickupLat! },
+        { lng: dropoffLng!, lat: dropoffLat! },
+      )
+      .then((res) => {
+        if (cancelled || !res) return;
+        setRouteCoords(res.coordinates);
+      });
     return () => { cancelled = true; };
   }, [hasBoth, pickupLat, pickupLng, dropoffLat, dropoffLng]);
 
@@ -124,20 +121,20 @@ export function MiniRouteMap({
 
           {/* Pickup marker */}
           {hasPickup && (
-            <Mapbox.PointAnnotation id="pickup" coordinate={[pickupLng!, pickupLat!]}>
+            <Mapbox.MarkerView id="pickup" coordinate={[pickupLng!, pickupLat!]} anchor={{ x: 0.5, y: 0.5 }} allowOverlap>
               <View className="w-6 h-6 rounded-full bg-primary items-center justify-center border-2 border-white">
                 <View className="w-2 h-2 rounded-full bg-white" />
               </View>
-            </Mapbox.PointAnnotation>
+            </Mapbox.MarkerView>
           )}
 
           {/* Dropoff marker */}
           {hasDropoff && (
-            <Mapbox.PointAnnotation id="dropoff" coordinate={[dropoffLng!, dropoffLat!]}>
+            <Mapbox.MarkerView id="dropoff" coordinate={[dropoffLng!, dropoffLat!]} anchor={{ x: 0.5, y: 0.5 }} allowOverlap>
               <View className="w-6 h-6 rounded-full bg-danger items-center justify-center border-2 border-white">
                 <View className="w-2 h-2 rounded-full bg-white" />
               </View>
-            </Mapbox.PointAnnotation>
+            </Mapbox.MarkerView>
           )}
 
           {/* Route line */}

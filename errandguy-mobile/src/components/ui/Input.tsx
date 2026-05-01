@@ -1,10 +1,9 @@
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef } from 'react';
 import {
   View,
   TextInput,
   Text,
   Pressable,
-  Animated,
   StyleSheet,
   type TextInputProps,
 } from 'react-native';
@@ -18,6 +17,15 @@ interface InputProps extends Omit<TextInputProps, 'onChange'> {
   rightIcon?: LucideIcon;
 }
 
+/**
+ * Form input with a static caption-style label.
+ *
+ * The previous version used `Animated` to float the label between two
+ * positions, but with `useNativeDriver: false` it forced a layout pass
+ * on every keystroke, which the user perceived as a glitch (label
+ * jitter, cursor jump). A static caption label removes the animation
+ * entirely and matches what iOS / Material 3 ship today.
+ */
 export function Input({
   label,
   value,
@@ -38,30 +46,14 @@ export function Input({
   const isPassword = secureTextEntry !== undefined;
   const inputRef = useRef<TextInput>(null);
 
-  const floated = focused || (value != null && value.length > 0);
-  const anim = useRef(new Animated.Value(floated ? 1 : 0)).current;
-
-  useEffect(() => {
-    Animated.timing(anim, {
-      toValue: floated ? 1 : 0,
-      duration: 150,
-      useNativeDriver: false,
-    }).start();
-  }, [floated, anim]);
-
-  const labelTop = anim.interpolate({
-    inputRange: [0, 1],
-    outputRange: [multiline ? 14 : 16, 6],
-  });
-  const labelSize = anim.interpolate({
-    inputRange: [0, 1],
-    outputRange: [14, 11],
-  });
-
   const borderColor = error ? '#EF4444' : focused ? '#2563EB' : '#E2E8F0';
+  const labelColor = error ? '#EF4444' : focused ? '#2563EB' : '#64748B';
 
   return (
     <View style={fs.wrapper}>
+      {label && (
+        <Text style={[fs.label, { color: labelColor }]}>{label}</Text>
+      )}
       <Pressable
         style={[
           fs.container,
@@ -70,32 +62,17 @@ export function Input({
         ]}
         onPress={() => inputRef.current?.focus()}
       >
-        {label && (
-          <Animated.Text
-            style={[
-              fs.label,
-              {
-                top: labelTop,
-                fontSize: labelSize,
-                color: error ? '#EF4444' : focused ? '#2563EB' : '#94A3B8',
-              },
-            ]}
-          >
-            {label}
-          </Animated.Text>
+        {LeftIcon && (
+          <LeftIcon size={18} color="#94A3B8" style={{ marginRight: 10 }} />
         )}
         <TextInput
           ref={inputRef}
           accessibilityLabel={label || placeholder}
           accessibilityState={{ disabled: rest.editable === false }}
-          style={[
-            fs.input,
-            label ? fs.inputWithLabel : null,
-            multiline && fs.inputMultiline,
-          ]}
+          style={[fs.input, multiline && fs.inputMultiline]}
           value={value}
           onChangeText={onChangeText}
-          placeholder={floated || !label ? placeholder : ''}
+          placeholder={placeholder}
           placeholderTextColor="#CBD5E1"
           secureTextEntry={isPassword && !showPassword}
           keyboardType={keyboardType}
@@ -109,10 +86,11 @@ export function Input({
         />
         {isPassword && (
           <Pressable
-            style={fs.toggle}
+            hitSlop={10}
             onPress={() => setShowPassword(!showPassword)}
             accessibilityRole="button"
             accessibilityLabel={showPassword ? 'Hide password' : 'Show password'}
+            style={{ marginLeft: 8 }}
           >
             {showPassword ? (
               <EyeOff size={18} color="#94A3B8" />
@@ -122,50 +100,51 @@ export function Input({
           </Pressable>
         )}
         {RightIcon && !isPassword && (
-          <RightIcon size={18} color="#94A3B8" style={fs.rightIcon} />
+          <RightIcon size={18} color="#94A3B8" style={{ marginLeft: 8 }} />
         )}
       </Pressable>
-      {error && <Text style={fs.error}>{error}</Text>}
+      {error && (
+        <Text
+          style={fs.error}
+          accessibilityLiveRegion="polite"
+          accessibilityRole="alert"
+        >
+          {error}
+        </Text>
+      )}
     </View>
   );
 }
 
 const fs = StyleSheet.create({
   wrapper: { marginBottom: 16 },
+  label: {
+    fontSize: 12,
+    fontFamily: 'Quicksand_600SemiBold',
+    marginBottom: 6,
+    marginLeft: 2,
+  },
   container: {
     borderWidth: 1.5,
-    borderRadius: 16,
+    borderRadius: 14,
     backgroundColor: '#FFFFFF',
-    minHeight: 56,
-    justifyContent: 'center',
-    paddingHorizontal: 16,
+    minHeight: 52,
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 14,
   },
-  multiline: { minHeight: 96, alignItems: 'flex-start' },
-  label: {
-    position: 'absolute',
-    left: 16,
-    fontFamily: 'Quicksand_400Regular',
-    backgroundColor: '#FFFFFF',
-    paddingHorizontal: 4,
-    zIndex: 1,
-  },
+  multiline: { minHeight: 96, alignItems: 'flex-start', paddingVertical: 12 },
   input: {
     flex: 1,
-    fontSize: 14,
+    fontSize: 15,
     fontFamily: 'Quicksand_400Regular',
     color: '#0F172A',
     paddingVertical: 0,
-    paddingTop: 0,
-  },
-  inputWithLabel: {
-    paddingTop: 12,
   },
   inputMultiline: {
-    paddingTop: 20,
     minHeight: 80,
+    textAlignVertical: 'top',
   },
-  toggle: { position: 'absolute', right: 16, top: 18 },
-  rightIcon: { position: 'absolute', right: 16, top: 18 },
   error: {
     fontSize: 12,
     fontFamily: 'Quicksand_400Regular',

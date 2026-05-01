@@ -9,13 +9,15 @@ import {
   ActivityIndicator,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { Search, MapPin, Navigation, CheckCircle, XCircle } from 'lucide-react-native';
+import { Search, MapPin, Navigation, CheckCircle, XCircle, MessageCircle } from 'lucide-react-native';
+import { useRouter } from 'expo-router';
 import { Card } from '../../../components/ui/Card';
 import { Badge } from '../../../components/ui/Badge';
 import { runnerService } from '../../../services/runner.service';
 import { useQuery } from '../../../hooks/useQuery';
 import { CacheTTL } from '../../../services/cache.service';
 import { useAuthStore } from '../../../stores/authStore';
+import { useChatStore } from '../../../stores/chatStore';
 import { formatCurrency } from '../../../utils/formatCurrency';
 import { useDebounce } from '../../../hooks/useDebounce';
 import { HistorySkeleton } from '../../../components/ui/Skeleton';
@@ -23,7 +25,9 @@ import type { Booking } from '../../../types';
 import { toast } from '../../../stores/toastStore';
 
 export default function HistoryScreen() {
+  const router = useRouter();
   const userId = useAuthStore((s) => s.user?.id ?? 'anon');
+  const chatUnread = useChatStore((s) => s.unreadCount);
   const [statusFilter, setStatusFilter] = useState<'all' | 'completed' | 'cancelled'>('all');
   const [search, setSearch] = useState('');
   const debouncedSearch = useDebounce(search, 300);
@@ -174,8 +178,42 @@ export default function HistoryScreen() {
 
   return (
     <SafeAreaView className="flex-1 bg-background" edges={['top']}>
-      <View className="px-5 pt-4 pb-2">
+      <View className="flex-row items-center justify-between px-5 pt-4 pb-2">
         <Text className="text-lg font-montserrat-bold text-textPrimary">Errand History</Text>
+        <Pressable
+          onPress={() => router.push('/(runner)/chat' as any)}
+          className="w-10 h-10 rounded-full items-center justify-center"
+          accessibilityRole="button"
+          accessibilityLabel="Messages"
+          accessibilityHint={chatUnread > 0 ? `${chatUnread} unread messages` : undefined}
+          hitSlop={8}
+        >
+          <View>
+            <MessageCircle size={22} color="#0F172A" />
+            {chatUnread > 0 && (
+              <View
+                style={{
+                  position: 'absolute',
+                  top: -4,
+                  right: -4,
+                  minWidth: 16,
+                  height: 16,
+                  borderRadius: 8,
+                  paddingHorizontal: 3,
+                  backgroundColor: '#DC2626',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  borderWidth: 2,
+                  borderColor: '#FFFFFF',
+                }}
+              >
+                <Text className="text-[9px] font-montserrat-bold text-white">
+                  {chatUnread > 9 ? '9+' : chatUnread}
+                </Text>
+              </View>
+            )}
+          </View>
+        </Pressable>
       </View>
 
       {/* Search Bar */}

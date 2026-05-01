@@ -1,45 +1,18 @@
 import { Tabs } from 'expo-router';
 import { Home, DollarSign, Clock, User } from 'lucide-react-native';
-import { View, Text, Platform, StyleSheet } from 'react-native';
+import { Platform, StyleSheet } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRunnerStore } from '../../../stores/runnerStore';
+import { TabBarItem } from '../../../components/ui/TabBarItem';
 
 const ACTIVE = '#2563EB';
 const INACTIVE = '#94A3B8';
 const BAR_HEIGHT = 56;
 
-function TabItem({
-  Icon,
-  label,
-  color,
-  focused,
-  showOnlineDot,
-}: {
-  Icon: typeof Home;
-  label: string;
-  color: string;
-  focused: boolean;
-  showOnlineDot?: boolean;
-}) {
-  return (
-    <View style={styles.itemWrap}>
-      <View style={[styles.iconPill, focused && { backgroundColor: '#EFF4FF' }]}>
-        <Icon size={20} color={color} strokeWidth={focused ? 2.4 : 1.9} />
-        {showOnlineDot && <View style={styles.onlineDot} />}
-      </View>
-      <Text
-        numberOfLines={1}
-        style={[styles.label, { color }, focused && styles.labelFocused]}
-      >
-        {label}
-      </Text>
-    </View>
-  );
-}
-
 export default function RunnerTabsLayout() {
   const isOnline = useRunnerStore((s) => s.isOnline);
   const insets = useSafeAreaInsets();
+  const bottomInset = insets.bottom;
 
   return (
     <Tabs
@@ -49,13 +22,14 @@ export default function RunnerTabsLayout() {
         tabBarActiveTintColor: ACTIVE,
         tabBarInactiveTintColor: INACTIVE,
         tabBarShowLabel: false,
+        tabBarHideOnKeyboard: true,
         tabBarStyle: {
           backgroundColor: '#FFFFFF',
           borderTopWidth: StyleSheet.hairlineWidth,
           borderTopColor: '#E2E8F0',
-          height: BAR_HEIGHT + insets.bottom,
-          paddingTop: 6,
-          paddingBottom: insets.bottom,
+          height: BAR_HEIGHT + bottomInset,
+          paddingTop: 4,
+          paddingBottom: bottomInset,
           ...Platform.select({
             ios: {
               shadowColor: '#0F172A',
@@ -66,18 +40,21 @@ export default function RunnerTabsLayout() {
             android: { elevation: 4 },
           }),
         },
-        tabBarItemStyle: { height: BAR_HEIGHT },
+        tabBarItemStyle: {
+          height: BAR_HEIGHT,
+          paddingTop: 0,
+          paddingBottom: 0,
+        },
       }}
     >
       <Tabs.Screen
         name="index"
         options={{
           title: 'Home',
-          tabBarIcon: ({ color, focused }) => (
-            <TabItem
+          tabBarIcon: ({ focused }) => (
+            <TabBarItem
               Icon={Home}
               label="Home"
-              color={color}
               focused={focused}
               showOnlineDot={isOnline}
             />
@@ -88,13 +65,8 @@ export default function RunnerTabsLayout() {
         name="earnings"
         options={{
           title: 'Earnings',
-          tabBarIcon: ({ color, focused }) => (
-            <TabItem
-              Icon={DollarSign}
-              label="Earnings"
-              color={color}
-              focused={focused}
-            />
+          tabBarIcon: ({ focused }) => (
+            <TabBarItem Icon={DollarSign} label="Earnings" focused={focused} />
           ),
         }}
       />
@@ -102,8 +74,8 @@ export default function RunnerTabsLayout() {
         name="history"
         options={{
           title: 'History',
-          tabBarIcon: ({ color, focused }) => (
-            <TabItem Icon={Clock} label="History" color={color} focused={focused} />
+          tabBarIcon: ({ focused }) => (
+            <TabBarItem Icon={Clock} label="History" focused={focused} />
           ),
         }}
       />
@@ -111,48 +83,11 @@ export default function RunnerTabsLayout() {
         name="profile"
         options={{
           title: 'Profile',
-          tabBarIcon: ({ color, focused }) => (
-            <TabItem Icon={User} label="Profile" color={color} focused={focused} />
+          tabBarIcon: ({ focused }) => (
+            <TabBarItem Icon={User} label="Profile" focused={focused} />
           ),
         }}
       />
     </Tabs>
   );
 }
-
-const styles = StyleSheet.create({
-  itemWrap: {
-    width: 64,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  iconPill: {
-    width: 48,
-    height: 28,
-    borderRadius: 14,
-    alignItems: 'center',
-    justifyContent: 'center',
-    position: 'relative',
-  },
-  label: {
-    fontFamily: 'Quicksand_500Medium',
-    fontSize: 11,
-    marginTop: 2,
-    lineHeight: 13,
-  },
-  labelFocused: {
-    fontFamily: 'Quicksand_700Bold',
-  },
-  onlineDot: {
-    position: 'absolute',
-    top: 2,
-    right: 8,
-    width: 8,
-    height: 8,
-    borderRadius: 4,
-    backgroundColor: '#22C55E',
-    borderWidth: 1.5,
-    borderColor: '#FFFFFF',
-  },
-});
-

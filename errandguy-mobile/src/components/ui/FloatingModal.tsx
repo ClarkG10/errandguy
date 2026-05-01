@@ -30,9 +30,9 @@ export function FloatingModal({
       >
         <Pressable onPress={(e) => e.stopPropagation()}>
           <MotiView
-            from={{ opacity: 0, scale: 0.9 }}
+            from={{ opacity: 0, scale: 0.96 }}
             animate={{ opacity: 1, scale: 1 }}
-            transition={{ type: 'spring', damping: 22, stiffness: 220 }}
+            transition={{ type: 'timing', duration: 200 }}
             className="bg-surface rounded-[24px] p-6 w-full min-w-[300px]"
           >
             {title && (

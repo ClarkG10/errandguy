@@ -31,10 +31,26 @@ class OTPController extends Controller
 
         $this->otpService->storeOTP($identifier, $otp);
 
-        if ($request->phone) {
-            $this->otpService->sendViaSMS($request->phone, $otp);
-        } else {
-            $this->otpService->sendViaEmail($request->email, $otp);
+        // If delivery fails (SMS gateway down, invalid number, mailer
+        // outage \u2026) we have to drop the just-stored OTP, otherwise the
+        // user is blocked: the throttle still counts this attempt and
+        // the cached OTP would shadow their next request.
+        try {
+            if ($request->phone) {
+                $this->otpService->sendViaSMS($request->phone, $otp);
+            } else {
+                $this->otpService->sendViaEmail($request->email, $otp);
+            }
+        } catch (\Throwable $e) {
+            $this->otpService->invalidateOTP($identifier);
+            Log::error('OTP delivery failed', [
+                'identifier' => $identifier,
+                'channel' => $request->phone ? 'sms' : 'email',
+                'error' => $e->getMessage(),
+            ]);
+            return response()->json([
+                'message' => 'Could not send verification code. Please try again.',
+            ], 502);
         }
 
         return response()->json([

@@ -120,7 +120,7 @@ export function ImagePickerModal({
             from={{ translateY: 400, opacity: 0 }}
             animate={{ translateY: 0, opacity: 1 }}
             exit={{ translateY: 400, opacity: 0 }}
-            transition={{ type: 'spring', damping: 20, stiffness: 200 }}
+            transition={{ type: 'timing', duration: 240 }}
             className="bg-surface rounded-t-[28px] pb-10"
           >
             {/* Handle bar */}

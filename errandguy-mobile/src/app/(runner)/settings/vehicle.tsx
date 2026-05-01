@@ -2,7 +2,9 @@ import React, { useState } from 'react';
 import { View, Text, ScrollView, Pressable } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
-import { ArrowLeft, Check } from 'lucide-react-native';
+import { Check, PersonStanding, Bike, Car } from 'lucide-react-native';
+import type { LucideIcon } from 'lucide-react-native';
+import { BackButton } from '../../../components/ui/BackButton';
 import { Input } from '../../../components/ui/Input';
 import { Button } from '../../../components/ui/Button';
 import { Card } from '../../../components/ui/Card';
@@ -11,11 +13,13 @@ import { runnerService } from '../../../services/runner.service';
 import type { VehicleType } from '../../../types';
 import { toast } from '../../../stores/toastStore';
 
-const VEHICLE_OPTIONS: { type: VehicleType; label: string; emoji: string }[] = [
-  { type: 'walk', label: 'Walking', emoji: '🚶' },
-  { type: 'bicycle', label: 'Bicycle', emoji: '🚲' },
-  { type: 'motorcycle', label: 'Motorcycle', emoji: '🏍️' },
-  { type: 'car', label: 'Car', emoji: '🚗' },
+// Lucide doesn't ship a motorcycle glyph, so we reuse `Bike` for the
+// two-wheeled options and let the label disambiguate.
+const VEHICLE_OPTIONS: { type: VehicleType; label: string; Icon: LucideIcon }[] = [
+  { type: 'walk', label: 'Walking', Icon: PersonStanding },
+  { type: 'bicycle', label: 'Bicycle', Icon: Bike },
+  { type: 'motorcycle', label: 'Motorcycle', Icon: Bike },
+  { type: 'car', label: 'Car', Icon: Car },
 ];
 
 export default function VehicleScreen() {
@@ -40,7 +44,7 @@ export default function VehicleScreen() {
       const res = await runnerService.updateRunnerProfile(data);
       setRunnerProfile(res.data.data);
       toast.success('Vehicle information updated');
-      if (router.canGoBack()) router.back(); else router.replace('/(runner)/(tabs)');
+      if (router.canGoBack()) router.back(); else router.replace('/(runner)/(tabs)/profile');
     } catch (err: any) {
       toast.error(err?.response?.data?.message ?? 'Failed to update vehicle');
     } finally {
@@ -52,13 +56,7 @@ export default function VehicleScreen() {
     <SafeAreaView className="flex-1 bg-background" edges={['top']}>
       {/* Header */}
       <View className="flex-row items-center gap-3 px-5 py-4">
-        <Pressable
-          onPress={() => router.canGoBack() ? router.back() : router.replace('/(runner)/(tabs)')}
-          className="w-9 h-9 rounded-xl bg-surface items-center justify-center"
-          style={{ shadowColor: '#0F172A', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.04, shadowRadius: 6, elevation: 1 }}
-        >
-          <ArrowLeft size={20} color="#0F172A" />
-        </Pressable>
+        <BackButton fallbackHref="/(runner)/(tabs)/profile" />
         <Text className="text-lg font-montserrat-bold text-textPrimary">
           Vehicle Information
         </Text>
@@ -84,7 +82,12 @@ export default function VehicleScreen() {
                   selected ? 'border-primary bg-primaryLight' : 'border-divider bg-surface'
                 }`}
               >
-                <Text className="text-2xl mb-1">{opt.emoji}</Text>
+                <opt.Icon
+                  size={26}
+                  color={selected ? '#2563EB' : '#64748B'}
+                  strokeWidth={1.8}
+                  style={{ marginBottom: 6 }}
+                />
                 <Text
                   className={`text-sm font-montserrat-bold ${
                     selected ? 'text-primary' : 'text-textSecondary'

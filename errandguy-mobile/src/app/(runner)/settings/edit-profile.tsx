@@ -2,8 +2,8 @@ import React, { useState } from 'react';
 import { View, Text, ScrollView, KeyboardAvoidingView, Platform } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
-import { ArrowLeft } from 'lucide-react-native';
-import { Pressable } from 'react-native';
+// ArrowLeft is now provided by the shared <BackButton> primitive.
+import { BackButton } from '../../../components/ui/BackButton';
 import { Input } from '../../../components/ui/Input';
 import { Button } from '../../../components/ui/Button';
 import { useAuthStore } from '../../../stores/authStore';
@@ -35,7 +35,7 @@ export default function EditProfileScreen() {
       });
       updateProfile(res.data.data);
       toast.success('Profile updated successfully');
-      if (router.canGoBack()) router.back(); else router.replace('/(runner)/(tabs)');
+      if (router.canGoBack()) router.back(); else router.replace('/(runner)/(tabs)/profile');
     } catch (err: any) {
       toast.error(err?.response?.data?.message ?? 'Failed to update profile');
     } finally {
@@ -47,13 +47,7 @@ export default function EditProfileScreen() {
     <SafeAreaView className="flex-1 bg-background" edges={['top']}>
       {/* Header */}
       <View className="flex-row items-center gap-3 px-5 py-4">
-        <Pressable
-          onPress={() => router.canGoBack() ? router.back() : router.replace('/(runner)/(tabs)')}
-          className="w-9 h-9 rounded-xl bg-surface items-center justify-center"
-          style={{ shadowColor: '#0F172A', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.04, shadowRadius: 6, elevation: 1 }}
-        >
-          <ArrowLeft size={20} color="#0F172A" />
-        </Pressable>
+        <BackButton fallbackHref="/(runner)/(tabs)/profile" />
         <Text className="text-lg font-montserrat-bold text-textPrimary">Edit Profile</Text>
       </View>
 

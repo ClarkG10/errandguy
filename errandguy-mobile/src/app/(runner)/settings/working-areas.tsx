@@ -2,11 +2,13 @@ import React, { useState, useCallback, useMemo } from 'react';
 import { View, Text, ScrollView, RefreshControl, Pressable } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
-import { ArrowLeft, MapPin } from 'lucide-react-native';
+import { MapPin } from 'lucide-react-native';
+import { BackButton } from '../../../components/ui/BackButton';
 import Mapbox from '@rnmapbox/maps';
 import Slider from '@react-native-community/slider';
 import { Card } from '../../../components/ui/Card';
 import { Button } from '../../../components/ui/Button';
+import { BottomActionBar } from '../../../components/ui/BottomActionBar';
 import { useRunnerStore } from '../../../stores/runnerStore';
 import { useLocationStore } from '../../../stores/locationStore';
 import { runnerService } from '../../../services/runner.service';
@@ -85,13 +87,7 @@ export default function WorkingAreasScreen() {
     <SafeAreaView className="flex-1 bg-background" edges={['top']}>
       {/* Header */}
       <View className="flex-row items-center gap-3 px-5 py-4">
-        <Pressable
-          onPress={() => router.canGoBack() ? router.back() : router.replace('/(runner)/(tabs)')}
-          className="w-9 h-9 rounded-xl bg-surface items-center justify-center"
-          style={{ shadowColor: '#0F172A', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.04, shadowRadius: 6, elevation: 1 }}
-        >
-          <ArrowLeft size={20} color="#0F172A" />
-        </Pressable>
+        <BackButton fallbackHref="/(runner)/(tabs)/profile" />
         <Text className="text-lg font-montserrat-bold text-textPrimary">Working Areas</Text>
       </View>
 
@@ -210,9 +206,9 @@ export default function WorkingAreasScreen() {
       </ScrollView>
 
       {/* Save Button */}
-      <View className="absolute bottom-0 left-0 right-0 bg-background border-t border-divider px-5 py-4 pb-8">
+      <BottomActionBar>
         <Button title="Save Working Area" onPress={handleSave} loading={saving} fullWidth />
-      </View>
+      </BottomActionBar>
     </SafeAreaView>
   );
 }

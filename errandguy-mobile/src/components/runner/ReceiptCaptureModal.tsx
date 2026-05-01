@@ -110,7 +110,7 @@ export function ReceiptCaptureModal({
               />
               {overBudget && (
                 <Text className="text-xs font-montserrat text-danger -mt-2 mb-3">
-                  Amount exceeds the budget. Contact the customer through chat to top up.
+                  Amount exceeds the budget. Contact the customer through chat to add more money.
                 </Text>
               )}
 

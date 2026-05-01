@@ -4,6 +4,9 @@ import { CreditCard, Wallet, Smartphone, X, Check, Banknote } from 'lucide-react
 import type { LucideIcon } from 'lucide-react-native';
 import { BottomSheet } from '../ui/BottomSheet';
 import { paymentService } from '../../services/payment.service';
+import { useQuery } from '../../hooks/useQuery';
+import { CacheTTL } from '../../services/cache.service';
+import { useAuthStore } from '../../stores/authStore';
 import type { PaymentMethod, PaymentMethodType } from '../../types';
 
 interface PaymentMethodSelectorProps {
@@ -23,30 +26,45 @@ export function PaymentMethodSelector({
   selectedId,
   onSelect,
 }: PaymentMethodSelectorProps) {
-  const [methods, setMethods] = useState<PaymentMethod[]>([]);
-  const [loading, setLoading] = useState(true);
+  const userId = useAuthStore((s) => s.user?.id ?? 'anon');
   const [showSheet, setShowSheet] = useState(false);
-  const fetched = useRef(false);
   const onSelectRef = useRef(onSelect);
   onSelectRef.current = onSelect;
+  // Track that we've already auto-applied the default once for this
+  // component instance — without this guard, removing the user's pick in
+  // the sheet would immediately re-snap back to the default after the
+  // next refetch, which feels like a broken UI.
+  const autoSelectedRef = useRef(false);
 
+  // Cache-first read so the booking review screen can paint instantly
+  // on revisit. Invalidations from setDefaultMethod / addPaymentMethod /
+  // removePaymentMethod (paymentService) push fresh data automatically.
+  const methodsQ = useQuery<PaymentMethod[]>(
+    ['payment-methods', userId],
+    async () => {
+      const res = await paymentService.getPaymentMethods();
+      return (res.data?.data ?? []) as PaymentMethod[];
+    },
+    { staleTime: 60_000, ttl: CacheTTL.MEDIUM },
+  );
+
+  const methods = methodsQ.data ?? [];
+  const loading = methodsQ.loading && !methodsQ.data;
+
+  // Auto-select default once on first successful load.
   useEffect(() => {
-    if (fetched.current) return;
-    fetched.current = true;
-    paymentService
-      .getPaymentMethods()
-      .then((res) => {
-        const data: PaymentMethod[] = res.data.data ?? [];
-        setMethods(data);
-        // Auto-select default if none selected
-        if (!selectedId) {
-          const defaultMethod = data.find((m) => m.is_default);
-          if (defaultMethod) onSelectRef.current(defaultMethod.id, defaultMethod.type);
-        }
-      })
-      .catch(() => setMethods([]))
-      .finally(() => setLoading(false));
-  }, []);
+    if (autoSelectedRef.current) return;
+    if (!methodsQ.data) return;
+    if (selectedId) {
+      autoSelectedRef.current = true;
+      return;
+    }
+    const def = methodsQ.data.find((m) => m.is_default);
+    if (def) {
+      autoSelectedRef.current = true;
+      onSelectRef.current(def.id, def.type);
+    }
+  }, [methodsQ.data, selectedId]);
 
   const selectedMethod = methods.find((m) => m.id === selectedId);
   const Icon = selectedMethod

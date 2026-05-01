@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { View, Text, StyleSheet, Dimensions } from 'react-native';
+import { View, Text, StyleSheet, Dimensions, AppState } from 'react-native';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import { CheckCircle, XCircle } from 'lucide-react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -14,6 +14,7 @@ import Animated, {
 import Mapbox from '@rnmapbox/maps';
 import { useBookingStore } from '../../../stores/bookingStore';
 import { useBookingStatus } from '../../../hooks/useBookingStatus';
+import { useBackGuard } from '../../../hooks/useBackGuard';
 import { bookingService } from '../../../services/booking.service';
 import { Button } from '../../../components/ui/Button';
 import { ConfirmModal } from '../../../components/ui/ConfirmModal';
@@ -21,7 +22,6 @@ import type { BookingStatus } from '../../../types';
 import { toast } from '../../../stores/toastStore';
 import { MAP_STYLE_URL } from '../../../constants/map';
 
-const MAPBOX_TOKEN = process.env.EXPO_PUBLIC_MAPBOX_TOKEN ?? '';
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 const PULSE_SIZE = 200;
 
@@ -94,6 +94,10 @@ export default function ConfirmScreen() {
   const [state, setState] = useState<SearchState>('searching');
   const [showCancelModal, setShowCancelModal] = useState(false);
   const [isCancelling, setIsCancelling] = useState(false);
+  // Tracks how many widened-radius retries the customer has used so the
+  // server keeps fanning the search out instead of repeating the same one.
+  const [retryStep, setRetryStep] = useState<1 | 2 | 3>(1);
+  const [isRetrying, setIsRetrying] = useState(false);
   const [bookingNumber, setBookingNumber] = useState(
     activeBooking?.booking_number ?? '',
   );
@@ -102,9 +106,32 @@ export default function ConfirmScreen() {
   // socket ever drops.
   const safetyPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
+  // Deep-link / cold-launch guard: if we somehow landed here with no
+  // bookingId in either route params or store, there's nothing to wait
+  // for. Send the user home rather than render a frozen "Searching..."
+  // forever.
+  useEffect(() => {
+    if (!bookingId) {
+      toast.error('Booking session lost. Please try again.');
+      router.replace('/(customer)/(tabs)');
+    }
+  }, [bookingId, router]);
+
   // Countdown until we give up waiting for a runner.
   // Fixed price → 60s (matches matching window). Negotiate → 5 minutes (per spec).
   const totalSeconds = activeBooking?.pricing_mode === 'negotiate' ? 300 : 60;
+  // Deadline-based countdown so backgrounding the app doesn't pause it
+  // (the *server* doesn't pause matching either — pretending it does
+  // gives users a stale impression). Recompute every tick from
+  // `Date.now()` against this deadline.
+  const deadlineRef = useRef<number>(Date.now() + totalSeconds * 1000);
+  // Reset deadline when the screen first mounts for a given totalSeconds.
+  // (Subsequent retries call `setDeadline` directly.)
+  const initialisedDeadlineRef = useRef(false);
+  if (!initialisedDeadlineRef.current) {
+    deadlineRef.current = Date.now() + totalSeconds * 1000;
+    initialisedDeadlineRef.current = true;
+  }
   const [secondsLeft, setSecondsLeft] = useState(totalSeconds);
 
   // Get pickup coords from booking or draft.
@@ -121,14 +148,48 @@ export default function ConfirmScreen() {
   // Countdown ticker — only runs while we're still searching.
   useEffect(() => {
     if (state !== 'searching') return;
-    if (secondsLeft <= 0) {
-      setState('no_runner');
-      if (safetyPollRef.current) clearInterval(safetyPollRef.current);
-      return;
-    }
-    const id = setTimeout(() => setSecondsLeft((s) => s - 1), 1000);
-    return () => clearTimeout(id);
-  }, [state, secondsLeft]);
+    const tick = () => {
+      const remaining = Math.max(
+        0,
+        Math.ceil((deadlineRef.current - Date.now()) / 1000),
+      );
+      setSecondsLeft(remaining);
+      if (remaining <= 0) {
+        setState('no_runner');
+        if (safetyPollRef.current) clearInterval(safetyPollRef.current);
+      }
+    };
+    tick(); // immediate sync (covers backgrounded-time-elapsed case)
+    const id = setInterval(tick, 1000);
+    return () => clearInterval(id);
+  }, [state]);
+
+  // Resync booking status whenever the app comes back to the foreground —
+  // realtime channels can miss events while suspended on Android.
+  useEffect(() => {
+    const sub = AppState.addEventListener('change', (next) => {
+      if (next !== 'active' || !bookingId || state !== 'searching') return;
+      bookingService
+        .getBooking(bookingId)
+        .then((res) => {
+          // reactToStatus is defined further below — read fresh via store
+          const fresh = res.data.data;
+          setBookingNumber(fresh?.booking_number ?? '');
+          // Mirror into store so the existing reactToStatus effect picks it up.
+          setActiveBooking(fresh);
+        })
+        .catch(() => {});
+    });
+    return () => sub.remove();
+  }, [bookingId, state, setActiveBooking]);
+
+  // Block accidental Android hardware-back / gesture-back during the
+  // search — first press shows a hint, second press inside 2s falls
+  // through. Cancellation should go through the explicit Cancel button.
+  useBackGuard(
+    state === 'searching',
+    'Tap back again to leave — your booking will keep searching.',
+  );
 
   // ── Realtime status updates ──
   // Subscribes to Supabase Realtime; reacts to status transitions instantly
@@ -208,10 +269,28 @@ export default function ConfirmScreen() {
     }
   }, [bookingId, setActiveBooking, router]);
 
-  const handleRetry = useCallback(() => {
-    setSecondsLeft(totalSeconds);
-    setState('searching');
-  }, [totalSeconds]);
+  const handleRetry = useCallback(async () => {
+    if (!bookingId || isRetrying) return;
+    // Step 1 = original radius, 2 = ~1.75x, 3 = ~2.5x. After 3 we stop
+    // pretending we can find someone and steer the user to alternatives.
+    const step = Math.min(retryStep, 3) as 1 | 2 | 3;
+    setIsRetrying(true);
+    try {
+      await bookingService.retryMatch(bookingId, step);
+      setRetryStep((s) => (s < 3 ? ((s + 1) as 1 | 2 | 3) : 3));
+      // Reset the deadline-based countdown.
+      deadlineRef.current = Date.now() + totalSeconds * 1000;
+      setSecondsLeft(totalSeconds);
+      setState('searching');
+    } catch (err: any) {
+      toast.error(
+        err?.response?.data?.message ??
+          'Could not retry matching right now. Try again in a moment.',
+      );
+    } finally {
+      setIsRetrying(false);
+    }
+  }, [bookingId, isRetrying, retryStep, totalSeconds]);
 
   const mm = Math.floor(secondsLeft / 60).toString().padStart(2, '0');
   const ss = (secondsLeft % 60).toString().padStart(2, '0');
@@ -306,10 +385,29 @@ export default function ConfirmScreen() {
                 No runners available
               </Text>
               <Text className="text-sm font-montserrat text-textSecondary mt-1 text-center">
-                Try again in a few minutes
+                {retryStep === 1
+                  ? 'No runners are nearby right now. We can widen the search area.'
+                  : retryStep === 2
+                    ? 'Still no luck. We can search a much larger area, but ETA will be longer.'
+                    : "We've already searched a wide area. Try cancelling and rebooking later, or switch pricing modes."}
               </Text>
               <View className="mt-5 w-full gap-3">
-                <Button title="Try Again" onPress={handleRetry} fullWidth />
+                {retryStep <= 3 && (
+                  <Button
+                    title={
+                      isRetrying
+                        ? 'Searching…'
+                        : retryStep === 1
+                          ? 'Search again'
+                          : retryStep === 2
+                            ? 'Widen search area'
+                            : 'Search a wider area'
+                    }
+                    onPress={handleRetry}
+                    disabled={isRetrying}
+                    fullWidth
+                  />
+                )}
                 <Button
                   title="Go Home"
                   variant="outline"

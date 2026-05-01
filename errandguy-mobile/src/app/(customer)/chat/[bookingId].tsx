@@ -9,10 +9,13 @@ import {
   Platform,
   ScrollView,
   Linking,
+  AppState,
+  type AppStateStatus,
 } from 'react-native';
 import { Image } from 'expo-image';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import { ArrowLeft, Send, Camera, Phone } from 'lucide-react-native';
+import { ActivityIndicator } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useAuthStore } from '../../../stores/authStore';
 import { useBookingStore } from '../../../stores/bookingStore';
@@ -34,7 +37,11 @@ export default function ChatScreen() {
     messages,
     fetchMessages,
     sendMessage: chatSendMessage,
+    sendMessageWithImage: chatSendImage,
     markAsRead,
+    loadOlder,
+    hasMore,
+    loadingOlder,
   } = useChat(bookingId ?? '');
 
   const [inputText, setInputText] = useState('');
@@ -65,6 +72,42 @@ export default function ChatScreen() {
     markAsRead().catch(() => {});
   }, [bookingId, fetchMessages, markAsRead]);
 
+  // Keep the read receipt fresh while the user is actively looking at
+  // the conversation. Without this, every Realtime push from the runner
+  // bumped the global unread badge even though the message was visible
+  // on screen — the user would have to leave and come back to clear it.
+  //
+  // Conditions:
+  //   - app must be foregrounded (AppState === 'active')
+  //   - newest message must NOT be from us (otherwise nothing new to read)
+  //   - debounced via the dependency on `messages.length` so a burst of
+  //     incoming messages collapses into a single PATCH.
+  const lastSeenLengthRef = useRef(messages.length);
+  useEffect(() => {
+    if (!bookingId) return;
+    if (messages.length <= lastSeenLengthRef.current) {
+      lastSeenLengthRef.current = messages.length;
+      return;
+    }
+    lastSeenLengthRef.current = messages.length;
+
+    const last = messages[messages.length - 1];
+    if (!last || last.sender_id === user?.id || last.is_system) return;
+    if (AppState.currentState !== 'active') return;
+    markAsRead().catch(() => {});
+  }, [bookingId, messages, user?.id, markAsRead]);
+
+  // When the user returns to the app with the chat already open, flush
+  // a read receipt so the unread badge clears immediately.
+  useEffect(() => {
+    const sub = AppState.addEventListener('change', (state: AppStateStatus) => {
+      if (state === 'active' && bookingId) {
+        markAsRead().catch(() => {});
+      }
+    });
+    return () => sub.remove();
+  }, [bookingId, markAsRead]);
+
   const handleSend = useCallback(
     async (content?: string, imageUrl?: string) => {
       if (!bookingId) return;
@@ -87,8 +130,20 @@ export default function ChatScreen() {
 
   const handleImageSend = useCallback(async (uri: string) => {
     setImagePickerVisible(false);
-    await handleSend(undefined, uri);
-  }, [handleSend]);
+    if (!bookingId) return;
+    setSending(true);
+    try {
+      // Multipart upload — the server stores the file and returns the
+      // canonical URL on the message row. Sending the raw `file://` URI
+      // through the JSON path would be silently dropped.
+      await chatSendImage(uri);
+      flatListRef.current?.scrollToEnd({ animated: true });
+    } catch {
+      toast.error('Failed to send image');
+    } finally {
+      setSending(false);
+    }
+  }, [bookingId, chatSendImage]);
 
   const renderMessage = useCallback(
     ({ item }: { item: Message }) => {
@@ -150,6 +205,9 @@ export default function ChatScreen() {
       <View className="flex-row items-center px-5 py-3 border-b border-divider">
         <Pressable
           onPress={() => router.canGoBack() ? router.back() : router.replace('/(customer)/(tabs)/activity')}
+          accessibilityRole="button"
+          accessibilityLabel="Back to activity"
+          hitSlop={8}
           className="mr-3 w-9 h-9 rounded-xl bg-surface items-center justify-center"
           style={{ shadowColor: '#0F172A', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.04, shadowRadius: 6, elevation: 1 }}
         >
@@ -172,7 +230,13 @@ export default function ChatScreen() {
       <KeyboardAvoidingView
         className="flex-1"
         behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-        keyboardVerticalOffset={0}
+        // The header above is ~56pt tall + the safe-area top inset. Without
+        // an offset the input row hides BEHIND the keyboard on notched
+        // iPhones because KAV measures from the screen edge, not from the
+        // SafeAreaView. 90 covers the worst case (Pro Max top inset);
+        // shorter devices get a few extra pts of breathing room which is
+        // imperceptible but never wrong.
+        keyboardVerticalOffset={Platform.OS === 'ios' ? 90 : 0}
       >
         {/* Messages */}
         <FlatList
@@ -185,9 +249,39 @@ export default function ChatScreen() {
           maxToRenderPerBatch={15}
           windowSize={7}
           removeClippedSubviews={true}
-          onContentSizeChange={() =>
-            flatListRef.current?.scrollToEnd({ animated: false })
+          // Older messages live ABOVE the current top — trigger the
+          // back-pagination when the user scrolls near the start of the
+          // list. iOS reports negative offsets at the top, so any
+          // y < 60 means "close to the start".
+          onScroll={(e) => {
+            if (e.nativeEvent.contentOffset.y < 60 && hasMore && !loadingOlder) {
+              loadOlder().catch(() => {});
+            }
+          }}
+          scrollEventThrottle={120}
+          ListHeaderComponent={
+            loadingOlder ? (
+              <View className="py-3 items-center">
+                <ActivityIndicator size="small" color="#2563EB" />
+              </View>
+            ) : hasMore ? (
+              <View className="py-2 items-center">
+                <Text className="text-[11px] font-montserrat text-textTertiary">
+                  Pull down or scroll up to load older messages
+                </Text>
+              </View>
+            ) : null
           }
+          onContentSizeChange={() => {
+            // Only auto-scroll-to-end when NEW messages arrive at the
+            // bottom. If we're prepending older messages from a back-fetch
+            // (loadingOlder), preserve the user's current scroll position
+            // \u2014 jumping them to the bottom would defeat the whole point
+            // of pagination.
+            if (!loadingOlder) {
+              flatListRef.current?.scrollToEnd({ animated: false });
+            }
+          }}
         />
 
         {/* Quick Messages */}
@@ -212,33 +306,46 @@ export default function ChatScreen() {
         </ScrollView>
 
         {/* Input Area */}
-        <View className="flex-row items-center px-4 py-3 border-t border-divider bg-surface">
+        <View className="flex-row items-end px-4 py-3 border-t border-divider bg-surface">
           <Pressable
-            className="mr-2"
+            className="mr-2 mb-1.5"
             onPress={() => setImagePickerVisible(true)}
             disabled={sending}
             hitSlop={8}
+            accessibilityRole="button"
+            accessibilityLabel="Attach a photo"
           >
             <Camera size={24} color={sending ? '#94A3B8' : '#475569'} />
           </Pressable>
           <TextInput
-            className="flex-1 bg-background border border-divider rounded-full px-4 h-10 text-sm font-montserrat text-textPrimary"
+            className="flex-1 bg-background border border-divider rounded-3xl px-4 py-2.5 text-sm font-montserrat text-textPrimary"
+            style={{ maxHeight: 120, minHeight: 40 }}
             value={inputText}
             onChangeText={setInputText}
             placeholder="Type a message..."
             placeholderTextColor="#94A3B8"
-            returnKeyType="send"
-            onSubmitEditing={() => handleSend()}
+            multiline
+            // “Send on Enter” feels wrong on a multiline composer — leave
+            // the platform's default newline behaviour and rely on the
+            // dedicated send button.
             editable={!sending}
+            accessibilityLabel="Message input"
           />
           <Pressable
-            className={`ml-2 w-10 h-10 rounded-full items-center justify-center ${
+            className={`ml-2 mb-1 w-10 h-10 rounded-full items-center justify-center ${
               sending || !inputText.trim() ? 'bg-gray-300' : 'bg-primary'
             }`}
             onPress={() => handleSend()}
             disabled={sending || !inputText.trim()}
+            accessibilityRole="button"
+            accessibilityLabel="Send message"
+            accessibilityState={{ disabled: sending || !inputText.trim() }}
           >
-            <Send size={18} color="#FFFFFF" />
+            {sending ? (
+              <ActivityIndicator size="small" color="#FFFFFF" />
+            ) : (
+              <Send size={18} color="#FFFFFF" />
+            )}
           </Pressable>
         </View>
       </KeyboardAvoidingView>

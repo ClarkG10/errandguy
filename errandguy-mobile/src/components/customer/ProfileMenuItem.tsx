@@ -1,10 +1,15 @@
 import React from 'react';
-import { Pressable, Text, View } from 'react-native';
+import { Pressable, Text } from 'react-native';
 import { ChevronRight } from 'lucide-react-native';
 import type { LucideIcon } from 'lucide-react-native';
 
 interface ProfileMenuItemProps {
-  icon: LucideIcon;
+  /**
+   * Kept in the prop signature for backwards compatibility with callers
+   * that still pass an icon. The icon is intentionally NOT rendered —
+   * the design is text-first to match native settings patterns.
+   */
+  icon?: LucideIcon;
   label: string;
   onPress: () => void;
   danger?: boolean;
@@ -12,7 +17,6 @@ interface ProfileMenuItemProps {
 }
 
 export function ProfileMenuItem({
-  icon: Icon,
   label,
   onPress,
   danger = false,
@@ -20,19 +24,13 @@ export function ProfileMenuItem({
 }: ProfileMenuItemProps) {
   return (
     <Pressable
-      className="flex-row items-center py-3.5 px-1"
+      className="flex-row items-center justify-between py-4 px-1"
       onPress={onPress}
       accessibilityRole="button"
       accessibilityLabel={label}
     >
-      <View
-        className="w-9 h-9 rounded-xl items-center justify-center mr-3"
-        style={{ backgroundColor: danger ? '#FEF2F2' : '#EFF6FF' }}
-      >
-        <Icon size={18} color={danger ? '#EF4444' : '#2563EB'} />
-      </View>
       <Text
-        className={`text-sm font-montserrat flex-1 ${
+        className={`text-[15px] font-montserrat flex-1 ${
           danger ? 'text-danger' : 'text-textPrimary'
         }`}
       >

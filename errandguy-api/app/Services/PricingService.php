@@ -8,6 +8,28 @@ use App\Models\SystemConfig;
 class PricingService
 {
     /**
+     * Per-vehicle base premium (PHP). Added on top of the errand type's
+     * base fee so that vehicle choice meaningfully changes the quoted
+     * price even on very short trips where distance_fee ≈ 0.
+     *
+     * Without this, walk/bicycle/motorcycle/car all collapse to the
+     * same total at low distance, which made the vehicle selector look
+     * broken to customers ("why are they all the same price?").
+     *
+     * Tuned to be ladderable but not punitive on short hops:
+     *   walk        +0   (cheapest by design)
+     *   bicycle    +10   (small premium for human-powered convenience)
+     *   motorcycle +25   (default urban delivery vehicle)
+     *   car        +60   (capacity / shelter premium)
+     */
+    private const VEHICLE_BASE_PREMIUM = [
+        'walk' => 0,
+        'bicycle' => 10,
+        'motorcycle' => 25,
+        'car' => 60,
+    ];
+
+    /**
      * Calculate price breakdown for a booking.
      *
      * Dropoff coordinates are optional: single-location errands (queue,
@@ -28,11 +50,12 @@ class PricingService
             : 0.0;
 
         $baseFee = (float) $errandType->base_fee;
+        $vehiclePremium = (float) (self::VEHICLE_BASE_PREMIUM[$vehicleType] ?? 0);
         $perKmRate = $this->getPerKmRate($errandType, $vehicleType);
         $distanceFee = round($distanceKm * $perKmRate, 2);
 
         $platformFeePercent = (float) SystemConfig::getValue('platform_fee_percent', '15');
-        $subtotal = $baseFee + $distanceFee;
+        $subtotal = $baseFee + $vehiclePremium + $distanceFee;
         $serviceFee = round($subtotal * ($platformFeePercent / 100), 2);
 
         $surcharge = (float) $errandType->surcharge;
@@ -46,6 +69,7 @@ class PricingService
 
         return [
             'base_fee' => $baseFee,
+            'vehicle_premium' => $vehiclePremium,
             'distance_km' => round($distanceKm, 2),
             'distance_fee' => $distanceFee,
             'service_fee' => $serviceFee,
@@ -66,13 +90,16 @@ class PricingService
         ?float $dropoffLat,
         ?float $dropoffLng
     ): array {
-        // Per-type vehicle restrictions (mirror mobile errandTypeRules.ts).
         $errandType = ErrandType::find($errandTypeId);
-        $vehicleTypes = match ($errandType?->slug) {
-            'transportation' => ['motorcycle', 'car'],
-            'food' => ['bicycle', 'motorcycle', 'car'],
-            default => ['walk', 'bicycle', 'motorcycle', 'car'],
-        };
+
+        // Derive the supported vehicle list from the per-km rate columns
+        // on the errand type itself. A vehicle is offered when its
+        // per-km rate is non-zero \u2014 letting ops disable a mode for a
+        // specific errand type purely from the database (no redeploy)
+        // and keeping the previous hardcoded slug-based match in lockstep
+        // with the seed data.
+        $vehicleTypes = $this->supportedVehicleTypes($errandType);
+
         $estimates = [];
 
         foreach ($vehicleTypes as $type) {
@@ -94,10 +121,57 @@ class PricingService
             : 0.0;
         $estimates['distance_km'] = $distanceKm;
         if ($errandType) {
-            $estimates['min_negotiate_fee'] = (float) $errandType->min_negotiate_fee;
+            $minNegotiate = (float) $errandType->min_negotiate_fee;
+            $estimates['min_negotiate_fee'] = $minNegotiate;
+            $estimates['vehicle_types'] = $vehicleTypes;
+
+            // Suggested negotiate band for the mobile slider. Without
+            // this the client falls back to a hard 500 PHP ceiling that
+            // is much too low for car / long-distance jobs.
+            //   recommended_min ≈ cheapest vehicle total
+            //   recommended_max ≈ 3× the most expensive vehicle total,
+            //                     floored at 1000 PHP for short hops.
+            $totals = array_map(
+                fn ($t) => (float) ($estimates[$t]['total_amount'] ?? 0),
+                $vehicleTypes,
+            );
+            $maxTotal = empty($totals) ? 0 : max($totals);
+            $minTotal = empty($totals) ? 0 : min(array_filter($totals)) ?: $minNegotiate;
+            $estimates['recommended_min'] = max($minNegotiate, round($minTotal, 2));
+            $estimates['recommended_max'] = max(1000.0, round($maxTotal * 3, 2));
         }
 
         return $estimates;
+    }
+
+    /**
+     * Vehicles available for a given errand type.
+     *
+     * Logic: a vehicle is offered iff its per-km column is > 0. This
+     * matches how seed data is structured (transportation has 0 for walk
+     * and bicycle, food has 0 for walk, etc.) and gives ops a single
+     * row to flip without code changes.
+     */
+    private function supportedVehicleTypes(?ErrandType $errandType): array
+    {
+        if (!$errandType) {
+            return ['walk', 'bicycle', 'motorcycle', 'car'];
+        }
+
+        $candidates = [
+            'walk' => (float) $errandType->per_km_walk,
+            'bicycle' => (float) $errandType->per_km_bicycle,
+            'motorcycle' => (float) $errandType->per_km_motorcycle,
+            'car' => (float) $errandType->per_km_car,
+        ];
+
+        $supported = array_keys(array_filter($candidates, fn ($rate) => $rate > 0));
+
+        // Safety fallback: if config is misconfigured (all zeros), keep
+        // the historical defaults so the customer can still get a quote.
+        return empty($supported)
+            ? ['walk', 'bicycle', 'motorcycle', 'car']
+            : $supported;
     }
 
     /**

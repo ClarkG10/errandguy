@@ -43,8 +43,17 @@ return Application::configure(basePath: dirname(__DIR__))
     })
     ->booting(function () {
         RateLimiter::for('api', function (Request $request) {
+            // Authenticated mobile clients regularly burst 60+ requests/min
+            // during a single tracking session (track polling + chat
+            // unread + booking refresh + notification list + GPS pushes
+            // on the runner side). The previous 60/min default was
+            // tripping legitimate users into 429s mid-trip. 240/min
+            // (4 rps avg) gives normal usage plenty of headroom while
+            // still capping scripted abuse — and per-endpoint throttles
+            // (auth, otp, location, sos, top-up) keep sensitive surfaces
+            // tight regardless.
             return $request->user()
-                ? Limit::perMinute(60)->by($request->user()->id)
+                ? Limit::perMinute(240)->by($request->user()->id)
                 : Limit::perMinute(20)->by($request->ip());
         });
 
@@ -54,7 +63,13 @@ return Application::configure(basePath: dirname(__DIR__))
                 ?? $request->input('phone_or_email')
                 ?? $request->ip();
 
-            return Limit::perMinute(10)->by($identifier);
+            // Lock by BOTH the identifier and the originating IP so an
+            // attacker spraying credentials across many accounts from
+            // one IP also gets stopped. Two parallel limits compose.
+            return [
+                Limit::perMinute(10)->by($identifier),
+                Limit::perMinute(30)->by('ip:' . $request->ip()),
+            ];
         });
 
         RateLimiter::for('otp', function (Request $request) {

@@ -84,7 +84,7 @@ class RunnerEarningsController extends Controller
             ->completed()
             ->with([
                 'errandType',
-                'customer:id,phone,email,full_name,avatar_url,role,status,email_verified,phone_verified,wallet_balance,avg_rating,total_ratings,created_at',
+                'customer:id,phone,full_name,avatar_url,role,status,phone_verified,avg_rating,total_ratings,created_at',
             ])
             ->orderByDesc('completed_at');
 

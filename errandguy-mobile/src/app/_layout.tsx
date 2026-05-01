@@ -16,13 +16,14 @@ import {
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { configureReanimatedLogger, ReanimatedLogLevel } from 'react-native-reanimated';
-import { Platform } from 'react-native';
+import { Platform, Text, TextInput } from 'react-native';
 import Mapbox from '@rnmapbox/maps';
-import * as NavigationBar from 'expo-navigation-bar';
 import { useAuthStore } from '../stores/authStore';
+import { useBookingStore } from '../stores/bookingStore';
 import { userService } from '../services/user.service';
 import { useNotifications } from '../hooks/useNotifications';
 import { ToastProvider } from '../components/ui/ToastProvider';
+import { ApiActivityBar } from '../components/ui/ApiActivityBar';
 import { applySystemFontOnIOS } from '../utils/systemFont';
 import '../../global.css';
 
@@ -33,10 +34,38 @@ Mapbox.setAccessToken(process.env.EXPO_PUBLIC_MAPBOX_TOKEN ?? '');
 // Quicksand/Inter family names to `System` + an explicit fontWeight.
 applySystemFontOnIOS();
 
-// Hide Android system navigation bar (immersive mode — swipe up to reveal)
+// Lock font scaling globally so the app renders at the same physical
+// size on iOS and Android regardless of the OS-level "Display size" /
+// "Font size" accessibility settings. Without this, Android with a
+// large display setting renders every label, button, and tab item ~1.3x
+// larger than iOS — which is what the user was complaining about.
+// Suppression is set on the component defaultProps before any screen
+// mounts, so it cascades through the whole tree.
+// @ts-expect-error - defaultProps exists at runtime on RN base components
+Text.defaultProps = Text.defaultProps ?? {};
+// @ts-expect-error
+Text.defaultProps.allowFontScaling = false;
+// @ts-expect-error
+TextInput.defaultProps = TextInput.defaultProps ?? {};
+// @ts-expect-error
+TextInput.defaultProps.allowFontScaling = false;
+// @ts-expect-error
+TextInput.defaultProps.maxFontSizeMultiplier = 1;
+
+// Hide Android system navigation bar (immersive mode — swipe up to reveal).
+// `expo-navigation-bar` ships a native module that may be missing in some
+// development builds (Expo Go, prebuild-out-of-sync); lazy-require so the
+// entire app doesn't fail to boot when it isn't linked.
 if (Platform.OS === 'android') {
-  NavigationBar.setVisibilityAsync('hidden');
-  NavigationBar.setBehaviorAsync('overlay-swipe');
+  try {
+    const NavigationBar = require('expo-navigation-bar');
+    NavigationBar.setVisibilityAsync('hidden');
+    NavigationBar.setBehaviorAsync('overlay-swipe');
+  } catch (e) {
+    if (__DEV__) {
+      console.warn('[ExpoNavigationBar] native module unavailable — skipping immersive setup');
+    }
+  }
 }
 
 // Prevent ExpoKeepAwake.activate crash when activity is destroyed
@@ -73,19 +102,30 @@ export default function RootLayout() {
   const isLoading = useAuthStore((s) => s.isLoading);
   const role = useAuthStore((s) => s.role);
   const token = useAuthStore((s) => s.token);
+  const user = useAuthStore((s) => s.user);
   const onboardingSeen = useAuthStore((s) => s.onboardingSeen);
   const loadFromStorage = useAuthStore((s) => s.loadFromStorage);
   const setUser = useAuthStore((s) => s.setUser);
   const logout = useAuthStore((s) => s.logout);
+  // Hydrate any in-flight booking draft (item description, locations,
+  // photos, etc.) so a crash, kill, or OS-eviction during the booking
+  // funnel doesn't lose the user's typing.
+  const loadDraftFromStorage = useBookingStore((s) => s.loadDraftFromStorage);
   const segments = useSegments();
   const router = useRouter();
 
-  // Register push notifications and FCM token
-  useNotifications(isAuthenticated);
+  // Register push notifications + FCM token. Only do this once the
+  // account has at least one verified contact channel — otherwise we'd
+  // be requesting OS-level notification permission while the user is
+  // still mid-OTP, which is jarring and degrades grant rates.
+  const canRegisterPush =
+    isAuthenticated && !!(user?.phone_verified || user?.email_verified);
+  useNotifications(canRegisterPush);
 
   useEffect(() => {
     loadFromStorage();
-  }, [loadFromStorage]);
+    loadDraftFromStorage();
+  }, [loadFromStorage, loadDraftFromStorage]);
 
   // Validate token on app load
   useEffect(() => {
@@ -148,6 +188,7 @@ export default function RootLayout() {
     <SafeAreaProvider>
       <GestureHandlerRootView style={{ flex: 1 }}>
         <Slot />
+        <ApiActivityBar />
         <ToastProvider />
       </GestureHandlerRootView>
     </SafeAreaProvider>

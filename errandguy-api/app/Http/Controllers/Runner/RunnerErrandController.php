@@ -14,6 +14,7 @@ use App\Services\LocationService;
 use App\Services\MatchingService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Storage;
 
@@ -75,7 +76,7 @@ class RunnerErrandController extends Controller
             ->runnerBookings()
             ->with([
                 'errandType',
-                'customer:id,phone,email,full_name,avatar_url,role,status,email_verified,phone_verified,wallet_balance,avg_rating,total_ratings,created_at',
+                'customer:id,phone,full_name,avatar_url,role,status,phone_verified,avg_rating,total_ratings,created_at',
                 'statusLogs',
             ])
             ->whereNotIn('status', ['completed', 'cancelled'])
@@ -84,6 +85,38 @@ class RunnerErrandController extends Controller
 
         return response()->json([
             'data' => $booking ? new BookingResource($booking) : null,
+        ]);
+    }
+
+    /**
+     * Show a single errand assigned to this runner. Used by deep links
+     * (e.g. notification → errand detail) when the booking is not the
+     * runner's currently active errand — historic / completed errands
+     * are still viewable via the same screen.
+     *
+     * Scoped via the `runnerBookings` relation so a runner can only ever
+     * fetch bookings where they were the assigned runner. 404 if not.
+     */
+    public function show(Request $request, string $id): JsonResponse
+    {
+        $booking = $request->user()
+            ->runnerBookings()
+            ->with([
+                'errandType',
+                'customer:id,phone,full_name,avatar_url,role,status,phone_verified,avg_rating,total_ratings,created_at',
+                'statusLogs',
+            ])
+            ->where('bookings.id', $id)
+            ->first();
+
+        if (! $booking) {
+            return response()->json([
+                'message' => 'Errand not found',
+            ], 404);
+        }
+
+        return response()->json([
+            'data' => new BookingResource($booking),
         ]);
     }
 
@@ -100,8 +133,9 @@ class RunnerErrandController extends Controller
 
         // Atomically claim the booking to prevent two runners from accepting
         // the same offer (lockForUpdate serialises competing acceptors).
+        $oldStatus = 'pending';
         try {
-            $booking = DB::transaction(function () use ($id, $user) {
+            $booking = DB::transaction(function () use ($id, $user, &$oldStatus) {
                 $booking = Booking::whereKey($id)->lockForUpdate()->firstOrFail();
 
                 if (!in_array($booking->status, ['pending', 'matched'])) {
@@ -111,17 +145,27 @@ class RunnerErrandController extends Controller
                     throw new \RuntimeException('unavailable');
                 }
 
+                // Only OTHER active errands should block acceptance — the
+                // booking being accepted may already be assigned to this
+                // runner in `matched` status (via MatchRunnerJob), in which
+                // case it would otherwise self-block the acceptance.
                 $hasActive = $user->runnerBookings()
+                    ->where('bookings.id', '!=', $booking->id)
                     ->whereNotIn('status', ['completed', 'cancelled', 'pending'])
                     ->exists();
                 if ($hasActive) {
                     throw new \RuntimeException('has_active');
                 }
 
+                // Capture the real old status for the BookingStatusChanged
+                // event so listeners (notifications, analytics) report the
+                // correct transition (e.g. matched → accepted vs pending → accepted).
+                $oldStatus = $booking->status;
+
                 $booking->update([
                     'runner_id' => $user->id,
                     'status' => 'accepted',
-                    'matched_at' => now(),
+                    'matched_at' => $booking->matched_at ?? now(),
                     'accepted_at' => now(),
                 ]);
 
@@ -135,14 +179,17 @@ class RunnerErrandController extends Controller
             ], 422);
         }
 
-        $oldStatus = 'pending';
-
         BookingStatusLog::create([
             'booking_id' => $booking->id,
             'status' => 'accepted',
             'changed_by' => $user->id,
             'note' => "Accepted by runner {$user->full_name}",
         ]);
+
+        // Bust the per-runner active-booking cache so the very next GPS
+        // tick attaches `booking_id` to the new ride instead of returning
+        // the stale (likely null) value held by RunnerLocationController.
+        Cache::forget("runner_active_booking_id:{$user->id}");
 
         // Notify customer
         Notification::create([
@@ -157,7 +204,7 @@ class RunnerErrandController extends Controller
 
         $booking->load([
             'errandType',
-            'customer:id,phone,email,full_name,avatar_url,role,status,email_verified,phone_verified,wallet_balance,avg_rating,total_ratings,created_at',
+            'customer:id,phone,full_name,avatar_url,role,status,phone_verified,avg_rating,total_ratings,created_at',
             'statusLogs',
         ]);
 
@@ -354,6 +401,15 @@ class RunnerErrandController extends Controller
                 $this->handleCompletion($booking, $user);
             }
 
+            // The runner's "active booking" cache (used by
+            // RunnerLocationController to tag GPS pushes) needs to be
+            // dropped on any terminal transition, otherwise the next
+            // 30s of location pings would still be attributed to a
+            // booking that's already done.
+            if (in_array($newStatus, ['completed', 'cancelled', 'no_runner'], true)) {
+                Cache::forget("runner_active_booking_id:{$user->id}");
+            }
+
             event(new BookingStatusChanged($booking, $oldStatus, $newStatus));
         });
 
@@ -480,7 +536,30 @@ class RunnerErrandController extends Controller
 
         $payoutAmount = (float) $booking->runner_payout;
 
-        // Create wallet transaction for runner earning (with locking to prevent race conditions)
+        // Idempotency guard: if an earning transaction already exists for
+        // this booking we must NOT credit again. Status updates can race
+        // (double-tap, retried job, accidental re-completion via admin),
+        // and without this check the runner would be paid twice and the
+        // stats counters would double-count.
+        $alreadyPaid = WalletTransaction::where('user_id', $user->id)
+            ->where('reference_id', $booking->id)
+            ->where('type', 'earning')
+            ->exists();
+
+        if ($alreadyPaid) {
+            // Still mark payment completed if it slipped through, but skip
+            // the wallet credit + stats bump.
+            $payment = $booking->payment;
+            if ($payment && $payment->status !== 'completed') {
+                $payment->update([
+                    'status' => 'completed',
+                    'paid_at' => now(),
+                ]);
+            }
+            return;
+        }
+
+        // Lock the runner row to serialize concurrent earnings writes.
         $user = \App\Models\User::lockForUpdate()->find($user->id);
         $newBalance = (float) $user->wallet_balance + $payoutAmount;
         WalletTransaction::create([

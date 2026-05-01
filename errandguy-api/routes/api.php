@@ -35,6 +35,7 @@ use App\Http\Controllers\Admin\UserManagementController;
 use App\Http\Controllers\Admin\RunnerVerificationController;
 use App\Http\Controllers\Admin\BookingManagementController;
 use App\Http\Controllers\Admin\DisputeController;
+use App\Http\Controllers\Admin\AdminPayoutController;
 use Illuminate\Support\Facades\Route;
 
 /*
@@ -104,6 +105,11 @@ Route::prefix('v1')->group(function () {
             Route::get('/{id}/track', [BookingController::class, 'track']);
             Route::post('/{id}/review', [ReviewController::class, 'store']);
             Route::post('/{id}/rebook', [BookingController::class, 'rebook']);
+            // Retry-match is rate-limited tighter than the broader booking
+            // endpoints — a frantically tapping user shouldn't be able to
+            // re-dispatch MatchRunnerJob more than once every few seconds.
+            Route::post('/{id}/retry-match', [BookingController::class, 'retryMatch'])
+                ->middleware('throttle:6,1');
             Route::post('/{id}/sos', [SOSController::class, 'trigger'])->middleware('throttle:6,1');
             Route::delete('/{id}/sos', [SOSController::class, 'deactivate'])->middleware('throttle:10,1');
             Route::post('/{id}/share-trip', [TripShareController::class, 'share']);
@@ -119,9 +125,11 @@ Route::prefix('v1')->group(function () {
             Route::post('/location', [RunnerLocationController::class, 'store'])->middleware('throttle:120,1');
 
             Route::get('/errand/current', [RunnerErrandController::class, 'current']);
+            Route::get('/errand/available', [RunnerErrandController::class, 'available']);
+            Route::get('/errand/{id}', [RunnerErrandController::class, 'show'])
+                ->where('id', '[0-9a-fA-F-]{36}');
             Route::post('/errand/{id}/accept', [RunnerErrandController::class, 'accept']);
             Route::post('/errand/{id}/decline', [RunnerErrandController::class, 'decline']);
-            Route::get('/errand/available', [RunnerErrandController::class, 'available']);
             Route::post('/errand/{id}/status', [RunnerErrandController::class, 'updateStatus']);
             Route::post('/errand/{id}/verify-pin', [RunnerErrandController::class, 'verifyPin']);
 
@@ -129,6 +137,11 @@ Route::prefix('v1')->group(function () {
             Route::get('/earnings/history', [RunnerEarningsController::class, 'history']);
             Route::get('/errands/history', [RunnerErrandHistoryController::class, 'index']);
             Route::post('/payout/request', [RunnerPayoutController::class, 'requestPayout']);
+
+            // Runner-side review of the customer. The controller itself is
+            // role-agnostic (see ReviewController::store) — gating is done
+            // by BookingPolicy::review which now allows either party.
+            Route::post('/errand/{id}/review', [ReviewController::class, 'store']);
 
             // Runner-side SOS (only valid while owning an in-flight booking)
             Route::post('/errand/{id}/sos', [RunnerSOSController::class, 'trigger'])->middleware('throttle:6,1');
@@ -138,6 +151,7 @@ Route::prefix('v1')->group(function () {
         // Chat routes
         Route::prefix('chat')->group(function () {
             Route::get('/unread-count', [ChatController::class, 'unreadCount']);
+            Route::get('/conversations', [ChatController::class, 'conversations']);
             Route::get('/{bookingId}/messages', [ChatController::class, 'index']);
             Route::post('/{bookingId}/messages', [ChatController::class, 'store'])->middleware('throttle:60,1');
             Route::post('/{bookingId}/read', [ChatController::class, 'markAsRead']);
@@ -179,31 +193,30 @@ Route::prefix('v1')->group(function () {
             ]);
         });
 
-        // Promo code validation
-        Route::get('/promos/validate/{code}', function (string $code) {
-            $promo = \App\Models\PromoCode::where('code', $code)
-                ->where('is_active', true)
-                ->where('valid_from', '<=', now())
-                ->where('valid_until', '>=', now())
-                ->first();
-
-            if (!$promo) {
-                return response()->json(['message' => 'Invalid or expired promo code.'], 404);
+        // Promo code validation. Delegates to PromoService so the same
+        // global-limit, per-user-limit, and validity-window checks that
+        // run at booking-create time also run here — otherwise the UI
+        // would happily accept a code the server will later reject.
+        Route::get('/promos/validate/{code}', function (string $code, \Illuminate\Http\Request $request) {
+            $service = app(\App\Services\PromoService::class);
+            // Optional `?amount=N` lets the client preview discount + check
+            // min_order. Defaults to 0 (skips min_order via PromoService
+            // contract).
+            $amount = (float) $request->query('amount', 0);
+            try {
+                $result = $service->validate($code, $request->user()->id, $amount);
+            } catch (\InvalidArgumentException $e) {
+                return response()->json(['message' => $e->getMessage()], 422);
             }
-
-            if ($promo->usage_limit && $promo->used_count >= $promo->usage_limit) {
-                return response()->json(['message' => 'This promo code has reached its usage limit.'], 422);
-            }
-
             return response()->json([
                 'data' => [
-                    'id' => $promo->id,
-                    'code' => $promo->code,
-                    'discount_type' => $promo->discount_type,
-                    'discount_value' => $promo->discount_value,
-                    'max_discount' => $promo->max_discount,
-                    'min_order' => $promo->min_order,
-                    'description' => $promo->description,
+                    'id' => $result['id'],
+                    'code' => $result['code'],
+                    'discount_type' => $result['discount_type'],
+                    'discount_value' => $result['discount_value'],
+                    'max_discount' => $result['max_discount'],
+                    'description' => $result['description'],
+                    'discount' => $result['discount'],
                 ],
             ]);
         });
@@ -260,6 +273,10 @@ Route::prefix('v1')->group(function () {
             Route::get('/disputes/{id}', [DisputeController::class, 'show']);
             Route::post('/disputes/{id}/resolve', [DisputeController::class, 'resolve']);
             Route::post('/disputes/{id}/escalate', [DisputeController::class, 'escalate']);
+
+            Route::get('/payouts', [AdminPayoutController::class, 'index']);
+            Route::post('/payouts/{id}/complete', [AdminPayoutController::class, 'markCompleted']);
+            Route::post('/payouts/{id}/fail', [AdminPayoutController::class, 'markFailed']);
         });
     });
 

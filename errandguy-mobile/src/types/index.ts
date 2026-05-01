@@ -24,6 +24,7 @@ export type {
   WalletTransactionType,
 } from './payment';
 export type { Message } from './message';
+export type { Conversation } from './message';
 export type { Review } from './review';
 export type { AppNotification, NotificationType } from './notification';
 export type { Coordinate, SavedAddress, RunnerLocation } from './location';

@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { View, Text, ScrollView, Pressable, RefreshControl, TextInput, Keyboard } from 'react-native';
+import { View, Text, ScrollView, Pressable, RefreshControl, TextInput, Keyboard, KeyboardAvoidingView, Platform } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import { ChevronLeft, Plus, MapPin, Trash2, Pencil, Home, Briefcase, Star, X, Search } from 'lucide-react-native';
@@ -12,13 +12,13 @@ import { useQuery } from '../../../hooks/useQuery';
 import { useAuthStore } from '../../../stores/authStore';
 import { CacheTTL } from '../../../services/cache.service';
 import { userService } from '../../../services/user.service';
+import { geocodingService } from '../../../services/geocoding.service';
 import { MAP_STYLE_URL } from '../../../constants/map';
 import type { SavedAddress } from '../../../types';
 import { toast } from '../../../stores/toastStore';
 
 type AddressLabel = 'home' | 'work' | 'other';
 
-const MAPBOX_TOKEN = process.env.EXPO_PUBLIC_MAPBOX_TOKEN ?? '';
 const DEFAULT_CENTER: [number, number] = [121.0, 14.6];
 
 const LABEL_ICONS: Record<string, typeof Home> = {
@@ -85,44 +85,44 @@ export default function AddressesScreen() {
     setRefreshing(false);
   }, [addressesQ]);
 
-  /* ── Reverse geocode ── */
-  const reverseGeocode = useCallback(async (lng: number, lat: number): Promise<string> => {
-    if (!MAPBOX_TOKEN) return `${lat.toFixed(6)}, ${lng.toFixed(6)}`;
-    try {
-      const res = await fetch(
-        `https://api.mapbox.com/geocoding/v5/mapbox.places/${lng},${lat}.json?access_token=${MAPBOX_TOKEN}&language=en&limit=1`,
-      );
-      const data = await res.json();
-      return data.features?.[0]?.place_name ?? `${lat.toFixed(6)}, ${lng.toFixed(6)}`;
-    } catch {
-      return `${lat.toFixed(6)}, ${lng.toFixed(6)}`;
-    }
-  }, []);
+  /* ── Reverse geocode (cached) ── */
+  const reverseGeocode = useCallback(
+    (lng: number, lat: number) => geocodingService.reverse(lng, lat),
+    [],
+  );
 
-  /* ── Search geocoding ── */
+  /* ── Search geocoding (cached, proximity-biased) ──
+     Bias to whatever the user has the map centered on right now (the pin
+     coords) so search for a coffee shop returns the branch near them
+     instead of one on the other side of the country. */
   useEffect(() => {
-    if (debouncedSearch.length < 3 || !MAPBOX_TOKEN) {
+    if (debouncedSearch.length < 2) {
       setSearchResults([]);
       return;
     }
+    const proximity =
+      newLat && newLng ? { lng: newLng, lat: newLat } : undefined;
     let cancelled = false;
-    const encoded = encodeURIComponent(debouncedSearch);
-    fetch(
-      `https://api.mapbox.com/geocoding/v5/mapbox.places/${encoded}.json?access_token=${MAPBOX_TOKEN}&country=ph&limit=5&language=en`,
-    )
-      .then((r) => r.json())
-      .then((data) => {
+    geocodingService
+      .search(debouncedSearch, 8, undefined, proximity)
+      .then((features) => {
         if (cancelled) return;
-        setSearchResults(
-          (data.features ?? []).map((f: any) => ({
-            place_name: f.place_name,
-            center: f.center,
-          })),
-        );
-      })
-      .catch(() => {});
+        setSearchResults(features);
+      });
     return () => { cancelled = true; };
+    // proximity intentionally excluded so we only refetch when the
+    // *query* changes, not on every map nudge.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [debouncedSearch]);
+
+  // Cancel any pending reverse-geocode write when the screen unmounts so
+  // we don't fire setState on an unmounted component (harmless warning,
+  // but it also keeps stale geocodes from clobbering the next session).
+  useEffect(() => {
+    return () => {
+      if (geocodeTimeout.current) clearTimeout(geocodeTimeout.current);
+    };
+  }, []);
 
   const handleSearchSelect = useCallback((item: { place_name: string; center: [number, number] }) => {
     setSearchQuery('');
@@ -151,21 +151,34 @@ export default function AddressesScreen() {
   }, [reverseGeocode]);
 
   const handleAdd = async () => {
-    if (!newAddress.trim()) return;
+    const trimmedAddress = newAddress.trim();
+    if (!trimmedAddress) return;
+    // Coordinates are required — saved addresses without lat/lng break the
+    // booking flow (map can't pre-center, fare estimate skips them, runner
+    // can't navigate). Guard here instead of letting the user save junk.
+    const hasValidCoords =
+      Number.isFinite(newLat) &&
+      Number.isFinite(newLng) &&
+      Math.abs(newLat) > 0.0001 &&
+      Math.abs(newLng) > 0.0001;
+    if (!hasValidCoords) {
+      toast.error('Please pin a location on the map');
+      return;
+    }
     const finalLabel = newLabel === 'other' && customLabel.trim() ? customLabel.trim() : newLabel;
     setSaving(true);
     try {
       if (editingId) {
         await userService.updateAddress(editingId, {
           label: finalLabel,
-          address: newAddress.trim(),
+          address: trimmedAddress,
           lat: newLat,
           lng: newLng,
         });
       } else {
         await userService.addAddress({
           label: finalLabel,
-          address: newAddress.trim(),
+          address: trimmedAddress,
           lat: newLat,
           lng: newLng,
           is_default: false,
@@ -251,20 +264,27 @@ export default function AddressesScreen() {
         </Text>
         <Pressable
           onPress={resetForm}
-          className="w-9 h-9 rounded-xl bg-primary50 items-center justify-center"
+          hitSlop={8}
+          className="w-9 h-9 items-center justify-center"
         >
-          {showAdd ? <X size={18} color="#2563EB" /> : <Plus size={18} color="#2563EB" />}
+          {showAdd ? <X size={20} color="#475569" /> : <Plus size={22} color="#2563EB" strokeWidth={2.2} />}
         </Pressable>
       </View>
 
       {loading ? (
         <AddressSkeleton />
       ) : (
+        <KeyboardAvoidingView
+          style={{ flex: 1 }}
+          behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+          keyboardVerticalOffset={Platform.OS === 'ios' ? 64 : 0}
+        >
         <ScrollView
           className="flex-1"
           showsVerticalScrollIndicator={false}
           refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
           contentContainerStyle={{ paddingHorizontal: 16, paddingTop: 4, paddingBottom: 100 }}
+          keyboardShouldPersistTaps="handled"
         >
           {/* Add / Edit Form with Map */}
           {showAdd && (
@@ -413,9 +433,7 @@ export default function AddressesScreen() {
                   className="flex-row items-center bg-surface rounded-xl px-3 py-3 mb-2 border border-divider"
                   onPress={() => handleEdit(addr)}
                 >
-                  <View className="w-9 h-9 rounded-full bg-primary50 items-center justify-center mr-3">
-                    <Icon size={16} color="#2563EB" />
-                  </View>
+                  <Icon size={18} color="#475569" strokeWidth={1.8} style={{ marginRight: 12 }} />
                   <View className="flex-1 mr-2">
                     <Text className="text-[13px] font-montserrat-semi text-textPrimary capitalize">
                       {addr.label}
@@ -425,7 +443,14 @@ export default function AddressesScreen() {
                     </Text>
                   </View>
                   <Pressable
-                    onPress={() => handleDelete(addr.id)}
+                    onPress={(e) => {
+                      // Stop propagation so the row's onPress (handleEdit)
+                      // doesn't also fire when the user taps the trash icon.
+                      e.stopPropagation();
+                      handleDelete(addr.id);
+                    }}
+                    accessibilityRole="button"
+                    accessibilityLabel={`Delete ${addr.label} address`}
                     className="w-8 h-8 rounded-lg items-center justify-center"
                     hitSlop={8}
                   >
@@ -436,6 +461,7 @@ export default function AddressesScreen() {
             })
           )}
         </ScrollView>
+        </KeyboardAvoidingView>
       )}
 
       <ConfirmModal

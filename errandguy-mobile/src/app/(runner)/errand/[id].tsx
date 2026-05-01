@@ -1,9 +1,8 @@
 import React, { useState, useCallback, useRef, useEffect } from 'react';
-import { View, Text, ScrollView, TextInput, RefreshControl, Pressable, Linking } from 'react-native';
+import { View, Text, ScrollView, TextInput, RefreshControl, Pressable, Linking, KeyboardAvoidingView, Platform } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import {
-  ArrowLeft,
   MessageCircle,
   Phone,
   MapPin,
@@ -16,6 +15,8 @@ import {
 import { Card } from '../../../components/ui/Card';
 import { Avatar } from '../../../components/ui/Avatar';
 import { Button } from '../../../components/ui/Button';
+import { BackButton } from '../../../components/ui/BackButton';
+import { BottomActionBar } from '../../../components/ui/BottomActionBar';
 import { ConfirmModal } from '../../../components/ui/ConfirmModal';
 import { StatusActionButton, getNextStatus } from '../../../components/runner/StatusActionButton';
 import { ErrandDetailsCard } from '../../../components/runner/ErrandDetailsCard';
@@ -30,7 +31,11 @@ import { useChatStore } from '../../../stores/chatStore';
 import { useLocationStore } from '../../../stores/locationStore';
 import { useForegroundInterval } from '../../../hooks/useForegroundInterval';
 import { useBackGuard, confirmLeaveErrand } from '../../../hooks/useBackGuard';
+import { useQuery } from '../../../hooks/useQuery';
+import { useEta } from '../../../hooks/useEta';
+import { CacheTTL } from '../../../services/cache.service';
 import { runnerService } from '../../../services/runner.service';
+import type { Booking } from '../../../types';
 import { STATUS_LABELS } from '../../../constants/statusLabels';
 import { getErrandTypeRule } from '../../../constants/errandTypeRules';
 import { formatCurrency } from '../../../utils/formatCurrency';
@@ -72,9 +77,18 @@ export default function ActiveErrandScreen() {
   // unmount because the dashboard owns the long-lived subscription.
   const isTracking = useLocationStore((s) => s.isTracking);
   const startTracking = useLocationStore((s) => s.startTracking);
+  const currentLocation = useLocationStore((s) => s.currentLocation);
   useEffect(() => {
     if (!isTracking) {
-      startTracking().catch(() => {});
+      startTracking()
+        .then((ok) => {
+          if (!ok) {
+            toast.warning(
+              'Location permission is off. Customers can\u2019t see your live position.',
+            );
+          }
+        })
+        .catch(() => {});
     }
   }, [isTracking, startTracking]);
 
@@ -88,45 +102,70 @@ export default function ActiveErrandScreen() {
   const [pinVerified, setPinVerified] = useState(false);
   const [deliveryPhotoUrl, setDeliveryPhotoUrl] = useState<string | null>(null);
 
-  const booking = currentErrand;
+  // Cache-first fetch fallback. The runner store only ever holds the
+  // *currently active* errand, so deep links from notifications (e.g.
+  // "payment for past errand released") or cold starts mid-shift would
+  // otherwise hit the empty-state. We fetch by id whenever the URL id
+  // doesn't match the in-store errand and use whichever is fresher.
+  const storeMatchesUrl = currentErrand?.id === id;
+  const fetchedQ = useQuery<Booking | null>(
+    ['runner', 'errand', 'byId', id ?? 'none'],
+    async () => {
+      if (!id) return null;
+      const r = await runnerService.getErrand(id);
+      return (r.data?.data ?? null) as Booking | null;
+    },
+    { staleTime: 30_000, ttl: CacheTTL.SHORT, enabled: !!id && !storeMatchesUrl },
+  );
 
-  if (!booking) {
-    return (
-      <SafeAreaView className="flex-1 bg-background items-center justify-center" edges={['top']}>
-        <Text className="text-sm font-montserrat text-textSecondary">No active errand</Text>
-        <Button title="Go Back" variant="outline" onPress={() => router.canGoBack() ? router.back() : router.replace('/(runner)/(tabs)')} />
-      </SafeAreaView>
-    );
-  }
+  const booking: Booking | null = storeMatchesUrl
+    ? currentErrand
+    : (fetchedQ.data ?? null);
+  // Mutations are only safe when the booking is the runner's *current*
+  // active job (i.e. lives in the store) — historical/completed errands
+  // open in read-only view.
+  const isReadOnly = !storeMatchesUrl;
 
-  const isTransportation = booking.is_transportation;
-  const errandSlug = booking.errand_type?.slug;
+  // ── Hooks below MUST stay above the early-return so that the hook
+  // call order is stable across the null → resolved booking transition.
+  // Optional chaining keeps them safe when `booking` is still loading.
+  const isTransportation = !!booking?.is_transportation;
+  const errandSlug = booking?.errand_type?.slug;
   const errandRule = getErrandTypeRule(errandSlug);
   const isShoppingErrand = errandRule.requiresShoppingBudget;
   const isSingleLocation = errandRule.singleLocation;
-  // Active = anything other than terminal/closed states. Used to gate the
-  // back-button confirmation so completed errands let the user leave freely.
-  const isErrandActive = !['completed', 'cancelled', 'no_runner'].includes(booking.status);
-  // Android hardware-back guard: require two presses while errand is active.
-  useBackGuard(isErrandActive);
-  // Use the per-type flow so single-location errands (queue / bills /
-  // document) don't render dropoff stages they will never reach.
+  const isErrandActive = !!booking && !['completed', 'cancelled', 'no_runner'].includes(booking.status);
+  // Android hardware-back guard: require two presses while errand is active
+  // AND the runner is the assigned mutator (read-only deep link can leave freely).
+  useBackGuard(isErrandActive && !isReadOnly);
   const timelineSteps = errandRule.statusFlow as unknown as BookingStatus[];
-  const currentStatusIdx = timelineSteps.indexOf(booking.status);
+  const currentStatusIdx = booking ? timelineSteps.indexOf(booking.status) : -1;
 
-  /** Phone we can use for one-tap calling the customer.
-   *  Prefer the dropoff/pickup contact (whoever physically receives the
-   *  errand), fall back to the customer's account phone for single-location
-   *  errands or when no explicit contact was provided. */
+  // Live ETA from the runner's device GPS to the active destination
+  // (pickup or dropoff depending on phase). Drives the "X min away"
+  // overlay on the runner's mini map and gives the runner a constant
+  // sense of progress without flipping to Google Maps.
+  const inPickupPhase = booking ? PICKUP_PHASE_STATUSES.has(booking.status) : true;
+  const etaTargetLat = inPickupPhase ? booking?.pickup_lat : booking?.dropoff_lat;
+  const etaTargetLng = inPickupPhase ? booking?.pickup_lng : booking?.dropoff_lng;
+  const runnerEta = useEta(
+    currentLocation
+      ? { lat: currentLocation.lat, lng: currentLocation.lng }
+      : null,
+    etaTargetLat != null && etaTargetLng != null
+      ? { lat: Number(etaTargetLat), lng: Number(etaTargetLng) }
+      : null,
+  );
+
   const customerPhone =
-    booking.dropoff_contact_phone ??
-    booking.pickup_contact_phone ??
-    booking.customer?.phone ??
+    booking?.dropoff_contact_phone ??
+    booking?.pickup_contact_phone ??
+    booking?.customer?.phone ??
     null;
   const customerName =
-    booking.dropoff_contact_name ??
-    booking.pickup_contact_name ??
-    booking.customer?.full_name ??
+    booking?.dropoff_contact_name ??
+    booking?.pickup_contact_name ??
+    booking?.customer?.full_name ??
     'Customer';
 
   const handleCallCustomer = useCallback(() => {
@@ -143,11 +182,14 @@ export default function ActiveErrandScreen() {
   // Idempotent on the backend, so a double-tap won't stack alerts.
   const [showSOSConfirm, setShowSOSConfirm] = useState(false);
   const [sosLoading, setSosLoading] = useState(false);
-  const [sosActive, setSosActive] = useState<boolean>(
-    Boolean(booking.sos_triggered),
-  );
+  const [sosActive, setSosActive] = useState<boolean>(false);
+  // Sync the SOS toggle from the (possibly async) booking payload.
+  useEffect(() => {
+    if (booking?.sos_triggered) setSosActive(true);
+  }, [booking?.sos_triggered]);
+
   const handleConfirmSOS = useCallback(async () => {
-    if (sosLoading) return;
+    if (sosLoading || !booking) return;
     setSosLoading(true);
     try {
       await runnerService.triggerSOS(booking.id);
@@ -159,7 +201,26 @@ export default function ActiveErrandScreen() {
     } finally {
       setSosLoading(false);
     }
-  }, [booking.id, sosLoading]);
+  }, [booking, sosLoading]);
+
+  if (!booking) {
+    if (fetchedQ.loading) {
+      return (
+        <SafeAreaView className="flex-1 bg-background items-center justify-center" edges={['top']}>
+          <Text className="text-sm font-montserrat text-textSecondary">Loading errand…</Text>
+        </SafeAreaView>
+      );
+    }
+    return (
+      <SafeAreaView className="flex-1 bg-background items-center justify-center px-8" edges={['top']}>
+        <Text className="text-base font-montserrat-bold text-textPrimary mb-1">Errand unavailable</Text>
+        <Text className="text-xs font-montserrat text-textSecondary text-center mb-4">
+          This errand is no longer accessible. It may have been reassigned or removed.
+        </Text>
+        <Button title="Go Back" variant="outline" onPress={() => router.canGoBack() ? router.back() : router.replace('/(runner)/(tabs)')} />
+      </SafeAreaView>
+    );
+  }
 
   const handleStatusUpdate = async () => {
     const nextStatus = getNextStatus(booking.status, errandSlug);
@@ -240,19 +301,37 @@ export default function ActiveErrandScreen() {
 
   const handleVerifyPin = async () => {
     if (pinInput.length !== 4) return;
+    setLoading(true);
     try {
-      await runnerService.updateErrandStatus(booking.id, 'verify_pin');
+      // Hit the dedicated PIN endpoint — NOT the generic status updater.
+      // The server validates the 4-digit code against booking.ride_pin,
+      // tracks attempts, and flips ride_pin_verified on success.
+      await runnerService.verifyRidePin(booking.id, pinInput);
       setPinVerified(true);
+      toast.success('PIN verified — ride may begin');
     } catch (err: any) {
-      toast.error(err?.response?.data?.message ?? 'Please try again');
+      toast.error(err?.response?.data?.message ?? 'Incorrect PIN. Please try again.');
       setPinInput('');
+    } finally {
+      setLoading(false);
     }
   };
 
   const handleRateSubmit = async (rating: number, comment: string) => {
     setShowRate(false);
-    // Rating submission would be handled via review service
-    router.replace('/(runner)/(tabs)' as any);
+    try {
+      await runnerService.submitCustomerReview(booking.id, rating, comment);
+      toast.success('Thanks for your feedback');
+    } catch (err: any) {
+      // Don't block the runner from leaving the screen on failure — their
+      // shift continues. Most common 422 here is "already reviewed".
+      const msg = err?.response?.data?.message;
+      if (msg && err?.response?.status !== 422) {
+        toast.error(msg);
+      }
+    } finally {
+      router.replace('/(runner)/(tabs)' as any);
+    }
   };
 
   const handleRateSkip = () => {
@@ -264,21 +343,16 @@ export default function ActiveErrandScreen() {
     <SafeAreaView className="flex-1 bg-background" edges={['top']}>
       {/* Header */}
       <View className="flex-row items-center justify-between px-5 py-4">
-        <Pressable
+        <BackButton
+          fallbackHref="/(runner)/(tabs)"
+          accessibilityHint={isErrandActive ? 'Confirms before leaving the active errand' : undefined}
           onPress={() => {
-            if (isErrandActive) {
-              confirmLeaveErrand(() => {
-                router.canGoBack() ? router.back() : router.replace('/(runner)/(tabs)');
-              });
-            } else {
+            const goBack = () =>
               router.canGoBack() ? router.back() : router.replace('/(runner)/(tabs)');
-            }
+            if (isErrandActive) confirmLeaveErrand(goBack);
+            else goBack();
           }}
-          className="w-9 h-9 rounded-xl bg-surface items-center justify-center"
-          style={{ shadowColor: '#0F172A', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.04, shadowRadius: 6, elevation: 1 }}
-        >
-          <ArrowLeft size={20} color="#0F172A" />
-        </Pressable>
+        />
         <Text className="text-lg font-montserrat-bold text-textPrimary">
           {isTransportation ? 'Passenger Ride' : 'Active Errand'}
         </Text>
@@ -287,7 +361,17 @@ export default function ActiveErrandScreen() {
         </Pressable>
       </View>
 
-      <ScrollView className="flex-1" showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: 120 }}>
+      <KeyboardAvoidingView
+        style={{ flex: 1 }}
+        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+        keyboardVerticalOffset={Platform.OS === 'ios' ? 64 : 0}
+      >
+      <ScrollView
+        className="flex-1"
+        showsVerticalScrollIndicator={false}
+        contentContainerStyle={{ paddingBottom: 120 }}
+        keyboardShouldPersistTaps="handled"
+      >
         {/* Live Map — runner location, pickup/dropoff markers, route line
             to whichever destination is active for the current phase. */}
         <RunnerActiveMap
@@ -297,6 +381,7 @@ export default function ActiveErrandScreen() {
           dropoffLng={booking.dropoff_lng}
           inPickupPhase={PICKUP_PHASE_STATUSES.has(booking.status)}
           singleLocation={isSingleLocation}
+          etaMinutes={runnerEta.minutes}
         />
 
         {/* Navigate Button — always available so single-location errands
@@ -502,40 +587,56 @@ export default function ActiveErrandScreen() {
             </View>
 
             {/* Runner safety — emergency button. Stays subtle (red outline)
-                so it doesn't compete with the primary status CTA. */}
-            <Pressable
-              className={`mt-3 flex-row items-center justify-center gap-2 rounded-xl py-2.5 border ${
-                sosActive
-                  ? 'bg-danger border-danger'
-                  : 'bg-white border-danger'
-              }`}
-              onPress={() => !sosActive && setShowSOSConfirm(true)}
-              disabled={sosActive || sosLoading}
-            >
-              <ShieldAlert size={16} color={sosActive ? '#FFFFFF' : '#EF4444'} />
-              <Text
-                className={`text-xs font-montserrat-bold ${
-                  sosActive ? 'text-white' : 'text-danger'
+                so it doesn't compete with the primary status CTA. Hidden
+                in read-only deep-link view (no live errand in progress). */}
+            {!isReadOnly && (
+              <Pressable
+                className={`mt-3 flex-row items-center justify-center gap-2 rounded-xl py-2.5 border ${
+                  sosActive
+                    ? 'bg-danger border-danger'
+                    : 'bg-white border-danger'
                 }`}
+                onPress={() => !sosActive && setShowSOSConfirm(true)}
+                disabled={sosActive || sosLoading}
               >
-                {sosActive ? 'SOS Active — help notified' : 'Emergency SOS'}
-              </Text>
-            </Pressable>
+                <ShieldAlert size={16} color={sosActive ? '#FFFFFF' : '#EF4444'} />
+                <Text
+                  className={`text-xs font-montserrat-bold ${
+                    sosActive ? 'text-white' : 'text-danger'
+                  }`}
+                >
+                  {sosActive ? 'SOS Active — help notified' : 'Emergency SOS'}
+                </Text>
+              </Pressable>
+            )}
           </Card>
         </View>
       </ScrollView>
+      </KeyboardAvoidingView>
 
       {/* Bottom Action Button */}
-      <View className="absolute bottom-0 left-0 right-0 bg-background border-t border-divider px-5 py-4 pb-8">
-        <StatusActionButton
-          status={booking.status}
-          errandSlug={errandSlug}
-          isTransportation={isTransportation}
-          pinVerified={pinVerified}
-          onPress={handleStatusUpdate}
-          loading={loading}
-        />
-      </View>
+      {!isReadOnly && (
+        <BottomActionBar>
+          <StatusActionButton
+            status={booking.status}
+            errandSlug={errandSlug}
+            isTransportation={isTransportation}
+            pinVerified={pinVerified}
+            onPress={handleStatusUpdate}
+            loading={loading}
+          />
+        </BottomActionBar>
+      )}
+      {isReadOnly && (
+        <BottomActionBar background="#FFFFFF" style={{ alignItems: 'center' }}>
+          <Text className="text-[11px] font-montserrat text-textTertiary uppercase tracking-wider mb-0.5">
+            Read-only view
+          </Text>
+          <Text className="text-xs font-montserrat text-textSecondary">
+            Status: {STATUS_LABELS[booking.status] ?? booking.status}
+          </Text>
+        </BottomActionBar>
+      )}
 
       {/* Photo Proof Modal */}
       {showPhotoProof && (

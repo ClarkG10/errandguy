@@ -2,16 +2,19 @@ import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   View,
   Text,
-  FlatList,
+  SectionList,
   RefreshControl,
   Pressable,
+  ActivityIndicator,
 } from 'react-native';
-import { ClipboardList } from 'lucide-react-native';
+import { ClipboardList, MessageCircle } from 'lucide-react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { useRouter } from 'expo-router';
 import { bookingService } from '../../../services/booking.service';
 import { useQuery } from '../../../hooks/useQuery';
 import { CacheTTL } from '../../../services/cache.service';
 import { useAuthStore } from '../../../stores/authStore';
+import { useChatStore } from '../../../stores/chatStore';
 import { EmptyState } from '../../../components/ui/EmptyState';
 import { RecentErrandItem } from '../../../components/customer/RecentErrandItem';
 import { BookingDetailSheet } from '../../../components/customer/BookingDetailSheet';
@@ -36,11 +39,16 @@ const FILTER_STATUS_MAP: Record<FilterKey, string | undefined> = {
 };
 
 export default function ActivityScreen() {
+  const router = useRouter();
   const userId = useAuthStore((s) => s.user?.id ?? 'anon');
+  const chatUnread = useChatStore((s) => s.unreadCount);
   const [filter, setFilter] = useState<FilterKey>('all');
   const [selectedBooking, setSelectedBooking] = useState<Booking | null>(null);
 
   // Page 1 cached per filter; subsequent pages live in local state.
+  // staleTime is generous (2 min) because mutations (create/cancel/review)
+  // call invalidateQuery(['bookings']) which forces an immediate refresh.
+  // Without that signal, the list rarely needs to revalidate on focus.
   const page1Q = useQuery<Booking[]>(
     ['bookings', 'activity', filter, userId],
     async () => {
@@ -51,7 +59,7 @@ export default function ActivityScreen() {
       });
       return (res.data.data ?? []) as Booking[];
     },
-    { staleTime: 30_000, ttl: CacheTTL.LONG },
+    { staleTime: 120_000, ttl: CacheTTL.LONG },
   );
 
   const [extraPages, setExtraPages] = useState<Booking[]>([]);
@@ -76,6 +84,52 @@ export default function ActivityScreen() {
     [page1Q.data, extraPages],
   );
   const loading = page1Q.loading && !page1Q.data;
+
+  // Bucket bookings by date so the list reads as a journal rather than
+  // a flat infinite scroll. Active filter buckets by status instead
+  // (Today/Yesterday is meaningless when everything is in-progress).
+  const sections = useMemo<{ title: string; data: Booking[] }[]>(() => {
+    if (!bookings.length) return [];
+    if (filter === 'active') {
+      const onTheWay: Booking[] = [];
+      const inProgress: Booking[] = [];
+      const searching: Booking[] = [];
+      for (const b of bookings) {
+        if (b.status === 'pending') {
+          searching.push(b);
+        } else if (b.status === 'matched' || b.status === 'accepted') {
+          onTheWay.push(b);
+        } else {
+          inProgress.push(b);
+        }
+      }
+      return [
+        { title: 'In progress', data: inProgress },
+        { title: 'On the way', data: onTheWay },
+        { title: 'Looking for runner', data: searching },
+      ].filter((s) => s.data.length > 0);
+    }
+    const now = new Date();
+    const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+    const startOfYesterday = startOfToday - 24 * 60 * 60 * 1000;
+    const startOfWeek = startOfToday - 6 * 24 * 60 * 60 * 1000;
+    const buckets: Record<string, Booking[]> = {
+      Today: [],
+      Yesterday: [],
+      'This Week': [],
+      Earlier: [],
+    };
+    for (const b of bookings) {
+      const ts = new Date(b.created_at).getTime();
+      if (ts >= startOfToday) buckets.Today.push(b);
+      else if (ts >= startOfYesterday) buckets.Yesterday.push(b);
+      else if (ts >= startOfWeek) buckets['This Week'].push(b);
+      else buckets.Earlier.push(b);
+    }
+    return (['Today', 'Yesterday', 'This Week', 'Earlier'] as const)
+      .filter((title) => buckets[title].length > 0)
+      .map((title) => ({ title, data: buckets[title] }));
+  }, [bookings, filter]);
 
   const onRefresh = useCallback(async () => {
     setRefreshing(true);
@@ -117,10 +171,44 @@ export default function ActivityScreen() {
 
   return (
     <SafeAreaView className="flex-1 bg-background" edges={['top']}>
-      <View className="px-5 pt-4 pb-2">
+      <View className="flex-row items-center justify-between px-5 pt-4 pb-2">
         <Text className="text-lg font-montserrat-semi text-textPrimary">
           Activity
         </Text>
+        <Pressable
+          onPress={() => router.push('/(customer)/chat' as any)}
+          className="w-10 h-10 rounded-full items-center justify-center"
+          accessibilityRole="button"
+          accessibilityLabel="Messages"
+          accessibilityHint={chatUnread > 0 ? `${chatUnread} unread messages` : undefined}
+          hitSlop={8}
+        >
+          <View>
+            <MessageCircle size={22} color="#0F172A" />
+            {chatUnread > 0 && (
+              <View
+                style={{
+                  position: 'absolute',
+                  top: -4,
+                  right: -4,
+                  minWidth: 16,
+                  height: 16,
+                  borderRadius: 8,
+                  paddingHorizontal: 3,
+                  backgroundColor: '#DC2626',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  borderWidth: 2,
+                  borderColor: '#FFFFFF',
+                }}
+              >
+                <Text className="text-[9px] font-montserrat-bold text-white">
+                  {chatUnread > 9 ? '9+' : chatUnread}
+                </Text>
+              </View>
+            )}
+          </View>
+        </Pressable>
       </View>
 
       {/* Filters */}
@@ -146,8 +234,8 @@ export default function ActivityScreen() {
       </View>
 
       {/* Booking List */}
-      <FlatList
-        data={bookings}
+      <SectionList
+        sections={sections}
         keyExtractor={(item) => item.id}
         renderItem={({ item }) => (
           <View className="px-5">
@@ -157,6 +245,17 @@ export default function ActivityScreen() {
             />
           </View>
         )}
+        renderSectionHeader={({ section: { title, data } }) => (
+          <View className="flex-row items-center justify-between px-5 pt-3 pb-2 bg-background">
+            <Text className="text-[11px] font-montserrat-bold text-textTertiary uppercase tracking-wider">
+              {title}
+            </Text>
+            <Text className="text-[10px] font-montserrat text-textTertiary">
+              {data.length}
+            </Text>
+          </View>
+        )}
+        stickySectionHeadersEnabled
         refreshControl={
           <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
         }
@@ -165,6 +264,19 @@ export default function ActivityScreen() {
         maxToRenderPerBatch={10}
         windowSize={5}
         removeClippedSubviews={true}
+        ListFooterComponent={
+          loadingMore ? (
+            <View className="py-4 items-center">
+              <ActivityIndicator size="small" color="#2563EB" />
+            </View>
+          ) : !hasMore && bookings.length > 0 ? (
+            <View className="py-4 items-center">
+              <Text className="text-[11px] font-montserrat text-textTertiary">
+                That's everything
+              </Text>
+            </View>
+          ) : null
+        }
         ListEmptyComponent={
           !loading ? (
             <EmptyState

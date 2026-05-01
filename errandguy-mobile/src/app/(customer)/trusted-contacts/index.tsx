@@ -6,6 +6,8 @@ import {
   Pressable,
   Modal,
   ScrollView,
+  KeyboardAvoidingView,
+  Platform,
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import {
@@ -22,6 +24,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { userService } from '../../../services/user.service';
 import { Button } from '../../../components/ui/Button';
+import { BottomActionBar } from '../../../components/ui/BottomActionBar';
 import { Input } from '../../../components/ui/Input';
 import { Badge } from '../../../components/ui/Badge';
 import { EmptyState } from '../../../components/ui/EmptyState';
@@ -256,6 +259,9 @@ export default function TrustedContactsScreen() {
         <View className="flex-row items-center">
           <Pressable
             onPress={() => router.canGoBack() ? router.back() : router.replace('/(customer)/(tabs)/profile')}
+            accessibilityRole="button"
+            accessibilityLabel="Go back"
+            hitSlop={8}
             className="mr-3 w-9 h-9 rounded-xl bg-surface items-center justify-center"
             style={{ shadowColor: '#0F172A', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.04, shadowRadius: 6, elevation: 1 }}
           >
@@ -292,79 +298,88 @@ export default function TrustedContactsScreen() {
       />
 
       {/* Add button */}
-      <View className="absolute bottom-0 left-0 right-0 bg-background border-t border-divider px-5 py-4 pb-8">
+      <BottomActionBar>
         <Button
           title="Add Contact"
           onPress={openAddModal}
           disabled={contacts.length >= MAX_CONTACTS}
           fullWidth
         />
-      </View>
+      </BottomActionBar>
 
       {/* Add/Edit Modal */}
-      <Modal visible={modalVisible} animationType="slide" transparent>
-        <View className="flex-1 bg-black/50 justify-end">
-          <View className="bg-background rounded-t-3xl px-5 pt-6 pb-10">
-            <View className="flex-row items-center justify-between mb-6">
-              <Text className="text-lg font-montserrat-bold text-textPrimary">
-                {editingId ? 'Edit Contact' : 'Add Contact'}
-              </Text>
-              <Pressable onPress={() => setModalVisible(false)}>
-                <X size={24} color="#64748B" />
-              </Pressable>
-            </View>
-
-            <ScrollView showsVerticalScrollIndicator={false}>
-              <Input
-                label="Name"
-                value={formName}
-                onChangeText={setFormName}
-                placeholder="Contact name"
-              />
-              <View className="h-3" />
-              <Input
-                label="Phone Number"
-                value={formPhone}
-                onChangeText={setFormPhone}
-                placeholder="+63 9XX XXX XXXX"
-                keyboardType="phone-pad"
-              />
-              <View className="h-3" />
-
-              <Text className="text-sm font-montserrat-bold text-textPrimary mb-2">
-                Relationship
-              </Text>
-              <View className="flex-row flex-wrap gap-2 mb-6">
-                {RELATIONSHIPS.map((rel) => (
-                  <Pressable
-                    key={rel}
-                    className={`px-4 py-2 rounded-full border ${
-                      formRelationship === rel
-                        ? 'bg-primary border-primary'
-                        : 'bg-surface border-divider'
-                    }`}
-                    onPress={() => setFormRelationship(rel)}
-                  >
-                    <Text
-                      className={`text-sm font-montserrat ${
-                        formRelationship === rel ? 'text-white' : 'text-textPrimary'
-                      }`}
-                    >
-                      {rel}
-                    </Text>
-                  </Pressable>
-                ))}
+      <Modal visible={modalVisible} animationType="slide" transparent onRequestClose={() => setModalVisible(false)}>
+        <KeyboardAvoidingView
+          style={{ flex: 1 }}
+          behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+        >
+          <View className="flex-1 bg-black/50 justify-end">
+            <View className="bg-background rounded-t-3xl px-5 pt-6 pb-10" style={{ maxHeight: '90%' }}>
+              <View className="flex-row items-center justify-between mb-6">
+                <Text className="text-lg font-montserrat-bold text-textPrimary">
+                  {editingId ? 'Edit Contact' : 'Add Contact'}
+                </Text>
+                <Pressable onPress={() => setModalVisible(false)} hitSlop={12}>
+                  <X size={24} color="#64748B" />
+                </Pressable>
               </View>
 
-              <Button
-                title={editingId ? 'Save Changes' : 'Add Contact'}
-                onPress={handleSave}
-                loading={saving}
-                fullWidth
-              />
-            </ScrollView>
+              <ScrollView
+                showsVerticalScrollIndicator={false}
+                keyboardShouldPersistTaps="handled"
+                contentContainerStyle={{ paddingBottom: 24 }}
+              >
+                <Input
+                  label="Name"
+                  value={formName}
+                  onChangeText={setFormName}
+                  placeholder="Contact name"
+                />
+                <View className="h-3" />
+                <Input
+                  label="Phone Number"
+                  value={formPhone}
+                  onChangeText={setFormPhone}
+                  placeholder="+63 9XX XXX XXXX"
+                  keyboardType="phone-pad"
+                />
+                <View className="h-3" />
+
+                <Text className="text-sm font-montserrat-bold text-textPrimary mb-2">
+                  Relationship
+                </Text>
+                <View className="flex-row flex-wrap gap-2 mb-6">
+                  {RELATIONSHIPS.map((rel) => (
+                    <Pressable
+                      key={rel}
+                      className={`px-4 py-2 rounded-full border ${
+                        formRelationship === rel
+                          ? 'bg-primary border-primary'
+                          : 'bg-surface border-divider'
+                      }`}
+                      onPress={() => setFormRelationship(rel)}
+                    >
+                      <Text
+                        className={`text-sm font-montserrat ${
+                          formRelationship === rel ? 'text-white' : 'text-textPrimary'
+                        }`}
+                      >
+                        {rel}
+                      </Text>
+                    </Pressable>
+                  ))}
+                </View>
+
+                <Button
+                  title={editingId ? 'Save Changes' : 'Add Contact'}
+                  onPress={handleSave}
+                  loading={saving}
+                  fullWidth
+                />
+              </ScrollView>
+            </View>
           </View>
-        </View>
+        </KeyboardAvoidingView>
       </Modal>
 
       <ConfirmModal

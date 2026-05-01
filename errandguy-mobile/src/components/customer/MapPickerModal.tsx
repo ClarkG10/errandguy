@@ -6,8 +6,7 @@ import Mapbox from '@rnmapbox/maps';
 import * as Location from 'expo-location';
 import { Button } from '../ui/Button';
 import { MAP_STYLE_URL } from '../../constants/map';
-
-const MAPBOX_TOKEN = process.env.EXPO_PUBLIC_MAPBOX_TOKEN ?? '';
+import { geocodingService } from '../../services/geocoding.service';
 
 // Default center: Manila, PH
 const DEFAULT_CENTER: [number, number] = [121.0, 14.6];
@@ -82,18 +81,10 @@ export function MapPickerModal({
     }
   }, [visible]);
 
-  const reverseGeocode = useCallback(async (lng: number, lat: number) => {
-    if (!MAPBOX_TOKEN) return '';
-    try {
-      const res = await fetch(
-        `https://api.mapbox.com/geocoding/v5/mapbox.places/${lng},${lat}.json?access_token=${MAPBOX_TOKEN}&language=en&limit=1`,
-      );
-      const data = await res.json();
-      return data.features?.[0]?.place_name ?? `${lat.toFixed(6)}, ${lng.toFixed(6)}`;
-    } catch {
-      return `${lat.toFixed(6)}, ${lng.toFixed(6)}`;
-    }
-  }, []);
+  const reverseGeocode = useCallback(
+    (lng: number, lat: number) => geocodingService.reverse(lng, lat),
+    [],
+  );
 
   const handleMapPress = useCallback(
     async (event: any) => {
@@ -146,11 +137,15 @@ export function MapPickerModal({
               animationDuration={500}
             />
 
-            {/* Selected location marker */}
+            {/* Selected location marker — MarkerView (vs. PointAnnotation)
+                so the pin head + base dot can render as siblings without
+                tripping rnmapbox's "max 1 subview" warning. */}
             {selectedCoord && (
-              <Mapbox.PointAnnotation
+              <Mapbox.MarkerView
                 id="selected-location"
                 coordinate={selectedCoord}
+                anchor={{ x: 0.5, y: 1 }}
+                allowOverlap
               >
                 <View className="items-center">
                   <View className="w-10 h-10 rounded-full bg-primary items-center justify-center border-2 border-white shadow-lg">
@@ -158,7 +153,7 @@ export function MapPickerModal({
                   </View>
                   <View className="w-2 h-2 bg-primary rounded-full mt-0.5" />
                 </View>
-              </Mapbox.PointAnnotation>
+              </Mapbox.MarkerView>
             )}
           </Mapbox.MapView>
 

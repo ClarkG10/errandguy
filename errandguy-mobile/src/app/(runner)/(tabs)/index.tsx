@@ -3,18 +3,18 @@ import { View, Text, ScrollView, RefreshControl, FlatList, Pressable } from 'rea
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import * as Location from 'expo-location';
-import { Bell, Package, Handshake } from 'lucide-react-native';
-import { DollarSign, CheckCircle, Star } from 'lucide-react-native';
-import { OnlineToggle } from '../../../components/runner/OnlineToggle';
-import { StatCard } from '../../../components/runner/StatCard';
+import { Bell, Handshake, Star } from 'lucide-react-native';
+import { OnlineButton } from '../../../components/runner/OnlineButton';
 import { NegotiateOfferCard } from '../../../components/runner/NegotiateOfferCard';
 import { VerificationBanner } from '../../../components/runner/VerificationBanner';
 import { IncomingRequestModal } from '../../../components/runner/IncomingRequestModal';
+import { ActiveRunnerErrandCard } from '../../../components/runner/ActiveRunnerErrandCard';
 import { Card } from '../../../components/ui/Card';
 import { Badge } from '../../../components/ui/Badge';
 import { useRunnerStore } from '../../../stores/runnerStore';
 import { useLocationStore } from '../../../stores/locationStore';
 import { useAuthStore } from '../../../stores/authStore';
+import { useNotificationStore } from '../../../stores/notificationStore';
 import { runnerService } from '../../../services/runner.service';
 import { formatCurrency } from '../../../utils/formatCurrency';
 import { RunnerHomeSkeleton } from '../../../components/ui/Skeleton';
@@ -41,6 +41,27 @@ export default function RunnerHomeScreen() {
     setRunnerProfile,
   } = useRunnerStore();
   const { startTracking, stopTracking } = useLocationStore();
+  const unreadCount = useNotificationStore((s) => s.unreadCount);
+
+  // Loading state for the big online button so the runner sees clear
+  // feedback while the toggle round-trips to the server (~300–1500ms).
+  const [togglingOnline, setTogglingOnline] = useState(false);
+  // Track foreground location permission status so we can surface a
+  // contextual hint + a one-tap "Enable" button on the home screen.
+  const [locationGranted, setLocationGranted] = useState<boolean | null>(null);
+
+  const checkLocationPermission = useCallback(async () => {
+    try {
+      const { status } = await Location.getForegroundPermissionsAsync();
+      setLocationGranted(status === 'granted');
+    } catch {
+      setLocationGranted(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    checkLocationPermission();
+  }, [checkLocationPermission]);
 
   // Subscribe to incoming booking requests via Supabase Realtime
   useIncomingRequest(isOnline && user?.id ? user.id : null);
@@ -70,9 +91,22 @@ export default function RunnerHomeScreen() {
     async () => ((await runnerService.getAvailableErrands()).data.data ?? []) as Booking[],
     { staleTime: 15_000, ttl: CacheTTL.SHORT, enabled: enabled && isOnline },
   );
+  // Hydrate the in-flight errand on mount so a cold app launch mid-errand
+  // immediately shows the runner what they're working on. Without this the
+  // runner used to have to navigate to the Errands tab after every kill.
+  // The endpoint already has a 5 s server-side cache; we layer 30 s
+  // staleTime on top so navigating away and back is free.
+  const currentErrandQ = useQuery<Booking | null>(
+    ['runner', 'errand', 'current', userId],
+    async () => ((await runnerService.getCurrentErrand()).data.data ?? null) as Booking | null,
+    { staleTime: 30_000, ttl: CacheTTL.SHORT, enabled },
+  );
 
   const recentErrands = historyQ.data ?? [];
   const negotiateOffers = offersQ.data ?? [];
+  // Prefer the realtime store value (already updated by acceptErrand /
+  // status pushes) when available; fall back to the cached fetch result.
+  const activeErrand = currentErrand ?? currentErrandQ.data ?? null;
 
   // Mirror into the global store so other screens see fresh data.
   useEffect(() => {
@@ -95,12 +129,38 @@ export default function RunnerHomeScreen() {
       profileQ.refresh(),
       earningsTodayQ.refresh(),
       historyQ.refresh(),
+      currentErrandQ.refresh(),
       isOnline ? offersQ.refresh() : Promise.resolve(),
     ]);
     setRefreshing(false);
-  }, [profileQ, earningsTodayQ, historyQ, offersQ, isOnline]);
+  }, [profileQ, earningsTodayQ, historyQ, currentErrandQ, offersQ, isOnline]);
 
   const handleToggleOnline = async (value: boolean) => {
+    if (togglingOnline) return;
+
+    // ─ Pre-flight using the cached runner profile ─
+    // Avoids a guaranteed-to-fail PUT /runner/online when the runner
+    // hasn't picked any preferred errand types yet (the backend would
+    // 422 with "Please set at least one preferred errand type...").
+    // We trust the cached profile; if it's stale, the worst case is
+    // we let the request through and surface the same toast anyway.
+    if (value) {
+      const cachedProfile = profileQ.data ?? runnerProfile;
+      if (cachedProfile && (!cachedProfile.preferred_types || cachedProfile.preferred_types.length === 0)) {
+        toast.warning(
+          'Pick at least one errand type you\u2019d like to receive before going online.',
+        );
+        router.push('/(runner)/settings/preferred-types' as any);
+        return;
+      }
+      if (cachedProfile && cachedProfile.verification_status && cachedProfile.verification_status !== 'approved') {
+        toast.warning('Finish account verification before going online.');
+        router.push('/(runner)/settings/documents' as any);
+        return;
+      }
+    }
+
+    setTogglingOnline(true);
     try {
       let coords: { lat: number; lng: number } | undefined;
       if (value) {
@@ -108,7 +168,24 @@ export default function RunnerHomeScreen() {
         if (currentLocation) {
           coords = { lat: currentLocation.lat, lng: currentLocation.lng };
         } else {
-          // Request location before going online
+          // Fail closed if foreground permission isn't granted — going
+          // online without GPS makes the runner invisible to the
+          // matcher (current_lat/lng would be null) and we'd silently
+          // burn battery polling toggleOnline endpoints. Better to
+          // surface a clear, actionable message and bail before we
+          // touch the server.
+          const { status } = await Location.getForegroundPermissionsAsync();
+          if (status !== 'granted') {
+            const req = await Location.requestForegroundPermissionsAsync();
+            if (req.status !== 'granted') {
+              setLocationGranted(false);
+              toast.warning(
+                'Location permission is required to go online. Enable it in Settings to start receiving errands.',
+              );
+              return;
+            }
+            setLocationGranted(true);
+          }
           const loc = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.High });
           coords = { lat: loc.coords.latitude, lng: loc.coords.longitude };
         }
@@ -116,13 +193,56 @@ export default function RunnerHomeScreen() {
       await runnerService.toggleOnline(value, coords);
       toggleOnline(value);
       if (value) {
-        await startTracking();
+        const ok = await startTracking();
+        if (!ok) {
+          // Background tracking failed after we flipped online server-side.
+          // Roll back so we don't leave the runner in an "online but
+          // unreachable" zombie state — the matcher would never see them
+          // and they'd wonder why no errands are coming in.
+          try {
+            await runnerService.toggleOnline(false);
+          } catch {
+            /* best-effort rollback */
+          }
+          toggleOnline(false);
+          toast.warning(
+            'Couldn\u2019t start location tracking. You\u2019ve been set back to offline — please check Settings.',
+          );
+        } else {
+          toast.success('You\u2019re online and ready for errands.');
+        }
       } else {
         stopTracking();
         offersQ.mutate(() => []);
+        toast.info('You\u2019re offline. We\u2019ll stop sending you new requests.');
       }
     } catch (err: any) {
-      toast.error(err?.response?.data?.message ?? 'Failed to toggle status');
+      const status = err?.status ?? err?.response?.status;
+      const message: string =
+        err?.message ?? err?.response?.data?.message ?? 'Failed to toggle status';
+
+      // Map known 422 backend rules to actionable, user-friendly toasts
+      // so the runner knows exactly what to do next instead of seeing
+      // a raw API error like "Please set at least one preferred errand type".
+      if (status === 422 && /preferred errand type/i.test(message)) {
+        toast.warning(
+          'Pick at least one errand type you\u2019d like to receive before going online.',
+        );
+        router.push('/(runner)/settings/preferred-types' as any);
+        return;
+      }
+      if (status === 422 && /verif/i.test(message)) {
+        toast.warning('Finish account verification before going online.');
+        router.push('/(runner)/settings/documents' as any);
+        return;
+      }
+      if (status === 0) {
+        toast.error('No connection. Check your internet and try again.');
+        return;
+      }
+      toast.error(message);
+    } finally {
+      setTogglingOnline(false);
     }
   };
 
@@ -170,10 +290,27 @@ export default function RunnerHomeScreen() {
           </Text>
         </View>
         <Pressable
-          className="w-10 h-10 rounded-full bg-primary50 items-center justify-center"
-          onPress={() => router.push('/(runner)/settings/notifications' as any)}
+          accessibilityRole="button"
+          accessibilityLabel={
+            unreadCount > 0
+              ? `Notifications, ${unreadCount} unread`
+              : 'Notifications'
+          }
+          hitSlop={12}
+          className="w-10 h-10 items-center justify-center"
+          onPress={() => router.push('/(runner)/notifications' as any)}
         >
-          <Bell size={20} color="#2563EB" strokeWidth={1.8} />
+          <Bell size={22} color="#475569" strokeWidth={1.8} />
+          {unreadCount > 0 && (
+            <View
+              className="absolute top-1 right-1 min-w-[16px] h-4 px-1 rounded-full bg-danger items-center justify-center"
+              style={{ borderWidth: 1.5, borderColor: '#FFFFFF' }}
+            >
+              <Text className="text-[9px] font-montserrat-bold text-white">
+                {unreadCount > 9 ? '9+' : unreadCount}
+              </Text>
+            </View>
+          )}
         </Pressable>
       </View>
 
@@ -193,39 +330,120 @@ export default function RunnerHomeScreen() {
           />
         )}
 
-        {/* Online Toggle */}
+        {/* Online Button — the big primary CTA */}
         <View className="px-5 mb-4">
-          <OnlineToggle
+          <OnlineButton
             isOnline={isOnline}
-            onToggle={handleToggleOnline}
+            loading={togglingOnline}
             disabled={verificationStatus !== 'approved'}
+            disabledReason="Your account needs verification before you can go online. Submit your documents for review."
+            hint={
+              locationGranted === false
+                ? 'Location permission is off. Tap Enable so customers can see you on the map.'
+                : undefined
+            }
+            hintAction={
+              locationGranted === false
+                ? {
+                    label: 'Enable',
+                    onPress: async () => {
+                      const req = await Location.requestForegroundPermissionsAsync();
+                      setLocationGranted(req.status === 'granted');
+                      if (req.status !== 'granted') {
+                        toast.warning(
+                          'Permission still off. Open device Settings to allow location for ErrandGuy.',
+                        );
+                      }
+                    },
+                  }
+                : undefined
+            }
+            onToggle={handleToggleOnline}
           />
         </View>
 
-        {/* Today's Stats */}
+        {/* Active errand — the most important thing on the screen when
+            the runner has work in flight. Sits above stats so it's the
+            first thing seen on every return-to-foreground. */}
+        {activeErrand && (
+          <View className="px-5 mb-4">
+            <ActiveRunnerErrandCard
+              errand={activeErrand}
+              onPress={() => router.push(`/(runner)/errand/${activeErrand.id}` as any)}
+            />
+          </View>
+        )}
+
+        {/* Snapshot — a single, calm summary card that replaces the
+            old icon-heavy 3-tile row. The hierarchy is now:
+              • the most actionable number (today's earnings) is the
+                hero, large and on-brand;
+              • lifetime context (total errands, rating) sits below as
+                small secondary stats separated by a divider.
+            No icons — the labels carry the meaning, which keeps the
+            section quiet so the eye returns to the Online button. */}
         <View className="px-5 mb-4">
-          <Text className="text-xs font-montserrat-bold text-textTertiary uppercase tracking-wider mb-2 ml-0.5">
-            Today's Stats
-          </Text>
-          <View className="flex-row gap-3">
-            <StatCard
-              icon={DollarSign}
-              value={formatCurrency(earnings.today)}
-              label="Earnings"
-              color="#22C55E"
-            />
-            <StatCard
-              icon={CheckCircle}
-              value={runnerProfile?.total_errands ?? 0}
-              label="Errands"
-              color="#2563EB"
-            />
-            <StatCard
-              icon={Star}
-              value={Number(user?.avg_rating ?? 0).toFixed(1)}
-              label="Rating"
-              color="#F59E0B"
-            />
+          <View
+            className="bg-surface rounded-2xl px-5 py-4"
+            style={{
+              shadowColor: '#0F172A',
+              shadowOffset: { width: 0, height: 2 },
+              shadowOpacity: 0.05,
+              shadowRadius: 10,
+              elevation: 2,
+            }}
+          >
+            <View className="flex-row items-end justify-between">
+              <View>
+                <Text className="text-[11px] font-montserrat-semi text-textTertiary uppercase tracking-wider">
+                  Today’s earnings
+                </Text>
+                <Text className="text-2xl font-montserrat-bold text-textPrimary mt-0.5">
+                  {formatCurrency(earnings.today)}
+                </Text>
+              </View>
+              <Pressable
+                onPress={() => router.push('/(runner)/(tabs)/earnings' as any)}
+                hitSlop={8}
+                className="px-3 py-1.5 rounded-full bg-primary50"
+              >
+                <Text className="text-[11px] font-montserrat-bold text-primary">View</Text>
+              </Pressable>
+            </View>
+
+            <View className="h-px bg-divider my-3" />
+
+            <View className="flex-row items-center justify-between">
+              <View className="flex-1">
+                <Text className="text-[10px] font-montserrat-semi text-textTertiary uppercase tracking-wider">
+                  Total errands
+                </Text>
+                <Text className="text-base font-montserrat-bold text-textPrimary mt-0.5">
+                  {runnerProfile?.total_errands ?? 0}
+                </Text>
+              </View>
+              <View className="w-px h-8 bg-divider mx-3" />
+              <View className="flex-1">
+                <Text className="text-[10px] font-montserrat-semi text-textTertiary uppercase tracking-wider">
+                  Rating
+                </Text>
+                <View className="flex-row items-center mt-0.5">
+                  <Text className="text-base font-montserrat-bold text-textPrimary">
+                    {Number(user?.avg_rating ?? 0).toFixed(1)}
+                  </Text>
+                  <Star size={12} color="#F59E0B" fill="#F59E0B" style={{ marginLeft: 4 }} />
+                </View>
+              </View>
+              <View className="w-px h-8 bg-divider mx-3" />
+              <View className="flex-1">
+                <Text className="text-[10px] font-montserrat-semi text-textTertiary uppercase tracking-wider">
+                  Acceptance
+                </Text>
+                <Text className="text-base font-montserrat-bold text-textPrimary mt-0.5">
+                  {Math.round(runnerProfile?.acceptance_rate ?? 0)}%
+                </Text>
+              </View>
+            </View>
           </View>
         </View>
 
@@ -255,17 +473,13 @@ export default function RunnerHomeScreen() {
           </Text>
           {recentErrands.length === 0 ? (
             <Card className="items-center py-8">
-              <View className="w-14 h-14 rounded-2xl bg-primary50 items-center justify-center mb-2">
-                <Package size={22} color="#2563EB" />
-              </View>
-              <Text className="text-sm font-montserrat text-textTertiary mt-1">
+              <Text className="text-sm font-montserrat text-textTertiary">
                 {isOnline
                   ? 'No recent errands yet.'
-                  : 'Go online to start earning!'}
+                  : 'Go online to start earning.'}
               </Text>
             </Card>
-          ) : (
-            <>
+          ) : (            <>
               {recentErrands.map((errand) => (
                 <Card key={errand.id} className="mb-2 p-3">
                   <View className="flex-row items-center justify-between">

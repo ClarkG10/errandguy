@@ -1,5 +1,6 @@
 import axios, { AxiosRequestConfig, AxiosResponse } from 'axios';
 import { secureStorage } from '../utils/storage';
+import { apiActivity } from '../stores/apiActivityStore';
 
 const api = axios.create({
   baseURL: process.env.EXPO_PUBLIC_API_URL,
@@ -58,6 +59,10 @@ api.interceptors.request.use(
     if (token) {
       config.headers.Authorization = `Bearer ${token}`;
     }
+    // Bump the global activity counter so the top progress bar appears
+    // for any in-flight network request. Cache hits skip this entirely
+    // (handled inside the request wrapper below).
+    apiActivity.start();
     if (__DEV__) {
       console.log(
         `📡 ${config.method?.toUpperCase()} ${config.baseURL}${config.url}`,
@@ -66,12 +71,16 @@ api.interceptors.request.use(
     }
     return config;
   },
-  (error) => Promise.reject(error),
+  (error) => {
+    apiActivity.done();
+    return Promise.reject(error);
+  },
 );
 
 // ── Response logging + error handling ──
 api.interceptors.response.use(
   (response) => {
+    apiActivity.done();
     if (__DEV__) {
       console.log(
         `✅ ${response.status} ${response.config.method?.toUpperCase()} ${response.config.url}`,
@@ -80,6 +89,7 @@ api.interceptors.response.use(
     return response;
   },
   async (error) => {
+    apiActivity.done();
     if (__DEV__) {
       if (error.response) {
         console.error(
@@ -96,7 +106,26 @@ api.interceptors.response.use(
 
       if (status === 401) {
         await secureStorage.remove('auth_token');
-        // Auth store will handle redirect via listener
+        // Hard reset the in-memory auth store so the route gate flips
+        // back to /welcome immediately. Without this the user would sit
+        // on a stale logged-in screen until they tried to navigate.
+        // Lazy require avoids the api↔authStore circular import.
+        try {
+          const { useAuthStore } = require('../stores/authStore');
+          useAuthStore.setState({
+            user: null,
+            token: null,
+            isAuthenticated: false,
+            role: null,
+          });
+        } catch {
+          /* store not yet initialised — safe to ignore */
+        }
+        // Also drop the request micro-cache so the next sign-in doesn't
+        // serve the previous user's cached responses.
+        microCache.clear();
+        inflight.clear();
+        apiActivity.reset();
       }
 
       if (status === 422) {

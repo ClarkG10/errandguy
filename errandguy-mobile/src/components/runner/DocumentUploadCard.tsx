@@ -13,6 +13,7 @@ interface DocumentUploadCardProps {
   fileUrl?: string | null;
   rejectionReason?: string | null;
   onUpload: () => void;
+  onView?: (uri: string) => void;
 }
 
 const STATUS_CONFIG: Record<string, { icon: typeof CheckCircle; color: string; label: string }> = {
@@ -28,6 +29,7 @@ export function DocumentUploadCard({
   fileUrl,
   rejectionReason,
   onUpload,
+  onView,
 }: DocumentUploadCardProps) {
   const config = status ? STATUS_CONFIG[status] : null;
   const StatusIcon = config?.icon;
@@ -52,11 +54,32 @@ export function DocumentUploadCard({
       </View>
 
       {fileUrl && (
-        <Image
-          source={{ uri: fileUrl }}
-          className="w-full h-24 rounded-lg mb-2"
-          contentFit="cover"
-        />
+        <Pressable
+          onPress={() => onView?.(fileUrl)}
+          accessibilityRole="imagebutton"
+          accessibilityLabel={`View ${label}`}
+          accessibilityHint="Opens a full-screen preview of the uploaded document"
+          style={{ marginBottom: 8 }}
+        >
+          {/* expo-image ignores Tailwind className for sizing, which is
+              why the preview was invisible on the runner side. Set the
+              dimensions inline. */}
+          <Image
+            source={{ uri: fileUrl }}
+            style={{
+              width: '100%',
+              height: 140,
+              borderRadius: 10,
+              backgroundColor: '#F1F5F9',
+            }}
+            contentFit="cover"
+            cachePolicy="memory-disk"
+            transition={150}
+          />
+          <Text className="text-[11px] font-montserrat text-textTertiary mt-1.5">
+            Tap to view full size
+          </Text>
+        </Pressable>
       )}
 
       {rejectionReason && (

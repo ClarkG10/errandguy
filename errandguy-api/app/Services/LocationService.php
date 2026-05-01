@@ -63,6 +63,19 @@ class LocationService
     /**
      * Find nearby online, approved runners within a radius.
      * Uses Haversine formula (PostGIS-free fallback).
+     *
+     * Performance note: a naive `WHERE is_online=true AND approved`
+     * loads every online runner into memory before filtering by
+     * distance — fine at 50 runners, painful at 5,000. We pre-filter
+     * with a bounding box in SQL so the database does the rough
+     * "could possibly be in range" cull, then PHP applies the exact
+     * great-circle distance only on the candidate slice.
+     *
+     * 1° latitude ≈ 111 km everywhere; 1° longitude shrinks toward
+     * the poles, so we widen the longitude window by `1 / cos(lat)`.
+     * At Manila (~14°N) cos ≈ 0.97, so the box is barely larger than
+     * a square — accuracy is exact (any miss would have failed the
+     * subsequent haversine check anyway).
      */
     public function getNearbyRunners(
         float $lat,
@@ -71,10 +84,19 @@ class LocationService
         ?string $vehicleType = null,
         ?string $errandTypeId = null
     ): Collection {
+        $latDelta = $radiusKm / 111.0;
+        // Guard against the equator-pole singularity (cos→0). At extreme
+        // latitudes we just open the box to ±180° on lng — the haversine
+        // post-filter still keeps the result correct.
+        $cosLat = cos(deg2rad($lat));
+        $lngDelta = $cosLat > 0.01 ? $radiusKm / (111.0 * $cosLat) : 180.0;
+
         $query = RunnerProfile::where('is_online', true)
             ->where('verification_status', 'approved')
             ->whereNotNull('current_lat')
             ->whereNotNull('current_lng')
+            ->whereBetween('current_lat', [$lat - $latDelta, $lat + $latDelta])
+            ->whereBetween('current_lng', [$lng - $lngDelta, $lng + $lngDelta])
             ->with('user');
 
         if ($vehicleType) {

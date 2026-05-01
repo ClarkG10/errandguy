@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useCallback } from 'react';
-import { View, Text, Pressable, Vibration } from 'react-native';
+import { View, Text, Pressable, Vibration, AppState, type AppStateStatus } from 'react-native';
 import { MotiView } from 'moti';
 import { MapPin, Navigation, Truck, ShoppingBag } from 'lucide-react-native';
 import { Badge } from '../ui/Badge';
@@ -34,7 +34,39 @@ export function IncomingRequestModal({
     booking.dropoff_address !== booking.pickup_address;
 
   useEffect(() => {
-    Vibration.vibrate([0, 500, 200, 500]);
+    // Initial buzz the moment the modal mounts — then keep re-buzzing
+    // every 5s so a runner who's not looking at the screen still has a
+    // chance to notice before the 30s window expires. We stop as soon as
+    // they tap accept/decline OR the timer hits zero (parent unmounts).
+    //
+    // Pause when the app is backgrounded so we don't drain battery /
+    // annoy the user with vibrations they can't act on — the OS push
+    // notification handles attention while away. Resume on return.
+    const startBuzz = () => {
+      Vibration.vibrate([0, 500, 200, 500]);
+      return setInterval(() => {
+        Vibration.vibrate([0, 400, 150, 400]);
+      }, 5000);
+    };
+
+    let interval: ReturnType<typeof setInterval> | null =
+      AppState.currentState === 'active' ? startBuzz() : null;
+
+    const sub = AppState.addEventListener('change', (state: AppStateStatus) => {
+      if (state === 'active' && !interval) {
+        interval = startBuzz();
+      } else if (state !== 'active' && interval) {
+        clearInterval(interval);
+        Vibration.cancel();
+        interval = null;
+      }
+    });
+
+    return () => {
+      if (interval) clearInterval(interval);
+      Vibration.cancel();
+      sub.remove();
+    };
   }, []);
 
   useEffect(() => {
@@ -145,17 +177,34 @@ export function IncomingRequestModal({
           </View>
         )}
 
-        {/* Distance + Payout */}
-        <View className="flex-row items-center justify-between mb-4 bg-primaryLight rounded-xl p-3">
-          <View className="flex-row items-center gap-1">
-            <Truck size={14} color="#2563EB" />
-            <Text className="text-xs font-inter tabular-nums text-primary">
+        {/* Distance + Payout — the most important number on the modal,
+            given the slate fintech treatment so it visually wins. */}
+        <View
+          className="flex-row items-center justify-between mb-4 rounded-xl p-3 overflow-hidden"
+          style={{ backgroundColor: '#0F172A' }}
+        >
+          <View
+            pointerEvents="none"
+            style={{
+              position: 'absolute',
+              top: -30,
+              right: -20,
+              width: 90,
+              height: 90,
+              borderRadius: 45,
+              backgroundColor: '#2563EB',
+              opacity: 0.22,
+            }}
+          />
+          <View className="flex-row items-center gap-1.5">
+            <Truck size={14} color="#FFFFFF" />
+            <Text className="text-xs font-inter tabular-nums text-white/80">
               {booking.distance_km != null && booking.distance_km > 0
                 ? `${booking.distance_km} km`
                 : 'On-site'}
             </Text>
           </View>
-          <Text className="text-xl font-inter-semi tabular-nums text-primary">
+          <Text className="text-xl font-inter-semi tabular-nums text-white">
             {formatCurrency(booking.runner_payout ?? booking.total_amount)}
           </Text>
         </View>

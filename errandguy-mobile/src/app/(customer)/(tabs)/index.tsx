@@ -19,8 +19,6 @@ import {
   Bell,
   ChevronRight,
   Search,
-  MapPin,
-  ArrowRight,
   AlertCircle,
   RefreshCw,
 } from 'lucide-react-native';
@@ -35,6 +33,7 @@ import { configService } from '../../../services/config.service';
 import { useQuery } from '../../../hooks/useQuery';
 import { CacheTTL } from '../../../services/cache.service';
 import { Avatar } from '../../../components/ui/Avatar';
+import { ActiveBookingCard } from '../../../components/customer/ActiveBookingCard';
 import { HomeSkeleton } from '../../../components/ui/Skeleton';
 import { STATUS_LABELS, STATUS_COLORS } from '../../../constants/statusLabels';
 import type { Booking, ErrandType } from '../../../types';
@@ -104,10 +103,14 @@ export default function CustomerHomeScreen() {
     errandTypes.length === 0 && recentBookings.length === 0;
   const error: string | null = null;
 
-  // Sync active booking into the global store whenever the query updates.
+  // Sync active booking into the global store — but only AFTER the
+  // query has resolved at least once. Without the loaded-once guard the
+  // initial undefined `data` would clobber an in-flight booking that
+  // another screen (or a push notification) had already populated.
   useEffect(() => {
+    if (activeBookingQ.loading && activeBookingQ.data == null) return;
     setActiveBooking(activeBookingQ.data ?? null);
-  }, [activeBookingQ.data, setActiveBooking]);
+  }, [activeBookingQ.data, activeBookingQ.loading, setActiveBooking]);
 
   const [refreshing, setRefreshing] = useState(false);
   const onRefresh = useCallback(async () => {
@@ -168,12 +171,13 @@ export default function CustomerHomeScreen() {
             </View>
           </View>
           <Pressable
-            className="relative w-10 h-10 rounded-full bg-primary50 items-center justify-center"
+            className="relative w-10 h-10 items-center justify-center"
+            hitSlop={8}
             onPress={() => router.push('/(customer)/(tabs)/notifications')}
           >
-            <Bell size={20} color="#2563EB" strokeWidth={1.8} />
+            <Bell size={22} color="#475569" strokeWidth={1.8} />
             {unreadCount > 0 && (
-              <View className="absolute -top-0.5 -right-0.5 rounded-full items-center justify-center" style={{ width: 18, height: 18, backgroundColor: '#EF4444' }}>
+              <View className="absolute top-1 right-1 rounded-full items-center justify-center" style={{ width: 18, height: 18, backgroundColor: '#EF4444' }}>
                 <Text style={{ fontSize: 9, fontFamily: 'Quicksand_600SemiBold', color: '#FFF' }}>
                   {unreadCount > 9 ? '9+' : unreadCount}
                 </Text>
@@ -206,52 +210,19 @@ export default function CustomerHomeScreen() {
           </Pressable>
         )}
 
-        {/* ── Active Errand ── */}
+        {/* ── Active Errand ──
+             Status-aware card with runner avatar, rating, headline copy
+             tailored to the current phase, segmented progress bar, and
+             a pulsing dot while we're still searching for a runner. */}
         {activeBooking && (
-          <Pressable
-            className="mx-5 mt-4 rounded-2xl overflow-hidden bg-primary"
-            style={hs.card}
-            onPress={() => router.push(`/(customer)/tracking/${activeBooking.id}`)}
-          >
-            <View className="p-4">
-              <View className="flex-row items-center justify-between mb-3">
-                <View className="flex-row items-center">
-                  <View className="w-2 h-2 rounded-full bg-white mr-2" />
-                  <Text className="text-xs font-montserrat-bold text-white/90">
-                    Active Errand
-                  </Text>
-                </View>
-                <View className="bg-white/15 rounded-full px-2.5 py-1">
-                  <Text style={{ fontSize: 10, fontFamily: 'Quicksand_600SemiBold', color: '#FFF' }}>
-                    {STATUS_LABELS[activeBooking.status] ?? activeBooking.status}
-                  </Text>
-                </View>
-              </View>
-              <View className="flex-row items-center mb-1.5">
-                <MapPin size={12} color="rgba(255,255,255,0.6)" />
-                <Text className="text-xs font-montserrat text-white/70 ml-1.5 flex-1" numberOfLines={1}>
-                  {activeBooking.pickup_address}
-                </Text>
-              </View>
-              <View className="flex-row items-center">
-                <MapPin size={12} color="rgba(255,255,255,0.6)" />
-                <Text className="text-xs font-montserrat text-white/70 ml-1.5 flex-1" numberOfLines={1}>
-                  {activeBooking.dropoff_address}
-                </Text>
-              </View>
-              <View className="flex-row items-center justify-between mt-3 pt-3 border-t border-white/10">
-                <Text className="text-base font-montserrat-bold text-white">
-                  {formatCurrency(activeBooking.total_amount)}
-                </Text>
-                <View className="flex-row items-center bg-white rounded-full px-3.5 py-1.5">
-                  <Text style={{ fontSize: 12, fontFamily: 'Quicksand_600SemiBold', color: '#2563EB' }}>
-                    Track
-                  </Text>
-                  <ArrowRight size={14} color="#2563EB" style={{ marginLeft: 4 }} />
-                </View>
-              </View>
-            </View>
-          </Pressable>
+          <View className="mx-5 mt-4">
+            <ActiveBookingCard
+              booking={activeBooking}
+              onPress={() =>
+                router.push(`/(customer)/tracking/${activeBooking.id}`)
+              }
+            />
+          </View>
         )}
 
         {/* ── Services ── */}
@@ -277,9 +248,7 @@ export default function CustomerHomeScreen() {
                       });
                     }}
                   >
-                    <View className="w-11 h-11 rounded-xl bg-primary50 items-center justify-center mb-2">
-                      <Icon size={20} color="#2563EB" strokeWidth={1.8} />
-                    </View>
+                    <Icon size={26} color="#2563EB" strokeWidth={1.6} style={{ marginBottom: 8 }} />
                     <Text
                       className="text-[11px] font-montserrat-semi text-textPrimary text-center"
                       numberOfLines={2}
@@ -315,9 +284,6 @@ export default function CustomerHomeScreen() {
           </View>
           {recentBookings.length === 0 ? (
             <View className="bg-surface rounded-2xl items-center py-10 px-6" style={hs.card}>
-              <View className="w-14 h-14 rounded-2xl bg-primary50 items-center justify-center mb-3">
-                <Package size={22} color="#2563EB" />
-              </View>
               <Text className="text-sm font-montserrat-semi text-textPrimary mb-1">
                 No errands yet
               </Text>
@@ -336,9 +302,6 @@ export default function CustomerHomeScreen() {
                   onPress={() => router.push(`/(customer)/tracking/${booking.id}`)}
                 >
                   <View className="flex-row items-center">
-                    <View className="w-10 h-10 rounded-xl bg-primary50 items-center justify-center mr-3">
-                      <Package size={18} color="#2563EB" />
-                    </View>
                     <View className="flex-1">
                       <Text className="text-sm font-montserrat-bold text-textPrimary" numberOfLines={1}>
                         {booking.errand_type?.name ?? 'Errand'}

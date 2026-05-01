@@ -104,6 +104,8 @@ export interface Booking {
     full_name: string;
     phone?: string | null;
     avatar_url?: string | null;
+    avg_rating?: number | string | null;
+    total_ratings?: number | null;
   } | null;
   /** Loaded for the runner-facing endpoints so the runner can fall back
    *  to the customer's account phone when no pickup/dropoff contact is set. */

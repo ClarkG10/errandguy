@@ -9,6 +9,7 @@ import {
   Platform,
   StyleSheet,
 } from 'react-native';
+import * as Haptics from 'expo-haptics';
 import { useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useForm, Controller } from 'react-hook-form';
@@ -46,12 +47,12 @@ export default function LoginScreen() {
     defaultValues: { identifier: '', password: '' },
   });
 
-  // Pre-fill remembered credentials
+  // Pre-fill remembered identifier (NEVER password — see authStore).
   useEffect(() => {
-    if (rememberedCredentials) {
+    if (rememberedCredentials?.identifier) {
       reset({
         identifier: rememberedCredentials.identifier,
-        password: rememberedCredentials.password,
+        password: '',
       });
     }
   }, [rememberedCredentials, reset]);
@@ -65,9 +66,14 @@ export default function LoginScreen() {
         : { email: id, password: data.password };
       await login(loginData);
 
-      // Save or clear remembered credentials
+      // Success haptic — a satisfying confirmation that's standard
+      // on iOS banking / fintech apps. Quiet failures are forgivable;
+      // a quiet success makes the app feel slow.
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
+
+      // Save or clear remembered identifier (no password).
       if (rememberMe) {
-        await setRememberedCredentials({ identifier: id, password: data.password });
+        await setRememberedCredentials({ identifier: id });
       } else {
         await setRememberedCredentials(null);
       }
@@ -95,6 +101,7 @@ export default function LoginScreen() {
         message = error.message || 'Login failed. Please try again.';
       }
 
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error).catch(() => {});
       toast.error(message);
     } finally {
       setLoading(false);
@@ -142,17 +149,28 @@ export default function LoginScreen() {
               validate: (val) =>
                 isPhone(val) || isEmail(val) || 'Enter a valid phone or email',
             }}
-            render={({ field: { onChange, value } }) => (
-              <Input
-                label="Phone or Email"
-                value={value}
-                onChangeText={onChange}
-                placeholder="09XXXXXXXXX or you@email.com"
-                keyboardType="email-address"
-                autoCapitalize="none"
-                error={errors.identifier?.message}
-              />
-            )}
+            render={({ field: { onChange, value } }) => {
+              // Swap the keyboard the moment the user starts typing
+              // digits or +63 — a phone-pad on a digits-first input is
+              // both faster and a tactile cue that the field auto-detects.
+              // Falls back to email-address keyboard otherwise so '@' / '.'
+              // stay one tap away.
+              const looksLikePhone =
+                value.length > 0 && /^[+0-9]/.test(value);
+              return (
+                <Input
+                  label="Phone or Email"
+                  value={value}
+                  onChangeText={onChange}
+                  placeholder="09XXXXXXXXX or you@email.com"
+                  keyboardType={looksLikePhone ? 'phone-pad' : 'email-address'}
+                  autoCapitalize="none"
+                  autoComplete={looksLikePhone ? 'tel' : 'email'}
+                  textContentType={looksLikePhone ? 'telephoneNumber' : 'emailAddress'}
+                  error={errors.identifier?.message}
+                />
+              );
+            }}
           />
 
           <Controller
@@ -169,6 +187,8 @@ export default function LoginScreen() {
                 onChangeText={onChange}
                 placeholder="Enter your password"
                 secureTextEntry
+                autoComplete="current-password"
+                textContentType="password"
                 error={errors.password?.message}
               />
             )}

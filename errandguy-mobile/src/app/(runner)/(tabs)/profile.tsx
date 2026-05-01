@@ -1,40 +1,25 @@
 import React, { useCallback, useState } from 'react';
-import { View, Text, ScrollView, Pressable, RefreshControl, Modal, TextInput } from 'react-native';
+import { View, Text, ScrollView, Pressable, RefreshControl, Modal, TextInput, KeyboardAvoidingView, Platform } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { useRouter } from 'expo-router';
-import {
-  ChevronRight,
-  User,
-  FileText,
-  Car,
-  Wallet,
-  ClipboardList,
-  MapPin,
-  Bell,
-  Moon,
-  HelpCircle,
-  ScrollText,
-  LogOut,
-  Trash2,
-} from 'lucide-react-native';
+import { useRouter, useFocusEffect } from 'expo-router';
+import { ChevronRight, Star, BadgeCheck } from 'lucide-react-native';
 import * as Haptics from 'expo-haptics';
 import { Avatar } from '../../../components/ui/Avatar';
-import { Badge } from '../../../components/ui/Badge';
 import { Card } from '../../../components/ui/Card';
 import { Button } from '../../../components/ui/Button';
 import { ConfirmModal } from '../../../components/ui/ConfirmModal';
+import { LoadingOverlay } from '../../../components/ui/LoadingOverlay';
 import { PerformanceMetric } from '../../../components/runner/PerformanceMetric';
 import { useRunnerStore } from '../../../stores/runnerStore';
 import { useAuthStore } from '../../../stores/authStore';
 import { runnerService } from '../../../services/runner.service';
 import { userService } from '../../../services/user.service';
-import type { LucideIcon } from 'lucide-react-native';
 import { toast } from '../../../stores/toastStore';
 
 interface MenuItem {
-  icon: LucideIcon;
   label: string;
   route?: string;
+  /** Optional destructive accent for the label (e.g. red "Delete"). */
   color?: string;
   trailing?: React.ReactNode;
   onPress?: () => void;
@@ -43,22 +28,41 @@ interface MenuItem {
 export default function RunnerProfileScreen() {
   const router = useRouter();
   const user = useAuthStore((s) => s.user);
+  const setUser = useAuthStore((s) => s.setUser);
   const logout = useAuthStore((s) => s.logout);
   const { runnerProfile, setRunnerProfile } = useRunnerStore();
   const [refreshing, setRefreshing] = useState(false);
   const [showDeleteModal, setShowDeleteModal] = useState(false);
   const [showLogoutModal, setShowLogoutModal] = useState(false);
+  const [loggingOut, setLoggingOut] = useState(false);
   const [deleteConfirmText, setDeleteConfirmText] = useState('');
   const [deleting, setDeleting] = useState(false);
 
+  // Pull both the runner profile (acceptance_rate, completion_rate,
+  // total_errands) and the user record (wallet_balance, avg_rating)
+  // in parallel — either alone leaves part of the screen stale.
+  const refreshAll = useCallback(async () => {
+    try {
+      const [runnerRes, userRes] = await Promise.all([
+        runnerService.getRunnerProfile(),
+        userService.getProfile(),
+      ]);
+      setRunnerProfile(runnerRes.data.data);
+      if (userRes.data?.data) setUser(userRes.data.data);
+    } catch {}
+  }, [setRunnerProfile, setUser]);
+
+  useFocusEffect(
+    useCallback(() => {
+      refreshAll();
+    }, [refreshAll]),
+  );
+
   const onRefresh = useCallback(async () => {
     setRefreshing(true);
-    try {
-      const res = await runnerService.getRunnerProfile();
-      setRunnerProfile(res.data.data);
-    } catch {}
+    await refreshAll();
     setRefreshing(false);
-  }, []);
+  }, [refreshAll]);
 
   const handleLogout = () => {
     setShowLogoutModal(true);
@@ -66,9 +70,11 @@ export default function RunnerProfileScreen() {
 
   const confirmLogout = async () => {
     setShowLogoutModal(false);
+    setLoggingOut(true);
     try {
       await logout();
     } finally {
+      setLoggingOut(false);
       router.replace('/(auth)/welcome' as any);
     }
   };
@@ -93,43 +99,35 @@ export default function RunnerProfileScreen() {
   const isVerified = runnerProfile?.verification_status === 'approved';
 
   const accountMenu: MenuItem[] = [
-    { icon: User, label: 'Edit Profile', route: '/(runner)/settings/edit-profile' },
-    { icon: FileText, label: 'Documents & Verification', route: '/(runner)/settings/documents' },
-    { icon: Car, label: 'Vehicle Information', route: '/(runner)/settings/vehicle' },
-    { icon: Wallet, label: 'Payout Settings', route: '/(runner)/payout' },
-    { icon: ClipboardList, label: 'Preferred Errand Types', route: '/(runner)/settings/preferred-types' },
-    { icon: MapPin, label: 'Working Areas', route: '/(runner)/settings/working-areas' },
+    { label: 'Edit Profile', route: '/(runner)/settings/edit-profile' },
+    { label: 'Documents & Verification', route: '/(runner)/settings/documents' },
+    { label: 'Vehicle Information', route: '/(runner)/settings/vehicle' },
+    { label: 'Payout Settings', route: '/(runner)/payout' },
+    { label: 'Preferred Errand Types', route: '/(runner)/settings/preferred-types' },
+    { label: 'Working Areas', route: '/(runner)/settings/working-areas' },
   ];
 
   const settingsMenu: MenuItem[] = [
-    { icon: Bell, label: 'Notification Preferences', route: '/(runner)/settings/notifications' },
-    { icon: HelpCircle, label: 'Help & Support', route: '/(runner)/settings/help' },
-    { icon: ScrollText, label: 'Terms & Privacy', route: '/(runner)/settings/terms' },
+    { label: 'Notification Preferences', route: '/(runner)/settings/notifications' },
+    { label: 'Help & Support', route: '/(runner)/settings/help' },
+    { label: 'Terms & Privacy', route: '/(runner)/settings/terms' },
   ];
 
-  const renderMenuItem = (item: MenuItem, idx: number, arr: MenuItem[]) => (
+  const renderMenuItem = (item: MenuItem, _idx: number, _arr: MenuItem[]) => (
     <Pressable
       key={item.label}
       onPress={() => {
         if (item.onPress) item.onPress();
         else if (item.route) router.push(item.route as any);
       }}
-      className="flex-row items-center justify-between py-3.5"
+      className="flex-row items-center justify-between py-4"
     >
-      <View className="flex-row items-center gap-3">
-        <View
-          className="w-9 h-9 rounded-xl items-center justify-center"
-          style={{ backgroundColor: item.color ? item.color + '15' : '#EFF6FF' }}
-        >
-          <item.icon size={18} color={item.color ?? '#2563EB'} />
-        </View>
-        <Text
-          className="text-sm font-montserrat text-textPrimary"
-          style={item.color ? { color: item.color } : undefined}
-        >
-          {item.label}
-        </Text>
-      </View>
+      <Text
+        className="text-[15px] font-montserrat text-textPrimary"
+        style={item.color ? { color: item.color } : undefined}
+      >
+        {item.label}
+      </Text>
       {item.trailing ?? <ChevronRight size={16} color="#CBD5E1" />}
     </Pressable>
   );
@@ -152,12 +150,16 @@ export default function RunnerProfileScreen() {
           <Text className="text-lg font-montserrat-bold text-textPrimary mt-3">
             {user?.full_name ?? 'Runner'}
           </Text>
-          <Text className="text-xs font-montserrat text-textTertiary mt-0.5">
-            ★ {Number(user?.avg_rating ?? 0).toFixed(1)} • {runnerProfile?.total_errands ?? 0} errands
-          </Text>
+          <View className="flex-row items-center gap-1.5 mt-0.5">
+            <Star size={12} color="#F59E0B" fill="#F59E0B" />
+            <Text className="text-xs font-montserrat text-textTertiary">
+              {Number(user?.avg_rating ?? 0).toFixed(1)} · {runnerProfile?.total_errands ?? 0} errands
+            </Text>
+          </View>
           {isVerified && (
-            <View className="mt-2">
-              <Badge label="✅ Verified Runner" variant="primary" />
+            <View className="flex-row items-center gap-1 mt-2">
+              <BadgeCheck size={14} color="#2563EB" />
+              <Text className="text-xs font-montserrat-bold text-primary">Verified Runner</Text>
             </View>
           )}
         </View>
@@ -191,12 +193,13 @@ export default function RunnerProfileScreen() {
             <View className="flex-row items-center justify-between pt-2 border-t border-divider">
               <Text className="text-xs font-montserrat text-textTertiary">Member since</Text>
               <Text className="text-xs font-montserrat-bold text-textPrimary">
-                {runnerProfile
-                  ? new Date(runnerProfile.created_at).toLocaleDateString([], {
-                      month: 'short',
-                      year: 'numeric',
-                    })
-                  : '--'}
+                {(() => {
+                  const raw = runnerProfile?.created_at;
+                  if (!raw) return 'New member';
+                  const d = new Date(raw);
+                  if (isNaN(d.getTime())) return 'New member';
+                  return d.toLocaleDateString([], { month: 'short', year: 'numeric' });
+                })()}
               </Text>
             </View>
           </Card>
@@ -232,13 +235,10 @@ export default function RunnerProfileScreen() {
         <View className="px-5 mb-4">
           <Pressable
             onPress={handleLogout}
-            className="bg-surface rounded-2xl py-3.5 items-center"
+            className="bg-surface rounded-2xl py-4 items-center"
             style={{ shadowColor: '#0F172A', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.04, shadowRadius: 8, elevation: 1 }}
           >
-            <View className="flex-row items-center gap-2">
-              <LogOut size={18} color="#475569" />
-              <Text className="text-sm font-montserrat-semi text-textTertiary">Log Out</Text>
-            </View>
+            <Text className="text-[15px] font-montserrat-semi text-textSecondary">Log Out</Text>
           </Pressable>
         </View>
 
@@ -255,50 +255,55 @@ export default function RunnerProfileScreen() {
 
       {/* Delete Account Modal */}
       <Modal visible={showDeleteModal} transparent animationType="slide">
-        <Pressable
-          className="flex-1 bg-black/40 justify-end"
-          onPress={() => { setShowDeleteModal(false); setDeleteConfirmText(''); }}
+        <KeyboardAvoidingView
+          style={{ flex: 1 }}
+          behavior={Platform.OS === 'ios' ? 'padding' : undefined}
         >
           <Pressable
-            className="bg-surface rounded-t-3xl px-6 pt-5 pb-10"
-            onPress={() => {}}
+            className="flex-1 bg-black/40 justify-end"
+            onPress={() => { setShowDeleteModal(false); setDeleteConfirmText(''); }}
           >
-            <View className="w-10 h-1 rounded-full bg-divider self-center mb-5" />
-            <Text className="text-base font-montserrat-bold text-textPrimary mb-1">
-              Delete your account?
-            </Text>
-            <Text className="text-sm font-montserrat text-textTertiary mb-5">
-              This can't be undone. Your earnings, errand history, and data will be permanently removed.
-            </Text>
-            <Text className="text-xs font-montserrat-bold text-textSecondary mb-2">
-              Type DELETE to confirm
-            </Text>
-            <View className="border border-divider rounded-xl px-4 h-12 justify-center mb-5 bg-background">
-              <TextInput
-                value={deleteConfirmText}
-                onChangeText={setDeleteConfirmText}
-                placeholder="DELETE"
-                placeholderTextColor="#CBD5E1"
-                autoCapitalize="characters"
-                style={{ fontFamily: 'Quicksand_400Regular', fontSize: 15, color: '#0F172A' }}
-              />
-            </View>
-            <Button
-              title="Delete Account"
-              variant="danger"
-              fullWidth
-              loading={deleting}
-              disabled={deleteConfirmText !== 'DELETE'}
-              onPress={handleDeleteAccount}
-            />
             <Pressable
-              className="mt-3 py-3 items-center"
-              onPress={() => { setShowDeleteModal(false); setDeleteConfirmText(''); }}
+              className="bg-surface rounded-t-3xl px-6 pt-5 pb-10"
+              onPress={() => {}}
             >
-              <Text className="text-sm font-montserrat-bold text-textTertiary">Cancel</Text>
+              <View className="w-10 h-1 rounded-full bg-divider self-center mb-5" />
+              <Text className="text-base font-montserrat-bold text-textPrimary mb-1">
+                Delete your account?
+              </Text>
+              <Text className="text-sm font-montserrat text-textTertiary mb-5">
+                This can't be undone. Your earnings, errand history, and data will be permanently removed.
+              </Text>
+              <Text className="text-xs font-montserrat-bold text-textSecondary mb-2">
+                Type DELETE to confirm
+              </Text>
+              <View className="border border-divider rounded-xl px-4 h-12 justify-center mb-5 bg-background">
+                <TextInput
+                  value={deleteConfirmText}
+                  onChangeText={setDeleteConfirmText}
+                  placeholder="DELETE"
+                  placeholderTextColor="#CBD5E1"
+                  autoCapitalize="characters"
+                  style={{ fontFamily: 'Quicksand_400Regular', fontSize: 15, color: '#0F172A' }}
+                />
+              </View>
+              <Button
+                title="Delete Account"
+                variant="danger"
+                fullWidth
+                loading={deleting}
+                disabled={deleteConfirmText !== 'DELETE'}
+                onPress={handleDeleteAccount}
+              />
+              <Pressable
+                className="mt-3 py-3 items-center"
+                onPress={() => { setShowDeleteModal(false); setDeleteConfirmText(''); }}
+              >
+                <Text className="text-sm font-montserrat-bold text-textTertiary">Cancel</Text>
+              </Pressable>
             </Pressable>
           </Pressable>
-        </Pressable>
+        </KeyboardAvoidingView>
       </Modal>
 
       <ConfirmModal
@@ -311,6 +316,8 @@ export default function RunnerProfileScreen() {
         onConfirm={confirmLogout}
         onCancel={() => setShowLogoutModal(false)}
       />
+
+      <LoadingOverlay isVisible={loggingOut} message="Signing you out…" />
     </SafeAreaView>
   );
 }

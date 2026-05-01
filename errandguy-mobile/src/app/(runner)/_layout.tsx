@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
-import { View, ActivityIndicator } from 'react-native';
-import { Slot, useRouter, useSegments } from 'expo-router';
+import { View } from 'react-native';
+import { CenteredLoader } from '@/components/ui/Spinner';
+import { Stack, useRouter, useSegments } from 'expo-router';
 import { useAuthStore } from '../../stores/authStore';
 import { useRealtimeNotifications } from '../../hooks/useRealtimeNotifications';
 
@@ -52,11 +53,11 @@ export default function RunnerLayout() {
   const isOnboarding = segments.includes('onboarding' as never);
   if (!ready && !isOnboarding) {
     return (
-      <View className="flex-1 bg-background items-center justify-center">
-        <ActivityIndicator size="large" color="#2563EB" />
+      <View className="flex-1 bg-background">
+        <CenteredLoader />
       </View>
     );
   }
 
-  return <Slot />;
+  return <Stack screenOptions={{ headerShown: false, animation: 'ios_from_right' }} />;
 }

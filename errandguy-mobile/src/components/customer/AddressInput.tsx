@@ -2,8 +2,7 @@ import React, { useState, useCallback, useEffect } from 'react';
 import { View, Text, TextInput, ScrollView, Pressable, ActivityIndicator } from 'react-native';
 import { MapPin, Navigation, Bookmark, Map } from 'lucide-react-native';
 import { useDebounce } from '../../hooks/useDebounce';
-
-const MAPBOX_TOKEN = process.env.EXPO_PUBLIC_MAPBOX_TOKEN ?? '';
+import { geocodingService } from '../../services/geocoding.service';
 
 interface AddressSuggestion {
   place_name: string;
@@ -43,7 +42,7 @@ export function AddressInput({
   }, [value]);
 
   useEffect(() => {
-    if (debouncedQuery.length < 3 || !MAPBOX_TOKEN) {
+    if (debouncedQuery.length < 3) {
       setSuggestions([]);
       setShowSuggestions(false);
       return;
@@ -52,25 +51,12 @@ export function AddressInput({
     let cancelled = false;
     setSearching(true);
 
-    const encoded = encodeURIComponent(debouncedQuery);
-    // Bias results toward Philippines
-    const url = `https://api.mapbox.com/geocoding/v5/mapbox.places/${encoded}.json?access_token=${MAPBOX_TOKEN}&country=ph&limit=5&language=en&types=address,poi,place,locality,neighborhood`;
-
-    fetch(url)
-      .then((res) => res.json())
-      .then((data) => {
+    geocodingService
+      .search(debouncedQuery, 5, 'address,poi,place,locality,neighborhood')
+      .then((results) => {
         if (cancelled) return;
-        const results: AddressSuggestion[] = (data.features ?? []).map(
-          (f: any) => ({
-            place_name: f.place_name,
-            center: f.center as [number, number],
-          }),
-        );
         setSuggestions(results);
         setShowSuggestions(results.length > 0);
-      })
-      .catch(() => {
-        if (!cancelled) setSuggestions([]);
       })
       .finally(() => {
         if (!cancelled) setSearching(false);

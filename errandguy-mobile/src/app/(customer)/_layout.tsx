@@ -1,5 +1,5 @@
 import { useEffect } from 'react';
-import { Slot, useRouter } from 'expo-router';
+import { Stack, useRouter } from 'expo-router';
 import { useAuthStore } from '../../stores/authStore';
 import { useRealtimeNotifications } from '../../hooks/useRealtimeNotifications';
 
@@ -24,5 +24,8 @@ export default function CustomerLayout() {
     return null;
   }
 
-  return <Slot />;
+  // Use Stack (not Slot) so router.back() pops to the previous screen
+  // within this group (e.g. Profile → Wallet → back returns to Profile,
+  // not to the home tab the user happened to visit earlier).
+  return <Stack screenOptions={{ headerShown: false, animation: 'ios_from_right' }} />;
 }

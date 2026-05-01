@@ -97,6 +97,20 @@ export const bookingService = {
     return p;
   },
 
+  /**
+   * Re-attempt matching after a `no_runner` outcome. `widenStep` 1–3
+   * progressively expands the search radius server-side.
+   */
+  retryMatch(id: string, widenStep: 1 | 2 | 3 = 1) {
+    const p = api.post<{
+      data: any;
+      meta: { radius_km: number; widen_step: number };
+      message: string;
+    }>(`/bookings/${id}/retry-match`, { widen_step: widenStep });
+    p.then(() => invalidateBookingsCaches(id)).catch(() => {});
+    return p;
+  },
+
   verifyPin(id: string, pin: string) {
     return api.post(`/runner/errand/${id}/verify-pin`, { pin });
   },

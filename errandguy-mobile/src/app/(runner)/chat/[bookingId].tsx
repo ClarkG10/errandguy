@@ -9,10 +9,14 @@ import {
   Platform,
   ScrollView,
   Linking,
+  ActivityIndicator,
+  AppState,
+  type AppStateStatus,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter, useLocalSearchParams } from 'expo-router';
-import { ArrowLeft, Send, Camera, Phone } from 'lucide-react-native';
+import { Send, Camera, Phone } from 'lucide-react-native';
+import { BackButton } from '../../../components/ui/BackButton';
 import { useAuthStore } from '../../../stores/authStore';
 import { useRunnerStore } from '../../../stores/runnerStore';
 import { useChat } from '../../../hooks/useChat';
@@ -50,6 +54,9 @@ export default function RunnerChatScreen() {
     fetchMessages,
     sendMessage: chatSendMessage,
     markAsRead,
+    loadOlder,
+    hasMore,
+    loadingOlder,
   } = useChat(bookingId ?? '');
 
   const [input, setInput] = useState('');
@@ -63,6 +70,33 @@ export default function RunnerChatScreen() {
     fetchMessages().catch(() => {});
     markAsRead().catch(() => {});
   }, [bookingId, fetchMessages, markAsRead]);
+
+  // Auto-mark-as-read while the conversation is in the foreground so
+  // the runner's unread badge clears as the customer's messages stream
+  // in. See customer chat for full rationale — same pattern, mirrored.
+  const lastSeenLengthRef = useRef(messages.length);
+  useEffect(() => {
+    if (!bookingId) return;
+    if (messages.length <= lastSeenLengthRef.current) {
+      lastSeenLengthRef.current = messages.length;
+      return;
+    }
+    lastSeenLengthRef.current = messages.length;
+
+    const last = messages[messages.length - 1];
+    if (!last || last.sender_id === user?.id || last.is_system) return;
+    if (AppState.currentState !== 'active') return;
+    markAsRead().catch(() => {});
+  }, [bookingId, messages, user?.id, markAsRead]);
+
+  useEffect(() => {
+    const sub = AppState.addEventListener('change', (state: AppStateStatus) => {
+      if (state === 'active' && bookingId) {
+        markAsRead().catch(() => {});
+      }
+    });
+    return () => sub.remove();
+  }, [bookingId, markAsRead]);
 
   const handleSend = useCallback(async () => {
     if (!input.trim() || sending) return;
@@ -154,13 +188,10 @@ export default function RunnerChatScreen() {
     <SafeAreaView className="flex-1 bg-background" edges={['top']}>
       {/* Header */}
       <View className="flex-row items-center gap-3 px-5 py-4 border-b border-divider">
-        <Pressable
-          onPress={() => router.canGoBack() ? router.back() : router.replace('/(runner)/(tabs)')}
-          className="w-9 h-9 rounded-xl bg-surface items-center justify-center"
-          style={{ shadowColor: '#0F172A', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.04, shadowRadius: 6, elevation: 1 }}
-        >
-          <ArrowLeft size={20} color="#0F172A" />
-        </Pressable>
+        <BackButton
+          fallbackHref="/(runner)/(tabs)"
+          accessibilityLabel="Back to home"
+        />
         <View className="flex-1">
           <Text className="text-base font-montserrat-bold text-textPrimary">
             Chat with Customer
@@ -182,7 +213,7 @@ export default function RunnerChatScreen() {
       <KeyboardAvoidingView
         className="flex-1"
         behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-        keyboardVerticalOffset={0}
+        keyboardVerticalOffset={Platform.OS === 'ios' ? 90 : 0}
       >
         {/* Messages */}
         <FlatList
@@ -202,7 +233,32 @@ export default function RunnerChatScreen() {
               </Text>
             </View>
           }
-          onContentSizeChange={() => flatListRef.current?.scrollToEnd({ animated: false })}
+          // Back-pagination: trigger when the user scrolls near the top.
+          onScroll={(e) => {
+            if (e.nativeEvent.contentOffset.y < 60 && hasMore && !loadingOlder) {
+              loadOlder().catch(() => {});
+            }
+          }}
+          scrollEventThrottle={120}
+          ListHeaderComponent={
+            loadingOlder ? (
+              <View className="py-3 items-center">
+                <ActivityIndicator size="small" color="#2563EB" />
+              </View>
+            ) : hasMore ? (
+              <View className="py-2 items-center">
+                <Text className="text-[11px] font-montserrat text-textTertiary">
+                  Scroll up to load older messages
+                </Text>
+              </View>
+            ) : null
+          }
+          onContentSizeChange={() => {
+            // Preserve scroll position when prepending older messages.
+            if (!loadingOlder) {
+              flatListRef.current?.scrollToEnd({ animated: false });
+            }
+          }}
         />
 
         {/* Quick Messages */}
@@ -225,32 +281,43 @@ export default function RunnerChatScreen() {
         </ScrollView>
 
         {/* Input */}
-        <View className="flex-row items-center gap-2 px-5 py-3 pb-6 border-t border-divider bg-background">
+        <View className="flex-row items-end gap-2 px-5 py-3 pb-6 border-t border-divider bg-background">
           <Pressable
             onPress={() => setImagePickerVisible(true)}
             disabled={sending}
             hitSlop={8}
+            accessibilityRole="button"
+            accessibilityLabel="Attach a photo"
+            className="mb-1.5"
           >
             <Camera size={24} color={sending ? '#94A3B8' : '#475569'} />
           </Pressable>
           <TextInput
-            className="flex-1 bg-surface border border-divider rounded-full px-4 py-2.5 text-sm font-montserrat text-textPrimary"
+            className="flex-1 bg-surface border border-divider rounded-3xl px-4 py-2.5 text-sm font-montserrat text-textPrimary"
+            style={{ maxHeight: 120, minHeight: 40 }}
             placeholder="Type a message..."
             placeholderTextColor="#94A3B8"
             value={input}
             onChangeText={setInput}
-            onSubmitEditing={handleSend}
-            returnKeyType="send"
+            multiline
             editable={!sending}
+            accessibilityLabel="Message input"
           />
           <Pressable
             onPress={handleSend}
-            className={`w-10 h-10 rounded-full items-center justify-center ${
+            className={`w-10 h-10 rounded-full items-center justify-center mb-1 ${
               !input.trim() || sending ? 'bg-gray-200' : 'bg-primary'
             }`}
             disabled={!input.trim() || sending}
+            accessibilityRole="button"
+            accessibilityLabel="Send message"
+            accessibilityState={{ disabled: !input.trim() || sending }}
           >
-            <Send size={18} color={!input.trim() || sending ? '#94A3B8' : '#FFFFFF'} />
+            {sending ? (
+              <ActivityIndicator size="small" color={!input.trim() ? '#94A3B8' : '#FFFFFF'} />
+            ) : (
+              <Send size={18} color={!input.trim() || sending ? '#94A3B8' : '#FFFFFF'} />
+            )}
           </Pressable>
         </View>
       </KeyboardAvoidingView>

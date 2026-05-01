@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { View, Text, ScrollView, Pressable, StyleSheet } from 'react-native';
+import * as Haptics from 'expo-haptics';
 import { useRouter } from 'expo-router';
 import { ArrowLeft, Footprints, Bike, Truck, Car, MapPin, Clock, Route } from 'lucide-react-native';
 import type { LucideIcon } from 'lucide-react-native';
@@ -7,6 +8,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { useBookingStore } from '../../../stores/bookingStore';
 import { bookingService } from '../../../services/booking.service';
 import { Button } from '../../../components/ui/Button';
+import { BottomActionBar } from '../../../components/ui/BottomActionBar';
 import { PriceBreakdown } from '../../../components/ui/PriceBreakdown';
 import {
   VehicleTypeSelector,
@@ -15,6 +17,7 @@ import {
 import { PromoCodeInput } from '../../../components/customer/PromoCodeInput';
 import { PaymentMethodSelector } from '../../../components/customer/PaymentMethodSelector';
 import { OfferSlider } from '../../../components/customer/OfferSlider';
+import { BookingStepIndicator } from '../../../components/customer/BookingStepIndicator';
 import { formatCurrency } from '../../../utils/formatCurrency';
 import { getErrandTypeRule, type VehicleKey } from '../../../constants/errandTypeRules';
 import type { PricingMode } from '../../../types';
@@ -77,31 +80,56 @@ export default function ReviewScreen() {
     draftBooking.customer_offer ?? 100,
   );
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [isEstimateLoading, setIsEstimateLoading] = useState(false);
 
-  // Fetch estimate on mount
+  // Fetch estimate on mount — guarded against a stale-response race when
+  // the user navigates back/forward quickly (the previous version could
+  // commit a stale total to state after unmount).
   useEffect(() => {
     if (
-      draftBooking.errand_type_id &&
-      draftBooking.pickup_lat != null &&
-      draftBooking.pickup_lng != null
+      !draftBooking.errand_type_id ||
+      draftBooking.pickup_lat == null ||
+      draftBooking.pickup_lng == null
     ) {
-      bookingService
-        .getEstimate({
-          errand_type_id: draftBooking.errand_type_id,
-          pickup_lat: draftBooking.pickup_lat,
-          pickup_lng: draftBooking.pickup_lng,
-          dropoff_lat: draftBooking.dropoff_lat,
-          dropoff_lng: draftBooking.dropoff_lng,
-        })
-        .then((res) => {
-          setEstimate(res.data.data ?? null);
-          if (res.data.data?.min_negotiate_fee) {
-            setOfferPrice(res.data.data.min_negotiate_fee);
-          }
-        })
-        .catch(() => {});
+      return;
     }
-  }, [draftBooking.errand_type_id, draftBooking.pickup_lat, draftBooking.pickup_lng, draftBooking.dropoff_lat, draftBooking.dropoff_lng]);
+    let cancelled = false;
+    setIsEstimateLoading(true);
+    bookingService
+      .getEstimate({
+        errand_type_id: draftBooking.errand_type_id,
+        pickup_lat: draftBooking.pickup_lat,
+        pickup_lng: draftBooking.pickup_lng,
+        dropoff_lat: draftBooking.dropoff_lat,
+        dropoff_lng: draftBooking.dropoff_lng,
+      })
+      .then((res) => {
+        if (cancelled) return;
+        const data = res.data.data ?? null;
+        setEstimate(data);
+        // Only seed offer if the user hasn't already set one — never
+        // overwrite their explicit choice with a server suggestion.
+        if (data?.min_negotiate_fee && draftBooking.customer_offer == null) {
+          setOfferPrice(data.min_negotiate_fee);
+        }
+      })
+      .catch(() => {})
+      .finally(() => {
+        if (!cancelled) setIsEstimateLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+    // draftBooking.customer_offer intentionally excluded — including it
+    // would refetch on every offer-slider movement.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [
+    draftBooking.errand_type_id,
+    draftBooking.pickup_lat,
+    draftBooking.pickup_lng,
+    draftBooking.dropoff_lat,
+    draftBooking.dropoff_lng,
+  ]);
 
   const allVehicleOptions: VehicleOption[] = [
     {
@@ -176,6 +204,30 @@ export default function ReviewScreen() {
       toast.warning('Please go back and complete all booking steps.');
       return;
     }
+    // Per-errand-type validation. Without these the server would 422 the
+    // request after the user already tapped Confirm — slow + ugly.
+    if (
+      rule.descriptionRequired &&
+      (!draftBooking.description || draftBooking.description.trim().length === 0)
+    ) {
+      toast.warning(`${rule.descriptionLabel} is required for this errand.`);
+      return;
+    }
+    if (!rule.singleLocation && !draftBooking.dropoff_address) {
+      toast.warning('Please add a drop-off location.');
+      return;
+    }
+    if (
+      rule.requiresShoppingBudget &&
+      (draftBooking.shopping_budget == null || draftBooking.shopping_budget <= 0)
+    ) {
+      toast.warning('Please set a shopping budget for this errand.');
+      return;
+    }
+    if (pricingMode === 'negotiate' && (!offerPrice || offerPrice <= 0)) {
+      toast.warning('Please set an offer amount.');
+      return;
+    }
     setIsSubmitting(true);
     try {
       const payload = {
@@ -220,6 +272,7 @@ export default function ReviewScreen() {
     vehicleType,
     offerPrice,
     paymentMethodType,
+    rule,
     setActiveBooking,
     clearDraft,
     router,
@@ -231,6 +284,9 @@ export default function ReviewScreen() {
       <View className="flex-row items-center px-5 py-3">
         <Pressable
           onPress={() => router.canGoBack() ? router.back() : router.replace('/(customer)/(tabs)')}
+          accessibilityRole="button"
+          accessibilityLabel="Go back"
+          hitSlop={8}
           className="w-9 h-9 rounded-xl bg-surface items-center justify-center mr-3"
         >
           <ArrowLeft size={18} color="#0F172A" />
@@ -238,6 +294,12 @@ export default function ReviewScreen() {
         <Text className="text-lg font-montserrat-bold text-textPrimary">
           Review
         </Text>
+      </View>
+
+      {/* Step indicator — reaffirms position in the funnel and
+          shows the previous three steps as completed. */}
+      <View className="px-5 pb-3">
+        <BookingStepIndicator currentStep={3} />
       </View>
 
       <ScrollView className="flex-1 px-5" showsVerticalScrollIndicator={false}>
@@ -288,13 +350,21 @@ export default function ReviewScreen() {
         )}
 
         {/* Pricing Mode Toggle */}
-        <View className="bg-surface rounded-xl p-1 mb-4">
+        <View
+          className="bg-surface rounded-xl p-1 mb-4"
+          accessibilityRole="tablist"
+        >
           <View className="flex-row">
             <Pressable
               className={`flex-1 py-2.5 rounded-lg items-center ${
                 pricingMode === 'fixed' ? 'bg-primary' : ''
               }`}
+              accessibilityRole="tab"
+              accessibilityState={{ selected: pricingMode === 'fixed' }}
+              accessibilityLabel="Fixed price mode"
               onPress={() => {
+                if (pricingMode === 'fixed') return;
+                Haptics.selectionAsync();
                 setPricingMode('fixed');
                 updateDraft({ pricing_mode: 'fixed' });
               }}
@@ -311,9 +381,25 @@ export default function ReviewScreen() {
               className={`flex-1 py-2.5 rounded-lg items-center ${
                 pricingMode === 'negotiate' ? 'bg-primary' : ''
               }`}
+              accessibilityRole="tab"
+              accessibilityState={{ selected: pricingMode === 'negotiate' }}
+              accessibilityLabel="Make an offer mode"
               onPress={() => {
+                if (pricingMode === 'negotiate') return;
+                Haptics.selectionAsync();
                 setPricingMode('negotiate');
                 updateDraft({ pricing_mode: 'negotiate' });
+                // Snap the offer to the server-recommended floor whenever
+                // the user enters negotiate mode (and the estimate is
+                // ready). Avoids the awkward initial ₱100 → real-floor
+                // jump described in the prior implementation.
+                if (
+                  estimate?.min_negotiate_fee &&
+                  draftBooking.customer_offer == null
+                ) {
+                  setOfferPrice(estimate.min_negotiate_fee);
+                  updateDraft({ customer_offer: estimate.min_negotiate_fee });
+                }
               }}
             >
               <Text
@@ -344,12 +430,43 @@ export default function ReviewScreen() {
               />
             )}
 
-            {currentVehicleEstimate && (
+            {currentVehicleEstimate ? (
               <View className="mb-4">
                 <PriceBreakdown
                   items={priceItems}
                   total={totalAmount}
                 />
+              </View>
+            ) : (
+              /* Estimate skeleton — sized to roughly match the real
+                 PriceBreakdown so the CTA doesn't shift when the data
+                 arrives. Pulses softly via opacity. */
+              <View className="mb-4" accessibilityLabel="Calculating fare">
+                {Array.from({ length: 3 }).map((_, i) => (
+                  <View
+                    key={`pb-skel-${i}`}
+                    className="flex-row justify-between py-2"
+                  >
+                    <View
+                      className="h-3 rounded-full bg-divider"
+                      style={{ width: 90, opacity: 0.6 }}
+                    />
+                    <View
+                      className="h-3 rounded-full bg-divider"
+                      style={{ width: 60, opacity: 0.6 }}
+                    />
+                  </View>
+                ))}
+                <View className="border-t border-divider mt-1 pt-3 flex-row justify-between">
+                  <View
+                    className="h-4 rounded-full bg-divider"
+                    style={{ width: 50, opacity: 0.7 }}
+                  />
+                  <View
+                    className="h-4 rounded-full bg-divider"
+                    style={{ width: 80, opacity: 0.7 }}
+                  />
+                </View>
               </View>
             )}
           </>
@@ -357,7 +474,15 @@ export default function ReviewScreen() {
           <OfferSlider
             value={offerPrice}
             min={estimate?.min_negotiate_fee ?? 50}
-            max={estimate?.recommended_max ?? 500}
+            max={
+              estimate?.recommended_max ??
+              // Fallback when backend doesn't yet emit recommended_max:
+              // 3x the most expensive vehicle estimate, floored at 1500.
+              Math.max(
+                ...vehicleOptions.map((v) => v.estimatedTotal ?? 0),
+                500,
+              ) * 3
+            }
             recommendedMin={estimate?.recommended_min}
             recommendedMax={estimate?.recommended_max}
             onChange={(val) => {
@@ -393,18 +518,29 @@ export default function ReviewScreen() {
       </ScrollView>
 
       {/* Bottom CTA */}
-      <View className="absolute bottom-0 left-0 right-0 bg-background px-5 py-4 pb-8 border-t border-divider">
+      <BottomActionBar>
         <Button
           title={
             pricingMode === 'fixed'
-              ? `Confirm ${totalAmount > 0 ? formatCurrency(totalAmount) : ''}`
+              ? isEstimateLoading || !currentVehicleEstimate
+                ? 'Calculating fare…'
+                : `Confirm ${formatCurrency(totalAmount)}`
               : `Send Offer ${formatCurrency(offerPrice)}`
           }
           onPress={handleSubmit}
           loading={isSubmitting}
+          // Don't let the user submit a fixed-price booking before the
+          // estimate has resolved — without it we'd be sending a
+          // payload with an indeterminate price expectation, and the
+          // server would 422 on `vehicle_type_rate` validation
+          // mismatch.
+          disabled={
+            pricingMode === 'fixed' &&
+            (isEstimateLoading || !currentVehicleEstimate)
+          }
           fullWidth
         />
-      </View>
+      </BottomActionBar>
     </SafeAreaView>
   );
 }

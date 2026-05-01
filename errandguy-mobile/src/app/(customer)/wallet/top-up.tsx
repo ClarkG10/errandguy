@@ -6,12 +6,34 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { useWalletStore } from '../../../stores/walletStore';
 import { paymentService } from '../../../services/payment.service';
 import { Button } from '../../../components/ui/Button';
+import { BottomActionBar } from '../../../components/ui/BottomActionBar';
 import { Input } from '../../../components/ui/Input';
 import { PaymentMethodSelector } from '../../../components/customer/PaymentMethodSelector';
 import { formatCurrency } from '../../../utils/formatCurrency';
 import { toast } from '../../../stores/toastStore';
 
 const QUICK_AMOUNTS = [100, 200, 500, 1000];
+// Sanity bounds enforced client-side so the user gets immediate feedback
+// instead of round-tripping a 422. Mirror the server's WalletController
+// validation (min:50, max:50000) so client + server agree.
+const MIN_TOPUP = 50;
+const MAX_TOPUP = 50_000;
+
+// Strip anything that isn't a digit or a single decimal point, then
+// clamp to two decimal places. Prevents "100abc" / "1.2.3" / "1.999"
+// from becoming a confusing parseFloat result.
+function sanitizeAmount(input: string): string {
+  let cleaned = input.replace(/[^\d.]/g, '');
+  const firstDot = cleaned.indexOf('.');
+  if (firstDot !== -1) {
+    cleaned = cleaned.slice(0, firstDot + 1) + cleaned.slice(firstDot + 1).replace(/\./g, '');
+    const [whole, frac = ''] = cleaned.split('.');
+    cleaned = `${whole}.${frac.slice(0, 2)}`;
+  }
+  // Strip leading zeros except for "0.xx"
+  if (/^0\d/.test(cleaned)) cleaned = cleaned.replace(/^0+/, '');
+  return cleaned;
+}
 
 export default function TopUpScreen() {
   const router = useRouter();
@@ -25,8 +47,12 @@ export default function TopUpScreen() {
   const displayAmount = customAmount ? parseFloat(customAmount) || 0 : amount;
 
   const handleTopUp = useCallback(async () => {
-    if (displayAmount <= 0) {
-      toast.error('Please enter a valid amount');
+    if (displayAmount < MIN_TOPUP) {
+      toast.error(`Minimum amount is ${formatCurrency(MIN_TOPUP)}`);
+      return;
+    }
+    if (displayAmount > MAX_TOPUP) {
+      toast.error(`Maximum amount is ${formatCurrency(MAX_TOPUP)}`);
       return;
     }
     if (!paymentMethodId) {
@@ -51,7 +77,7 @@ export default function TopUpScreen() {
         router.replace('/(customer)/wallet');
       }
     } catch (err: any) {
-      toast.error(err?.response?.data?.message ?? 'Failed to top up wallet');
+      toast.error(err?.response?.data?.message ?? 'Failed to add money to wallet');
     } finally {
       setLoading(false);
     }
@@ -63,13 +89,16 @@ export default function TopUpScreen() {
       <View className="flex-row items-center px-5 py-4">
         <Pressable
           onPress={() => router.canGoBack() ? router.back() : router.replace('/(customer)/wallet')}
-          className="mr-3 w-9 h-9 rounded-xl bg-surface items-center justify-center"
+          accessibilityRole="button"
+          accessibilityLabel="Go back"
+          hitSlop={8}
+          className="mr-3 w-10 h-10 rounded-xl bg-surface items-center justify-center"
           style={{ shadowColor: '#0F172A', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.04, shadowRadius: 6, elevation: 1 }}
         >
           <ArrowLeft size={20} color="#0F172A" />
         </Pressable>
         <Text className="text-xl font-montserrat-bold text-textPrimary">
-          Top Up Wallet
+          Add Money
         </Text>
       </View>
 
@@ -110,12 +139,15 @@ export default function TopUpScreen() {
           label="Or enter custom amount"
           value={customAmount}
           onChangeText={(v) => {
-            setCustomAmount(v);
+            setCustomAmount(sanitizeAmount(v));
             setAmount(0);
           }}
           placeholder="₱0.00"
-          keyboardType="numeric"
+          keyboardType="decimal-pad"
         />
+        <Text className="text-[11px] font-montserrat text-textTertiary mt-1 ml-1">
+          Min {formatCurrency(MIN_TOPUP)} · Max {formatCurrency(MAX_TOPUP)}
+        </Text>
 
         {/* Payment Method */}
         <PaymentMethodSelector
@@ -127,15 +159,19 @@ export default function TopUpScreen() {
       </ScrollView>
 
       {/* Bottom CTA */}
-      <View className="absolute bottom-0 left-0 right-0 bg-background border-t border-divider px-5 py-4 pb-8">
+      <BottomActionBar>
         <Button
-          title={`Top Up ${displayAmount > 0 ? formatCurrency(displayAmount) : ''}`}
+          title={`Add ${displayAmount > 0 ? formatCurrency(displayAmount) : 'Money'}`}
           onPress={handleTopUp}
-          disabled={displayAmount <= 0 || !paymentMethodId}
+          disabled={
+            displayAmount < MIN_TOPUP ||
+            displayAmount > MAX_TOPUP ||
+            !paymentMethodId
+          }
           loading={loading}
           fullWidth
         />
-      </View>
+      </BottomActionBar>
     </SafeAreaView>
   );
 }

@@ -19,21 +19,48 @@ export const useNotificationStore = create<NotificationState>((set) => ({
   unreadCount: 0,
   isLoading: false,
 
-  setNotifications: (notifications) => set({ notifications }),
+  // Replace the full list. Recompute the unread badge from the payload
+  // itself so a refresh can never leave the badge out of sync with the
+  // visible rows (previously a stale unreadCount could survive a list
+  // replacement, e.g. after pull-to-refresh hit a server that had since
+  // marked everything read).
+  setNotifications: (notifications) =>
+    set({
+      notifications,
+      unreadCount: notifications.filter((n) => !n.is_read).length,
+    }),
 
   addNotification: (notification) =>
-    set((state) => ({
-      notifications: [notification, ...state.notifications],
-      unreadCount: state.unreadCount + 1,
-    })),
+    set((state) => {
+      // De-dupe by id. Realtime INSERT and an explicit refresh fetched
+      // around the same time can both deliver the same row; we don't
+      // want it stacking twice in the list (or the unread count to
+      // double-count). Also: only bump unread if the row isn't already
+      // marked read server-side (e.g. the push handler called
+      // markRead() before the Realtime fan-out arrived).
+      if (state.notifications.some((n) => n.id === notification.id)) {
+        return state;
+      }
+      const isUnread = !notification.is_read;
+      return {
+        notifications: [notification, ...state.notifications],
+        unreadCount: isUnread ? state.unreadCount + 1 : state.unreadCount,
+      };
+    }),
 
   markRead: (id) =>
-    set((state) => ({
-      notifications: state.notifications.map((n) =>
-        n.id === id ? { ...n, is_read: true } : n,
-      ),
-      unreadCount: Math.max(0, state.unreadCount - 1),
-    })),
+    set((state) => {
+      const target = state.notifications.find((n) => n.id === id);
+      // Idempotent: marking an already-read notification is a no-op so
+      // the unread counter can't drift below zero on duplicate calls.
+      if (!target || target.is_read) return state;
+      return {
+        notifications: state.notifications.map((n) =>
+          n.id === id ? { ...n, is_read: true } : n,
+        ),
+        unreadCount: Math.max(0, state.unreadCount - 1),
+      };
+    }),
 
   markAllRead: () =>
     set((state) => ({

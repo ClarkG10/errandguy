@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { View, Text, Pressable } from 'react-native';
+import * as Haptics from 'expo-haptics';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { ChevronLeft } from 'lucide-react-native';
@@ -35,6 +36,9 @@ export default function VerifyOTPScreen() {
 
   const handleVerify = useCallback(async () => {
     if (code.length !== 6) return;
+    // Bail if attempts are already exhausted — the auto-submit effect
+    // would otherwise keep firing on every re-paste from SMS autofill.
+    if (attemptsRemaining <= 0) return;
     setLoading(true);
     try {
       const payload = phone ? { phone, code } : { email, code };
@@ -45,6 +49,8 @@ export default function VerifyOTPScreen() {
         await setToken(data.token);
         setUser(data.user);
       }
+
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
 
       if (purpose === 'register-verify') {
         router.replace('/(auth)/role-select');
@@ -57,12 +63,13 @@ export default function VerifyOTPScreen() {
         setAttemptsRemaining(remaining);
       }
       const message = error?.message || 'Verification failed. Please try again.';
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error).catch(() => {});
       toast.error(message);
       setCode('');
     } finally {
       setLoading(false);
     }
-  }, [code, phone, email, purpose, setToken, setUser, router]);
+  }, [code, phone, email, purpose, setToken, setUser, router, attemptsRemaining]);
 
   // Auto-submit when 6 digits entered
   useEffect(() => {
@@ -110,7 +117,12 @@ export default function VerifyOTPScreen() {
             Resend code in {formatted}
           </Text>
         ) : (
-          <Pressable onPress={handleResend}>
+          <Pressable
+            onPress={handleResend}
+            accessibilityRole="button"
+            accessibilityLabel="Resend verification code"
+            hitSlop={8}
+          >
             <Text className="text-sm font-montserrat text-textSecondary">
               Didn't receive it?{' '}
               <Text className="text-primary font-montserrat-semi">Resend</Text>

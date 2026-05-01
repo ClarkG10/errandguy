@@ -60,6 +60,7 @@ class RunnerPayoutController extends Controller
                     'amount' => -$amount,
                     'balance_after' => $newBalance,
                     'description' => 'Payout request',
+                    'status' => 'pending',
                 ]);
 
                 $locked->update(['wallet_balance' => $newBalance]);

@@ -39,28 +39,42 @@ export function Avatar({
 }: AvatarProps) {
   const { container, text, dot } = sizeMap[size];
 
+  // Inner clip wraps the image/initials so border-radius is enforced
+  // on Android (where expo-image's borderRadius alone can fail to clip
+  // because the underlying view isn't a NativeWind-aware View). The
+  // outer wrapper stays unclipped so the status badges (online dot,
+  // verified check) can sit on the avatar's edge.
   return (
     <View style={{ width: container, height: container }}>
-      {uri ? (
-        <Image
-          source={{ uri }}
-          className="rounded-full"
-          style={{ width: container, height: container }}
-          contentFit="cover"
-          transition={200}
-          cachePolicy="memory-disk"
-          placeholder={{ blurhash: 'LKN]Rv%2Tw=w]~RBVZRi};RPxuwH' }}
-        />
-      ) : (
-        <View
-          className="rounded-full bg-primaryLight items-center justify-center"
-          style={{ width: container, height: container }}
-        >
-          <Text className={`${text} font-montserrat-bold text-primary`}>
-            {getInitials(name)}
-          </Text>
-        </View>
-      )}
+      <View
+        style={{
+          width: container,
+          height: container,
+          borderRadius: container / 2,
+          overflow: 'hidden',
+          backgroundColor: '#EFF4FF',
+        }}
+      >
+        {uri ? (
+          <Image
+            source={{ uri }}
+            style={{ width: container, height: container }}
+            contentFit="cover"
+            transition={200}
+            cachePolicy="memory-disk"
+            placeholder={{ blurhash: 'LKN]Rv%2Tw=w]~RBVZRi};RPxuwH' }}
+          />
+        ) : (
+          <View
+            className="bg-primaryLight items-center justify-center"
+            style={{ width: container, height: container }}
+          >
+            <Text className={`${text} font-montserrat-bold text-primary`}>
+              {getInitials(name)}
+            </Text>
+          </View>
+        )}
+      </View>
       {showOnline && (
         <View
           className="absolute bottom-0 right-0 rounded-full bg-success border-2 border-surface"

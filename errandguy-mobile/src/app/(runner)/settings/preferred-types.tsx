@@ -2,9 +2,11 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { View, Text, ScrollView, Pressable, RefreshControl } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
-import { ArrowLeft, Check } from 'lucide-react-native';
+import { Check } from 'lucide-react-native';
+import { BackButton } from '../../../components/ui/BackButton';
 import { Card } from '../../../components/ui/Card';
 import { Button } from '../../../components/ui/Button';
+import { BottomActionBar } from '../../../components/ui/BottomActionBar';
 import { useRunnerStore } from '../../../stores/runnerStore';
 import { runnerService } from '../../../services/runner.service';
 import { toast } from '../../../stores/toastStore';
@@ -85,13 +87,7 @@ export default function PreferredTypesScreen() {
     <SafeAreaView className="flex-1 bg-background" edges={['top']}>
       {/* Header */}
       <View className="flex-row items-center gap-3 px-5 py-4">
-        <Pressable
-          onPress={() => router.canGoBack() ? router.back() : router.replace('/(runner)/(tabs)')}
-          className="w-9 h-9 rounded-xl bg-surface items-center justify-center"
-          style={{ shadowColor: '#0F172A', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.04, shadowRadius: 6, elevation: 1 }}
-        >
-          <ArrowLeft size={20} color="#0F172A" />
-        </Pressable>
+        <BackButton fallbackHref="/(runner)/(tabs)/profile" />
         <View className="flex-1">
           <Text className="text-lg font-montserrat-bold text-textPrimary">
             Preferred Errand Types
@@ -130,9 +126,9 @@ export default function PreferredTypesScreen() {
       </ScrollView>
 
       {/* Save Button */}
-      <View className="absolute bottom-0 left-0 right-0 bg-background border-t border-divider px-5 py-4 pb-8">
+      <BottomActionBar>
         <Button title="Save Preferences" onPress={handleSave} loading={saving} fullWidth />
-      </View>
+      </BottomActionBar>
     </SafeAreaView>
   );
 }

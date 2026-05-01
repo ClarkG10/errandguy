@@ -23,6 +23,7 @@ export const runnerService = {
     bank_name?: string;
     bank_account_number?: string;
     bank_account_name?: string;
+    ewallet_number?: string;
   }) {
     const p = api.put('/runner/profile', data);
     p.then(invalidateRunnerProfile).catch(() => {});
@@ -51,6 +52,15 @@ export const runnerService = {
     return api.get('/runner/errand/current', { cacheTtlMs: 5_000 } as any);
   },
 
+  /**
+   * Fetch a single errand by id (any status). Used by deep links from
+   * notifications so we can hydrate the runner errand screen even when
+   * the runner store is empty (cold start, app killed mid-shift).
+   */
+  getErrand(id: string) {
+    return api.get(`/runner/errand/${id}`, { cacheTtlMs: 4_000 } as any);
+  },
+
   acceptErrand(id: string) {
     const p = api.post(`/runner/errand/${id}/accept`);
     p.then(invalidateRunnerErrands).catch(() => {});
@@ -69,6 +79,32 @@ export const runnerService = {
 
   updateErrandStatus(id: string, status: string) {
     const p = api.post(`/runner/errand/${id}/status`, { status });
+    p.then(invalidateRunnerErrands).catch(() => {});
+    return p;
+  },
+
+  /**
+   * Submit the 4-digit ride PIN for a transportation errand. The server
+   * tracks attempts (max 3) and locks the runner out on repeated misses,
+   * so callers should treat 422 responses as user-facing errors.
+   */
+  verifyRidePin(id: string, pin: string) {
+    const p = api.post(`/runner/errand/${id}/verify-pin`, { pin });
+    p.then(invalidateRunnerErrands).catch(() => {});
+    return p;
+  },
+
+  /**
+   * Runner-side review of the customer for a completed booking. Mirrors
+   * the customer's POST /bookings/{id}/review but routed under /runner
+   * so the role middleware passes; the controller infers reviewee from
+   * the reviewer's role on the booking.
+   */
+  submitCustomerReview(bookingId: string, rating: number, comment?: string) {
+    const p = api.post(`/runner/errand/${bookingId}/review`, {
+      rating,
+      comment: comment?.trim() ? comment.trim() : null,
+    });
     p.then(invalidateRunnerErrands).catch(() => {});
     return p;
   },
@@ -99,7 +135,7 @@ export const runnerService = {
     return api.get('/runner/earnings', { params: { period }, cacheTtlMs: 15_000 } as any);
   },
 
-  getEarningsHistory(params?: { page?: number; per_page?: number }) {
+  getEarningsHistory(params?: { page?: number; per_page?: number; date_from?: string; date_to?: string }) {
     return api.get('/runner/earnings/history', { params, cacheTtlMs: 10_000 } as any);
   },
 
@@ -116,8 +152,19 @@ export const runnerService = {
     p.then(() => {
       invalidateEarnings();
       invalidateQuery(['wallet']);
+      invalidateQuery(['runner', 'payouts']);
     }).catch(() => {});
     return p;
+  },
+
+  // Reuses the shared wallet/transactions endpoint (which already supports
+  // `type` filtering) so we don't have to duplicate a payouts index on the
+  // backend just to list past requests on the runner's Payouts screen.
+  getPayoutHistory(params?: { page?: number; per_page?: number }) {
+    return api.get('/wallet/transactions', {
+      params: { ...params, type: 'payout' },
+      cacheTtlMs: 10_000,
+    } as any);
   },
 
   triggerSOS(bookingId: string) {

@@ -8,6 +8,7 @@ import Animated, {
   Easing,
   interpolate,
 } from 'react-native-reanimated';
+import { useReducedMotion } from '../../hooks/useReducedMotion';
 
 // ── Shimmer bar ───────────────────────────────────────────────
 // Uses a pure Reanimated sliding overlay instead of expo-linear-gradient to
@@ -27,14 +28,23 @@ export function Skeleton({
   style,
 }: SkeletonProps) {
   const progress = useSharedValue(0);
+  // Honor the OS "Reduce Motion" preference. Indefinite shimmer
+  // animations are an accessibility flashpoint (motion sensitivity,
+  // vestibular triggers); we keep the placeholder block visible but
+  // freeze the moving overlay.
+  const reduceMotion = useReducedMotion();
 
   useEffect(() => {
+    if (reduceMotion) {
+      progress.value = 0;
+      return;
+    }
     progress.value = withRepeat(
       withTiming(1, { duration: 1200, easing: Easing.linear }),
       -1,
       false,
     );
-  }, [progress]);
+  }, [progress, reduceMotion]);
 
   const animatedStyle = useAnimatedStyle(() => ({
     transform: [
@@ -47,6 +57,11 @@ export function Skeleton({
 
   return (
     <View
+      // Block content reads from screen readers while loading — the parent
+      // screen typically renders an aria-busy region; the skeleton itself
+      // shouldn't speak "rectangle".
+      accessibilityElementsHidden
+      importantForAccessibility="no-hide-descendants"
       style={[
         {
           width: width as any,
@@ -58,18 +73,20 @@ export function Skeleton({
         style,
       ]}
     >
-      <Animated.View
-        style={[
-          {
-            position: 'absolute',
-            top: 0,
-            bottom: 0,
-            width: 200,
-            backgroundColor: '#FFFFFF',
-          },
-          animatedStyle,
-        ]}
-      />
+      {!reduceMotion && (
+        <Animated.View
+          style={[
+            {
+              position: 'absolute',
+              top: 0,
+              bottom: 0,
+              width: 200,
+              backgroundColor: '#FFFFFF',
+            },
+            animatedStyle,
+          ]}
+        />
+      )}
     </View>
   );
 }

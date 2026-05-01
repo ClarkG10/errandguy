@@ -9,6 +9,8 @@ import {
   StyleSheet,
   Dimensions,
   Keyboard,
+  KeyboardAvoidingView,
+  Platform,
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import {
@@ -33,15 +35,17 @@ import { Input } from '../../../components/ui/Input';
 import { PhotoGrid } from '../../../components/customer/PhotoGrid';
 import { ImagePickerModal } from '../../../components/ui/ImagePickerModal';
 import { SavedAddressSheet } from '../../../components/customer/SavedAddressSheet';
+import { BookingStepIndicator } from '../../../components/customer/BookingStepIndicator';
 import { MAP_STYLE_URL } from '../../../constants/map';
 import { getErrandTypeRule } from '../../../constants/errandTypeRules';
 import type { SavedAddress } from '../../../types';
 import { toast } from '../../../stores/toastStore';
+import { geocodingService } from '../../../services/geocoding.service';
+import { routeService } from '../../../services/route.service';
 
-const MAPBOX_TOKEN = process.env.EXPO_PUBLIC_MAPBOX_TOKEN ?? '';
 const DEFAULT_CENTER: [number, number] = [121.0, 14.6];
 const { height: SCREEN_HEIGHT } = Dimensions.get('window');
-const STEP_LABELS = ['Type', 'Details', 'Schedule', 'Review'];
+// Step labels live in `BookingStepIndicator`; keep this file lean.
 
 /* ─── Animated Pulse Marker (frozen pins) ─── */
 
@@ -187,8 +191,22 @@ export default function TaskDetailsScreen() {
   const [searchResults, setSearchResults] = useState<
     Array<{ place_name: string; center: [number, number] }>
   >([]);
+  const [recentPlaces, setRecentPlaces] = useState<
+    Array<{ place_name: string; center: [number, number] }>
+  >([]);
   const [showSearch, setShowSearch] = useState(false);
   const debouncedSearch = useDebounce(searchQuery, 400);
+
+  // Hydrate recent destinations once — instant render on next focus.
+  useEffect(() => {
+    let cancelled = false;
+    geocodingService.getRecent(6).then((items) => {
+      if (!cancelled) setRecentPlaces(items);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   // Details form
   const [photos, setPhotos] = useState<string[]>(draftBooking.item_photos ?? []);
@@ -251,49 +269,61 @@ export default function TaskDetailsScreen() {
 
   const pinColor = phase === 'pickup' ? '#2563EB' : '#EF4444';
 
-  /* ── Reverse geocode ── */
-  const reverseGeocode = useCallback(async (lng: number, lat: number): Promise<string> => {
-    if (!MAPBOX_TOKEN) return `${lat.toFixed(6)}, ${lng.toFixed(6)}`;
-    try {
-      const res = await fetch(
-        `https://api.mapbox.com/geocoding/v5/mapbox.places/${lng},${lat}.json?access_token=${MAPBOX_TOKEN}&language=en&limit=1`,
-      );
-      const data = await res.json();
-      return data.features?.[0]?.place_name ?? `${lat.toFixed(6)}, ${lng.toFixed(6)}`;
-    } catch {
-      return `${lat.toFixed(6)}, ${lng.toFixed(6)}`;
-    }
-  }, []);
+  /* ── Reverse geocode (cached) ──
+     Same coordinate within ~11 m re-uses the cached place name for 24 h.
+     Cuts the chatty Mapbox traffic when the user nudges the pin. */
+  const reverseGeocode = useCallback(
+    (lng: number, lat: number) => geocodingService.reverse(lng, lat),
+    [],
+  );
 
-  /* ── Search geocoding ── */
+  /* ── Search geocoding (cached, proximity-biased) ──
+     Bias to the most relevant nearby point so a search for "jollibee" or
+     "7 eleven" returns the branch a few blocks away instead of one
+     across the country. Order of preference:
+       1. The current map center (whatever the user is looking at)
+       2. The runner's GPS position
+       3. An already-selected pickup (when on dropoff phase)
+     If none of those exist we fall back to an unbiased PH-wide search. */
   useEffect(() => {
-    if (debouncedSearch.length < 3 || !MAPBOX_TOKEN) {
+    if (debouncedSearch.length < 2) {
       setSearchResults([]);
       return;
     }
+    const proxSource: [number, number] | null =
+      currentCoord ??
+      userLocation ??
+      (draftBooking.pickup_lng != null && draftBooking.pickup_lat != null && phase === 'dropoff'
+        ? [draftBooking.pickup_lng, draftBooking.pickup_lat]
+        : null);
+    const proximity = proxSource
+      ? { lng: proxSource[0], lat: proxSource[1] }
+      : undefined;
     let cancelled = false;
-    const encoded = encodeURIComponent(debouncedSearch);
-    fetch(
-      `https://api.mapbox.com/geocoding/v5/mapbox.places/${encoded}.json?access_token=${MAPBOX_TOKEN}&country=ph&limit=5&language=en`,
-    )
-      .then((r) => r.json())
-      .then((data) => {
+    geocodingService
+      .search(debouncedSearch, 8, undefined, proximity)
+      .then((features) => {
         if (cancelled) return;
-        setSearchResults(
-          (data.features ?? []).map((f: any) => ({
-            place_name: f.place_name,
-            center: f.center,
-          })),
-        );
-      })
-      .catch(() => {});
+        setSearchResults(features);
+      });
     return () => {
       cancelled = true;
     };
+    // currentCoord/userLocation/phase intentionally read fresh — the bias
+    // should track wherever the user has the map right now, but we don't
+    // want to spam Mapbox on every pin nudge, so we still only fire when
+    // the *query* changes.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [debouncedSearch]);
 
   const handleSearchSelect = useCallback(
     (item: { place_name: string; center: [number, number] }) => {
+      // Promote to recents — fire-and-forget, never blocks the UI.
+      geocodingService.addRecent(item).then(() => {
+        // Refresh the local list so the next time the user opens the
+        // search this pick is already at the top.
+        geocodingService.getRecent(6).then(setRecentPlaces);
+      });
       setSearchQuery('');
       setSearchResults([]);
       setShowSearch(false);
@@ -364,7 +394,8 @@ export default function TaskDetailsScreen() {
   /* ── Back ── */
   const handleBack = useCallback(() => {
     if (phase === 'pickup') {
-      // Reset all location data when leaving details entirely
+      // Leaving the booking-details flow entirely — reset all locations
+      // so a stale pickup pin doesn't follow the user back here later.
       updateDraft({
         pickup_address: undefined,
         pickup_lat: undefined,
@@ -375,37 +406,59 @@ export default function TaskDetailsScreen() {
       });
       router.canGoBack() ? router.back() : router.replace('/(customer)/(tabs)');
     } else if (phase === 'dropoff') {
-      // Clear pickup so user can re-select
-      updateDraft({
-        pickup_address: undefined,
-        pickup_lat: undefined,
-        pickup_lng: undefined,
-      });
+      // Going back to pick-the-pickup. Keep the existing pickup so the
+      // user doesn't have to re-search; just toggle the phase and seed
+      // the camera + address from the saved pickup.
       setPhase('pickup');
-      setCurrentAddress('');
-      setCurrentCoord(null);
-    } else {
-      // details → (single-location: pickup, otherwise: dropoff)
-      if (rule.singleLocation) {
-        updateDraft({
-          pickup_address: undefined,
-          pickup_lat: undefined,
-          pickup_lng: undefined,
-        });
-        setPhase('pickup');
+      setRouteCoords([]);
+      if (draftBooking.pickup_lat && draftBooking.pickup_lng) {
+        const coord: [number, number] = [draftBooking.pickup_lng, draftBooking.pickup_lat];
+        skipNextGeocode.current = true;
+        setCurrentCoord(coord);
+        setCurrentAddress(draftBooking.pickup_address ?? '');
+        setTimeout(() => {
+          cameraRef.current?.setCamera({
+            centerCoordinate: coord,
+            zoomLevel: 16,
+            animationDuration: 500,
+          });
+        }, 100);
       } else {
-        updateDraft({
-          dropoff_address: undefined,
-          dropoff_lat: undefined,
-          dropoff_lng: undefined,
-        });
+        setCurrentAddress('');
+        setCurrentCoord(null);
+      }
+    } else {
+      // details → (single-location: pickup, otherwise: dropoff). For the
+      // dropoff case we keep dropoff data so the user can just tap
+      // Confirm again — if they want to change it they can use the
+      // "Change" link on the route summary.
+      if (rule.singleLocation) {
+        setPhase('pickup');
+        if (draftBooking.pickup_lat && draftBooking.pickup_lng) {
+          const coord: [number, number] = [draftBooking.pickup_lng, draftBooking.pickup_lat];
+          skipNextGeocode.current = true;
+          setCurrentCoord(coord);
+          setCurrentAddress(draftBooking.pickup_address ?? '');
+        }
+      } else {
         setPhase('dropoff');
+        if (draftBooking.dropoff_lat && draftBooking.dropoff_lng) {
+          const coord: [number, number] = [draftBooking.dropoff_lng, draftBooking.dropoff_lat];
+          skipNextGeocode.current = true;
+          setCurrentCoord(coord);
+          setCurrentAddress(draftBooking.dropoff_address ?? '');
+          setTimeout(() => {
+            cameraRef.current?.setCamera({
+              centerCoordinate: coord,
+              zoomLevel: 16,
+              animationDuration: 500,
+            });
+          }, 100);
+        }
       }
       setRouteCoords([]);
-      setCurrentAddress('');
-      setCurrentCoord(null);
     }
-  }, [phase, router, updateDraft, rule.singleLocation]);
+  }, [phase, router, updateDraft, rule.singleLocation, draftBooking.pickup_lat, draftBooking.pickup_lng, draftBooking.pickup_address, draftBooking.dropoff_lat, draftBooking.dropoff_lng, draftBooking.dropoff_address]);
 
   /* ── Change a confirmed location (tapped from details phase) ── */
   const handleChangeLocation = useCallback(
@@ -487,20 +540,20 @@ export default function TaskDetailsScreen() {
     });
   }, []);
 
-  /* ── Fetch route ── */
+  /* ── Fetch route (cached) ── */
   useEffect(() => {
     if (phase !== 'details') return;
     if (!draftBooking.pickup_lat || !draftBooking.dropoff_lat) return;
     let cancelled = false;
-    const url = `https://api.mapbox.com/directions/v5/mapbox/driving/${draftBooking.pickup_lng},${draftBooking.pickup_lat};${draftBooking.dropoff_lng},${draftBooking.dropoff_lat}?geometries=geojson&overview=full&access_token=${MAPBOX_TOKEN}`;
-    fetch(url)
-      .then((r) => r.json())
-      .then((data) => {
-        if (cancelled) return;
-        const coords = data.routes?.[0]?.geometry?.coordinates;
-        if (Array.isArray(coords)) setRouteCoords(coords);
-      })
-      .catch(() => {});
+    routeService
+      .getRoute(
+        { lng: Number(draftBooking.pickup_lng), lat: Number(draftBooking.pickup_lat) },
+        { lng: Number(draftBooking.dropoff_lng), lat: Number(draftBooking.dropoff_lat) },
+      )
+      .then((res) => {
+        if (cancelled || !res) return;
+        setRouteCoords(res.coordinates);
+      });
     return () => {
       cancelled = true;
     };
@@ -536,27 +589,11 @@ export default function TaskDetailsScreen() {
     return () => clearTimeout(t);
   }, [phase, draftBooking.pickup_lat, draftBooking.pickup_lng, draftBooking.dropoff_lat, draftBooking.dropoff_lng]);
 
-  /* ── Auto-center on user location at mount ── */
-  useEffect(() => {
-    if (initialPhase !== 'pickup') return;
-    (async () => {
-      try {
-        const { status } = await Location.requestForegroundPermissionsAsync();
-        if (status !== 'granted') return;
-        const loc = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
-        const coords: [number, number] = [loc.coords.longitude, loc.coords.latitude];
-        skipNextGeocode.current = true;
-        setCurrentCoord(coords);
-        cameraRef.current?.setCamera({
-          centerCoordinate: coords,
-          zoomLevel: 15,
-          animationDuration: 800,
-        });
-        const addr = await reverseGeocode(coords[0], coords[1]);
-        setCurrentAddress(addr);
-      } catch {}
-    })();
-  }, []);
+  /* ── Auto-center on user location at mount (pickup phase only,
+     and only when there's no saved pickup yet). The previous version
+     had two competing useEffects that both fetched location at mount
+     — they raced each other into setCamera and the geocoded address
+     could flicker. Consolidated below. ── */
 
   /* ── Photos ── */
   const handleAddPhoto = useCallback(() => {
@@ -652,7 +689,7 @@ export default function TaskDetailsScreen() {
           styleURL={MAP_STYLE_URL}
           logoEnabled={false}
           attributionEnabled={false}
-          onRegionWillChange={handleRegionWillChange}
+          onRegionIsChanging={handleRegionWillChange}
           onRegionDidChange={handleRegionDidChange}
           onPress={() => {
             setShowSearch(false);
@@ -664,24 +701,30 @@ export default function TaskDetailsScreen() {
             defaultSettings={{ centerCoordinate: initialCenter, zoomLevel: 14 }}
           />
 
-          {/* Frozen pickup marker */}
+          {/* Frozen pickup marker — MarkerView (not PointAnnotation) so
+              the animated pulse halo + pin tip can live as siblings
+              without tripping rnmapbox's "max 1 subview" warning. */}
           {phase !== 'pickup' && draftBooking.pickup_lng != null && draftBooking.pickup_lat != null && (
-            <Mapbox.PointAnnotation
+            <Mapbox.MarkerView
               id="pickup-marker"
               coordinate={[draftBooking.pickup_lng, draftBooking.pickup_lat]}
+              anchor={{ x: 0.5, y: 1 }}
+              allowOverlap
             >
               <PulseMarker color="#2563EB" />
-            </Mapbox.PointAnnotation>
+            </Mapbox.MarkerView>
           )}
 
           {/* Frozen dropoff marker */}
           {phase === 'details' && draftBooking.dropoff_lng != null && draftBooking.dropoff_lat != null && (
-            <Mapbox.PointAnnotation
+            <Mapbox.MarkerView
               id="dropoff-marker"
               coordinate={[draftBooking.dropoff_lng, draftBooking.dropoff_lat]}
+              anchor={{ x: 0.5, y: 1 }}
+              allowOverlap
             >
               <PulseMarker color="#EF4444" />
-            </Mapbox.PointAnnotation>
+            </Mapbox.MarkerView>
           )}
 
           {/* Route polyline */}
@@ -713,19 +756,25 @@ export default function TaskDetailsScreen() {
         {/* ── Floating header ── */}
         <SafeAreaView style={st.floatingHeader} edges={['top']} pointerEvents="box-none">
           <View style={st.headerRow}>
-            <Pressable onPress={handleBack} style={st.backBtn}>
+            <Pressable
+              onPress={handleBack}
+              accessibilityRole="button"
+              accessibilityLabel="Go back"
+              hitSlop={8}
+              style={st.backBtn}
+            >
               <ArrowLeft size={20} color="#0F172A" />
             </Pressable>
-            <View style={st.headerPills}>
-              {STEP_LABELS.map((label, i) => (
-                <View key={label} style={[st.pill, i <= 1 ? st.pillActive : st.pillInactive]}>
-                  <Text style={[st.pillText, i <= 1 && st.pillTextActive]}>{i + 1}</Text>
-                </View>
-              ))}
-            </View>
             <Text style={st.phaseTitle}>
-              {phase === 'pickup' ? 'Pickup' : phase === 'dropoff' ? 'Dropoff' : 'Details'}
+              {phase === 'pickup' ? 'Set pickup' : phase === 'dropoff' ? 'Set dropoff' : 'Add details'}
             </Text>
+          </View>
+
+          {/* Step indicator pinned under the back row — sits in a soft
+              translucent card so it stays legible whether the map below
+              is in dark park, light city, or satellite mode. */}
+          <View style={st.stepIndicatorBackdrop}>
+            <BookingStepIndicator currentStep={phase === 'pickup' ? 0 : 1} />
           </View>
 
           {/* Floating search bar */}
@@ -783,6 +832,38 @@ export default function TaskDetailsScreen() {
                   ))}
                 </View>
               )}
+
+              {/* Empty-state recents — only when the user has focused
+                  the search but hasn't typed yet. Helps repeat bookings
+                  feel near-instant without ever hitting Mapbox. */}
+              {showSearch &&
+                searchQuery.trim().length === 0 &&
+                recentPlaces.length > 0 && (
+                  <View style={st.searchResults}>
+                    <Text style={st.recentHeading}>Recent</Text>
+                    {recentPlaces.map((item, idx) => (
+                      <Pressable
+                        key={`recent-${idx}`}
+                        style={st.searchResultItem}
+                        onPress={() => handleSearchSelect(item)}
+                      >
+                        <View style={[st.searchResultDot, { backgroundColor: '#94A3B833' }]}>
+                          <View
+                            style={{
+                              width: 6,
+                              height: 6,
+                              borderRadius: 3,
+                              backgroundColor: '#64748B',
+                            }}
+                          />
+                        </View>
+                        <Text style={st.searchResultText} numberOfLines={2}>
+                          {item.place_name}
+                        </Text>
+                      </Pressable>
+                    ))}
+                  </View>
+                )}
             </View>
           )}
         </SafeAreaView>
@@ -815,16 +896,17 @@ export default function TaskDetailsScreen() {
 
           {/* Quick actions */}
           <View style={st.quickActions}>
-            <Pressable style={st.quickBtn} onPress={handleMyLocation}>
+            <Pressable style={st.quickBtn} onPress={handleMyLocation} accessibilityRole="button" accessibilityLabel="Use current location">
               <Navigation size={14} color="#2563EB" />
               <Text style={st.quickBtnText}>Current</Text>
             </Pressable>
-            {phase === 'dropoff' && (
-              <Pressable style={st.quickBtn} onPress={() => setShowSavedSheet(true)}>
-                <Bookmark size={14} color="#2563EB" />
-                <Text style={st.quickBtnText}>Saved</Text>
-              </Pressable>
-            )}
+            {/* Saved addresses are useful for pickup too — a runner picking up
+                from your home or office is the most common pattern. Previously
+                this was hidden during pickup, forcing users to type or pan. */}
+            <Pressable style={st.quickBtn} onPress={() => setShowSavedSheet(true)} accessibilityRole="button" accessibilityLabel="Choose from saved addresses">
+              <Bookmark size={14} color="#2563EB" />
+              <Text style={st.quickBtnText}>Saved</Text>
+            </Pressable>
           </View>
 
           <Button
@@ -836,7 +918,11 @@ export default function TaskDetailsScreen() {
         </View>
       ) : (
         /* ── Details sheet ── */
-        <View style={st.detailsSheet}>
+        <KeyboardAvoidingView
+          style={st.detailsSheet}
+          behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+          keyboardVerticalOffset={Platform.OS === 'ios' ? 0 : 0}
+        >
           <View style={st.dragHandle} />
 
           {/* Route summary strip — tappable to change */}
@@ -975,9 +1061,10 @@ export default function TaskDetailsScreen() {
                     <Input
                       label="Contact Phone"
                       value={draftBooking.pickup_contact_phone ?? ''}
-                      onChangeText={(v) => updateDraft({ pickup_contact_phone: v })}
-                      placeholder="Phone number"
+                      onChangeText={(v) => updateDraft({ pickup_contact_phone: v.replace(/[^0-9+]/g, '').slice(0, 13) })}
+                      placeholder="e.g. 09171234567"
                       keyboardType="phone-pad"
+                      maxLength={13}
                     />
                   </>
                 )}
@@ -1012,9 +1099,10 @@ export default function TaskDetailsScreen() {
                     <Input
                       label="Contact Phone"
                       value={draftBooking.dropoff_contact_phone ?? ''}
-                      onChangeText={(v) => updateDraft({ dropoff_contact_phone: v })}
-                      placeholder="Phone number"
+                      onChangeText={(v) => updateDraft({ dropoff_contact_phone: v.replace(/[^0-9+]/g, '').slice(0, 13) })}
+                      placeholder="e.g. 09171234567"
                       keyboardType="phone-pad"
+                      maxLength={13}
                     />
                   </>
                 )}
@@ -1029,7 +1117,7 @@ export default function TaskDetailsScreen() {
             )}
             <Button title="Continue" onPress={handleContinue} fullWidth />
           </View>
-        </View>
+        </KeyboardAvoidingView>
       )}
 
       {/* Saved Address Sheet */}
@@ -1071,6 +1159,19 @@ const st = StyleSheet.create({
     paddingHorizontal: 16,
     paddingTop: 8,
   },
+  stepIndicatorBackdrop: {
+    marginTop: 10,
+    marginHorizontal: 16,
+    backgroundColor: 'rgba(255,255,255,0.96)',
+    borderRadius: 16,
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    shadowColor: '#0F172A',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.08,
+    shadowRadius: 8,
+    elevation: 3,
+  },
   backBtn: {
     width: 42,
     height: 42,
@@ -1088,18 +1189,13 @@ const st = StyleSheet.create({
     flexDirection: 'row',
     marginLeft: 12,
     gap: 6,
+    // Retained for compatibility with any external snapshots; visually unused.
   },
-  pill: {
-    width: 26,
-    height: 26,
-    borderRadius: 13,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  pillActive: { backgroundColor: '#2563EB' },
-  pillInactive: { backgroundColor: '#FFF', borderWidth: 1.5, borderColor: '#E2E8F0' },
-  pillText: { fontSize: 11, fontFamily: 'Quicksand_600SemiBold', color: '#94A3B8' },
-  pillTextActive: { color: '#FFF' },
+  pill: { width: 0, height: 0 },
+  pillActive: {},
+  pillInactive: {},
+  pillText: {},
+  pillTextActive: {},
   phaseTitle: {
     fontSize: 16,
     fontFamily: 'Quicksand_500Medium',
@@ -1162,6 +1258,16 @@ const st = StyleSheet.create({
     fontSize: 13,
     fontFamily: 'Quicksand_400Regular',
     color: '#0F172A',
+  },
+  recentHeading: {
+    fontSize: 11,
+    fontFamily: 'Quicksand_700Bold',
+    color: '#64748B',
+    letterSpacing: 0.5,
+    textTransform: 'uppercase',
+    paddingHorizontal: 14,
+    paddingTop: 10,
+    paddingBottom: 4,
   },
   myLocationBtn: {
     position: 'absolute',

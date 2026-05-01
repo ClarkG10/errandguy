@@ -13,12 +13,17 @@ class MatchingService
     /**
      * Find the best available runner for a booking.
      * Returns the matched runner profile or null.
+     *
+     * @param  float|null  $radiusOverrideKm  When set, ignores SystemConfig
+     *         and uses this radius instead. Used by retry-match to
+     *         progressively widen the search after a failed attempt.
      */
-    public function findRunner(string $bookingId): ?RunnerProfile
+    public function findRunner(string $bookingId, ?float $radiusOverrideKm = null): ?RunnerProfile
     {
         $booking = Booking::with('errandType')->findOrFail($bookingId);
 
-        $radiusKm = (float) SystemConfig::getValue('matching_radius_km', '10');
+        $radiusKm = $radiusOverrideKm
+            ?? (float) SystemConfig::getValue('matching_radius_km', '10');
 
         $runners = $this->getEligibleRunners(
             $booking->pickup_lat,
@@ -28,7 +33,7 @@ class MatchingService
         );
 
         if ($runners->isEmpty()) {
-            Log::info("No runners found for booking {$bookingId}");
+            Log::info("No runners found for booking {$bookingId} (radius: {$radiusKm}km)");
             return null;
         }
 
@@ -75,7 +80,20 @@ class MatchingService
             ->where('verification_status', 'approved')
             ->whereNotNull('current_lat')
             ->whereNotNull('current_lng')
-            // Reject runners whose last GPS ping is older than 5 minutes —
+            // Cheap bounding-box prefilter so we don't haversine every
+            // online runner in the country. ~111km per latitude degree;
+            // longitude scales with cos(lat). We add a 25% safety margin
+            // because the box is a square inscribing the search circle's
+            // outer edge \u2014 we'd otherwise clip nearby runners at the
+            // 45\u00b0 corners.
+            ->where(function ($q) use ($lat, $lng, $radiusKm) {
+                $latDelta = ($radiusKm * 1.25) / 111.0;
+                $cos = max(0.000001, cos(deg2rad($lat)));
+                $lngDelta = ($radiusKm * 1.25) / (111.0 * $cos);
+                $q->whereBetween('current_lat', [$lat - $latDelta, $lat + $latDelta])
+                  ->whereBetween('current_lng', [$lng - $lngDelta, $lng + $lngDelta]);
+            })
+            // Reject runners whose last GPS ping is older than 5 minutes \u2014
             // their phone is likely dead/in-tunnel and dispatching to them
             // wastes the broadcast slot and frustrates the customer.
             ->where(function ($q) {

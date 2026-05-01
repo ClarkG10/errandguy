@@ -52,5 +52,21 @@ export interface WalletTransaction {
   balance_after: number;
   reference_id: string | null;
   description: string | null;
+  /**
+   * Server-side composed customer-facing label, e.g.
+   * "ErrandGuy · Paid for Document delivery #A1B2C3".
+   * Falls back to `description` when older rows or unknown types are
+   * encountered. Always prefer this over `description` in UI.
+   */
+  display_description?: string | null;
+  /**
+   * Lifecycle state. For top_ups / earnings / payments / refunds the
+   * money has already moved when the row is written, so they are
+   * always 'completed'. Payout requests start as 'pending' until an
+   * operator marks them completed or failed.
+   */
+  status?: 'pending' | 'completed' | 'failed';
+  processed_at?: string | null;
+  failure_reason?: string | null;
   created_at: string;
 }

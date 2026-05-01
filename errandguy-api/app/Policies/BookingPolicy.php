@@ -22,7 +22,15 @@ class BookingPolicy
 
     public function review(User $user, Booking $booking): bool
     {
-        if ($user->id !== $booking->customer_id) {
+        // Either party of a completed booking may leave one review. The
+        // reviewee is implicit — customer reviews the assigned runner,
+        // runner reviews the customer. We block reviews on bookings the
+        // user wasn't part of, and we enforce one-review-per-reviewer.
+        $isParticipant =
+            $user->id === $booking->customer_id
+            || ($booking->runner_id !== null && $user->id === $booking->runner_id);
+
+        if (!$isParticipant) {
             return false;
         }
 
@@ -30,7 +38,7 @@ class BookingPolicy
             return false;
         }
 
-        // Check no existing review
+        // Check no existing review from this reviewer for this booking
         return !Review::where('booking_id', $booking->id)
             ->where('reviewer_id', $user->id)
             ->exists();
@@ -40,5 +48,17 @@ class BookingPolicy
     {
         return $user->id === $booking->customer_id
             || $user->id === $booking->runner_id;
+    }
+
+    /**
+     * Re-attempt matching after a failed `no_runner` outcome. Only the
+     * booking customer can retry, and only while the booking has not yet
+     * been completed/cancelled or matched to someone else.
+     */
+    public function retryMatch(User $user, Booking $booking): bool
+    {
+        return $user->id === $booking->customer_id
+            && in_array($booking->status, ['no_runner', 'pending'], true)
+            && $booking->runner_id === null;
     }
 }

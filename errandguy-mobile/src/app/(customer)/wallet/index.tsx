@@ -1,8 +1,8 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   View,
   Text,
-  FlatList,
+  SectionList,
   RefreshControl,
   Pressable,
 } from 'react-native';
@@ -84,6 +84,32 @@ export default function WalletScreen() {
     setRefreshing(false);
   }, [balanceQ, txQ]);
 
+  // Group wallet transactions into date buckets so customers can scan
+  // for a specific transaction without scrolling through a flat list.
+  const txSections = useMemo<{ title: string; data: WalletTransaction[] }[]>(() => {
+    if (!transactions.length) return [];
+    const now = new Date();
+    const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+    const startOfYesterday = startOfToday - 24 * 60 * 60 * 1000;
+    const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1).getTime();
+    const buckets: Record<string, WalletTransaction[]> = {
+      Today: [],
+      Yesterday: [],
+      'This Month': [],
+      Earlier: [],
+    };
+    for (const t of transactions) {
+      const ts = new Date(t.created_at).getTime();
+      if (ts >= startOfToday) buckets.Today.push(t);
+      else if (ts >= startOfYesterday) buckets.Yesterday.push(t);
+      else if (ts >= startOfMonth) buckets['This Month'].push(t);
+      else buckets.Earlier.push(t);
+    }
+    return (['Today', 'Yesterday', 'This Month', 'Earlier'] as const)
+      .filter((k) => buckets[k].length > 0)
+      .map((title) => ({ title, data: buckets[title] }));
+  }, [transactions]);
+
   const renderTransaction = useCallback(
     ({ item }: { item: WalletTransaction }) => {
       const config = TX_ICONS[item.type] ?? TX_ICONS.payment;
@@ -99,8 +125,11 @@ export default function WalletScreen() {
             <Icon size={20} color={config.color} />
           </View>
           <View className="flex-1">
-            <Text className="text-sm font-montserrat-bold text-textPrimary">
-              {item.description ?? item.type.replace('_', ' ')}
+            <Text
+              className="text-sm font-montserrat-bold text-textPrimary"
+              numberOfLines={1}
+            >
+              {item.display_description ?? item.description ?? item.type.replace('_', ' ')}
             </Text>
             <Text className="text-xs font-montserrat text-textSecondary mt-0.5">
               {formatRelativeTime(item.created_at)}
@@ -130,7 +159,10 @@ export default function WalletScreen() {
       {/* Header */}
       <View className="flex-row items-center px-5 py-4">
         <Pressable
-          onPress={() => router.canGoBack() ? router.back() : router.replace('/(customer)/(tabs)')}
+          onPress={() => router.canGoBack() ? router.back() : router.replace('/(customer)/(tabs)/profile')}
+          accessibilityRole="button"
+          accessibilityLabel="Go back"
+          hitSlop={8}
           className="mr-3 w-9 h-9 rounded-xl bg-surface items-center justify-center"
           style={{ shadowColor: '#0F172A', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.04, shadowRadius: 6, elevation: 1 }}
         >
@@ -141,21 +173,94 @@ export default function WalletScreen() {
         </Text>
       </View>
 
-      {/* Balance Card */}
-      <View className="mx-5 bg-primary rounded-2xl p-6 mb-4">
-        <Text className="text-sm font-montserrat text-white/80">
-          Available Balance
-        </Text>
-        <Text className="text-3xl font-inter-semi tabular-nums text-white mt-1">
-          {formatCurrency(balance)}
-        </Text>
-        <View className="mt-4">
-          <Button
-            title="Top Up"
-            variant="secondary"
+      {/* Balance Card
+          A solid blue tile competed visually with the brand primary
+          everywhere else and made the wallet feel like just another
+          CTA. We swapped to a deep slate card (premium fintech feel)
+          with a subtle blue accent ring around the amount and a
+          slightly recessed top-up pill. The amount now uses our
+          tabular-nums Inter face on a #0F172A base for proper
+          currency emphasis. */}
+      <View
+        className="mx-5 mb-4 rounded-3xl p-6 overflow-hidden"
+        style={{
+          backgroundColor: '#0F172A',
+          shadowColor: '#0F172A',
+          shadowOffset: { width: 0, height: 8 },
+          shadowOpacity: 0.18,
+          shadowRadius: 20,
+          elevation: 6,
+        }}
+      >
+        {/* Decorative blue glow blob — adds depth without painting the
+            whole card brand-blue. */}
+        <View
+          pointerEvents="none"
+          style={{
+            position: 'absolute',
+            top: -40,
+            right: -40,
+            width: 160,
+            height: 160,
+            borderRadius: 80,
+            backgroundColor: '#2563EB',
+            opacity: 0.22,
+          }}
+        />
+        <View
+          pointerEvents="none"
+          style={{
+            position: 'absolute',
+            bottom: -60,
+            left: -30,
+            width: 140,
+            height: 140,
+            borderRadius: 70,
+            backgroundColor: '#3B82F6',
+            opacity: 0.12,
+          }}
+        />
+
+        <View className="flex-row items-center justify-between mb-1">
+          <Text className="text-xs font-montserrat-semi text-white/60 uppercase tracking-wider">
+            Available Balance
+          </Text>
+          <View className="flex-row items-center bg-white/10 px-2 py-0.5 rounded-md">
+            <Text className="text-[10px] font-montserrat-semi text-white">
+              PHP
+            </Text>
+          </View>
+        </View>
+
+        {balanceQ.loading && balance == null && balanceQ.data == null ? (
+          <View className="mt-2 h-10 w-44 rounded-lg bg-white/15" />
+        ) : (
+          <Text className="text-4xl font-inter-semi tabular-nums text-white mt-1">
+            {formatCurrency(balance)}
+          </Text>
+        )}
+
+        <View className="mt-5 flex-row gap-2">
+          <Pressable
             onPress={() => router.push('/(customer)/wallet/top-up')}
-            fullWidth
-          />
+            className="flex-1 bg-white py-3 rounded-2xl items-center"
+            accessibilityRole="button"
+            accessibilityLabel="Add money to wallet"
+          >
+            <Text className="text-sm font-montserrat-bold text-textPrimary">
+              Add Money
+            </Text>
+          </Pressable>
+          <Pressable
+            onPress={() => router.push('/(customer)/(tabs)/activity' as any)}
+            className="flex-1 bg-white/10 py-3 rounded-2xl items-center border border-white/15"
+            accessibilityRole="button"
+            accessibilityLabel="View bookings"
+          >
+            <Text className="text-sm font-montserrat-bold text-white">
+              History
+            </Text>
+          </Pressable>
         </View>
       </View>
 
@@ -163,10 +268,18 @@ export default function WalletScreen() {
       <Text className="text-base font-montserrat-bold text-textPrimary px-5 mb-2">
         Transactions
       </Text>
-      <FlatList
-        data={transactions}
+      <SectionList
+        sections={txSections}
         keyExtractor={(item) => item.id}
         renderItem={renderTransaction}
+        renderSectionHeader={({ section: { title } }) => (
+          <View className="px-5 pt-3 pb-2 bg-background">
+            <Text className="text-[11px] font-montserrat-bold text-textTertiary uppercase tracking-wider">
+              {title}
+            </Text>
+          </View>
+        )}
+        stickySectionHeadersEnabled
         refreshControl={
           <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
         }

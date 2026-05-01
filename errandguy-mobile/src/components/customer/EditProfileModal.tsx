@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { View, Text, Modal, Pressable, ScrollView } from 'react-native';
+import { View, Text, Modal, Pressable, ScrollView, KeyboardAvoidingView, Platform } from 'react-native';
 import { X } from 'lucide-react-native';
 import { useAuthStore } from '../../stores/authStore';
 import { userService } from '../../services/user.service';
@@ -68,63 +68,72 @@ export function EditProfileModal({ visible, onClose }: EditProfileModalProps) {
 
   return (
     <Modal visible={visible} animationType="slide" presentationStyle="pageSheet">
-      <View className="flex-1 bg-background">
-        <View className="flex-row items-center justify-between px-5 py-4 border-b border-divider">
-          <Text className="text-lg font-montserrat-semi text-textPrimary">
-            Edit Profile
-          </Text>
-          <Pressable onPress={onClose}>
-            <X size={24} color="#475569" />
-          </Pressable>
-        </View>
-
-        <ScrollView className="flex-1 px-5 pt-6">
-          <View className="items-center mb-6">
-            <Pressable onPress={() => setAvatarPickerVisible(true)}>
-              <Avatar
-                uri={user?.avatar_url}
-                name={user?.full_name}
-                size="xl"
-              />
-              <Text className="text-xs font-montserrat text-primary mt-2 text-center">
-                {uploadingAvatar ? 'Uploading…' : 'Change Photo'}
-              </Text>
+      <KeyboardAvoidingView
+        style={{ flex: 1 }}
+        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+      >
+        <View className="flex-1 bg-background">
+          <View className="flex-row items-center justify-between px-5 py-4 border-b border-divider">
+            <Text className="text-lg font-montserrat-semi text-textPrimary">
+              Edit Profile
+            </Text>
+            <Pressable onPress={onClose} hitSlop={10}>
+              <X size={24} color="#475569" />
             </Pressable>
           </View>
 
-          <Input
-            label="Full Name"
-            value={fullName}
-            onChangeText={setFullName}
-            placeholder="Enter your name"
-          />
-          <Input
-            label="Email"
-            value={email}
-            onChangeText={setEmail}
-            placeholder="Enter your email"
-            keyboardType="email-address"
-          />
+          <ScrollView
+            className="flex-1 px-5 pt-6"
+            keyboardShouldPersistTaps="handled"
+            contentContainerStyle={{ paddingBottom: 40 }}
+          >
+            <View className="items-center mb-6">
+              <Pressable onPress={() => setAvatarPickerVisible(true)}>
+                <Avatar
+                  uri={user?.avatar_url}
+                  name={user?.full_name}
+                  size="xl"
+                />
+                <Text className="text-xs font-montserrat text-primary mt-2 text-center">
+                  {uploadingAvatar ? 'Uploading…' : 'Change Photo'}
+                </Text>
+              </Pressable>
+            </View>
 
-          <View className="mt-4">
-            <Button
-              title="Save Changes"
-              onPress={handleSave}
-              loading={saving}
-              fullWidth
+            <Input
+              label="Full Name"
+              value={fullName}
+              onChangeText={setFullName}
+              placeholder="Enter your name"
             />
-          </View>
-        </ScrollView>
+            <Input
+              label="Email"
+              value={email}
+              onChangeText={setEmail}
+              placeholder="Enter your email"
+              keyboardType="email-address"
+            />
 
-        <ImagePickerModal
-          visible={avatarPickerVisible}
-          onClose={() => setAvatarPickerVisible(false)}
-          onConfirm={handleAvatarUpload}
-          title="Profile Photo"
-          subtitle="Choose a photo for your profile"
-          uploading={uploadingAvatar}
-        />
-      </View>
+            <View className="mt-4">
+              <Button
+                title="Save Changes"
+                onPress={handleSave}
+                loading={saving}
+                fullWidth
+              />
+            </View>
+          </ScrollView>
+
+          <ImagePickerModal
+            visible={avatarPickerVisible}
+            onClose={() => setAvatarPickerVisible(false)}
+            onConfirm={handleAvatarUpload}
+            title="Profile Photo"
+            subtitle="Choose a photo for your profile"
+            uploading={uploadingAvatar}
+          />
+        </View>
+      </KeyboardAvoidingView>
     </Modal>
   );
 }

@@ -1,6 +1,9 @@
 import { create } from 'zustand';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { secureStorage } from '../utils/storage';
+import { geocodingService } from '../services/geocoding.service';
+import { CacheService } from '../services/cache.service';
+import { apiCache } from '../services/api';
 import type { User, UserRole } from '../types';
 
 interface AuthState {
@@ -11,7 +14,7 @@ interface AuthState {
   role: UserRole | null;
   onboardingSeen: boolean;
   runnerOnboardingSkipped: boolean;
-  rememberedCredentials: { identifier: string; password: string } | null;
+  rememberedCredentials: { identifier: string } | null;
 
   setUser: (user: User | null) => void;
   setToken: (token: string | null) => Promise<void>;
@@ -19,7 +22,7 @@ interface AuthState {
   loadFromStorage: () => Promise<void>;
   updateProfile: (data: Partial<User>) => void;
   setRunnerOnboardingSkipped: (skipped: boolean) => Promise<void>;
-  setRememberedCredentials: (creds: { identifier: string; password: string } | null) => Promise<void>;
+  setRememberedCredentials: (creds: { identifier: string } | null) => Promise<void>;
 }
 
 export const useAuthStore = create<AuthState>((set, get) => ({
@@ -58,8 +61,13 @@ export const useAuthStore = create<AuthState>((set, get) => ({
   },
 
   setRememberedCredentials: async (creds) => {
+    // SECURITY: We deliberately persist ONLY the identifier (phone/email),
+    // never the password. Storing the password — even in the device
+    // keychain — broadens the blast radius of a compromised unlock and
+    // contradicts the principle of session-bound credentials. The auth
+    // token already provides "stay signed in" without this risk.
     if (creds) {
-      await secureStorage.set('remembered_credentials', JSON.stringify(creds));
+      await secureStorage.set('remembered_credentials', JSON.stringify({ identifier: creds.identifier }));
     } else {
       await secureStorage.remove('remembered_credentials');
     }
@@ -69,6 +77,14 @@ export const useAuthStore = create<AuthState>((set, get) => ({
   logout: async () => {
     await secureStorage.remove('auth_token');
     await AsyncStorage.removeItem('@runner_onboarding_skipped');
+    // Privacy: don't leak the previous user's recent destinations,
+    // cached profile/wallet data, or in-memory request responses to
+    // whoever signs in next on the same device.
+    await Promise.allSettled([
+      geocodingService.clearRecent(),
+      CacheService.clearAll(),
+    ]);
+    apiCache.clear();
     set({
       user: null,
       token: null,
@@ -85,9 +101,15 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       AsyncStorage.getItem('@runner_onboarding_skipped'),
       secureStorage.get('remembered_credentials'),
     ]);
-    let rememberedCredentials = null;
+    let rememberedCredentials: { identifier: string } | null = null;
     if (rememberedRaw) {
-      try { rememberedCredentials = JSON.parse(rememberedRaw); } catch {}
+      try {
+        const parsed = JSON.parse(rememberedRaw);
+        // Backwards compat: silently drop any legacy stored password.
+        if (parsed?.identifier) {
+          rememberedCredentials = { identifier: String(parsed.identifier) };
+        }
+      } catch {}
     }
     set({
       token,

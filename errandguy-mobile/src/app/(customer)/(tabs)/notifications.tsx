@@ -1,10 +1,11 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   View,
   Text,
-  FlatList,
+  SectionList,
   RefreshControl,
   Pressable,
+  ActivityIndicator,
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import {
@@ -26,7 +27,6 @@ import { CacheTTL } from '../../../services/cache.service';
 import { EmptyState } from '../../../components/ui/EmptyState';
 import { formatRelativeTime } from '../../../utils/formatDate';
 import type { AppNotification, NotificationType } from '../../../types';
-import { toast } from '../../../stores/toastStore';
 
 const TYPE_ICONS: Record<NotificationType, LucideIcon> = {
   booking_update: Package,
@@ -42,7 +42,9 @@ const TYPE_COLORS: Record<NotificationType, string> = {
   booking_update: '#2563EB',
   payment: '#22C55E',
   promo: '#F59E0B',
-  chat: '#3B82F6',
+  // Aligned with brand primary so the chat icon matches the rest of the
+  // app instead of being a one-off lighter blue (#3B82F6).
+  chat: '#2563EB',
   sos: '#EF4444',
   system: '#94A3B8',
   document_update: '#8B5CF6',
@@ -61,15 +63,65 @@ export default function NotificationsScreen() {
   const userId = useAuthStore((s) => s.user?.id);
 
   const [refreshing, setRefreshing] = useState(false);
+  // Pagination state. The server returns 20 per page — the previous UI
+  // never requested page 2, so notifications older than the most recent
+  // 20 were unreachable for the user.
+  const [page, setPage] = useState(1);
+  const [hasMore, setHasMore] = useState(true);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const loadingMoreRef = useRef(false);
 
   const notifQ = useQuery<AppNotification[]>(
     ['notifications', userId ?? 'anon'],
     async () => {
-      const r = await notificationService.getNotifications();
-      return (r.data.data ?? []) as AppNotification[];
+      const r = await notificationService.getNotifications({ page: 1, per_page: 20 });
+      const list = (r.data?.data ?? []) as AppNotification[];
+      // Reset pagination state whenever the head page is (re)fetched.
+      setPage(1);
+      // The Laravel paginator response surfaces last_page / current_page
+      // at the top level; fall back to a length heuristic if the meta
+      // shape changes.
+      const meta = r.data?.meta ?? r.data;
+      const lastPage = Number(meta?.last_page ?? meta?.['last_page']);
+      setHasMore(
+        Number.isFinite(lastPage) ? lastPage > 1 : list.length >= 20,
+      );
+      return list;
     },
     { staleTime: 30_000, ttl: CacheTTL.MEDIUM },
   );
+
+  const handleLoadMore = useCallback(async () => {
+    if (loadingMoreRef.current || !hasMore) return;
+    loadingMoreRef.current = true;
+    setLoadingMore(true);
+    try {
+      const next = page + 1;
+      const r = await notificationService.getNotifications({ page: next, per_page: 20 });
+      const more = (r.data?.data ?? []) as AppNotification[];
+      const meta = r.data?.meta ?? r.data;
+      const lastPage = Number(meta?.last_page ?? meta?.['last_page']);
+      // Append while deduping in case Realtime has already inserted any
+      // of these into the head of the list.
+      const existingIds = new Set(
+        (useNotificationStore.getState().notifications ?? []).map((n) => n.id),
+      );
+      const fresh = more.filter((n) => !existingIds.has(n.id));
+      if (fresh.length > 0) {
+        setNotifications([
+          ...useNotificationStore.getState().notifications,
+          ...fresh,
+        ]);
+      }
+      setPage(next);
+      setHasMore(Number.isFinite(lastPage) ? next < lastPage : more.length >= 20);
+    } catch {
+      // Soft-fail — keep `hasMore` true so user can retry by scrolling.
+    } finally {
+      setLoadingMore(false);
+      loadingMoreRef.current = false;
+    }
+  }, [hasMore, page, setNotifications]);
 
   // Sync into the global store as the query updates.
   useEffect(() => {
@@ -191,6 +243,58 @@ export default function NotificationsScreen() {
     [handleNotificationPress],
   );
 
+  // Group notifications into time buckets so the list reads like an
+  // Inbox rather than an endless wall. Bucket boundaries use the device
+  // local clock for "Today / Yesterday" and a 7-day window for "This Week".
+  const sections = useMemo(() => {
+    if (!notifications.length) return [];
+    const now = new Date();
+    const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+    const startOfYesterday = startOfToday - 24 * 60 * 60 * 1000;
+    const startOfWeek = startOfToday - 6 * 24 * 60 * 60 * 1000;
+
+    const buckets: Record<string, AppNotification[]> = {
+      Today: [],
+      Yesterday: [],
+      'This Week': [],
+      Earlier: [],
+    };
+
+    for (const n of notifications) {
+      const ts = new Date(n.created_at).getTime();
+      if (ts >= startOfToday) buckets.Today.push(n);
+      else if (ts >= startOfYesterday) buckets.Yesterday.push(n);
+      else if (ts >= startOfWeek) buckets['This Week'].push(n);
+      else buckets.Earlier.push(n);
+    }
+
+    // Drop empty buckets and preserve order.
+    return (['Today', 'Yesterday', 'This Week', 'Earlier'] as const)
+      .filter((title) => buckets[title].length > 0)
+      .map((title) => ({ title, data: buckets[title] }));
+  }, [notifications]);
+
+  const renderSectionHeader = useCallback(
+    ({ section: { title, data } }: { section: { title: string; data: AppNotification[] } }) => {
+      const unreadInSection = data.filter((n) => !n.is_read).length;
+      return (
+        <View className="flex-row items-center justify-between px-5 pt-3 pb-2 bg-background">
+          <Text className="text-[11px] font-montserrat-bold text-textTertiary uppercase tracking-wider">
+            {title}
+          </Text>
+          {unreadInSection > 0 && (
+            <View className="bg-primary50 rounded-full px-2 py-0.5">
+              <Text className="text-[10px] font-montserrat-bold text-primary">
+                {unreadInSection} new
+              </Text>
+            </View>
+          )}
+        </View>
+      );
+    },
+    [],
+  );
+
   return (
     <SafeAreaView className="flex-1 bg-background" edges={['top']}>
       {/* Header */}
@@ -208,10 +312,12 @@ export default function NotificationsScreen() {
       </View>
 
       {/* Notification List */}
-      <FlatList
-        data={notifications}
+      <SectionList
+        sections={sections}
         keyExtractor={(item) => item.id}
         renderItem={renderNotification}
+        renderSectionHeader={renderSectionHeader}
+        stickySectionHeadersEnabled
         refreshControl={
           <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
         }
@@ -219,6 +325,21 @@ export default function NotificationsScreen() {
         windowSize={5}
         removeClippedSubviews={true}
         contentContainerStyle={{ paddingTop: 4, paddingBottom: 24 }}
+        onEndReached={handleLoadMore}
+        onEndReachedThreshold={0.4}
+        ListFooterComponent={
+          loadingMore ? (
+            <View className="py-4 items-center">
+              <ActivityIndicator size="small" color="#2563EB" />
+            </View>
+          ) : !hasMore && notifications.length > 0 ? (
+            <View className="py-4 items-center">
+              <Text className="text-[11px] font-montserrat text-textTertiary">
+                You're all caught up
+              </Text>
+            </View>
+          ) : null
+        }
         ListEmptyComponent={
           <EmptyState
             icon={Bell}

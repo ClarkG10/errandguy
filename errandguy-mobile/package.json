@@ -10,7 +10,7 @@
     "test": "jest --no-coverage",
     "test:ci": "jest --ci --coverage --reporters=default",
     "lint": "npx tsc --noEmit",
-    "postinstall": "npx patch-package"
+    "postinstall": "npx patch-package && node scripts/fix-material-symbols.js"
   },
   "dependencies": {
     "@expo-google-fonts/inter": "^0.4.2",

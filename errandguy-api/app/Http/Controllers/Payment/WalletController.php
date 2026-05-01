@@ -44,6 +44,27 @@ class WalletController extends Controller
             'payment_method_id.exists' => 'Selected payment method is not available on your account.',
         ]);
 
+        // Idempotency guard: if the same user submitted an identical
+        // top-up (same amount, same payment method) in the last 60s,
+        // assume it's a duplicate from a network retry / double-tap and
+        // return the existing transaction rather than charging twice.
+        // Real payment-gateway integrations should additionally rely on
+        // the gateway's own idempotency key.
+        $duplicate = WalletTransaction::where('user_id', $user->id)
+            ->where('type', 'top_up')
+            ->where('amount', $validated['amount'])
+            ->where('reference_id', $validated['payment_method_id'])
+            ->where('created_at', '>=', now()->subSeconds(60))
+            ->latest('created_at')
+            ->first();
+
+        if ($duplicate) {
+            return response()->json([
+                'data' => $duplicate,
+                'idempotent' => true,
+            ], 200);
+        }
+
         $transaction = $this->walletService->topUp(
             $user->id,
             (float) $validated['amount'],
@@ -57,7 +78,11 @@ class WalletController extends Controller
 
     public function transactions(Request $request): JsonResponse
     {
-        $query = WalletTransaction::where('user_id', $request->user()->id)
+        // Eager-load the booking + errand type so the appended
+        // `display_description` accessor on each row can compose a
+        // friendly label without triggering an N+1 lookup per row.
+        $query = WalletTransaction::with(['booking:id,booking_number,errand_type_id', 'booking.errandType:id,name'])
+            ->where('user_id', $request->user()->id)
             ->orderByDesc('created_at');
 
         if ($request->filled('type')) {

@@ -26,12 +26,21 @@ export const useChatStore = create<ChatState>((set, get) => ({
   isTyping: false,
 
   addMessage: (bookingId, message) =>
-    set((state) => ({
-      messages: {
-        ...state.messages,
-        [bookingId]: [...(state.messages[bookingId] || []), message],
-      },
-    })),
+    set((state) => {
+      const existing = state.messages[bookingId] || [];
+      // Dedupe: Realtime fan-out re-delivers the message we just
+      // optimistically appended after sending, so without this guard the
+      // sender would see their own message twice. Match by id (UUID).
+      if (message?.id && existing.some((m) => m.id === message.id)) {
+        return state;
+      }
+      return {
+        messages: {
+          ...state.messages,
+          [bookingId]: [...existing, message],
+        },
+      };
+    }),
 
   setMessages: (bookingId, messages) =>
     set((state) => ({

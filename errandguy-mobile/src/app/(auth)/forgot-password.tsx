@@ -11,7 +11,7 @@ import {
 import { useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useForm, Controller } from 'react-hook-form';
-import { ChevronLeft } from 'lucide-react-native';
+import { ChevronLeft, MailCheck } from 'lucide-react-native';
 import { Input } from '../../components/ui/Input';
 import { Button } from '../../components/ui/Button';
 import { authService } from '../../services/auth.service';
@@ -71,7 +71,7 @@ export default function ForgotPasswordScreen() {
 
       {sent ? (
         <View className="flex-1 justify-center items-center px-8">
-          <Text style={{ fontSize: 56, marginBottom: 20 }}>✉️</Text>
+          <MailCheck size={64} color="#2563EB" strokeWidth={1.6} style={{ marginBottom: 20 }} />
           <Text className="text-2xl font-montserrat-semi text-textPrimary mb-2 text-center">
             Check your email
           </Text>

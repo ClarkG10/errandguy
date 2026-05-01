@@ -13,7 +13,7 @@ import {
 import { useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useForm, Controller } from 'react-hook-form';
-import { ChevronLeft, Camera } from 'lucide-react-native';
+import { ChevronLeft, Camera, Check } from 'lucide-react-native';
 import { Input } from '../../components/ui/Input';
 import { Button } from '../../components/ui/Button';
 import { PasswordStrengthIndicator } from '../../components/auth/PasswordStrengthIndicator';
@@ -74,18 +74,24 @@ export default function RegisterScreen() {
         password: data.password,
       });
 
-      // Upload avatar if selected
+      // Upload avatar if selected. Best-effort — we don't want a flaky
+      // upload to block account creation, but we DO want to surface a
+      // toast so the user knows their photo isn't on file and can retry
+      // from the profile screen later.
       if (image) {
         const formData = new FormData();
+        const ext = image.uri.split('.').pop()?.toLowerCase() || 'jpg';
+        const mime =
+          ext === 'png' ? 'image/png' : ext === 'webp' ? 'image/webp' : 'image/jpeg';
         formData.append('avatar', {
           uri: image.uri,
-          name: 'avatar.jpg',
-          type: 'image/jpeg',
+          name: `avatar.${ext === 'jpeg' ? 'jpg' : ext}`,
+          type: mime,
         } as any);
         try {
           await userService.uploadAvatar(formData);
         } catch {
-          // Non-critical — continue
+          toast.warning('Profile photo upload failed — you can add it later from your profile.');
         }
       }
 
@@ -213,6 +219,8 @@ export default function RegisterScreen() {
                 onChangeText={onChange}
                 placeholder="09XXXXXXXXX"
                 keyboardType="phone-pad"
+                autoComplete="tel"
+                textContentType="telephoneNumber"
                 error={errors.phone?.message}
               />
             )}
@@ -236,6 +244,8 @@ export default function RegisterScreen() {
                 placeholder="you@example.com"
                 keyboardType="email-address"
                 autoCapitalize="none"
+                autoComplete="email"
+                textContentType="emailAddress"
                 error={errors.email?.message}
               />
             )}
@@ -264,6 +274,8 @@ export default function RegisterScreen() {
                   onChangeText={onChange}
                   placeholder="Create a strong password"
                   secureTextEntry
+                  autoComplete="new-password"
+                  textContentType="newPassword"
                   error={errors.password?.message}
                 />
                 <PasswordStrengthIndicator password={value} />
@@ -286,6 +298,8 @@ export default function RegisterScreen() {
                 onChangeText={onChange}
                 placeholder="Confirm your password"
                 secureTextEntry
+                autoComplete="new-password"
+                textContentType="newPassword"
                 error={errors.confirm_password?.message}
               />
             )}
@@ -315,7 +329,7 @@ export default function RegisterScreen() {
               }`}
             >
               {termsAccepted && (
-                <Text className="text-white text-xs font-montserrat-bold">✓</Text>
+                <Check size={14} color="#FFFFFF" strokeWidth={3} />
               )}
             </View>
             <Text className="flex-1 text-sm font-montserrat text-textSecondary">

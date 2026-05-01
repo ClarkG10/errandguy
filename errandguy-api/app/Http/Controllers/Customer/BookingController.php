@@ -38,7 +38,7 @@ class BookingController extends Controller
             ->customerBookings()
             ->with([
                 'errandType',
-                'runner:id,phone,email,full_name,avatar_url,role,status,email_verified,phone_verified,wallet_balance,avg_rating,total_ratings,created_at',
+                'runner:id,phone,full_name,avatar_url,role,status,phone_verified,avg_rating,total_ratings,created_at',
                 'review',
             ])
             ->orderByDesc('created_at');
@@ -226,7 +226,8 @@ class BookingController extends Controller
     {
         $booking = Booking::with([
             'errandType',
-            'runner:id,phone,email,full_name,avatar_url,role,status,email_verified,phone_verified,wallet_balance,avg_rating,total_ratings,created_at',
+            'runner:id,phone,full_name,avatar_url,role,status,phone_verified,avg_rating,total_ratings,created_at',
+            'runner.runnerProfile:user_id,vehicle_type,vehicle_plate,vehicle_photo_url,verification_status,acceptance_rate,completion_rate,is_online,total_errands,approved_at',
             'statusLogs',
             'payment',
             'review',
@@ -259,6 +260,12 @@ class BookingController extends Controller
             'cancelled_by' => $request->user()->id,
             'cancellation_reason' => $request->validated('reason'),
             'cancellation_fee' => $policy['fee'],
+            // Revoke any active trip-share link so the recipient can no
+            // longer poll the public endpoint for runner GPS or addresses
+            // after the trip has been called off. The customer can re-share
+            // a fresh link if they rebook.
+            'trip_share_token' => null,
+            'trip_share_active' => false,
         ]);
 
         BookingStatusLog::create([
@@ -295,7 +302,8 @@ class BookingController extends Controller
     {
         $booking = Booking::with([
             'errandType',
-            'runner:id,phone,email,full_name,avatar_url,role,status,email_verified,phone_verified,wallet_balance,avg_rating,total_ratings,created_at',
+            'runner:id,phone,full_name,avatar_url,role,status,phone_verified,avg_rating,total_ratings,created_at',
+            'runner.runnerProfile:user_id,vehicle_type,vehicle_plate,vehicle_photo_url,verification_status,acceptance_rate,completion_rate,is_online,total_errands,approved_at',
             'statusLogs',
         ])->findOrFail($id);
 
@@ -329,7 +337,8 @@ class BookingController extends Controller
             ->customerBookings()
             ->with([
                 'errandType',
-                'runner:id,phone,email,full_name,avatar_url,role,status,email_verified,phone_verified,wallet_balance,avg_rating,total_ratings,created_at',
+                'runner:id,phone,full_name,avatar_url,role,status,phone_verified,avg_rating,total_ratings,created_at',
+                'runner.runnerProfile:user_id,vehicle_type,vehicle_plate,vehicle_photo_url,verification_status,acceptance_rate,completion_rate,is_online,total_errands,approved_at',
                 'statusLogs',
             ])
             ->active()
@@ -426,5 +435,62 @@ class BookingController extends Controller
             'data' => new BookingResource($newBooking),
             'message' => 'Booking rebooked successfully.',
         ], 201);
+    }
+
+    /**
+     * Re-attempt matching for a booking that previously failed to find
+     * a runner. Resets status back to `pending`, dispatches a fresh
+     * MatchRunnerJob with a progressively widened radius (1.5×, 2×, 3×
+     * the system default) and re-arms the auto-cancel safety net.
+     */
+    public function retryMatch(Request $request, string $id): JsonResponse
+    {
+        $booking = Booking::findOrFail($id);
+
+        $this->authorize('retryMatch', $booking);
+
+        $validated = $request->validate([
+            // 1 = default radius, 2 = ~2x, 3 = ~3x. Capped server-side
+            // so a malicious client can't request a 1000km sweep.
+            'widen_step' => ['nullable', 'integer', 'min:1', 'max:3'],
+        ]);
+        $step = (int) ($validated['widen_step'] ?? 1);
+        $multiplier = match ($step) {
+            2 => 1.75,
+            3 => 2.5,
+            default => 1.0,
+        };
+        $baseRadius = (float) \App\Models\SystemConfig::getValue('matching_radius_km', '10');
+        $radius = $baseRadius * $multiplier;
+
+        $booking->update([
+            'status' => 'pending',
+        ]);
+
+        BookingStatusLog::create([
+            'booking_id' => $booking->id,
+            'status' => 'pending',
+            'changed_by' => $request->user()->id,
+            'note' => sprintf('Retry match (step %d, radius %.1fkm)', $step, $radius),
+        ]);
+
+        MatchRunnerJob::dispatch($booking->id, $radius);
+
+        // Re-arm auto-cancel — short window so the customer isn't left
+        // hanging if this widened sweep also fails.
+        $autoCancelMinutes = (int) \App\Models\SystemConfig::getValue(
+            'retry_auto_cancel_timeout_minutes',
+            '5',
+        );
+        AutoCancelBookingJob::dispatch($booking->id)
+            ->delay(now()->addMinutes($autoCancelMinutes));
+
+        $booking->load(['errandType', 'statusLogs']);
+
+        return response()->json([
+            'data' => new BookingResource($booking),
+            'meta' => ['radius_km' => $radius, 'widen_step' => $step],
+            'message' => 'Searching again with a wider radius.',
+        ]);
     }
 }

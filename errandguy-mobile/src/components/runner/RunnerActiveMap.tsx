@@ -4,8 +4,7 @@ import { Locate, Navigation } from 'lucide-react-native';
 import Mapbox from '@rnmapbox/maps';
 import { MAP_STYLE_URL } from '../../constants/map';
 import { useLocationStore } from '../../stores/locationStore';
-
-const MAPBOX_TOKEN = process.env.EXPO_PUBLIC_MAPBOX_TOKEN ?? '';
+import { routeService } from '../../services/route.service';
 
 interface RunnerActiveMapProps {
   pickupLat?: number | null;
@@ -63,20 +62,17 @@ export function RunnerActiveMap({
   }, [currentLocation]);
 
   useEffect(() => {
-    if (!hasRunner || !hasDest || !MAPBOX_TOKEN) return;
+    if (!hasRunner || !hasDest) return;
     let cancelled = false;
-    const url =
-      `https://api.mapbox.com/directions/v5/mapbox/driving/` +
-      `${currentLocation!.lng},${currentLocation!.lat};${destLng},${destLat}` +
-      `?geometries=geojson&overview=full&access_token=${MAPBOX_TOKEN}`;
-    fetch(url)
-      .then((r) => r.json())
-      .then((data) => {
-        if (cancelled) return;
-        const coords = data?.routes?.[0]?.geometry?.coordinates;
-        if (Array.isArray(coords)) setRouteCoords(coords);
-      })
-      .catch(() => {});
+    routeService
+      .getRoute(
+        { lng: currentLocation!.lng, lat: currentLocation!.lat },
+        { lng: destLng!, lat: destLat! },
+      )
+      .then((res) => {
+        if (cancelled || !res) return;
+        setRouteCoords(res.coordinates);
+      });
     return () => {
       cancelled = true;
     };
@@ -160,9 +156,11 @@ export function RunnerActiveMap({
         {/* Pickup marker (only when not single-location, or when in pickup
             phase for single-location to indicate the task spot). */}
         {hasPickup && (
-          <Mapbox.PointAnnotation
+          <Mapbox.MarkerView
             id="r-pickup"
             coordinate={[pickupLng!, pickupLat!]}
+            anchor={{ x: 0.5, y: 0.5 }}
+            allowOverlap
           >
             <View
               className={`w-7 h-7 rounded-full items-center justify-center border-2 border-white ${
@@ -171,14 +169,16 @@ export function RunnerActiveMap({
             >
               <View className="w-2 h-2 rounded-full bg-white" />
             </View>
-          </Mapbox.PointAnnotation>
+          </Mapbox.MarkerView>
         )}
 
         {/* Dropoff marker — hidden for single-location errands. */}
         {hasDropoff && !singleLocation && (
-          <Mapbox.PointAnnotation
+          <Mapbox.MarkerView
             id="r-dropoff"
             coordinate={[dropoffLng!, dropoffLat!]}
+            anchor={{ x: 0.5, y: 0.5 }}
+            allowOverlap
           >
             <View
               className={`w-7 h-7 rounded-full items-center justify-center border-2 border-white ${
@@ -187,19 +187,21 @@ export function RunnerActiveMap({
             >
               <View className="w-2 h-2 rounded-full bg-white" />
             </View>
-          </Mapbox.PointAnnotation>
+          </Mapbox.MarkerView>
         )}
 
         {/* Runner live marker */}
         {hasRunner && (
-          <Mapbox.PointAnnotation
+          <Mapbox.MarkerView
             id="r-self"
             coordinate={[currentLocation!.lng, currentLocation!.lat]}
+            anchor={{ x: 0.5, y: 0.5 }}
+            allowOverlap
           >
             <View className="w-8 h-8 rounded-full bg-blue-500/30 items-center justify-center">
               <View className="w-4 h-4 rounded-full bg-blue-600 border-2 border-white" />
             </View>
-          </Mapbox.PointAnnotation>
+          </Mapbox.MarkerView>
         )}
 
         {/* Route line runner → active destination */}

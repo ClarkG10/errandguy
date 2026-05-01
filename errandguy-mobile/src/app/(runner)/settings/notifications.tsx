@@ -2,7 +2,8 @@ import React, { useState } from 'react';
 import { View, Text, ScrollView, Switch, Pressable } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
-import { ArrowLeft, Bell, MessageSquare, Star, AlertTriangle } from 'lucide-react-native';
+import { Bell, MessageSquare, Star, AlertTriangle } from 'lucide-react-native';
+import { BackButton } from '../../../components/ui/BackButton';
 import { Card } from '../../../components/ui/Card';
 import type { LucideIcon } from 'lucide-react-native';
 
@@ -57,13 +58,7 @@ export default function NotificationsScreen() {
     <SafeAreaView className="flex-1 bg-background" edges={['top']}>
       {/* Header */}
       <View className="flex-row items-center gap-3 px-5 py-4">
-        <Pressable
-          onPress={() => router.canGoBack() ? router.back() : router.replace('/(runner)/(tabs)')}
-          className="w-9 h-9 rounded-xl bg-surface items-center justify-center"
-          style={{ shadowColor: '#0F172A', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.04, shadowRadius: 6, elevation: 1 }}
-        >
-          <ArrowLeft size={20} color="#0F172A" />
-        </Pressable>
+        <BackButton fallbackHref="/(runner)/(tabs)/profile" />
         <Text className="text-lg font-montserrat-bold text-textPrimary">
           Notification Preferences
         </Text>

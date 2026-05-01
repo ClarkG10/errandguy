@@ -32,9 +32,13 @@ module.exports = {
         textPrimary: '#0F172A',
         'text-secondary': '#64748B',
         textSecondary: '#64748B',
-        'text-tertiary': '#94A3B8',
-        textTertiary: '#94A3B8',
-        divider: '#F1F5F9',
+        'text-tertiary': '#64748B',
+        textTertiary: '#64748B',
+        // Subdued caption tone for `text-textMuted` (replaces previous
+        // textTertiary which was too light against bg-background
+        // — #94A3B8 on #F8FAFC failed WCAG AA at ~2.6:1).
+        textMuted: '#94A3B8',
+        divider: '#E2E8F0',
         danger: '#EF4444',
         'danger-dark': '#DC2626',
         dangerDark: '#DC2626',

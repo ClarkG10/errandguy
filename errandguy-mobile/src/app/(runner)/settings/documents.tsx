@@ -2,14 +2,18 @@ import React, { useEffect, useState, useCallback } from 'react';
 import { View, Text, ScrollView, RefreshControl, Platform } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
-import { ArrowLeft, CheckCircle, Clock, XCircle } from 'lucide-react-native';
-import { Pressable } from 'react-native';
+import { CheckCircle, Clock, XCircle } from 'lucide-react-native';
+import { BackButton } from '../../../components/ui/BackButton';
 import { Card } from '../../../components/ui/Card';
 import { DocumentUploadCard } from '../../../components/runner/DocumentUploadCard';
+import { DocumentViewer } from '../../../components/runner/DocumentViewer';
 import { ImagePickerModal } from '../../../components/ui/ImagePickerModal';
 import { useRunnerStore } from '../../../stores/runnerStore';
+import { useAuthStore } from '../../../stores/authStore';
 import { runnerService } from '../../../services/runner.service';
-import type { RunnerDocument, DocumentType } from '../../../types';
+import { useQuery } from '../../../hooks/useQuery';
+import { CacheTTL } from '../../../services/cache.service';
+import type { RunnerDocument, DocumentType, RunnerProfile } from '../../../types';
 import { toast } from '../../../stores/toastStore';
 
 interface DocConfig {
@@ -27,31 +31,35 @@ const DOCUMENT_TYPES: DocConfig[] = [
 
 export default function DocumentsScreen() {
   const router = useRouter();
+  const userId = useAuthStore((s) => s.user?.id ?? 'anon');
   const { runnerProfile, setRunnerProfile } = useRunnerStore();
-  const [documents, setDocuments] = useState<RunnerDocument[]>([]);
-  const [refreshing, setRefreshing] = useState(false);
   const [uploading, setUploading] = useState<string | null>(null);
   const [pickerVisible, setPickerVisible] = useState(false);
   const [activeDocType, setActiveDocType] = useState<DocumentType | null>(null);
+  const [viewer, setViewer] = useState<{ uri: string; title: string } | null>(null);
 
-  const fetchProfile = useCallback(async () => {
-    try {
-      const res = await runnerService.getRunnerProfile();
-      const profile = res.data.data;
-      setRunnerProfile(profile);
-      setDocuments(profile?.documents ?? []);
-    } catch {}
-  }, []);
+  // Cache-first: re-opening this screen paints from AsyncStorage
+  // immediately, then revalidates in the background. Previously every
+  // visit fired /runner/profile and showed an empty state until it
+  // returned.
+  const profileQ = useQuery<RunnerProfile | null>(
+    ['runner', 'profile', userId],
+    async () => (await runnerService.getRunnerProfile()).data.data ?? null,
+    { staleTime: 60_000, ttl: CacheTTL.LONG },
+  );
 
+  // Mirror to the global store so other screens (home, profile tab) stay
+  // in sync without a second fetch.
   useEffect(() => {
-    fetchProfile();
-  }, [fetchProfile]);
+    if (profileQ.data) setRunnerProfile(profileQ.data);
+  }, [profileQ.data, setRunnerProfile]);
+
+  const documents: RunnerDocument[] = profileQ.data?.documents ?? [];
+  const verificationStatus = profileQ.data?.verification_status ?? runnerProfile?.verification_status;
 
   const onRefresh = useCallback(async () => {
-    setRefreshing(true);
-    await fetchProfile();
-    setRefreshing(false);
-  }, [fetchProfile]);
+    await profileQ.refresh();
+  }, [profileQ]);
 
   const handleUpload = (docType: DocumentType) => {
     setActiveDocType(docType);
@@ -77,10 +85,12 @@ export default function DocumentsScreen() {
       } as any);
 
       await runnerService.uploadDocument(formData);
-      await fetchProfile();
+      await profileQ.refresh();
       toast.success('Document uploaded successfully');
     } catch (err: any) {
-      toast.error(err?.response?.data?.message ?? 'Failed to upload document');
+      const message =
+        err?.message ?? err?.response?.data?.message ?? 'Failed to upload document';
+      toast.error(message);
     } finally {
       setUploading(null);
     }
@@ -90,19 +100,11 @@ export default function DocumentsScreen() {
     return documents.find((d) => d.document_type === type);
   };
 
-  const verificationStatus = runnerProfile?.verification_status;
-
   return (
     <SafeAreaView className="flex-1 bg-background" edges={['top']}>
       {/* Header */}
       <View className="flex-row items-center gap-3 px-5 py-4">
-        <Pressable
-          onPress={() => router.canGoBack() ? router.back() : router.replace('/(runner)/(tabs)')}
-          className="w-9 h-9 rounded-xl bg-surface items-center justify-center"
-          style={{ shadowColor: '#0F172A', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.04, shadowRadius: 6, elevation: 1 }}
-        >
-          <ArrowLeft size={20} color="#0F172A" />
-        </Pressable>
+        <BackButton fallbackHref="/(runner)/(tabs)/profile" />
         <Text className="text-lg font-montserrat-bold text-textPrimary">
           Documents & Verification
         </Text>
@@ -111,7 +113,7 @@ export default function DocumentsScreen() {
       <ScrollView
         className="flex-1"
         showsVerticalScrollIndicator={false}
-        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
+        refreshControl={<RefreshControl refreshing={profileQ.loading && !profileQ.data} onRefresh={onRefresh} />}
         contentContainerStyle={{ paddingBottom: 40 }}
       >
         {/* Verification Status Banner */}
@@ -169,11 +171,19 @@ export default function DocumentsScreen() {
                 fileUrl={existing?.file_url}
                 rejectionReason={existing?.rejection_reason}
                 onUpload={() => handleUpload(doc.type)}
+                onView={(uri) => setViewer({ uri, title: doc.label })}
               />
             );
           })}
         </View>
       </ScrollView>
+
+      <DocumentViewer
+        visible={!!viewer}
+        uri={viewer?.uri ?? null}
+        title={viewer?.title}
+        onClose={() => setViewer(null)}
+      />
 
       <ImagePickerModal
         visible={pickerVisible}

@@ -10,7 +10,9 @@ use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Bus\Dispatchable;
 use Illuminate\Queue\InteractsWithQueue;
 use Illuminate\Queue\SerializesModels;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
+use Throwable;
 
 class MatchRunnerJob implements ShouldQueue
 {
@@ -21,45 +23,79 @@ class MatchRunnerJob implements ShouldQueue
 
     public function __construct(
         public string $bookingId,
+        public ?float $radiusOverrideKm = null,
     ) {}
 
     public function handle(MatchingService $matchingService): void
     {
-        $booking = Booking::find($this->bookingId);
-
-        if (!$booking || $booking->status !== 'pending') {
+        // Cheap pre-check outside the transaction — avoid acquiring a row
+        // lock for bookings that are obviously already done.
+        $current = Booking::find($this->bookingId);
+        if (!$current || $current->status !== 'pending') {
             Log::info("MatchRunnerJob skipped: booking {$this->bookingId} not pending");
             return;
         }
 
-        $runner = $matchingService->findRunner($this->bookingId);
+        // Resolve the runner outside the transaction. Matching is read-only
+        // and can be slow (haversine over many runners) — holding the row
+        // lock during it would serialize all incoming bookings.
+        $runner = $matchingService->findRunner($this->bookingId, $this->radiusOverrideKm);
 
-        if ($runner) {
-            $booking->update([
-                'runner_id' => $runner->user_id,
-                'status' => 'matched',
-                'matched_at' => now(),
-            ]);
+        try {
+            DB::transaction(function () use ($runner) {
+                // Re-fetch with FOR UPDATE so a concurrent MatchRunnerJob
+                // (re-dispatch, retry, or admin reassign) cannot also flip
+                // the same row from `pending` to `matched`.
+                $booking = Booking::whereKey($this->bookingId)->lockForUpdate()->first();
 
-            BookingStatusLog::create([
-                'booking_id' => $booking->id,
-                'status' => 'matched',
-                'changed_by' => null,
-                'note' => 'Runner matched: ' . ($runner->user->full_name ?? 'Unknown'),
-            ]);
+                if (!$booking || $booking->status !== 'pending') {
+                    Log::info("MatchRunnerJob race-skipped: booking {$this->bookingId} no longer pending");
+                    return;
+                }
 
-            Log::info("Runner {$runner->user_id} matched to booking {$this->bookingId}");
-        } else {
-            $booking->update(['status' => 'no_runner']);
+                if ($runner) {
+                    // Defensive: ensure the chosen runner hasn't been claimed
+                    // by another booking in the meantime.
+                    $stillFree = ! Booking::where('runner_id', $runner->user_id)
+                        ->whereNotIn('status', ['pending', 'completed', 'cancelled', 'no_runner'])
+                        ->exists();
 
-            BookingStatusLog::create([
-                'booking_id' => $booking->id,
-                'status' => 'no_runner',
-                'changed_by' => null,
-                'note' => 'No available runners found',
-            ]);
+                    if (!$stillFree) {
+                        Log::info("MatchRunnerJob: chosen runner {$runner->user_id} no longer free for booking {$this->bookingId}");
+                        // Leave booking pending — outer retry / scheduler will pick it up again.
+                        return;
+                    }
 
-            Log::info("No runners found for booking {$this->bookingId}");
+                    $booking->update([
+                        'runner_id' => $runner->user_id,
+                        'status' => 'matched',
+                        'matched_at' => now(),
+                    ]);
+
+                    BookingStatusLog::create([
+                        'booking_id' => $booking->id,
+                        'status' => 'matched',
+                        'changed_by' => null,
+                        'note' => 'Runner matched: ' . ($runner->user->full_name ?? 'Unknown'),
+                    ]);
+
+                    Log::info("Runner {$runner->user_id} matched to booking {$this->bookingId}");
+                } else {
+                    $booking->update(['status' => 'no_runner']);
+
+                    BookingStatusLog::create([
+                        'booking_id' => $booking->id,
+                        'status' => 'no_runner',
+                        'changed_by' => null,
+                        'note' => 'No available runners found',
+                    ]);
+
+                    Log::info("No runners found for booking {$this->bookingId}");
+                }
+            });
+        } catch (Throwable $e) {
+            Log::error("MatchRunnerJob failed for booking {$this->bookingId}: {$e->getMessage()}");
+            throw $e; // let queue worker apply backoff/tries
         }
     }
 }
