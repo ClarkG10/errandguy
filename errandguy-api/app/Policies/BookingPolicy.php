@@ -52,13 +52,30 @@ class BookingPolicy
 
     /**
      * Re-attempt matching after a failed `no_runner` outcome. Only the
-     * booking customer can retry, and only while the booking has not yet
-     * been completed/cancelled or matched to someone else.
+     * booking customer can retry, and only while the booking has not
+     * yet been matched/accepted by a runner. We also accept `cancelled`
+     * rows whose cancellation was the auto-cancel safety net firing
+     * — the customer is allowed to revive their own auto-killed
+     * search, but cannot un-cancel a booking they (or a runner)
+     * cancelled deliberately.
      */
     public function retryMatch(User $user, Booking $booking): bool
     {
-        return $user->id === $booking->customer_id
-            && in_array($booking->status, ['no_runner', 'pending'], true)
-            && $booking->runner_id === null;
+        if ($user->id !== $booking->customer_id || $booking->runner_id !== null) {
+            return false;
+        }
+
+        if (in_array($booking->status, ['no_runner', 'pending'], true)) {
+            return true;
+        }
+
+        if ($booking->status === 'cancelled'
+            && is_string($booking->cancellation_reason)
+            && str_starts_with($booking->cancellation_reason, 'Auto-cancelled')
+        ) {
+            return true;
+        }
+
+        return false;
     }
 }

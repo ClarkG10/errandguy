@@ -475,6 +475,10 @@ class BookingController extends Controller
 
         $booking->update([
             'status' => 'pending',
+            // Reviving an auto-cancelled booking — clear the cancellation
+            // marker so subsequent reads don't display "cancelled" copy.
+            'cancelled_at' => null,
+            'cancellation_reason' => null,
         ]);
 
         BookingStatusLog::create([
@@ -484,7 +488,9 @@ class BookingController extends Controller
             'note' => sprintf('Retry match (step %d, radius %.1fkm)', $step, $radius),
         ]);
 
-        MatchRunnerJob::dispatch($booking->id, $radius);
+        // Run matching inline so the customer sees the result in the same
+        // request (matches the immediate-booking path in store()).
+        MatchRunnerJob::dispatchSync($booking->id, $radius);
 
         // Re-arm auto-cancel — short window so the customer isn't left
         // hanging if this widened sweep also fails.
