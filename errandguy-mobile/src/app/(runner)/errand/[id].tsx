@@ -1,5 +1,5 @@
 import React, { useState, useCallback, useRef, useEffect } from 'react';
-import { View, Text, ScrollView, TextInput, RefreshControl, Pressable, Linking, KeyboardAvoidingView, Platform } from 'react-native';
+import { View, Text, ScrollView, TextInput, RefreshControl, Pressable, Linking, KeyboardAvoidingView, Platform, Dimensions } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import {
@@ -20,13 +20,13 @@ import { BottomActionBar } from '../../../components/ui/BottomActionBar';
 import { ConfirmModal } from '../../../components/ui/ConfirmModal';
 import { StatusActionButton, getNextStatus } from '../../../components/runner/StatusActionButton';
 import { ErrandDetailsCard } from '../../../components/runner/ErrandDetailsCard';
-import { NavigateButton } from '../../../components/runner/NavigateButton';
 import { PhotoProofModal } from '../../../components/runner/PhotoProofModal';
 import { ReceiptCaptureModal } from '../../../components/runner/ReceiptCaptureModal';
 import { CompletionModal } from '../../../components/runner/CompletionModal';
 import { RateCustomerModal } from '../../../components/runner/RateCustomerModal';
 import { RunnerActiveMap } from '../../../components/runner/RunnerActiveMap';
 import { useRunnerStore } from '../../../stores/runnerStore';
+import { useAuthStore } from '../../../stores/authStore';
 import { useChatStore } from '../../../stores/chatStore';
 import { useLocationStore } from '../../../stores/locationStore';
 import { useForegroundInterval } from '../../../hooks/useForegroundInterval';
@@ -53,8 +53,13 @@ const TIMELINE_STEPS: BookingStatus[] = [
   'completed',
 ];
 
-/** Statuses that mean "runner is heading to / at the pickup location". */
+/** Statuses that mean "runner is heading to / at the pickup location".
+ *  `matched` is included because the runner is assigned but hasn't yet
+ *  acknowledged via 'accepted' — they are still travelling to pickup
+ *  (or about to). Treating matched as dropoff phase would point the
+ *  route + navigate button at the wrong location. */
 const PICKUP_PHASE_STATUSES = new Set<string>([
+  'matched',
   'accepted',
   'heading_to_pickup',
   'arrived_at_pickup',
@@ -121,10 +126,78 @@ export default function ActiveErrandScreen() {
   const booking: Booking | null = storeMatchesUrl
     ? currentErrand
     : (fetchedQ.data ?? null);
-  // Mutations are only safe when the booking is the runner's *current*
-  // active job (i.e. lives in the store) — historical/completed errands
-  // open in read-only view.
-  const isReadOnly = !storeMatchesUrl;
+  // Mutations are only safe when this booking is the runner's *current*
+  // active job. Two paths put it there:
+  //  1) Runner accepted via the IncomingRequestModal \u2014 acceptErrand()
+  //     populated the store before navigation.
+  //  2) Runner deep-linked from a notification (cold start, app killed
+  //     mid-shift) \u2014 the store is empty but the fetched booking's
+  //     runner_id matches the logged-in user AND status is non-terminal.
+  //     In that case we self-claim into the store so the action button
+  //     renders. Without this, the runner is locked into read-only view
+  //     after every notification deep link.
+  const myUserId = useAuthStore((s) => s.user?.id ?? null);
+  useEffect(() => {
+    if (storeMatchesUrl) return;
+    const fetched = fetchedQ.data;
+    if (!fetched || !myUserId) return;
+    if (fetched.runner_id !== myUserId) return;
+    if (['completed', 'cancelled', 'no_runner'].includes(fetched.status)) return;
+    useRunnerStore.setState({ currentErrand: fetched });
+  }, [storeMatchesUrl, fetchedQ.data, myUserId]);
+
+  const isReadOnly =
+    !storeMatchesUrl &&
+    // If we just received a fetch result that proves this user is the
+    // assigned runner, treat as writable for this render \u2014 the effect
+    // above will also write it into the store on the next tick.
+    !(
+      myUserId &&
+      fetchedQ.data?.runner_id === myUserId &&
+      !['completed', 'cancelled', 'no_runner'].includes(fetchedQ.data?.status ?? '')
+    );
+
+  // Light status-sync poll. The errand screen is the runner's primary
+  // workspace during a job; if the customer cancels, the admin force-
+  // completes, or another mobile session advances status, we want the
+  // CTA to reflect that within ~15s without burning battery.
+  //
+  // We fetch directly (not via fetchedQ.refresh) so we can also push the
+  // result into the runner store \u2014 otherwise, when storeMatchesUrl=true
+  // the screen renders from `currentErrand` and ignores fetchedQ.data
+  // entirely. The fetch is cache-backed via runnerService.getErrand
+  // (cacheTtlMs: 4_000) so back-to-back triggers within the cache
+  // window collapse to one network call.
+  const _bookingForPollGuard = booking;
+  const _pollEnabled =
+    !!id &&
+    !!_bookingForPollGuard &&
+    !['completed', 'cancelled', 'no_runner'].includes(_bookingForPollGuard.status);
+  useForegroundInterval(
+    () => {
+      if (!id) return;
+      runnerService
+        .getErrand(id)
+        .then((r) => {
+          const fresh = (r?.data?.data ?? null) as Booking | null;
+          if (!fresh) return;
+          // Mirror into the store when this is the runner's active job
+          // so the home screen + other consumers see the new status.
+          const store = useRunnerStore.getState();
+          if (store.currentErrand?.id === fresh.id && fresh.status !== store.currentErrand.status) {
+            if (fresh.status === 'completed' || fresh.status === 'cancelled') {
+              store.updateErrandStatus(fresh.status);
+            } else {
+              useRunnerStore.setState({ currentErrand: fresh });
+            }
+          }
+        })
+        .catch(() => {});
+    },
+    15_000,
+    _pollEnabled,
+    false,
+  );
 
   // ── Hooks below MUST stay above the early-return so that the hook
   // call order is stable across the null → resolved booking transition.
@@ -145,7 +218,13 @@ export default function ActiveErrandScreen() {
   // (pickup or dropoff depending on phase). Drives the "X min away"
   // overlay on the runner's mini map and gives the runner a constant
   // sense of progress without flipping to Google Maps.
-  const inPickupPhase = booking ? PICKUP_PHASE_STATUSES.has(booking.status) : true;
+  //
+  // Single-location errands (queue, bills, document) only have a
+  // pickup pin — there is no dropoff leg — so we always route to the
+  // pickup regardless of status. Otherwise, fall back to the dropoff
+  // only after the package leaves pickup.
+  const inPickupPhase =
+    isSingleLocation || (booking ? PICKUP_PHASE_STATUSES.has(booking.status) : true);
   const etaTargetLat = inPickupPhase ? booking?.pickup_lat : booking?.dropoff_lat;
   const etaTargetLng = inPickupPhase ? booking?.pickup_lng : booking?.dropoff_lng;
   const runnerEta = useEta(
@@ -339,304 +418,349 @@ export default function ActiveErrandScreen() {
     router.replace('/(runner)/(tabs)' as any);
   };
 
+  // Sheet height \u2014 ~55% of the window. Using a flex-based split (map
+  // grows, sheet stays a fixed slice) instead of absolute positioning
+  // because the previous absolute+maxHeight layout collapsed the inner
+  // ScrollView to zero and pushed the sticky action button off-screen.
+  const SHEET_HEIGHT = Math.round(Dimensions.get('window').height * 0.55);
+
   return (
-    <SafeAreaView className="flex-1 bg-background" edges={['top']}>
-      {/* Header */}
-      <View className="flex-row items-center justify-between px-5 py-4">
-        <BackButton
-          fallbackHref="/(runner)/(tabs)"
-          accessibilityHint={isErrandActive ? 'Confirms before leaving the active errand' : undefined}
-          onPress={() => {
-            const goBack = () =>
-              router.canGoBack() ? router.back() : router.replace('/(runner)/(tabs)');
-            if (isErrandActive) confirmLeaveErrand(goBack);
-            else goBack();
-          }}
-        />
-        <Text className="text-lg font-montserrat-bold text-textPrimary">
-          {isTransportation ? 'Passenger Ride' : 'Active Errand'}
-        </Text>
-        <Pressable onPress={() => router.push(`/(runner)/chat/${booking.id}` as any)}>
-          <MessageCircle size={24} color="#0F172A" />
-        </Pressable>
-      </View>
-
-      <KeyboardAvoidingView
-        style={{ flex: 1 }}
-        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-        keyboardVerticalOffset={Platform.OS === 'ios' ? 64 : 0}
-      >
-      <ScrollView
-        className="flex-1"
-        showsVerticalScrollIndicator={false}
-        contentContainerStyle={{ paddingBottom: 120 }}
-        keyboardShouldPersistTaps="handled"
-      >
-        {/* Live Map — runner location, pickup/dropoff markers, route line
-            to whichever destination is active for the current phase. */}
-        <RunnerActiveMap
-          pickupLat={booking.pickup_lat}
-          pickupLng={booking.pickup_lng}
-          dropoffLat={booking.dropoff_lat}
-          dropoffLng={booking.dropoff_lng}
-          inPickupPhase={PICKUP_PHASE_STATUSES.has(booking.status)}
-          singleLocation={isSingleLocation}
-          etaMinutes={runnerEta.minutes}
-        />
-
-        {/* Navigate Button — always available so single-location errands
-            (queue/bills/document) still get one-tap directions to the
-            single destination. Toggles between pickup and dropoff based
-            on whether the runner is still in the pickup phase. */}
-        {(() => {
-          const inPickupPhase = PICKUP_PHASE_STATUSES.has(booking.status);
-          const targetLat = inPickupPhase ? booking.pickup_lat : booking.dropoff_lat;
-          const targetLng = inPickupPhase ? booking.pickup_lng : booking.dropoff_lng;
-          if (!targetLat || !targetLng) return null;
-          return (
-            <View className="px-5 mb-4">
-              <NavigateButton
-                lat={targetLat}
-                lng={targetLng}
-                label={inPickupPhase ? errandRule.pickupLabel : errandRule.dropoffLabel}
-              />
-            </View>
-          );
-        })()}
-
-        {/* Errand Details */}
-        <View className="px-5">
-          <ErrandDetailsCard
-            description={booking.description}
-            specialInstructions={booking.special_instructions}
-            itemPhotos={booking.item_photos}
-            estimatedItemValue={booking.estimated_item_value}
+    <SafeAreaView className="flex-1 bg-background" edges={[]}>
+      <View style={{ flex: 1 }}>
+        {/* ── Map area (top half, fills remaining space) ────────── */}
+        <View style={{ flex: 1, position: 'relative' }}>
+          <RunnerActiveMap
+            variant="fill"
+            pickupLat={booking.pickup_lat}
+            pickupLng={booking.pickup_lng}
+            dropoffLat={booking.dropoff_lat}
+            dropoffLng={booking.dropoff_lng}
+            inPickupPhase={inPickupPhase}
+            singleLocation={isSingleLocation}
+            etaMinutes={runnerEta.minutes}
           />
-        </View>
 
-        {/* Payout */}
-        <View className="px-5 mb-4">
-          <Card className="p-3 flex-row items-center justify-between">
-            <Text className="text-sm font-montserrat text-textSecondary">Payout</Text>
-            <Text className="text-lg font-montserrat-bold text-primary">
-              {formatCurrency(booking.runner_payout ?? booking.total_amount)}
-            </Text>
-          </Card>
-        </View>
-
-        {/* Shopping Budget — pre-authorized cap the runner must respect.
-            Shown prominently so the runner knows the spend ceiling before
-            buying anything. Customer reconciles after picked_up. */}
-        {isShoppingErrand && booking.shopping_budget != null && (
-          <View className="px-5 mb-4">
-            <Card className="p-3 bg-amber-50 border border-amber-200">
-              <View className="flex-row items-center gap-2 mb-1">
-                <ShoppingBag size={16} color="#B45309" />
-                <Text className="text-xs font-montserrat-bold text-amber-800">
-                  Customer Budget (Max)
-                </Text>
-              </View>
-              <Text className="text-xl font-montserrat-bold text-amber-900">
-                {formatCurrency(booking.shopping_budget)}
-              </Text>
-              <Text className="text-[11px] font-montserrat text-amber-700 mt-1">
-                Do not exceed this amount. Capture the receipt at pickup—the customer pays the actual cost.
-              </Text>
-            </Card>
-          </View>
-        )}
-
-        {/* PIN Verification (Transportation only) */}
-        {isTransportation && booking.status === 'arrived_at_pickup' && !pinVerified && (
-          <View className="px-5 mb-4">
-            <Card className="p-4">
-              <Text className="text-sm font-montserrat-bold text-textPrimary mb-2">
-                PIN Verification
-              </Text>
-              <Text className="text-xs font-montserrat text-textSecondary mb-3">
-                Ask the passenger to share their 4-digit ride PIN.
-              </Text>
-              <View className="flex-row items-center gap-3">
-                <TextInput
-                  className="flex-1 bg-surface border border-divider rounded-xl px-4 py-3 text-center text-xl font-montserrat-bold text-textPrimary tracking-[12px]"
-                  value={pinInput}
-                  onChangeText={(t) => setPinInput(t.replace(/\D/g, '').slice(0, 4))}
-                  keyboardType="number-pad"
-                  maxLength={4}
-                  placeholder="• • • •"
-                  placeholderTextColor="#94A3B8"
-                />
-                <Button
-                  title="Verify"
-                  onPress={handleVerifyPin}
-                  disabled={pinInput.length !== 4}
-                  size="sm"
+          {/* Floating top bar */}
+          <SafeAreaView
+            edges={['top']}
+            pointerEvents="box-none"
+            style={{ position: 'absolute', top: 0, left: 0, right: 0 }}
+          >
+            <View
+              className="flex-row items-center justify-between px-4 py-2"
+              pointerEvents="box-none"
+            >
+              <View className="w-11 h-11 rounded-full bg-white items-center justify-center shadow-md">
+                <BackButton
+                  fallbackHref="/(runner)/(tabs)"
+                  accessibilityHint={isErrandActive ? 'Confirms before leaving the active errand' : undefined}
+                  onPress={() => {
+                    const goBack = () =>
+                      router.canGoBack() ? router.back() : router.replace('/(runner)/(tabs)');
+                    if (isErrandActive) confirmLeaveErrand(goBack);
+                    else goBack();
+                  }}
                 />
               </View>
-            </Card>
-          </View>
-        )}
-
-        {pinVerified && isTransportation && (
-          <View className="px-5 mb-2">
-            <View className="flex-row items-center gap-2 bg-green-50 p-3 rounded-xl">
-              <CheckCircle size={16} color="#22C55E" />
-              <Text className="text-xs font-montserrat-bold text-green-700">
-                PIN Verified — Ready to start ride
-              </Text>
-            </View>
-          </View>
-        )}
-
-        {/* Status Timeline — honors the per-type flow so we don't show
-            "Drop-off" stages on a queue or bills-payment job. */}
-        <View className="px-5 mb-4">
-          <Text className="text-sm font-montserrat-bold text-textSecondary mb-3">
-            Status Timeline
-          </Text>
-          {timelineSteps.map((step, idx) => {
-            const isCompleted = idx < currentStatusIdx;
-            const isCurrent = idx === currentStatusIdx;
-            const isPending = idx > currentStatusIdx;
-
-            return (
-              <View key={step} className="flex-row items-start gap-3 mb-2">
-                <View className="items-center" style={{ width: 20 }}>
-                  {isCompleted ? (
-                    <CheckCircle size={18} color="#22C55E" />
-                  ) : isCurrent ? (
-                    <View className="w-[18px] h-[18px] rounded-full bg-primary items-center justify-center">
-                      <View className="w-2 h-2 rounded-full bg-white" />
-                    </View>
-                  ) : (
-                    <Circle size={18} color="#94A3B8" />
-                  )}
-                  {idx < timelineSteps.length - 1 && (
-                    <View
-                      className={`w-0.5 h-4 mt-0.5 ${
-                        isCompleted ? 'bg-success' : 'bg-divider'
-                      }`}
-                    />
-                  )}
-                </View>
-                <Text
-                  className={`text-sm font-montserrat ${
-                    isCurrent
-                      ? 'text-primary font-montserrat-bold'
-                      : isCompleted
-                      ? 'text-textPrimary'
-                      : 'text-gray-400'
-                  }`}
-                >
-                  {STATUS_LABELS[step] ?? step}
-                </Text>
-              </View>
-            );
-          })}
-        </View>
-
-        {/* Customer Info */}
-        <View className="px-5 mb-4">
-          <Card className="p-4">
-            <View className="flex-row items-center gap-3 mb-3">
-              <Avatar name={customerName} size="md" />
-              <View className="flex-1">
+              <View className="bg-white px-4 py-2 rounded-full shadow-md">
                 <Text className="text-sm font-montserrat-bold text-textPrimary">
-                  {customerName}
+                  {isTransportation ? 'Passenger Ride' : 'Active Errand'}
                 </Text>
-                {customerPhone && (
-                  <Text className="text-xs font-montserrat text-textSecondary mt-0.5">
-                    {customerPhone}
+              </View>
+              <Pressable
+                onPress={() => router.push(`/(runner)/chat/${booking.id}` as any)}
+                className="w-11 h-11 rounded-full bg-white items-center justify-center shadow-md"
+                accessibilityRole="button"
+                accessibilityLabel="Open chat with customer"
+              >
+                <MessageCircle size={20} color="#0F172A" />
+                {unreadForBooking > 0 && (
+                  <View className="absolute -top-0.5 -right-0.5 min-w-[16px] h-[16px] px-1 bg-danger rounded-full items-center justify-center border-[1.5px] border-white">
+                    <Text className="text-[9px] text-white font-montserrat-bold leading-[12px]">
+                      {unreadForBooking > 9 ? '9+' : String(unreadForBooking)}
+                    </Text>
+                  </View>
+                )}
+              </Pressable>
+            </View>
+          </SafeAreaView>
+
+          {/* No external Navigate FAB — the in-app route line + ETA on
+              the map and the in-system Status Action button below ARE
+              the navigation. Tapping out to Google/Apple Maps would
+              hand the runner off to a third-party app that can’t
+              update booking status, location, or notify the customer. */}
+        </View>
+
+        {/* ── Bottom sheet (fixed slice with proper flex column) ── */}
+        <KeyboardAvoidingView
+          behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+          keyboardVerticalOffset={0}
+        >
+          <View
+            className="bg-white rounded-t-3xl"
+            style={{
+              height: SHEET_HEIGHT,
+              shadowColor: '#000',
+              shadowOpacity: 0.1,
+              shadowRadius: 12,
+              shadowOffset: { width: 0, height: -2 },
+              elevation: 12,
+            }}
+          >
+            {/* Drag handle */}
+            <View className="items-center pt-2 pb-1">
+              <View className="w-10 h-1 rounded-full bg-gray-300" />
+            </View>
+
+            {/* Header line \u2014 always visible */}
+            <View className="px-5 pb-2">
+              <View className="flex-row items-center justify-between">
+                <View className="flex-1 min-w-0">
+                  <Text className="text-[10px] font-montserrat-bold text-textTertiary uppercase tracking-wider">
+                    {inPickupPhase ? 'Heading to' : 'Delivering to'}
                   </Text>
+                  <Text className="text-sm font-montserrat-bold text-textPrimary mt-0.5" numberOfLines={1}>
+                    {inPickupPhase
+                      ? booking.pickup_address ?? errandRule.pickupLabel
+                      : booking.dropoff_address ?? errandRule.dropoffLabel}
+                  </Text>
+                </View>
+                {runnerEta.minutes != null && (
+                  <View className="ml-3 bg-primaryLight px-3 py-1.5 rounded-full">
+                    <Text className="text-xs font-montserrat-bold text-primary">
+                      {Math.max(1, Math.round(runnerEta.minutes))} min
+                    </Text>
+                  </View>
                 )}
               </View>
+              <Text className="text-[11px] font-montserrat text-textSecondary mt-1">
+                Status: {STATUS_LABELS[booking.status] ?? booking.status}
+              </Text>
             </View>
-            <View className="flex-row gap-3">
-              <Pressable
-                className={`flex-1 flex-row items-center justify-center gap-2 rounded-xl py-2 ${
-                  customerPhone ? 'bg-primaryLight' : 'bg-gray-100'
-                }`}
-                onPress={handleCallCustomer}
-                disabled={!customerPhone}
-              >
-                <Phone size={16} color={customerPhone ? '#2563EB' : '#94A3B8'} />
-                <Text
-                  className={`text-xs font-montserrat-bold ${
-                    customerPhone ? 'text-primary' : 'text-textTertiary'
-                  }`}
-                >
-                  Call
+
+            {/* Scrollable details \u2014 explicit flex:1 so it actually grows
+                inside the fixed-height sheet and the sticky button below
+                stays visible. */}
+            <ScrollView
+              style={{ flex: 1 }}
+              showsVerticalScrollIndicator={false}
+              contentContainerStyle={{ paddingHorizontal: 20, paddingBottom: 12 }}
+              keyboardShouldPersistTaps="handled"
+            >
+              {/* Customer Info */}
+              <Card className="p-4 mb-3">
+                <View className="flex-row items-center gap-3 mb-3">
+                  <Avatar name={customerName} size="md" />
+                  <View className="flex-1">
+                    <Text className="text-sm font-montserrat-bold text-textPrimary">
+                      {customerName}
+                    </Text>
+                    {customerPhone && (
+                      <Text className="text-xs font-montserrat text-textSecondary mt-0.5">
+                        {customerPhone}
+                      </Text>
+                    )}
+                  </View>
+                </View>
+                <View className="flex-row gap-3">
+                  <Pressable
+                    className={`flex-1 flex-row items-center justify-center gap-2 rounded-xl py-2 ${
+                      customerPhone ? 'bg-primaryLight' : 'bg-gray-100'
+                    }`}
+                    onPress={handleCallCustomer}
+                    disabled={!customerPhone}
+                  >
+                    <Phone size={16} color={customerPhone ? '#2563EB' : '#94A3B8'} />
+                    <Text
+                      className={`text-xs font-montserrat-bold ${
+                        customerPhone ? 'text-primary' : 'text-textTertiary'
+                      }`}
+                    >
+                      Call
+                    </Text>
+                  </Pressable>
+                  <Pressable
+                    className="flex-1 flex-row items-center justify-center gap-2 bg-primaryLight rounded-xl py-2"
+                    onPress={() => router.push(`/(runner)/chat/${booking.id}` as any)}
+                  >
+                    <MessageCircle size={16} color="#2563EB" />
+                    <Text className="text-xs font-montserrat-bold text-primary">Chat</Text>
+                  </Pressable>
+                </View>
+                {!isReadOnly && (
+                  <Pressable
+                    className={`mt-3 flex-row items-center justify-center gap-2 rounded-xl py-2.5 border ${
+                      sosActive ? 'bg-danger border-danger' : 'bg-white border-danger'
+                    }`}
+                    onPress={() => !sosActive && setShowSOSConfirm(true)}
+                    disabled={sosActive || sosLoading}
+                  >
+                    <ShieldAlert size={16} color={sosActive ? '#FFFFFF' : '#EF4444'} />
+                    <Text
+                      className={`text-xs font-montserrat-bold ${
+                        sosActive ? 'text-white' : 'text-danger'
+                      }`}
+                    >
+                      {sosActive ? 'SOS Active — help notified' : 'Emergency SOS'}
+                    </Text>
+                  </Pressable>
+                )}
+              </Card>
+
+              {/* PIN Verification (Transportation only) */}
+              {isTransportation && booking.status === 'arrived_at_pickup' && !pinVerified && (
+                <Card className="p-4 mb-3">
+                  <Text className="text-sm font-montserrat-bold text-textPrimary mb-2">
+                    PIN Verification
+                  </Text>
+                  <Text className="text-xs font-montserrat text-textSecondary mb-3">
+                    Ask the passenger to share their 4-digit ride PIN.
+                  </Text>
+                  <View className="flex-row items-center gap-3">
+                    <TextInput
+                      className="flex-1 bg-surface border border-divider rounded-xl px-4 py-3 text-center text-xl font-montserrat-bold text-textPrimary tracking-[12px]"
+                      value={pinInput}
+                      onChangeText={(t) => setPinInput(t.replace(/\D/g, '').slice(0, 4))}
+                      keyboardType="number-pad"
+                      maxLength={4}
+                      placeholder="• • • •"
+                      placeholderTextColor="#94A3B8"
+                    />
+                    <Button
+                      title="Verify"
+                      onPress={handleVerifyPin}
+                      disabled={pinInput.length !== 4}
+                      size="sm"
+                    />
+                  </View>
+                </Card>
+              )}
+              {pinVerified && isTransportation && (
+                <View className="mb-3 flex-row items-center gap-2 bg-green-50 p-3 rounded-xl">
+                  <CheckCircle size={16} color="#22C55E" />
+                  <Text className="text-xs font-montserrat-bold text-green-700">
+                    PIN Verified — Ready to start ride
+                  </Text>
+                </View>
+              )}
+
+              {/* Shopping Budget */}
+              {isShoppingErrand && booking.shopping_budget != null && (
+                <Card className="p-3 bg-amber-50 border border-amber-200 mb-3">
+                  <View className="flex-row items-center gap-2 mb-1">
+                    <ShoppingBag size={16} color="#B45309" />
+                    <Text className="text-xs font-montserrat-bold text-amber-800">
+                      Customer Budget (Max)
+                    </Text>
+                  </View>
+                  <Text className="text-xl font-montserrat-bold text-amber-900">
+                    {formatCurrency(booking.shopping_budget)}
+                  </Text>
+                  <Text className="text-[11px] font-montserrat text-amber-700 mt-1">
+                    Do not exceed this amount. Capture the receipt at pickup—the customer pays the actual cost.
+                  </Text>
+                </Card>
+              )}
+
+              {/* Errand Details */}
+              <View className="mb-3">
+                <ErrandDetailsCard
+                  description={booking.description}
+                  specialInstructions={booking.special_instructions}
+                  itemPhotos={booking.item_photos}
+                  estimatedItemValue={booking.estimated_item_value}
+                />
+              </View>
+
+              {/* Payout */}
+              <Card className="p-3 flex-row items-center justify-between mb-3">
+                <Text className="text-sm font-montserrat text-textSecondary">Payout</Text>
+                <Text className="text-lg font-montserrat-bold text-primary">
+                  {formatCurrency(booking.runner_payout ?? booking.total_amount)}
                 </Text>
-              </Pressable>
-              <Pressable
-                className="flex-1 flex-row items-center justify-center gap-2 bg-primaryLight rounded-xl py-2"
-                onPress={() => router.push(`/(runner)/chat/${booking.id}` as any)}
-              >
-                <View>
-                  <MessageCircle size={16} color="#2563EB" />
-                  {unreadForBooking > 0 && (
-                    <View className="absolute -top-1 -right-2 min-w-[14px] h-[14px] px-1 bg-danger rounded-full items-center justify-center border-[1.5px] border-white">
-                      <Text className="text-[8px] text-white font-montserrat-bold leading-[10px]">
-                        {unreadForBooking > 9 ? '9+' : String(unreadForBooking)}
+              </Card>
+
+              {/* Status Timeline */}
+              <View className="mb-2">
+                <Text className="text-xs font-montserrat-bold text-textSecondary mb-3 uppercase tracking-wider">
+                  Status Timeline
+                </Text>
+                {timelineSteps.map((step, idx) => {
+                  const isCompleted = idx < currentStatusIdx;
+                  const isCurrent = idx === currentStatusIdx;
+                  return (
+                    <View key={step} className="flex-row items-start gap-3 mb-2">
+                      <View className="items-center" style={{ width: 20 }}>
+                        {isCompleted ? (
+                          <CheckCircle size={18} color="#22C55E" />
+                        ) : isCurrent ? (
+                          <View className="w-[18px] h-[18px] rounded-full bg-primary items-center justify-center">
+                            <View className="w-2 h-2 rounded-full bg-white" />
+                          </View>
+                        ) : (
+                          <Circle size={18} color="#94A3B8" />
+                        )}
+                        {idx < timelineSteps.length - 1 && (
+                          <View
+                            className={`w-0.5 h-4 mt-0.5 ${
+                              isCompleted ? 'bg-success' : 'bg-divider'
+                            }`}
+                          />
+                        )}
+                      </View>
+                      <Text
+                        className={`text-sm font-montserrat ${
+                          isCurrent
+                            ? 'text-primary font-montserrat-bold'
+                            : isCompleted
+                            ? 'text-textPrimary'
+                            : 'text-gray-400'
+                        }`}
+                      >
+                        {STATUS_LABELS[step] ?? step}
                       </Text>
                     </View>
-                  )}
-                </View>
-                <Text className="text-xs font-montserrat-bold text-primary">Chat</Text>
-              </Pressable>
-            </View>
+                  );
+                })}
+              </View>
+            </ScrollView>
 
-            {/* Runner safety — emergency button. Stays subtle (red outline)
-                so it doesn't compete with the primary status CTA. Hidden
-                in read-only deep-link view (no live errand in progress). */}
-            {!isReadOnly && (
-              <Pressable
-                className={`mt-3 flex-row items-center justify-center gap-2 rounded-xl py-2.5 border ${
-                  sosActive
-                    ? 'bg-danger border-danger'
-                    : 'bg-white border-danger'
-                }`}
-                onPress={() => !sosActive && setShowSOSConfirm(true)}
-                disabled={sosActive || sosLoading}
-              >
-                <ShieldAlert size={16} color={sosActive ? '#FFFFFF' : '#EF4444'} />
-                <Text
-                  className={`text-xs font-montserrat-bold ${
-                    sosActive ? 'text-white' : 'text-danger'
-                  }`}
-                >
-                  {sosActive ? 'SOS Active — help notified' : 'Emergency SOS'}
+            {/* Sticky action button — always visible at bottom of sheet.
+                This is THE in-system action: tapping it calls
+                POST /runner/errand/{id}/status which advances the
+                booking, fires BookingStatusChanged, broadcasts via
+                Supabase Realtime, and is mirrored on the customer
+                tracking screen within ~5s. */}
+            {!isReadOnly ? (
+              <View className="px-5 pt-3 pb-3 border-t border-divider bg-white">
+                <Text className="text-[10px] font-montserrat-bold text-textTertiary uppercase tracking-wider mb-1.5 text-center">
+                  Tap to advance — customer is notified instantly
                 </Text>
-              </Pressable>
+                <StatusActionButton
+                  status={booking.status}
+                  errandSlug={errandSlug}
+                  isTransportation={isTransportation}
+                  pinVerified={pinVerified}
+                  onPress={handleStatusUpdate}
+                  loading={loading}
+                />
+              </View>
+            ) : (
+              <View className="px-5 pt-3 pb-3 border-t border-divider bg-white items-center">
+                <Text className="text-[11px] font-montserrat text-textTertiary uppercase tracking-wider mb-0.5">
+                  Read-only view
+                </Text>
+                <Text className="text-xs font-montserrat text-textSecondary">
+                  Status: {STATUS_LABELS[booking.status] ?? booking.status}
+                </Text>
+              </View>
             )}
-          </Card>
-        </View>
-      </ScrollView>
-      </KeyboardAvoidingView>
+          </View>
+          <SafeAreaView edges={['bottom']} style={{ backgroundColor: 'white' }} />
+        </KeyboardAvoidingView>
+      </View>
 
-      {/* Bottom Action Button */}
-      {!isReadOnly && (
-        <BottomActionBar>
-          <StatusActionButton
-            status={booking.status}
-            errandSlug={errandSlug}
-            isTransportation={isTransportation}
-            pinVerified={pinVerified}
-            onPress={handleStatusUpdate}
-            loading={loading}
-          />
-        </BottomActionBar>
-      )}
-      {isReadOnly && (
-        <BottomActionBar background="#FFFFFF" style={{ alignItems: 'center' }}>
-          <Text className="text-[11px] font-montserrat text-textTertiary uppercase tracking-wider mb-0.5">
-            Read-only view
-          </Text>
-          <Text className="text-xs font-montserrat text-textSecondary">
-            Status: {STATUS_LABELS[booking.status] ?? booking.status}
-          </Text>
-        </BottomActionBar>
-      )}
 
       {/* Photo Proof Modal */}
       {showPhotoProof && (

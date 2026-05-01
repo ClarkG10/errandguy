@@ -1,16 +1,24 @@
 import React from 'react';
-import { Pressable, Text, Linking, Platform } from 'react-native';
+import { Pressable, Linking, Platform } from 'react-native';
 import { Navigation } from 'lucide-react-native';
 
 interface NavigateButtonProps {
   lat: number;
   lng: number;
+  /** Kept for callers that pass it (deep-link label / a11y); not rendered as text. */
   label?: string;
+  /** Override absolute position. Defaults to bottom-right of the parent. */
+  style?: any;
 }
 
-export function NavigateButton({ lat, lng, label }: NavigateButtonProps) {
+/**
+ * Icon-only round FAB that opens turn-by-turn navigation in the
+ * platform's preferred maps app. Text label removed by design — it
+ * was duplicating the destination labels already shown elsewhere on
+ * the screen.
+ */
+export function NavigateButton({ lat, lng, label, style }: NavigateButtonProps) {
   const handlePress = () => {
-    const encodedLabel = encodeURIComponent(label ?? 'Destination');
     const url = Platform.select({
       ios: `maps:?daddr=${lat},${lng}&dirflg=d`,
       android: `google.navigation:q=${lat},${lng}`,
@@ -18,9 +26,8 @@ export function NavigateButton({ lat, lng, label }: NavigateButtonProps) {
 
     if (url) {
       Linking.openURL(url).catch(() => {
-        // Fallback to Google Maps web
         Linking.openURL(
-          `https://www.google.com/maps/dir/?api=1&destination=${lat},${lng}`
+          `https://www.google.com/maps/dir/?api=1&destination=${lat},${lng}`,
         );
       });
     }
@@ -29,10 +36,13 @@ export function NavigateButton({ lat, lng, label }: NavigateButtonProps) {
   return (
     <Pressable
       onPress={handlePress}
-      className="absolute bottom-4 right-4 bg-primary rounded-full px-4 py-3 flex-row items-center gap-2 shadow-md"
+      accessibilityRole="button"
+      accessibilityLabel={label ? `Navigate to ${label}` : 'Open navigation'}
+      hitSlop={8}
+      style={style}
+      className="w-12 h-12 rounded-full bg-primary items-center justify-center shadow-md"
     >
-      <Navigation size={18} color="#FFFFFF" />
-      <Text className="text-sm font-montserrat-bold text-white">Navigate</Text>
+      <Navigation size={20} color="#FFFFFF" />
     </Pressable>
   );
 }

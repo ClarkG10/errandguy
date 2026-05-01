@@ -30,10 +30,22 @@ function approxDistanceMeters(a: Point, b: Point): number {
 /**
  * Round a coordinate to ~111m precision so the route key clusters
  * sub-block movements into the same Mapbox call. Without this the
- * runner's GPS jitter would re-hit Directions every second.
+ * runner's GPS jitter would re-hit Directions every second. Defensive
+ * against string inputs (Postgres `numeric` columns serialise as
+ * strings unless explicitly cast).
  */
-function snap(n: number): string {
-  return n.toFixed(3);
+function snap(n: unknown): string {
+  const v = typeof n === 'number' ? n : Number(n);
+  if (!Number.isFinite(v)) return 'NaN';
+  return v.toFixed(3);
+}
+
+function coercePoint(p: Point | null | undefined): Point | null {
+  if (!p) return null;
+  const lat = typeof p.lat === 'number' ? p.lat : Number(p.lat);
+  const lng = typeof p.lng === 'number' ? p.lng : Number(p.lng);
+  if (!Number.isFinite(lat) || !Number.isFinite(lng)) return null;
+  return { lat, lng };
 }
 
 /**
@@ -59,20 +71,30 @@ export function useEta(
   const [minutes, setMinutes] = useState<number | null>(null);
   const [refreshing, setRefreshing] = useState(false);
 
+  // Defensive coercion: callers occasionally pass `booking.pickup_lat`
+  // / `booking.pickup_lng` straight through, which Laravel serialises
+  // from a Postgres `numeric` column as a string. Normalise once here
+  // so every downstream consumer sees a finite Point or null.
+  const safeOrigin = useMemo(() => coercePoint(origin), [origin?.lat, origin?.lng]);
+  const safeDestination = useMemo(
+    () => coercePoint(destination),
+    [destination?.lat, destination?.lng],
+  );
+
   const distanceMeters = useMemo(() => {
-    if (!origin || !destination) return null;
-    return approxDistanceMeters(origin, destination);
-  }, [origin?.lat, origin?.lng, destination?.lat, destination?.lng]);
+    if (!safeOrigin || !safeDestination) return null;
+    return approxDistanceMeters(safeOrigin, safeDestination);
+  }, [safeOrigin, safeDestination]);
 
   // Snapped origin key drives refetch — destination is fixed per call site.
-  const originKey = origin ? `${snap(origin.lat)},${snap(origin.lng)}` : '';
-  const destKey = destination
-    ? `${snap(destination.lat)},${snap(destination.lng)}`
+  const originKey = safeOrigin ? `${snap(safeOrigin.lat)},${snap(safeOrigin.lng)}` : '';
+  const destKey = safeDestination
+    ? `${snap(safeDestination.lat)},${snap(safeDestination.lng)}`
     : '';
   const lastFetchedKeyRef = useRef<string>('');
 
   useEffect(() => {
-    if (!origin || !destination) {
+    if (!safeOrigin || !safeDestination) {
       setMinutes(null);
       return;
     }
@@ -84,8 +106,8 @@ export function useEta(
     setRefreshing(true);
     routeService
       .getRoute(
-        { lng: origin.lng, lat: origin.lat },
-        { lng: destination.lng, lat: destination.lat },
+        { lng: safeOrigin.lng, lat: safeOrigin.lat },
+        { lng: safeDestination.lng, lat: safeDestination.lat },
         profile,
       )
       .then((res) => {

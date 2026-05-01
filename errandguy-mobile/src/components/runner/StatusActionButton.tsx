@@ -19,13 +19,20 @@ interface StatusActionButtonProps {
 /**
  * Returns the next status the runner should advance to, honoring the
  * per-errand-type flow (e.g. queue/bills_payment skip the dropoff stages).
+ *
+ * 'matched' is treated as 'accepted' for advancement purposes — the
+ * server flips matched→accepted on POST /accept, but realtime/poll lag
+ * can leave the local store on 'matched' for a beat. Without this
+ * fallback the next-status lookup returns null and the runner is
+ * stuck with no working button.
  */
 export function getNextStatus(
   current: string,
   errandSlug?: string | null,
 ): string | null {
   const flow = getErrandTypeRule(errandSlug).statusFlow;
-  const idx = flow.indexOf(current as BookingStatusKey);
+  const effective = current === 'matched' ? 'accepted' : current;
+  const idx = flow.indexOf(effective as BookingStatusKey);
   if (idx === -1 || idx >= flow.length - 1) return null;
   return flow[idx + 1];
 }
@@ -39,7 +46,11 @@ export function StatusActionButton({
   loading,
 }: StatusActionButtonProps) {
   const rule = getErrandTypeRule(errandSlug);
-  const label = rule.statusActions[status as BookingStatusKey];
+  // Treat 'matched' as 'accepted' for the action label so the runner
+  // sees the same "Head to pickup" CTA even if the optimistic store
+  // update from acceptErrand hasn't reached this screen yet.
+  const labelKey = (status === 'matched' ? 'accepted' : status) as BookingStatusKey;
+  const label = rule.statusActions[labelKey];
 
   if (!label) return null;
 

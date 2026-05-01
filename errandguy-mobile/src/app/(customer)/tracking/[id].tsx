@@ -180,18 +180,29 @@ export default function TrackingScreen() {
   useForegroundInterval(refreshUnread, 30000);
 
   // Polling fallback for the runner's live position. Supabase Realtime
-  // is the primary path (useRunnerTracking) but a silent websocket
-  // disconnect would otherwise freeze the runner pin on the customer's
-  // map. Re-fetching /track every 10s when realtime is reportedly down
-  // keeps the dot moving in the worst case. Pause when the realtime
-  // channel is healthy to avoid wasting bandwidth.
+  // is the primary path (useRunnerTracking) but in production we have
+  // observed cases where the channel reports SUBSCRIBED yet never
+  // delivers payloads (RLS blocks anon SELECT, table not in the
+  // realtime publication, free-tier websocket eviction, etc.). To
+  // match Grab's "the pin always moves" feel we poll unconditionally
+  // every 5s while a runner is assigned. The runner-side update is
+  // already throttled to 1/5s so this exactly mirrors the maximum
+  // server emit rate without piling on extra cost.
+  //
+  // The /track response also carries the full booking, so we use the
+  // same poll to reconcile status when the realtime channel for
+  // booking updates drops too. Without this, runner-side advances
+  // (heading_to_pickup → arrived_at_pickup → picked_up …) silently
+  // failed to render on the customer screen until the customer
+  // pull-to-refreshed.
   useForegroundInterval(
     () => {
       if (!id || !booking?.runner_id) return;
       bookingService
         .trackBooking(id)
         .then((res) => {
-          const loc = res.data?.data?.runner_location;
+          const data = res.data?.data;
+          const loc = data?.runner_location;
           if (loc?.lat != null && loc?.lng != null) {
             setRunnerLocation({
               id: 'poll',
@@ -205,12 +216,20 @@ export default function TrackingScreen() {
               created_at: loc.updated_at ?? new Date().toISOString(),
             });
           }
+          // Reconcile booking status from the poll. Pushing into the
+          // global store routes through the same realtime-driven
+          // useEffect above (`activeBooking` watcher), which fires the
+          // status-change toasts + triggers the status-log refresh.
+          const fresh = data?.booking;
+          if (fresh && fresh.status !== booking.status) {
+            setActiveBooking(fresh);
+          }
         })
         .catch(() => {});
     },
-    10_000,
-    !!id && !!booking?.runner_id && !isConnected,
-    false,
+    5_000,
+    !!id && !!booking?.runner_id,
+    true,
   );
 
   // Phase-aware route target. While the runner is heading to the
@@ -363,10 +382,42 @@ export default function TrackingScreen() {
     // Only refresh status logs when the status actually changed — otherwise
     // every minor field update on the booking row would refetch /track.
     if (activeBooking.status !== lastSyncedStatusRef.current) {
+      const prev = lastSyncedStatusRef.current;
       lastSyncedStatusRef.current = activeBooking.status;
       bookingService.trackBooking(id).then((trackRes) => {
         setStatusLogs(trackRes.data.data?.status_logs ?? []);
       }).catch(() => {});
+
+      // User-visible confirmation that something happened. Without this
+      // the customer has no idea the runner accepted unless they happen
+      // to be staring at the timeline pill. Push notifications cover
+      // backgrounded users; this covers the foreground case.
+      if (prev != null) {
+        const runnerName = activeBooking.runner?.full_name ?? 'Your runner';
+        switch (activeBooking.status) {
+          case 'matched':
+            toast.success(`${runnerName} was matched to your errand`);
+            break;
+          case 'accepted':
+            toast.success(`${runnerName} accepted your errand`);
+            break;
+          case 'heading_to_pickup':
+            toast.info(`${runnerName} is on the way to pickup`);
+            break;
+          case 'arrived_at_pickup':
+            toast.info(`${runnerName} arrived at pickup`);
+            break;
+          case 'picked_up':
+          case 'in_transit':
+            toast.info(`${runnerName} is heading to dropoff`);
+            break;
+          case 'arrived_at_dropoff':
+            toast.info(`${runnerName} arrived at dropoff`);
+            break;
+          default:
+            break;
+        }
+      }
     }
     if (activeBooking.status === 'completed') {
       router.replace(`/(customer)/rate/${id}`);
@@ -388,9 +439,10 @@ export default function TrackingScreen() {
   // Performance note: runnerLocation can update every second from the
   // realtime channel. Recomputing `bounds` on every tick re-fires
   // Mapbox.Camera's fit-to-bounds animation, which both burns frame time
-  // and creates a "jittery" zoom on every GPS sample. We only re-fit
-  // when the runner has moved meaningfully (>120m) OR enough time has
-  // passed (>5s), whichever comes first.
+  // and creates a "jittery" zoom on every GPS sample. We re-fit when
+  // the runner has moved >40m OR ≥3s since the last fit, whichever
+  // comes first — tight enough that the pin visibly slides on every
+  // poll tick (5s server throttle), loose enough not to thrash the GPU.
   const lastFitRef = useRef<{ ts: number; lat: number; lng: number } | null>(null);
   const [stableRunnerPoint, setStableRunnerPoint] = useState<{ lat: number; lng: number } | null>(null);
 
@@ -415,7 +467,7 @@ export default function TrackingScreen() {
     const movedMeters = Math.sqrt(dLat * dLat + dLng * dLng);
     const elapsedMs = now - last.ts;
 
-    if (movedMeters > 120 || elapsedMs > 5000) {
+    if (movedMeters > 40 || elapsedMs > 3000) {
       lastFitRef.current = { ts: now, lat, lng };
       setStableRunnerPoint({ lat, lng });
     }

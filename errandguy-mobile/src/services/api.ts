@@ -92,10 +92,23 @@ api.interceptors.response.use(
     apiActivity.done();
     if (__DEV__) {
       if (error.response) {
-        console.error(
-          `❌ ${error.response.status} ${error.config?.method?.toUpperCase()} ${error.config?.url}`,
-          JSON.stringify(error.response.data).slice(0, 500),
-        );
+        // Silence expected 429s on the runner location endpoint. The
+        // server throttles GPS pushes to 1/5s per runner; the mobile
+        // GPS watcher already debounces to match, but a transient
+        // burst (mode change, app foreground, multiple watchers
+        // resuming together) can briefly outpace the throttle. These
+        // are NOT errors \u2014 they are the throttle working as designed
+        // \u2014 and logging them as red ERROR makes real failures hide
+        // in noise.
+        const url: string = error.config?.url ?? '';
+        const isExpectedThrottle =
+          error.response.status === 429 && url.includes('/runner/location');
+        if (!isExpectedThrottle) {
+          console.error(
+            `❌ ${error.response.status} ${error.config?.method?.toUpperCase()} ${error.config?.url}`,
+            JSON.stringify(error.response.data).slice(0, 500),
+          );
+        }
       } else {
         console.error(`❌ NETWORK ERROR ${error.config?.url}`, error.message);
       }

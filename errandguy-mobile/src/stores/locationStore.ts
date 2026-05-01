@@ -54,7 +54,11 @@ export const useLocationStore = create<LocationState>((set, get) => ({
       {
         accuracy: Location.Accuracy.High,
         distanceInterval: 10,
-        timeInterval: 5000,
+        // Server throttles /runner/location to 1/5s. Watching at exactly
+        // 5000ms races the throttle and produces sporadic 429s on every
+        // 6th-or-so tick. 6000ms gives a 1s safety margin and matches
+        // what the customer-side polling fallback expects to see.
+        timeInterval: 6000,
       },
       (location) => {
         // Drop low-confidence fixes (urban canyons, indoor wifi-only)

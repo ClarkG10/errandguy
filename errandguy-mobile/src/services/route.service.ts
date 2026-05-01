@@ -15,9 +15,22 @@ export interface RouteResult {
  * Round a coordinate to ~11m precision so cache keys cluster nearby
  * pickup/dropoff pins. Two requests for "same intersection ± 5m" share
  * one cache hit — Mapbox bills per request, so this matters.
+ *
+ * Defensive against non-number inputs: callers occasionally hand us
+ * Postgres `numeric` columns serialised as strings (`"14.5995"`) or
+ * undefined fields when a booking has no dropoff. We coerce + validate
+ * here so a single dirty caller doesn't crash every map screen with
+ * `n.toFixed is not a function`.
  */
-function quantize(n: number): string {
-  return n.toFixed(4);
+function quantize(n: unknown): string {
+  const v = typeof n === 'number' ? n : Number(n);
+  if (!Number.isFinite(v)) return 'NaN';
+  return v.toFixed(4);
+}
+
+function isFiniteCoord(n: unknown): n is number {
+  const v = typeof n === 'number' ? n : Number(n);
+  return Number.isFinite(v);
 }
 
 function cacheKey(
@@ -59,8 +72,23 @@ export const routeService = {
     profile: DirectionsProfile = 'driving',
   ): Promise<RouteResult | null> {
     if (!MAPBOX_TOKEN) return null;
+    // Coerce + validate up front. Returning null is the documented
+    // contract for "no route available", and it stops a non-finite
+    // coordinate from blowing up cacheKey/quantize.
+    const fLng = Number(from?.lng);
+    const fLat = Number(from?.lat);
+    const tLng = Number(to?.lng);
+    const tLat = Number(to?.lat);
+    if (
+      !isFiniteCoord(fLng) ||
+      !isFiniteCoord(fLat) ||
+      !isFiniteCoord(tLng) ||
+      !isFiniteCoord(tLat)
+    ) {
+      return null;
+    }
 
-    const key = cacheKey(from.lng, from.lat, to.lng, to.lat, profile);
+    const key = cacheKey(fLng, fLat, tLng, tLat, profile);
     try {
       // Persist for 6 hours — road geometry doesn't meaningfully change
       // mid-day, and a stale ETA is corrected by realtime once the
@@ -99,7 +127,19 @@ export const routeService = {
     to: { lng: number; lat: number },
     profile: DirectionsProfile = 'driving',
   ): Promise<RouteResult | null> {
-    const key = cacheKey(from.lng, from.lat, to.lng, to.lat, profile);
+    const fLng = Number(from?.lng);
+    const fLat = Number(from?.lat);
+    const tLng = Number(to?.lng);
+    const tLat = Number(to?.lat);
+    if (
+      !isFiniteCoord(fLng) ||
+      !isFiniteCoord(fLat) ||
+      !isFiniteCoord(tLng) ||
+      !isFiniteCoord(tLat)
+    ) {
+      return null;
+    }
+    const key = cacheKey(fLng, fLat, tLng, tLat, profile);
     await CacheService.remove(key);
     return this.getRoute(from, to, profile);
   },

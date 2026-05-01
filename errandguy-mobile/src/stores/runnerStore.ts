@@ -44,7 +44,18 @@ export const useRunnerStore = create<RunnerState>((set, get) => ({
   clearIncomingRequest: () => set({ incomingRequest: null }),
 
   acceptErrand: (booking) =>
-    set({ currentErrand: booking, incomingRequest: null }),
+    // Force status forward to 'accepted' on accept. The booking object
+    // passed in usually came from the IncomingRequestModal where it was
+    // still 'matched' — storing it as-is would leave the runner on the
+    // errand screen with NO action button (statusActions has no entry
+    // for 'matched'). Server-side accept always flips to 'accepted', so
+    // mirror that optimistically. The next /runner/errand/current poll
+    // (or status push) will reconcile if the server returned something
+    // unexpected.
+    set({
+      currentErrand: { ...booking, status: 'accepted' as BookingStatus },
+      incomingRequest: null,
+    }),
 
   declineErrand: () => set({ incomingRequest: null }),
 

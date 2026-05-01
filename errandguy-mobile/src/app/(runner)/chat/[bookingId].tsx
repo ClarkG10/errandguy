@@ -212,7 +212,11 @@ export default function RunnerChatScreen() {
 
       <KeyboardAvoidingView
         className="flex-1"
-        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+        // See customer chat for rationale: 'undefined' on Android made
+        // the IME cover the input row + send button. 'height' lets the
+        // KAV resize the available area, and we paired this with
+        // softwareKeyboardLayoutMode: 'resize' in app.json.
+        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
         keyboardVerticalOffset={Platform.OS === 'ios' ? 90 : 0}
       >
         {/* Messages */}

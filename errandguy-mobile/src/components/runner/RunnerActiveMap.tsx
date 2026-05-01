@@ -18,6 +18,13 @@ interface RunnerActiveMapProps {
   singleLocation?: boolean;
   /** Approx ETA shown as overlay (minutes). Optional. */
   etaMinutes?: number | null;
+  /**
+   * 'card' (default) renders a rounded inset map with margin — used
+   * when embedded between other content. 'fill' renders edge-to-edge
+   * with no border/margin, intended for full-screen layouts where the
+   * map is the background and other UI is overlaid.
+   */
+  variant?: 'card' | 'fill';
 }
 
 /**
@@ -37,18 +44,40 @@ export function RunnerActiveMap({
   inPickupPhase,
   singleLocation = false,
   etaMinutes,
+  variant = 'card',
 }: RunnerActiveMapProps) {
   const currentLocation = useLocationStore((s) => s.currentLocation);
   const cameraRef = React.useRef<Mapbox.Camera>(null);
 
-  // Resolve the active destination based on phase.
-  const destLat = inPickupPhase ? pickupLat : dropoffLat;
-  const destLng = inPickupPhase ? pickupLng : dropoffLng;
+  // Postgres `numeric` columns serialise as strings ("14.5995") in
+  // Laravel API responses unless the model explicitly casts them. The
+  // native Mapbox bindings reject string-typed coordinates with a
+  // "Expected to decode Double but found a string" error and the map
+  // crashes. Coerce + validate every coord here, once, so every render
+  // path below sees a finite number or null.
+  const toFiniteNum = (v: unknown): number | null => {
+    if (v == null) return null;
+    const n = typeof v === 'number' ? v : Number(v);
+    return Number.isFinite(n) ? n : null;
+  };
+  const pLat = toFiniteNum(pickupLat);
+  const pLng = toFiniteNum(pickupLng);
+  const dLat = toFiniteNum(dropoffLat);
+  const dLng = toFiniteNum(dropoffLng);
+  const myLng = toFiniteNum(currentLocation?.lng);
+  const myLat = toFiniteNum(currentLocation?.lat);
 
-  const hasRunner = currentLocation != null;
+  // Resolve the active destination based on phase. If the runner is
+  // supposed to be in pickup phase but pickup is missing (shouldn't
+  // happen for any current errand type but we guard anyway), fall
+  // back to dropoff so the map still draws something useful.
+  const destLat = inPickupPhase ? (pLat ?? dLat) : (dLat ?? pLat);
+  const destLng = inPickupPhase ? (pLng ?? dLng) : (dLng ?? pLng);
+
+  const hasRunner = myLng != null && myLat != null;
   const hasDest = destLat != null && destLng != null;
-  const hasPickup = pickupLat != null && pickupLng != null;
-  const hasDropoff = dropoffLat != null && dropoffLng != null;
+  const hasPickup = pLat != null && pLng != null;
+  const hasDropoff = dLat != null && dLng != null;
 
   const [routeCoords, setRouteCoords] = useState<[number, number][]>([]);
 
@@ -56,17 +85,17 @@ export function RunnerActiveMap({
   // when the destination flips (pickup → dropoff) or when the runner
   // moves >300m from the previous fetch (cheap snap to grid).
   const runnerKey = useMemo(() => {
-    if (!currentLocation) return '';
+    if (!hasRunner) return '';
     // Round to ~3 decimals (~110m) so we don't refetch every GPS tick.
-    return `${currentLocation.lat.toFixed(3)},${currentLocation.lng.toFixed(3)}`;
-  }, [currentLocation]);
+    return `${myLat!.toFixed(3)},${myLng!.toFixed(3)}`;
+  }, [hasRunner, myLat, myLng]);
 
   useEffect(() => {
     if (!hasRunner || !hasDest) return;
     let cancelled = false;
     routeService
       .getRoute(
-        { lng: currentLocation!.lng, lat: currentLocation!.lat },
+        { lng: myLng!, lat: myLat! },
         { lng: destLng!, lat: destLat! },
       )
       .then((res) => {
@@ -76,7 +105,7 @@ export function RunnerActiveMap({
     return () => {
       cancelled = true;
     };
-    // currentLocation intentionally excluded — runnerKey covers it.
+    // myLng/myLat intentionally excluded — runnerKey covers it.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [runnerKey, destLat, destLng, hasRunner, hasDest]);
 
@@ -92,8 +121,8 @@ export function RunnerActiveMap({
   // Camera bounds covering both runner and active destination.
   const bounds = useMemo(() => {
     if (!hasRunner || !hasDest) return undefined;
-    const lngs = [currentLocation!.lng, destLng!];
-    const lats = [currentLocation!.lat, destLat!];
+    const lngs = [myLng!, destLng!];
+    const lats = [myLat!, destLat!];
     return {
       ne: [Math.max(...lngs), Math.max(...lats)] as [number, number],
       sw: [Math.min(...lngs), Math.min(...lats)] as [number, number],
@@ -102,13 +131,13 @@ export function RunnerActiveMap({
       paddingLeft: 50,
       paddingRight: 50,
     };
-  }, [hasRunner, hasDest, currentLocation, destLat, destLng]);
+  }, [hasRunner, hasDest, myLng, myLat, destLat, destLng]);
 
   const fallbackCenter = useMemo<[number, number]>(() => {
     if (hasDest) return [destLng!, destLat!];
-    if (hasRunner) return [currentLocation!.lng, currentLocation!.lat];
+    if (hasRunner) return [myLng!, myLat!];
     return [121.0, 14.6]; // Manila
-  }, [hasDest, hasRunner, currentLocation, destLat, destLng]);
+  }, [hasDest, hasRunner, myLng, myLat, destLat, destLng]);
 
   const recenter = () => {
     if (!cameraRef.current) return;
@@ -116,7 +145,7 @@ export function RunnerActiveMap({
       cameraRef.current.fitBounds(bounds.ne, bounds.sw, [50, 50, 70, 50], 600);
     } else if (hasRunner) {
       cameraRef.current.setCamera({
-        centerCoordinate: [currentLocation!.lng, currentLocation!.lat],
+        centerCoordinate: [myLng!, myLat!],
         zoomLevel: 15,
         animationDuration: 600,
       });
@@ -125,7 +154,13 @@ export function RunnerActiveMap({
 
   if (!hasPickup && !hasDropoff && !hasRunner) {
     return (
-      <View className="mx-5 h-48 bg-gray-100 rounded-2xl items-center justify-center mb-4">
+      <View
+        className={
+          variant === 'fill'
+            ? 'flex-1 bg-gray-100 items-center justify-center'
+            : 'mx-5 h-48 bg-gray-100 rounded-2xl items-center justify-center mb-4'
+        }
+      >
         <Navigation size={28} color="#94A3B8" />
         <Text className="text-xs font-montserrat text-textSecondary mt-2">
           Map unavailable
@@ -134,8 +169,13 @@ export function RunnerActiveMap({
     );
   }
 
+  const containerCls =
+    variant === 'fill'
+      ? 'flex-1'
+      : 'mx-5 h-56 rounded-2xl overflow-hidden mb-4 border border-divider';
+
   return (
-    <View className="mx-5 h-56 rounded-2xl overflow-hidden mb-4 border border-divider">
+    <View className={containerCls}>
       <Mapbox.MapView
         style={{ flex: 1 }}
         styleURL={MAP_STYLE_URL}
@@ -158,7 +198,7 @@ export function RunnerActiveMap({
         {hasPickup && (
           <Mapbox.MarkerView
             id="r-pickup"
-            coordinate={[pickupLng!, pickupLat!]}
+            coordinate={[pLng!, pLat!]}
             anchor={{ x: 0.5, y: 0.5 }}
             allowOverlap
           >
@@ -176,7 +216,7 @@ export function RunnerActiveMap({
         {hasDropoff && !singleLocation && (
           <Mapbox.MarkerView
             id="r-dropoff"
-            coordinate={[dropoffLng!, dropoffLat!]}
+            coordinate={[dLng!, dLat!]}
             anchor={{ x: 0.5, y: 0.5 }}
             allowOverlap
           >
@@ -194,7 +234,7 @@ export function RunnerActiveMap({
         {hasRunner && (
           <Mapbox.MarkerView
             id="r-self"
-            coordinate={[currentLocation!.lng, currentLocation!.lat]}
+            coordinate={[myLng!, myLat!]}
             anchor={{ x: 0.5, y: 0.5 }}
             allowOverlap
           >

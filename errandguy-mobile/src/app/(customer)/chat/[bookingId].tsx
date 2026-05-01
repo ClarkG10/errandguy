@@ -229,7 +229,14 @@ export default function ChatScreen() {
 
       <KeyboardAvoidingView
         className="flex-1"
-        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+        // 'padding' on iOS, 'height' on Android. Previously we passed
+        // `undefined` on Android which meant the IME would slide UP and
+        // the system gesture/IME bar would still cover the bottom row
+        // — user couldn't tap the send button or even the bottom of
+        // the text input. Combined with `softwareKeyboardLayoutMode:
+        // "resize"` in app.json (was 'pan'), the layout actually
+        // shrinks so the input stays visible above the keyboard.
+        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
         // The header above is ~56pt tall + the safe-area top inset. Without
         // an offset the input row hides BEHIND the keyboard on notched
         // iPhones because KAV measures from the screen edge, not from the

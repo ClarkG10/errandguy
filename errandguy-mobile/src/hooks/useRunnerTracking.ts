@@ -10,6 +10,15 @@ export function useRunnerTracking(bookingId: string | null) {
   useEffect(() => {
     if (!bookingId) return;
 
+    // Drop any stale channel registered under this name before opening
+    // a fresh one. See useChat / useSupabaseRealtime for full rationale
+    // — supabase.channel(name) returns the same singleton when one
+    // already exists, and adding listeners after subscribe() throws.
+    const stale = supabase
+      .getChannels()
+      .find((c) => c.topic === `realtime:tracking:${bookingId}`);
+    if (stale) supabase.removeChannel(stale);
+
     // Defensive: subscribe to BOTH INSERT and UPDATE on `runner_locations`.
     // Append-only writes on the runner side hit INSERT, but if the
     // backend ever switches to upserting the latest fix per booking

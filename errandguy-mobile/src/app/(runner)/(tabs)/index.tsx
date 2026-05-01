@@ -286,9 +286,20 @@ export default function RunnerHomeScreen() {
 
   const handleAcceptErrand = async () => {
     if (!incomingRequest) return;
+    const bookingId = incomingRequest.booking.id;
     try {
-      await runnerService.acceptErrand(incomingRequest.booking.id);
-      acceptErrand(incomingRequest.booking);
+      // Trust the server response — it returns the freshly-updated
+      // booking with status='accepted', accepted_at, runner_id, etc.
+      // Falling back to the stale modal payload would leave the runner
+      // looking at status='matched' with no action button.
+      const res = await runnerService.acceptErrand(bookingId);
+      const updated = (res?.data?.data ?? incomingRequest.booking) as Booking;
+      acceptErrand(updated);
+      // Push them straight onto the active errand screen so they see
+      // the route + “Head to pickup” CTA without an extra tap. Without
+      // this, the runner sat on the dashboard with the modal closed
+      // and no obvious next step.
+      router.push(`/(runner)/errand/${bookingId}` as any);
     } catch (err: any) {
       toast.error(err?.response?.data?.message ?? 'Failed to accept errand');
       clearIncomingRequest();

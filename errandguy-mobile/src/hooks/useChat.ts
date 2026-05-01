@@ -88,6 +88,17 @@ export function useChat(bookingId: string) {
   }, [bookingId, markRead]);
 
   useEffect(() => {
+    // Drop any stale channel registered under this name before opening
+    // a fresh one. supabase.channel(name) returns the same singleton
+    // when one already exists — if a previous mount hadn't been fully
+    // cleaned up yet (StrictMode double-effect, fast remount on route
+    // change, hot reload), the returned channel is already SUBSCRIBED
+    // and adding listeners after subscribe() throws.
+    const stale = supabase
+      .getChannels()
+      .find((c) => c.topic === `realtime:chat:${bookingId}`);
+    if (stale) supabase.removeChannel(stale);
+
     const channel = supabase
       .channel(`chat:${bookingId}`)
       .on(
@@ -106,6 +117,38 @@ export function useChat(bookingId: string) {
 
     return () => {
       supabase.removeChannel(channel);
+    };
+  }, [bookingId, addMessage]);
+
+  // Polling fallback for new messages. Realtime above is the primary
+  // path but it can drop silently (cellular handoff, RLS misconfig,
+  // table not in publication). Re-fetching the head every 6s while
+  // the screen is mounted means a dropped websocket adds at most ~6s
+  // of latency instead of stalling the conversation forever. We dedup
+  // by id and only `addMessage` for ids the store hasn't seen, so
+  // pagination state and the user's scroll position are untouched.
+  useEffect(() => {
+    if (!bookingId) return;
+    let cancelled = false;
+    const tick = async () => {
+      try {
+        const response = await chatService.getMessages(bookingId, { limit: 50 });
+        if (cancelled) return;
+        const fresh: Message[] = response.data?.data ?? [];
+        if (fresh.length === 0) return;
+        const existing = useChatStore.getState().messages[bookingId] ?? [];
+        const ids = new Set(existing.map((m) => m.id));
+        for (const m of fresh) {
+          if (!ids.has(m.id)) addMessage(bookingId, m);
+        }
+      } catch {
+        /* ignore — next tick will retry */
+      }
+    };
+    const id = setInterval(tick, 6_000);
+    return () => {
+      cancelled = true;
+      clearInterval(id);
     };
   }, [bookingId, addMessage]);
 
