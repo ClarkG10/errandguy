@@ -107,11 +107,13 @@ export default function ActiveErrandScreen() {
   const [pinVerified, setPinVerified] = useState(false);
   const [deliveryPhotoUrl, setDeliveryPhotoUrl] = useState<string | null>(null);
 
-  // Cache-first fetch fallback. The runner store only ever holds the
-  // *currently active* errand, so deep links from notifications (e.g.
-  // "payment for past errand released") or cold starts mid-shift would
-  // otherwise hit the empty-state. We fetch by id whenever the URL id
-  // doesn't match the in-store errand and use whichever is fresher.
+  // Always run the fetch in parallel \u2014 even when storeMatchesUrl is
+  // true. The store-backed copy can be stale (e.g. customer cancelled,
+  // status was advanced from the admin panel, another session moved
+  // the booking forward), and useQuery is stale-while-revalidate so a
+  // cached value is returned synchronously while the network refresh
+  // happens in the background. The cache is keyed by booking id so a
+  // returning runner sees their last known state instantly.
   const storeMatchesUrl = currentErrand?.id === id;
   const fetchedQ = useQuery<Booking | null>(
     ['runner', 'errand', 'byId', id ?? 'none'],
@@ -120,42 +122,66 @@ export default function ActiveErrandScreen() {
       const r = await runnerService.getErrand(id);
       return (r.data?.data ?? null) as Booking | null;
     },
-    { staleTime: 30_000, ttl: CacheTTL.SHORT, enabled: !!id && !storeMatchesUrl },
+    { staleTime: 15_000, ttl: CacheTTL.SHORT, enabled: !!id },
   );
 
-  const booking: Booking | null = storeMatchesUrl
-    ? currentErrand
-    : (fetchedQ.data ?? null);
-  // Mutations are only safe when this booking is the runner's *current*
-  // active job. Two paths put it there:
-  //  1) Runner accepted via the IncomingRequestModal \u2014 acceptErrand()
-  //     populated the store before navigation.
-  //  2) Runner deep-linked from a notification (cold start, app killed
-  //     mid-shift) \u2014 the store is empty but the fetched booking's
-  //     runner_id matches the logged-in user AND status is non-terminal.
-  //     In that case we self-claim into the store so the action button
-  //     renders. Without this, the runner is locked into read-only view
-  //     after every notification deep link.
+  // Prefer the *freshest* of the two sources rather than always
+  // store-first. The store-held copy can be older than what we just
+  // fetched (status changed elsewhere, payload trimmed at accept-time
+  // missing fields like statusLogs / errand_type, etc.).
+  const booking: Booking | null = (() => {
+    if (storeMatchesUrl && fetchedQ.data) {
+      // Both available \u2014 the fetched copy has full relations and the
+      // latest status, so prefer it. The store copy is kept in sync by
+      // the effect below.
+      return fetchedQ.data;
+    }
+    if (storeMatchesUrl) return currentErrand;
+    return fetchedQ.data ?? null;
+  })();
+
+  // Self-claim the booking into the runner store whenever this user is
+  // the assigned runner and the errand is still active. Covers both
+  // paths into this screen:
+  //  1) Accept via IncomingRequestModal (acceptErrand already populated
+  //     the store; this effect is a no-op).
+  //  2) Cold-start / notification deep-link (store is empty; this
+  //     effect promotes the fetched booking so other screens \u2014 home
+  //     dashboard, location store, chat \u2014 see it).
+  // Also handles the inverse: if the booking is no longer assigned to
+  // us (admin reassigned, runner removed), drop it from the store.
   const myUserId = useAuthStore((s) => s.user?.id ?? null);
   useEffect(() => {
-    if (storeMatchesUrl) return;
-    const fetched = fetchedQ.data;
-    if (!fetched || !myUserId) return;
-    if (fetched.runner_id !== myUserId) return;
-    if (['completed', 'cancelled', 'no_runner'].includes(fetched.status)) return;
-    useRunnerStore.setState({ currentErrand: fetched });
-  }, [storeMatchesUrl, fetchedQ.data, myUserId]);
+    const src = fetchedQ.data ?? (storeMatchesUrl ? currentErrand : null);
+    if (!src || !myUserId) return;
+    const isMine = src.runner_id === myUserId;
+    const isActive = !['completed', 'cancelled', 'no_runner'].includes(src.status);
+    if (isMine && isActive) {
+      // Only write when the cached store copy is missing or stale to
+      // avoid a setState loop.
+      const existing = useRunnerStore.getState().currentErrand;
+      if (!existing || existing.id !== src.id || existing.status !== src.status) {
+        useRunnerStore.setState({ currentErrand: src });
+      }
+    } else if (storeMatchesUrl) {
+      // It's still the same id but no longer mine / no longer active.
+      // Clear the store so the runner home doesn't keep promoting a
+      // stale active errand.
+      useRunnerStore.setState({ currentErrand: null });
+    }
+  }, [fetchedQ.data, storeMatchesUrl, currentErrand, myUserId]);
 
-  const isReadOnly =
-    !storeMatchesUrl &&
-    // If we just received a fetch result that proves this user is the
-    // assigned runner, treat as writable for this render \u2014 the effect
-    // above will also write it into the store on the next tick.
-    !(
-      myUserId &&
-      fetchedQ.data?.runner_id === myUserId &&
-      !['completed', 'cancelled', 'no_runner'].includes(fetchedQ.data?.status ?? '')
-    );
+  // Read-only ONLY if this booking is genuinely not the user's, or it's
+  // already terminal. Don't depend on the store \u2014 that introduces a
+  // race window where the action button briefly disappears between
+  // mount and the self-claim effect firing.
+  const isReadOnly = (() => {
+    if (!booking) return true;
+    if (['completed', 'cancelled', 'no_runner'].includes(booking.status)) return true;
+    if (booking.runner_id == null) return true; // unassigned (shouldn't happen on this screen)
+    if (myUserId && booking.runner_id !== myUserId) return true;
+    return false;
+  })();
 
   // Light status-sync poll. The errand screen is the runner's primary
   // workspace during a job; if the customer cancels, the admin force-
