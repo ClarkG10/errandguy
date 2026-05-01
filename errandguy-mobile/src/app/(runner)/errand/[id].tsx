@@ -107,14 +107,20 @@ export default function ActiveErrandScreen() {
   const [pinVerified, setPinVerified] = useState(false);
   const [deliveryPhotoUrl, setDeliveryPhotoUrl] = useState<string | null>(null);
 
-  // Always run the fetch in parallel \u2014 even when storeMatchesUrl is
-  // true. The store-backed copy can be stale (e.g. customer cancelled,
-  // status was advanced from the admin panel, another session moved
-  // the booking forward), and useQuery is stale-while-revalidate so a
-  // cached value is returned synchronously while the network refresh
-  // happens in the background. The cache is keyed by booking id so a
-  // returning runner sees their last known state instantly.
-  const storeMatchesUrl = currentErrand?.id === id;
+  // Single source of truth: the API. The runner-facing endpoint
+  // (RunnerErrandController@show) is scoped by `runnerBookings()` on
+  // the server, so a 200 response is itself proof of ownership \u2014 the
+  // backend will only return the booking if `runner_id === auth()->id`.
+  // Mobile-side identity comparisons are unnecessary (and were the
+  // source of a previous bug: the BookingResource didn't expose
+  // runner_id, so booking.runner_id was always undefined and every
+  // session got locked into read-only mode).
+  //
+  // useQuery is stale-while-revalidate against AsyncStorage, so a
+  // returning runner sees their last known state synchronously on
+  // mount while the network refresh happens in the background. The
+  // cache key is per-booking-id, and runnerService mutations call
+  // invalidateRunnerErrands() to bust it on every status update.
   const fetchedQ = useQuery<Booking | null>(
     ['runner', 'errand', 'byId', id ?? 'none'],
     async () => {
@@ -125,61 +131,39 @@ export default function ActiveErrandScreen() {
     { staleTime: 15_000, ttl: CacheTTL.SHORT, enabled: !!id },
   );
 
-  // Prefer the *freshest* of the two sources rather than always
-  // store-first. The store-held copy can be older than what we just
-  // fetched (status changed elsewhere, payload trimmed at accept-time
-  // missing fields like statusLogs / errand_type, etc.).
-  const booking: Booking | null = (() => {
-    if (storeMatchesUrl && fetchedQ.data) {
-      // Both available \u2014 the fetched copy has full relations and the
-      // latest status, so prefer it. The store copy is kept in sync by
-      // the effect below.
-      return fetchedQ.data;
-    }
-    if (storeMatchesUrl) return currentErrand;
-    return fetchedQ.data ?? null;
-  })();
+  // Prefer the freshest source. The store-held copy from accept-time
+  // can be missing relations (status_logs, errand_type) that the
+  // detail endpoint includes.
+  const storeMatchesUrl = currentErrand?.id === id;
+  const booking: Booking | null =
+    fetchedQ.data ?? (storeMatchesUrl ? currentErrand : null);
 
-  // Self-claim the booking into the runner store whenever this user is
-  // the assigned runner and the errand is still active. Covers both
-  // paths into this screen:
-  //  1) Accept via IncomingRequestModal (acceptErrand already populated
-  //     the store; this effect is a no-op).
-  //  2) Cold-start / notification deep-link (store is empty; this
-  //     effect promotes the fetched booking so other screens \u2014 home
-  //     dashboard, location store, chat \u2014 see it).
-  // Also handles the inverse: if the booking is no longer assigned to
-  // us (admin reassigned, runner removed), drop it from the store.
+  // Mirror the latest fetched booking into the runner store so the
+  // home dashboard, location store, and chat screen see the same
+  // status. Strictly a downstream sync \u2014 the source of truth is
+  // still the API. Avoids the previous "self-claim" race that
+  // briefly hid the action button between mount and effect.
   const myUserId = useAuthStore((s) => s.user?.id ?? null);
   useEffect(() => {
-    const src = fetchedQ.data ?? (storeMatchesUrl ? currentErrand : null);
-    if (!src || !myUserId) return;
-    const isMine = src.runner_id === myUserId;
-    const isActive = !['completed', 'cancelled', 'no_runner'].includes(src.status);
-    if (isMine && isActive) {
-      // Only write when the cached store copy is missing or stale to
-      // avoid a setState loop.
-      const existing = useRunnerStore.getState().currentErrand;
-      if (!existing || existing.id !== src.id || existing.status !== src.status) {
-        useRunnerStore.setState({ currentErrand: src });
+    const fresh = fetchedQ.data;
+    if (!fresh || !myUserId) return;
+    const isActive = !['completed', 'cancelled', 'no_runner'].includes(fresh.status);
+    const existing = useRunnerStore.getState().currentErrand;
+    if (isActive) {
+      if (!existing || existing.id !== fresh.id || existing.status !== fresh.status) {
+        useRunnerStore.setState({ currentErrand: fresh });
       }
-    } else if (storeMatchesUrl) {
-      // It's still the same id but no longer mine / no longer active.
-      // Clear the store so the runner home doesn't keep promoting a
-      // stale active errand.
+    } else if (existing?.id === fresh.id) {
       useRunnerStore.setState({ currentErrand: null });
     }
-  }, [fetchedQ.data, storeMatchesUrl, currentErrand, myUserId]);
+  }, [fetchedQ.data, myUserId]);
 
-  // Read-only ONLY if this booking is genuinely not the user's, or it's
-  // already terminal. Don't depend on the store \u2014 that introduces a
-  // race window where the action button briefly disappears between
-  // mount and the self-claim effect firing.
+  // Read-only is now a function of booking state alone, not identity:
+  // the API has already proved ownership by returning the booking.
+  // Locked when the booking is terminal or hasn't loaded yet.
   const isReadOnly = (() => {
     if (!booking) return true;
     if (['completed', 'cancelled', 'no_runner'].includes(booking.status)) return true;
-    if (booking.runner_id == null) return true; // unassigned (shouldn't happen on this screen)
-    if (myUserId && booking.runner_id !== myUserId) return true;
     return false;
   })();
 
@@ -511,11 +495,32 @@ export default function ActiveErrandScreen() {
             </View>
           </SafeAreaView>
 
-          {/* No external Navigate FAB — the in-app route line + ETA on
-              the map and the in-system Status Action button below ARE
-              the navigation. Tapping out to Google/Apple Maps would
-              hand the runner off to a third-party app that can’t
-              update booking status, location, or notify the customer. */}
+          {/* In-app Navigate FAB \u2014 opens the runner's full-screen
+              turn-by-turn navigation (course-up Mapbox view with a
+              maneuver banner). This is the in-system navigator: no
+              hand-off to Google/Apple Maps, so location pings and
+              status updates keep flowing to the backend the entire
+              time the runner is following directions. */}
+          {!isReadOnly && isErrandActive && (
+            <Pressable
+              onPress={() => router.push(`/(runner)/navigate/${booking.id}` as any)}
+              accessibilityRole="button"
+              accessibilityLabel="Open turn-by-turn navigation"
+              className="absolute right-4 bottom-4 px-4 h-12 rounded-full bg-primary flex-row items-center"
+              style={{
+                shadowColor: '#000',
+                shadowOpacity: 0.25,
+                shadowRadius: 10,
+                shadowOffset: { width: 0, height: 4 },
+                elevation: 8,
+              }}
+            >
+              <Navigation size={18} color="#FFFFFF" />
+              <Text className="text-white text-sm font-montserrat-bold ml-2">
+                Navigate
+              </Text>
+            </Pressable>
+          )}
         </View>
 
         {/* ── Bottom sheet (fixed slice with proper flex column) ── */}

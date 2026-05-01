@@ -143,4 +143,104 @@ export const routeService = {
     await CacheService.remove(key);
     return this.getRoute(from, to, profile);
   },
+
+  /**
+   * Navigation-grade fetch: returns the polyline + per-step turn-by-turn
+   * maneuvers. Used by the runner navigation screen to drive the
+   * "in 200 m, turn right onto …" banner.
+   *
+   * Not cached \u2014 the runner's origin moves continuously and stale
+   * steps would point at intersections they've already passed.
+   */
+  async getNavigationRoute(
+    from: { lng: number; lat: number },
+    to: { lng: number; lat: number },
+    profile: DirectionsProfile = 'driving',
+  ): Promise<NavigationRoute | null> {
+    if (!MAPBOX_TOKEN) return null;
+    const fLng = Number(from?.lng);
+    const fLat = Number(from?.lat);
+    const tLng = Number(to?.lng);
+    const tLat = Number(to?.lat);
+    if (
+      !isFiniteCoord(fLng) ||
+      !isFiniteCoord(fLat) ||
+      !isFiniteCoord(tLng) ||
+      !isFiniteCoord(tLat)
+    ) {
+      return null;
+    }
+    try {
+      // `steps=true` is required to get the maneuver list.
+      // `voice_instructions` & `banner_instructions` are noisy + bloat
+      // payload; we only need maneuver type + modifier + raw text.
+      // `annotations=duration,distance` lets us interpolate ETA per leg.
+      const url =
+        `https://api.mapbox.com/directions/v5/mapbox/${profile}` +
+        `/${fLng},${fLat};${tLng},${tLat}` +
+        `?geometries=geojson&overview=full&steps=true` +
+        `&annotations=duration,distance&access_token=${MAPBOX_TOKEN}`;
+      const res = await fetch(url);
+      if (!res.ok) return null;
+      const data = await res.json();
+      const route = data.routes?.[0];
+      const coords = route?.geometry?.coordinates;
+      if (!Array.isArray(coords) || coords.length === 0) return null;
+
+      const steps: NavigationStep[] = [];
+      for (const leg of route.legs ?? []) {
+        for (const s of leg.steps ?? []) {
+          const m = s.maneuver ?? {};
+          const loc = Array.isArray(m.location) ? m.location : [0, 0];
+          steps.push({
+            instruction: String(s.maneuver?.instruction ?? ''),
+            distanceMeters: Number(s.distance ?? 0),
+            durationSeconds: Number(s.duration ?? 0),
+            maneuverType: String(m.type ?? 'continue'),
+            maneuverModifier: m.modifier ? String(m.modifier) : null,
+            location: [Number(loc[0]), Number(loc[1])],
+            geometry: Array.isArray(s.geometry?.coordinates)
+              ? (s.geometry.coordinates as [number, number][])
+              : [],
+            // Mapbox provides bearing_after as the heading the user
+            // should be travelling on AFTER the maneuver \u2014 used to
+            // orient the turn arrow.
+            bearingAfter: typeof m.bearing_after === 'number' ? m.bearing_after : null,
+          });
+        }
+      }
+
+      return {
+        coordinates: coords as [number, number][],
+        distanceMeters: Number(route.distance ?? 0),
+        durationSeconds: Number(route.duration ?? 0),
+        steps,
+      };
+    } catch {
+      return null;
+    }
+  },
 };
+
+export interface NavigationStep {
+  /** Plain English instruction, e.g. "Turn right onto Quezon Ave". */
+  instruction: string;
+  /** Distance covered by this step in metres. */
+  distanceMeters: number;
+  /** Estimated time to traverse this step in seconds. */
+  durationSeconds: number;
+  /** Mapbox maneuver type ("turn", "merge", "arrive", \u2026). */
+  maneuverType: string;
+  /** Modifier ("left", "right", "slight left", \u2026) or null when n/a. */
+  maneuverModifier: string | null;
+  /** [lng, lat] point where the maneuver happens. */
+  location: [number, number];
+  /** Polyline geometry of just this step (for off-route detection). */
+  geometry: [number, number][];
+  /** Compass bearing AFTER the maneuver, 0\u2013359, or null. */
+  bearingAfter: number | null;
+}
+
+export interface NavigationRoute extends RouteResult {
+  steps: NavigationStep[];
+}

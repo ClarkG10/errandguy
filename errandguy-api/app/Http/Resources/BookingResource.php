@@ -21,6 +21,13 @@ class BookingResource extends JsonResource
         return [
             'id' => $this->id,
             'booking_number' => $this->booking_number,
+            // Expose participant FKs so the mobile client can derive
+            // ownership without an extra round-trip. Both are scoped by
+            // the controller queries (runnerBookings / customerBookings)
+            // so non-participants never see this resource.
+            'customer_id' => $this->customer_id,
+            'runner_id' => $this->runner_id,
+            'errand_type_id' => $this->errand_type_id,
             'status' => $this->status,
             'errand_type' => $this->when(
                 $this->relationLoaded('errandType'),
