@@ -3,6 +3,7 @@
 namespace App\Services;
 
 use App\Events\RouteDeviationAlert;
+use App\Models\ErrandType;
 use App\Models\RunnerLocation;
 use App\Models\RunnerProfile;
 use Illuminate\Support\Collection;
@@ -105,7 +106,12 @@ class LocationService
 
         $runners = $query->get();
 
-        return $runners->filter(function (RunnerProfile $runner) use ($lat, $lng, $radiusKm, $errandTypeId) {
+        // preferred_types is stored as errand-type slugs; resolve once.
+        $errandTypeSlug = $errandTypeId
+            ? ErrandType::whereKey($errandTypeId)->value('slug')
+            : null;
+
+        return $runners->filter(function (RunnerProfile $runner) use ($lat, $lng, $radiusKm, $errandTypeSlug) {
             $distance = $this->haversineDistance(
                 $lat,
                 $lng,
@@ -117,10 +123,10 @@ class LocationService
                 return false;
             }
 
-            // Filter by preferred errand type
-            if ($errandTypeId) {
+            // Filter by preferred errand type (slug match).
+            if ($errandTypeSlug) {
                 $preferred = $runner->preferred_types ?? [];
-                if (!empty($preferred) && !in_array($errandTypeId, $preferred)) {
+                if (!empty($preferred) && !in_array($errandTypeSlug, $preferred, true)) {
                     return false;
                 }
             }

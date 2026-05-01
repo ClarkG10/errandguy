@@ -3,6 +3,7 @@
 namespace App\Services;
 
 use App\Models\Booking;
+use App\Models\ErrandType;
 use App\Models\RunnerProfile;
 use App\Models\SystemConfig;
 use Illuminate\Support\Collection;
@@ -110,7 +111,8 @@ class MatchingService
             ->get();
 
         // Filter by distance and preferred errand types
-        $eligible = $runners->filter(function (RunnerProfile $runner) use ($lat, $lng, $radiusKm, $errandTypeId) {
+        $errandTypeSlug = ErrandType::whereKey($errandTypeId)->value('slug');
+        $eligible = $runners->filter(function (RunnerProfile $runner) use ($lat, $lng, $radiusKm, $errandTypeSlug) {
             $distance = $this->haversineDistance(
                 $lat,
                 $lng,
@@ -122,9 +124,9 @@ class MatchingService
                 return false;
             }
 
-            // Check preferred types
+            // Check preferred types — stored as errand-type slugs.
             $preferredTypes = $runner->preferred_types ?? [];
-            if (!empty($preferredTypes) && !in_array($errandTypeId, $preferredTypes)) {
+            if (!empty($preferredTypes) && $errandTypeSlug && !in_array($errandTypeSlug, $preferredTypes, true)) {
                 return false;
             }
 

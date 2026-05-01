@@ -18,7 +18,11 @@ class UpdateRunnerProfileRequest extends FormRequest
             'vehicle_type' => ['sometimes', 'string', Rule::in(['walk', 'bicycle', 'motorcycle', 'car'])],
             'vehicle_plate' => ['sometimes', 'nullable', 'string', 'max:20'],
             'preferred_types' => ['sometimes', 'array', 'min:1'],
-            'preferred_types.*' => ['string', Rule::exists('errand_types', 'id')->where('is_active', true)],
+            // Mobile clients send slugs (e.g. "delivery") — these are the
+            // stable, human-readable identifiers exposed to the runner UI.
+            // The matching/location services compare against the errand
+            // type slug as well (see MatchingService::getEligibleRunners).
+            'preferred_types.*' => ['string', Rule::exists('errand_types', 'slug')->where('is_active', true)],
             'working_area_lat' => ['sometimes', 'numeric', 'between:-90,90'],
             'working_area_lng' => ['sometimes', 'numeric', 'between:-180,180'],
             'working_area_radius' => ['sometimes', 'integer', 'min:1000', 'max:50000'],
