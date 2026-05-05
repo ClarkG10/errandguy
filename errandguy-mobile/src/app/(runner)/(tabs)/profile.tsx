@@ -1,6 +1,5 @@
 import React, { useCallback, useState } from 'react';
 import { View, Text, ScrollView, Pressable, RefreshControl, Modal, TextInput, KeyboardAvoidingView, Platform } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter, useFocusEffect } from 'expo-router';
 import { ChevronRight, Star, BadgeCheck } from 'lucide-react-native';
 import * as Haptics from 'expo-haptics';
@@ -8,7 +7,8 @@ import { Avatar } from '../../../components/ui/Avatar';
 import { Card } from '../../../components/ui/Card';
 import { Button } from '../../../components/ui/Button';
 import { ConfirmModal } from '../../../components/ui/ConfirmModal';
-import { LoadingOverlay } from '../../../components/ui/LoadingOverlay';
+import { LogoutSplash } from '../../../components/ui/LogoutSplash';
+import { GradientHeader } from '../../../components/ui/GradientHeader';
 import { PerformanceMetric } from '../../../components/runner/PerformanceMetric';
 import { useRunnerStore } from '../../../stores/runnerStore';
 import { useAuthStore } from '../../../stores/authStore';
@@ -120,23 +120,21 @@ export default function RunnerProfileScreen() {
         if (item.onPress) item.onPress();
         else if (item.route) router.push(item.route as any);
       }}
-      className="flex-row items-center justify-between py-4"
+      className="flex-row items-center justify-between py-4 border-b border-divider"
     >
       <Text
-        className="text-[15px] font-montserrat text-textPrimary"
+        className="text-[14px] font-montserrat-semi text-textPrimary"
         style={item.color ? { color: item.color } : undefined}
       >
         {item.label}
       </Text>
-      {item.trailing ?? <ChevronRight size={16} color="#CBD5E1" />}
+      {item.trailing ?? <ChevronRight size={16} color="#CBD5E1" strokeWidth={1.5} />}
     </Pressable>
   );
 
   return (
-    <SafeAreaView className="flex-1 bg-background" edges={['top']}>
-      <View className="px-5 pt-4 pb-2">
-        <Text className="text-lg font-montserrat-bold text-textPrimary">Profile</Text>
-      </View>
+    <View className="flex-1 bg-background">
+      <GradientHeader title="Profile" />
 
       <ScrollView
         className="flex-1"
@@ -144,111 +142,110 @@ export default function RunnerProfileScreen() {
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
         contentContainerStyle={{ paddingBottom: 24 }}
       >
-        {/* Profile Header */}
-        <View className="items-center px-5 mb-6">
-          <Avatar uri={user?.avatar_url} name={user?.full_name} size="xl" />
-          <Text className="text-lg font-montserrat-bold text-textPrimary mt-3">
-            {user?.full_name ?? 'Runner'}
-          </Text>
-          <View className="flex-row items-center gap-1.5 mt-0.5">
-            <Star size={12} color="#F59E0B" fill="#F59E0B" />
-            <Text className="text-xs font-montserrat text-textTertiary">
-              {Number(user?.avg_rating ?? 0).toFixed(1)} · {runnerProfile?.total_errands ?? 0} errands
+        {/* Asymmetric identity row — avatar left, name + meta right.
+            No centered hero card. */}
+        <View className="flex-row items-center px-5 pt-2 pb-5">
+          <Avatar uri={user?.avatar_url} name={user?.full_name} size="lg" />
+          <View className="flex-1 ml-4">
+            <Text className="text-[18px] font-montserrat-bold text-textPrimary" numberOfLines={1}>
+              {user?.full_name ?? 'Runner'}
             </Text>
-          </View>
-          {isVerified && (
-            <View className="flex-row items-center gap-1 mt-2">
-              <BadgeCheck size={14} color="#2563EB" />
-              <Text className="text-xs font-montserrat-bold text-primary">Verified Runner</Text>
-            </View>
-          )}
-        </View>
-
-        {/* Performance */}
-        <View className="px-5 mb-4">
-          <Text className="text-[11px] font-montserrat-semi text-textTertiary uppercase tracking-wider mb-3 ml-0.5">Performance</Text>
-          <Card className="p-4">
-            <View className="flex-row gap-3 mb-3">
-              <PerformanceMetric
-                value={runnerProfile?.acceptance_rate ?? 0}
-                label="Acceptance"
-                color={
-                  (runnerProfile?.acceptance_rate ?? 0) < 70 ? '#F97316' : '#22C55E'
-                }
-              />
-              <PerformanceMetric
-                value={runnerProfile?.completion_rate ?? 0}
-                label="Completion"
-                color={
-                  (runnerProfile?.completion_rate ?? 0) < 80 ? '#F97316' : '#22C55E'
-                }
-              />
-              <PerformanceMetric
-                value={Number(user?.avg_rating ?? 0).toFixed(1)}
-                label="Rating"
-                color="#F59E0B"
-                suffix="★"
-              />
-            </View>
-            <View className="flex-row items-center justify-between pt-2 border-t border-divider">
-              <Text className="text-xs font-montserrat text-textTertiary">Member since</Text>
-              <Text className="text-xs font-montserrat-bold text-textPrimary">
-                {(() => {
-                  const raw = runnerProfile?.created_at;
-                  if (!raw) return 'New member';
-                  const d = new Date(raw);
-                  if (isNaN(d.getTime())) return 'New member';
-                  return d.toLocaleDateString([], { month: 'short', year: 'numeric' });
-                })()}
+            <View className="flex-row items-center mt-1">
+              <Star size={11} color="#F59E0B" fill="#F59E0B" />
+              <Text className="text-[12px] font-inter tabular-nums text-textSecondary ml-1">
+                {Number(user?.avg_rating ?? 0).toFixed(1)}
+              </Text>
+              <Text className="text-[12px] font-montserrat text-textMuted ml-1.5">
+                · {runnerProfile?.total_errands ?? 0} errands
               </Text>
             </View>
-          </Card>
+            {isVerified && (
+              <View className="flex-row items-center mt-1.5">
+                <BadgeCheck size={12} color="#2563EB" strokeWidth={2} />
+                <Text className="text-[11px] font-montserrat-bold text-primary ml-1">Verified runner</Text>
+              </View>
+            )}
+          </View>
         </View>
 
-        {/* Account Menu */}
-        <View className="px-5 mb-4">
-          <Text className="text-[11px] font-montserrat-semi text-textTertiary uppercase tracking-wider mb-1 ml-0.5">Account</Text>
-          <Card className="px-4">
-            {accountMenu.map((item, idx, arr) => (
-              <View key={item.label}>
-                {renderMenuItem(item, idx, arr)}
-                {idx < arr.length - 1 && <View className="border-b border-divider" />}
-              </View>
-            ))}
-          </Card>
+        {/* Performance — hairline-bound row, no card chrome */}
+        <View className="px-5 mb-6">
+          <Text className="text-[10px] font-montserrat-bold uppercase text-textSecondary mb-3" style={{ letterSpacing: 1.4 }}>
+            Performance
+          </Text>
+          <View className="flex-row py-4 border-y border-divider">
+            <PerformanceMetric
+              value={runnerProfile?.acceptance_rate ?? 0}
+              label="Acceptance"
+              color={
+                (runnerProfile?.acceptance_rate ?? 0) < 70 ? '#F97316' : '#22C55E'
+              }
+            />
+            <PerformanceMetric
+              value={runnerProfile?.completion_rate ?? 0}
+              label="Completion"
+              color={
+                (runnerProfile?.completion_rate ?? 0) < 80 ? '#F97316' : '#22C55E'
+              }
+            />
+            <PerformanceMetric
+              value={Number(user?.avg_rating ?? 0).toFixed(1)}
+              label="Rating"
+              color="#F59E0B"
+              suffix="★"
+            />
+          </View>
+          <View className="flex-row items-center justify-between pt-3">
+            <Text className="text-[12px] font-montserrat text-textMuted">Member since</Text>
+            <Text className="text-[12px] font-montserrat-bold text-textPrimary">
+              {(() => {
+                const raw = runnerProfile?.created_at;
+                if (!raw) return 'New member';
+                const d = new Date(raw);
+                if (isNaN(d.getTime())) return 'New member';
+                return d.toLocaleDateString([], { month: 'short', year: 'numeric' });
+              })()}
+            </Text>
+          </View>
+        </View>
+
+        {/* Account Menu — definition-list pattern, no card */}
+        <View className="px-5 mb-6">
+          <Text className="text-[10px] font-montserrat-bold uppercase text-textSecondary mb-1" style={{ letterSpacing: 1.4 }}>
+            Account
+          </Text>
+          <View className="border-t border-divider">
+            {accountMenu.map((item, idx, arr) => renderMenuItem(item, idx, arr))}
+          </View>
         </View>
 
         {/* Settings Menu */}
         <View className="px-5 mb-6">
-          <Text className="text-[11px] font-montserrat-semi text-textTertiary uppercase tracking-wider mb-1 ml-0.5">Settings</Text>
-          <Card className="px-4">
-            {settingsMenu.map((item, idx, arr) => (
-              <View key={item.label}>
-                {renderMenuItem(item, idx, arr)}
-                {idx < arr.length - 1 && <View className="border-b border-divider" />}
-              </View>
-            ))}
-          </Card>
+          <Text className="text-[10px] font-montserrat-bold uppercase text-textSecondary mb-1" style={{ letterSpacing: 1.4 }}>
+            Preferences
+          </Text>
+          <View className="border-t border-divider">
+            {settingsMenu.map((item, idx, arr) => renderMenuItem(item, idx, arr))}
+          </View>
         </View>
 
-        {/* Logout */}
-        <View className="px-5 mb-4">
+        {/* Logout — plain text link, no card */}
+        <View className="px-5">
           <Pressable
             onPress={handleLogout}
-            className="bg-surface rounded-2xl py-4 items-center"
-            style={{ shadowColor: '#0F172A', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.04, shadowRadius: 8, elevation: 1 }}
+            className="py-4 items-center border-y border-divider"
           >
-            <Text className="text-[15px] font-montserrat-semi text-textSecondary">Log Out</Text>
+            <Text className="text-[14px] font-montserrat-bold text-textSecondary">Log out</Text>
           </Pressable>
         </View>
 
         {/* Delete Account — simple link */}
         <Pressable
-          className="items-center py-4 mb-8"
+          className="items-center py-5 mb-4"
           onPress={() => setShowDeleteModal(true)}
         >
-          <Text className="text-xs font-montserrat text-textTertiary underline">
-            Delete Account
+          <Text className="text-[12px] font-montserrat text-textMuted underline">
+            Delete account
           </Text>
         </Pressable>
       </ScrollView>
@@ -264,7 +261,7 @@ export default function RunnerProfileScreen() {
             onPress={() => { setShowDeleteModal(false); setDeleteConfirmText(''); }}
           >
             <Pressable
-              className="bg-surface rounded-t-2xl px-6 pt-5 pb-10"
+              className="bg-surface px-7 pt-6 pb-12"
               onPress={() => {}}
             >
               <View className="w-10 h-1 rounded-full bg-divider self-center mb-5" />
@@ -317,7 +314,7 @@ export default function RunnerProfileScreen() {
         onCancel={() => setShowLogoutModal(false)}
       />
 
-      <LoadingOverlay isVisible={loggingOut} message="Signing you out…" />
-    </SafeAreaView>
+      <LogoutSplash visible={loggingOut} />
+    </View>
   );
 }

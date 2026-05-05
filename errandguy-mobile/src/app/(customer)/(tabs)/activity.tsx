@@ -16,6 +16,7 @@ import { CacheTTL } from '../../../services/cache.service';
 import { useAuthStore } from '../../../stores/authStore';
 import { useChatStore } from '../../../stores/chatStore';
 import { EmptyState } from '../../../components/ui/EmptyState';
+import { GradientHeader } from '../../../components/ui/GradientHeader';
 import { RecentErrandItem } from '../../../components/customer/RecentErrandItem';
 import { BookingDetailSheet } from '../../../components/customer/BookingDetailSheet';
 import { ActivitySkeleton } from '../../../components/ui/Skeleton';
@@ -170,67 +171,47 @@ export default function ActivityScreen() {
   }
 
   return (
-    <SafeAreaView className="flex-1 bg-background" edges={['top']}>
-      <View className="flex-row items-center justify-between px-5 pt-4 pb-2">
-        <Text className="text-lg font-montserrat-semi text-textPrimary">
-          Activity
-        </Text>
-        <Pressable
-          onPress={() => router.push('/(customer)/chat' as any)}
-          className="w-10 h-10 rounded-full items-center justify-center"
-          accessibilityRole="button"
-          accessibilityLabel="Messages"
-          accessibilityHint={chatUnread > 0 ? `${chatUnread} unread messages` : undefined}
-          hitSlop={8}
-        >
-          <View>
-            <MessageCircle size={22} color="#0F172A" />
-            {chatUnread > 0 && (
-              <View
-                style={{
-                  position: 'absolute',
-                  top: -4,
-                  right: -4,
-                  minWidth: 16,
-                  height: 16,
-                  borderRadius: 8,
-                  paddingHorizontal: 3,
-                  backgroundColor: '#DC2626',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  borderWidth: 2,
-                  borderColor: '#FFFFFF',
-                }}
-              >
-                <Text className="text-[9px] font-montserrat-bold text-white">
-                  {chatUnread > 9 ? '9+' : chatUnread}
-                </Text>
-              </View>
-            )}
-          </View>
-        </Pressable>
-      </View>
+    <View className="flex-1 bg-background">
+      <GradientHeader
+        title="Activity"
+        trailing={{
+          icon: MessageCircle,
+          onPress: () => router.push('/(customer)/chat' as any),
+          badge: chatUnread,
+          accessibilityLabel:
+            chatUnread > 0 ? `${chatUnread} unread messages` : 'Messages',
+        }}
+      />
 
-      {/* Filters */}
-      <View className="flex-row px-5 mb-3" style={{ gap: 6 }}>
-        {FILTERS.map((f) => (
-          <Pressable
-            key={f.key}
-            className={`px-3 py-1 rounded-lg ${
-              filter === f.key ? 'bg-primary' : 'bg-surface'
-            }`}
-            style={filter !== f.key ? { borderWidth: 1, borderColor: '#E2E8F0' } : undefined}
-            onPress={() => setFilter(f.key)}
-          >
-            <Text
-              className={`text-xs font-montserrat-semi ${
-                filter === f.key ? 'text-white' : 'text-textSecondary'
-              }`}
+      {/* Filter chips — underline-only style. Active filter has a 2px
+          brand underline and bold weight; inactive is muted text. No
+          colored fills, no rounded pills — reads as a tab strip rather
+          than a row of buttons. */}
+      <View className="flex-row px-5 mt-3 mb-3 border-b border-divider">
+        {FILTERS.map((f) => {
+          const active = filter === f.key;
+          return (
+            <Pressable
+              key={f.key}
+              onPress={() => setFilter(f.key)}
+              hitSlop={6}
+              className="pr-5 pb-2.5 -mb-px"
+              style={active ? { borderBottomWidth: 2, borderBottomColor: '#2563EB' } : undefined}
+              accessibilityRole="tab"
+              accessibilityState={{ selected: active }}
             >
-              {f.label}
-            </Text>
-          </Pressable>
-        ))}
+              <Text
+                className={`text-[13px] ${
+                  active
+                    ? 'font-montserrat-bold text-textPrimary'
+                    : 'font-montserrat-semi text-textSecondary'
+                }`}
+              >
+                {f.label}
+              </Text>
+            </Pressable>
+          );
+        })}
       </View>
 
       {/* Booking List */}
@@ -295,6 +276,6 @@ export default function ActivityScreen() {
         isVisible={!!selectedBooking}
         onClose={() => setSelectedBooking(null)}
       />
-    </SafeAreaView>
+    </View>
   );
 }

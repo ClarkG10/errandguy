@@ -1,9 +1,8 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { View, Text, ScrollView, Pressable, RefreshControl } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import { Check } from 'lucide-react-native';
-import { BackButton } from '../../../components/ui/BackButton';
+import { GradientHeader } from '../../../components/ui/GradientHeader';
 import { Card } from '../../../components/ui/Card';
 import { Button } from '../../../components/ui/Button';
 import { BottomActionBar } from '../../../components/ui/BottomActionBar';
@@ -84,19 +83,14 @@ export default function PreferredTypesScreen() {
   const selectedCount = types.filter((t) => t.selected).length;
 
   return (
-    <SafeAreaView className="flex-1 bg-background" edges={['top']}>
-      {/* Header */}
-      <View className="flex-row items-center gap-3 px-5 py-4">
-        <BackButton fallbackHref="/(runner)/(tabs)/profile" />
-        <View className="flex-1">
-          <Text className="text-lg font-montserrat-bold text-textPrimary">
-            Preferred Errand Types
-          </Text>
-          <Text className="text-xs font-montserrat text-textSecondary">
+    <View className="flex-1 bg-background">
+      <GradientHeader title="Preferred Errand Types" showBack fallbackHref="/(runner)/(tabs)/profile">
+        <View className="px-5 pb-2">
+          <Text className="text-xs font-montserrat text-white/80">
             {selectedCount} selected • min 1 required
           </Text>
         </View>
-      </View>
+      </GradientHeader>
 
       <ScrollView
         className="flex-1 px-5"
@@ -129,6 +123,6 @@ export default function PreferredTypesScreen() {
       <BottomActionBar>
         <Button title="Save Preferences" onPress={handleSave} loading={saving} fullWidth />
       </BottomActionBar>
-    </SafeAreaView>
+    </View>
   );
 }

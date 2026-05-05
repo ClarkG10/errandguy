@@ -15,7 +15,6 @@ import {
   ChevronUp,
   AlertTriangle,
 } from 'lucide-react-native';
-import { Card } from '../../../components/ui/Card';
 import { JourneyBeads } from '../../../components/ui/JourneyBeads';
 import { CurrentStepHero } from '../../../components/ui/CurrentStepHero';
 import { Avatar } from '../../../components/ui/Avatar';
@@ -254,6 +253,35 @@ export default function ActiveErrandScreen() {
       ? { lat: Number(etaTargetLat), lng: Number(etaTargetLng) }
       : null,
   );
+
+  // ── Auto-launch turn-by-turn when the runner enters a travel leg.
+  // Triggers exactly once per status transition into `heading_to_pickup`
+  // or `in_transit` so we don't fight the runner if they manually
+  // close Navigate. The dismissed-status ref is keyed by booking id +
+  // status string so a different booking (or the *next* travel leg
+  // within the same booking) will re-trigger. Skipped while read-only
+  // or when there's no destination yet. */
+  const autoNavLaunchedRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!booking || isReadOnly) return;
+    const status = booking.status;
+    const isTravelLeg = status === 'heading_to_pickup' || status === 'in_transit';
+    if (!isTravelLeg) return;
+    const key = `${booking.id}:${status}`;
+    if (autoNavLaunchedRef.current === key) return;
+    // Need a destination to actually navigate to.
+    const destLat = inPickupPhase ? booking.pickup_lat : booking.dropoff_lat;
+    const destLng = inPickupPhase ? booking.pickup_lng : booking.dropoff_lng;
+    if (destLat == null || destLng == null) return;
+    autoNavLaunchedRef.current = key;
+    // Small delay so the optimistic status update has painted before
+    // the screen pushes \u2014 makes the transition feel intentional, not
+    // jarring.
+    const t = setTimeout(() => {
+      router.push(`/(runner)/navigate/${booking.id}` as any);
+    }, 350);
+    return () => clearTimeout(t);
+  }, [booking, isReadOnly, inPickupPhase, router]);
 
   // Verb-led, runner-POV headline for the CurrentStepHero. Phrased as
   // a directive ("Pick up the order") rather than a status label
@@ -546,24 +574,17 @@ export default function ActiveErrandScreen() {
   const sheetHeight = useRef(new Animated.Value(SNAP_MID)).current;
   const sheetHeightStartRef = useRef<number>(SNAP_MID);
   const currentSheetHeightRef = useRef<number>(SNAP_MID);
-  const [sheetTop, setSheetTop] = useState<number>(WIN_H - SNAP_MID);
 
-  // Mirror the animated value into a ref + state so the Navigate FAB
-  // can sit just above the sheet's current top edge. We throttle the
-  // state setter through the listener to one update per ~60ms so
-  // dragging stays smooth.
+  // Track the current sheet height in a ref so the pan responder can
+  // resume drags from wherever the sheet currently sits. No state
+  // mirror is needed \u2014 the old Navigate FAB that depended on it has
+  // been moved inside the sheet.
   useEffect(() => {
-    let lastTs = 0;
     const id = sheetHeight.addListener(({ value }) => {
       currentSheetHeightRef.current = value;
-      const now = Date.now();
-      if (now - lastTs > 60) {
-        lastTs = now;
-        setSheetTop(WIN_H - value);
-      }
     });
     return () => sheetHeight.removeListener(id);
-  }, [sheetHeight, WIN_H]);
+  }, [sheetHeight]);
 
   const snapTo = useCallback((target: number) => {
     Animated.spring(sheetHeight, {
@@ -573,9 +594,8 @@ export default function ActiveErrandScreen() {
       speed: 14,
     }).start(() => {
       currentSheetHeightRef.current = target;
-      setSheetTop(WIN_H - target);
     });
-  }, [sheetHeight, WIN_H]);
+  }, [sheetHeight]);
 
   const panResponder = useRef(
     PanResponder.create({
@@ -645,48 +665,71 @@ export default function ActiveErrandScreen() {
           />
         </View>
 
-        {/* Floating top bar */}
+        {/* Floating top bar \u2014 single cohesive card. Replaces the old
+            three-pill arrangement. Back chevron, ride/errand label +
+            booking number, then a separator and chat icon on the right. */}
         <SafeAreaView
           edges={['top']}
           pointerEvents="box-none"
           style={{ position: 'absolute', top: 0, left: 0, right: 0 }}
         >
-          <View
-            className="flex-row items-center justify-between px-4 py-2"
-            pointerEvents="box-none"
-          >
-            <View className="w-11 h-11 rounded-full bg-white items-center justify-center shadow-md">
-              <BackButton
-                fallbackHref="/(runner)/(tabs)"
-                accessibilityHint={isErrandActive ? 'Confirms before leaving the active errand' : undefined}
-                onPress={() => {
-                  const goBack = () =>
-                    router.canGoBack() ? router.back() : router.replace('/(runner)/(tabs)');
-                  if (isErrandActive) confirmLeaveErrand(goBack);
-                  else goBack();
-                }}
-              />
-            </View>
-            <View className="bg-white px-4 py-2 rounded-full shadow-md">
-              <Text className="text-sm font-montserrat-bold text-textPrimary">
-                {isTransportation ? 'Passenger Ride' : 'Active Errand'}
-              </Text>
-            </View>
-            <Pressable
-              onPress={() => router.push(`/(runner)/chat/${booking.id}` as any)}
-              className="w-11 h-11 rounded-full bg-white items-center justify-center shadow-md"
-              accessibilityRole="button"
-              accessibilityLabel="Open chat with customer"
+          <View className="px-4 pt-2" pointerEvents="box-none">
+            <View
+              className="flex-row items-stretch bg-white rounded-2xl"
+              style={{
+                shadowColor: '#0F172A',
+                shadowOffset: { width: 0, height: 4 },
+                shadowOpacity: 0.12,
+                shadowRadius: 10,
+                elevation: 4,
+              }}
             >
-              <MessageCircle size={20} color="#0F172A" />
-              {unreadForBooking > 0 && (
-                <View className="absolute -top-0.5 -right-0.5 min-w-[16px] h-[16px] px-1 bg-danger rounded-full items-center justify-center border-[1.5px] border-white">
-                  <Text className="text-[9px] text-white font-montserrat-bold leading-[12px]">
-                    {unreadForBooking > 9 ? '9+' : String(unreadForBooking)}
-                  </Text>
-                </View>
-              )}
-            </Pressable>
+              <View className="w-12 items-center justify-center">
+                <BackButton
+                  fallbackHref="/(runner)/(tabs)"
+                  accessibilityHint={isErrandActive ? 'Confirms before leaving the active errand' : undefined}
+                  onPress={() => {
+                    const goBack = () =>
+                      router.canGoBack() ? router.back() : router.replace('/(runner)/(tabs)');
+                    if (isErrandActive) confirmLeaveErrand(goBack);
+                    else goBack();
+                  }}
+                />
+              </View>
+              <View className="flex-1 py-2.5 pr-3 justify-center">
+                <Text
+                  className="text-[14px] font-montserrat-bold text-textPrimary"
+                  numberOfLines={1}
+                >
+                  {isTransportation ? 'Passenger ride' : 'Active errand'}
+                </Text>
+                <Text
+                  className="text-[10px] font-montserrat text-textTertiary mt-0.5"
+                  style={{ letterSpacing: 0.4 }}
+                >
+                  {booking.booking_number}
+                </Text>
+              </View>
+              <View className="flex-row items-center pr-3">
+                <View className="w-px h-7 bg-divider mr-2" />
+                <Pressable
+                  onPress={() => router.push(`/(runner)/chat/${booking.id}` as any)}
+                  className="w-10 h-10 items-center justify-center"
+                  accessibilityRole="button"
+                  accessibilityLabel="Open chat with customer"
+                  hitSlop={6}
+                >
+                  <MessageCircle size={20} color="#0F172A" strokeWidth={1.8} />
+                  {unreadForBooking > 0 && (
+                    <View className="absolute top-1 right-1 min-w-[16px] h-[16px] px-1 bg-danger rounded-full items-center justify-center border-[1.5px] border-white">
+                      <Text className="text-[9px] text-white font-montserrat-bold leading-[12px]">
+                        {unreadForBooking > 9 ? '9+' : String(unreadForBooking)}
+                      </Text>
+                    </View>
+                  )}
+                </Pressable>
+              </View>
+            </View>
           </View>
         </SafeAreaView>
 
@@ -697,7 +740,7 @@ export default function ActiveErrandScreen() {
           style={{ position: 'absolute', left: 0, right: 0, bottom: 0 }}
         >
           <Animated.View
-            className="bg-white rounded-t-2xl"
+            className="bg-white"
             style={{
               height: sheetHeight,
               shadowColor: '#000',
@@ -739,115 +782,133 @@ export default function ActiveErrandScreen() {
                   etaMinutes={runnerEta.minutes != null ? Math.max(1, Math.round(runnerEta.minutes)) : null}
                   accent={booking.status === 'cancelled' ? 'danger' : 'brand'}
                 />
-                {/* Open in Maps — surfaced inline, not as a giant button.
-                    Plain underlined link reads as a utility, leaving the
-                    sticky action below as the unambiguous primary CTA. */}
-                <Pressable
-                  onPress={() => {
-                    const lat = inPickupPhase ? booking.pickup_lat : booking.dropoff_lat;
-                    const lng = inPickupPhase ? booking.pickup_lng : booking.dropoff_lng;
-                    if (lat == null || lng == null) {
-                      toast.error('Address coordinates are missing');
-                      return;
-                    }
-                    const url = Platform.OS === 'ios'
-                      ? `http://maps.apple.com/?daddr=${lat},${lng}&dirflg=d`
-                      : `https://www.google.com/maps/dir/?api=1&destination=${lat},${lng}&travelmode=driving`;
-                    Linking.openURL(url).catch(() => toast.error('Could not open maps'));
-                  }}
-                  hitSlop={6}
-                  accessibilityRole="link"
-                  accessibilityLabel="Open in Maps"
-                  className="mt-2 self-start"
-                >
-                  <Text className="text-[11px] font-montserrat-semi text-primary underline">
-                    Open in Maps →
-                  </Text>
-                </Pressable>
+                {/* Action row — Navigate (primary, in-app turn-by-turn)
+                    + Maps (secondary, system maps fallback). Lives
+                    INSIDE the sheet so it scrolls with the hero and
+                    never overlaps the sheet edge like the old floating
+                    FAB did. Hidden in read-only / non-active states. */}
+                {!isReadOnly && isErrandActive && (
+                  <View className="flex-row gap-2 mt-3">
+                    <Pressable
+                      onPress={() => router.push(`/(runner)/navigate/${booking.id}` as any)}
+                      accessibilityRole="button"
+                      accessibilityLabel="Open turn-by-turn navigation"
+                      className="flex-1 h-11 rounded-xl bg-primary flex-row items-center justify-center"
+                      style={{
+                        shadowColor: '#2563EB',
+                        shadowOpacity: 0.18,
+                        shadowRadius: 6,
+                        shadowOffset: { width: 0, height: 2 },
+                        elevation: 2,
+                      }}
+                    >
+                      <Navigation size={16} color="#FFFFFF" strokeWidth={2.2} />
+                      <Text className="text-white text-[13px] font-montserrat-bold ml-2">
+                        Navigate
+                      </Text>
+                    </Pressable>
+                    <Pressable
+                      onPress={() => {
+                        const lat = inPickupPhase ? booking.pickup_lat : booking.dropoff_lat;
+                        const lng = inPickupPhase ? booking.pickup_lng : booking.dropoff_lng;
+                        if (lat == null || lng == null) {
+                          toast.error('Address coordinates are missing');
+                          return;
+                        }
+                        const url = Platform.OS === 'ios'
+                          ? `http://maps.apple.com/?daddr=${lat},${lng}&dirflg=d`
+                          : `https://www.google.com/maps/dir/?api=1&destination=${lat},${lng}&travelmode=driving`;
+                        Linking.openURL(url).catch(() => toast.error('Could not open maps'));
+                      }}
+                      accessibilityRole="button"
+                      accessibilityLabel="Open in system maps"
+                      className="h-11 px-4 rounded-xl border border-divider bg-white flex-row items-center justify-center"
+                    >
+                      <MapPin size={15} color="#0F172A" strokeWidth={1.8} />
+                      <Text className="text-textPrimary text-[13px] font-montserrat-semi ml-1.5">
+                        Maps
+                      </Text>
+                    </Pressable>
+                  </View>
+                )}
               </View>
             </View>
 
-            {/* Scrollable details \u2014 explicit flex:1 so it actually grows
-                inside the fixed-height sheet and the sticky button below
-                stays visible. */}
+            {/* Scrollable details — clean Uber-style hierarchy:
+                  1. Customer pill (avatar + name + circular call/chat)
+                  2. PIN gate (transportation only, when needed)
+                  3. Payout strip (always visible — the runner's "why")
+                  4. Trip details disclosure (errand brief, shopping
+                     budget, timeline, SOS, report-issue) */}
             <ScrollView
               style={{ flex: 1 }}
               showsVerticalScrollIndicator={false}
-              contentContainerStyle={{ paddingHorizontal: 20, paddingBottom: 12 }}
+              contentContainerStyle={{ paddingHorizontal: 20, paddingBottom: 16 }}
               keyboardShouldPersistTaps="handled"
             >
-              {/* Customer Info */}
-              <Card className="p-4 mb-3">
-                <View className="flex-row items-center gap-3 mb-3">
-                  <Avatar name={customerName} size="md" />
-                  <View className="flex-1">
-                    <Text className="text-sm font-montserrat-bold text-textPrimary">
-                      {customerName}
-                    </Text>
-                    {customerPhone && (
-                      <Text className="text-xs font-montserrat text-textSecondary mt-0.5">
-                        {customerPhone}
+              {/* ── Customer pill ─────────────────────────────── */}
+              <View className="flex-row items-center bg-surface rounded-2xl p-3 mb-3">
+                <Avatar name={customerName} size="md" />
+                <View className="flex-1 ml-3 mr-2">
+                  <Text
+                    className="text-[14px] font-montserrat-bold text-textPrimary"
+                    numberOfLines={1}
+                  >
+                    {customerName}
+                  </Text>
+                  <Text
+                    className="text-[11px] font-montserrat text-textTertiary mt-0.5"
+                    numberOfLines={1}
+                  >
+                    {customerPhone ?? 'Phone unavailable'}
+                  </Text>
+                </View>
+                <Pressable
+                  onPress={handleCallCustomer}
+                  disabled={!customerPhone}
+                  accessibilityRole="button"
+                  accessibilityLabel="Call customer"
+                  hitSlop={6}
+                  className={`w-10 h-10 rounded-full items-center justify-center mr-2 ${
+                    customerPhone ? 'bg-primaryLight' : 'bg-gray-100'
+                  }`}
+                >
+                  <Phone size={17} color={customerPhone ? '#2563EB' : '#94A3B8'} strokeWidth={2} />
+                </Pressable>
+                <Pressable
+                  onPress={() => router.push(`/(runner)/chat/${booking.id}` as any)}
+                  accessibilityRole="button"
+                  accessibilityLabel={
+                    unreadForBooking > 0
+                      ? `Open chat, ${unreadForBooking} unread`
+                      : 'Open chat with customer'
+                  }
+                  hitSlop={6}
+                  className="w-10 h-10 rounded-full bg-primaryLight items-center justify-center"
+                >
+                  <MessageCircle size={17} color="#2563EB" strokeWidth={2} />
+                  {unreadForBooking > 0 && (
+                    <View className="absolute -top-0.5 -right-0.5 min-w-[16px] h-[16px] px-1 bg-danger rounded-full items-center justify-center border-[1.5px] border-white">
+                      <Text className="text-[9px] text-white font-montserrat-bold leading-[12px]">
+                        {unreadForBooking > 9 ? '9+' : String(unreadForBooking)}
                       </Text>
-                    )}
-                  </View>
-                </View>
-                <View className="flex-row gap-3">
-                  <Pressable
-                    className={`flex-1 flex-row items-center justify-center gap-2 rounded-xl py-2 ${
-                      customerPhone ? 'bg-primaryLight' : 'bg-gray-100'
-                    }`}
-                    onPress={handleCallCustomer}
-                    disabled={!customerPhone}
-                  >
-                    <Phone size={16} color={customerPhone ? '#2563EB' : '#94A3B8'} />
-                    <Text
-                      className={`text-xs font-montserrat-bold ${
-                        customerPhone ? 'text-primary' : 'text-textTertiary'
-                      }`}
-                    >
-                      Call
-                    </Text>
-                  </Pressable>
-                  <Pressable
-                    className="flex-1 flex-row items-center justify-center gap-2 bg-primaryLight rounded-xl py-2"
-                    onPress={() => router.push(`/(runner)/chat/${booking.id}` as any)}
-                  >
-                    <MessageCircle size={16} color="#2563EB" />
-                    <Text className="text-xs font-montserrat-bold text-primary">Chat</Text>
-                  </Pressable>
-                </View>
-                {!isReadOnly && (
-                  <Pressable
-                    className={`mt-3 flex-row items-center justify-center gap-2 rounded-xl py-2.5 border ${
-                      sosActive ? 'bg-danger border-danger' : 'bg-white border-danger'
-                    }`}
-                    onPress={() => !sosActive && setShowSOSConfirm(true)}
-                    disabled={sosActive || sosLoading}
-                  >
-                    <ShieldAlert size={16} color={sosActive ? '#FFFFFF' : '#EF4444'} />
-                    <Text
-                      className={`text-xs font-montserrat-bold ${
-                        sosActive ? 'text-white' : 'text-danger'
-                      }`}
-                    >
-                      {sosActive ? 'SOS Active — help notified' : 'Emergency SOS'}
-                    </Text>
-                  </Pressable>
-                )}
-              </Card>
+                    </View>
+                  )}
+                </Pressable>
+              </View>
 
-              {/* PIN Verification (Transportation only) */}
+              {/* ── PIN verification (transportation pickup) ──── */}
               {isTransportation && booking.status === 'arrived_at_pickup' && !pinVerified && (
-                <Card className="p-4 mb-3">
-                  <Text className="text-sm font-montserrat-bold text-textPrimary mb-2">
-                    PIN Verification
+                <View className="bg-warning/10 border border-warning/40 rounded-2xl p-4 mb-3">
+                  <Text className="text-[13px] font-montserrat-bold text-textPrimary mb-1">
+                    Verify ride PIN
                   </Text>
-                  <Text className="text-xs font-montserrat text-textSecondary mb-3">
-                    Ask the passenger to share their 4-digit ride PIN.
+                  <Text className="text-[11px] font-montserrat text-textSecondary mb-3">
+                    Ask the passenger to share their 4-digit PIN.
                   </Text>
-                  <View className="flex-row items-center gap-3">
+                  <View className="flex-row items-center gap-2">
                     <TextInput
-                      className="flex-1 bg-surface border border-divider rounded-xl px-4 py-3 text-center text-xl font-montserrat-bold text-textPrimary tracking-[12px]"
+                      className="flex-1 bg-white border border-divider rounded-xl px-4 py-3 text-center text-xl font-montserrat-bold text-textPrimary tracking-[12px]"
                       value={pinInput}
                       onChangeText={(t) => setPinInput(t.replace(/\D/g, '').slice(0, 4))}
                       keyboardType="number-pad"
@@ -862,31 +923,49 @@ export default function ActiveErrandScreen() {
                       size="sm"
                     />
                   </View>
-                </Card>
+                </View>
               )}
               {pinVerified && isTransportation && (
-                <View className="mb-3 flex-row items-center gap-2 bg-green-50 p-3 rounded-xl">
+                <View className="mb-3 flex-row items-center gap-2 bg-success/10 px-3 py-2.5 rounded-xl">
                   <CheckCircle size={16} color="#22C55E" />
-                  <Text className="text-xs font-montserrat-bold text-green-700">
-                    PIN Verified — Ready to start ride
+                  <Text className="text-[12px] font-montserrat-bold text-success">
+                    PIN verified — ready to start
                   </Text>
                 </View>
               )}
 
-              {/* Trip details disclosure — collapses payout, errand
-                  description, shopping budget, and the verbose status
-                  timeline behind a single toggle so the runner sees
-                  only the current step + the action button by default.
-                  Reference data is one tap away. */}
+              {/* ── Payout strip (always visible) ─────────────── */}
+              <View className="flex-row items-center justify-between bg-surface rounded-2xl px-4 py-3 mb-3">
+                <View>
+                  <Text className="text-[10px] font-montserrat-bold uppercase text-textTertiary" style={{ letterSpacing: 1 }}>
+                    Your payout
+                  </Text>
+                  <Text className="text-[18px] font-montserrat-bold text-textPrimary mt-0.5">
+                    {formatCurrency(booking.runner_payout ?? booking.total_amount)}
+                  </Text>
+                </View>
+                {isShoppingErrand && booking.shopping_budget != null && (
+                  <View className="items-end">
+                    <Text className="text-[10px] font-montserrat-bold uppercase text-warning" style={{ letterSpacing: 1 }}>
+                      Budget
+                    </Text>
+                    <Text className="text-[14px] font-montserrat-bold text-warning mt-0.5">
+                      {formatCurrency(booking.shopping_budget)}
+                    </Text>
+                  </View>
+                )}
+              </View>
+
+              {/* ── Trip details disclosure ───────────────────── */}
               <Pressable
                 onPress={() => setDetailsOpen((v) => !v)}
                 accessibilityRole="button"
                 accessibilityLabel={detailsOpen ? 'Hide trip details' : 'Show trip details'}
                 hitSlop={6}
-                className="flex-row items-center justify-between mt-1 mb-2"
+                className="flex-row items-center justify-between py-2"
               >
                 <Text className="text-[11px] font-montserrat-bold uppercase text-textSecondary" style={{ letterSpacing: 1.4 }}>
-                  {detailsOpen ? 'Hide trip details' : 'Trip details'}
+                  Trip details
                 </Text>
                 {detailsOpen ? (
                   <ChevronUp size={14} color="#64748B" />
@@ -894,115 +973,111 @@ export default function ActiveErrandScreen() {
                   <ChevronDown size={14} color="#64748B" />
                 )}
               </Pressable>
-              <View className="h-px bg-divider mb-3" />
 
               {detailsOpen && (
-                <>
-              {/* Shopping Budget */}
-              {isShoppingErrand && booking.shopping_budget != null && (
-                <Card className="p-3 bg-amber-50 border border-amber-200 mb-3">
-                  <View className="flex-row items-center gap-2 mb-1">
-                    <ShoppingBag size={16} color="#B45309" />
-                    <Text className="text-xs font-montserrat-bold text-amber-800">
-                      Customer Budget (Max)
-                    </Text>
-                  </View>
-                  <Text className="text-xl font-montserrat-bold text-amber-900">
-                    {formatCurrency(booking.shopping_budget)}
-                  </Text>
-                  <Text className="text-[11px] font-montserrat text-amber-700 mt-1">
-                    Do not exceed this amount. Capture the receipt at pickup—the customer pays the actual cost.
-                  </Text>
-                </Card>
-              )}
-
-              {/* Errand Details */}
-              <View className="mb-3">
-                <ErrandDetailsCard
-                  description={booking.description}
-                  specialInstructions={booking.special_instructions}
-                  itemPhotos={booking.item_photos}
-                  estimatedItemValue={booking.estimated_item_value}
-                />
-              </View>
-
-              {/* Payout */}
-              <Card className="p-3 flex-row items-center justify-between mb-3">
-                <Text className="text-sm font-montserrat text-textSecondary">Payout</Text>
-                <Text className="text-lg font-montserrat-bold text-primary">
-                  {formatCurrency(booking.runner_payout ?? booking.total_amount)}
-                </Text>
-              </Card>
-
-              {/* Status Timeline */}
-              <View className="mb-2">
-                <Text className="text-xs font-montserrat-bold text-textSecondary mb-3 uppercase tracking-wider">
-                  Status Timeline
-                </Text>
-                {timelineSteps.map((step, idx) => {
-                  const isCompleted = idx < currentStatusIdx;
-                  const isCurrent = idx === currentStatusIdx;
-                  return (
-                    <View key={step} className="flex-row items-start gap-3 mb-2">
-                      <View className="items-center" style={{ width: 20 }}>
-                        {isCompleted ? (
-                          <CheckCircle size={18} color="#22C55E" />
-                        ) : isCurrent ? (
-                          <View className="w-[18px] h-[18px] rounded-full bg-primary items-center justify-center">
-                            <View className="w-2 h-2 rounded-full bg-white" />
-                          </View>
-                        ) : (
-                          <Circle size={18} color="#94A3B8" />
-                        )}
-                        {idx < timelineSteps.length - 1 && (
-                          <View
-                            className={`w-0.5 h-4 mt-0.5 ${
-                              isCompleted ? 'bg-success' : 'bg-divider'
-                            }`}
-                          />
-                        )}
-                      </View>
-                      <Text
-                        className={`text-sm font-montserrat ${
-                          isCurrent
-                            ? 'text-primary font-montserrat-bold'
-                            : isCompleted
-                            ? 'text-textPrimary'
-                            : 'text-gray-400'
-                        }`}
-                      >
-                        {STATUS_LABELS[step] ?? step}
+                <View className="mt-2">
+                  {isShoppingErrand && booking.shopping_budget != null && (
+                    <View className="bg-amber-50 border border-amber-200 rounded-xl p-3 mb-3 flex-row gap-2">
+                      <ShoppingBag size={14} color="#B45309" />
+                      <Text className="flex-1 text-[11px] font-montserrat text-amber-800 leading-[15px]">
+                        Don't exceed {formatCurrency(booking.shopping_budget)}. Capture the receipt at pickup — the customer is charged the actual cost.
                       </Text>
                     </View>
-                  );
-                })}
-              </View>
+                  )}
 
-              {/* Report an issue — quiet inline link, intentionally
-                  small. Opens an email draft to support so the runner
-                  can flag a problem mid-errand without competing with
-                  the sticky action button below. */}
-              <Pressable
-                onPress={() => {
-                  const subject = encodeURIComponent(`Issue with errand ${booking.booking_number ?? booking.id}`);
-                  Linking.openURL(`mailto:support@errandguy.app?subject=${subject}`).catch(() =>
-                    toast.error('Could not open email app'),
-                  );
-                }}
-                accessibilityRole="link"
-                accessibilityLabel="Report an issue with this errand"
-                hitSlop={6}
-                className="mt-4 mb-2 flex-row items-center self-start gap-1.5"
-              >
-                <AlertTriangle size={12} color="#94A3B8" />
-                <Text className="text-[11px] font-montserrat-semi text-textTertiary underline">
-                  Report an issue
-                </Text>
-              </Pressable>
-                </>
+                  <View className="mb-3">
+                    <ErrandDetailsCard
+                      description={booking.description}
+                      specialInstructions={booking.special_instructions}
+                      itemPhotos={booking.item_photos}
+                      estimatedItemValue={booking.estimated_item_value}
+                    />
+                  </View>
+
+                  <Text className="text-[10px] font-montserrat-bold text-textTertiary mb-3 uppercase" style={{ letterSpacing: 1.2 }}>
+                    Progress
+                  </Text>
+                  <View className="mb-3">
+                    {timelineSteps.map((step, idx) => {
+                      const isCompleted = idx < currentStatusIdx;
+                      const isCurrent = idx === currentStatusIdx;
+                      return (
+                        <View key={step} className="flex-row items-start gap-3 mb-2">
+                          <View className="items-center" style={{ width: 20 }}>
+                            {isCompleted ? (
+                              <CheckCircle size={18} color="#22C55E" />
+                            ) : isCurrent ? (
+                              <View className="w-[18px] h-[18px] rounded-full bg-primary items-center justify-center">
+                                <View className="w-2 h-2 rounded-full bg-white" />
+                              </View>
+                            ) : (
+                              <Circle size={18} color="#CBD5E1" />
+                            )}
+                            {idx < timelineSteps.length - 1 && (
+                              <View
+                                className={`w-0.5 h-4 mt-0.5 ${
+                                  isCompleted ? 'bg-success' : 'bg-divider'
+                                }`}
+                              />
+                            )}
+                          </View>
+                          <Text
+                            className={`text-[13px] font-montserrat ${
+                              isCurrent
+                                ? 'text-primary font-montserrat-bold'
+                                : isCompleted
+                                ? 'text-textPrimary'
+                                : 'text-gray-400'
+                            }`}
+                          >
+                            {STATUS_LABELS[step] ?? step}
+                          </Text>
+                        </View>
+                      );
+                    })}
+                  </View>
+
+                  {!isReadOnly && (
+                    <Pressable
+                      onPress={() => !sosActive && setShowSOSConfirm(true)}
+                      disabled={sosActive || sosLoading}
+                      accessibilityRole="button"
+                      accessibilityLabel={sosActive ? 'SOS already triggered' : 'Trigger emergency SOS'}
+                      className={`flex-row items-center justify-center gap-2 rounded-xl py-2.5 border mt-1 mb-3 ${
+                        sosActive ? 'bg-danger border-danger' : 'bg-white border-danger/40'
+                      }`}
+                    >
+                      <ShieldAlert size={15} color={sosActive ? '#FFFFFF' : '#EF4444'} />
+                      <Text
+                        className={`text-[12px] font-montserrat-bold ${
+                          sosActive ? 'text-white' : 'text-danger'
+                        }`}
+                      >
+                        {sosActive ? 'SOS active — help notified' : 'Emergency SOS'}
+                      </Text>
+                    </Pressable>
+                  )}
+
+                  <Pressable
+                    onPress={() => {
+                      const subject = encodeURIComponent(`Issue with errand ${booking.booking_number ?? booking.id}`);
+                      Linking.openURL(`mailto:support@errandguy.app?subject=${subject}`).catch(() =>
+                        toast.error('Could not open email app'),
+                      );
+                    }}
+                    accessibilityRole="link"
+                    accessibilityLabel="Report an issue with this errand"
+                    hitSlop={6}
+                    className="flex-row items-center self-start gap-1.5 mb-1"
+                  >
+                    <AlertTriangle size={12} color="#94A3B8" />
+                    <Text className="text-[11px] font-montserrat-semi text-textTertiary underline">
+                      Report an issue
+                    </Text>
+                  </Pressable>
+                </View>
               )}
             </ScrollView>
-
             {/* Sticky action button — always visible at bottom of sheet.
                 This is THE in-system action: tapping it calls
                 POST /runner/errand/{id}/status which advances the
@@ -1036,40 +1111,6 @@ export default function ActiveErrandScreen() {
           </Animated.View>
           <SafeAreaView edges={['bottom']} style={{ backgroundColor: 'white' }} />
         </KeyboardAvoidingView>
-
-        {/* In-app Navigate FAB — rendered AFTER the sheet so it always
-            wins z-order on both iOS (paint order) and Android (elevation).
-            Anchored just above the sheet's current top edge so the two
-            never overlap regardless of snap position. */}
-        {!isReadOnly && isErrandActive && (
-          <Pressable
-            onPress={() => router.push(`/(runner)/navigate/${booking.id}` as any)}
-            accessibilityRole="button"
-            accessibilityLabel="Open turn-by-turn navigation"
-            style={{
-              position: 'absolute',
-              right: 16,
-              top: Math.max(96, sheetTop - 60),
-              paddingHorizontal: 16,
-              height: 48,
-              borderRadius: 24,
-              backgroundColor: '#2563EB',
-              flexDirection: 'row',
-              alignItems: 'center',
-              shadowColor: '#000',
-              shadowOpacity: 0.28,
-              shadowRadius: 10,
-              shadowOffset: { width: 0, height: 4 },
-              elevation: 20,
-              zIndex: 20,
-            }}
-          >
-            <Navigation size={18} color="#FFFFFF" />
-            <Text className="text-white text-sm font-montserrat-bold ml-2">
-              Navigate
-            </Text>
-          </Pressable>
-        )}
       </View>
 
 

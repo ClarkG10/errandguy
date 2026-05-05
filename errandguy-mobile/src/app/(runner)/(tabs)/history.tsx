@@ -8,11 +8,11 @@ import {
   RefreshControl,
   ActivityIndicator,
 } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
 import { Search, MapPin, Navigation, CheckCircle, XCircle, MessageCircle } from 'lucide-react-native';
 import { useRouter } from 'expo-router';
 import { Card } from '../../../components/ui/Card';
 import { Badge } from '../../../components/ui/Badge';
+import { GradientHeader } from '../../../components/ui/GradientHeader';
 import { runnerService } from '../../../services/runner.service';
 import { useQuery } from '../../../hooks/useQuery';
 import { CacheTTL } from '../../../services/cache.service';
@@ -112,117 +112,83 @@ export default function HistoryScreen() {
     ({ item }: { item: Booking }) => {
       const isCompleted = item.status === 'completed';
       return (
-        <Card className="mx-5 mb-2 p-4">
-          <View className="flex-row items-center justify-between mb-2">
-            <Text className="text-sm font-montserrat-bold text-textPrimary">
-              {item.errand_type?.name ?? 'Errand'}
-            </Text>
-            <View className="flex-row items-center gap-1">
-              {isCompleted ? (
-                <CheckCircle size={14} color="#22C55E" />
-              ) : (
-                <XCircle size={14} color="#EF4444" />
-              )}
-              <Text
-                className={`text-xs font-montserrat-bold ${
-                  isCompleted ? 'text-success' : 'text-danger'
-                }`}
-              >
-                {isCompleted ? 'Completed' : 'Cancelled'}
+        <Pressable
+          className="flex-row items-center px-5 py-3.5 border-b border-divider"
+          onPress={() => router.push(`/(runner)/errand/${item.id}` as any)}
+        >
+          <View className="flex-1 pr-3">
+            <View className="flex-row items-center mb-1">
+              <Text className="text-[14px] font-montserrat-bold text-textPrimary" numberOfLines={1}>
+                {item.errand_type?.name ?? 'Errand'}
+              </Text>
+              <Text className="text-[11px] font-montserrat text-textMuted ml-2">
+                {new Date(item.completed_at ?? item.created_at).toLocaleDateString([], {
+                  month: 'short',
+                  day: 'numeric',
+                })}
               </Text>
             </View>
-          </View>
-
-          <View className="flex-row items-start gap-2 mb-1">
-            <MapPin size={12} color="#22C55E" />
-            <Text className="text-xs font-montserrat text-textTertiary flex-1" numberOfLines={1}>
+            <Text className="text-[12px] font-montserrat text-textSecondary" numberOfLines={1}>
               {item.pickup_address}
             </Text>
+            {item.dropoff_address ? (
+              <Text className="text-[12px] font-montserrat text-textMuted" numberOfLines={1}>
+                → {item.dropoff_address}
+              </Text>
+            ) : null}
           </View>
-          <View className="flex-row items-start gap-2 mb-2">
-            <Navigation size={12} color="#EF4444" />
-            <Text className="text-xs font-montserrat text-textTertiary flex-1" numberOfLines={1}>
-              {item.dropoff_address}
-            </Text>
-          </View>
-
-          <View className="flex-row items-center justify-between">
-            <Text className="text-xs font-montserrat text-textTertiary">
-              {new Date(item.completed_at ?? item.created_at).toLocaleDateString([], {
-                month: 'short',
-                day: 'numeric',
-              })}{' '}
-              •{' '}
-              {new Date(item.completed_at ?? item.created_at).toLocaleTimeString([], {
-                hour: '2-digit',
-                minute: '2-digit',
-              })}
-            </Text>
-            <Text className="text-sm font-montserrat-bold text-primary">
+          <View className="items-end">
+            <Text
+              className={`text-[15px] font-inter tabular-nums ${
+                isCompleted ? 'text-textPrimary' : 'text-textMuted'
+              }`}
+              style={{ fontWeight: '600' }}
+            >
               {formatCurrency(item.runner_payout ?? item.total_amount)}
             </Text>
+            <Text
+              className={`text-[10px] font-montserrat-bold uppercase mt-0.5 ${
+                isCompleted ? 'text-success' : 'text-danger'
+              }`}
+              style={{ letterSpacing: 1 }}
+            >
+              {isCompleted ? 'Paid' : 'Cancelled'}
+            </Text>
           </View>
-        </Card>
+        </Pressable>
       );
     },
-    [],
+    [router],
   );
 
   if (initialLoading) {
     return (
-      <SafeAreaView className="flex-1 bg-background" edges={['top']}>
+      <View className="flex-1 bg-background">
+        <GradientHeader title="Errands" />
         <HistorySkeleton />
-      </SafeAreaView>
+      </View>
     );
   }
 
   return (
-    <SafeAreaView className="flex-1 bg-background" edges={['top']}>
-      <View className="flex-row items-center justify-between px-5 pt-4 pb-2">
-        <Text className="text-lg font-montserrat-bold text-textPrimary">Errand History</Text>
-        <Pressable
-          onPress={() => router.push('/(runner)/chat' as any)}
-          className="w-10 h-10 rounded-full items-center justify-center"
-          accessibilityRole="button"
-          accessibilityLabel="Messages"
-          accessibilityHint={chatUnread > 0 ? `${chatUnread} unread messages` : undefined}
-          hitSlop={8}
-        >
-          <View>
-            <MessageCircle size={22} color="#0F172A" />
-            {chatUnread > 0 && (
-              <View
-                style={{
-                  position: 'absolute',
-                  top: -4,
-                  right: -4,
-                  minWidth: 16,
-                  height: 16,
-                  borderRadius: 8,
-                  paddingHorizontal: 3,
-                  backgroundColor: '#DC2626',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  borderWidth: 2,
-                  borderColor: '#FFFFFF',
-                }}
-              >
-                <Text className="text-[9px] font-montserrat-bold text-white">
-                  {chatUnread > 9 ? '9+' : chatUnread}
-                </Text>
-              </View>
-            )}
-          </View>
-        </Pressable>
-      </View>
+    <View className="flex-1 bg-background">
+      <GradientHeader
+        title="Errands"
+        trailing={{
+          icon: MessageCircle,
+          onPress: () => router.push('/(runner)/chat' as any),
+          badge: chatUnread,
+          accessibilityLabel: 'Messages',
+        }}
+      />
 
-      {/* Search Bar */}
-      <View className="px-5 mb-3">
-        <View className="flex-row items-center bg-surface rounded-2xl px-4 gap-2" style={{ shadowColor: '#0F172A', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.04, shadowRadius: 8, elevation: 1 }}>
-          <Search size={18} color="#94A3B8" />
+      {/* Search — thin underline input, no card */}
+      <View className="px-5 mb-2">
+        <View className="flex-row items-center border-b border-divider pb-2">
+          <Search size={16} color="#94A3B8" strokeWidth={1.6} />
           <TextInput
-            className="flex-1 py-2.5 text-sm font-montserrat text-textPrimary"
-            placeholder="Search errands..."
+            className="flex-1 ml-2 text-[14px] font-montserrat text-textPrimary"
+            placeholder="Search errands"
             placeholderTextColor="#94A3B8"
             value={search}
             onChangeText={setSearch}
@@ -230,26 +196,30 @@ export default function HistoryScreen() {
         </View>
       </View>
 
-      {/* Status Filters */}
-      <View className="flex-row gap-2 px-5 mb-3">
-        {(['all', 'completed', 'cancelled'] as const).map((s) => (
-          <Pressable
-            key={s}
-            onPress={() => setStatusFilter(s)}
-            className={`px-4 py-1.5 rounded-full ${
-              statusFilter === s ? 'bg-primary' : 'bg-surface'
-            }`}
-            style={statusFilter !== s ? { shadowColor: '#0F172A', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.04, shadowRadius: 6, elevation: 1 } : undefined}
-          >
-            <Text
-              className={`text-xs font-montserrat-semi ${
-                statusFilter === s ? 'text-white' : 'text-textTertiary'
-              }`}
+      {/* Status Filters — underline tabs (no pills) */}
+      <View className="flex-row px-5 mb-1 border-b border-divider">
+        {(['all', 'completed', 'cancelled'] as const).map((s) => {
+          const active = statusFilter === s;
+          return (
+            <Pressable
+              key={s}
+              onPress={() => setStatusFilter(s)}
+              className="pr-5 pb-2.5 -mb-px"
+              style={active ? { borderBottomWidth: 2, borderBottomColor: '#2563EB' } : undefined}
+              hitSlop={6}
             >
-              {s === 'all' ? 'All' : s === 'completed' ? 'Completed' : 'Cancelled'}
-            </Text>
-          </Pressable>
-        ))}
+              <Text
+                className={`text-[12px] ${
+                  active
+                    ? 'font-montserrat-bold text-textPrimary'
+                    : 'font-montserrat-semi text-textMuted'
+                }`}
+              >
+                {s === 'all' ? 'All' : s === 'completed' ? 'Completed' : 'Cancelled'}
+              </Text>
+            </Pressable>
+          );
+        })}
       </View>
 
       {/* List */}
@@ -279,6 +249,6 @@ export default function HistoryScreen() {
           ) : null
         }
       />
-    </SafeAreaView>
+    </View>
   );
 }

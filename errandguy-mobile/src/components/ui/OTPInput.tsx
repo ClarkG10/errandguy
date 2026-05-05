@@ -85,20 +85,47 @@ export function OTPInput({ length = 6, value, onChange, error }: OTPInputProps) 
     <View>
       <Animated.View
         style={shakeStyle}
-        className="flex-row justify-center gap-3"
+        className="flex-row justify-center"
         accessibilityRole="text"
         accessibilityLabel={`One-time code, ${length} digits`}
       >
-        {Array.from({ length }).map((_, index) => (
+        {Array.from({ length }).map((_, index) => {
+          // Modern OTP cell: larger 52×62 box with Inter tabular numerics
+          // (matches every other numeric in the app), 12px radius, and a
+          // 2px ink-dark border on a filled cell so the eye reads progress
+          // at a glance. Filled cells lift onto a soft surface tint.
+          const filled = !!digits[index];
+          const borderColor = error
+            ? '#EF4444'
+            : filled
+              ? '#0F172A'
+              : '#E2E8F0';
+          const bg = error
+            ? '#FEF2F2'
+            : filled
+              ? '#F8FAFC'
+              : '#FFFFFF';
+          return (
           <TextInput
             key={index}
             ref={(ref) => {
               inputs.current[index] = ref;
             }}
             accessibilityLabel={`Digit ${index + 1} of ${length}`}
-            className={`w-12 h-14 border rounded-lg text-center text-xl font-montserrat-bold text-textPrimary bg-surface ${
-              error ? 'border-danger' : digits[index] ? 'border-primary' : 'border-divider'
-            }`}
+            style={{
+              width: 48,
+              height: 60,
+              marginHorizontal: 4,
+              borderWidth: filled ? 2 : 1,
+              borderRadius: 12,
+              borderColor,
+              backgroundColor: bg,
+              textAlign: 'center',
+              fontSize: 22,
+              fontFamily: Platform.OS === 'ios' ? 'Inter_600SemiBold' : 'Quicksand_700Bold',
+              color: '#0F172A',
+              padding: 0,
+            }}
             value={digits[index]}
             onChangeText={(text) => handleChange(text, index)}
             onKeyPress={(e) => handleKeyPress(e, index)}
@@ -123,7 +150,8 @@ export function OTPInput({ length = 6, value, onChange, error }: OTPInputProps) 
             maxLength={length}
             selectTextOnFocus
           />
-        ))}
+          );
+        })}
       </Animated.View>
       {error && (
         <Text

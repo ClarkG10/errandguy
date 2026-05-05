@@ -1,7 +1,8 @@
 import { Stack } from 'expo-router';
+import { STACK_ANIMATION } from '../../../constants/navigation';
 
 export default function TrackingLayout() {
   return (
-    <Stack screenOptions={{ headerShown: false, animation: 'ios_from_right' }} />
+    <Stack screenOptions={{ headerShown: false, animation: STACK_ANIMATION }} />
   );
 }

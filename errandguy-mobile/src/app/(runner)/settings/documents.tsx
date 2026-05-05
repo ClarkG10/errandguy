@@ -1,9 +1,8 @@
 import React, { useEffect, useState, useCallback } from 'react';
 import { View, Text, ScrollView, RefreshControl, Platform } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import { CheckCircle, Clock, XCircle } from 'lucide-react-native';
-import { BackButton } from '../../../components/ui/BackButton';
+import { GradientHeader } from '../../../components/ui/GradientHeader';
 import { Card } from '../../../components/ui/Card';
 import { DocumentUploadCard } from '../../../components/runner/DocumentUploadCard';
 import { DocumentViewer } from '../../../components/runner/DocumentViewer';
@@ -101,14 +100,8 @@ export default function DocumentsScreen() {
   };
 
   return (
-    <SafeAreaView className="flex-1 bg-background" edges={['top']}>
-      {/* Header */}
-      <View className="flex-row items-center gap-3 px-5 py-4">
-        <BackButton fallbackHref="/(runner)/(tabs)/profile" />
-        <Text className="text-lg font-montserrat-bold text-textPrimary">
-          Documents & Verification
-        </Text>
-      </View>
+    <View className="flex-1 bg-background">
+      <GradientHeader title="Documents & Verification" showBack fallbackHref="/(runner)/(tabs)/profile" />
 
       <ScrollView
         className="flex-1"
@@ -199,6 +192,6 @@ export default function DocumentsScreen() {
         }
         uploading={!!uploading}
       />
-    </SafeAreaView>
+    </View>
   );
 }

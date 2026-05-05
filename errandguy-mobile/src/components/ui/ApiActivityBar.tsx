@@ -21,16 +21,17 @@ import { useApiActivityStore } from '../../stores/apiActivityStore';
  *
  * Behaviour
  *  - Stays hidden when idle (no work, zero overhead).
- *  - Hidden for fast requests (< 400 ms). Cache hits, dedupes, and
+ *  - Hidden for fast requests (< 800 ms). Cache hits, dedupes, and
  *    healthy single-server-roundtrips never show the bar — the
  *    perceived UX is "instant".
- *  - Fades in only after the network has been busy for 400 ms+.
+ *  - Fades in only after the network has been busy for 800 ms+.
  *  - Fades out smoothly when the counter returns to zero.
  *  - Background pollers (location pings, unread-count refreshes,
- *    realtime fallbacks) opt out entirely via `silent: true` in their
- *    axios config so they don't blip the bar.
+ *    realtime fallbacks, ETA refresh, errand sync) opt out entirely
+ *    via `silent: true` in their axios config so they don't blip the
+ *    bar.
  */
-const SHOW_DELAY_MS = 400;
+const SHOW_DELAY_MS = 800;
 
 export function ApiActivityBar() {
   const insets = useSafeAreaInsets();

@@ -4,6 +4,7 @@ import { CenteredLoader } from '@/components/ui/Spinner';
 import { Stack, useRouter, useSegments } from 'expo-router';
 import { useAuthStore } from '../../stores/authStore';
 import { useRealtimeNotifications } from '../../hooks/useRealtimeNotifications';
+import { STACK_ANIMATION } from '../../constants/navigation';
 
 export default function RunnerLayout() {
   const isAuthenticated = useAuthStore((s) => s.isAuthenticated);
@@ -27,16 +28,16 @@ export default function RunnerLayout() {
       return;
     }
 
-    // Gate: redirect to onboarding if runner has no profile or no documents
-    // (unless they explicitly skipped)
+    // Gate: only redirect brand-new runners (no runner_profile yet) to
+    // onboarding. Anyone with a profile \u2014 regardless of verification
+    // status (pending / approved / rejected / resubmit) \u2014 has already
+    // completed signup; they belong on the tabs, where the verification
+    // banner will surface any required action.
     const isOnboarding = segments.includes('onboarding' as never);
     const skipped = useAuthStore.getState().runnerOnboardingSkipped;
     if (!isOnboarding && !skipped) {
       const profile = user?.runner_profile;
-      const hasDocuments =
-        profile?.documents && profile.documents.length > 0;
-
-      if (!profile || !hasDocuments) {
+      if (!profile) {
         router.replace('/(runner)/onboarding');
         return;
       }
@@ -59,5 +60,5 @@ export default function RunnerLayout() {
     );
   }
 
-  return <Stack screenOptions={{ headerShown: false, animation: 'ios_from_right' }} />;
+  return <Stack screenOptions={{ headerShown: false, animation: STACK_ANIMATION }} />;
 }

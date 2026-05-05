@@ -19,8 +19,7 @@ import {
   FileCheck2,
 } from 'lucide-react-native';
 import type { LucideIcon } from 'lucide-react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
-import { BackButton } from '../../components/ui/BackButton';
+import { GradientHeader } from '../../components/ui/GradientHeader';
 import { EmptyState } from '../../components/ui/EmptyState';
 import { useNotificationStore } from '../../stores/notificationStore';
 import { useAuthStore } from '../../stores/authStore';
@@ -173,43 +172,37 @@ export default function RunnerNotificationsScreen() {
 
       return (
         <Pressable
-          android_ripple={{ color: '#E2E8F0', borderless: false }}
-          className="mx-5 mb-2 rounded-2xl bg-surface px-4 py-3.5"
-          style={{
-            borderWidth: 1,
-            borderColor: !item.is_read ? '#DBEAFE' : '#F1F5F9',
-          }}
+          android_ripple={{ color: '#F1F5F9', borderless: false }}
+          className="px-5 py-3.5 border-b border-divider"
           onPress={() => handleNotificationPress(item)}
         >
           <View className="flex-row">
-            <View
-              className="w-9 h-9 rounded-full items-center justify-center mr-3"
-              style={{ backgroundColor: color + '12' }}
-            >
-              <Icon size={16} color={color} />
+            <View className="w-9 items-center pt-0.5">
+              <Icon size={18} color={color} strokeWidth={1.7} />
             </View>
-
             <View className="flex-1">
-              <View className="flex-row items-center justify-between mb-0.5">
+              <View className="flex-row items-center mb-0.5">
                 <Text
-                  className={`text-[13px] ${
-                    !item.is_read ? 'font-montserrat-semi' : 'font-montserrat'
-                  } text-textPrimary flex-1 mr-2`}
+                  className={`text-[13px] flex-1 mr-2 ${
+                    !item.is_read
+                      ? 'font-montserrat-bold text-textPrimary'
+                      : 'font-montserrat-semi text-textSecondary'
+                  }`}
                   numberOfLines={1}
                 >
                   {item.title}
                 </Text>
                 {!item.is_read && (
-                  <View className="w-2 h-2 rounded-full bg-primary" />
+                  <View style={{ width: 6, height: 6, borderRadius: 3, backgroundColor: '#2563EB' }} />
                 )}
               </View>
               <Text
-                className="text-xs font-montserrat text-textTertiary leading-4"
+                className="text-[12px] font-montserrat text-textMuted leading-4"
                 numberOfLines={2}
               >
                 {item.body}
               </Text>
-              <Text className="text-[10px] font-montserrat text-textTertiary mt-1.5 opacity-60">
+              <Text className="text-[10px] font-montserrat text-textMuted mt-1.5">
                 {formatRelativeTime(item.created_at)}
               </Text>
             </View>
@@ -249,16 +242,17 @@ export default function RunnerNotificationsScreen() {
     ({ section: { title, data } }: { section: { title: string; data: AppNotification[] } }) => {
       const unreadInSection = data.filter((n) => !n.is_read).length;
       return (
-        <View className="flex-row items-center justify-between px-5 pt-3 pb-2 bg-background">
-          <Text className="text-[11px] font-montserrat-bold text-textTertiary uppercase tracking-wider">
+        <View className="flex-row items-center justify-between px-5 pt-4 pb-2 bg-background">
+          <Text
+            className="text-[10px] font-montserrat-bold uppercase text-textSecondary"
+            style={{ letterSpacing: 1.4 }}
+          >
             {title}
           </Text>
           {unreadInSection > 0 && (
-            <View className="bg-primary50 rounded-full px-2 py-0.5">
-              <Text className="text-[10px] font-montserrat-bold text-primary">
-                {unreadInSection} new
-              </Text>
-            </View>
+            <Text className="text-[10px] font-montserrat-bold text-primary">
+              {unreadInSection} new
+            </Text>
           )}
         </View>
       );
@@ -267,28 +261,17 @@ export default function RunnerNotificationsScreen() {
   );
 
   return (
-    <SafeAreaView className="flex-1 bg-background" edges={['top']}>
-      {/* Header */}
-      <View className="flex-row items-center justify-between px-5 pt-2 pb-3">
-        <View className="flex-row items-center">
-          <BackButton />
-          <Text className="ml-2 text-lg font-montserrat-semi text-textPrimary">
-            Notifications
-          </Text>
-        </View>
-        {notifications.length > 0 && (
-          <Pressable
-            onPress={handleMarkAllRead}
-            className="px-3 py-1.5 rounded-lg bg-primary50"
-            accessibilityRole="button"
-            accessibilityLabel="Mark all as read"
-          >
-            <Text className="text-[11px] font-montserrat-semi text-primary">
-              Mark all read
-            </Text>
-          </Pressable>
-        )}
-      </View>
+    <View className="flex-1 bg-background">
+      <GradientHeader
+        title="Notifications"
+        showBack
+        fallbackHref="/(runner)/(tabs)"
+        trailing={
+          notifications.length > 0
+            ? { label: 'Mark all read', onPress: handleMarkAllRead }
+            : undefined
+        }
+      />
 
       <SectionList
         sections={sections}
@@ -326,6 +309,6 @@ export default function RunnerNotificationsScreen() {
           />
         }
       />
-    </SafeAreaView>
+    </View>
   );
 }

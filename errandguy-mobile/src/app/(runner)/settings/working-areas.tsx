@@ -1,9 +1,8 @@
 import React, { useState, useCallback, useMemo } from 'react';
 import { View, Text, ScrollView, RefreshControl, Pressable } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import { MapPin } from 'lucide-react-native';
-import { BackButton } from '../../../components/ui/BackButton';
+import { GradientHeader } from '../../../components/ui/GradientHeader';
 import Mapbox from '@rnmapbox/maps';
 import Slider from '@react-native-community/slider';
 import { Card } from '../../../components/ui/Card';
@@ -84,12 +83,8 @@ export default function WorkingAreasScreen() {
   }, [lat, lng, radius]);
 
   return (
-    <SafeAreaView className="flex-1 bg-background" edges={['top']}>
-      {/* Header */}
-      <View className="flex-row items-center gap-3 px-5 py-4">
-        <BackButton fallbackHref="/(runner)/(tabs)/profile" />
-        <Text className="text-lg font-montserrat-bold text-textPrimary">Working Areas</Text>
-      </View>
+    <View className="flex-1 bg-background">
+      <GradientHeader title="Working Areas" showBack fallbackHref="/(runner)/(tabs)/profile" />
 
       <ScrollView
         className="flex-1"
@@ -209,6 +204,6 @@ export default function WorkingAreasScreen() {
       <BottomActionBar>
         <Button title="Save Working Area" onPress={handleSave} loading={saving} fullWidth />
       </BottomActionBar>
-    </SafeAreaView>
+    </View>
   );
 }

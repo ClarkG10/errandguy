@@ -24,6 +24,7 @@ import { useQuery } from '../../../hooks/useQuery';
 import { CacheTTL } from '../../../services/cache.service';
 import { Button } from '../../../components/ui/Button';
 import { EmptyState } from '../../../components/ui/EmptyState';
+import { GradientHeader } from '../../../components/ui/GradientHeader';
 import { formatCurrency } from '../../../utils/formatCurrency';
 import { formatRelativeTime } from '../../../utils/formatDate';
 import type { WalletTransaction, WalletTransactionType } from '../../../types';
@@ -117,35 +118,33 @@ export default function WalletScreen() {
       const isPositive = item.type === 'top_up' || item.type === 'refund' || item.type === 'bonus';
 
       return (
-        <View className="flex-row items-center px-5 py-3 border-b border-divider">
-          <View
-            className="w-10 h-10 rounded-full items-center justify-center mr-3"
-            style={{ backgroundColor: config.color + '20' }}
-          >
-            <Icon size={20} color={config.color} />
-          </View>
-          <View className="flex-1">
+        <View className="flex-row items-center px-5 py-3.5 border-b border-divider">
+          {/* Stroke-only icon — no filled tile. Reads as a typographic
+              affordance, not a colored chip, which lets the amount on
+              the right carry the visual weight. */}
+          <Icon size={18} color={config.color} strokeWidth={1.8} />
+          <View className="flex-1 ml-3">
             <Text
-              className="text-sm font-montserrat-bold text-textPrimary"
+              className="text-[14px] font-montserrat-bold text-textPrimary"
               numberOfLines={1}
             >
               {item.display_description ?? item.description ?? item.type.replace('_', ' ')}
             </Text>
-            <Text className="text-xs font-montserrat text-textSecondary mt-0.5">
+            <Text className="text-[11px] font-montserrat text-textSecondary mt-0.5">
               {formatRelativeTime(item.created_at)}
             </Text>
           </View>
           <View className="items-end">
             <Text
-              className={`text-sm font-inter-semi tabular-nums ${
-                isPositive ? 'text-success' : 'text-danger'
+              className={`text-[15px] font-inter-semi tabular-nums ${
+                isPositive ? 'text-success' : 'text-textPrimary'
               }`}
             >
-              {isPositive ? '+' : '-'}
+              {isPositive ? '+' : '−'}
               {formatCurrency(Math.abs(item.amount))}
             </Text>
-            <Text className="text-[10px] font-inter tabular-nums text-textSecondary mt-0.5">
-              Bal: {formatCurrency(item.balance_after)}
+            <Text className="text-[10px] font-inter tabular-nums text-textMuted mt-0.5">
+              {formatCurrency(item.balance_after)}
             </Text>
           </View>
         </View>
@@ -155,23 +154,12 @@ export default function WalletScreen() {
   );
 
   return (
-    <SafeAreaView className="flex-1 bg-background" edges={['top']}>
-      {/* Header */}
-      <View className="flex-row items-center px-5 py-4">
-        <Pressable
-          onPress={() => router.canGoBack() ? router.back() : router.replace('/(customer)/(tabs)/profile')}
-          accessibilityRole="button"
-          accessibilityLabel="Go back"
-          hitSlop={8}
-          className="mr-3 w-9 h-9 rounded-xl bg-surface items-center justify-center"
-          style={{ shadowColor: '#0F172A', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.04, shadowRadius: 6, elevation: 1 }}
-        >
-          <ArrowLeft size={20} color="#0F172A" />
-        </Pressable>
-        <Text className="text-xl font-montserrat-bold text-textPrimary">
-          Wallet
-        </Text>
-      </View>
+    <View className="flex-1 bg-background">
+      <GradientHeader
+        title="Wallet"
+        showBack
+        fallbackHref="/(customer)/(tabs)/profile"
+      />
 
       {/* Balance Card
           A solid blue tile competed visually with the brand primary
@@ -182,14 +170,17 @@ export default function WalletScreen() {
           tabular-nums Inter face on a #0F172A base for proper
           currency emphasis. */}
       <View
-        className="mx-5 mb-4 rounded-3xl p-6 overflow-hidden"
+        className="mx-5 mb-4 rounded-2xl p-6 overflow-hidden"
         style={{
           backgroundColor: '#0F172A',
+          // Tighter shadow — the previous 20px blur read as a marketing
+          // hero card, not a tappable surface. 12 + lower opacity sits
+          // closer to native iOS card shadows.
           shadowColor: '#0F172A',
-          shadowOffset: { width: 0, height: 8 },
-          shadowOpacity: 0.18,
-          shadowRadius: 20,
-          elevation: 6,
+          shadowOffset: { width: 0, height: 6 },
+          shadowOpacity: 0.12,
+          shadowRadius: 12,
+          elevation: 4,
         }}
       >
         {/* Decorative blue glow blob — adds depth without painting the
@@ -243,17 +234,19 @@ export default function WalletScreen() {
         <View className="mt-5 flex-row gap-2">
           <Pressable
             onPress={() => router.push('/(customer)/wallet/top-up')}
-            className="flex-1 bg-white py-3 rounded-2xl items-center"
+            className="flex-1 bg-white py-3.5 items-center"
+            style={{ borderRadius: 12 }}
             accessibilityRole="button"
             accessibilityLabel="Add money to wallet"
           >
             <Text className="text-sm font-montserrat-bold text-textPrimary">
-              Add Money
+              Add money
             </Text>
           </Pressable>
           <Pressable
             onPress={() => router.push('/(customer)/(tabs)/activity' as any)}
-            className="flex-1 bg-white/10 py-3 rounded-2xl items-center border border-white/15"
+            className="flex-1 py-3.5 items-center"
+            style={{ borderRadius: 12, borderWidth: 1, borderColor: 'rgba(255,255,255,0.18)' }}
             accessibilityRole="button"
             accessibilityLabel="View bookings"
           >
@@ -264,10 +257,14 @@ export default function WalletScreen() {
         </View>
       </View>
 
-      {/* Transactions */}
-      <Text className="text-base font-montserrat-bold text-textPrimary px-5 mb-2">
-        Transactions
-      </Text>
+      {/* Transactions section header — typographic eyebrow above the
+          list. Section bucket headers below render as smaller eyebrows
+          for date-bucket separation. */}
+      <View className="px-5 mt-2 mb-2">
+        <Text className="text-[10px] font-montserrat-bold uppercase text-textSecondary" style={{ letterSpacing: 1.4 }}>
+          Transactions
+        </Text>
+      </View>
       <SectionList
         sections={txSections}
         keyExtractor={(item) => item.id}
@@ -294,6 +291,6 @@ export default function WalletScreen() {
           />
         }
       />
-    </SafeAreaView>
+    </View>
   );
 }

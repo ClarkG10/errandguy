@@ -6,6 +6,7 @@ import { ChevronLeft, Plus, MapPin, Trash2, Pencil, Home, Briefcase, Star, X, Se
 import Mapbox from '@rnmapbox/maps';
 import { Button } from '../../../components/ui/Button';
 import { ConfirmModal } from '../../../components/ui/ConfirmModal';
+import { GradientHeader } from '../../../components/ui/GradientHeader';
 import { Skeleton } from '../../../components/ui/Skeleton';
 import { useDebounce } from '../../../hooks/useDebounce';
 import { useQuery } from '../../../hooks/useQuery';
@@ -244,32 +245,16 @@ export default function AddressesScreen() {
   };
 
   return (
-    <SafeAreaView className="flex-1 bg-background" edges={['top']}>
-      {/* Header */}
-      <View className="flex-row items-center px-4 py-3">
-        <Pressable
-          onPress={() => {
-            if (router.canGoBack()) {
-              router.back();
-            } else {
-              router.replace('/(customer)/(tabs)/profile');
-            }
-          }}
-          className="mr-3 w-9 h-9 rounded-xl bg-surface items-center justify-center"
-        >
-          <ChevronLeft size={20} color="#0F172A" />
-        </Pressable>
-        <Text className="text-base font-montserrat-semi text-textPrimary flex-1">
-          Saved Addresses
-        </Text>
-        <Pressable
-          onPress={resetForm}
-          hitSlop={8}
-          className="w-9 h-9 items-center justify-center"
-        >
-          {showAdd ? <X size={20} color="#475569" /> : <Plus size={22} color="#2563EB" strokeWidth={2.2} />}
-        </Pressable>
-      </View>
+    <View className="flex-1 bg-background">
+      <GradientHeader
+        title="Saved addresses"
+        showBack
+        fallbackHref="/(customer)/(tabs)/profile"
+        trailing={{
+          label: showAdd ? 'Cancel' : '+ Add',
+          onPress: resetForm,
+        }}
+      />
 
       {loading ? (
         <AddressSkeleton />
@@ -430,31 +415,29 @@ export default function AddressesScreen() {
               return (
                 <Pressable
                   key={addr.id}
-                  className="flex-row items-center bg-surface rounded-xl px-3 py-3 mb-2 border border-divider"
+                  className="flex-row items-center px-1 py-3.5 border-b border-divider"
                   onPress={() => handleEdit(addr)}
                 >
-                  <Icon size={18} color="#475569" strokeWidth={1.8} style={{ marginRight: 12 }} />
+                  <Icon size={18} color="#475569" strokeWidth={1.6} style={{ marginRight: 14 }} />
                   <View className="flex-1 mr-2">
-                    <Text className="text-[13px] font-montserrat-semi text-textPrimary capitalize">
+                    <Text className="text-[14px] font-montserrat-bold text-textPrimary capitalize">
                       {addr.label}
                     </Text>
-                    <Text className="text-[11px] font-montserrat text-textTertiary mt-0.5" numberOfLines={2}>
+                    <Text className="text-[12px] font-montserrat text-textMuted mt-0.5" numberOfLines={2}>
                       {addr.address}
                     </Text>
                   </View>
                   <Pressable
                     onPress={(e) => {
-                      // Stop propagation so the row's onPress (handleEdit)
-                      // doesn't also fire when the user taps the trash icon.
                       e.stopPropagation();
                       handleDelete(addr.id);
                     }}
                     accessibilityRole="button"
                     accessibilityLabel={`Delete ${addr.label} address`}
-                    className="w-8 h-8 rounded-lg items-center justify-center"
+                    className="w-9 h-9 items-center justify-center"
                     hitSlop={8}
                   >
-                    <Trash2 size={15} color="#EF4444" />
+                    <Trash2 size={15} color="#EF4444" strokeWidth={1.6} />
                   </Pressable>
                 </Pressable>
               );
@@ -475,6 +458,6 @@ export default function AddressesScreen() {
         onConfirm={confirmDeleteAddress}
         onCancel={() => setPendingDeleteId(null)}
       />
-    </SafeAreaView>
+    </View>
   );
 }

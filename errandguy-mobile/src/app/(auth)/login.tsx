@@ -7,6 +7,7 @@ import {
   ScrollView,
   KeyboardAvoidingView,
   Platform,
+  StatusBar,
   StyleSheet,
 } from 'react-native';
 import * as Haptics from 'expo-haptics';
@@ -109,36 +110,60 @@ export default function LoginScreen() {
   };
 
   return (
-    <SafeAreaView className="flex-1 bg-surface">
+    <View className="flex-1 bg-white">
+      <StatusBar barStyle="light-content" />
       <KeyboardAvoidingView
         className="flex-1"
         behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
       >
         <ScrollView
           className="flex-1"
-          contentContainerStyle={{ flexGrow: 1, paddingHorizontal: 24 }}
+          contentContainerStyle={{ flexGrow: 1 }}
           keyboardShouldPersistTaps="handled"
+          showsVerticalScrollIndicator={false}
         >
-          {/* Back — only show if onboarding not yet completed */}
-          {!onboardingSeen && (
-            <TouchableOpacity
-              cssInterop={false}
-              style={s.backBtn}
-              activeOpacity={0.6}
-              onPress={() => router.canGoBack() ? router.back() : router.replace('/(auth)/welcome')}
-            >
-              <ChevronLeft size={24} color="#0F172A" strokeWidth={2} />
-            </TouchableOpacity>
-          )}
-          {onboardingSeen && <View style={{ height: 48 }} />}
+          {/* Brand-color hero — flat solid block (no gradient, no
+              curved bottom seam). Reads as a deliberate header band
+              that the form sits cleanly underneath. */}
+          <View style={s.heroBlock}>
+            <SafeAreaView edges={['top']}>
+              <View className="px-6 pt-2 pb-10">
+                {!onboardingSeen && (
+                  <TouchableOpacity
+                    cssInterop={false}
+                    style={s.backBtn}
+                    activeOpacity={0.6}
+                    onPress={() => router.canGoBack() ? router.back() : router.replace('/(auth)/welcome')}
+                  >
+                    <ChevronLeft size={22} color="#FFFFFF" strokeWidth={2.2} />
+                  </TouchableOpacity>
+                )}
+                {onboardingSeen && <View style={{ height: 12 }} />}
 
-          {/* Header */}
-          <Text className="text-[28px] font-montserrat-bold text-textPrimary mb-1 tracking-tight">
-            Welcome back
-          </Text>
-          <Text className="text-[15px] font-montserrat text-textTertiary mb-10">
-            Sign in with your phone number or email
-          </Text>
+                <Text
+                  className="text-[11px] font-montserrat-bold uppercase mt-6"
+                  style={{ letterSpacing: 1.8, color: 'rgba(255,255,255,0.85)' }}
+                >
+                  ErrandGuy
+                </Text>
+                <Text
+                  className="text-[26px] font-montserrat-bold text-white tracking-tight mt-2"
+                  style={{ lineHeight: 30 }}
+                >
+                  Welcome back.
+                </Text>
+                <Text
+                  className="text-[13px] font-montserrat mt-2"
+                  style={{ color: 'rgba(255,255,255,0.85)' }}
+                >
+                  Sign in with your phone number or email
+                </Text>
+              </View>
+            </SafeAreaView>
+          </View>
+
+          {/* Form — flat seam, no overlap. */}
+          <View className="flex-1 bg-white px-6 pt-7">
 
           {/* Identifier — auto-detects phone or email */}
           <Controller
@@ -252,22 +277,24 @@ export default function LoginScreen() {
               <Text cssInterop={false} style={s.signupBtnText}>Create account</Text>
             </TouchableOpacity>
           </View>
+          </View>
         </ScrollView>
       </KeyboardAvoidingView>
-    </SafeAreaView>
+    </View>
   );
 }
 
 const s = StyleSheet.create({
+  heroBlock: {
+    backgroundColor: '#2563EB',
+  },
   backBtn: {
-    marginTop: 8,
-    marginBottom: 32,
-    alignSelf: 'flex-start',
-    width: 40,
-    height: 40,
-    borderRadius: 20,
+    width: 38,
+    height: 38,
+    borderRadius: 19,
     alignItems: 'center',
     justifyContent: 'center',
+    backgroundColor: 'rgba(255,255,255,0.16)',
   },
   forgotText: { fontSize: 13, fontFamily: 'Quicksand_500Medium', color: '#2563EB' },
   rememberRow: {

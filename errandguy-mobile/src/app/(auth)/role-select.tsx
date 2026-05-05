@@ -65,10 +65,19 @@ export default function RoleSelectScreen() {
   return (
     <SafeAreaView className="flex-1 bg-surface px-6">
       <View style={{ flex: 1, justifyContent: 'center' }}>
-        <Text className="text-[28px] font-montserrat-bold text-textPrimary mb-2 text-center tracking-tight">
+        <Text
+          className="text-[10px] font-montserrat-bold uppercase text-primary mb-3 text-center"
+          style={{ letterSpacing: 1.6 }}
+        >
+          One last step
+        </Text>
+        <Text
+          className="text-[30px] font-montserrat-bold text-textPrimary text-center tracking-tight"
+          style={{ lineHeight: 34 }}
+        >
           How will you use{'\n'}ErrandGuy?
         </Text>
-        <Text className="text-[15px] font-montserrat text-textTertiary text-center mb-10">
+        <Text className="text-[15px] font-montserrat text-textTertiary text-center mt-2 mb-10">
           Choose your role. You can switch anytime.
         </Text>
 

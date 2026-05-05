@@ -1,5 +1,6 @@
 import { Stack } from 'expo-router';
+import { STACK_ANIMATION } from '../../../constants/navigation';
 
 export default function WalletLayout() {
-  return <Stack screenOptions={{ headerShown: false, animation: 'ios_from_right' }} />;
+  return <Stack screenOptions={{ headerShown: false, animation: STACK_ANIMATION }} />;
 }

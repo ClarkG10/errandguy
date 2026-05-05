@@ -195,11 +195,22 @@ export function ConversationList({ chatHrefPrefix, fallbackHref }: Props) {
 
   return (
     <SafeAreaView className="flex-1 bg-background" edges={['top']}>
-      <View className="flex-row items-center px-4 py-2">
-        <BackButton fallbackHref={fallbackHref} />
-        <Text className="text-base font-montserrat-semi text-textPrimary ml-1">
-          Messages
-        </Text>
+      {/* Typographic eyebrow + title header */}
+      <View className="flex-row items-end px-5 pt-3 pb-3">
+        <View className="mr-3 mb-1">
+          <BackButton fallbackHref={fallbackHref} />
+        </View>
+        <View>
+          <Text
+            className="text-[10px] font-montserrat-bold uppercase text-textSecondary"
+            style={{ letterSpacing: 1.4 }}
+          >
+            Inbox
+          </Text>
+          <Text className="text-[24px] font-montserrat-bold text-textPrimary">
+            Messages
+          </Text>
+        </View>
       </View>
 
       <FlatList

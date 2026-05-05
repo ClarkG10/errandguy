@@ -15,10 +15,11 @@ import { useRouter, useFocusEffect } from 'expo-router';
 import { ChevronRight, Wallet } from 'lucide-react-native';
 import * as Haptics from 'expo-haptics';
 import { Avatar } from '../../../components/ui/Avatar';
-import { Card } from '../../../components/ui/Card';
 import { Button } from '../../../components/ui/Button';
 import { ConfirmModal } from '../../../components/ui/ConfirmModal';
-import { LoadingOverlay } from '../../../components/ui/LoadingOverlay';
+import { GradientHeader } from '../../../components/ui/GradientHeader';
+import { LogoutSplash } from '../../../components/ui/LogoutSplash';
+import { Eyebrow, Hairline } from '../../../components/ui/Typography';
 import { EditProfileModal } from '../../../components/customer/EditProfileModal';
 import { useAuthStore } from '../../../stores/authStore';
 import { useAuth } from '../../../hooks/useAuth';
@@ -124,170 +125,143 @@ export default function CustomerProfileScreen() {
     { label: 'Report an Issue', route: '/(customer)/help' },
   ];
 
-  const renderMenuItem = (item: MenuItem) => (
-    <Pressable
-      key={item.label}
-      onPress={() => {
-        if (item.onPress) item.onPress();
-        else if (item.route) router.push(item.route as any);
-      }}
-      className="flex-row items-center justify-between py-4"
-    >
-      <Text className="text-[15px] font-montserrat text-textPrimary">
-        {item.label}
-      </Text>
-      {item.trailing ?? <ChevronRight size={16} color="#CBD5E1" />}
-    </Pressable>
+  const renderMenuItem = (item: MenuItem, isLast: boolean) => (
+    <React.Fragment key={item.label}>
+      <Pressable
+        onPress={() => {
+          if (item.onPress) item.onPress();
+          else if (item.route) router.push(item.route as any);
+        }}
+        className="flex-row items-center justify-between py-3.5"
+        accessibilityRole="button"
+        accessibilityLabel={item.label}
+      >
+        <Text className="text-[15px] font-montserrat-semi text-textPrimary">
+          {item.label}
+        </Text>
+        {item.trailing ?? <ChevronRight size={16} color="#CBD5E1" />}
+      </Pressable>
+      {!isLast && <Hairline />}
+    </React.Fragment>
+  );
+
+  // Helper for the section blocks below — a typographic eyebrow
+  // followed by hairline-separated rows. No card chrome around the
+  // group; reads as a definition list.
+  const renderSection = (label: string, items: MenuItem[]) => (
+    <View className="px-5 mb-6">
+      <Eyebrow className="mb-1">{label}</Eyebrow>
+      <View>
+        {items.map((item, idx) =>
+          renderMenuItem(item, idx === items.length - 1),
+        )}
+      </View>
+    </View>
   );
 
   return (
-    <SafeAreaView className="flex-1 bg-background" edges={['top']}>
-      <View className="px-5 pt-4 pb-2">
-        <Text className="text-lg font-montserrat-bold text-textPrimary">
-          Profile
-        </Text>
-      </View>
-
+    <View className="flex-1 bg-background">
+      <GradientHeader title="Profile" />
       <ScrollView
         className="flex-1"
         showsVerticalScrollIndicator={false}
         refreshControl={
           <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
         }
-        contentContainerStyle={{ paddingBottom: 24 }}
+        contentContainerStyle={{ paddingBottom: 32 }}
       >
-        {/* Profile Header */}
-        <View className="items-center px-5 mb-6">
-          <Avatar uri={user?.avatar_url} name={user?.full_name} size="xl" />
-          <Text className="text-lg font-montserrat-bold text-textPrimary mt-3">
-            {user?.full_name ?? 'Customer'}
-          </Text>
-          {user?.email && (
-            <Text className="text-xs font-montserrat text-textTertiary mt-1">
-              {user.email}
-            </Text>
-          )}
-          {user?.phone && (
-            <Text className="text-xs font-montserrat text-textTertiary mt-0.5">
-              {user.phone}
-            </Text>
-          )}
-          <View className="mt-3">
-            <Button
-              title="Edit Profile"
-              variant="outline"
-              size="sm"
-              onPress={() => setShowEditModal(true)}
-            />
-          </View>
-        </View>
-
-        {/* Wallet quick card */}
-        <View className="px-5 mb-4">
-          <Pressable
-            onPress={() => router.push('/(customer)/wallet' as any)}
-            className="bg-primary rounded-2xl p-4 flex-row items-center"
-          >
-            <View
-              className="w-10 h-10 rounded-full items-center justify-center mr-3"
-              style={{ backgroundColor: 'rgba(255,255,255,0.18)' }}
+        {/* Profile identity row — ASYMMETRIC. Avatar left, name+email
+            stacked right. No centered hero block, no "Edit Profile"
+            button under the avatar (the row itself is tappable and the
+            Account section below has Edit Profile as its first item). */}
+        <Pressable
+          className="flex-row items-center px-5 pt-4 pb-5"
+          onPress={() => setShowEditModal(true)}
+          accessibilityRole="button"
+          accessibilityLabel="Edit profile"
+        >
+          <Avatar uri={user?.avatar_url} name={user?.full_name} size="lg" />
+          <View className="flex-1 ml-4">
+            <Text
+              className="text-[16px] font-montserrat-bold text-textPrimary"
+              numberOfLines={1}
             >
-              <Wallet size={18} color="#FFFFFF" />
-            </View>
-            <View className="flex-1">
-              <Text className="text-[11px] font-montserrat text-white/80">
-                Wallet balance
+              {user?.full_name ?? 'Customer'}
+            </Text>
+            {user?.email ? (
+              <Text
+                className="text-[12px] font-montserrat text-textSecondary mt-0.5"
+                numberOfLines={1}
+              >
+                {user.email}
               </Text>
-              <Text className="text-lg font-montserrat-bold text-white mt-0.5">
-                {formatCurrency(user?.wallet_balance ?? 0)}
+            ) : null}
+            {user?.phone ? (
+              <Text className="text-[12px] font-inter text-textSecondary mt-0.5">
+                {user.phone}
               </Text>
-            </View>
-            <Text className="text-xs font-montserrat-bold text-white">
+            ) : null}
+          </View>
+          <ChevronRight size={18} color="#CBD5E1" />
+        </Pressable>
+
+        {/* Wallet — NOT a colored hero card. Hairline-bounded row with
+            an asymmetric layout: large numeric balance left, top-up
+            CTA right. The numeric is in Inter for crispness. */}
+        <View className="mx-5 mb-6 py-4 border-y border-divider flex-row items-end">
+          <Pressable
+            className="flex-1"
+            onPress={() => router.push('/(customer)/wallet' as any)}
+            accessibilityRole="button"
+            accessibilityLabel="Open wallet"
+          >
+            <Eyebrow>Wallet balance</Eyebrow>
+            <Text className="text-[24px] font-inter-semi text-textPrimary mt-1" style={{ lineHeight: 26, letterSpacing: -0.3 }}>
+              {formatCurrency(user?.wallet_balance ?? 0)}
+            </Text>
+          </Pressable>
+          <Pressable
+            onPress={() => router.push('/(customer)/wallet/top-up' as any)}
+            className="flex-row items-center gap-1.5"
+            hitSlop={8}
+            accessibilityRole="button"
+            accessibilityLabel="Top up wallet"
+          >
+            <Wallet size={14} color="#2563EB" />
+            <Text className="text-[12px] font-montserrat-bold text-primary underline">
               Top up
             </Text>
-            <ChevronRight size={16} color="#FFFFFF" />
           </Pressable>
         </View>
 
-        {/* Account */}
-        <View className="px-5 mb-4">
-          <Text className="text-[11px] font-montserrat-semi text-textTertiary uppercase tracking-wider mb-1 ml-0.5">
-            Account
-          </Text>
-          <Card className="px-4">
-            {accountMenu.map((item, idx, arr) => (
-              <View key={item.label}>
-                {renderMenuItem(item)}
-                {idx < arr.length - 1 && (
-                  <View className="border-b border-divider" />
-                )}
-              </View>
-            ))}
-          </Card>
-        </View>
+        {renderSection('ACCOUNT', accountMenu)}
+        {renderSection('PAYMENT', paymentMenu)}
+        {renderSection('SUPPORT', supportMenu)}
 
-        {/* Payment */}
-        <View className="px-5 mb-4">
-          <Text className="text-[11px] font-montserrat-semi text-textTertiary uppercase tracking-wider mb-1 ml-0.5">
-            Payment
-          </Text>
-          <Card className="px-4">
-            {paymentMenu.map((item, idx, arr) => (
-              <View key={item.label}>
-                {renderMenuItem(item)}
-                {idx < arr.length - 1 && (
-                  <View className="border-b border-divider" />
-                )}
-              </View>
-            ))}
-          </Card>
-        </View>
-
-        {/* Support */}
-        <View className="px-5 mb-6">
-          <Text className="text-[11px] font-montserrat-semi text-textTertiary uppercase tracking-wider mb-1 ml-0.5">
-            Support
-          </Text>
-          <Card className="px-4">
-            {supportMenu.map((item, idx, arr) => (
-              <View key={item.label}>
-                {renderMenuItem(item)}
-                {idx < arr.length - 1 && (
-                  <View className="border-b border-divider" />
-                )}
-              </View>
-            ))}
-          </Card>
-        </View>
-
-        {/* Logout */}
-        <View className="px-5 mb-4">
+        {/* Logout / Delete — inline links, NOT cards. Demoted to match
+            their destructive nature (you have to want it). */}
+        <View className="items-center pt-2 pb-4 gap-4">
           <Pressable
             onPress={handleLogout}
-            className="bg-surface rounded-2xl py-4 items-center"
-            style={{
-              shadowColor: '#0F172A',
-              shadowOffset: { width: 0, height: 1 },
-              shadowOpacity: 0.04,
-              shadowRadius: 8,
-              elevation: 1,
-            }}
+            hitSlop={8}
+            accessibilityRole="button"
+            accessibilityLabel="Log out"
           >
-            <Text className="text-[15px] font-montserrat-semi text-textSecondary">
-              Log Out
+            <Text className="text-[14px] font-montserrat-bold text-textSecondary underline">
+              Log out
+            </Text>
+          </Pressable>
+          <Pressable
+            onPress={() => setShowDeleteModal(true)}
+            hitSlop={8}
+            accessibilityRole="button"
+            accessibilityLabel="Delete account"
+          >
+            <Text className="text-[11px] font-montserrat text-textMuted underline">
+              Delete account
             </Text>
           </Pressable>
         </View>
-
-        {/* Delete Account — simple link */}
-        <Pressable
-          className="items-center py-4 mb-8"
-          onPress={() => setShowDeleteModal(true)}
-        >
-          <Text className="text-xs font-montserrat text-textTertiary underline">
-            Delete Account
-          </Text>
-        </Pressable>
       </ScrollView>
 
       {/* Delete Account Modal */}
@@ -304,7 +278,7 @@ export default function CustomerProfileScreen() {
             }}
           >
             <Pressable
-              className="bg-surface rounded-t-2xl px-6 pt-5 pb-10"
+              className="bg-surface px-7 pt-6 pb-12"
               onPress={() => {}}
             >
               <View className="w-10 h-1 rounded-full bg-divider self-center mb-5" />
@@ -372,7 +346,7 @@ export default function CustomerProfileScreen() {
         onCancel={() => setShowLogoutModal(false)}
       />
 
-      <LoadingOverlay isVisible={loggingOut} message="Signing you out…" />
-    </SafeAreaView>
+      <LogoutSplash visible={loggingOut} />
+    </View>
   );
 }

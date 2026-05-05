@@ -102,10 +102,19 @@ export default function VerifyOTPScreen() {
       </Pressable>
 
       <View className="px-6">
-      <Text className="text-[24px] font-montserrat-semi text-textPrimary mb-1 tracking-tight">
-        Verify your {phone ? 'number' : 'email'}
+      <Text
+        className="text-[10px] font-montserrat-bold uppercase text-primary mb-3"
+        style={{ letterSpacing: 1.6 }}
+      >
+        Verification
       </Text>
-      <Text className="text-[15px] font-montserrat text-textTertiary mb-10">
+      <Text
+        className="text-[28px] font-montserrat-bold text-textPrimary tracking-tight"
+        style={{ lineHeight: 32 }}
+      >
+        Verify your {phone ? 'number' : 'email'}.
+      </Text>
+      <Text className="text-[15px] font-montserrat text-textTertiary mt-2 mb-10">
         We sent a 6-digit code to {maskedIdentifier}
       </Text>
 

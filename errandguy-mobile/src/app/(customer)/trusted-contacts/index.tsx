@@ -314,7 +314,7 @@ export default function TrustedContactsScreen() {
           behavior={Platform.OS === 'ios' ? 'padding' : undefined}
         >
           <View className="flex-1 bg-black/50 justify-end">
-            <View className="bg-background rounded-t-2xl px-5 pt-6 pb-10" style={{ maxHeight: '90%' }}>
+            <View className="bg-background px-7 pt-7 pb-12" style={{ maxHeight: '92%' }}>
               <View className="flex-row items-center justify-between mb-6">
                 <Text className="text-lg font-montserrat-bold text-textPrimary">
                   {editingId ? 'Edit Contact' : 'Add Contact'}

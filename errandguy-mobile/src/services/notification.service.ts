@@ -16,7 +16,7 @@ export const notificationService = {
   },
 
   getUnreadCount() {
-    return api.get('/notifications/unread-count', { cacheTtlMs: 15_000 } as any);
+    return api.get('/notifications/unread-count', { cacheTtlMs: 15_000, silent: true } as any);
   },
 
   markAsRead(id: string) {

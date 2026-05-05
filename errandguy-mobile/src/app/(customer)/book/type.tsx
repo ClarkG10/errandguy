@@ -22,9 +22,9 @@ import { useQuery } from '../../../hooks/useQuery';
 import { CacheTTL } from '../../../services/cache.service';
 import { Button } from '../../../components/ui/Button';
 import { BottomActionBar } from '../../../components/ui/BottomActionBar';
-import { Badge } from '../../../components/ui/Badge';
 import { ConfirmModal } from '../../../components/ui/ConfirmModal';
 import { BookingStepIndicator } from '../../../components/customer/BookingStepIndicator';
+import { GradientHeader } from '../../../components/ui/GradientHeader';
 import { formatCurrency } from '../../../utils/formatCurrency';
 import type { ErrandType } from '../../../types';
 import { toast } from '../../../stores/toastStore';
@@ -152,27 +152,21 @@ export default function TypeSelectionScreen() {
   }, [selectedId, errandTypes, draftBooking.errand_type_id, updateDraft, setStep, router]);
 
   return (
-    <SafeAreaView className="flex-1 bg-background" edges={['top']}>
-      {/* Header */}
-      <View className="flex-row items-center px-5 py-4">
-        <Pressable
-          onPress={handleBackPress}
-          accessibilityRole="button"
-          accessibilityLabel="Go back"
-          hitSlop={8}
-          className="mr-3 w-10 h-10 rounded-xl bg-surface items-center justify-center"
-          style={{ shadowColor: '#0F172A', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.04, shadowRadius: 6, elevation: 1 }}
-        >
-          <ArrowLeft size={20} color="#0F172A" />
-        </Pressable>
-        <Text className="text-lg font-montserrat-semi text-textPrimary">
-          What do you need?
-        </Text>
-      </View>
+    <View className="flex-1 bg-background">
+      <GradientHeader title="What do you need?" showBack fallbackHref="/(customer)/(tabs)">
+        <View className="px-5 -mt-2 pb-3">
+          <Text
+            className="text-[10px] font-montserrat-bold uppercase"
+            style={{ letterSpacing: 1.4, color: 'rgba(255,255,255,0.78)' }}
+          >
+            New errand · Step 1
+          </Text>
+        </View>
+      </GradientHeader>
 
       {/* Step indicator — makes the 4-step funnel visible from step 1
           (previously this screen had no indicator at all). */}
-      <View className="px-5 mb-3">
+      <View className="px-5 mt-3 mb-3">
         <BookingStepIndicator currentStep={0} />
       </View>
 
@@ -193,8 +187,8 @@ export default function TypeSelectionScreen() {
             {Array.from({ length: 6 }).map((_, i) => (
               <View
                 key={`skeleton-${i}`}
-                className="w-[48%] mb-3 rounded-2xl p-4 bg-surface"
-                style={{ height: 148, opacity: 0.6, shadowColor: '#0F172A', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.03, shadowRadius: 6, elevation: 1 }}
+                className="w-[48%] mb-3 p-4 bg-surface"
+                style={{ height: 148, borderRadius: 12, borderWidth: 1, borderColor: '#E2E8F0', opacity: 0.6 }}
               >
                 <View className="w-11 h-11 rounded-xl bg-divider mb-3" />
                 <View className="h-3 w-3/4 rounded-full bg-divider mb-2" />
@@ -216,14 +210,18 @@ export default function TypeSelectionScreen() {
                 accessibilityRole="button"
                 accessibilityLabel={`${type.name}. ${type.description ?? ''}`}
                 accessibilityState={{ selected: isSelected }}
-                // Always render a 2px border so selecting doesn't shift the tile.
-                className={`w-[48%] mb-3 rounded-2xl p-4 border-2 ${
-                  isSelected ? 'bg-primary50 border-primary' : 'bg-surface border-transparent'
-                }`}
+                // 12px corners (was 2xl/16) so tiles read more like cards
+                // less like pills. Selected state replaces the tinted
+                // bg+border combo with a solid 2px primary border on a
+                // surface background — cleaner, no color-fill
+                // duplication with the icon and label colors.
+                className="w-[48%] mb-3 p-4 bg-surface"
                 style={({ pressed }) => [
-                  !isSelected
-                    ? { shadowColor: '#0F172A', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.04, shadowRadius: 8, elevation: 1 }
-                    : null,
+                  {
+                    borderRadius: 12,
+                    borderWidth: isSelected ? 2 : 1,
+                    borderColor: isSelected ? '#2563EB' : '#E2E8F0',
+                  },
                   pressed ? { opacity: 0.92, transform: [{ scale: 0.985 }] } : null,
                 ]}
                 android_ripple={{ color: 'rgba(37,99,235,0.08)', borderless: false }}
@@ -231,35 +229,32 @@ export default function TypeSelectionScreen() {
               >
                 <View className="flex-row items-center justify-between mb-3">
                   <Icon
-                    size={26}
+                    size={22}
                     color={isSelected ? '#2563EB' : '#475569'}
                     strokeWidth={1.6}
                   />
                   {isTransportation && (
-                    <Badge label="Ride" variant="primary" size="sm" />
+                    <Text className="text-[10px] font-montserrat-bold uppercase text-warning" style={{ letterSpacing: 1.2 }}>
+                      Ride
+                    </Text>
                   )}
                 </View>
                 <Text
-                  className={`text-sm font-montserrat-semi mb-1 ${
+                  className={`text-[14px] font-montserrat-bold mb-1 ${
                     isSelected ? 'text-primary' : 'text-textPrimary'
                   }`}
                 >
                   {type.name}
                 </Text>
                 <Text
-                  className="text-xs font-montserrat text-textTertiary mb-2"
+                  className="text-[11px] font-montserrat text-textSecondary mb-3 leading-[14px]"
                   numberOfLines={2}
                 >
                   {type.description}
                 </Text>
-                <Text className="text-xs font-montserrat-semi text-textTertiary">
+                <Text className="text-[11px] font-inter tabular-nums text-textMuted">
                   From {formatCurrency(type.base_fee)}
                 </Text>
-                {isTransportation && (
-                  <Text className="text-[10px] font-montserrat text-warning mt-1">
-                    PIN verification required
-                  </Text>
-                )}
               </Pressable>
             );
           })}
@@ -302,6 +297,6 @@ export default function TypeSelectionScreen() {
         }}
         onCancel={() => setShowDiscardModal(false)}
       />
-    </SafeAreaView>
+    </View>
   );
 }

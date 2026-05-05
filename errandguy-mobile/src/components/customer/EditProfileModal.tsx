@@ -67,71 +67,82 @@ export function EditProfileModal({ visible, onClose }: EditProfileModalProps) {
   };
 
   return (
-    <Modal visible={visible} animationType="slide" presentationStyle="pageSheet">
+    <Modal
+      visible={visible}
+      animationType="slide"
+      transparent
+      statusBarTranslucent
+      onRequestClose={onClose}
+    >
       <KeyboardAvoidingView
         style={{ flex: 1 }}
         behavior={Platform.OS === 'ios' ? 'padding' : undefined}
       >
-        <View className="flex-1 bg-background">
-          <View className="flex-row items-center justify-between px-5 py-4 border-b border-divider">
-            <Text className="text-lg font-montserrat-semi text-textPrimary">
-              Edit Profile
-            </Text>
-            <Pressable onPress={onClose} hitSlop={10}>
-              <X size={24} color="#475569" />
-            </Pressable>
-          </View>
-
-          <ScrollView
-            className="flex-1 px-5 pt-6"
-            keyboardShouldPersistTaps="handled"
-            contentContainerStyle={{ paddingBottom: 40 }}
-          >
-            <View className="items-center mb-6">
-              <Pressable onPress={() => setAvatarPickerVisible(true)}>
-                <Avatar
-                  uri={user?.avatar_url}
-                  name={user?.full_name}
-                  size="xl"
-                />
-                <Text className="text-xs font-montserrat text-primary mt-2 text-center">
-                  {uploadingAvatar ? 'Uploading…' : 'Change Photo'}
-                </Text>
+        {/* Dim layer above the sheet so the parent screen reads as the
+            "back" surface but the sheet itself is a flat panel — no
+            native pageSheet curvature, no manual rounded-top. */}
+        <View className="flex-1 bg-black/40 justify-end">
+          <View className="bg-background" style={{ height: '92%' }}>
+            <View className="flex-row items-center justify-between px-7 py-5 border-b border-divider">
+              <Text className="text-lg font-montserrat-semi text-textPrimary">
+                Edit Profile
+              </Text>
+              <Pressable onPress={onClose} hitSlop={10}>
+                <X size={24} color="#475569" />
               </Pressable>
             </View>
 
-            <Input
-              label="Full Name"
-              value={fullName}
-              onChangeText={setFullName}
-              placeholder="Enter your name"
-            />
-            <Input
-              label="Email"
-              value={email}
-              onChangeText={setEmail}
-              placeholder="Enter your email"
-              keyboardType="email-address"
-            />
+            <ScrollView
+              className="flex-1 px-7 pt-8"
+              keyboardShouldPersistTaps="handled"
+              contentContainerStyle={{ paddingBottom: 48 }}
+            >
+              <View className="items-center mb-6">
+                <Pressable onPress={() => setAvatarPickerVisible(true)}>
+                  <Avatar
+                    uri={user?.avatar_url}
+                    name={user?.full_name}
+                    size="xl"
+                  />
+                  <Text className="text-xs font-montserrat text-primary mt-2 text-center">
+                    {uploadingAvatar ? 'Uploading…' : 'Change Photo'}
+                  </Text>
+                </Pressable>
+              </View>
 
-            <View className="mt-4">
-              <Button
-                title="Save Changes"
-                onPress={handleSave}
-                loading={saving}
-                fullWidth
+              <Input
+                label="Full Name"
+                value={fullName}
+                onChangeText={setFullName}
+                placeholder="Enter your name"
               />
-            </View>
-          </ScrollView>
+              <Input
+                label="Email"
+                value={email}
+                onChangeText={setEmail}
+                placeholder="Enter your email"
+                keyboardType="email-address"
+              />
 
-          <ImagePickerModal
-            visible={avatarPickerVisible}
-            onClose={() => setAvatarPickerVisible(false)}
-            onConfirm={handleAvatarUpload}
-            title="Profile Photo"
-            subtitle="Choose a photo for your profile"
-            uploading={uploadingAvatar}
-          />
+              <View className="mt-4">
+                <Button
+                  title="Save Changes"
+                  onPress={handleSave}
+                  loading={saving}
+                  fullWidth
+                />
+              </View>
+            </ScrollView>
+
+            <ImagePickerModal
+              visible={avatarPickerVisible}
+              onClose={() => setAvatarPickerVisible(false)}
+              onConfirm={handleAvatarUpload}
+              title="Profile Photo"
+              subtitle="Choose a photo for your profile"
+              uploading={uploadingAvatar}
+            />
+          </View>
         </View>
       </KeyboardAvoidingView>
     </Modal>

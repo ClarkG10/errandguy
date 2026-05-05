@@ -1,5 +1,5 @@
 import React from 'react';
-import { Pressable, Text, View, ActivityIndicator, StyleSheet } from 'react-native';
+import { Pressable, Text, View, ActivityIndicator, StyleSheet, Platform } from 'react-native';
 
 interface SocialLoginButtonProps {
   provider: 'google' | 'facebook';
@@ -37,8 +37,8 @@ export function SocialLoginButton({
         <ActivityIndicator size="small" color="#64748B" />
       ) : (
         <>
-          <View style={[styles.letterCircle, { backgroundColor: config.accentColor + '12' }]}>
-            <Text style={[styles.letter, { color: config.accentColor }]}>
+          <View style={[styles.letterCircle, { backgroundColor: config.accentColor }]}>
+            <Text style={styles.letter}>
               {config.letter}
             </Text>
           </View>
@@ -55,27 +55,28 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    height: 52,
+    height: Platform.OS === 'android' ? 48 : 50,
     backgroundColor: '#FFFFFF',
-    borderRadius: 16,
+    borderRadius: 8,
     borderWidth: 1,
     borderColor: '#E2E8F0',
-    gap: 8,
+    gap: 10,
   },
   letterCircle: {
-    width: 28,
-    height: 28,
-    borderRadius: 14,
+    width: 22,
+    height: 22,
+    borderRadius: 4,
     alignItems: 'center',
     justifyContent: 'center',
   },
   letter: {
-    fontSize: 15,
-    fontFamily: 'Quicksand_600SemiBold',
+    fontSize: 13,
+    color: '#FFFFFF',
+    fontFamily: Platform.OS === 'ios' ? 'Inter_700Bold' : 'Quicksand_700Bold',
   },
   label: {
-    fontSize: 14,
-    fontFamily: 'Quicksand_500Medium',
+    fontSize: Platform.OS === 'android' ? 13 : 14,
+    fontFamily: Platform.OS === 'ios' ? 'Inter_600SemiBold' : 'Quicksand_600SemiBold',
     color: '#0F172A',
   },
 });

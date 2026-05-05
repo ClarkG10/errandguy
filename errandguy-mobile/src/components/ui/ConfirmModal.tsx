@@ -1,5 +1,5 @@
 import React from 'react';
-import { View, Text, Modal, Pressable } from 'react-native';
+import { View, Text, Modal, Pressable, ScrollView } from 'react-native';
 import { MotiView } from 'moti';
 import { ErrandLoader } from './ErrandLoader';
 
@@ -40,26 +40,34 @@ export function ConfirmModal({
       >
         <Pressable onPress={(e) => e.stopPropagation()} className="w-full max-w-sm">
           <MotiView
-            from={{ opacity: 0, scale: 0.85, translateY: 20 }}
+            from={{ opacity: 0, scale: 0.92, translateY: 12 }}
             animate={{ opacity: 1, scale: 1, translateY: 0 }}
-            transition={{ type: 'spring', damping: 22, stiffness: 220, mass: 0.8 }}
-            className="bg-white rounded-2xl overflow-hidden"
+            transition={{ type: 'spring', damping: 22, stiffness: 240, mass: 0.7 }}
+            className="bg-white overflow-hidden"
+            style={{ maxHeight: '80%' }}
           >
-            <View className="px-6 pt-6 pb-5">
-              <Text className="text-lg font-montserrat-bold text-textPrimary text-center">
+            {/* Long copy is allowed to scroll inside the dialog — a
+                long Terms-of-service or cancellation reason will no
+                longer push the action row off-screen. */}
+            <ScrollView
+              showsVerticalScrollIndicator={false}
+              bounces={false}
+              contentContainerStyle={{ paddingHorizontal: 28, paddingTop: 28, paddingBottom: 22 }}
+            >
+              <Text className="text-[16px] font-montserrat-bold text-textPrimary text-center">
                 {title}
               </Text>
-              <Text className="text-sm font-montserrat text-textSecondary text-center mt-2">
+              <Text className="text-[13px] font-montserrat text-textSecondary text-center mt-3" style={{ lineHeight: 20 }}>
                 {message}
               </Text>
-            </View>
+            </ScrollView>
             <View className="flex-row border-t border-divider">
               <Pressable
                 className="flex-1 py-4 items-center border-r border-divider active:bg-gray-50"
                 onPress={onCancel}
                 disabled={loading}
               >
-                <Text className="text-sm font-montserrat-semi text-textSecondary">
+                <Text className="text-[13px] font-montserrat-semi text-textSecondary">
                   {cancelLabel}
                 </Text>
               </Pressable>
@@ -75,7 +83,7 @@ export function ConfirmModal({
                   />
                 ) : (
                   <Text
-                    className={`text-sm font-montserrat-bold ${
+                    className={`text-[13px] font-montserrat-bold ${
                       destructive ? 'text-danger' : 'text-primary'
                     }`}
                   >

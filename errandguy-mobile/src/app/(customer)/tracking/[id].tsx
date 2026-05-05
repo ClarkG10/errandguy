@@ -7,6 +7,7 @@ import {
   Image,
   StyleSheet,
   Linking,
+  Animated,
 } from 'react-native';
 import * as Haptics from 'expo-haptics';
 import { useRouter, useLocalSearchParams } from 'expo-router';
@@ -115,6 +116,28 @@ export default function TrackingScreen() {
   const { runnerLocation, isConnected } = useRunnerTracking(
     booking?.runner_id ? (id ?? null) : null,
   );
+
+  // Looping pulse driver shared between the on-map runner marker and
+  // the bottom-right "live" pill. Only animates while the runner has
+  // a positive speed reading so the pulse reads as actual movement.
+  const runnerPulse = useRef(new Animated.Value(0)).current;
+  useEffect(() => {
+    const moving = runnerLocation?.speed != null && runnerLocation.speed > 0;
+    if (!moving) {
+      runnerPulse.stopAnimation();
+      runnerPulse.setValue(0);
+      return;
+    }
+    const loop = Animated.loop(
+      Animated.timing(runnerPulse, {
+        toValue: 1,
+        duration: 1400,
+        useNativeDriver: true,
+      }),
+    );
+    loop.start();
+    return () => loop.stop();
+  }, [runnerLocation?.speed, runnerPulse]);
 
   // Live booking status updates via Supabase Realtime
   const { isConnected: statusConnected } = useBookingStatus(id ?? null);
@@ -575,6 +598,13 @@ export default function TrackingScreen() {
     }
   }, [id]);
 
+  // Active = anything other than terminal states. Used to gate the Android
+  // back-button guard so completed/cancelled bookings let the user leave freely.
+  // Must run BEFORE any conditional early-return below — hooks rules.
+  const isLiveBooking =
+    !!booking && !['completed', 'cancelled', 'no_runner'].includes(booking.status);
+  useBackGuard(isLiveBooking, 'Tracking your errand — tap back again to leave');
+
   if (loading) {
     return (
       <SafeAreaView className="flex-1 bg-background" edges={['top']}>
@@ -603,10 +633,6 @@ export default function TrackingScreen() {
   const steps = errandRule.statusFlow as unknown as BookingStatus[];
   const currentStatusIndex = steps.indexOf(booking.status);
   const isShopping = errandRule.requiresShoppingBudget;
-  // Active = anything other than terminal states. Used to gate the Android
-  // back-button guard so completed/cancelled bookings let the user leave freely.
-  const isLiveBooking = !['completed', 'cancelled', 'no_runner'].includes(booking.status);
-  useBackGuard(isLiveBooking, 'Tracking your errand — tap back again to leave');
   // Once a shopping runner has picked up (paid for) the items, the customer
   // can no longer self-cancel — they would still owe the spent amount.
   const canCancel =
@@ -727,7 +753,11 @@ export default function TrackingScreen() {
             </Mapbox.MarkerView>
           )}
 
-          {/* Runner marker (moving) — branded pin with vehicle icon. */}
+          {/* Runner marker (moving) — branded pin with vehicle icon.
+              A pulse ring expands+fades behind the inner pin whenever
+              the runner's reported speed > 0, so the customer gets an
+              unmistakable "my runner is moving" cue beyond the pin
+              just shifting position on the map. */}
           {runnerLocation && (
             <Mapbox.MarkerView
               id="runner"
@@ -736,6 +766,25 @@ export default function TrackingScreen() {
             >
               <View style={styles.runnerMarkerWrap}>
                 <View style={styles.runnerMarkerOuter}>
+                  {runnerLocation.speed != null && runnerLocation.speed > 0 && (
+                    <Animated.View
+                      pointerEvents="none"
+                      style={[
+                        styles.runnerPulse,
+                        {
+                          opacity: runnerPulse.interpolate({ inputRange: [0, 1], outputRange: [0.55, 0] }),
+                          transform: [
+                            {
+                              scale: runnerPulse.interpolate({
+                                inputRange: [0, 1],
+                                outputRange: [0.6, 2.4],
+                              }),
+                            },
+                          ],
+                        },
+                      ]}
+                    />
+                  )}
                   <View style={styles.runnerMarkerInner}>
                     <Bike size={16} color="#FFFFFF" strokeWidth={2.4} />
                   </View>
@@ -780,12 +829,53 @@ export default function TrackingScreen() {
           )}
         </Mapbox.MapView>
 
-        {/* Realtime indicator */}
+        {/* Realtime indicator — shows three states:
+              1. Connecting (no realtime channel yet)
+              2. Live + idle (runner connected, not moving)
+              3. Live + moving (runner connected, GPS speed > 0)
+            The third state surfaces the live km/h reading so the
+            customer sees their runner is actively in motion, not
+            just sitting at a red light. */}
         {booking.runner_id && (
-          <View className="absolute bottom-3 right-3 flex-row items-center bg-white/90 rounded-full px-3 py-1.5 shadow-sm">
-            <View className={`w-2 h-2 rounded-full mr-1.5 ${isConnected ? 'bg-success' : 'bg-gray-400'}`} />
-            <Text className="text-[10px] font-montserrat text-textSecondary">
-              {isConnected ? 'Live' : 'Connecting...'}
+          <View
+            className="absolute bottom-3 right-3 flex-row items-center bg-white rounded-full pl-2 pr-3 py-1.5"
+            style={{
+              shadowColor: '#000',
+              shadowOpacity: 0.12,
+              shadowRadius: 6,
+              shadowOffset: { width: 0, height: 2 },
+              elevation: 3,
+            }}
+          >
+            <View className="items-center justify-center mr-1.5" style={{ width: 10, height: 10 }}>
+              <View className={`w-2 h-2 rounded-full ${
+                isConnected
+                  ? runnerLocation?.speed != null && runnerLocation.speed > 0
+                    ? 'bg-success'
+                    : 'bg-primary'
+                  : 'bg-gray-400'
+              }`} />
+              {isConnected && runnerLocation?.speed != null && runnerLocation.speed > 0 && (
+                <Animated.View
+                  pointerEvents="none"
+                  style={{
+                    position: 'absolute',
+                    width: 10,
+                    height: 10,
+                    borderRadius: 5,
+                    backgroundColor: '#22C55E',
+                    opacity: runnerPulse.interpolate({ inputRange: [0, 1], outputRange: [0.5, 0] }),
+                    transform: [{ scale: runnerPulse.interpolate({ inputRange: [0, 1], outputRange: [1, 2.6] }) }],
+                  }}
+                />
+              )}
+            </View>
+            <Text className="text-[10px] font-montserrat-bold text-textPrimary">
+              {!isConnected
+                ? 'Connecting…'
+                : runnerLocation?.speed != null && runnerLocation.speed > 0
+                ? `${Math.round(runnerLocation.speed * 3.6)} km/h · moving`
+                : 'Live'}
             </Text>
           </View>
         )}
@@ -817,46 +907,61 @@ export default function TrackingScreen() {
         )}
       </View>
 
-      {/* Floating header — sits above the map and the sheet */}
+      {/* Floating header — bold colored banner so the tracking screen
+          reads as a dedicated "trip in progress" surface, not just a
+          map with chrome on top. Uses the brand blue gradient feel
+          (solid #2563EB) with a clear hierarchy: back chevron, status
+          + booking#, then a right-aligned ETA pill on a translucent
+          surface so the minutes pop. */}
       <SafeAreaView edges={['top']} pointerEvents="box-none">
-        <View className="flex-row items-center px-5 py-2" pointerEvents="box-none">
-          <Pressable
-            onPress={() => router.canGoBack() ? router.back() : router.replace('/(customer)/(tabs)')}
-            accessibilityRole="button"
-            accessibilityLabel="Go back"
-            hitSlop={8}
-            className="w-10 h-10 rounded-full bg-white items-center justify-center mr-3"
-            style={styles.floatingShadow}
+        <View className="px-3 pt-2" pointerEvents="box-none">
+          <View
+            className="flex-row items-stretch rounded-2xl overflow-hidden"
+            style={[styles.floatingShadow, { backgroundColor: '#2563EB' }]}
           >
-            <ArrowLeft size={20} color="#0F172A" />
-          </Pressable>
-          <View className="flex-1 bg-white rounded-full px-4 py-2" style={styles.floatingShadow}>
-            <Text className="text-sm font-montserrat-semi text-textPrimary" numberOfLines={1}>
-              {STATUS_LABELS[booking.status]}
-            </Text>
-            <Text className="text-[10px] font-montserrat text-textSecondary">
-              {booking.booking_number}
-            </Text>
-          </View>
-          {/* ETA pill \u2014 only meaningful once a runner is dispatched and we
-              have a live GPS fix. Phase-aware: shows time-to-pickup
-              before pickup, time-to-dropoff after. */}
-          {runnerLocation && eta.minutes != null && (
-            <View
-              className="ml-3 bg-primary rounded-full px-3 py-2"
-              style={styles.floatingShadow}
-              accessibilityRole="text"
-              accessibilityLabel={`Runner is ${eta.minutes} minutes away`}
+            <Pressable
+              onPress={() => router.canGoBack() ? router.back() : router.replace('/(customer)/(tabs)')}
+              accessibilityRole="button"
+              accessibilityLabel="Go back"
+              hitSlop={8}
+              className="w-12 items-center justify-center"
             >
-              <Text className="text-base font-montserrat-bold text-white leading-4">
-                {eta.minutes}
-                <Text className="text-[10px] font-montserrat-semi text-white/80"> min</Text>
+              <ArrowLeft size={22} color="#FFFFFF" strokeWidth={2.2} />
+            </Pressable>
+            <View className="flex-1 py-3 pr-3 justify-center">
+              <Text
+                className="text-[10px] font-montserrat-bold uppercase text-white/75"
+                style={{ letterSpacing: 1.2 }}
+              >
+                {booking.booking_number}
               </Text>
-              <Text className="text-[9px] font-montserrat text-white/80 leading-3">
-                {isPickupPhase ? 'to pickup' : 'to dropoff'}
+              <Text
+                className="text-[15px] font-montserrat-bold text-white mt-0.5"
+                numberOfLines={1}
+              >
+                {STATUS_LABELS[booking.status]}
               </Text>
             </View>
-          )}
+            {runnerLocation && eta.minutes != null && (
+              <View
+                className="flex-row items-center px-4 my-2 mr-2 rounded-xl"
+                style={{ backgroundColor: 'rgba(255,255,255,0.18)' }}
+              >
+                <View className="items-end">
+                  <Text className="text-[20px] font-montserrat-bold text-white tabular-nums leading-[22px]">
+                    {eta.minutes}
+                    <Text className="text-[11px] font-montserrat-semi text-white/80"> min</Text>
+                  </Text>
+                  <Text
+                    className="text-[9px] font-montserrat-bold text-white/80 uppercase mt-0.5"
+                    style={{ letterSpacing: 0.8 }}
+                  >
+                    {isPickupPhase ? 'to pickup' : 'to drop-off'}
+                  </Text>
+                </View>
+              </View>
+            )}
+          </View>
         </View>
       </SafeAreaView>
 
@@ -895,7 +1000,7 @@ export default function TrackingScreen() {
             ETA pill or terminal-state label. Sits at the very top of
             the sheet content so it's the first thing visible when the
             sheet expands from peek. */}
-        <View className="mb-4">
+        <View className="mb-3">
           <CurrentStepHero
             eyebrow={`STEP ${Math.min(currentStatusIndex + 1, steps.length)} OF ${steps.length}`}
             title={heroCopy.title}
@@ -909,7 +1014,7 @@ export default function TrackingScreen() {
 
         {/* Transportation PIN */}
         {isTransportation && booking.ride_pin && (
-          <View className="bg-warning/10 border border-warning rounded-xl p-4 mb-4 items-center">
+          <View className="bg-warning/10 border border-warning rounded-xl p-4 mb-3 items-center">
             <Text className="text-xs font-montserrat text-warning mb-1">
               Show this PIN to your runner
             </Text>
@@ -919,18 +1024,23 @@ export default function TrackingScreen() {
           </View>
         )}
 
-        {/* Runner Info */}
+        {/* ── Runner pill ─────────────────────────────────
+            Mirrors the runner errand "customer pill" so both sides
+            of the trip see the same identity card pattern: avatar +
+            name/rating on the left, circular icon-only actions on
+            the right. Wrapped in a soft surface card so it reads as
+            a contained section instead of free-floating row. */}
         {booking.runner_id && (
-          <View className="flex-row items-center mb-4">
+          <View className="flex-row items-center bg-surface rounded-2xl p-3 mb-3">
             <Avatar
               size="md"
               uri={booking.runner?.avatar_url ?? undefined}
               name={booking.runner?.full_name}
               isVerified
             />
-            <View className="flex-1 ml-3">
+            <View className="flex-1 ml-3 mr-2">
               <Text
-                className="text-sm font-montserrat-bold text-textPrimary"
+                className="text-[14px] font-montserrat-bold text-textPrimary"
                 numberOfLines={1}
               >
                 {booking.runner?.full_name ?? 'Your runner'}
@@ -938,7 +1048,7 @@ export default function TrackingScreen() {
               <View className="flex-row items-center mt-0.5">
                 <RatingStars
                   value={Number(booking.runner?.avg_rating ?? 0)}
-                  size={12}
+                  size={11}
                   readonly
                 />
                 {booking.runner?.total_ratings ? (
@@ -948,46 +1058,44 @@ export default function TrackingScreen() {
                 ) : null}
               </View>
             </View>
-            <View className="flex-row gap-3">
-              <Pressable
-                accessibilityRole="button"
-                accessibilityLabel={
-                  unreadForBooking > 0
-                    ? `Open chat, ${unreadForBooking} unread message${unreadForBooking === 1 ? '' : 's'}`
-                    : 'Open chat with runner'
-                }
-                hitSlop={8}
-                className="w-10 h-10 rounded-full bg-primaryLight items-center justify-center"
-                onPress={() => router.push(`/(customer)/chat/${booking.id}`)}
-              >
-                <MessageCircle size={18} color="#2563EB" />
-                {unreadForBooking > 0 && (
-                  <View className="absolute top-0 right-0 min-w-[16px] h-4 px-1 bg-danger rounded-full items-center justify-center border-[1.5px] border-white">
-                    <Text className="text-[9px] text-white font-montserrat-bold leading-[11px]">
-                      {unreadForBooking > 9 ? '9+' : String(unreadForBooking)}
-                    </Text>
-                  </View>
-                )}
-              </Pressable>
-              <Pressable
-                accessibilityRole="button"
-                accessibilityLabel="Call runner"
-                hitSlop={8}
-                className="w-10 h-10 rounded-full bg-primaryLight items-center justify-center"
-                onPress={handleCall}
-              >
-                <Phone size={18} color="#2563EB" />
-              </Pressable>
-              <Pressable
-                accessibilityRole="button"
-                accessibilityLabel="Share trip with a contact"
-                hitSlop={8}
-                className="w-10 h-10 rounded-full bg-primaryLight items-center justify-center"
-                onPress={handleShareTrip}
-              >
-                <Share2 size={18} color="#2563EB" />
-              </Pressable>
-            </View>
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel="Call runner"
+              hitSlop={6}
+              className="w-10 h-10 rounded-full bg-primaryLight items-center justify-center mr-2"
+              onPress={handleCall}
+            >
+              <Phone size={17} color="#2563EB" strokeWidth={2} />
+            </Pressable>
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel={
+                unreadForBooking > 0
+                  ? `Open chat, ${unreadForBooking} unread message${unreadForBooking === 1 ? '' : 's'}`
+                  : 'Open chat with runner'
+              }
+              hitSlop={6}
+              className="w-10 h-10 rounded-full bg-primaryLight items-center justify-center mr-2"
+              onPress={() => router.push(`/(customer)/chat/${booking.id}`)}
+            >
+              <MessageCircle size={17} color="#2563EB" strokeWidth={2} />
+              {unreadForBooking > 0 && (
+                <View className="absolute -top-0.5 -right-0.5 min-w-[16px] h-4 px-1 bg-danger rounded-full items-center justify-center border-[1.5px] border-white">
+                  <Text className="text-[9px] text-white font-montserrat-bold leading-[11px]">
+                    {unreadForBooking > 9 ? '9+' : String(unreadForBooking)}
+                  </Text>
+                </View>
+              )}
+            </Pressable>
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel="Share trip with a contact"
+              hitSlop={6}
+              className="w-10 h-10 rounded-full bg-primaryLight items-center justify-center"
+              onPress={handleShareTrip}
+            >
+              <Share2 size={17} color="#2563EB" strokeWidth={2} />
+            </Pressable>
           </View>
         )}
 
@@ -1232,28 +1340,35 @@ const styles = StyleSheet.create({
   runnerMarkerWrap: {
     alignItems: 'center',
   },
+  runnerPulse: {
+    position: 'absolute',
+    width: 64,
+    height: 64,
+    borderRadius: 32,
+    backgroundColor: '#22C55E',
+  },
   runnerMarkerOuter: {
-    width: 44,
-    height: 44,
-    borderRadius: 22,
-    backgroundColor: 'rgba(37, 99, 235, 0.18)',
+    width: 56,
+    height: 56,
+    borderRadius: 28,
+    backgroundColor: 'rgba(37, 99, 235, 0.22)',
     alignItems: 'center',
     justifyContent: 'center',
   },
   runnerMarkerInner: {
-    width: 32,
-    height: 32,
-    borderRadius: 16,
+    width: 40,
+    height: 40,
+    borderRadius: 20,
     backgroundColor: '#2563EB',
     alignItems: 'center',
     justifyContent: 'center',
-    borderWidth: 2.5,
+    borderWidth: 3,
     borderColor: '#FFFFFF',
     shadowColor: '#0F172A',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.25,
-    shadowRadius: 6,
-    elevation: 5,
+    shadowOffset: { width: 0, height: 3 },
+    shadowOpacity: 0.3,
+    shadowRadius: 8,
+    elevation: 8,
   },
   runnerSpeedBadge: {
     marginTop: 4,

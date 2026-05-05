@@ -78,7 +78,9 @@ export const bookingService = {
   },
 
   getActiveBooking() {
-    return api.get('/bookings/active', { cacheTtlMs: 5000 } as any);
+    // Silent: customer Home polls this on focus/foreground; the user
+    // didn't explicitly ask for it.
+    return api.get('/bookings/active', { cacheTtlMs: 5000, silent: true } as any);
   },
 
   getEstimate(data: {

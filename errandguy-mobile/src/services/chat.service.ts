@@ -77,8 +77,11 @@ export const chatService = {
   },
 
   getConversations() {
+    // Silent: refreshed on focus / interval; the user did not ask for
+    // it explicitly so it shouldn't paint the global progress bar.
     return api.get<{ data: Conversation[] }>('/chat/conversations', {
       cacheTtlMs: 15_000,
+      silent: true,
     } as any);
   },
 };

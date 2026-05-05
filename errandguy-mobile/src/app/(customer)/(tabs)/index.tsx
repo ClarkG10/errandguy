@@ -1,13 +1,15 @@
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import {
   View,
   Text,
   ScrollView,
   RefreshControl,
   Pressable,
+  StatusBar,
   StyleSheet,
 } from 'react-native';
 import { useRouter } from 'expo-router';
+import { LinearGradient } from 'expo-linear-gradient';
 import {
   Package,
   ShoppingCart,
@@ -17,16 +19,12 @@ import {
   Car,
   PenTool,
   Bell,
-  ChevronRight,
-  Search,
-  AlertCircle,
-  RefreshCw,
+  ArrowRight,
 } from 'lucide-react-native';
 import type { LucideIcon } from 'lucide-react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useAuthStore } from '../../../stores/authStore';
 import { useBookingStore } from '../../../stores/bookingStore';
-import { toast } from '../../../stores/toastStore';
 import { useNotificationStore } from '../../../stores/notificationStore';
 import { bookingService } from '../../../services/booking.service';
 import { configService } from '../../../services/config.service';
@@ -50,6 +48,32 @@ const ICON_MAP: Record<string, LucideIcon> = {
   PenTool,
 };
 
+/**
+ * Customer Home — radically simplified.
+ *
+ * The previous iteration stacked: header strip → eyebrow → headline →
+ * search → eyebrow → service grid → eyebrow → recent. Three "eyebrow +
+ * title" pairs on one screen reads as cluttered no matter how clean
+ * each individual block is.
+ *
+ * This version collapses to ONE focal hero (the address-style search)
+ * and three thin supporting strips. The whole screen should be visually
+ * scannable in under a second:
+ *
+ *   • Top — avatar (left) + greeting+name in one line + bell (right).
+ *     A single horizontal band, not three stacked sections.
+ *   • Hero — a tall "Where are we going?" card with two location rows
+ *     (pickup + drop-off placeholders). Mirrors the way ride-hailing
+ *     apps (Grab, Uber, Bolt) anchor their home screen on the
+ *     destination question rather than on a tile dashboard.
+ *   • Active errand — only when one exists.
+ *   • Service shortcuts — a tight icon-only horizontal strip. Names
+ *     under each icon, no card chrome, no per-tile "from ₱X" pricing
+ *     noise (that lives one tap deeper on the Type screen).
+ *   • Recent — at most three rows, plain text, separated by hairlines.
+ *     A "See all" link sits inline with the section label, not as its
+ *     own row.
+ */
 export default function CustomerHomeScreen() {
   const router = useRouter();
   const user = useAuthStore((s) => s.user);
@@ -61,12 +85,6 @@ export default function CustomerHomeScreen() {
 
   const enabled = role === 'customer';
 
-  // ── SWR-style queries ──
-  // Each query reads from AsyncStorage on mount (instant render with last
-  // known data), then revalidates in the background only if the cache is
-  // older than `staleTime`. Mutations elsewhere (createBooking, cancel…)
-  // invalidate the relevant cache so users always see fresh data without
-  // an explicit refetch on every mount.
   const errandTypesQ = useQuery<ErrandType[]>(
     ['errand-types'],
     async () => {
@@ -96,17 +114,19 @@ export default function CustomerHomeScreen() {
     { staleTime: 30_000, ttl: CacheTTL.SHORT, enabled: enabled && !!user?.id },
   );
 
-  const errandTypes = errandTypesQ.data ?? [];
-  const recentBookings = recentBookingsQ.data ?? [];
+  const errandTypes = (errandTypesQ.data ?? []).filter((t) => t.is_active);
+  // Keep the home dashboard simple — surface only the most common
+  // errand types here. The full list lives one tap deeper on the
+  // booking type screen ("See all").
+  const featuredTypes = errandTypes.slice(0, 4);
+  const recentBookings = (recentBookingsQ.data ?? []).slice(0, 3);
   const initialLoading =
     enabled && (errandTypesQ.loading || recentBookingsQ.loading) &&
     errandTypes.length === 0 && recentBookings.length === 0;
-  const error: string | null = null;
 
-  // Sync active booking into the global store — but only AFTER the
-  // query has resolved at least once. Without the loaded-once guard the
-  // initial undefined `data` would clobber an in-flight booking that
-  // another screen (or a push notification) had already populated.
+  // Sync active booking into the global store, but skip the very first
+  // pre-resolution undefined so we don't clobber any push-notification
+  // hydrated value.
   useEffect(() => {
     if (activeBookingQ.loading && activeBookingQ.data == null) return;
     setActiveBooking(activeBookingQ.data ?? null);
@@ -123,14 +143,29 @@ export default function CustomerHomeScreen() {
     setRefreshing(false);
   }, [errandTypesQ, recentBookingsQ, activeBookingQ]);
 
-  const getGreeting = () => {
+  const greeting = (() => {
     const hour = new Date().getHours();
     if (hour < 12) return 'Good morning';
     if (hour < 18) return 'Good afternoon';
     return 'Good evening';
-  };
+  })();
 
   const firstName = user?.full_name?.split(' ')[0] ?? 'there';
+
+  const startBooking = useCallback(
+    (preselectedTypeId?: string) => {
+      clearDraft();
+      router.push(
+        preselectedTypeId
+          ? {
+              pathname: '/(customer)/book/type',
+              params: { preselected: preselectedTypeId },
+            }
+          : '/(customer)/book/type',
+      );
+    },
+    [clearDraft, router],
+  );
 
   if (initialLoading) {
     return (
@@ -141,79 +176,155 @@ export default function CustomerHomeScreen() {
   }
 
   return (
-    <SafeAreaView className="flex-1 bg-background" edges={['top']}>
+    <View className="flex-1 bg-background">
+      <StatusBar barStyle="light-content" />
       <ScrollView
         className="flex-1"
         showsVerticalScrollIndicator={false}
-        contentContainerStyle={{ paddingBottom: 24 }}
+        contentContainerStyle={{ paddingBottom: 32 }}
         refreshControl={
           <RefreshControl
             refreshing={refreshing}
             onRefresh={onRefresh}
-            tintColor="#2563EB"
+            tintColor="#FFFFFF"
             colors={['#2563EB']}
           />
         }
       >
-        {/* ── Header ── */}
-        <View className="flex-row items-center justify-between px-5 pt-4 pb-2">
-          <View className="flex-row items-center flex-1">
-            <Pressable onPress={() => router.push('/(customer)/(tabs)/profile')}>
-              <Avatar uri={user?.avatar_url} name={user?.full_name} size="md" />
-            </Pressable>
-            <View className="ml-3 flex-1">
-              <Text className="text-xs font-montserrat text-textTertiary">
-                {getGreeting()}
-              </Text>
-              <Text className="text-lg font-montserrat-bold text-textPrimary" numberOfLines={1}>
-                {firstName}
-              </Text>
-            </View>
-          </View>
-          <Pressable
-            className="relative w-10 h-10 items-center justify-center"
-            hitSlop={8}
-            onPress={() => router.push('/(customer)/(tabs)/notifications')}
-          >
-            <Bell size={22} color="#475569" strokeWidth={1.8} />
-            {unreadCount > 0 && (
-              <View className="absolute top-1 right-1 rounded-full items-center justify-center" style={{ width: 18, height: 18, backgroundColor: '#EF4444' }}>
-                <Text style={{ fontSize: 9, fontFamily: 'Quicksand_600SemiBold', color: '#FFF' }}>
-                  {unreadCount > 9 ? '9+' : unreadCount}
+        {/* Brand-color header band — gives the home screen real
+            colour presence and visual depth. The hero destination
+            card floats up over the bottom edge of the gradient so it
+            reads as the primary surface. */}
+        <LinearGradient
+          colors={['#1D4ED8', '#2563EB', '#3B82F6']}
+          start={{ x: 0, y: 0 }}
+          end={{ x: 1, y: 1 }}
+          style={hs.headerGradient}
+        >
+          <SafeAreaView edges={['top']}>
+            <View className="flex-row items-center px-5 pt-2 pb-3">
+              <Pressable
+                onPress={() => router.push('/(customer)/(tabs)/profile')}
+                hitSlop={6}
+                accessibilityRole="button"
+                accessibilityLabel="Open profile"
+              >
+                <Avatar uri={user?.avatar_url} name={user?.full_name} size="sm" />
+              </Pressable>
+              <View className="flex-1 ml-3">
+                <Text className="text-[11px] font-montserrat" style={{ color: 'rgba(255,255,255,0.78)' }}>
+                  {greeting}
+                </Text>
+                <Text
+                  className="text-[14px] font-montserrat-bold text-white"
+                  numberOfLines={1}
+                >
+                  {firstName}
                 </Text>
               </View>
-            )}
+              <Pressable
+                className="relative w-10 h-10 items-center justify-center"
+                hitSlop={8}
+                onPress={() => router.push('/(customer)/(tabs)/notifications')}
+                accessibilityRole="button"
+                accessibilityLabel={
+                  unreadCount > 0
+                    ? `${unreadCount} unread notifications`
+                    : 'Notifications'
+                }
+              >
+                <Bell size={22} color="#FFFFFF" strokeWidth={1.8} />
+                {unreadCount > 0 && (
+                  <View
+                    className="absolute"
+                    style={{
+                      top: 8,
+                      right: 8,
+                      width: 8,
+                      height: 8,
+                      borderRadius: 4,
+                      backgroundColor: '#F87171',
+                      borderWidth: 1.5,
+                      borderColor: '#1D4ED8',
+                    }}
+                  />
+                )}
+              </Pressable>
+            </View>
+
+            {/* Hero copy on the gradient — white text for contrast.
+                Bottom padding leaves clear room for the destination
+                card to float up without crowding the subtitle. */}
+            <View className="px-5 pt-1 pb-10">
+              <Text
+                className="text-[24px] font-montserrat-bold text-white"
+                style={{ lineHeight: 28, letterSpacing: -0.3 }}
+              >
+                Where to?
+              </Text>
+              <Text
+                className="text-[13px] font-montserrat mt-1.5"
+                style={{ color: 'rgba(255,255,255,0.85)', lineHeight: 18 }}
+              >
+                Tap below to start a new errand.
+              </Text>
+            </View>
+          </SafeAreaView>
+        </LinearGradient>
+
+        {/* Destination card — floats up over the gradient bottom edge. */}
+        <View className="px-5" style={{ marginTop: -22 }}>
+          <Pressable
+            onPress={() => startBooking()}
+            accessibilityRole="button"
+            accessibilityLabel="Start a new booking"
+            className="bg-white px-4 py-4"
+            style={hs.searchBox}
+          >
+            <View className="flex-row items-center">
+              <View style={hs.pickupRing}>
+                <View style={hs.pickupDot} />
+              </View>
+              <Text className="ml-3 text-[14px] font-montserrat text-textSecondary flex-1">
+                Pickup location
+              </Text>
+            </View>
+            {/* Connector */}
+            <View
+              style={{
+                marginLeft: 7,
+                width: 2,
+                height: 14,
+                backgroundColor: '#E2E8F0',
+              }}
+            />
+            <View className="flex-row items-center">
+              {/* Drop-off square */}
+              <View
+                style={{
+                  width: 8,
+                  height: 8,
+                  borderRadius: 2,
+                  backgroundColor: '#0F172A',
+                  marginLeft: 4,
+                }}
+              />
+              <Text className="ml-3 text-[14px] font-montserrat-bold text-textPrimary flex-1">
+                Where to?
+              </Text>
+              {/* Signature chevron bubble — same gesture used on the
+                  primary CTA, tying the destination prompt to the
+                  app's primary forward-action vocabulary. */}
+              <View style={hs.chevronBubble}>
+                <ArrowRight size={16} color="#FFFFFF" strokeWidth={2.4} />
+              </View>
+            </View>
           </Pressable>
         </View>
 
-        {/* ── Search ── */}
-        <Pressable
-          className="mx-5 mt-3 flex-row items-center bg-surface rounded-2xl px-4 h-12"
-          style={hs.card}
-          onPress={() => { clearDraft(); router.push('/(customer)/book/type'); }}
-        >
-          <Search size={18} color="#94A3B8" strokeWidth={1.8} />
-          <Text className="ml-3 text-sm font-montserrat text-textTertiary flex-1">
-            What do you need help with?
-          </Text>
-        </Pressable>
-
-        {/* ── Error Banner ── */}
-        {error && (
-          <Pressable
-            className="mx-5 mt-3 flex-row items-center bg-danger/10 rounded-2xl px-4 py-3"
-            onPress={onRefresh}
-          >
-            <AlertCircle size={18} color="#EF4444" />
-            <Text className="flex-1 text-xs font-montserrat text-danger ml-2.5">{error}</Text>
-            <RefreshCw size={14} color="#EF4444" />
-          </Pressable>
-        )}
-
-        {/* ── Active Errand ──
-             Status-aware card with runner avatar, rating, headline copy
-             tailored to the current phase, segmented progress bar, and
-             a pulsing dot while we're still searching for a runner. */}
+        {/* Active errand — only when present, no eyebrow needed (the
+            card itself communicates the live state via its progress
+            track and headline). */}
         {activeBooking && (
           <View className="mx-5 mt-4">
             <ActiveBookingCard
@@ -225,128 +336,179 @@ export default function CustomerHomeScreen() {
           </View>
         )}
 
-        {/* ── Services ── */}
-        <View className="px-5 mt-6">
-          <Text className="text-base font-montserrat-bold text-textPrimary mb-3">
-            Services
-          </Text>
-          <View className="flex-row flex-wrap" style={{ gap: 10 }}>
-            {errandTypes
-              .filter((t) => t.is_active)
-              .map((type) => {
+        {/* Service tiles — a small set of the most common errand
+            types. Soft surface tiles with a tinted-blue icon chip and
+            dark label — less dominant blue than full brand-fill. */}
+        {featuredTypes.length > 0 && (
+          <View className="mt-7 px-5">
+            <View className="flex-row items-baseline justify-between mb-3">
+              <Text className="text-[15px] font-montserrat-bold text-textPrimary">
+                What can we help with?
+              </Text>
+              <Pressable
+                onPress={() => startBooking()}
+                hitSlop={8}
+                accessibilityRole="button"
+                accessibilityLabel="See all errand types"
+              >
+                <Text className="text-[11px] font-montserrat-bold text-primary underline">
+                  See all
+                </Text>
+              </Pressable>
+            </View>
+            <View className="flex-row flex-wrap -mx-1.5">
+              {featuredTypes.map((type) => {
                 const Icon = ICON_MAP[type.icon_name] ?? Package;
                 return (
-                  <Pressable
-                    key={type.id}
-                    className="bg-surface rounded-2xl items-center justify-center py-4 px-2"
-                    style={[hs.serviceCard, hs.card]}
-                    onPress={() => {
-                      clearDraft();
-                      router.push({
-                        pathname: '/(customer)/book/type',
-                        params: { preselected: type.id },
-                      });
-                    }}
-                  >
-                    <Icon size={26} color="#2563EB" strokeWidth={1.6} style={{ marginBottom: 8 }} />
-                    <Text
-                      className="text-[11px] font-montserrat-semi text-textPrimary text-center"
-                      numberOfLines={2}
+                  <View key={type.id} style={{ width: '25%' }} className="px-1.5">
+                    <Pressable
+                      onPress={() => startBooking(type.id)}
+                      className="items-center py-4 px-1"
+                      style={hs.serviceTile}
+                      accessibilityRole="button"
+                      accessibilityLabel={`Start a ${type.name} errand`}
                     >
-                      {type.name}
-                    </Text>
-                    <Text className="text-[10px] font-montserrat text-textTertiary mt-0.5">
-                      From {formatCurrency(type.base_fee)}
-                    </Text>
-                  </Pressable>
+                      <Icon size={22} color="#FFFFFF" strokeWidth={2} />
+                      <Text
+                        className="text-[11px] font-montserrat-semi text-white text-center mt-2"
+                        numberOfLines={1}
+                      >
+                        {type.name}
+                      </Text>
+                    </Pressable>
+                  </View>
                 );
               })}
+            </View>
           </View>
-        </View>
+        )}
 
-        {/* ── Recent ── */}
-        <View className="px-5 mt-6">
-          <View className="flex-row justify-between items-center mb-3">
-            <Text className="text-base font-montserrat-bold text-textPrimary">
-              Recent Errands
-            </Text>
-            {recentBookings.length > 0 && (
+        {/* Recent — at most 3 rows, no card chrome, single inline
+            section label with "See all" link to its right. */}
+        {recentBookings.length > 0 ? (
+          <View className="px-5 mt-7">
+            <View className="flex-row items-baseline justify-between mb-2">
+              <Text
+                className="text-[10px] font-montserrat-bold uppercase text-textSecondary"
+                style={{ letterSpacing: 1.4 }}
+              >
+                Recent
+              </Text>
               <Pressable
                 onPress={() => router.push('/(customer)/(tabs)/activity')}
-                className="flex-row items-center"
+                hitSlop={8}
+                accessibilityRole="button"
+                accessibilityLabel="See all errands"
               >
-                <Text className="text-xs font-montserrat-semi text-primary mr-0.5">
-                  See All
+                <Text className="text-[11px] font-montserrat-bold text-primary underline">
+                  See all
                 </Text>
-                <ChevronRight size={14} color="#2563EB" />
               </Pressable>
-            )}
-          </View>
-          {recentBookings.length === 0 ? (
-            <View className="bg-surface rounded-2xl items-center py-10 px-6" style={hs.card}>
-              <Text className="text-sm font-montserrat-semi text-textPrimary mb-1">
-                No errands yet
-              </Text>
-              <Text className="text-xs font-montserrat text-textTertiary text-center">
-                Book your first errand and it will show here
-              </Text>
             </View>
-          ) : (
-            recentBookings.map((booking) => {
+            {recentBookings.map((booking, idx) => {
               const statusColor = STATUS_COLORS[booking.status] ?? '#94A3B8';
               return (
                 <Pressable
                   key={booking.id}
-                  className="bg-surface rounded-2xl p-4 mb-2.5"
-                  style={hs.card}
-                  onPress={() => router.push(`/(customer)/tracking/${booking.id}`)}
+                  className="flex-row items-center py-3.5"
+                  style={
+                    idx < recentBookings.length - 1
+                      ? { borderBottomWidth: 1, borderBottomColor: '#E2E8F0' }
+                      : undefined
+                  }
+                  onPress={() =>
+                    router.push(`/(customer)/tracking/${booking.id}`)
+                  }
+                  accessibilityRole="button"
+                  accessibilityLabel={`Open ${booking.errand_type?.name ?? 'errand'} from ${formatRelativeTime(booking.created_at)}`}
                 >
-                  <View className="flex-row items-center">
-                    <View className="flex-1">
-                      <Text className="text-sm font-montserrat-bold text-textPrimary" numberOfLines={1}>
-                        {booking.errand_type?.name ?? 'Errand'}
-                      </Text>
-                      <Text className="text-[11px] font-montserrat text-textTertiary mt-0.5">
+                  <View className="flex-1 pr-3">
+                    <Text
+                      className="text-[14px] font-montserrat-bold text-textPrimary"
+                      numberOfLines={1}
+                    >
+                      {booking.errand_type?.name ?? 'Errand'}
+                    </Text>
+                    <View className="flex-row items-center mt-1">
+                      <View
+                        style={{
+                          width: 5,
+                          height: 5,
+                          borderRadius: 2.5,
+                          backgroundColor: statusColor,
+                          marginRight: 6,
+                        }}
+                      />
+                      <Text className="text-[11px] font-montserrat text-textSecondary">
+                        {STATUS_LABELS[booking.status] ?? booking.status}
+                        {' · '}
                         {formatRelativeTime(booking.created_at)}
                       </Text>
                     </View>
-                    <View className="items-end">
-                      <Text className="text-sm font-montserrat-bold text-textPrimary">
-                        {formatCurrency(booking.total_amount)}
-                      </Text>
-                      <View
-                        className="px-2 py-0.5 rounded-full mt-1"
-                        style={{ backgroundColor: statusColor + '15' }}
-                      >
-                        <Text
-                          style={{ fontSize: 10, fontFamily: 'Quicksand_500Medium', color: statusColor }}
-                        >
-                          {STATUS_LABELS[booking.status] ?? booking.status}
-                        </Text>
-                      </View>
-                    </View>
                   </View>
+                  <Text className="text-[14px] font-inter-semi text-textPrimary">
+                    {formatCurrency(booking.total_amount)}
+                  </Text>
                 </Pressable>
               );
-            })
-          )}
-        </View>
+            })}
+          </View>
+        ) : null}
       </ScrollView>
-    </SafeAreaView>
+    </View>
   );
 }
 
 const hs = StyleSheet.create({
-  card: {
-    shadowColor: '#0F172A',
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.04,
-    shadowRadius: 8,
-    elevation: 1,
+  headerGradient: {
+    paddingBottom: 0,
+    // Slight bottom rounding for a more deliberate header silhouette.
+    borderBottomLeftRadius: 24,
+    borderBottomRightRadius: 24,
   },
-  serviceCard: {
-    width: '30%',
-    flexGrow: 1,
-    minWidth: 100,
+  searchBox: {
+    borderRadius: 14,
+    // No border — the elevation does the visual lifting now that
+    // the card sits on a coloured surface above the gradient.
+    shadowColor: '#0F172A',
+    shadowOffset: { width: 0, height: 6 },
+    shadowOpacity: 0.10,
+    shadowRadius: 14,
+    elevation: 4,
+  },
+  pickupRing: {
+    width: 16,
+    height: 16,
+    borderRadius: 8,
+    backgroundColor: 'rgba(34,197,94,0.12)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  pickupDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    backgroundColor: '#22C55E',
+  },
+  chevronBubble: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: '#0F172A',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  serviceTile: {
+    borderRadius: 14,
+    backgroundColor: '#2563EB',
+    minHeight: 88,
+    justifyContent: 'center',
+    // Brand-tinted shadow so the tiles sit above the page surface,
+    // mirroring the depth on the destination card.
+    shadowColor: '#2563EB',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.18,
+    shadowRadius: 8,
+    elevation: 3,
   },
 });

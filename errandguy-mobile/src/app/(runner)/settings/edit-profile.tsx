@@ -1,9 +1,8 @@
 import React, { useState } from 'react';
 import { View, Text, ScrollView, KeyboardAvoidingView, Platform } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 // ArrowLeft is now provided by the shared <BackButton> primitive.
-import { BackButton } from '../../../components/ui/BackButton';
+import { GradientHeader } from '../../../components/ui/GradientHeader';
 import { Input } from '../../../components/ui/Input';
 import { Button } from '../../../components/ui/Button';
 import { useAuthStore } from '../../../stores/authStore';
@@ -44,12 +43,8 @@ export default function EditProfileScreen() {
   };
 
   return (
-    <SafeAreaView className="flex-1 bg-background" edges={['top']}>
-      {/* Header */}
-      <View className="flex-row items-center gap-3 px-5 py-4">
-        <BackButton fallbackHref="/(runner)/(tabs)/profile" />
-        <Text className="text-lg font-montserrat-bold text-textPrimary">Edit Profile</Text>
-      </View>
+    <View className="flex-1 bg-background">
+      <GradientHeader title="Edit Profile" showBack fallbackHref="/(runner)/(tabs)/profile" />
 
       <KeyboardAvoidingView
         className="flex-1"
@@ -96,6 +91,6 @@ export default function EditProfileScreen() {
           />
         </ScrollView>
       </KeyboardAvoidingView>
-    </SafeAreaView>
+    </View>
   );
 }

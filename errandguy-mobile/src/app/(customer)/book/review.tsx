@@ -5,6 +5,7 @@ import { useRouter } from 'expo-router';
 import { ArrowLeft, Footprints, Bike, Truck, Car, MapPin, Clock, Route } from 'lucide-react-native';
 import type { LucideIcon } from 'lucide-react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { GradientHeader } from '../../../components/ui/GradientHeader';
 import { useBookingStore } from '../../../stores/bookingStore';
 import { bookingService } from '../../../services/booking.service';
 import { Button } from '../../../components/ui/Button';
@@ -279,69 +280,82 @@ export default function ReviewScreen() {
   ]);
 
   return (
-    <SafeAreaView className="flex-1 bg-background" edges={['top']}>
-      {/* Header */}
-      <View className="flex-row items-center px-5 py-3">
-        <Pressable
-          onPress={() => router.canGoBack() ? router.back() : router.replace('/(customer)/(tabs)')}
-          accessibilityRole="button"
-          accessibilityLabel="Go back"
-          hitSlop={8}
-          className="w-9 h-9 rounded-xl bg-surface items-center justify-center mr-3"
-        >
-          <ArrowLeft size={18} color="#0F172A" />
-        </Pressable>
-        <Text className="text-lg font-montserrat-bold text-textPrimary">
-          Review
-        </Text>
-      </View>
+    <View className="flex-1 bg-background">
+      <GradientHeader title="Review & confirm" showBack fallbackHref="/(customer)/(tabs)">
+        <View className="px-5 -mt-2 pb-3">
+          <Text
+            className="text-[10px] font-montserrat-bold uppercase"
+            style={{ letterSpacing: 1.4, color: 'rgba(255,255,255,0.78)' }}
+          >
+            New errand · Step 4
+          </Text>
+        </View>
+      </GradientHeader>
 
-      {/* Step indicator — reaffirms position in the funnel and
-          shows the previous three steps as completed. */}
-      <View className="px-5 pb-3">
+      {/* Step indicator */}
+      <View className="px-5 mt-3 pb-3">
         <BookingStepIndicator currentStep={3} />
       </View>
 
       <ScrollView className="flex-1 px-5" showsVerticalScrollIndicator={false}>
-        {/* Route Summary */}
-        <View className="mb-4">
-          <View className="flex-row items-start mb-2.5">
-            <View className="w-5 h-5 rounded-full bg-primary/10 items-center justify-center mt-0.5 mr-2.5">
-              <MapPin size={11} color="#2563EB" />
-            </View>
-            <View className="flex-1">
-              <Text className="text-[10px] font-montserrat-semi text-textTertiary uppercase tracking-wider">Pickup</Text>
-              <Text className="text-sm font-montserrat text-textPrimary" numberOfLines={1}>
+        {/* Route Summary — typographic, ride-hailing-style two-line
+            stack with a connecting hairline. No icon-tile chips. */}
+        <View className="mb-5 py-3 border-y border-divider">
+          <View className="flex-row items-center mb-2.5">
+            <View
+              style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: '#22C55E' }}
+            />
+            <View className="flex-1 ml-3">
+              <Text
+                className="text-[10px] font-montserrat-bold uppercase text-textSecondary"
+                style={{ letterSpacing: 1.2 }}
+              >
+                Pickup
+              </Text>
+              <Text className="text-[14px] font-montserrat-semi text-textPrimary" numberOfLines={1}>
                 {draftBooking.pickup_address ?? 'Pickup location'}
               </Text>
             </View>
           </View>
-          <View className="flex-row items-start">
-            <View className="w-5 h-5 rounded-full bg-danger/10 items-center justify-center mt-0.5 mr-2.5">
-              <MapPin size={11} color="#EF4444" />
-            </View>
-            <View className="flex-1">
-              <Text className="text-[10px] font-montserrat-semi text-textTertiary uppercase tracking-wider">Dropoff</Text>
-              <Text className="text-sm font-montserrat text-textPrimary" numberOfLines={1}>
-                {draftBooking.dropoff_address ?? 'Dropoff location'}
+          <View
+            style={{
+              marginLeft: 3,
+              width: 2,
+              height: 12,
+              backgroundColor: '#E2E8F0',
+            }}
+          />
+          <View className="flex-row items-center mt-2.5">
+            <View
+              style={{ width: 8, height: 8, borderRadius: 2, backgroundColor: '#0F172A' }}
+            />
+            <View className="flex-1 ml-3">
+              <Text
+                className="text-[10px] font-montserrat-bold uppercase text-textSecondary"
+                style={{ letterSpacing: 1.2 }}
+              >
+                Drop-off
+              </Text>
+              <Text className="text-[14px] font-montserrat-semi text-textPrimary" numberOfLines={1}>
+                {draftBooking.dropoff_address ?? 'Drop-off location'}
               </Text>
             </View>
           </View>
         </View>
 
-        {/* Distance & Time Badges */}
+        {/* Distance & Time — inline typographic stat row, no chips. */}
         {estimate?.distance_km != null && (
-          <View className="flex-row gap-3 mb-5">
-            <View className="flex-row items-center bg-surface rounded-lg px-3 py-2">
-              <Route size={14} color="#64748B" />
-              <Text className="text-xs font-montserrat-semi text-textSecondary ml-1.5">
+          <View className="flex-row items-center mb-5" style={{ gap: 16 }}>
+            <View className="flex-row items-center">
+              <Route size={13} color="#64748B" strokeWidth={1.8} />
+              <Text className="text-[12px] font-inter tabular-nums text-textSecondary ml-1.5">
                 {estimate.distance_km.toFixed(1)} km
               </Text>
             </View>
             {getEstimatedTime() && (
-              <View className="flex-row items-center bg-surface rounded-lg px-3 py-2">
-                <Clock size={14} color="#64748B" />
-                <Text className="text-xs font-montserrat-semi text-textSecondary ml-1.5">
+              <View className="flex-row items-center">
+                <Clock size={13} color="#64748B" strokeWidth={1.8} />
+                <Text className="text-[12px] font-inter tabular-nums text-textSecondary ml-1.5">
                   ~{getEstimatedTime()}
                 </Text>
               </View>
@@ -349,68 +363,50 @@ export default function ReviewScreen() {
           </View>
         )}
 
-        {/* Pricing Mode Toggle */}
+        {/* Pricing Mode — underline tab strip (replaces the segmented
+            pill so the screen carries one less rounded element). */}
         <View
-          className="bg-surface rounded-xl p-1 mb-4"
+          className="flex-row mb-5 border-b border-divider"
           accessibilityRole="tablist"
         >
-          <View className="flex-row">
-            <Pressable
-              className={`flex-1 py-2.5 rounded-lg items-center ${
-                pricingMode === 'fixed' ? 'bg-primary' : ''
-              }`}
-              accessibilityRole="tab"
-              accessibilityState={{ selected: pricingMode === 'fixed' }}
-              accessibilityLabel="Fixed price mode"
-              onPress={() => {
-                if (pricingMode === 'fixed') return;
-                Haptics.selectionAsync();
-                setPricingMode('fixed');
-                updateDraft({ pricing_mode: 'fixed' });
-              }}
-            >
-              <Text
-                className={`text-sm font-montserrat-semi ${
-                  pricingMode === 'fixed' ? 'text-white' : 'text-textSecondary'
-                }`}
+          {(['fixed', 'negotiate'] as PricingMode[]).map((mode) => {
+            const active = pricingMode === mode;
+            return (
+              <Pressable
+                key={mode}
+                accessibilityRole="tab"
+                accessibilityState={{ selected: active }}
+                accessibilityLabel={mode === 'fixed' ? 'Fixed price mode' : 'Make an offer mode'}
+                onPress={() => {
+                  if (active) return;
+                  Haptics.selectionAsync();
+                  setPricingMode(mode);
+                  updateDraft({ pricing_mode: mode });
+                  if (
+                    mode === 'negotiate' &&
+                    estimate?.min_negotiate_fee &&
+                    draftBooking.customer_offer == null
+                  ) {
+                    setOfferPrice(estimate.min_negotiate_fee);
+                    updateDraft({ customer_offer: estimate.min_negotiate_fee });
+                  }
+                }}
+                className="pr-5 pb-2.5 -mb-px"
+                style={active ? { borderBottomWidth: 2, borderBottomColor: '#2563EB' } : undefined}
+                hitSlop={6}
               >
-                Fixed Price
-              </Text>
-            </Pressable>
-            <Pressable
-              className={`flex-1 py-2.5 rounded-lg items-center ${
-                pricingMode === 'negotiate' ? 'bg-primary' : ''
-              }`}
-              accessibilityRole="tab"
-              accessibilityState={{ selected: pricingMode === 'negotiate' }}
-              accessibilityLabel="Make an offer mode"
-              onPress={() => {
-                if (pricingMode === 'negotiate') return;
-                Haptics.selectionAsync();
-                setPricingMode('negotiate');
-                updateDraft({ pricing_mode: 'negotiate' });
-                // Snap the offer to the server-recommended floor whenever
-                // the user enters negotiate mode (and the estimate is
-                // ready). Avoids the awkward initial ₱100 → real-floor
-                // jump described in the prior implementation.
-                if (
-                  estimate?.min_negotiate_fee &&
-                  draftBooking.customer_offer == null
-                ) {
-                  setOfferPrice(estimate.min_negotiate_fee);
-                  updateDraft({ customer_offer: estimate.min_negotiate_fee });
-                }
-              }}
-            >
-              <Text
-                className={`text-sm font-montserrat-semi ${
-                  pricingMode === 'negotiate' ? 'text-white' : 'text-textSecondary'
-                }`}
-              >
-                Make an Offer
-              </Text>
-            </Pressable>
-          </View>
+                <Text
+                  className={`text-[13px] ${
+                    active
+                      ? 'font-montserrat-bold text-textPrimary'
+                      : 'font-montserrat-semi text-textSecondary'
+                  }`}
+                >
+                  {mode === 'fixed' ? 'Fixed price' : 'Make an offer'}
+                </Text>
+              </Pressable>
+            );
+          })}
         </View>
 
         {pricingMode === 'fixed' ? (
@@ -541,7 +537,7 @@ export default function ReviewScreen() {
           fullWidth
         />
       </BottomActionBar>
-    </SafeAreaView>
+    </View>
   );
 }
 

@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { View, Text, Pressable, StyleSheet, ActivityIndicator } from 'react-native';
+import { View, Text, Pressable, StyleSheet, ActivityIndicator, Animated } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import {
@@ -12,6 +12,8 @@ import {
   Flag,
   Locate,
   AlertTriangle,
+  MapPin,
+  Gauge,
 } from 'lucide-react-native';
 import Mapbox from '@rnmapbox/maps';
 import { MAP_STYLE_URL } from '../../../constants/map';
@@ -312,6 +314,52 @@ export default function NavigateScreen() {
   const arrivedSoon =
     remainingDistance != null && remainingDistance < 80;
 
+  // Greeting/intro overlay \u2014 a brief contextual welcome that fades
+  // in when the route resolves and auto-dismisses after ~3.5s. Gives
+  // the runner a moment to register destination + total trip cost
+  // before the turn-by-turn focus takes over. Manually dismissable.
+  const [showGreeting, setShowGreeting] = useState(true);
+  const greetingOpacity = useRef(new Animated.Value(0)).current;
+  const routeReadyRef = useRef(false);
+  useEffect(() => {
+    if (!navRoute || routeReadyRef.current) return;
+    routeReadyRef.current = true;
+    Animated.timing(greetingOpacity, {
+      toValue: 1,
+      duration: 220,
+      useNativeDriver: true,
+    }).start();
+    const t = setTimeout(() => {
+      Animated.timing(greetingOpacity, {
+        toValue: 0,
+        duration: 260,
+        useNativeDriver: true,
+      }).start(() => setShowGreeting(false));
+    }, 3500);
+    return () => clearTimeout(t);
+  }, [navRoute, greetingOpacity]);
+
+  const dismissGreeting = useCallback(() => {
+    Animated.timing(greetingOpacity, {
+      toValue: 0,
+      duration: 180,
+      useNativeDriver: true,
+    }).start(() => setShowGreeting(false));
+  }, [greetingOpacity]);
+
+  // Current speed in km/h \u2014 surfaced as a live HUD chip so the runner
+  // gets the same "I'm moving" feedback drivers expect from a sat-nav.
+  const speedKmh = useMemo(() => {
+    const s = currentLocation?.speed;
+    if (s == null || !Number.isFinite(s) || s <= 0) return null;
+    return Math.round(s * 3.6);
+  }, [currentLocation?.speed]);
+
+  // Lookahead: the maneuver AFTER the current one. Shown as a small
+  // "Then \u2026" line under the main banner so the runner can prep for
+  // back-to-back turns (left then immediate right, etc.).
+  const upcomingStep: NavigationStep | null = navRoute?.steps[currentStepIdx + 1] ?? null;
+
   if (!booking) {
     return (
       <View className="flex-1 bg-background items-center justify-center">
@@ -463,6 +511,14 @@ export default function NavigateScreen() {
             >
               {currentStep?.instruction ?? `Head to ${destLabel}`}
             </Text>
+            {upcomingStep && (
+              <Text
+                className="text-white/75 text-[11px] font-montserrat mt-1"
+                numberOfLines={1}
+              >
+                Then {upcomingStep.instruction}
+              </Text>
+            )}
           </View>
           <Pressable
             onPress={handleEndNavigation}
@@ -486,28 +542,127 @@ export default function NavigateScreen() {
         </View>
       </SafeAreaView>
 
-      {/* Recenter FAB \u2014 visible whenever course-follow is disengaged. */}
+      {/* Greeting / trip summary card \u2014 fades in once the route is
+          ready and auto-dismisses after 3.5s. Gives the runner a
+          contextual welcome with phase + total distance + ETA before
+          the maneuver banner takes over. Tap dismisses immediately. */}
+      {showGreeting && navRoute && (
+        <Animated.View
+          pointerEvents="box-none"
+          style={{
+            position: 'absolute',
+            top: 200,
+            left: 12,
+            right: 12,
+            opacity: greetingOpacity,
+          }}
+        >
+          <Pressable
+            onPress={dismissGreeting}
+            accessibilityRole="button"
+            accessibilityLabel="Dismiss trip summary"
+            className="rounded-2xl bg-white px-4 py-3.5 flex-row items-center"
+            style={{
+              shadowColor: '#000',
+              shadowOpacity: 0.22,
+              shadowRadius: 14,
+              shadowOffset: { width: 0, height: 6 },
+              elevation: 8,
+            }}
+          >
+            <View className={`w-11 h-11 rounded-full items-center justify-center mr-3 ${
+              inPickupPhase ? 'bg-primary/15' : 'bg-danger/15'
+            }`}>
+              <MapPin size={20} color={inPickupPhase ? '#2563EB' : '#DC2626'} strokeWidth={2.2} />
+            </View>
+            <View className="flex-1">
+              <Text className="text-[10px] font-montserrat-bold uppercase text-textTertiary" style={{ letterSpacing: 1.2 }}>
+                Heading to {inPickupPhase ? 'pickup' : 'drop-off'}
+              </Text>
+              <Text className="text-[14px] font-montserrat-bold text-textPrimary mt-0.5" numberOfLines={2}>
+                {destLabel}
+              </Text>
+              <View className="flex-row items-center mt-1">
+                <Text className="text-[11px] font-montserrat-semi text-primary">
+                  {remainingDistance != null ? fmtDistance(remainingDistance) : '\u2014'}
+                </Text>
+                <View className="w-1 h-1 rounded-full bg-textTertiary/60 mx-1.5" />
+                <Text className="text-[11px] font-montserrat text-textSecondary">
+                  {remainingDuration != null
+                    ? `${fmtDuration(remainingDuration)} \u00b7 arrives ${fmtArrival(remainingDuration)}`
+                    : 'Calculating\u2026'}
+                </Text>
+              </View>
+            </View>
+          </Pressable>
+        </Animated.View>
+      )}
+
+      {/* Speed HUD — small chip in the bottom-left corner that mirrors
+          the satnav convention. Only appears when the runner is
+          actually moving so a stationary screen doesn't show 0 km/h.
+          Lifted to bottom: 220 so it sits cleanly above the bottom
+          action bar (which is roughly 150–180px tall on iPhone with
+          the home indicator). */}
+      {speedKmh != null && (
+        <View
+          className="absolute left-4 bg-white rounded-2xl px-3 py-2 items-center"
+          // bottom raised so action bar never covers it
+          // eslint-disable-next-line react-native/no-inline-styles
+          style={{
+            bottom: 220,
+            zIndex: 20,
+            shadowColor: '#000',
+            shadowOpacity: 0.18,
+            shadowRadius: 6,
+            shadowOffset: { width: 0, height: 2 },
+            elevation: 12,
+          }}
+        >
+          <View className="flex-row items-baseline">
+            <Text className="text-[20px] font-montserrat-bold text-textPrimary tabular-nums leading-[22px]">
+              {speedKmh}
+            </Text>
+            <Text className="text-[10px] font-montserrat-semi text-textTertiary ml-1">
+              km/h
+            </Text>
+          </View>
+          <View className="flex-row items-center mt-0.5">
+            <Gauge size={9} color="#94A3B8" />
+            <Text className="text-[8px] font-montserrat text-textTertiary ml-0.5 uppercase" style={{ letterSpacing: 0.6 }}>
+              Speed
+            </Text>
+          </View>
+        </View>
+      )}
+
+      {/* Recenter FAB — visible whenever course-follow is disengaged.
+          Lifted to bottom: 220 (matches speed HUD) so it always clears
+          the bottom action bar; zIndex pushes it above the bar in case
+          the absolute layering ever shifts. */}
       {!followCamera && (
         <Pressable
           onPress={() => setFollowCamera(true)}
           accessibilityRole="button"
           accessibilityLabel="Recenter map on your location"
-          className="absolute right-4 bottom-44 w-12 h-12 rounded-full bg-white items-center justify-center"
+          className="absolute right-4 w-12 h-12 rounded-full bg-white items-center justify-center"
           style={{
+            bottom: 220,
+            zIndex: 20,
             shadowColor: '#000',
             shadowOpacity: 0.25,
             shadowRadius: 8,
             shadowOffset: { width: 0, height: 3 },
-            elevation: 6,
+            elevation: 12,
           }}
         >
-          <Locate size={20} color="#0F172A" />
+          <Locate size={22} color="#0F172A" strokeWidth={2.2} />
         </Pressable>
       )}
 
       {/* Bottom ETA / actions bar \u2014 always visible. */}
       <View
-        className="absolute left-0 right-0 bottom-0 bg-white rounded-t-2xl px-5 pt-4"
+        className="absolute left-0 right-0 bottom-0 bg-white px-5 pt-4"
         style={{
           shadowColor: '#000',
           shadowOpacity: 0.18,

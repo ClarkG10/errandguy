@@ -1,9 +1,10 @@
 import React, { useMemo, useState, useCallback } from 'react';
 import { View, Text, ScrollView, RefreshControl, Pressable } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import { Card } from '../../../components/ui/Card';
 import { Button } from '../../../components/ui/Button';
+import { Eyebrow, Hairline } from '../../../components/ui/Typography';
+import { GradientHeader } from '../../../components/ui/GradientHeader';
 import { useRunnerStore } from '../../../stores/runnerStore';
 import { useAuthStore } from '../../../stores/authStore';
 import { runnerService } from '../../../services/runner.service';
@@ -104,10 +105,8 @@ export default function EarningsScreen() {
   };
 
   return (
-    <SafeAreaView className="flex-1 bg-background" edges={['top']}>
-      <View className="px-5 pt-4 pb-2">
-        <Text className="text-lg font-montserrat-bold text-textPrimary">Earnings</Text>
-      </View>
+    <View className="flex-1 bg-background">
+      <GradientHeader title="Earnings" />
 
       <ScrollView
         className="flex-1"
@@ -164,100 +163,98 @@ export default function EarningsScreen() {
           </View>
         </View>
 
-        {/* Period Selector — segmented pill. The inner active pill is
-            inset by 4px so its rounded corners visually nest inside the
-            wrapper rather than colliding with the outer radius. */}
-        <View
-          className="flex-row mx-5 mb-4 bg-surface rounded-2xl p-1"
-          style={{ shadowColor: '#0F172A', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.04, shadowRadius: 8, elevation: 1 }}
-        >
+        {/* Period Selector — underline-style tab strip. Less rounded,
+            no nested pills, no background fills. The active tab
+            communicates state with weight + a 2px brand underline. */}
+        <View className="flex-row mx-5 mb-5 border-b border-divider">
           {(['today', 'week', 'month'] as Period[]).map((p) => (
             <Pressable
               key={p}
               onPress={() => setPeriod(p)}
-              accessibilityRole="button"
+              accessibilityRole="tab"
               accessibilityState={{ selected: period === p }}
-              className={`flex-1 py-2 items-center rounded-xl ${
-                period === p ? 'bg-primary' : ''
-              }`}
+              hitSlop={6}
+              className="pr-5 pb-2.5 -mb-px"
+              style={period === p ? { borderBottomWidth: 2, borderBottomColor: '#2563EB' } : undefined}
             >
               <Text
-                className={`text-sm font-montserrat-semi ${
-                  period === p ? 'text-white' : 'text-textTertiary'
+                className={`text-[13px] ${
+                  period === p
+                    ? 'font-montserrat-bold text-textPrimary'
+                    : 'font-montserrat-semi text-textSecondary'
                 }`}
               >
-                {p === 'today' ? 'Today' : p === 'week' ? 'Week' : 'Month'}
+                {p === 'today' ? 'Today' : p === 'week' ? 'This week' : 'This month'}
               </Text>
             </Pressable>
           ))}
         </View>
 
-        {/* Breakdown */}
-        <View className="px-5 mb-4">
-          <Card className="p-4">
-            <View className="flex-row items-center justify-between mb-2">
-              <Text className="text-sm font-montserrat text-textTertiary">Total Errands</Text>
-              <Text className="text-sm font-inter-semi tabular-nums text-textPrimary">
-                {earningsData?.total_errands ?? 0}
-              </Text>
-            </View>
-            <View className="flex-row items-center justify-between mb-2">
-              <Text className="text-sm font-montserrat text-textTertiary">Avg per Errand</Text>
-              <Text className="text-sm font-inter-semi tabular-nums text-textPrimary">
-                {formatCurrency(earningsData?.avg_per_errand ?? 0)}
-              </Text>
-            </View>
-            <View className="border-t border-divider pt-2 mt-1 flex-row items-center justify-between">
-              <Text className="text-sm font-montserrat-bold text-textPrimary">Total</Text>
-              <Text className="text-base font-inter-semi tabular-nums text-primary">
-                {formatCurrency(earningsData?.total_earnings ?? 0)}
-              </Text>
-            </View>
-          </Card>
+        {/* Breakdown — typographic key/value rows, no card chrome,
+            bounded by a subtle hairline above and below. */}
+        <View className="mx-5 mb-6 py-2 border-y border-divider">
+          <View className="flex-row items-center justify-between py-2">
+            <Text className="text-[13px] font-montserrat text-textSecondary">Total errands</Text>
+            <Text className="text-[14px] font-inter-semi tabular-nums text-textPrimary">
+              {earningsData?.total_errands ?? 0}
+            </Text>
+          </View>
+          <Hairline />
+          <View className="flex-row items-center justify-between py-2">
+            <Text className="text-[13px] font-montserrat text-textSecondary">Avg per errand</Text>
+            <Text className="text-[14px] font-inter-semi tabular-nums text-textPrimary">
+              {formatCurrency(earningsData?.avg_per_errand ?? 0)}
+            </Text>
+          </View>
+          <Hairline />
+          <View className="flex-row items-center justify-between py-2">
+            <Text className="text-[14px] font-montserrat-bold text-textPrimary">Total</Text>
+            <Text className="text-[16px] font-inter-semi tabular-nums text-primary">
+              {formatCurrency(earningsData?.total_earnings ?? 0)}
+            </Text>
+          </View>
         </View>
 
-        {/* Per-Errand Earnings List, grouped by day so the runner can
-            audit a specific day's takings without mental math. */}
-        <View className="px-5 mb-4">
-          <Text className="text-sm font-montserrat-bold text-textSecondary mb-2">
-            Per-Errand Earnings
-          </Text>
+        {/* Per-Errand Earnings List — hairline rows grouped by day. */}
+        <View className="px-5 mb-6">
+          <Eyebrow className="mb-2">Per-errand</Eyebrow>
           {earningsList.length === 0 ? (
-            <Card className="items-center py-6">
-              <Text className="text-sm font-montserrat text-textSecondary">
+            <View className="py-6">
+              <Text className="text-[13px] font-montserrat text-textSecondary">
                 No earnings yet for this period.
               </Text>
-            </Card>
+            </View>
           ) : (
             earningsByDay.map((group) => (
-              <View key={group.label} className="mb-3">
+              <View key={group.label} className="mb-4">
                 <View className="flex-row items-center justify-between mb-1.5">
-                  <Text className="text-[11px] font-montserrat-bold text-textTertiary uppercase tracking-wider">
+                  <Text className="text-[10px] font-montserrat-bold uppercase text-textSecondary" style={{ letterSpacing: 1.2 }}>
                     {group.label}
                   </Text>
                   <Text className="text-[11px] font-inter-semi tabular-nums text-textSecondary">
                     {formatCurrency(group.total)}
                   </Text>
                 </View>
-                {group.errands.map((errand) => (
-                  <Card key={errand.id} className="mb-2 p-3">
-                    <View className="flex-row items-center justify-between">
+                {group.errands.map((errand, idx) => (
+                  <View key={errand.id}>
+                    <View className="flex-row items-center justify-between py-3">
                       <View className="flex-1 mr-2">
-                        <Text className="text-sm font-montserrat-bold text-textPrimary" numberOfLines={1}>
+                        <Text className="text-[14px] font-montserrat-bold text-textPrimary" numberOfLines={1}>
                           {errand.errand_type?.name ?? 'Errand'}
                         </Text>
-                        <Text className="text-xs font-montserrat text-textSecondary">
+                        <Text className="text-[11px] font-inter tabular-nums text-textMuted mt-0.5">
                           {new Date(errand.completed_at ?? errand.created_at).toLocaleTimeString([], {
                             hour: '2-digit',
                             minute: '2-digit',
                           })}
                         </Text>
                       </View>
-                      <Text className="text-sm font-inter-semi tabular-nums text-primary">
+                      <Text className="text-[14px] font-inter-semi tabular-nums text-textPrimary">
                         {formatCurrency(errand.runner_payout ?? errand.total_amount)}
                       </Text>
                     </View>
-                  </Card>
+                    {idx < group.errands.length - 1 && <Hairline />}
+                  </View>
                 ))}
               </View>
             ))
@@ -274,6 +271,6 @@ export default function EarningsScreen() {
           />
         </View>
       </ScrollView>
-    </SafeAreaView>
+    </View>
   );
 }

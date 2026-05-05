@@ -1,11 +1,12 @@
 import { Stack } from 'expo-router';
+import { STACK_ANIMATION } from '../../../constants/navigation';
 
 export default function BookFlowLayout() {
   return (
     <Stack
       screenOptions={{
         headerShown: false,
-        animation: 'ios_from_right',
+        animation: STACK_ANIMATION,
       }}
     >
       <Stack.Screen name="type" />

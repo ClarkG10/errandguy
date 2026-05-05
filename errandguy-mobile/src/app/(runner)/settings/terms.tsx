@@ -1,9 +1,8 @@
 import React from 'react';
 import { View, Text, ScrollView, Pressable, Linking } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import { ExternalLink } from 'lucide-react-native';
-import { BackButton } from '../../../components/ui/BackButton';
+import { GradientHeader } from '../../../components/ui/GradientHeader';
 import { Card } from '../../../components/ui/Card';
 
 const SECTIONS = [
@@ -25,12 +24,8 @@ export default function TermsScreen() {
   const router = useRouter();
 
   return (
-    <SafeAreaView className="flex-1 bg-background" edges={['top']}>
-      {/* Header */}
-      <View className="flex-row items-center gap-3 px-5 py-4">
-        <BackButton fallbackHref="/(runner)/(tabs)/profile" />
-        <Text className="text-lg font-montserrat-bold text-textPrimary">Terms & Privacy</Text>
-      </View>
+    <View className="flex-1 bg-background">
+      <GradientHeader title="Terms & Privacy" showBack fallbackHref="/(runner)/(tabs)/profile" />
 
       <ScrollView
         className="flex-1 px-5"
@@ -54,6 +49,6 @@ export default function TermsScreen() {
           Last updated: January 2025
         </Text>
       </ScrollView>
-    </SafeAreaView>
+    </View>
   );
 }

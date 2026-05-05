@@ -30,7 +30,11 @@ export function Card({
   accessibilityHint,
   testID,
 }: CardProps) {
-  const cardClass = `bg-surface rounded-2xl p-4 ${className}`;
+  // Tighter corner radius (12 instead of 16/2xl) to fit the modernized
+  // typographic-first language. Cards are now neutral containers, not
+  // hero affordances \u2014 a hairline of white-on-background already does
+  // most of the visual work, the radius just softens the edge.
+  const cardClass = `bg-surface rounded-xl p-4 ${className}`;
 
   if (onPress) {
     return (

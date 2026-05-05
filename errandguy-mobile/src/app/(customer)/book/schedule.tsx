@@ -3,6 +3,7 @@ import { View, Text, ScrollView, Pressable } from 'react-native';
 import { useRouter } from 'expo-router';
 import { ArrowLeft, Info, Zap } from 'lucide-react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { GradientHeader } from '../../../components/ui/GradientHeader';
 import dayjs from 'dayjs';
 import { useBookingStore } from '../../../stores/bookingStore';
 import { Button } from '../../../components/ui/Button';
@@ -90,26 +91,20 @@ export default function ScheduleScreen() {
   }, [scheduleType, updateDraft, setStep, router]);
 
   return (
-    <SafeAreaView className="flex-1 bg-background" edges={['top']}>
-      {/* Header */}
-      <View className="flex-row items-center px-5 py-4">
-        <Pressable
-          onPress={() => router.canGoBack() ? router.back() : router.replace('/(customer)/(tabs)')}
-          accessibilityRole="button"
-          accessibilityLabel="Go back"
-          hitSlop={8}
-          className="mr-3 w-9 h-9 rounded-xl bg-surface items-center justify-center"
-          style={{ shadowColor: '#0F172A', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.04, shadowRadius: 6, elevation: 1 }}
-        >
-          <ArrowLeft size={20} color="#0F172A" />
-        </Pressable>
-        <Text className="text-lg font-montserrat-bold text-textPrimary">
-          Schedule
-        </Text>
-      </View>
+    <View className="flex-1 bg-background">
+      <GradientHeader title="When?" showBack fallbackHref="/(customer)/(tabs)">
+        <View className="px-5 -mt-2 pb-3">
+          <Text
+            className="text-[10px] font-montserrat-bold uppercase"
+            style={{ letterSpacing: 1.4, color: 'rgba(255,255,255,0.78)' }}
+          >
+            New errand · Step 3
+          </Text>
+        </View>
+      </GradientHeader>
 
       {/* Step Indicator */}
-      <View className="px-5 mb-4">
+      <View className="px-5 mt-3 mb-4">
         <BookingStepIndicator currentStep={2} />
       </View>
 
@@ -129,12 +124,16 @@ export default function ScheduleScreen() {
           <View>
             {/* Quick-pick chips — single-tap convenience for the most
                 common scheduling intents. Tapping a chip seeds the wheel
-                picker below so the user can fine-tune from there. */}
+                picker below so the user can fine-tune from there.
+                Restyled: less rounded (12 vs 16), no shadow tile, the
+                selected state uses a 2px brand border on a tinted bg
+                instead of the previous "border + shadow + transparent"
+                hack which read as nothing. */}
             {quickPicks.length > 0 && (
-              <View className="mb-5">
+              <View className="mb-6">
                 <View className="flex-row items-center mb-2">
-                  <Zap size={14} color="#2563EB" />
-                  <Text className="text-xs font-montserrat-semi text-textSecondary ml-1.5 uppercase tracking-wider">
+                  <Zap size={12} color="#2563EB" strokeWidth={2} />
+                  <Text className="text-[10px] font-montserrat-bold uppercase text-textSecondary ml-1.5" style={{ letterSpacing: 1.4 }}>
                     Quick pick
                   </Text>
                 </View>
@@ -153,32 +152,23 @@ export default function ScheduleScreen() {
                         accessibilityLabel={`${pick.label} ${pick.sublabel}`}
                         accessibilityState={{ selected: isSelected }}
                         onPress={() => updateDraft({ scheduled_at: iso })}
-                        className={`px-4 py-3 rounded-2xl border-2 ${
-                          isSelected
-                            ? 'bg-primary50 border-primary'
-                            : 'bg-surface border-transparent'
-                        }`}
+                        className="px-4 py-3 bg-surface"
                         style={{
                           minWidth: 110,
-                          shadowColor: '#0F172A',
-                          shadowOffset: { width: 0, height: 1 },
-                          shadowOpacity: 0.04,
-                          shadowRadius: 6,
-                          elevation: 1,
+                          borderRadius: 12,
+                          borderWidth: isSelected ? 2 : 1,
+                          borderColor: isSelected ? '#2563EB' : '#E2E8F0',
                         }}
                       >
                         <Text
-                          className={`text-xs font-montserrat-semi ${
+                          className={`text-[12px] font-montserrat-bold ${
                             isSelected ? 'text-primary' : 'text-textPrimary'
                           }`}
                         >
                           {pick.label}
                         </Text>
                         <Text
-                          className={`text-[11px] font-inter mt-0.5 ${
-                            isSelected ? 'text-primary' : 'text-textSecondary'
-                          }`}
-                          style={{ fontVariant: ['tabular-nums'] }}
+                          className="text-[11px] font-inter tabular-nums text-textSecondary mt-0.5"
                         >
                           {pick.sublabel}
                         </Text>
@@ -212,6 +202,6 @@ export default function ScheduleScreen() {
           fullWidth
         />
       </BottomActionBar>
-    </SafeAreaView>
+    </View>
   );
 }

@@ -33,7 +33,7 @@ export function FloatingModal({
             from={{ opacity: 0, scale: 0.96 }}
             animate={{ opacity: 1, scale: 1 }}
             transition={{ type: 'timing', duration: 200 }}
-            className="bg-surface rounded-[24px] p-6 w-full min-w-[300px]"
+            className="bg-surface p-7 w-full min-w-[300px]"
           >
             {title && (
               <View className="flex-row items-center justify-between mb-4">

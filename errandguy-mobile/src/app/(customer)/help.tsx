@@ -8,8 +8,8 @@ import {
   Phone,
   MessageCircle,
 } from 'lucide-react-native';
-import { Card } from '../../components/ui/Card';
 import { BackButton } from '../../components/ui/BackButton';
+import { GradientHeader } from '../../components/ui/GradientHeader';
 
 interface FAQ {
   question: string;
@@ -57,123 +57,123 @@ export default function CustomerHelpScreen() {
   };
 
   return (
-    <SafeAreaView className="flex-1 bg-background" edges={['top']}>
-      <View className="flex-row items-center gap-3 px-5 py-4">
-        <BackButton fallbackHref="/(customer)/(tabs)/profile" />
-        <Text className="text-lg font-montserrat-bold text-textPrimary">
-          Help Center
-        </Text>
-      </View>
+    <View className="flex-1 bg-background">
+      <GradientHeader
+        title="Help center"
+        showBack
+        fallbackHref="/(customer)/(tabs)/profile"
+      />
 
       <ScrollView
         className="flex-1 px-5"
         showsVerticalScrollIndicator={false}
         contentContainerStyle={{ paddingBottom: 32 }}
       >
-        <Text className="text-[11px] font-montserrat-semi text-textTertiary uppercase tracking-wider mb-2 ml-1">
-          Frequently Asked
+        <Text
+          className="text-[10px] font-montserrat-bold uppercase text-textSecondary mb-1"
+          style={{ letterSpacing: 1.4 }}
+        >
+          Frequently asked
         </Text>
 
-        <Card className="p-0 overflow-hidden">
+        <View className="border-t border-divider">
           {FAQS.map((faq, idx) => {
             const isOpen = expanded === idx;
             return (
-              <View key={idx}>
+              <View key={idx} className="border-b border-divider">
                 <Pressable
                   onPress={() => toggle(idx)}
-                  className="flex-row items-center px-4 py-4"
+                  className="flex-row items-center py-4"
                   accessibilityRole="button"
                   accessibilityState={{ expanded: isOpen }}
                   accessibilityLabel={faq.question}
                 >
-                  <Text className="flex-1 text-sm font-montserrat-semi text-textPrimary pr-3">
+                  <Text className="flex-1 text-[14px] font-montserrat-semi text-textPrimary pr-3">
                     {faq.question}
                   </Text>
                   {isOpen ? (
-                    <ChevronUp size={18} color="#64748B" />
+                    <ChevronUp size={16} color="#94A3B8" strokeWidth={1.6} />
                   ) : (
-                    <ChevronDown size={18} color="#64748B" />
+                    <ChevronDown size={16} color="#94A3B8" strokeWidth={1.6} />
                   )}
                 </Pressable>
                 {isOpen && (
-                  <View className="px-4 pb-4 -mt-1">
+                  <View className="pb-4 -mt-1">
                     <Text className="text-[13px] font-montserrat text-textSecondary leading-5">
                       {faq.answer}
                     </Text>
                   </View>
                 )}
-                {idx < FAQS.length - 1 && (
-                  <View className="h-px bg-divider mx-4" />
-                )}
               </View>
             );
           })}
-        </Card>
+        </View>
 
-        <Text className="text-[11px] font-montserrat-semi text-textTertiary uppercase tracking-wider mt-6 mb-2 ml-1">
+        <Text
+          className="text-[10px] font-montserrat-bold uppercase text-textSecondary mt-8 mb-1"
+          style={{ letterSpacing: 1.4 }}
+        >
           Still need help?
         </Text>
-        <Card className="p-0 overflow-hidden">
+        <View className="border-t border-divider">
           <Pressable
             onPress={() =>
               Linking.openURL(
                 'mailto:support@errandguy.ph?subject=ErrandGuy%20Support',
               )
             }
-            className="flex-row items-center px-4 py-4"
+            className="flex-row items-center py-4 border-b border-divider"
             accessibilityRole="button"
             accessibilityLabel="Email support"
           >
-            <Mail size={20} color="#475569" strokeWidth={1.8} />
+            <Mail size={18} color="#475569" strokeWidth={1.6} />
             <View className="flex-1 ml-3">
-              <Text className="text-sm font-montserrat-semi text-textPrimary">
-                Email Support
+              <Text className="text-[14px] font-montserrat-semi text-textPrimary">
+                Email support
               </Text>
-              <Text className="text-xs font-montserrat text-textTertiary">
+              <Text className="text-[11px] font-montserrat text-textMuted">
                 support@errandguy.ph
               </Text>
             </View>
           </Pressable>
-          <View className="h-px bg-divider mx-4" />
           <Pressable
             onPress={() => Linking.openURL('tel:+639171234567')}
-            className="flex-row items-center px-4 py-4"
+            className="flex-row items-center py-4 border-b border-divider"
             accessibilityRole="button"
             accessibilityLabel="Call support"
           >
-            <Phone size={20} color="#475569" strokeWidth={1.8} />
+            <Phone size={18} color="#475569" strokeWidth={1.6} />
             <View className="flex-1 ml-3">
-              <Text className="text-sm font-montserrat-semi text-textPrimary">
+              <Text className="text-[14px] font-montserrat-semi text-textPrimary">
                 Hotline
               </Text>
-              <Text className="text-xs font-montserrat text-textTertiary">
+              <Text className="text-[11px] font-montserrat text-textMuted">
                 Mon–Sun, 8 AM – 10 PM
               </Text>
             </View>
           </Pressable>
-          <View className="h-px bg-divider mx-4" />
           <Pressable
             onPress={() =>
               Linking.openURL(
                 'mailto:support@errandguy.ph?subject=ErrandGuy%20Issue%20Report&body=Booking%20number%3A%20%0AIssue%3A%20',
               )
             }
-            className="flex-row items-center px-4 py-4"
+            className="flex-row items-center py-4 border-b border-divider"
             accessibilityRole="button"
             accessibilityLabel="Report an issue"
           >
-            <MessageCircle size={20} color="#475569" strokeWidth={1.8} />
+            <MessageCircle size={18} color="#475569" strokeWidth={1.6} />
             <View className="flex-1 ml-3">
-              <Text className="text-sm font-montserrat-semi text-textPrimary">
-                Report an Issue
+              <Text className="text-[14px] font-montserrat-semi text-textPrimary">
+                Report an issue
               </Text>
-              <Text className="text-xs font-montserrat text-textTertiary">
+              <Text className="text-[11px] font-montserrat text-textMuted">
                 We respond within one business day
               </Text>
             </View>
           </Pressable>
-        </Card>
+        </View>
       </ScrollView>
-    </SafeAreaView>
+    </View>
   );
 }

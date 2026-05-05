@@ -1,11 +1,10 @@
 import React, { useState, useCallback, useEffect, useMemo } from 'react';
 import { View, Text, ScrollView, TextInput, RefreshControl, Pressable, KeyboardAvoidingView, Platform } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import { Wallet, CreditCard, Smartphone, Clock, CheckCircle2, XCircle } from 'lucide-react-native';
 import { Card } from '../../../components/ui/Card';
 import { Button } from '../../../components/ui/Button';
-import { BackButton } from '../../../components/ui/BackButton';
+import { GradientHeader } from '../../../components/ui/GradientHeader';
 import { ConfirmModal } from '../../../components/ui/ConfirmModal';
 import { useRunnerStore } from '../../../stores/runnerStore';
 import { useAuthStore } from '../../../stores/authStore';
@@ -150,16 +149,8 @@ export default function PayoutScreen() {
   };
 
   return (
-    <SafeAreaView className="flex-1 bg-background" edges={['top']}>
-      {/* Header */}
-      <View className="flex-row items-center gap-3 px-5 py-4">
-        <BackButton
-          onPress={() =>
-            router.canGoBack() ? router.back() : router.replace('/(runner)/(tabs)/profile')
-          }
-        />
-        <Text className="text-lg font-montserrat-bold text-textPrimary">Payouts</Text>
-      </View>
+    <View className="flex-1 bg-background">
+      <GradientHeader title="Payouts" showBack fallbackHref="/(runner)/(tabs)/profile" />
 
       <KeyboardAvoidingView
         style={{ flex: 1 }}
@@ -415,6 +406,6 @@ export default function PayoutScreen() {
         onConfirm={confirmRequestPayout}
         onCancel={() => setShowRequestModal(false)}
       />
-    </SafeAreaView>
+    </View>
   );
 }

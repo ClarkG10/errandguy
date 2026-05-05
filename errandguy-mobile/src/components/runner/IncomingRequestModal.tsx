@@ -109,7 +109,7 @@ export function IncomingRequestModal({
         from={{ opacity: 0, scale: 0.92, translateY: 12 }}
         animate={{ opacity: 1, scale: 1, translateY: 0 }}
         transition={{ type: 'spring', damping: 22, stiffness: 240, mass: 0.8 }}
-        className="bg-background rounded-2xl p-6 w-full max-w-sm"
+        className="bg-background p-7 w-full max-w-sm"
       >
         {/* Countdown Ring */}
         <View className="items-center mb-4">

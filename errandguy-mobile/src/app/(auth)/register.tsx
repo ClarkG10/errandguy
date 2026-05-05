@@ -7,6 +7,7 @@ import {
   KeyboardAvoidingView,
   Platform,
   Image,
+  StatusBar,
   StyleSheet,
   TouchableOpacity,
 } from 'react-native';
@@ -145,29 +146,51 @@ export default function RegisterScreen() {
   };
 
   return (
-    <SafeAreaView className="flex-1 bg-surface">
+    <View className="flex-1 bg-white">
+      <StatusBar barStyle="light-content" />
       <KeyboardAvoidingView
         className="flex-1"
         behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
       >
         <ScrollView
           className="flex-1"
-          contentContainerStyle={{ paddingHorizontal: 24, paddingBottom: 40 }}
+          contentContainerStyle={{ paddingBottom: 40 }}
           keyboardShouldPersistTaps="handled"
+          showsVerticalScrollIndicator={false}
         >
-          <Pressable
-            className="mt-2 mb-8 w-10 h-10 rounded-full items-center justify-center"
-            onPress={() => router.canGoBack() ? router.back() : router.replace('/(auth)/login')}
-          >
-            <ChevronLeft size={24} color="#0F172A" strokeWidth={2} />
-          </Pressable>
+          {/* Brand-color hero — flat solid block, same pattern as login. */}
+          <View style={rs.heroBlock}>
+            <SafeAreaView edges={['top']}>
+              <View className="px-6 pt-2 pb-10">
+                <Pressable
+                  style={rs.backBtn}
+                  onPress={() => router.canGoBack() ? router.back() : router.replace('/(auth)/login')}
+                >
+                  <ChevronLeft size={22} color="#FFFFFF" strokeWidth={2.2} />
+                </Pressable>
+                <Text
+                  className="text-[11px] font-montserrat-bold uppercase mt-6"
+                  style={{ letterSpacing: 1.8, color: 'rgba(255,255,255,0.85)' }}
+                >
+                  Get started
+                </Text>
+                <Text
+                  className="text-[26px] font-montserrat-bold text-white tracking-tight mt-2"
+                  style={{ lineHeight: 30 }}
+                >
+                  Create your account.
+                </Text>
+                <Text
+                  className="text-[13px] font-montserrat mt-2"
+                  style={{ color: 'rgba(255,255,255,0.85)' }}
+                >
+                  Let’s set up your profile
+                </Text>
+              </View>
+            </SafeAreaView>
+          </View>
 
-          <Text className="text-[28px] font-montserrat-bold text-textPrimary mb-1 tracking-tight">
-            Create your account
-          </Text>
-          <Text className="text-[15px] font-montserrat text-textTertiary mb-8">
-            Let's set up your profile
-          </Text>
+          <View className="flex-1 bg-white px-6 pt-7">
 
           {/* Avatar Upload */}
           <Pressable className="self-center mb-6" onPress={pickImage}>
@@ -359,13 +382,25 @@ export default function RegisterScreen() {
               <Text style={rs.loginBtnText}>Login</Text>
             </TouchableOpacity>
           </View>
+          </View>
         </ScrollView>
       </KeyboardAvoidingView>
-    </SafeAreaView>
+    </View>
   );
 }
 
 const rs = StyleSheet.create({
+  heroBlock: {
+    backgroundColor: '#2563EB',
+  },
+  backBtn: {
+    width: 38,
+    height: 38,
+    borderRadius: 19,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: 'rgba(255,255,255,0.16)',
+  },
   loginRow: {
     flexDirection: 'row',
     alignItems: 'center',

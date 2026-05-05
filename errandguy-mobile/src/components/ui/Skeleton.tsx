@@ -24,7 +24,9 @@ interface SkeletonProps {
 export function Skeleton({
   width = '100%',
   height = 16,
-  borderRadius = 8,
+  // 10px so skeleton blocks read as the same family as 12px form
+  // elements / cards without looking like fat pills next to text.
+  borderRadius = 10,
   style,
 }: SkeletonProps) {
   const progress = useSharedValue(0);

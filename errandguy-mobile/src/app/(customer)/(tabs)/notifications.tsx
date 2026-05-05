@@ -18,6 +18,7 @@ import {
   Info,
 } from 'lucide-react-native';
 import type { LucideIcon } from 'lucide-react-native';
+import { GradientHeader } from '../../../components/ui/GradientHeader';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useNotificationStore } from '../../../stores/notificationStore';
 import { useAuthStore } from '../../../stores/authStore';
@@ -195,44 +196,47 @@ export default function NotificationsScreen() {
 
       return (
         <Pressable
-          className="mx-5 mb-2 rounded-2xl bg-surface px-4 py-3.5"
-          style={{
-            borderWidth: 1,
-            borderColor: !item.is_read ? '#DBEAFE' : '#F1F5F9',
-          }}
+          className="px-5 py-3.5 border-b border-divider"
+          // Unread row tint — was #F8FAFC which is identical to the
+          // background, so unread items had ZERO visual differentiation.
+          // Now uses a soft brand-tinted wash so the eye lands on what
+          // needs attention without the row reading as a colored chip.
+          style={!item.is_read ? { backgroundColor: '#EFF6FF' } : undefined}
           onPress={() => handleNotificationPress(item)}
+          accessibilityRole="button"
+          accessibilityLabel={item.title}
         >
           <View className="flex-row">
-            {/* Icon */}
-            <View
-              className="w-9 h-9 rounded-full items-center justify-center mr-3"
-              style={{ backgroundColor: color + '12' }}
-            >
-              <Icon size={16} color={color} />
+            {/* Stroke-only typographic icon — NOT a colored chip. The
+                unread accent rides on the right side as a dot, keeping
+                the row’s left edge aligned with section headers. */}
+            <View className="w-5 pt-0.5 items-center mr-3">
+              <Icon size={16} color={color} strokeWidth={1.8} />
             </View>
 
-            {/* Content */}
             <View className="flex-1">
-              <View className="flex-row items-center justify-between mb-0.5">
+              <View className="flex-row items-start justify-between mb-0.5">
                 <Text
-                  className={`text-[13px] ${
-                    !item.is_read ? 'font-montserrat-semi' : 'font-montserrat'
-                  } text-textPrimary flex-1 mr-2`}
+                  className={`text-[14px] ${
+                    !item.is_read
+                      ? 'font-montserrat-bold text-textPrimary'
+                      : 'font-montserrat-semi text-textSecondary'
+                  } flex-1 mr-2`}
                   numberOfLines={1}
                 >
                   {item.title}
                 </Text>
                 {!item.is_read && (
-                  <View className="w-2 h-2 rounded-full bg-primary" />
+                  <View className="w-1.5 h-1.5 rounded-full bg-primary mt-1.5" />
                 )}
               </View>
               <Text
-                className="text-xs font-montserrat text-textTertiary leading-4"
+                className="text-[12px] font-montserrat text-textSecondary leading-[16px]"
                 numberOfLines={2}
               >
                 {item.body}
               </Text>
-              <Text className="text-[10px] font-montserrat text-textTertiary mt-1.5 opacity-60">
+              <Text className="text-[10px] font-montserrat text-textMuted mt-1.5">
                 {formatRelativeTime(item.created_at)}
               </Text>
             </View>
@@ -278,16 +282,14 @@ export default function NotificationsScreen() {
     ({ section: { title, data } }: { section: { title: string; data: AppNotification[] } }) => {
       const unreadInSection = data.filter((n) => !n.is_read).length;
       return (
-        <View className="flex-row items-center justify-between px-5 pt-3 pb-2 bg-background">
-          <Text className="text-[11px] font-montserrat-bold text-textTertiary uppercase tracking-wider">
+        <View className="flex-row items-baseline justify-between px-5 pt-4 pb-2 bg-background">
+          <Text className="text-[10px] font-montserrat-bold text-textSecondary uppercase" style={{ letterSpacing: 1.4 }}>
             {title}
           </Text>
           {unreadInSection > 0 && (
-            <View className="bg-primary50 rounded-full px-2 py-0.5">
-              <Text className="text-[10px] font-montserrat-bold text-primary">
-                {unreadInSection} new
-              </Text>
-            </View>
+            <Text className="text-[10px] font-montserrat-bold text-primary uppercase" style={{ letterSpacing: 1.2 }}>
+              {unreadInSection} new
+            </Text>
           )}
         </View>
       );
@@ -296,20 +298,15 @@ export default function NotificationsScreen() {
   );
 
   return (
-    <SafeAreaView className="flex-1 bg-background" edges={['top']}>
-      {/* Header */}
-      <View className="flex-row items-center justify-between px-5 pt-4 pb-3">
-        <Text className="text-lg font-montserrat-semi text-textPrimary">
-          Notifications
-        </Text>
-        {notifications.length > 0 && (
-          <Pressable onPress={handleMarkAllRead} className="px-3 py-1.5 rounded-lg bg-primary50">
-            <Text className="text-[11px] font-montserrat-semi text-primary">
-              Mark all read
-            </Text>
-          </Pressable>
-        )}
-      </View>
+    <View className="flex-1 bg-background">
+      <GradientHeader
+        title="Notifications"
+        trailing={
+          notifications.length > 0 ? (
+            { label: 'Mark all read', onPress: handleMarkAllRead }
+          ) : undefined
+        }
+      />
 
       {/* Notification List */}
       <SectionList
@@ -348,6 +345,6 @@ export default function NotificationsScreen() {
           />
         }
       />
-    </SafeAreaView>
+    </View>
   );
 }

@@ -77,11 +77,25 @@ export function BottomSheet({
       />
       <GestureDetector gesture={gesture}>
         <Animated.View
-          className="absolute left-0 right-0 bg-surface rounded-t-[24px] mx-4 mb-6"
-          style={[{ height: maxSnap }, animatedStyle]}
+          className="absolute left-0 right-0 bg-surface"
+          style={[
+            { height: maxSnap },
+            // Edge-to-edge sheet (no floating side margins) — the
+            // previous mx-4 mb-6 made the sheet look like a card,
+            // not a sheet. Modern apps anchor sheets to the screen
+            // edges. A subtle top shadow gives depth.
+            {
+              shadowColor: '#0F172A',
+              shadowOffset: { width: 0, height: -4 },
+              shadowOpacity: 0.12,
+              shadowRadius: 16,
+              elevation: 12,
+            },
+            animatedStyle,
+          ]}
         >
-          <View className="items-center pt-3 pb-2">
-            <View className="w-10 h-1 rounded-full bg-divider" />
+          <View className="items-center pt-2.5 pb-1.5">
+            <View className="w-9 h-1 rounded-full bg-divider" />
           </View>
           {scrollable ? (
             <ScrollView

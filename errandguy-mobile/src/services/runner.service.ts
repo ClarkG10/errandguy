@@ -52,7 +52,11 @@ export const runnerService = {
   },
 
   getCurrentErrand() {
-    return api.get('/runner/errand/current', { cacheTtlMs: 5_000 } as any);
+    // Silent: this endpoint is hit every 30s by the runner home
+    // dashboard's foreground interval AND by useQuery's stale-time
+    // refetch on focus. The user never explicitly asked for the
+    // refresh, so it shouldn't blink the global progress bar.
+    return api.get('/runner/errand/current', { cacheTtlMs: 5_000, silent: true } as any);
   },
 
   /**
@@ -61,7 +65,11 @@ export const runnerService = {
    * the runner store is empty (cold start, app killed mid-shift).
    */
   getErrand(id: string) {
-    return api.get(`/runner/errand/${id}`, { cacheTtlMs: 4_000 } as any);
+    // Silent: the errand screen polls this every 15s as a realtime
+    // fallback. Initial mount also runs through here, but the screen
+    // shows a TrackingSkeleton for first-load feedback so the global
+    // bar would only add noise.
+    return api.get(`/runner/errand/${id}`, { cacheTtlMs: 4_000, silent: true } as any);
   },
 
   acceptErrand(id: string) {
@@ -77,7 +85,9 @@ export const runnerService = {
   },
 
   getAvailableErrands() {
-    return api.get('/runner/errand/available', { cacheTtlMs: 5_000 } as any);
+    // Silent: dashboard polls this; loader bar would otherwise flash
+    // every refresh tick.
+    return api.get('/runner/errand/available', { cacheTtlMs: 5_000, silent: true } as any);
   },
 
   updateErrandStatus(id: string, status: string) {

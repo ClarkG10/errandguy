@@ -32,7 +32,7 @@ const api = axios.create({
  */
 type ExtraConfig = AxiosRequestConfig & { noDedupe?: boolean; noCache?: boolean; cacheTtlMs?: number; silent?: boolean };
 
-const DEFAULT_GET_CACHE_MS = 3000;
+const DEFAULT_GET_CACHE_MS = 8000;
 const inflight = new Map<string, Promise<AxiosResponse<any>>>();
 const microCache = new Map<string, { ts: number; response: AxiosResponse<any> }>();
 
@@ -74,12 +74,10 @@ api.interceptors.request.use(
     if (!(config as ExtraConfig).silent) {
       apiActivity.start();
     }
-    if (__DEV__) {
-      console.log(
-        `📡 ${config.method?.toUpperCase()} ${config.baseURL}${config.url}`,
-        config.data ? JSON.stringify(config.data).slice(0, 200) : '',
-      );
-    }
+    // Per-request logging removed in favour of the on-screen activity
+    // bar. The previous JSON.stringify on every call added measurable
+    // overhead on the RN bridge during burst traffic and produced log
+    // noise that hid real failures.
     return config;
   },
   (error) => {
@@ -95,11 +93,6 @@ api.interceptors.response.use(
   (response) => {
     if (!(response.config as ExtraConfig).silent) {
       apiActivity.done();
-    }
-    if (__DEV__) {
-      console.log(
-        `✅ ${response.status} ${response.config.method?.toUpperCase()} ${response.config.url}`,
-      );
     }
     return response;
   },
@@ -118,11 +111,19 @@ api.interceptors.response.use(
         // \u2014 and logging them as red ERROR makes real failures hide
         // in noise.
         const url: string = error.config?.url ?? '';
+        const status = error.response.status;
+        // Quiet logs we don't want to see as red ERRORs in dev:
+        //  • 429 on /runner/location — server-side GPS throttle, expected.
+        //  • 422 anywhere — validation rejections handled by the UI as
+        //    toasts/inline errors. Logging them as ERROR adds noise and
+        //    hides real failures. The status + message still flow to
+        //    the rejection below.
         const isExpectedThrottle =
-          error.response.status === 429 && url.includes('/runner/location');
-        if (!isExpectedThrottle) {
+          status === 429 && url.includes('/runner/location');
+        const isClientValidation = status === 422;
+        if (!isExpectedThrottle && !isClientValidation) {
           console.error(
-            `❌ ${error.response.status} ${error.config?.method?.toUpperCase()} ${error.config?.url}`,
+            `❌ ${status} ${error.config?.method?.toUpperCase()} ${error.config?.url}`,
             JSON.stringify(error.response.data).slice(0, 500),
           );
         }

@@ -5,6 +5,7 @@ import {
   Text,
   Pressable,
   StyleSheet,
+  Platform,
   type TextInputProps,
 } from 'react-native';
 import { Eye, EyeOff } from 'lucide-react-native';
@@ -46,8 +47,8 @@ export function Input({
   const isPassword = secureTextEntry !== undefined;
   const inputRef = useRef<TextInput>(null);
 
-  const borderColor = error ? '#EF4444' : focused ? '#2563EB' : '#E2E8F0';
-  const labelColor = error ? '#EF4444' : focused ? '#2563EB' : '#64748B';
+  const borderColor = error ? '#EF4444' : focused ? '#0F172A' : '#E2E8F0';
+  const labelColor = error ? '#EF4444' : '#475569';
 
   return (
     <View style={fs.wrapper}>
@@ -58,6 +59,7 @@ export function Input({
         style={[
           fs.container,
           { borderColor },
+          focused && !error ? fs.focusedShadow : null,
           multiline && fs.multiline,
         ]}
         onPress={() => inputRef.current?.focus()}
@@ -119,20 +121,37 @@ export function Input({
 const fs = StyleSheet.create({
   wrapper: { marginBottom: 16 },
   label: {
-    fontSize: 12,
-    fontFamily: 'Quicksand_600SemiBold',
-    marginBottom: 6,
+    fontSize: 11,
+    fontFamily: 'Quicksand_700Bold',
+    letterSpacing: 0.6,
+    textTransform: 'uppercase',
+    marginBottom: 8,
     marginLeft: 2,
   },
   container: {
-    borderWidth: 1.5,
-    borderRadius: 14,
+    borderWidth: 1,
+    // 12px to match Button + tile radii. The previous 14px combined
+    // with 1.5px border made every form field read as a fat pill.
+    borderRadius: 12,
     backgroundColor: '#FFFFFF',
-    minHeight: 52,
+    minHeight: 50,
     flexDirection: 'row',
     alignItems: 'center',
     paddingHorizontal: 14,
   },
+  // Subtle focus ring — a soft ink-dark glow rather than a brand-blue
+  // border so the field communicates "active" without competing with
+  // the primary CTA below it.
+  focusedShadow: Platform.select({
+    ios: {
+      shadowColor: '#0F172A',
+      shadowOffset: { width: 0, height: 0 },
+      shadowOpacity: 0.08,
+      shadowRadius: 6,
+    },
+    android: { elevation: 1 },
+    default: {},
+  }) as any,
   multiline: { minHeight: 96, alignItems: 'flex-start', paddingVertical: 12 },
   input: {
     flex: 1,
