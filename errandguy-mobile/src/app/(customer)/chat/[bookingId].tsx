@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   View,
   Text,
@@ -24,6 +24,7 @@ import { Avatar } from '../../../components/ui/Avatar';
 import { ImagePickerModal } from '../../../components/ui/ImagePickerModal';
 import { ImageLightbox } from '../../../components/ui/ImageLightbox';
 import { formatTime } from '../../../utils/formatDate';
+import { buildChatRows, type ChatRow } from '../../../utils/chatList';
 import { resolveImageUrl } from '../../../utils/resolveImageUrl';
 import { CUSTOMER_QUICK_MESSAGES } from '../../../constants/quickMessages';
 import type { Message } from '../../../types';
@@ -53,7 +54,13 @@ export default function ChatScreen() {
   const [sending, setSending] = useState(false);
   const [imagePickerVisible, setImagePickerVisible] = useState(false);
   const [previewUri, setPreviewUri] = useState<string | null>(null);
-  const flatListRef = useRef<FlatList<Message>>(null);
+  const flatListRef = useRef<FlatList<ChatRow>>(null);
+
+  // Inverted FlatList consumes a newest-first array. Memoizing keeps the
+  // `data` ref stable across unrelated re-renders so RN doesn't redo
+  // the entire viewport on every parent tick. Day separators are baked
+  // in here (cheap O(n) walk) so the renderer stays a pure function.
+  const rows = useMemo<ChatRow[]>(() => buildChatRows(messages), [messages]);
 
   // Runner contact (only available once a runner is matched on the active booking).
   const runnerName =
@@ -133,11 +140,13 @@ export default function ChatScreen() {
       const text = content ?? inputText.trim();
       if (!text && !imageUrl) return;
 
-      // Clear the input + scroll BEFORE awaiting so the message appears
-      // instantly. The optimistic bubble inside chatSendMessage gives
-      // the "sent" feedback while the API settles in the background.
+      // Clear the input BEFORE awaiting so the message appears instantly.
+      // The optimistic bubble inside chatSendMessage gives the "sent"
+      // feedback while the API settles in the background. With an
+      // inverted FlatList the new bubble is automatically at the
+      // visible bottom — no manual scrollToEnd needed (and no jank from
+      // animating to a moving target while the keyboard expands).
       if (!content) setInputText('');
-      setTimeout(() => flatListRef.current?.scrollToEnd({ animated: true }), 30);
       try {
         await chatSendMessage(text || undefined, imageUrl);
       } catch {
@@ -157,7 +166,6 @@ export default function ChatScreen() {
       // canonical URL on the message row. Sending the raw `file://` URI
       // through the JSON path would be silently dropped.
       await chatSendImage(uri);
-      flatListRef.current?.scrollToEnd({ animated: true });
     } catch {
       toast.error('Failed to send image');
     } finally {
@@ -165,16 +173,32 @@ export default function ChatScreen() {
     }
   }, [bookingId, chatSendImage]);
 
-  const renderMessage = useCallback(
-    ({ item }: { item: Message }) => {
-      const isMe = item.sender_id === user?.id;
-      const isSystem = item.is_system;
+  const renderRow = useCallback(
+    ({ item }: { item: ChatRow }) => {
+      // Day separator pill — sits between calendar-day boundaries the
+      // same way iMessage / WhatsApp do, so the user can scan when a
+      // conversation happened without reading every timestamp.
+      if (item.kind === 'day') {
+        return (
+          <View className="items-center my-3">
+            <View className="px-3 py-1 bg-divider/60 rounded-full">
+              <Text className="text-[11px] font-montserrat-semi text-textSecondary">
+                {item.label}
+              </Text>
+            </View>
+          </View>
+        );
+      }
+
+      const m = item.message;
+      const isMe = m.sender_id === user?.id;
+      const isSystem = m.is_system;
 
       if (isSystem) {
         return (
           <View className="items-center my-2 px-4">
             <Text className="text-xs font-montserrat italic text-textSecondary text-center">
-              {item.content}
+              {m.content}
             </Text>
           </View>
         );
@@ -187,24 +211,21 @@ export default function ChatScreen() {
           <View
             className={`max-w-[80%] rounded-2xl px-4 py-2 ${
               isMe
-                ? item.failed
+                ? m.failed
                   ? 'bg-danger rounded-br-sm'
                   : 'bg-primary rounded-br-sm'
                 : 'bg-divider rounded-bl-sm'
             }`}
-            style={isMe && item.pending ? { opacity: 0.75 } : undefined}
+            style={isMe && m.pending ? { opacity: 0.75 } : undefined}
           >
-            {item.image_url && (
+            {m.image_url && (
               <Pressable
-                onPress={() => setPreviewUri(resolveImageUrl(item.image_url))}
+                onPress={() => setPreviewUri(resolveImageUrl(m.image_url))}
                 accessibilityRole="imagebutton"
                 accessibilityLabel="View image full screen"
               >
-                {/* Use explicit `style` (not className) so the size lands
-                    on Image even on Android where NativeWind sometimes
-                    loses inferred width/height for native components. */}
                 <Image
-                  source={{ uri: resolveImageUrl(item.image_url)! }}
+                  source={{ uri: resolveImageUrl(m.image_url)! }}
                   style={{ width: 192, height: 192, borderRadius: 12, marginBottom: 6 }}
                   contentFit="cover"
                   transition={150}
@@ -212,13 +233,13 @@ export default function ChatScreen() {
                 />
               </Pressable>
             )}
-            {item.content && (
+            {m.content && (
               <Text
                 className={`text-sm font-montserrat ${
                   isMe ? 'text-white' : 'text-textPrimary'
                 }`}
               >
-                {item.content}
+                {m.content}
               </Text>
             )}
             <Text
@@ -226,7 +247,7 @@ export default function ChatScreen() {
                 isMe ? 'text-white/60' : 'text-textSecondary'
               }`}
             >
-              {formatTime(item.created_at)}
+              {formatTime(m.created_at)}
             </Text>
           </View>
           {/* Delivery indicator under own messages. Failed bubbles are
@@ -234,9 +255,9 @@ export default function ChatScreen() {
           {isMe && (
             <Pressable
               onPress={
-                item.failed
+                m.failed
                   ? () => {
-                      chatRetryMessage(item.id).catch(() =>
+                      chatRetryMessage(m.id).catch(() =>
                         toast.error('Still couldn’t send. Check your connection.'),
                       );
                     }
@@ -245,14 +266,14 @@ export default function ChatScreen() {
               hitSlop={6}
               className="flex-row items-center mt-0.5 px-1"
             >
-              {item.pending ? (
+              {m.pending ? (
                 <>
                   <Clock size={10} color="#94A3B8" />
                   <Text className="text-[10px] font-montserrat text-textSecondary ml-1">
                     Sending
                   </Text>
                 </>
-              ) : item.failed ? (
+              ) : m.failed ? (
                 <>
                   <AlertCircle size={11} color="#DC2626" />
                   <Text className="text-[10px] font-montserrat-semi text-danger ml-1">
@@ -260,7 +281,7 @@ export default function ChatScreen() {
                   </Text>
                   <RotateCw size={10} color="#DC2626" style={{ marginLeft: 4 }} />
                 </>
-              ) : item.read_at ? (
+              ) : m.read_at ? (
                 <>
                   <CheckCheck size={11} color="#2563EB" />
                   <Text className="text-[10px] font-montserrat text-primary ml-0.5">
@@ -328,50 +349,44 @@ export default function ChatScreen() {
         // imperceptible but never wrong.
         keyboardVerticalOffset={Platform.OS === 'ios' ? 90 : 0}
       >
-        {/* Messages */}
+        {/* Messages — inverted FlatList. The newest row sits at index 0
+            which RN paints at the visual bottom (the user's reading
+            position). This makes auto-scroll-to-newest free: a new
+            outgoing or incoming bubble simply becomes the new index 0,
+            no imperative scrollToEnd needed. The inverted layout also
+            means "load older" becomes onEndReached, which RN handles
+            with proper threshold + retain-position semantics, instead
+            of the fragile contentOffset.y < 60 trick. */}
         <FlatList
           ref={flatListRef}
-          data={messages}
-          keyExtractor={(item) => item.id}
-          renderItem={renderMessage}
+          data={rows}
+          keyExtractor={(item) =>
+            item.kind === 'day' ? item.id : item.message.id
+          }
+          renderItem={renderRow}
+          inverted
           className="flex-1"
           contentContainerStyle={{ paddingVertical: 12 }}
           maxToRenderPerBatch={15}
           windowSize={7}
-          removeClippedSubviews={true}
-          // Older messages live ABOVE the current top — trigger the
-          // back-pagination when the user scrolls near the start of the
-          // list. iOS reports negative offsets at the top, so any
-          // y < 60 means "close to the start".
-          onScroll={(e) => {
-            if (e.nativeEvent.contentOffset.y < 60 && hasMore && !loadingOlder) {
-              loadOlder().catch(() => {});
-            }
+          removeClippedSubviews
+          initialNumToRender={20}
+          // In an inverted list, onEndReached fires when the user
+          // scrolls past the OLDEST visible row — i.e. up the screen.
+          // That's exactly when we want to back-paginate, with none of
+          // the offset-tracking gymnastics the old top-anchored layout
+          // required.
+          onEndReached={() => {
+            if (hasMore && !loadingOlder) loadOlder().catch(() => {});
           }}
-          scrollEventThrottle={120}
-          ListHeaderComponent={
+          onEndReachedThreshold={0.4}
+          ListFooterComponent={
             loadingOlder ? (
               <View className="py-3 items-center">
                 <ActivityIndicator size="small" color="#2563EB" />
               </View>
-            ) : hasMore ? (
-              <View className="py-2 items-center">
-                <Text className="text-[11px] font-montserrat text-textTertiary">
-                  Pull down or scroll up to load older messages
-                </Text>
-              </View>
             ) : null
           }
-          onContentSizeChange={() => {
-            // Only auto-scroll-to-end when NEW messages arrive at the
-            // bottom. If we're prepending older messages from a back-fetch
-            // (loadingOlder), preserve the user's current scroll position
-            // \u2014 jumping them to the bottom would defeat the whole point
-            // of pagination.
-            if (!loadingOlder) {
-              flatListRef.current?.scrollToEnd({ animated: false });
-            }
-          }}
         />
 
         {/* Quick Messages */}

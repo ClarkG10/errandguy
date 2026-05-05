@@ -11,8 +11,13 @@ import {
   Circle,
   ShoppingBag,
   ShieldAlert,
+  ChevronDown,
+  ChevronUp,
+  AlertTriangle,
 } from 'lucide-react-native';
 import { Card } from '../../../components/ui/Card';
+import { JourneyBeads } from '../../../components/ui/JourneyBeads';
+import { CurrentStepHero } from '../../../components/ui/CurrentStepHero';
 import { Avatar } from '../../../components/ui/Avatar';
 import { Button } from '../../../components/ui/Button';
 import { BackButton } from '../../../components/ui/BackButton';
@@ -106,6 +111,10 @@ export default function ActiveErrandScreen() {
   const [pinInput, setPinInput] = useState('');
   const [pinVerified, setPinVerified] = useState(false);
   const [deliveryPhotoUrl, setDeliveryPhotoUrl] = useState<string | null>(null);
+  // Trip details (payout, errand description, status timeline) collapse
+  // by default. The runner's brain only needs the current step + the
+  // ONE big action button; everything else is reference material.
+  const [detailsOpen, setDetailsOpen] = useState(false);
 
   // Single source of truth: the API. The runner-facing endpoint
   // (RunnerErrandController@show) is scoped by `runnerBookings()` on
@@ -245,6 +254,58 @@ export default function ActiveErrandScreen() {
       ? { lat: Number(etaTargetLat), lng: Number(etaTargetLng) }
       : null,
   );
+
+  // Verb-led, runner-POV headline for the CurrentStepHero. Phrased as
+  // a directive ("Pick up the order") rather than a status label
+  // ("Picked Up") so it reads as the next thing the runner needs to
+  // do — not the last thing they did.
+  const runnerHeroTitle: string = (() => {
+    if (!booking) return '';
+    if (isTransportation) {
+      switch (booking.status) {
+        case 'accepted':
+        case 'matched':
+          return 'Head to your passenger';
+        case 'heading_to_pickup':
+          return 'On the way to pickup';
+        case 'arrived_at_pickup':
+          return 'Verify the ride PIN';
+        case 'picked_up':
+        case 'in_transit':
+          return 'Drive to drop-off';
+        case 'arrived_at_dropoff':
+          return 'End the ride';
+        case 'delivered':
+        case 'completed':
+          return 'Trip complete';
+        case 'cancelled':
+          return 'Ride cancelled';
+        default:
+          return STATUS_LABELS[booking.status] ?? '';
+      }
+    }
+    switch (booking.status) {
+      case 'accepted':
+      case 'matched':
+        return 'Head to pickup';
+      case 'heading_to_pickup':
+        return 'On the way to pickup';
+      case 'arrived_at_pickup':
+        return isShoppingErrand ? 'Shop for the items' : 'Pick up the order';
+      case 'picked_up':
+      case 'in_transit':
+        return isSingleLocation ? 'Complete the task' : 'On the way to drop-off';
+      case 'arrived_at_dropoff':
+        return 'Hand off the order';
+      case 'delivered':
+      case 'completed':
+        return 'Errand complete';
+      case 'cancelled':
+        return 'Errand cancelled';
+      default:
+        return STATUS_LABELS[booking.status] ?? '';
+    }
+  })();
 
   const customerPhone =
     booking?.dropoff_contact_phone ??
@@ -657,30 +718,53 @@ export default function ActiveErrandScreen() {
               <View className="w-12 h-1 rounded-full bg-gray-300" />
             </View>
 
-            {/* Header line \u2014 always visible */}
+            {/* Header line — always visible.
+
+                Replaces the old multi-row "Heading to / Status:" header
+                with a richer 2-tier strip:
+                  1. Journey beads — full-trip context at a glance.
+                  2. CurrentStepHero — verb-led "do this now" headline
+                     with the address as subtitle and an inline
+                     "Open Maps" affordance (tap address to launch the
+                     OS maps app for traffic/alternate-route checks). */}
             <View className="px-5 pb-2">
-              <View className="flex-row items-center justify-between">
-                <View className="flex-1 min-w-0">
-                  <Text className="text-[10px] font-montserrat-bold text-textTertiary uppercase tracking-wider">
-                    {inPickupPhase ? 'Heading to' : 'Delivering to'}
+              <JourneyBeads status={booking.status} />
+              <View className="mt-1">
+                <CurrentStepHero
+                  eyebrow={inPickupPhase ? 'PICKUP' : 'DROP-OFF'}
+                  title={runnerHeroTitle}
+                  subtitle={(inPickupPhase
+                    ? booking.pickup_address ?? errandRule.pickupLabel
+                    : booking.dropoff_address ?? errandRule.dropoffLabel) ?? undefined}
+                  etaMinutes={runnerEta.minutes != null ? Math.max(1, Math.round(runnerEta.minutes)) : null}
+                  accent={booking.status === 'cancelled' ? 'danger' : 'brand'}
+                />
+                {/* Open in Maps — surfaced inline, not as a giant button.
+                    Plain underlined link reads as a utility, leaving the
+                    sticky action below as the unambiguous primary CTA. */}
+                <Pressable
+                  onPress={() => {
+                    const lat = inPickupPhase ? booking.pickup_lat : booking.dropoff_lat;
+                    const lng = inPickupPhase ? booking.pickup_lng : booking.dropoff_lng;
+                    if (lat == null || lng == null) {
+                      toast.error('Address coordinates are missing');
+                      return;
+                    }
+                    const url = Platform.OS === 'ios'
+                      ? `http://maps.apple.com/?daddr=${lat},${lng}&dirflg=d`
+                      : `https://www.google.com/maps/dir/?api=1&destination=${lat},${lng}&travelmode=driving`;
+                    Linking.openURL(url).catch(() => toast.error('Could not open maps'));
+                  }}
+                  hitSlop={6}
+                  accessibilityRole="link"
+                  accessibilityLabel="Open in Maps"
+                  className="mt-2 self-start"
+                >
+                  <Text className="text-[11px] font-montserrat-semi text-primary underline">
+                    Open in Maps →
                   </Text>
-                  <Text className="text-sm font-montserrat-bold text-textPrimary mt-0.5" numberOfLines={1}>
-                    {inPickupPhase
-                      ? booking.pickup_address ?? errandRule.pickupLabel
-                      : booking.dropoff_address ?? errandRule.dropoffLabel}
-                  </Text>
-                </View>
-                {runnerEta.minutes != null && (
-                  <View className="ml-3 bg-primaryLight px-3 py-1.5 rounded-full">
-                    <Text className="text-xs font-montserrat-bold text-primary">
-                      {Math.max(1, Math.round(runnerEta.minutes))} min
-                    </Text>
-                  </View>
-                )}
+                </Pressable>
               </View>
-              <Text className="text-[11px] font-montserrat text-textSecondary mt-1">
-                Status: {STATUS_LABELS[booking.status] ?? booking.status}
-              </Text>
             </View>
 
             {/* Scrollable details \u2014 explicit flex:1 so it actually grows
@@ -789,6 +873,31 @@ export default function ActiveErrandScreen() {
                 </View>
               )}
 
+              {/* Trip details disclosure — collapses payout, errand
+                  description, shopping budget, and the verbose status
+                  timeline behind a single toggle so the runner sees
+                  only the current step + the action button by default.
+                  Reference data is one tap away. */}
+              <Pressable
+                onPress={() => setDetailsOpen((v) => !v)}
+                accessibilityRole="button"
+                accessibilityLabel={detailsOpen ? 'Hide trip details' : 'Show trip details'}
+                hitSlop={6}
+                className="flex-row items-center justify-between mt-1 mb-2"
+              >
+                <Text className="text-[11px] font-montserrat-bold uppercase text-textSecondary" style={{ letterSpacing: 1.4 }}>
+                  {detailsOpen ? 'Hide trip details' : 'Trip details'}
+                </Text>
+                {detailsOpen ? (
+                  <ChevronUp size={14} color="#64748B" />
+                ) : (
+                  <ChevronDown size={14} color="#64748B" />
+                )}
+              </Pressable>
+              <View className="h-px bg-divider mb-3" />
+
+              {detailsOpen && (
+                <>
               {/* Shopping Budget */}
               {isShoppingErrand && booking.shopping_budget != null && (
                 <Card className="p-3 bg-amber-50 border border-amber-200 mb-3">
@@ -868,6 +977,30 @@ export default function ActiveErrandScreen() {
                   );
                 })}
               </View>
+
+              {/* Report an issue — quiet inline link, intentionally
+                  small. Opens an email draft to support so the runner
+                  can flag a problem mid-errand without competing with
+                  the sticky action button below. */}
+              <Pressable
+                onPress={() => {
+                  const subject = encodeURIComponent(`Issue with errand ${booking.booking_number ?? booking.id}`);
+                  Linking.openURL(`mailto:support@errandguy.app?subject=${subject}`).catch(() =>
+                    toast.error('Could not open email app'),
+                  );
+                }}
+                accessibilityRole="link"
+                accessibilityLabel="Report an issue with this errand"
+                hitSlop={6}
+                className="mt-4 mb-2 flex-row items-center self-start gap-1.5"
+              >
+                <AlertTriangle size={12} color="#94A3B8" />
+                <Text className="text-[11px] font-montserrat-semi text-textTertiary underline">
+                  Report an issue
+                </Text>
+              </Pressable>
+                </>
+              )}
             </ScrollView>
 
             {/* Sticky action button — always visible at bottom of sheet.

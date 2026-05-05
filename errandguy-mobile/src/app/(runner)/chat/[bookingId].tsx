@@ -1,4 +1,4 @@
-import React, { useState, useRef, useCallback, useEffect } from 'react';
+import React, { useState, useRef, useCallback, useEffect, useMemo } from 'react';
 import {
   View,
   Text,
@@ -24,8 +24,8 @@ import { useChat } from '../../../hooks/useChat';
 import { ImagePickerModal } from '../../../components/ui/ImagePickerModal';
 import { ImageLightbox } from '../../../components/ui/ImageLightbox';
 import { resolveImageUrl } from '../../../utils/resolveImageUrl';
+import { buildChatRows, type ChatRow } from '../../../utils/chatList';
 import { RUNNER_QUICK_MESSAGES } from '../../../constants/quickMessages';
-import type { Message } from '../../../types';
 import { toast } from '../../../stores/toastStore';
 
 export default function RunnerChatScreen() {
@@ -70,7 +70,13 @@ export default function RunnerChatScreen() {
   const [sending, setSending] = useState(false);
   const [imagePickerVisible, setImagePickerVisible] = useState(false);
   const [previewUri, setPreviewUri] = useState<string | null>(null);
-  const flatListRef = useRef<FlatList<Message>>(null);
+  const flatListRef = useRef<FlatList<ChatRow>>(null);
+
+  // Inverted FlatList consumes a newest-first array. Memoizing keeps the
+  // `data` ref stable across unrelated re-renders so RN doesn't redo
+  // the entire viewport on every parent tick. Day separators are baked
+  // in here (cheap O(n) walk) so the renderer stays a pure function.
+  const rows = useMemo<ChatRow[]>(() => buildChatRows(messages), [messages]);
 
   // Fetch initial messages and mark as read (only when needed)
   useEffect(() => {
@@ -119,24 +125,20 @@ export default function RunnerChatScreen() {
   const handleSend = useCallback(async () => {
     const text = input.trim();
     if (!text || sending) return;
-    // Clear the input + scroll IMMEDIATELY so the runner sees their
-    // message land in the thread on the same frame as the keypress.
-    // The optimistic bubble (added inside chatSendMessage) provides the
-    // "sent" feedback while the API call settles in the background.
+    // Clear the input IMMEDIATELY so the runner sees their message land
+    // on the same frame as the keypress. Inverted FlatList places the
+    // new bubble at the visible bottom automatically — no scrollToEnd.
     setInput('');
-    setTimeout(() => flatListRef.current?.scrollToEnd({ animated: true }), 30);
     try {
       await chatSendMessage(text);
     } catch {
       toast.error('Failed to send message');
-      // Restore the text so the runner can retry without retyping.
       setInput((prev) => (prev ? prev : text));
     }
   }, [input, sending, chatSendMessage]);
 
   const handleQuickMessage = useCallback(
     async (msg: string) => {
-      setTimeout(() => flatListRef.current?.scrollToEnd({ animated: true }), 30);
       try {
         await chatSendMessage(msg);
       } catch {
@@ -154,7 +156,6 @@ export default function RunnerChatScreen() {
       // canonical URL on the message row. Sending the raw `file://` URI
       // through the JSON `image_url` field would 422 (must be a valid URL).
       await chatSendImage(uri);
-      setTimeout(() => flatListRef.current?.scrollToEnd({ animated: true }), 100);
     } catch {
       toast.error('Failed to send image');
     } finally {
@@ -171,16 +172,32 @@ export default function RunnerChatScreen() {
     [chatRetryMessage],
   );
 
-  const renderMessage = useCallback(
-    ({ item }: { item: Message }) => {
-      const isMine = item.sender_id === user?.id;
-      const isSystem = item.is_system;
+  const renderRow = useCallback(
+    ({ item }: { item: ChatRow }) => {
+      // Day separator pill — sits between calendar-day boundaries the
+      // same way iMessage / WhatsApp do, so the runner can scan when a
+      // conversation happened without reading every timestamp.
+      if (item.kind === 'day') {
+        return (
+          <View className="items-center my-3">
+            <View className="px-3 py-1 bg-divider/60 rounded-full">
+              <Text className="text-[11px] font-montserrat-semi text-textSecondary">
+                {item.label}
+              </Text>
+            </View>
+          </View>
+        );
+      }
+
+      const m = item.message;
+      const isMine = m.sender_id === user?.id;
+      const isSystem = m.is_system;
 
       if (isSystem) {
         return (
           <View className="items-center my-2 px-5">
             <Text className="text-[10px] font-montserrat text-textSecondary bg-gray-100 px-3 py-1 rounded-full">
-              {item.content}
+              {m.content}
             </Text>
           </View>
         );
@@ -193,35 +210,35 @@ export default function RunnerChatScreen() {
           <View
             className={`max-w-[75%] rounded-2xl px-4 py-2.5 ${
               isMine
-                ? item.failed
+                ? m.failed
                   ? 'bg-danger rounded-br-sm'
                   : 'bg-primary rounded-br-sm'
                 : 'bg-surface border border-divider rounded-bl-sm'
             }`}
-            style={isMine && item.pending ? { opacity: 0.75 } : undefined}
+            style={isMine && m.pending ? { opacity: 0.75 } : undefined}
           >
-            {item.image_url ? (
+            {m.image_url ? (
               <Pressable
-                onPress={() => setPreviewUri(resolveImageUrl(item.image_url))}
+                onPress={() => setPreviewUri(resolveImageUrl(m.image_url))}
                 accessibilityRole="imagebutton"
                 accessibilityLabel="View image full screen"
               >
                 <Image
-                  source={{ uri: resolveImageUrl(item.image_url)! }}
-                  style={{ width: 192, height: 192, borderRadius: 12, marginBottom: item.content ? 6 : 0 }}
+                  source={{ uri: resolveImageUrl(m.image_url)! }}
+                  style={{ width: 192, height: 192, borderRadius: 12, marginBottom: m.content ? 6 : 0 }}
                   contentFit="cover"
                   transition={150}
                   cachePolicy="memory-disk"
                 />
               </Pressable>
             ) : null}
-            {item.content ? (
+            {m.content ? (
               <Text
                 className={`text-sm font-montserrat ${
                   isMine ? 'text-white' : 'text-textPrimary'
                 }`}
               >
-                {item.content}
+                {m.content}
               </Text>
             ) : null}
           </View>
@@ -230,24 +247,24 @@ export default function RunnerChatScreen() {
               entire row becomes a tap target that retries the request. */}
           {isMine ? (
             <Pressable
-              onPress={item.failed ? () => handleRetry(item.id) : undefined}
+              onPress={m.failed ? () => handleRetry(m.id) : undefined}
               hitSlop={6}
               className="flex-row items-center mt-0.5 px-1"
             >
               <Text className="text-[10px] font-montserrat text-textSecondary mr-1">
-                {new Date(item.created_at).toLocaleTimeString([], {
+                {new Date(m.created_at).toLocaleTimeString([], {
                   hour: '2-digit',
                   minute: '2-digit',
                 })}
               </Text>
-              {item.pending ? (
+              {m.pending ? (
                 <>
                   <Clock size={10} color="#94A3B8" />
                   <Text className="text-[10px] font-montserrat text-textSecondary ml-1">
                     Sending
                   </Text>
                 </>
-              ) : item.failed ? (
+              ) : m.failed ? (
                 <>
                   <AlertCircle size={11} color="#DC2626" />
                   <Text className="text-[10px] font-montserrat-semi text-danger ml-1">
@@ -255,7 +272,7 @@ export default function RunnerChatScreen() {
                   </Text>
                   <RotateCw size={10} color="#DC2626" style={{ marginLeft: 4 }} />
                 </>
-              ) : item.read_at ? (
+              ) : m.read_at ? (
                 <>
                   <CheckCheck size={11} color="#2563EB" />
                   <Text className="text-[10px] font-montserrat text-primary ml-0.5">
@@ -273,7 +290,7 @@ export default function RunnerChatScreen() {
             </Pressable>
           ) : (
             <Text className="text-[10px] font-montserrat text-textSecondary mt-0.5 px-1">
-              {new Date(item.created_at).toLocaleTimeString([], {
+              {new Date(m.created_at).toLocaleTimeString([], {
                 hour: '2-digit',
                 minute: '2-digit',
               })}
@@ -321,17 +338,25 @@ export default function RunnerChatScreen() {
         behavior={Platform.OS === 'ios' ? 'padding' : undefined}
         keyboardVerticalOffset={Platform.OS === 'ios' ? 90 : 0}
       >
-        {/* Messages */}
+        {/* Messages — inverted FlatList. Newest row = index 0 = bottom
+            of the screen. Auto-scroll to newest is automatic; older
+            messages live "off screen above" and are paginated in via
+            onEndReached, which RN handles with proper threshold +
+            retain-position semantics. */}
         <FlatList
           ref={flatListRef}
-          data={messages}
-          renderItem={renderMessage}
-          keyExtractor={(item) => item.id}
+          data={rows}
+          renderItem={renderRow}
+          keyExtractor={(item) =>
+            item.kind === 'day' ? item.id : item.message.id
+          }
+          inverted
           className="flex-1"
           contentContainerStyle={{ paddingVertical: 16 }}
           maxToRenderPerBatch={15}
           windowSize={7}
-          removeClippedSubviews={true}
+          removeClippedSubviews
+          initialNumToRender={20}
           ListEmptyComponent={
             <View className="flex-1 items-center justify-center py-20">
               <Text className="text-sm font-montserrat text-textSecondary">
@@ -339,32 +364,20 @@ export default function RunnerChatScreen() {
               </Text>
             </View>
           }
-          // Back-pagination: trigger when the user scrolls near the top.
-          onScroll={(e) => {
-            if (e.nativeEvent.contentOffset.y < 60 && hasMore && !loadingOlder) {
-              loadOlder().catch(() => {});
-            }
+          // In an inverted list onEndReached fires when the user
+          // scrolls past the OLDEST visible row — exactly when we
+          // want to back-paginate.
+          onEndReached={() => {
+            if (hasMore && !loadingOlder) loadOlder().catch(() => {});
           }}
-          scrollEventThrottle={120}
-          ListHeaderComponent={
+          onEndReachedThreshold={0.4}
+          ListFooterComponent={
             loadingOlder ? (
               <View className="py-3 items-center">
                 <ActivityIndicator size="small" color="#2563EB" />
               </View>
-            ) : hasMore ? (
-              <View className="py-2 items-center">
-                <Text className="text-[11px] font-montserrat text-textTertiary">
-                  Scroll up to load older messages
-                </Text>
-              </View>
             ) : null
           }
-          onContentSizeChange={() => {
-            // Preserve scroll position when prepending older messages.
-            if (!loadingOlder) {
-              flatListRef.current?.scrollToEnd({ animated: false });
-            }
-          }}
         />
 
         {/* Quick Messages */}

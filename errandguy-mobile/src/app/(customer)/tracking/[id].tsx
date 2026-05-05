@@ -17,6 +17,9 @@ import {
   Share2,
   Shield,
   Bike,
+  ChevronDown,
+  ChevronUp,
+  Clock,
 } from 'lucide-react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import Mapbox from '@rnmapbox/maps';
@@ -33,6 +36,8 @@ import { TrackingSkeleton } from '../../../components/ui/Skeleton';
 import { Avatar } from '../../../components/ui/Avatar';
 import { RatingStars } from '../../../components/ui/RatingStars';
 import { StatusTimeline } from '../../../components/ui/StatusTimeline';
+import { JourneyBeads } from '../../../components/ui/JourneyBeads';
+import { CurrentStepHero } from '../../../components/ui/CurrentStepHero';
 import { Button } from '../../../components/ui/Button';
 import { ConfirmModal } from '../../../components/ui/ConfirmModal';
 import { ExpandableSheet } from '../../../components/ui/ExpandableSheet';
@@ -86,6 +91,12 @@ export default function TrackingScreen() {
   >('idle');
   const [isCancelling, setIsCancelling] = useState(false);
   const [showCancelModal, setShowCancelModal] = useState(false);
+  // Trip details (timeline, shopping breakdown, proof photos) collapse
+  // by default so the bottom sheet stays uncluttered. Customers who
+  // want the verbose breakdown tap "Trip details" to expand. We keep
+  // the toggle in component state — no global store, no animation lib —
+  // so reopening the screen restores the default minimal view.
+  const [detailsOpen, setDetailsOpen] = useState(false);
   const [cancelPreview, setCancelPreview] = useState<{
     fee: number;
     tier: 'free' | 'flat' | 'percentage';
@@ -614,6 +625,51 @@ export default function TrackingScreen() {
     };
   });
 
+  // Hero copy — verb-led, role-aware. Mapped per-status so the headline
+  // reads as a sentence about what's happening RIGHT NOW from the
+  // customer's perspective (e.g. "On the way to you" rather than the
+  // backend-flavored "In Transit"). Falls back to STATUS_LABELS for any
+  // unmapped status so we never render an empty headline.
+  const heroCopy: { title: string; subtitle?: string; accent: 'brand' | 'success' | 'danger' | 'warning' } = (() => {
+    const runnerName = booking.runner?.full_name?.split(' ')[0];
+    switch (booking.status) {
+      case 'pending':
+        return { title: 'Finding you a runner', subtitle: 'Usually takes under a minute.', accent: 'warning' };
+      case 'no_runner':
+        return { title: 'No runner available', subtitle: 'Try again in a few minutes.', accent: 'danger' };
+      case 'matched':
+      case 'accepted':
+        return { title: runnerName ? `${runnerName} accepted` : 'Runner accepted', subtitle: 'Getting ready to head out.', accent: 'brand' };
+      case 'heading_to_pickup':
+        return { title: 'Heading to pickup', subtitle: runnerName ? `${runnerName} is on the way.` : undefined, accent: 'brand' };
+      case 'arrived_at_pickup':
+        return { title: 'Arrived at pickup', subtitle: isShopping ? 'Shopping for your items now.' : 'Picking up your order.', accent: 'brand' };
+      case 'picked_up':
+        return { title: 'Picked up', subtitle: 'Heading to drop-off next.', accent: 'brand' };
+      case 'in_transit':
+        return { title: isTransportation ? 'On the way' : 'On the way to you', accent: 'brand' };
+      case 'arrived_at_dropoff':
+        return { title: 'Arrived at drop-off', accent: 'brand' };
+      case 'delivered':
+      case 'completed':
+        return { title: isTransportation ? 'Trip complete' : 'Delivered', subtitle: 'Thanks for using ErrandGuy.', accent: 'success' };
+      case 'cancelled':
+        return { title: 'Cancelled', accent: 'danger' };
+      default:
+        return { title: STATUS_LABELS[booking.status], accent: 'brand' };
+    }
+  })();
+
+  // ETA pill copy — only meaningful while a runner is moving toward us.
+  // Once the trip ends we surface the terminal state in words instead.
+  const heroEtaLabel: string | undefined = ['delivered', 'completed', 'cancelled'].includes(booking.status)
+    ? booking.status === 'cancelled'
+      ? 'Ended'
+      : 'Done'
+    : booking.status === 'arrived_at_pickup' || booking.status === 'arrived_at_dropoff'
+      ? 'Here'
+      : undefined;
+
   const mapCenter: [number, number] = booking.pickup_lng && booking.pickup_lat
     ? [Number(booking.pickup_lng), Number(booking.pickup_lat)]
     : [121.0, 14.6]; // Manila default
@@ -805,24 +861,28 @@ export default function TrackingScreen() {
       </SafeAreaView>
 
       {/* Draggable bottom sheet — peek/half/full so the customer can collapse it
-          for an unobstructed map view, or expand for full details. */}
+          for an unobstructed map view, or expand for full details.
+
+          Handle: instead of repeating the status text (already in the
+          floating header), we paint a horizontal "journey beads" strip
+          so even at peek size the customer sees the trip's overall
+          progress at a glance, with a discreet live-tracking dot. */}
       <ExpandableSheet
         initial="half"
         renderHandle={() => (
-          <View className="px-5 pt-1 pb-2">
-            <View className="flex-row items-center justify-between">
-              <Text className="text-sm font-montserrat-bold text-textPrimary">
-                {STATUS_LABELS[booking.status]}
-              </Text>
-              {booking.runner_id && (
-                <View className="flex-row items-center">
-                  <View className={`w-2 h-2 rounded-full mr-1.5 ${isConnected ? 'bg-success' : 'bg-gray-400'}`} />
-                  <Text className="text-[10px] font-montserrat text-textSecondary">
-                    {isConnected ? 'Live tracking' : 'Connecting…'}
-                  </Text>
-                </View>
-              )}
-            </View>
+          <View className="px-5 pt-1 pb-1">
+            <JourneyBeads
+              status={booking.status}
+              accent={booking.status === 'cancelled' ? 'danger' : 'brand'}
+            />
+            {booking.runner_id && (
+              <View className="flex-row items-center justify-end -mt-1 mb-1">
+                <View className={`w-1.5 h-1.5 rounded-full mr-1 ${isConnected ? 'bg-success' : 'bg-gray-400'}`} />
+                <Text className="text-[9px] font-montserrat text-textTertiary uppercase" style={{ letterSpacing: 1 }}>
+                  {isConnected ? 'Live' : 'Reconnecting'}
+                </Text>
+              </View>
+            )}
           </View>
         )}
       >
@@ -831,6 +891,22 @@ export default function TrackingScreen() {
           showsVerticalScrollIndicator={false}
           contentContainerStyle={{ paddingBottom: 40 }}
         >
+        {/* Hero — verb-led "what's happening right now" with optional
+            ETA pill or terminal-state label. Sits at the very top of
+            the sheet content so it's the first thing visible when the
+            sheet expands from peek. */}
+        <View className="mb-4">
+          <CurrentStepHero
+            eyebrow={`STEP ${Math.min(currentStatusIndex + 1, steps.length)} OF ${steps.length}`}
+            title={heroCopy.title}
+            subtitle={heroCopy.subtitle}
+            etaMinutes={heroEtaLabel ? null : (runnerLocation ? eta.minutes : null)}
+            etaLabel={heroEtaLabel}
+            accent={heroCopy.accent}
+            Icon={Clock}
+          />
+        </View>
+
         {/* Transportation PIN */}
         {isTransportation && booking.ride_pin && (
           <View className="bg-warning/10 border border-warning rounded-xl p-4 mb-4 items-center">
@@ -915,6 +991,30 @@ export default function TrackingScreen() {
           </View>
         )}
 
+        {/* Trip details — collapsed by default. We deliberately use a
+            text-only toggle (not a card / not a button) so it reads as
+            an inline disclosure, not another CTA competing with the
+            real actions below. The chevron rotates as a subtle hint. */}
+        <Pressable
+          onPress={() => setDetailsOpen((v) => !v)}
+          accessibilityRole="button"
+          accessibilityLabel={detailsOpen ? 'Hide trip details' : 'Show trip details'}
+          hitSlop={6}
+          className="flex-row items-center justify-between mt-3 mb-2"
+        >
+          <Text className="text-[11px] font-montserrat-bold uppercase text-textSecondary" style={{ letterSpacing: 1.4 }}>
+            {detailsOpen ? 'Hide trip details' : 'Trip details'}
+          </Text>
+          {detailsOpen ? (
+            <ChevronUp size={14} color="#64748B" />
+          ) : (
+            <ChevronDown size={14} color="#64748B" />
+          )}
+        </Pressable>
+        <View className="h-px bg-divider mb-2" />
+
+        {detailsOpen && (
+          <>
         {/* Shopping reconciliation card — visible whenever a shopping budget
             was pre-authorized so the customer can see what was approved
             and, after pickup, exactly what the runner spent. */}
@@ -1043,6 +1143,8 @@ export default function TrackingScreen() {
 
         {/* Status Timeline */}
         <StatusTimeline steps={timelineSteps} />
+          </>
+        )}
 
         {/* Bottom Actions */}
         <View className="pb-6 pt-4 gap-2">
