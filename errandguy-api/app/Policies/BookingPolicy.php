@@ -3,7 +3,6 @@
 namespace App\Policies;
 
 use App\Models\Booking;
-use App\Models\Review;
 use App\Models\User;
 
 class BookingPolicy
@@ -24,8 +23,15 @@ class BookingPolicy
     {
         // Either party of a completed booking may leave one review. The
         // reviewee is implicit — customer reviews the assigned runner,
-        // runner reviews the customer. We block reviews on bookings the
-        // user wasn't part of, and we enforce one-review-per-reviewer.
+        // runner reviews the customer.
+        //
+        // We deliberately keep this check narrow (participant + completed
+        // only). Duplicate-submission and other lifecycle errors are
+        // surfaced by the controller as 422 with a descriptive message;
+        // collapsing them into 403 here loses that granularity and the
+        // mobile client was logging spurious "unauthorized" errors when
+        // a runner re-entered a completed errand and the rate sheet
+        // auto-submitted a duplicate review.
         $isParticipant =
             $user->id === $booking->customer_id
             || ($booking->runner_id !== null && $user->id === $booking->runner_id);
@@ -34,14 +40,7 @@ class BookingPolicy
             return false;
         }
 
-        if ($booking->status !== 'completed') {
-            return false;
-        }
-
-        // Check no existing review from this reviewer for this booking
-        return !Review::where('booking_id', $booking->id)
-            ->where('reviewer_id', $user->id)
-            ->exists();
+        return $booking->status === 'completed';
     }
 
     public function track(User $user, Booking $booking): bool
