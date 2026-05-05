@@ -7,6 +7,7 @@ use App\Http\Requests\Chat\SendMessageRequest;
 use App\Http\Resources\MessageResource;
 use App\Models\Booking;
 use App\Models\Message;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Storage;
@@ -189,14 +190,20 @@ class ChatController extends Controller
 
         $bookingIds = $bookings->pluck('id');
 
-        // Latest message per booking (single round-trip).
-        $latestPerBooking = Message::query()
+        // Latest message per booking. Previously we hydrated EVERY
+        // message row across all 60 bookings just to keep the first one
+        // of each group — that's O(history) memory + bandwidth on each
+        // inbox open. Postgres `DISTINCT ON` picks the newest row per
+        // booking_id directly in SQL with the new
+        // (booking_id, created_at) composite index.
+        $latestRows = DB::table('messages')
             ->whereIn('booking_id', $bookingIds)
-            ->select('booking_id', 'content', 'image_url', 'is_system', 'sender_id', 'created_at')
+            ->orderBy('booking_id')
             ->orderByDesc('created_at')
-            ->get()
-            ->groupBy('booking_id')
-            ->map(fn ($g) => $g->first());
+            ->select('booking_id', 'content', 'image_url', 'is_system', 'sender_id', 'created_at')
+            ->distinct('booking_id')
+            ->get();
+        $latestPerBooking = collect($latestRows)->keyBy('booking_id');
 
         // Unread counts per booking for messages not sent by the user.
         $unreadPerBooking = Message::query()

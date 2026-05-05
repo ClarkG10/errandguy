@@ -45,7 +45,10 @@ export const runnerService = {
   },
 
   updateLocation(coords: Coordinate & { heading?: number; speed?: number }) {
-    return api.post('/runner/location', coords);
+    // Silent: GPS push fires every ~5s while the runner is online; it
+    // has zero user-facing intent and shouldn't pin the global progress
+    // bar.
+    return api.post('/runner/location', coords, { silent: true } as any);
   },
 
   getCurrentErrand() {
@@ -79,6 +82,68 @@ export const runnerService = {
 
   updateErrandStatus(id: string, status: string) {
     const p = api.post(`/runner/errand/${id}/status`, { status });
+    p.then(invalidateRunnerErrands).catch(() => {});
+    return p;
+  },
+
+  /**
+   * Status transition with optional photo uploads. Used for the
+   * picked_up / delivered / completed transitions where the backend
+   * requires (resp.) pickup_photo / delivery_photo / signature on the
+   * SAME request as the status field — sending the status first and
+   * then uploading the photo separately fails validation (422).
+   *
+   * If no photo is supplied this collapses to the cheap JSON variant
+   * so transportation / queue / bills_payment runners don't pay the
+   * multipart overhead.
+   */
+  advanceErrandStatus(
+    id: string,
+    status: string,
+    opts?: {
+      pickupPhoto?: string | null;
+      deliveryPhoto?: string | null;
+      signature?: string | null;
+      note?: string | null;
+      lat?: number | null;
+      lng?: number | null;
+    },
+  ) {
+    const hasFile = !!(opts?.pickupPhoto || opts?.deliveryPhoto || opts?.signature);
+    let p;
+    if (hasFile) {
+      const form = new FormData();
+      form.append('status', status);
+      if (opts?.note) form.append('note', opts.note);
+      if (opts?.lat != null) form.append('lat', String(opts.lat));
+      if (opts?.lng != null) form.append('lng', String(opts.lng));
+      if (opts?.pickupPhoto) {
+        form.append('pickup_photo', {
+          uri: opts.pickupPhoto,
+          type: 'image/jpeg',
+          name: 'pickup.jpg',
+        } as any);
+      }
+      if (opts?.deliveryPhoto) {
+        form.append('delivery_photo', {
+          uri: opts.deliveryPhoto,
+          type: 'image/jpeg',
+          name: 'delivery.jpg',
+        } as any);
+      }
+      if (opts?.signature) {
+        form.append('signature', {
+          uri: opts.signature,
+          type: 'image/jpeg',
+          name: 'signature.jpg',
+        } as any);
+      }
+      p = api.post(`/runner/errand/${id}/status`, form, {
+        headers: { 'Content-Type': 'multipart/form-data' },
+      });
+    } else {
+      p = api.post(`/runner/errand/${id}/status`, { status });
+    }
     p.then(invalidateRunnerErrands).catch(() => {});
     return p;
   },

@@ -15,7 +15,12 @@ return [
     |
     */
 
-    'default' => env('CACHE_STORE', 'database'),
+    // Default to the file driver. The previous Laravel-shipped default
+    // ('database') routed every Cache::* call (rate-limit throttling,
+    // EnsureUserActive 60s presence throttle, OTP buckets, system
+    // config lookups) through 2 extra DB queries per call, completely
+    // negating the value of caching on the request hot path.
+    'default' => env('CACHE_STORE', 'file'),
 
     /*
     |--------------------------------------------------------------------------

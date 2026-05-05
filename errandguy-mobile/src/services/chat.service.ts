@@ -69,9 +69,11 @@ export const chatService = {
   },
 
   getUnreadCount() {
+    // Silent: refreshed every 30s on a foreground interval; the user
+    // never asked for it, so it shouldn't trigger the loader bar.
     return api.get<{
       data: { total: number; by_booking: Record<string, number> };
-    }>('/chat/unread-count', { cacheTtlMs: 10_000 } as any);
+    }>('/chat/unread-count', { cacheTtlMs: 10_000, silent: true } as any);
   },
 
   getConversations() {

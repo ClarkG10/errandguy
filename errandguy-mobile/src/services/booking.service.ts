@@ -68,7 +68,7 @@ export const bookingService = {
   },
 
   trackBooking(id: string) {
-    return api.get(`/bookings/${id}/track`, { cacheTtlMs: 4000 } as any);
+    return api.get(`/bookings/${id}/track`, { cacheTtlMs: 4000, silent: true } as any);
   },
 
   reviewBooking(id: string, data: { rating: number; comment?: string }) {

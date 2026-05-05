@@ -22,17 +22,43 @@ function getStore() {
   return require('expo-secure-store') as typeof webStorage;
 }
 
+// In-memory cache of every secure-storage key we've already read or
+// written this session. SecureStore hits the native Keychain (iOS) /
+// EncryptedSharedPreferences (Android), which costs 20–100 ms per
+// call. The axios request interceptor reads `auth_token` on EVERY
+// request, and screens that mount 3+ parallel queries used to pay
+// that cost 3+ times sequentially. The token is already held in
+// memory by the auth store and is invalidated explicitly on login /
+// logout, so caching the value here is functionally identical and
+// shaves the cold-mount perception time substantially.
+const memCache = new Map<string, string | null>();
+
 export const secureStorage = {
   async get(key: string): Promise<string | null> {
-    return getStore().getItemAsync(key);
+    if (memCache.has(key)) return memCache.get(key) ?? null;
+    const value = await getStore().getItemAsync(key);
+    memCache.set(key, value);
+    return value;
   },
 
   async set(key: string, value: string): Promise<void> {
+    memCache.set(key, value);
     await getStore().setItemAsync(key, value);
   },
 
   async remove(key: string): Promise<void> {
+    memCache.set(key, null);
     await getStore().deleteItemAsync(key);
+  },
+
+  /**
+   * Synchronous read of the in-memory cache. Returns null on miss
+   * (the caller should fall back to the async `get`). Used by the
+   * axios request interceptor so the common-case auth-token fetch
+   * stays off the JS bridge.
+   */
+  peek(key: string): string | null | undefined {
+    return memCache.get(key);
   },
 };
 

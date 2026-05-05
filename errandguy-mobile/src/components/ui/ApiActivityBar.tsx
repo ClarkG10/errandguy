@@ -1,4 +1,4 @@
-import React, { useEffect } from 'react';
+import React, { useEffect, useState } from 'react';
 import { StyleSheet, View } from 'react-native';
 import Animated, {
   useSharedValue,
@@ -14,26 +14,47 @@ import { useApiActivityStore } from '../../stores/apiActivityStore';
 
 /**
  * Thin top-of-screen progress bar that animates whenever there's at
- * least one outstanding network request. Mounted once at the app root
- * via `ToastProvider` so every screen automatically gets the indicator
+ * least one outstanding network request lasting longer than the
+ * SHOW_DELAY threshold. Mounted once at the app root via
+ * `ToastProvider` so every screen automatically gets the indicator
  * without per-screen wiring.
  *
  * Behaviour
  *  - Stays hidden when idle (no work, zero overhead).
- *  - Fades in and runs an indeterminate sweep while requests are in
- *    flight (we don't have per-request progress percentages, so a sweep
- *    is the honest UX).
+ *  - Hidden for fast requests (< 400 ms). Cache hits, dedupes, and
+ *    healthy single-server-roundtrips never show the bar — the
+ *    perceived UX is "instant".
+ *  - Fades in only after the network has been busy for 400 ms+.
  *  - Fades out smoothly when the counter returns to zero.
+ *  - Background pollers (location pings, unread-count refreshes,
+ *    realtime fallbacks) opt out entirely via `silent: true` in their
+ *    axios config so they don't blip the bar.
  */
+const SHOW_DELAY_MS = 400;
+
 export function ApiActivityBar() {
   const insets = useSafeAreaInsets();
   const busy = useApiActivityStore((s) => s.count > 0);
+
+  // Visible only after busy has been continuously true for SHOW_DELAY_MS.
+  // Without this, every fast request blinked the bar for ~150 ms which
+  // made the app feel like it was constantly loading even when most
+  // calls return well under 400 ms.
+  const [shouldShow, setShouldShow] = useState(false);
+  useEffect(() => {
+    if (!busy) {
+      setShouldShow(false);
+      return;
+    }
+    const t = setTimeout(() => setShouldShow(true), SHOW_DELAY_MS);
+    return () => clearTimeout(t);
+  }, [busy]);
 
   const opacity = useSharedValue(0);
   const translateX = useSharedValue(-1);
 
   useEffect(() => {
-    if (busy) {
+    if (shouldShow) {
       opacity.value = withTiming(1, { duration: 150 });
       // Indeterminate sweep: slide a 40%-wide bar from -40% to 100%.
       translateX.value = -1;
@@ -49,7 +70,7 @@ export function ApiActivityBar() {
       opacity.value = withTiming(0, { duration: 250 });
       cancelAnimation(translateX);
     }
-  }, [busy, opacity, translateX]);
+  }, [shouldShow, opacity, translateX]);
 
   const containerStyle = useAnimatedStyle(() => ({ opacity: opacity.value }));
   const barStyle = useAnimatedStyle(() => ({

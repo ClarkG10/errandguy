@@ -134,7 +134,11 @@ class Booking extends Model
 
     public function statusLogs(): HasMany
     {
-        return $this->hasMany(BookingStatusLog::class);
+        // Default ordering so every consumer (BookingResource, polling
+        // /track, /show, /current) gets a chronologically-stable list
+        // without each call paying for an in-memory sort. Composite
+        // index idx_status_logs_booking_created supports this directly.
+        return $this->hasMany(BookingStatusLog::class)->orderBy('created_at');
     }
 
     public function messages(): HasMany

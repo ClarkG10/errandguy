@@ -114,14 +114,18 @@ export default function RunnerHomeScreen() {
   // RLS misconfig, websocket eviction on cellular handoff, table not
   // in the realtime publication, etc. — and a runner who never sees
   // their match is the worst possible failure mode here. Re-fetching
-  // /runner/errand/current every 8s while online catches anything the
-  // realtime channel missed.
+  // /runner/errand/current every 30s while online catches anything the
+  // realtime channel missed. Previously this was 8s, which on a busy
+  // home screen meant ~7.5 GETs/min just for fallback safety \u2014 the
+  // realtime channel is reliable enough that 30s is the right tier
+  // and the user-visible effect is unchanged because the broadcast +
+  // incoming-request modal both run on the realtime push path.
   useForegroundInterval(
     () => {
       if (!enabled || !isOnline) return;
       currentErrandQ.refresh();
     },
-    8_000,
+    30_000,
     enabled && isOnline,
     false,
   );

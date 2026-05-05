@@ -10,20 +10,34 @@ import type { Message } from '../types';
 /** Per-booking cache key for the most recent page of messages. */
 const cacheKey = (bookingId: string) => `chat:messages:${bookingId}`;
 
-export function useChat(bookingId: string) {
-  const {
-    messages,
-    unreadCount,
-    isTyping,
-    addMessage,
-    replaceMessage,
-    removeMessage,
-    setMessages,
-    markRead,
-    setIsTyping,
-  } = useChatStore();
+// Stable reference for chats that have no messages yet. Returning a
+// fresh `[]` on every render forces the chat FlatList's `data` prop
+// to change identity, which in turn re-renders every visible bubble
+// on every unrelated chat-store update (incoming push to another
+// booking, unread-count refresh, etc.). One module-level constant
+// fixes the entire downstream re-render storm.
+const EMPTY_MESSAGES: Message[] = [];
 
-  const bookingMessages = messages[bookingId] || [];
+export function useChat(bookingId: string) {
+  // Per-field selectors. The previous form — `useChatStore()` with no
+  // selector — subscribed every consumer of this hook to EVERY change
+  // in the store, so an incoming push to chat A re-rendered every
+  // open chat B, re-ran every effect (including the realtime channel
+  // teardown/setup), and re-allocated every callback. Per-field
+  // subscriptions only fire when that specific slice changes; action
+  // refs are stable across renders by definition (zustand creates
+  // them once at store init), so consuming components stay calm.
+  const bookingMessages = useChatStore(
+    (s) => s.messages[bookingId] ?? EMPTY_MESSAGES,
+  );
+  const unreadCount = useChatStore((s) => s.unreadCount);
+  const isTyping = useChatStore((s) => s.isTyping);
+  const addMessage = useChatStore((s) => s.addMessage);
+  const replaceMessage = useChatStore((s) => s.replaceMessage);
+  const removeMessage = useChatStore((s) => s.removeMessage);
+  const setMessages = useChatStore((s) => s.setMessages);
+  const markRead = useChatStore((s) => s.markRead);
+  const setIsTyping = useChatStore((s) => s.setIsTyping);
 
   // Cursor + has-more tracker for infinite-scroll-back. Reset whenever
   // the bookingId switches so a new conversation starts at the head.
@@ -279,10 +293,17 @@ export function useChat(bookingId: string) {
 
     const start = () => {
       if (intervalId) return;
-      // Tick immediately so resume-from-background doesn't wait 2s for
+      // Tick immediately so resume-from-background doesn't wait for
       // the next interval edge to surface anything new.
       tick();
-      intervalId = setInterval(tick, 2_000);
+      // 8 s, not 2 s. The Supabase realtime channel above is the
+      // primary push path — polling is purely a fallback for the
+      // case where the channel never delivers. At 2 s every open
+      // chat sustained 30 GETs/min/user, all of which were silent
+      // (server logs were swamped). 8 s gives a worst-case 8 s
+      // visibility lag in the rare RLS-blocked case while collapsing
+      // background traffic by 4×.
+      intervalId = setInterval(tick, 8_000);
     };
     const stop = () => {
       if (intervalId) {
@@ -307,8 +328,11 @@ export function useChat(bookingId: string) {
 
   // Persist the live store to disk whenever the message list changes.
   // Throttled by trailing-edge effect debounce: we only write when the
-  // length stops changing for ~600ms so a burst of incoming pushes
-  // collapses into a single AsyncStorage write.
+  // length stops changing for ~3s so a burst of incoming pushes
+  // collapses into a single AsyncStorage write. Previously this fired
+  // every 600ms which on a busy chat meant a JSON.stringify + bridge
+  // write of up to 100 message rows roughly every push — enough to
+  // visibly stall the JS thread on mid-tier Android devices.
   useEffect(() => {
     if (!bookingId) return;
     const handle = setTimeout(() => {
@@ -319,7 +343,7 @@ export function useChat(bookingId: string) {
       // is fetched on-demand via loadOlder().
       const window = list.slice(-100);
       CacheService.set(cacheKey(bookingId), window, CacheTTL.LONG);
-    }, 600);
+    }, 3_000);
     return () => clearTimeout(handle);
   }, [bookingId, bookingMessages.length]);
 

@@ -30,9 +30,9 @@ const api = axios.create({
  * Per-request opt-out: pass `{ noDedupe: true }` or `{ noCache: true }` in
  * the axios config (e.g., `api.get(url, { noDedupe: true } as any)`).
  */
-type ExtraConfig = AxiosRequestConfig & { noDedupe?: boolean; noCache?: boolean; cacheTtlMs?: number };
+type ExtraConfig = AxiosRequestConfig & { noDedupe?: boolean; noCache?: boolean; cacheTtlMs?: number; silent?: boolean };
 
-const DEFAULT_GET_CACHE_MS = 1500;
+const DEFAULT_GET_CACHE_MS = 3000;
 const inflight = new Map<string, Promise<AxiosResponse<any>>>();
 const microCache = new Map<string, { ts: number; response: AxiosResponse<any> }>();
 
@@ -55,14 +55,25 @@ const invalidateRelated = (url?: string) => {
 // ── Request logging ──
 api.interceptors.request.use(
   async (config) => {
-    const token = await secureStorage.get('auth_token');
+    // Hot-path: peek the in-memory token cache first to avoid an async
+    // SecureStore round-trip on every request. Falls back to the async
+    // read only on cold start (before authStore.loadFromStorage has
+    // populated the cache).
+    let token = secureStorage.peek('auth_token');
+    if (token === undefined) {
+      token = await secureStorage.get('auth_token');
+    }
     if (token) {
       config.headers.Authorization = `Bearer ${token}`;
     }
     // Bump the global activity counter so the top progress bar appears
     // for any in-flight network request. Cache hits skip this entirely
-    // (handled inside the request wrapper below).
-    apiActivity.start();
+    // (handled inside the request wrapper below). Background pollers,
+    // GPS pings, and unread-count refreshes pass `silent: true` so they
+    // don't pin the bar permanently.
+    if (!(config as ExtraConfig).silent) {
+      apiActivity.start();
+    }
     if (__DEV__) {
       console.log(
         `📡 ${config.method?.toUpperCase()} ${config.baseURL}${config.url}`,
@@ -72,7 +83,9 @@ api.interceptors.request.use(
     return config;
   },
   (error) => {
-    apiActivity.done();
+    if (!(error?.config as ExtraConfig | undefined)?.silent) {
+      apiActivity.done();
+    }
     return Promise.reject(error);
   },
 );
@@ -80,7 +93,9 @@ api.interceptors.request.use(
 // ── Response logging + error handling ──
 api.interceptors.response.use(
   (response) => {
-    apiActivity.done();
+    if (!(response.config as ExtraConfig).silent) {
+      apiActivity.done();
+    }
     if (__DEV__) {
       console.log(
         `✅ ${response.status} ${response.config.method?.toUpperCase()} ${response.config.url}`,
@@ -89,7 +104,9 @@ api.interceptors.response.use(
     return response;
   },
   async (error) => {
-    apiActivity.done();
+    if (!(error?.config as ExtraConfig | undefined)?.silent) {
+      apiActivity.done();
+    }
     if (__DEV__) {
       if (error.response) {
         // Silence expected 429s on the runner location endpoint. The

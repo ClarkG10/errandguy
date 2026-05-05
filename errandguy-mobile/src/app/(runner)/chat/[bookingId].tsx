@@ -63,6 +63,7 @@ export default function RunnerChatScreen() {
     loadOlder,
     hasMore,
     loadingOlder,
+    unreadCount,
   } = useChat(bookingId ?? '');
 
   const [input, setInput] = useState('');
@@ -71,16 +72,21 @@ export default function RunnerChatScreen() {
   const [previewUri, setPreviewUri] = useState<string | null>(null);
   const flatListRef = useRef<FlatList<Message>>(null);
 
-  // Fetch initial messages and mark as read
+  // Fetch initial messages and mark as read (only when needed)
   useEffect(() => {
     if (!bookingId) return;
     fetchMessages().catch(() => {});
-    markAsRead().catch(() => {});
+    if (unreadCount > 0) {
+      markAsRead().catch(() => {});
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [bookingId, fetchMessages, markAsRead]);
 
   // Auto-mark-as-read while the conversation is in the foreground so
   // the runner's unread badge clears as the customer's messages stream
-  // in. See customer chat for full rationale — same pattern, mirrored.
+  // in. Debounced 1.2s so a burst of incoming messages collapses into
+  // a single PATCH; gated on unreadCount > 0 so we never write when
+  // there's nothing to clear.
   const lastSeenLengthRef = useRef(messages.length);
   useEffect(() => {
     if (!bookingId) return;
@@ -93,17 +99,22 @@ export default function RunnerChatScreen() {
     const last = messages[messages.length - 1];
     if (!last || last.sender_id === user?.id || last.is_system) return;
     if (AppState.currentState !== 'active') return;
-    markAsRead().catch(() => {});
-  }, [bookingId, messages, user?.id, markAsRead]);
+    if (unreadCount === 0) return;
+
+    const handle = setTimeout(() => {
+      markAsRead().catch(() => {});
+    }, 1_200);
+    return () => clearTimeout(handle);
+  }, [bookingId, messages, user?.id, markAsRead, unreadCount]);
 
   useEffect(() => {
     const sub = AppState.addEventListener('change', (state: AppStateStatus) => {
-      if (state === 'active' && bookingId) {
+      if (state === 'active' && bookingId && unreadCount > 0) {
         markAsRead().catch(() => {});
       }
     });
     return () => sub.remove();
-  }, [bookingId, markAsRead]);
+  }, [bookingId, markAsRead, unreadCount]);
 
   const handleSend = useCallback(async () => {
     const text = input.trim();

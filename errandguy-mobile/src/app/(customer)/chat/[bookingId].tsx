@@ -46,6 +46,7 @@ export default function ChatScreen() {
     loadOlder,
     hasMore,
     loadingOlder,
+    unreadCount,
   } = useChat(bookingId ?? '');
 
   const [inputText, setInputText] = useState('');
@@ -74,7 +75,14 @@ export default function ChatScreen() {
   useEffect(() => {
     if (!bookingId) return;
     fetchMessages().catch(() => {});
-    markAsRead().catch(() => {});
+    // Only PATCH /read on mount when there's actually something to
+    // clear. Previously we fired this unconditionally on every chat
+    // open, costing a write on the messages table even when the
+    // conversation was already fully read.
+    if (unreadCount > 0) {
+      markAsRead().catch(() => {});
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [bookingId, fetchMessages, markAsRead]);
 
   // Keep the read receipt fresh while the user is actively looking at
@@ -85,8 +93,8 @@ export default function ChatScreen() {
   // Conditions:
   //   - app must be foregrounded (AppState === 'active')
   //   - newest message must NOT be from us (otherwise nothing new to read)
-  //   - debounced via the dependency on `messages.length` so a burst of
-  //     incoming messages collapses into a single PATCH.
+  //   - debounced 1.2s so a burst of incoming messages collapses into
+  //     a single PATCH instead of one per push.
   const lastSeenLengthRef = useRef(messages.length);
   useEffect(() => {
     if (!bookingId) return;
@@ -99,19 +107,25 @@ export default function ChatScreen() {
     const last = messages[messages.length - 1];
     if (!last || last.sender_id === user?.id || last.is_system) return;
     if (AppState.currentState !== 'active') return;
-    markAsRead().catch(() => {});
-  }, [bookingId, messages, user?.id, markAsRead]);
+    if (unreadCount === 0) return; // nothing to clear server-side
+
+    const handle = setTimeout(() => {
+      markAsRead().catch(() => {});
+    }, 1_200);
+    return () => clearTimeout(handle);
+  }, [bookingId, messages, user?.id, markAsRead, unreadCount]);
 
   // When the user returns to the app with the chat already open, flush
-  // a read receipt so the unread badge clears immediately.
+  // a read receipt so the unread badge clears immediately — but only
+  // if there's actually unread content.
   useEffect(() => {
     const sub = AppState.addEventListener('change', (state: AppStateStatus) => {
-      if (state === 'active' && bookingId) {
+      if (state === 'active' && bookingId && unreadCount > 0) {
         markAsRead().catch(() => {});
       }
     });
     return () => sub.remove();
-  }, [bookingId, markAsRead]);
+  }, [bookingId, markAsRead, unreadCount]);
 
   const handleSend = useCallback(
     async (content?: string, imageUrl?: string) => {

@@ -183,18 +183,15 @@ export default function TrackingScreen() {
   // is the primary path (useRunnerTracking) but in production we have
   // observed cases where the channel reports SUBSCRIBED yet never
   // delivers payloads (RLS blocks anon SELECT, table not in the
-  // realtime publication, free-tier websocket eviction, etc.). To
-  // match Grab's "the pin always moves" feel we poll unconditionally
-  // every 5s while a runner is assigned. The runner-side update is
-  // already throttled to 1/5s so this exactly mirrors the maximum
-  // server emit rate without piling on extra cost.
-  //
-  // The /track response also carries the full booking, so we use the
-  // same poll to reconcile status when the realtime channel for
-  // booking updates drops too. Without this, runner-side advances
-  // (heading_to_pickup → arrived_at_pickup → picked_up …) silently
-  // failed to render on the customer screen until the customer
-  // pull-to-refreshed.
+  // realtime publication, free-tier websocket eviction, etc.). We
+  // adapt the poll cadence to the realtime health: when BOTH the
+  // location channel and the booking-status channel are connected we
+  // tail the server every 20s purely as a sanity reconcile; if either
+  // channel is silent we drop back to 5s so the pin keeps moving.
+  // This mirrors Grab's "always live" feel in the failure mode while
+  // collapsing happy-path traffic 4\u00d7 (12 GETs/min \u2192 3).
+  const realtimeHealthy = isConnected && statusConnected;
+  const trackPollMs = realtimeHealthy ? 20_000 : 5_000;
   useForegroundInterval(
     () => {
       if (!id || !booking?.runner_id) return;
@@ -227,7 +224,7 @@ export default function TrackingScreen() {
         })
         .catch(() => {});
     },
-    5_000,
+    trackPollMs,
     !!id && !!booking?.runner_id,
     true,
   );
@@ -989,6 +986,58 @@ export default function TrackingScreen() {
                 exact amount spent.
               </Text>
             )}
+          </View>
+        )}
+
+        {/* Proof photos uploaded by the runner. We only render the card
+            when at least one photo exists so it doesn't add visual noise
+            for in-progress bookings. Tapping a thumbnail opens the
+            full-resolution image in the OS browser. */}
+        {(booking.pickup_photo_url || booking.delivery_photo_url) && (
+          <View className="mt-4 bg-white rounded-xl p-4">
+            <Text className="text-sm font-montserrat-bold text-textPrimary mb-3">
+              Proof photos
+            </Text>
+            <View className="flex-row gap-3">
+              {booking.pickup_photo_url && (
+                <Pressable
+                  className="flex-1"
+                  onPress={() =>
+                    booking.pickup_photo_url &&
+                    Linking.openURL(booking.pickup_photo_url).catch(() =>
+                      toast.error('Could not open photo'),
+                    )
+                  }
+                >
+                  <Image
+                    source={{ uri: booking.pickup_photo_url }}
+                    className="w-full h-24 rounded-lg bg-divider"
+                  />
+                  <Text className="text-[11px] font-montserrat-semi text-textSecondary mt-1.5">
+                    Pickup
+                  </Text>
+                </Pressable>
+              )}
+              {booking.delivery_photo_url && (
+                <Pressable
+                  className="flex-1"
+                  onPress={() =>
+                    booking.delivery_photo_url &&
+                    Linking.openURL(booking.delivery_photo_url).catch(() =>
+                      toast.error('Could not open photo'),
+                    )
+                  }
+                >
+                  <Image
+                    source={{ uri: booking.delivery_photo_url }}
+                    className="w-full h-24 rounded-lg bg-divider"
+                  />
+                  <Text className="text-[11px] font-montserrat-semi text-textSecondary mt-1.5">
+                    Delivery
+                  </Text>
+                </Pressable>
+              )}
+            </View>
           </View>
         )}
 

@@ -336,42 +336,99 @@ export default function ActiveErrandScreen() {
     await advanceStatus(nextStatus);
   };
 
-  const advanceStatus = async (status: string) => {
-    setLoading(true);
-    try {
-      await runnerService.updateErrandStatus(booking.id, status);
-      updateErrandStatus(status as BookingStatus);
+  // Optimistic status advance.
+  // Strategy: flip the local cached booking + runner store FIRST so the
+  // CTA, timeline, and map phase update on the next frame. Then fire
+  // the network request in the background. On failure, snap back and
+  // surface a toast — the runner doesn't see a spinner sitting on the
+  // CTA while the photo uploads (which is what made the screen feel
+  // sluggish, especially over LTE).
+  //
+  // For transitions that require a file (picked_up/pickup_photo,
+  // delivered/delivery_photo, completed/signature) we pass the local
+  // file URI through as part of the SAME request — sending the status
+  // and uploading the photo separately fails the backend validator.
+  const advanceStatus = async (
+    status: string,
+    opts?: {
+      pickupPhoto?: string | null;
+      deliveryPhoto?: string | null;
+      signature?: string | null;
+    },
+  ) => {
+    if (!booking) return;
+    const prev = booking;
+    const nowIso = new Date().toISOString();
+    const optimistic: Booking = {
+      ...prev,
+      status: status as BookingStatus,
+      ...(opts?.pickupPhoto ? { pickup_photo_url: opts.pickupPhoto } : {}),
+      ...(opts?.deliveryPhoto ? { delivery_photo_url: opts.deliveryPhoto } : {}),
+      ...(opts?.signature && opts.signature.startsWith('file')
+        ? { signature_url: opts.signature }
+        : {}),
+      ...(status === 'picked_up' && !prev.picked_up_at
+        ? { picked_up_at: nowIso }
+        : {}),
+      ...(status === 'completed' && !prev.completed_at
+        ? { completed_at: nowIso }
+        : {}),
+    };
+    // Update the SWR cache so the screen re-renders immediately, and
+    // mirror into the runner store so the home dashboard + chat header
+    // see the new status without waiting on the next 15s poll.
+    fetchedQ.mutate(optimistic);
+    updateErrandStatus(status as BookingStatus);
 
-      if (status === 'completed') {
-        setShowRate(true);
-      }
-    } catch (err: any) {
-      toast.error(err?.response?.data?.message ?? 'Failed to update status');
-    } finally {
-      setLoading(false);
+    if (status === 'completed') {
+      // Open the rate modal right away; the network call continues in
+      // the background. If it fails, the rate submission's own retry
+      // path handles it — we still want the runner to be able to
+      // start their next job without waiting for a slow upload.
+      setShowRate(true);
     }
+
+    runnerService
+      .advanceErrandStatus(booking.id, status, opts)
+      .catch((err: any) => {
+        // Revert optimistic state and surface the error.
+        fetchedQ.mutate(prev);
+        updateErrandStatus(prev.status as BookingStatus);
+        toast.error(err?.response?.data?.message ?? 'Failed to update status');
+      });
   };
 
   const handlePhotoConfirm = async (uri: string) => {
+    const phase = showPhotoProof;
     setShowPhotoProof(null);
-    if (showPhotoProof === 'delivery') {
+    if (phase === 'delivery') {
+      // Flow: mark `delivered` (uploads delivery_photo) → open the
+      // completion sheet so the runner can capture the signature and
+      // advance to `completed`. The two transitions used to be merged
+      // into a single `completed` call which dropped the delivery
+      // photo on the floor; the picked_up case suffered the same
+      // bug (status sent without the captured photo → 422).
       setDeliveryPhotoUrl(uri);
+      await advanceStatus('delivered', { deliveryPhoto: uri });
       setShowCompletion(true);
       return;
     }
-    const nextStatus = getNextStatus(booking.status, errandSlug);
-    if (nextStatus) {
-      await advanceStatus(nextStatus);
-    }
+    // Pickup phase: pass the captured photo through to the backend.
+    await advanceStatus('picked_up', { pickupPhoto: uri });
   };
 
-  const handleCompletionConfirm = async (_signatureUri: string) => {
+  const handleCompletionConfirm = async (signatureUri: string) => {
     setShowCompletion(false);
-    await advanceStatus('completed');
+    // Only forward signature when it looks like a real file URI; the
+    // CompletionModal currently emits 'signature_placeholder' which
+    // would 422 on the backend's `image` rule. Pre-existing limitation
+    // — leaves transport/single-location flows working untouched.
+    const sig = signatureUri && signatureUri.startsWith('file') ? signatureUri : null;
+    await advanceStatus('completed', { signature: sig });
   };
 
   const handleVerifyPin = async () => {
-    if (pinInput.length !== 4) return;
+    if (pinInput.length !== 4 || !booking) return;
     setLoading(true);
     try {
       // Hit the dedicated PIN endpoint — NOT the generic status updater.
@@ -390,6 +447,10 @@ export default function ActiveErrandScreen() {
 
   const handleRateSubmit = async (rating: number, comment: string) => {
     setShowRate(false);
+    if (!booking) {
+      router.replace('/(runner)/(tabs)' as any);
+      return;
+    }
     try {
       await runnerService.submitCustomerReview(booking.id, rating, comment);
       toast.success('Thanks for your feedback');
@@ -894,21 +955,32 @@ export default function ActiveErrandScreen() {
         budget={Number(booking.shopping_budget ?? 0)}
         submitting={submittingReceipt}
         onSubmit={async ({ actualCost, receiptUri }) => {
+          // Close the sheet + advance the UI immediately. Receipt
+          // upload runs in the background; on failure we revert and
+          // toast (mirrors the optimistic flow used by advanceStatus).
+          const prev = booking;
+          const optimistic: Booking = {
+            ...prev,
+            status: 'picked_up' as BookingStatus,
+            actual_item_cost: actualCost,
+            receipt_photo_url: receiptUri,
+            picked_up_at: prev.picked_up_at ?? new Date().toISOString(),
+          };
+          fetchedQ.mutate(optimistic);
+          updateErrandStatus('picked_up');
+          setShowReceipt(false);
+
           setSubmittingReceipt(true);
-          try {
-            await runnerService.submitPickedUpWithReceipt(booking.id, {
-              actualCost,
-              receiptUri,
-            });
-            updateErrandStatus('picked_up');
-            setShowReceipt(false);
-          } catch (err: any) {
-            toast.error(
-              err?.response?.data?.message ?? 'Failed to submit receipt',
-            );
-          } finally {
-            setSubmittingReceipt(false);
-          }
+          runnerService
+            .submitPickedUpWithReceipt(booking.id, { actualCost, receiptUri })
+            .catch((err: any) => {
+              fetchedQ.mutate(prev);
+              updateErrandStatus(prev.status as BookingStatus);
+              toast.error(
+                err?.response?.data?.message ?? 'Failed to submit receipt',
+              );
+            })
+            .finally(() => setSubmittingReceipt(false));
         }}
         onClose={() => setShowReceipt(false)}
       />
