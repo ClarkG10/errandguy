@@ -1,8 +1,9 @@
 import React, { useState } from 'react';
-import { View, Text, Pressable, ScrollView } from 'react-native';
+import { View, Text, Pressable, ScrollView, Linking } from 'react-native';
 import { Image } from 'expo-image';
 import { ChevronDown, ChevronUp } from 'lucide-react-native';
 import { Card } from '../ui/Card';
+import { resolveImageUrl } from '../../utils/resolveImageUrl';
 
 interface ErrandDetailsCardProps {
   description?: string | null;
@@ -76,18 +77,31 @@ export function ErrandDetailsCard({
 
           {itemPhotos && itemPhotos.length > 0 && (
             <View>
-              <Text className="text-xs font-montserrat-bold text-textSecondary mb-1">
+              <Text className="text-xs font-montserrat-bold text-textSecondary mb-2">
                 Item Photos
               </Text>
               <ScrollView horizontal showsHorizontalScrollIndicator={false}>
-                {itemPhotos.map((photo, i) => (
-                  <Image
-                    key={i}
-                    source={{ uri: photo }}
-                    className="w-20 h-20 rounded-lg mr-2"
-                    contentFit="cover"
-                  />
-                ))}
+                {itemPhotos.map((photo, i) => {
+                  const uri = resolveImageUrl(photo);
+                  if (!uri) return null;
+                  return (
+                    <Pressable
+                      key={i}
+                      onPress={() => Linking.openURL(uri).catch(() => {})}
+                      accessibilityRole="imagebutton"
+                      accessibilityLabel={`Open item photo ${i + 1}`}
+                      style={{ marginRight: 8 }}
+                    >
+                      <Image
+                        source={{ uri }}
+                        style={{ width: 96, height: 96, borderRadius: 12, backgroundColor: '#E2E8F0' }}
+                        contentFit="cover"
+                        transition={150}
+                        cachePolicy="memory-disk"
+                      />
+                    </Pressable>
+                  );
+                })}
               </ScrollView>
             </View>
           )}

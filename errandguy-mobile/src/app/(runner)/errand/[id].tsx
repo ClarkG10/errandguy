@@ -662,6 +662,7 @@ export default function ActiveErrandScreen() {
             inPickupPhase={inPickupPhase}
             singleLocation={isSingleLocation}
             etaMinutes={runnerEta.minutes}
+            bottomOffset={Animated.add(sheetHeight, new Animated.Value(12))}
           />
         </View>
 
@@ -771,8 +772,8 @@ export default function ActiveErrandScreen() {
                      "Open Maps" affordance (tap address to launch the
                      OS maps app for traffic/alternate-route checks). */}
             <View className="px-5 pb-2">
-              <JourneyBeads status={booking.status} />
-              <View className="mt-1">
+              <JourneyBeads status={booking.status} showLabel={false} />
+              <View className="mt-2">
                 <CurrentStepHero
                   eyebrow={inPickupPhase ? 'PICKUP' : 'DROP-OFF'}
                   title={runnerHeroTitle}

@@ -204,6 +204,87 @@ export default function ChatScreen() {
         );
       }
 
+      // Image-only messages render the image bare — no bubble chrome.
+      // The chat-bubble wrapper exists to give text a tappable shape; an
+      // image already has its own shape. Wrapping it in a coloured pill
+      // makes the picture feel boxed-in (and on the receiver side, the
+      // grey bubble shows around any transparent edges of the photo).
+      const imageOnly = !!m.image_url && !m.content;
+
+      if (imageOnly) {
+        return (
+          <View className={`my-1 px-4 ${isMe ? 'items-end' : 'items-start'}`}>
+            <Pressable
+              onPress={() => setPreviewUri(resolveImageUrl(m.image_url))}
+              accessibilityRole="imagebutton"
+              accessibilityLabel="View image full screen"
+              style={isMe && m.pending ? { opacity: 0.75 } : undefined}
+            >
+              <Image
+                source={{ uri: resolveImageUrl(m.image_url)! }}
+                style={{ width: 220, height: 220, borderRadius: 16, backgroundColor: '#E2E8F0' }}
+                contentFit="cover"
+                transition={150}
+                cachePolicy="memory-disk"
+              />
+            </Pressable>
+            {isMe ? (
+              <Pressable
+                onPress={
+                  m.failed
+                    ? () => {
+                        chatRetryMessage(m.id).catch(() =>
+                          toast.error('Still couldn’t send. Check your connection.'),
+                        );
+                      }
+                    : undefined
+                }
+                hitSlop={6}
+                className="flex-row items-center mt-1 px-1"
+              >
+                <Text className="text-[10px] font-montserrat text-textSecondary mr-1">
+                  {formatTime(m.created_at)}
+                </Text>
+                {m.pending ? (
+                  <>
+                    <Clock size={10} color="#94A3B8" />
+                    <Text className="text-[10px] font-montserrat text-textSecondary ml-1">
+                      Sending
+                    </Text>
+                  </>
+                ) : m.failed ? (
+                  <>
+                    <AlertCircle size={11} color="#DC2626" />
+                    <Text className="text-[10px] font-montserrat-semi text-danger ml-1">
+                      Failed · Tap to retry
+                    </Text>
+                    <RotateCw size={10} color="#DC2626" style={{ marginLeft: 4 }} />
+                  </>
+                ) : m.read_at ? (
+                  <>
+                    <CheckCheck size={11} color="#2563EB" />
+                    <Text className="text-[10px] font-montserrat text-primary ml-0.5">
+                      Read
+                    </Text>
+                  </>
+                ) : (
+                  <>
+                    <Check size={11} color="#94A3B8" />
+                    <Text className="text-[10px] font-montserrat text-textSecondary ml-0.5">
+                      Sent
+                    </Text>
+                  </>
+                )}
+              </Pressable>
+            ) : (
+              <Text className="text-[10px] font-montserrat text-textSecondary mt-1 px-1">
+                {formatTime(m.created_at)}
+              </Text>
+            )}
+          </View>
+        );
+      }
+
       return (
         <View
           className={`my-1 px-4 ${isMe ? 'items-end' : 'items-start'}`}

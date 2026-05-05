@@ -203,6 +203,82 @@ export default function RunnerChatScreen() {
         );
       }
 
+      // Image-only messages render the photo bare — no bubble chrome —
+      // so the image isn't visually crammed inside a coloured pill.
+      const imageOnly = !!m.image_url && !m.content;
+
+      if (imageOnly) {
+        return (
+          <View className={`px-5 mb-2 ${isMine ? 'items-end' : 'items-start'}`}>
+            <Pressable
+              onPress={() => setPreviewUri(resolveImageUrl(m.image_url))}
+              accessibilityRole="imagebutton"
+              accessibilityLabel="View image full screen"
+              style={isMine && m.pending ? { opacity: 0.75 } : undefined}
+            >
+              <Image
+                source={{ uri: resolveImageUrl(m.image_url)! }}
+                style={{ width: 220, height: 220, borderRadius: 16, backgroundColor: '#E2E8F0' }}
+                contentFit="cover"
+                transition={150}
+                cachePolicy="memory-disk"
+              />
+            </Pressable>
+            {isMine ? (
+              <Pressable
+                onPress={m.failed ? () => handleRetry(m.id) : undefined}
+                hitSlop={6}
+                className="flex-row items-center mt-1 px-1"
+              >
+                <Text className="text-[10px] font-montserrat text-textSecondary mr-1">
+                  {new Date(m.created_at).toLocaleTimeString([], {
+                    hour: '2-digit',
+                    minute: '2-digit',
+                  })}
+                </Text>
+                {m.pending ? (
+                  <>
+                    <Clock size={10} color="#94A3B8" />
+                    <Text className="text-[10px] font-montserrat text-textSecondary ml-1">
+                      Sending
+                    </Text>
+                  </>
+                ) : m.failed ? (
+                  <>
+                    <AlertCircle size={11} color="#DC2626" />
+                    <Text className="text-[10px] font-montserrat-semi text-danger ml-1">
+                      Failed · Tap to retry
+                    </Text>
+                    <RotateCw size={10} color="#DC2626" style={{ marginLeft: 4 }} />
+                  </>
+                ) : m.read_at ? (
+                  <>
+                    <CheckCheck size={11} color="#2563EB" />
+                    <Text className="text-[10px] font-montserrat text-primary ml-0.5">
+                      Read
+                    </Text>
+                  </>
+                ) : (
+                  <>
+                    <Check size={11} color="#94A3B8" />
+                    <Text className="text-[10px] font-montserrat text-textSecondary ml-0.5">
+                      Sent
+                    </Text>
+                  </>
+                )}
+              </Pressable>
+            ) : (
+              <Text className="text-[10px] font-montserrat text-textSecondary mt-1 px-1">
+                {new Date(m.created_at).toLocaleTimeString([], {
+                  hour: '2-digit',
+                  minute: '2-digit',
+                })}
+              </Text>
+            )}
+          </View>
+        );
+      }
+
       return (
         <View
           className={`px-5 mb-2 ${isMine ? 'items-end' : 'items-start'}`}

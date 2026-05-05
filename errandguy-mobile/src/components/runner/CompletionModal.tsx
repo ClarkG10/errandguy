@@ -1,9 +1,10 @@
-import React, { useState } from 'react';
+import React, { useRef, useState } from 'react';
 import { View, Text, Pressable } from 'react-native';
 import { MotiView } from 'moti';
 import { Image } from 'expo-image';
 import { X, Eraser, CheckCircle2 } from 'lucide-react-native';
 import { Button } from '../ui/Button';
+import { SignaturePad, type SignaturePadHandle } from './SignaturePad';
 
 interface CompletionModalProps {
   bookingId: string;
@@ -19,7 +20,10 @@ interface CompletionModalProps {
   title?: string;
   /** Short helper text under the title for non-signature flows. */
   subtitle?: string;
-  onComplete: (signatureUri: string) => void;
+  /** Resolved with a file:// URI when a signature is captured, or an
+   *  empty string for confirm-only flows. The parent uploads the file
+   *  via the existing multipart helper. */
+  onComplete: (signatureUri: string) => void | Promise<void>;
   onClose: () => void;
 }
 
@@ -33,20 +37,32 @@ export function CompletionModal({
   onClose,
 }: CompletionModalProps) {
   const [signed, setSigned] = useState(false);
-
-  // Signature pad placeholder — would use react-native-canvas or gesture handler
-  const handleSign = () => {
-    setSigned(true);
-  };
+  const [submitting, setSubmitting] = useState(false);
+  const padRef = useRef<SignaturePadHandle>(null);
 
   const handleClear = () => {
+    padRef.current?.clear();
     setSigned(false);
   };
 
-  const handleSubmit = () => {
-    // In production, capture signature bitmap from canvas
-    // For now, use a placeholder URI when signature is required, empty otherwise.
-    onComplete(requiresSignature ? 'signature_placeholder' : '');
+  const handleSubmit = async () => {
+    if (submitting) return;
+    setSubmitting(true);
+    try {
+      if (!requiresSignature) {
+        await onComplete('');
+        return;
+      }
+      // Rasterise the SVG strokes → PNG file in the cache dir, then
+      // hand the local file URI to the parent. The runner.service
+      // upload helper attaches it as the `signature` form field, the
+      // backend stores it in Supabase and writes `signature_url` on
+      // the booking, and the customer tracking screen reads it back.
+      const uri = await padRef.current?.exportToFile();
+      await onComplete(uri ?? '');
+    } finally {
+      setSubmitting(false);
+    }
   };
 
   return (
@@ -84,26 +100,23 @@ export function CompletionModal({
 
         {requiresSignature ? (
           <>
-            {/* Signature Pad */}
+            {/* Signature Pad — real PanResponder + SVG canvas. The
+                placeholder "tap to sign" affordance was confusing
+                runners (and the previous build never actually shipped
+                a bitmap to the backend). The pad below captures real
+                strokes, exports a PNG on submit, and uploads it to
+                the bookings.signature_url column. */}
             <Text className="text-xs font-montserrat-bold text-textSecondary mb-2">
               Customer Signature
             </Text>
-            <Pressable
-              onPress={handleSign}
-              className={`h-40 rounded-xl border-2 border-dashed items-center justify-center mb-3 ${
-                signed ? 'border-primary bg-primaryLight' : 'border-divider bg-gray-50'
-              }`}
-            >
-              {signed ? (
-                <Text className="text-sm font-montserrat text-primary">
-                  ✓ Signature captured
-                </Text>
-              ) : (
-                <Text className="text-sm font-montserrat text-textSecondary">
-                  Tap here for customer to sign
-                </Text>
-              )}
-            </Pressable>
+            <SignaturePad
+              ref={padRef}
+              height={180}
+              onBegin={() => setSigned(true)}
+            />
+            <Text className="text-[11px] font-montserrat text-textTertiary mt-1.5 mb-3">
+              Hand the phone to the customer to sign with their finger.
+            </Text>
 
             {signed && (
               <Pressable
@@ -118,9 +131,9 @@ export function CompletionModal({
             )}
 
             <Button
-              title="Confirm & Complete"
+              title={submitting ? 'Submitting…' : 'Confirm & Complete'}
               onPress={handleSubmit}
-              disabled={!signed}
+              disabled={!signed || submitting}
               fullWidth
             />
           </>
@@ -136,8 +149,9 @@ export function CompletionModal({
             </View>
 
             <Button
-              title="Confirm Completion"
+              title={submitting ? 'Submitting…' : 'Confirm Completion'}
               onPress={handleSubmit}
+              disabled={submitting}
               fullWidth
             />
           </>

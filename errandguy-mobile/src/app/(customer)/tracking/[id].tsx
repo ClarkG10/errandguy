@@ -9,6 +9,7 @@ import {
   Linking,
   Animated,
 } from 'react-native';
+import { Image as ExpoImage } from 'expo-image';
 import * as Haptics from 'expo-haptics';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import {
@@ -44,6 +45,7 @@ import { ConfirmModal } from '../../../components/ui/ConfirmModal';
 import { ExpandableSheet } from '../../../components/ui/ExpandableSheet';
 import { formatTime } from '../../../utils/formatDate';
 import { formatCurrency } from '../../../utils/formatCurrency';
+import { resolveImageUrl } from '../../../utils/resolveImageUrl';
 import { STATUS_LABELS } from '../../../constants/statusLabels';
 import { MAP_STYLE_URL } from '../../../constants/map';
 import { getErrandTypeRule } from '../../../constants/errandTypeRules';
@@ -1201,50 +1203,97 @@ export default function TrackingScreen() {
             when at least one photo exists so it doesn't add visual noise
             for in-progress bookings. Tapping a thumbnail opens the
             full-resolution image in the OS browser. */}
-        {(booking.pickup_photo_url || booking.delivery_photo_url) && (
+        {(booking.pickup_photo_url || booking.delivery_photo_url || booking.signature_url) && (
           <View className="mt-4 bg-white rounded-xl p-4">
             <Text className="text-sm font-montserrat-bold text-textPrimary mb-3">
               Proof photos
             </Text>
             <View className="flex-row gap-3">
-              {booking.pickup_photo_url && (
-                <Pressable
-                  className="flex-1"
-                  onPress={() =>
-                    booking.pickup_photo_url &&
-                    Linking.openURL(booking.pickup_photo_url).catch(() =>
-                      toast.error('Could not open photo'),
-                    )
-                  }
-                >
-                  <Image
-                    source={{ uri: booking.pickup_photo_url }}
-                    className="w-full h-24 rounded-lg bg-divider"
-                  />
-                  <Text className="text-[11px] font-montserrat-semi text-textSecondary mt-1.5">
-                    Pickup
-                  </Text>
-                </Pressable>
-              )}
-              {booking.delivery_photo_url && (
-                <Pressable
-                  className="flex-1"
-                  onPress={() =>
-                    booking.delivery_photo_url &&
-                    Linking.openURL(booking.delivery_photo_url).catch(() =>
-                      toast.error('Could not open photo'),
-                    )
-                  }
-                >
-                  <Image
-                    source={{ uri: booking.delivery_photo_url }}
-                    className="w-full h-24 rounded-lg bg-divider"
-                  />
-                  <Text className="text-[11px] font-montserrat-semi text-textSecondary mt-1.5">
-                    Delivery
-                  </Text>
-                </Pressable>
-              )}
+              {booking.pickup_photo_url && (() => {
+                const uri = resolveImageUrl(booking.pickup_photo_url);
+                if (!uri) return null;
+                return (
+                  <Pressable
+                    className="flex-1"
+                    onPress={() =>
+                      Linking.openURL(uri).catch(() =>
+                        toast.error('Could not open photo'),
+                      )
+                    }
+                    accessibilityRole="imagebutton"
+                    accessibilityLabel="Open pickup proof photo"
+                  >
+                    <ExpoImage
+                      source={{ uri }}
+                      style={{ width: '100%', height: 120, borderRadius: 12, backgroundColor: '#E2E8F0' }}
+                      contentFit="cover"
+                      transition={150}
+                      cachePolicy="memory-disk"
+                    />
+                    <Text className="text-[11px] font-montserrat-semi text-textSecondary mt-1.5">
+                      Pickup
+                    </Text>
+                  </Pressable>
+                );
+              })()}
+              {booking.delivery_photo_url && (() => {
+                const uri = resolveImageUrl(booking.delivery_photo_url);
+                if (!uri) return null;
+                return (
+                  <Pressable
+                    className="flex-1"
+                    onPress={() =>
+                      Linking.openURL(uri).catch(() =>
+                        toast.error('Could not open photo'),
+                      )
+                    }
+                    accessibilityRole="imagebutton"
+                    accessibilityLabel="Open delivery proof photo"
+                  >
+                    <ExpoImage
+                      source={{ uri }}
+                      style={{ width: '100%', height: 120, borderRadius: 12, backgroundColor: '#E2E8F0' }}
+                      contentFit="cover"
+                      transition={150}
+                      cachePolicy="memory-disk"
+                    />
+                    <Text className="text-[11px] font-montserrat-semi text-textSecondary mt-1.5">
+                      Delivery
+                    </Text>
+                  </Pressable>
+                );
+              })()}
+              {booking.signature_url && (() => {
+                // Signature is stored as a PNG in the same delivery-proofs
+                // bucket as the pickup/delivery photos. We render it on a
+                // white background (contentFit "contain") so the dark ink
+                // strokes stay legible — "cover" would crop most signatures.
+                const uri = resolveImageUrl(booking.signature_url);
+                if (!uri) return null;
+                return (
+                  <Pressable
+                    className="flex-1"
+                    onPress={() =>
+                      Linking.openURL(uri).catch(() =>
+                        toast.error('Could not open signature'),
+                      )
+                    }
+                    accessibilityRole="imagebutton"
+                    accessibilityLabel="Open customer signature"
+                  >
+                    <ExpoImage
+                      source={{ uri }}
+                      style={{ width: '100%', height: 120, borderRadius: 12, backgroundColor: '#FFFFFF', borderWidth: 1, borderColor: '#E2E8F0' }}
+                      contentFit="contain"
+                      transition={150}
+                      cachePolicy="memory-disk"
+                    />
+                    <Text className="text-[11px] font-montserrat-semi text-textSecondary mt-1.5">
+                      Signature
+                    </Text>
+                  </Pressable>
+                );
+              })()}
             </View>
           </View>
         )}

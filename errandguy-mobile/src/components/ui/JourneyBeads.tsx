@@ -74,9 +74,17 @@ interface JourneyBeadsProps {
    */
   accent?: 'brand' | 'danger';
   onPress?: () => void;
+  /**
+   * Render the small "EN ROUTE" caption under the active bead. Defaults
+   * to true. Pass `false` when the surrounding screen already shows the
+   * current step in a hero (e.g. `CurrentStepHero`) — otherwise the two
+   * tiny uppercase captions stack on top of each other and read as one
+   * cluttered block.
+   */
+  showLabel?: boolean;
 }
 
-export function JourneyBeads({ status, accent = 'brand', onPress }: JourneyBeadsProps) {
+export function JourneyBeads({ status, accent = 'brand', onPress, showLabel = true }: JourneyBeadsProps) {
   const activeIdx = STATUS_TO_PHASE_INDEX[status] ?? 0;
 
   // Pulse animation for the active bead. We deliberately drive only an
@@ -207,24 +215,29 @@ export function JourneyBeads({ status, accent = 'brand', onPress }: JourneyBeads
 
         {/* Active phase label — uppercase, tracked, anchored under the
             track. We compute its left offset from activeIdx so it sits
-            (roughly) under its own bead instead of always centered. */}
-        <View className="mt-1.5 flex-row">
-          <View
-            style={{
-              width: `${(activeIdx / (PHASES.length - 1)) * 100}%`,
-            }}
-          />
-          <Text
-            className="text-[10px] font-montserrat-bold uppercase"
-            style={{
-              color: activeColor,
-              letterSpacing: 1.4,
-              transform: [{ translateX: -8 }],
-            }}
-          >
-            {activePhase.short}
-          </Text>
-        </View>
+            (roughly) under its own bead instead of always centered.
+            Suppressed when the host screen already renders a step
+            headline (CurrentStepHero) — otherwise two stacked tiny
+            captions read as cluttered text. */}
+        {showLabel && (
+          <View className="mt-1.5 flex-row">
+            <View
+              style={{
+                width: `${(activeIdx / (PHASES.length - 1)) * 100}%`,
+              }}
+            />
+            <Text
+              className="text-[10px] font-montserrat-bold uppercase"
+              style={{
+                color: activeColor,
+                letterSpacing: 1.4,
+                transform: [{ translateX: -8 }],
+              }}
+            >
+              {activePhase.short}
+            </Text>
+          </View>
+        )}
       </View>
     </Wrapper>
   );

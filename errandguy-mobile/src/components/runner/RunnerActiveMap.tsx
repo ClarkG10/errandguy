@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { View, Text, Pressable } from 'react-native';
+import { View, Text, Pressable, Animated } from 'react-native';
 import { Locate, Navigation } from 'lucide-react-native';
 import Mapbox from '@rnmapbox/maps';
 import { MAP_STYLE_URL } from '../../constants/map';
@@ -25,6 +25,13 @@ interface RunnerActiveMapProps {
    * map is the background and other UI is overlaid.
    */
   variant?: 'card' | 'fill';
+  /**
+   * Pixel offset from the bottom of the map for the floating ETA pill
+   * and Recenter FAB. Pass an Animated.Value when the host screen has
+   * a draggable bottom sheet so the controls track the sheet edge and
+   * never sit underneath it. Defaults to 24 (just above safe area).
+   */
+  bottomOffset?: number | Animated.Value | Animated.AnimatedInterpolation<number>;
 }
 
 /**
@@ -45,6 +52,7 @@ export function RunnerActiveMap({
   singleLocation = false,
   etaMinutes,
   variant = 'card',
+  bottomOffset = 24,
 }: RunnerActiveMapProps) {
   const currentLocation = useLocationStore((s) => s.currentLocation);
   const cameraRef = React.useRef<Mapbox.Camera>(null);
@@ -273,23 +281,68 @@ export function RunnerActiveMap({
         )}
       </Mapbox.MapView>
 
-      {/* ETA pill */}
+      {/* ETA pill — sits bottom-left, above where the bottom sheet
+          peeks. The previous top-left position was fully hidden behind
+          the floating header card (and the iOS notch). bottomOffset
+          can be an Animated.Value so the host screen's draggable sheet
+          pushes both controls upward in lockstep — they're never
+          covered by sheet content. */}
       {etaMinutes != null && (
-        <View className="absolute top-3 left-3 bg-surface/95 px-3 py-1.5 rounded-full shadow-sm">
+        <Animated.View
+          style={{
+            position: 'absolute',
+            left: 12,
+            bottom: bottomOffset as unknown as number,
+            backgroundColor: '#FFFFFF',
+            paddingHorizontal: 12,
+            paddingVertical: 6,
+            borderRadius: 999,
+            shadowColor: '#0F172A',
+            shadowOffset: { width: 0, height: 2 },
+            shadowOpacity: 0.18,
+            shadowRadius: 8,
+            elevation: 6,
+            zIndex: 20,
+          }}
+        >
           <Text className="text-[11px] font-montserrat-bold text-textPrimary">
             {Math.max(1, Math.round(etaMinutes))} min away
           </Text>
-        </View>
+        </Animated.View>
       )}
 
-      {/* Recenter FAB */}
-      <Pressable
-        onPress={recenter}
-        className="absolute top-3 right-3 w-9 h-9 rounded-full bg-surface items-center justify-center shadow-sm"
-        hitSlop={6}
+      {/* Recenter FAB — bottom-right, mirrors the ETA pill so both sit
+          clear of the sheet peek and the floating top bar. */}
+      <Animated.View
+        style={{
+          position: 'absolute',
+          right: 12,
+          bottom: bottomOffset as unknown as number,
+          zIndex: 20,
+        }}
       >
-        <Locate size={16} color="#0F172A" />
-      </Pressable>
+        <Pressable
+          onPress={recenter}
+          accessibilityRole="button"
+          accessibilityLabel="Recenter map on your location"
+          hitSlop={8}
+          style={{
+            width: 44,
+            height: 44,
+            borderRadius: 22,
+            backgroundColor: '#FFFFFF',
+            alignItems: 'center',
+            justifyContent: 'center',
+            shadowColor: '#0F172A',
+            shadowOffset: { width: 0, height: 2 },
+            shadowOpacity: 0.18,
+            shadowRadius: 8,
+            elevation: 6,
+          }}
+        >
+          <Locate size={18} color="#0F172A" />
+        </Pressable>
+      </Animated.View>
     </View>
   );
 }
