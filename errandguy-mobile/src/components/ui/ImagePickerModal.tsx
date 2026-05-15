@@ -6,7 +6,7 @@ import {
   Modal,
   Image,
   ActivityIndicator,
-  Dimensions,
+  useWindowDimensions,
 } from 'react-native';
 import { MotiView } from 'moti';
 import * as Haptics from 'expo-haptics';
@@ -20,8 +20,10 @@ import {
   Upload,
 } from 'lucide-react-native';
 
-const { width: SCREEN_WIDTH } = Dimensions.get('window');
-const PREVIEW_SIZE = SCREEN_WIDTH - 80;
+// Preview size is computed inside the component now (was a module-level
+// const) so rotating an iPad or resizing iOS split view re-flows the
+// preview tile correctly. Cap at 320pt to avoid an enormous square on
+// large screens.
 
 interface ImagePickerModalProps {
   visible: boolean;
@@ -45,6 +47,11 @@ export function ImagePickerModal({
 }: ImagePickerModalProps) {
   const [stage, setStage] = useState<Stage>('pick');
   const [previewUri, setPreviewUri] = useState<string | null>(null);
+  const { width: SCREEN_WIDTH } = useWindowDimensions();
+  // Cap at 320 so the preview tile never bloats on a tablet or
+  // landscape-oriented phone; floor at 220 so it stays usable on
+  // narrow phones in a split-view shell.
+  const PREVIEW_SIZE = Math.max(220, Math.min(320, SCREEN_WIDTH - 80));
 
   const reset = useCallback(() => {
     setStage('pick');

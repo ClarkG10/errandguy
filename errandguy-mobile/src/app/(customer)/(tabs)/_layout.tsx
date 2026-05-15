@@ -1,35 +1,39 @@
 import { Tabs } from 'expo-router';
 import { Home, ClipboardList, Bell, User } from 'lucide-react-native';
-import { Platform, StyleSheet } from 'react-native';
+import { Platform, StyleSheet, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useNotificationStore } from '../../../stores/notificationStore';
 import { TabBarItem } from '../../../components/ui/TabBarItem';
+import { QuickBookFAB } from '../../../components/ui/QuickBookFAB';
+import { TAB_BAR_HEIGHT as BAR_HEIGHT } from '../../../constants/tabLayout';
 
 const ACTIVE = '#2563EB';
 const INACTIVE = '#94A3B8';
-
-// One bar height for both platforms — the previous setup let Android
-// inflate the items because it relied on default Material padding.
-// 56 keeps us close to the iOS 49pt + label spec while still meeting
-// Android's 48dp touch-target minimum.
-const BAR_HEIGHT = 56;
 
 export default function CustomerTabsLayout() {
   const unreadCount = useNotificationStore((s) => s.unreadCount);
   const insets = useSafeAreaInsets();
 
-  // Mirror native behaviour (Facebook, Instagram, etc.): on Android
-  // edge-to-edge mode the tab bar's bottom padding equals the gesture
-  // / 3-button nav inset so the bar sits flush against the system nav
-  // and labels never get clipped. iOS gets the home-indicator inset.
-  // No artificial caps — the OS knows what its own nav needs.
+  // Edge-to-edge bottom inset — the OS knows what its own nav needs.
   const bottomInset = insets.bottom;
 
   return (
+    <View style={{ flex: 1 }}>
     <Tabs
       screenOptions={{
         headerShown: false,
         animation: 'shift',
+        // Suspend off-screen tab subtrees: their components stay
+        // mounted (so navigating back is instant and scroll position
+        // is preserved) but React skips re-rendering them and any
+        // animations / setState in their effects pause. This is the
+        // single biggest win for low-end Android — a backgrounded
+        // Activity tab no longer re-renders the booking list every
+        // time the foreground Home tab pings the API.
+        freezeOnBlur: true,
+        // Defer mounting each tab until first focus. Tabs the user
+        // never visits in a session never pay their mount cost.
+        lazy: true,
         tabBarActiveTintColor: ACTIVE,
         tabBarInactiveTintColor: INACTIVE,
         tabBarShowLabel: false,
@@ -37,24 +41,28 @@ export default function CustomerTabsLayout() {
         tabBarStyle: {
           backgroundColor: '#FFFFFF',
           borderTopWidth: StyleSheet.hairlineWidth,
-          borderTopColor: '#E2E8F0',
+          borderTopColor: '#E6EBF2',
           height: BAR_HEIGHT + bottomInset,
-          paddingTop: 4,
-          paddingBottom: bottomInset,
+          paddingTop: 8,
+          paddingBottom: bottomInset + 1,
+          paddingHorizontal: 10,
+          // Lighter, brand-tinted lift — keeps the bar feeling like a
+          // floating surface rather than a heavy slab.
           ...Platform.select({
             ios: {
-              shadowColor: '#0F172A',
-              shadowOffset: { width: 0, height: -1 },
-              shadowOpacity: 0.04,
-              shadowRadius: 4,
+              shadowColor: '#1D4ED8',
+              shadowOffset: { width: 0, height: -4 },
+              shadowOpacity: 0.06,
+              shadowRadius: 14,
             },
-            android: { elevation: 4 },
+            android: { elevation: 10 },
           }),
         },
         tabBarItemStyle: {
           height: BAR_HEIGHT,
           paddingTop: 0,
           paddingBottom: 0,
+          paddingHorizontal: 2,
         },
       }}
     >
@@ -63,7 +71,7 @@ export default function CustomerTabsLayout() {
         options={{
           title: 'Home',
           tabBarIcon: ({ focused }) => (
-            <TabBarItem Icon={Home} label="Home" focused={focused} />
+            <TabBarItem Icon={Home} label="Home" focused={focused} offsetX={-6} />
           ),
         }}
       />
@@ -72,7 +80,7 @@ export default function CustomerTabsLayout() {
         options={{
           title: 'Activity',
           tabBarIcon: ({ focused }) => (
-            <TabBarItem Icon={ClipboardList} label="Activity" focused={focused} />
+            <TabBarItem Icon={ClipboardList} label="Activity" focused={focused} offsetX={-22} />
           ),
         }}
       />
@@ -85,6 +93,7 @@ export default function CustomerTabsLayout() {
               Icon={Bell}
               label="Alerts"
               focused={focused}
+              offsetX={22}
               badgeCount={unreadCount}
             />
           ),
@@ -95,10 +104,16 @@ export default function CustomerTabsLayout() {
         options={{
           title: 'Profile',
           tabBarIcon: ({ focused }) => (
-            <TabBarItem Icon={User} label="Profile" focused={focused} />
+            <TabBarItem Icon={User} label="Profile" focused={focused} offsetX={6} />
           ),
         }}
       />
     </Tabs>
+    {/* Overlaid quick-book FAB — sits above the tab bar centre and
+        opens the errand-type fan-out menu. Rendered as a sibling of
+        <Tabs> so it can float on top of every tab route without each
+        screen needing to know about it. */}
+    <QuickBookFAB tabBarHeight={BAR_HEIGHT} />
+    </View>
   );
 }

@@ -7,7 +7,7 @@ import {
   TextInput,
   Animated,
   StyleSheet,
-  Dimensions,
+  useWindowDimensions,
   Keyboard,
   KeyboardAvoidingView,
   Platform,
@@ -25,7 +25,7 @@ import {
   Crosshair,
 } from 'lucide-react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import Mapbox from '@rnmapbox/maps';
+import MapView, { Marker, Polyline, PROVIDER_GOOGLE } from 'react-native-maps';
 import * as Location from 'expo-location';
 import { useBookingStore } from '../../../stores/bookingStore';
 import { useImagePicker } from '../../../hooks/useImagePicker';
@@ -36,7 +36,7 @@ import { PhotoGrid } from '../../../components/customer/PhotoGrid';
 import { ImagePickerModal } from '../../../components/ui/ImagePickerModal';
 import { SavedAddressSheet } from '../../../components/customer/SavedAddressSheet';
 import { BookingStepIndicator } from '../../../components/customer/BookingStepIndicator';
-import { MAP_STYLE_URL } from '../../../constants/map';
+
 import { getErrandTypeRule } from '../../../constants/errandTypeRules';
 import type { SavedAddress } from '../../../types';
 import { toast } from '../../../stores/toastStore';
@@ -44,7 +44,6 @@ import { geocodingService } from '../../../services/geocoding.service';
 import { routeService } from '../../../services/route.service';
 
 const DEFAULT_CENTER: [number, number] = [121.0, 14.6];
-const { height: SCREEN_HEIGHT } = Dimensions.get('window');
 // Step labels live in `BookingStepIndicator`; keep this file lean.
 
 /* ─── Animated Pulse Marker (frozen pins) ─── */
@@ -165,6 +164,9 @@ export default function TaskDetailsScreen() {
   const router = useRouter();
   const { draftBooking, updateDraft, setStep } = useBookingStore();
   const { pickImage, takePhoto } = useImagePicker();
+  // Listen to window dimensions so the map pane re-flows on rotation
+  // and iPad split-view resizes (was a static module-level read).
+  const { height: SCREEN_HEIGHT } = useWindowDimensions();
 
   // Per-errand-type UX rules (which fields to show, labels, etc.)
   const rule = useMemo(
@@ -263,7 +265,7 @@ export default function TaskDetailsScreen() {
   const [routeCoords, setRouteCoords] = useState<[number, number][]>([]);
 
   // Refs
-  const cameraRef = useRef<Mapbox.Camera>(null);
+  const mapRef = useRef<MapView>(null);
   const geocodeTimeout = useRef<ReturnType<typeof setTimeout>>(undefined);
   const skipNextGeocode = useRef(false);
 
@@ -331,25 +333,21 @@ export default function TaskDetailsScreen() {
       skipNextGeocode.current = true;
       setCurrentCoord(item.center);
       setCurrentAddress(item.place_name);
-      cameraRef.current?.setCamera({
-        centerCoordinate: item.center,
-        zoomLevel: 16,
-        animationDuration: 800,
-      });
+      mapRef.current?.animateToRegion({ latitude: item.center[1], longitude: item.center[0], latitudeDelta: 0.008, longitudeDelta: 0.008 }, 800);
     },
     [],
   );
 
   /* ── Map region handlers ── */
-  const handleRegionWillChange = useCallback(() => {
+  const handleRegionChange = useCallback(() => {
     if (phase === 'details') return;
     setIsMoving(true);
     setCurrentAddress('');
     if (geocodeTimeout.current) clearTimeout(geocodeTimeout.current);
   }, [phase]);
 
-  const handleRegionDidChange = useCallback(
-    (feature: any) => {
+  const handleRegionChangeComplete = useCallback(
+    (region: { latitude: number; longitude: number }) => {
       if (phase === 'details') return;
       setIsMoving(false);
 
@@ -358,8 +356,7 @@ export default function TaskDetailsScreen() {
         return;
       }
 
-      const center = feature?.geometry?.coordinates as [number, number] | undefined;
-      if (!center) return;
+      const center: [number, number] = [region.longitude, region.latitude];
 
       if (geocodeTimeout.current) clearTimeout(geocodeTimeout.current);
       geocodeTimeout.current = setTimeout(async () => {
@@ -417,11 +414,7 @@ export default function TaskDetailsScreen() {
         setCurrentCoord(coord);
         setCurrentAddress(draftBooking.pickup_address ?? '');
         setTimeout(() => {
-          cameraRef.current?.setCamera({
-            centerCoordinate: coord,
-            zoomLevel: 16,
-            animationDuration: 500,
-          });
+          mapRef.current?.animateToRegion({ latitude: coord[1], longitude: coord[0], latitudeDelta: 0.008, longitudeDelta: 0.008 }, 500);
         }, 100);
       } else {
         setCurrentAddress('');
@@ -448,11 +441,10 @@ export default function TaskDetailsScreen() {
           setCurrentCoord(coord);
           setCurrentAddress(draftBooking.dropoff_address ?? '');
           setTimeout(() => {
-            cameraRef.current?.setCamera({
-              centerCoordinate: coord,
-              zoomLevel: 16,
-              animationDuration: 500,
-            });
+            mapRef.current?.animateToRegion({
+              latitude: coord[1], longitude: coord[0],
+              latitudeDelta: 0.008, longitudeDelta: 0.008,
+            }, 500);
           }, 100);
         }
       }
@@ -491,11 +483,10 @@ export default function TaskDetailsScreen() {
         // Center on pickup so user sees context
         if (draftBooking.pickup_lng && draftBooking.pickup_lat) {
           setTimeout(() => {
-            cameraRef.current?.setCamera({
-              centerCoordinate: [draftBooking.pickup_lng!, draftBooking.pickup_lat!],
-              zoomLevel: 14,
-              animationDuration: 500,
-            });
+            mapRef.current?.animateToRegion({
+              latitude: [draftBooking.pickup_lng!, draftBooking.pickup_lat!][1], longitude: [draftBooking.pickup_lng!, draftBooking.pickup_lat!][0],
+              latitudeDelta: 0.032, longitudeDelta: 0.032,
+            }, 500);
           }, 100);
         }
       }
@@ -515,11 +506,10 @@ export default function TaskDetailsScreen() {
       const coords: [number, number] = [loc.coords.longitude, loc.coords.latitude];
       skipNextGeocode.current = true;
       setCurrentCoord(coords);
-      cameraRef.current?.setCamera({
-        centerCoordinate: coords,
-        zoomLevel: 16,
-        animationDuration: 800,
-      });
+      mapRef.current?.animateToRegion({
+              latitude: coords[1], longitude: coords[0],
+              latitudeDelta: 0.008, longitudeDelta: 0.008,
+            }, 800);
       const addr = await reverseGeocode(coords[0], coords[1]);
       setCurrentAddress(addr);
     } catch {
@@ -533,11 +523,10 @@ export default function TaskDetailsScreen() {
     skipNextGeocode.current = true;
     setCurrentCoord(coords);
     setCurrentAddress(address.address);
-    cameraRef.current?.setCamera({
-      centerCoordinate: coords,
-      zoomLevel: 16,
-      animationDuration: 800,
-    });
+    mapRef.current?.animateToRegion({
+              latitude: coords[1], longitude: coords[0],
+              latitudeDelta: 0.008, longitudeDelta: 0.008,
+            }, 800);
   }, []);
 
   /* ── Fetch route (cached) ── */
@@ -559,13 +548,8 @@ export default function TaskDetailsScreen() {
     };
   }, [phase, draftBooking.pickup_lat, draftBooking.pickup_lng, draftBooking.dropoff_lat, draftBooking.dropoff_lng]);
 
-  const routeGeoJSON = useMemo(() => {
-    if (routeCoords.length === 0) return null;
-    return {
-      type: 'Feature' as const,
-      properties: {},
-      geometry: { type: 'LineString' as const, coordinates: routeCoords },
-    };
+  const routeMapCoords = useMemo(() => {
+    return routeCoords.map(([lng, lat]) => ({ latitude: lat, longitude: lng }));
   }, [routeCoords]);
 
   /* ── Fit bounds (details phase) ── */
@@ -581,10 +565,10 @@ export default function TaskDetailsScreen() {
       Math.min(draftBooking.pickup_lat!, draftBooking.dropoff_lat!),
     ] as [number, number];
     const t = setTimeout(() => {
-      cameraRef.current?.setCamera({
-        bounds: { ne, sw, paddingTop: 60, paddingBottom: 40, paddingLeft: 60, paddingRight: 60 },
-        animationDuration: 800,
-      });
+      mapRef.current?.fitToCoordinates(
+        [{ latitude: sw[1], longitude: sw[0] }, { latitude: ne[1], longitude: ne[0] }],
+        { edgePadding: { top: 60, bottom: 40, left: 60, right: 60 }, animated: true },
+      );
     }, 300);
     return () => clearTimeout(t);
   }, [phase, draftBooking.pickup_lat, draftBooking.pickup_lng, draftBooking.dropoff_lat, draftBooking.dropoff_lng]);
@@ -665,11 +649,7 @@ export default function TaskDetailsScreen() {
         setUserLocation(coord);
         setCurrentCoord(coord);
         skipNextGeocode.current = true;
-        cameraRef.current?.setCamera({
-          centerCoordinate: coord,
-          zoomLevel: 16,
-          animationDuration: 800,
-        });
+        mapRef.current?.animateToRegion({ latitude: coord[1], longitude: coord[0], latitudeDelta: 0.008, longitudeDelta: 0.008 }, 800);
         const addr = await reverseGeocode(coord[0], coord[1]);
         if (!cancelled) setCurrentAddress(addr);
       } catch {
@@ -684,74 +664,51 @@ export default function TaskDetailsScreen() {
     <View style={{ flex: 1, backgroundColor: '#F8FAFC' }}>
       {/* ═══ MAP ═══ */}
       <View style={phase === 'details' ? { height: SCREEN_HEIGHT * 0.36 } : { flex: 1 }}>
-        <Mapbox.MapView
+        <MapView
           style={{ flex: 1 }}
-          styleURL={MAP_STYLE_URL}
-          logoEnabled={false}
-          attributionEnabled={false}
-          onRegionIsChanging={handleRegionWillChange}
-          onRegionDidChange={handleRegionDidChange}
+          ref={mapRef}
+          provider={PROVIDER_GOOGLE}
+          onRegionChangeComplete={handleRegionChangeComplete}
+          onRegionChange={handleRegionChange}
           onPress={() => {
             setShowSearch(false);
             Keyboard.dismiss();
           }}
+          initialRegion={{
+            latitude: initialCenter[1],
+            longitude: initialCenter[0],
+            latitudeDelta: 0.01,
+            longitudeDelta: 0.01,
+          }}
         >
-          <Mapbox.Camera
-            ref={cameraRef}
-            defaultSettings={{ centerCoordinate: initialCenter, zoomLevel: 14 }}
-          />
-
-          {/* Frozen pickup marker — MarkerView (not PointAnnotation) so
-              the animated pulse halo + pin tip can live as siblings
-              without tripping rnmapbox's "max 1 subview" warning. */}
+          {/* Frozen pickup marker */}
           {phase !== 'pickup' && draftBooking.pickup_lng != null && draftBooking.pickup_lat != null && (
-            <Mapbox.MarkerView
-              id="pickup-marker"
-              coordinate={[draftBooking.pickup_lng, draftBooking.pickup_lat]}
+            <Marker
+              coordinate={{ latitude: draftBooking.pickup_lat, longitude: draftBooking.pickup_lng }}
               anchor={{ x: 0.5, y: 1 }}
-              allowOverlap
             >
               <PulseMarker color="#2563EB" />
-            </Mapbox.MarkerView>
+            </Marker>
           )}
 
           {/* Frozen dropoff marker */}
           {phase === 'details' && draftBooking.dropoff_lng != null && draftBooking.dropoff_lat != null && (
-            <Mapbox.MarkerView
-              id="dropoff-marker"
-              coordinate={[draftBooking.dropoff_lng, draftBooking.dropoff_lat]}
+            <Marker
+              coordinate={{ latitude: draftBooking.dropoff_lat, longitude: draftBooking.dropoff_lng }}
               anchor={{ x: 0.5, y: 1 }}
-              allowOverlap
             >
               <PulseMarker color="#EF4444" />
-            </Mapbox.MarkerView>
+            </Marker>
           )}
 
-          {/* Route polyline \u2014 cased for visibility over busy tiles. */}
-          {routeGeoJSON && (
-            <Mapbox.ShapeSource id="routeLine" shape={routeGeoJSON}>
-              <Mapbox.LineLayer
-                id="routeLineCasing"
-                style={{
-                  lineColor: '#1E3A8A',
-                  lineWidth: 8,
-                  lineCap: 'round',
-                  lineJoin: 'round',
-                  lineOpacity: 0.95,
-                }}
-              />
-              <Mapbox.LineLayer
-                id="routeLineLayer"
-                style={{
-                  lineColor: '#3B82F6',
-                  lineWidth: 5,
-                  lineCap: 'round',
-                  lineJoin: 'round',
-                }}
-              />
-            </Mapbox.ShapeSource>
+          {/* Route polyline — cased for visibility over busy tiles. */}
+          {routeMapCoords.length > 0 && (
+            <>
+              <Polyline coordinates={routeMapCoords} strokeColor="#1E3A8A" strokeWidth={8} lineJoin="round" />
+              <Polyline coordinates={routeMapCoords} strokeColor="#3B82F6" strokeWidth={5} lineJoin="round" />
+            </>
           )}
-        </Mapbox.MapView>
+        </MapView>
 
         {/* Center pin overlay */}
         {phase !== 'details' && (
@@ -929,8 +886,18 @@ export default function TaskDetailsScreen() {
         /* ── Details sheet ── */
         <KeyboardAvoidingView
           style={st.detailsSheet}
-          behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-          keyboardVerticalOffset={Platform.OS === 'ios' ? 0 : 0}
+          // Android transparent layouts don't auto-resize on input
+          // focus. Forcing `height` makes the sheet shrink so the
+          // focused input stays above the keyboard. iOS uses padding.
+          behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+          // Floating-header sheet with a sticky route summary at top —
+          // the offset has to compensate for the gradient header AND
+          // the bottom CTA / contact-name fields, otherwise the input
+          // the user is typing into stays buried under the keyboard
+          // (the previous offset of 90 wasn't enough on iPhones with
+          // taller keyboards). 140 keeps every input above the
+          // keyboard on iPhone SE → 16 Pro Max.
+          keyboardVerticalOffset={Platform.OS === 'ios' ? 140 : 0}
         >
           <View style={st.dragHandle} />
 
@@ -962,6 +929,10 @@ export default function TaskDetailsScreen() {
             style={{ flex: 1 }}
             contentContainerStyle={{ paddingBottom: 100 }}
             keyboardShouldPersistTaps="handled"
+            // iOS-only: lets the ScrollView add its own inset when the
+            // keyboard appears so a focused TextInput auto-scrolls into
+            // view even if the surrounding KAV offset undershoots.
+            automaticallyAdjustKeyboardInsets={Platform.OS === 'ios'}
           >
             {rule.helperNote && (
               <View style={st.helperNote}>

@@ -76,7 +76,7 @@ export function EditProfileModal({ visible, onClose }: EditProfileModalProps) {
     >
       <KeyboardAvoidingView
         style={{ flex: 1 }}
-        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
       >
         {/* Dim layer above the sheet so the parent screen reads as the
             "back" surface but the sheet itself is a flat panel — no

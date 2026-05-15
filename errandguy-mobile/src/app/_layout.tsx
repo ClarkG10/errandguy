@@ -16,19 +16,32 @@ import {
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { configureReanimatedLogger, ReanimatedLogLevel } from 'react-native-reanimated';
-import { Platform, Text, TextInput } from 'react-native';
-import Mapbox from '@rnmapbox/maps';
+import { Platform, Text, TextInput, LogBox } from 'react-native';
 import { useAuthStore } from '../stores/authStore';
 import { useBookingStore } from '../stores/bookingStore';
 import { userService } from '../services/user.service';
+import { preloadAfterAuth, preloadCoreImages } from '../services/preload.service';
 import { useNotifications } from '../hooks/useNotifications';
 import { ToastProvider } from '../components/ui/ToastProvider';
 import { ApiActivityBar } from '../components/ui/ApiActivityBar';
 import { applySystemFontOnIOS } from '../utils/systemFont';
 import '../../global.css';
 
-// Initialize Mapbox
-Mapbox.setAccessToken(process.env.EXPO_PUBLIC_MAPBOX_TOKEN ?? '');
+// Suppress known third-party / native-module-not-linked warnings so the
+// dev console isn't flooded on every hot-reload. These are all expected
+// in Expo Go / dev-client builds where native modules aren't fully linked.
+LogBox.ignoreLogs([
+  // SafeAreaView from `react-native` core is deprecated; our code already
+  // uses react-native-safe-area-context, but some third-party packages don't.
+  'SafeAreaView has been deprecated',
+  // expo-linear-gradient ViewManager isn't registered in Expo Go or a
+  // dev-client that hasn't been rebuilt after adding the module.
+  'Unable to get the view config for',
+  // Logged by our own try/catch below when expo-navigation-bar isn't linked.
+  '[ExpoNavigationBar]',
+]);
+
+// Google Maps API key is configured via EXPO_PUBLIC_GOOGLE_MAPS_KEY in app.json/eas.json
 
 // On iOS, render all text with San Francisco (SF Pro) by remapping the
 // Quicksand/Inter family names to `System` + an explicit fontWeight.
@@ -61,10 +74,8 @@ if (Platform.OS === 'android') {
     const NavigationBar = require('expo-navigation-bar');
     NavigationBar.setVisibilityAsync('hidden');
     NavigationBar.setBehaviorAsync('overlay-swipe');
-  } catch (e) {
-    if (__DEV__) {
-      console.warn('[ExpoNavigationBar] native module unavailable — skipping immersive setup');
-    }
+  } catch {
+    // Native module not linked (Expo Go / out-of-sync dev client) — safe to ignore.
   }
 }
 
@@ -125,22 +136,41 @@ export default function RootLayout() {
   useEffect(() => {
     loadFromStorage();
     loadDraftFromStorage();
+    preloadCoreImages();
   }, [loadFromStorage, loadDraftFromStorage]);
 
   // Validate token on app load
   useEffect(() => {
     if (isLoading || !token) return;
 
+    // Abort the in-flight profile call if the layout unmounts (hot
+    // reload / fast logout / token swap) so we don't end up with a
+    // stale `setUser` racing the new state \u2014 and so we don't burn
+    // the network call on a result nobody will read.
+    const controller = new AbortController();
+    let cancelled = false;
+
     const validateSession = async () => {
       try {
-        const response = await userService.getProfile();
-        setUser(response.data.data ?? response.data);
-      } catch {
+        const response = await userService.getProfile({ signal: controller.signal });
+        if (cancelled) return;
+        const fresh = response.data.data ?? response.data;
+        setUser(fresh);
+        // Warm critical caches so the first tab the user lands on
+        // paints from cache instead of showing a skeleton.
+        preloadAfterAuth(fresh?.role ?? null, fresh?.id);
+      } catch (err: any) {
+        if (cancelled || err?.name === 'CanceledError' || err?.code === 'ERR_CANCELED') return;
         await logout();
       }
     };
 
     validateSession();
+
+    return () => {
+      cancelled = true;
+      controller.abort();
+    };
   }, [isLoading, token, setUser, logout]);
 
   useEffect(() => {

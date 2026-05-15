@@ -9,6 +9,10 @@ module.exports = {
   theme: {
     extend: {
       colors: {
+        // Brand blue ramp — full Tailwind blue scale, exposed both
+        // in dash- and camel-cased form so existing className usage
+        // (e.g. `bg-primary50`, `text-primary600`) keeps working
+        // while new code can use the dash form.
         primary: '#2563EB',
         'primary-dark': '#1D4ED8',
         primaryDark: '#1D4ED8',
@@ -16,39 +20,74 @@ module.exports = {
         primaryLight: '#EFF6FF',
         'primary-muted': '#93C5FD',
         primaryMuted: '#93C5FD',
+        'primary-soft': '#DBEAFE',
+        primarySoft: '#DBEAFE',
         'primary-50': '#EFF6FF',
         primary50: '#EFF6FF',
         'primary-100': '#DBEAFE',
         primary100: '#DBEAFE',
+        'primary-200': '#BFDBFE',
+        primary200: '#BFDBFE',
+        'primary-300': '#93C5FD',
+        primary300: '#93C5FD',
+        'primary-400': '#60A5FA',
+        primary400: '#60A5FA',
         'primary-500': '#3B82F6',
         primary500: '#3B82F6',
         'primary-600': '#2563EB',
         primary600: '#2563EB',
         'primary-700': '#1D4ED8',
         primary700: '#1D4ED8',
+        'primary-800': '#1E40AF',
+        primary800: '#1E40AF',
+        'primary-900': '#1E3A8A',
+        primary900: '#1E3A8A',
+
+        // Surfaces — three white-to-blue tints stack cleanly.
         surface: '#FFFFFF',
-        background: '#F8FAFC',
+        'surface-muted': '#F8FAFC',
+        surfaceMuted: '#F8FAFC',
+        'surface-tinted': '#F0F6FF',
+        surfaceTinted: '#F0F6FF',
+        background: '#F5F8FF',
+
+        // Ink / text.
+        ink: '#0B1220',
         'text-primary': '#0F172A',
         textPrimary: '#0F172A',
-        'text-secondary': '#64748B',
-        textSecondary: '#64748B',
+        'text-secondary': '#475569',
+        textSecondary: '#475569',
         'text-tertiary': '#64748B',
         textTertiary: '#64748B',
-        // Subdued caption tone for `text-textMuted` (replaces previous
-        // textTertiary which was too light against bg-background
-        // — #94A3B8 on #F8FAFC failed WCAG AA at ~2.6:1).
         textMuted: '#94A3B8',
-        divider: '#E2E8F0',
+        textInverse: '#FFFFFF',
+
+        // Lines.
+        divider: '#E6EBF2',
+        'divider-strong': '#CBD5E1',
+        dividerStrong: '#CBD5E1',
+
+        // Status — soft-bg variants paired with full-strength fg.
         danger: '#EF4444',
         'danger-dark': '#DC2626',
         dangerDark: '#DC2626',
-        success: '#22C55E',
+        'danger-soft': '#FEE2E2',
+        dangerSoft: '#FEE2E2',
+        success: '#16A34A',
+        'success-soft': '#DCFCE7',
+        successSoft: '#DCFCE7',
         'success-light': '#F0FDF4',
         successLight: '#F0FDF4',
         warning: '#F59E0B',
+        'warning-soft': '#FEF3C7',
+        warningSoft: '#FEF3C7',
         'warning-light': '#FFFBEB',
         warningLight: '#FFFBEB',
-        // Dark mode colors
+        info: '#0EA5E9',
+        'info-soft': '#E0F2FE',
+        infoSoft: '#E0F2FE',
+
+        // Dark mode.
         'surface-dark': '#0F172A',
         surfaceDark: '#0F172A',
         'background-dark': '#020617',
@@ -76,23 +115,27 @@ module.exports = {
         'inter-semi': ['Inter_600SemiBold'],
       },
       borderRadius: {
-        sm: '8px',
+        // Tighter modern scale. 10/12/14/16 reads as a deliberate
+        // production system rather than the previous 8/12/16/20.
+        sm: '10px',
         md: '12px',
-        lg: '16px',
-        xl: '20px',
-        '2xl': '24px',
+        lg: '14px',
+        xl: '18px',
+        '2xl': '22px',
+        '3xl': '28px',
         full: '9999px',
       },
       fontSize: {
         xs: '12px',
-        sm: '14px',
-        base: '16px',
-        lg: '18px',
-        xl: '20px',
-        '2xl': '24px',
-        '3xl': '30px',
+        sm: '13px',
+        base: '15px',
+        lg: '17px',
+        xl: '19px',
+        '2xl': '22px',
+        '3xl': '28px',
       },
     },
   },
   plugins: [],
 };
+

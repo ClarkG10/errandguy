@@ -5,6 +5,7 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { ChevronLeft } from 'lucide-react-native';
 import { useRouter } from 'expo-router';
 import type { LucideIcon } from 'lucide-react-native';
+import { useResponsive } from '../../constants/responsive';
 
 /**
  * Brand-color page header — used on every customer (and runner) page
@@ -41,7 +42,7 @@ interface GradientHeaderProps {
   flush?: boolean;
 }
 
-export const HEADER_COLORS = ['#1D4ED8', '#2563EB', '#3B82F6'] as const;
+export const HEADER_COLORS = ['#1E40AF', '#2563EB', '#3B82F6'] as const;
 
 export function GradientHeader({
   title,
@@ -53,16 +54,31 @@ export function GradientHeader({
   flush = false,
 }: GradientHeaderProps) {
   const router = useRouter();
+  const { mScale } = useResponsive();
+
+  // Header chrome scales moderately so it stays balanced on narrow
+  // phones (~10% smaller) without growing oversized on tablets
+  // (~10% larger). Title row height keeps the platform-specific
+  // delta because Material vs Human-Interface guidelines disagree.
+  const padH = mScale(20);
+  const titleHeight = mScale(Platform.OS === 'android' ? 48 : 52);
+  const titleFont = mScale(Platform.OS === 'android' ? 16 : 18);
+  const trailingSlot = mScale(40);
+  const backBtn = mScale(34);
+  const trailingIcon = mScale(22);
+  const backIcon = mScale(20);
 
   const handleBack = () => {
     if (router.canGoBack()) router.back();
     else if (fallbackHref) router.replace(fallbackHref as any);
   };
 
+  const slotStyle = { minWidth: trailingSlot, height: trailingSlot } as const;
+
   const renderTrailing = () => {
-    if (!trailing) return <View style={s.trailingSlot} />;
+    if (!trailing) return <View style={[s.trailingSlot, slotStyle]} />;
     if (React.isValidElement(trailing)) {
-      return <View style={s.trailingSlot}>{trailing}</View>;
+      return <View style={[s.trailingSlot, slotStyle]}>{trailing}</View>;
     }
     const t = trailing as TrailingAction;
     if (t.icon) {
@@ -71,11 +87,11 @@ export function GradientHeader({
         <Pressable
           onPress={t.onPress}
           hitSlop={10}
-          style={[s.trailingSlot, { marginRight: -6 }]}
+          style={[s.trailingSlot, slotStyle, { marginRight: -6 }]}
           accessibilityRole="button"
           accessibilityLabel={t.accessibilityLabel ?? t.label ?? 'Action'}
         >
-          <Icon size={22} color="#FFFFFF" strokeWidth={1.9} />
+          <Icon size={trailingIcon} color="#FFFFFF" strokeWidth={1.9} />
           {t.badge && t.badge > 0 ? (
             <View
               className="absolute"
@@ -99,7 +115,7 @@ export function GradientHeader({
         <Pressable
           onPress={t.onPress}
           hitSlop={10}
-          style={s.trailingSlot}
+          style={[s.trailingSlot, slotStyle]}
           accessibilityRole="button"
           accessibilityLabel={t.accessibilityLabel ?? t.label}
         >
@@ -109,14 +125,14 @@ export function GradientHeader({
         </Pressable>
       );
     }
-    return <View style={s.trailingSlot} />;
+    return <View style={[s.trailingSlot, slotStyle]} />;
   };
 
   return (
     <>
       {Platform.OS === 'ios' && <StatusBar barStyle="light-content" />}
       <LinearGradient
-        colors={HEADER_COLORS as unknown as string[]}
+        colors={HEADER_COLORS as readonly [string, string, string]}
         start={{ x: 0, y: 0 }}
         end={{ x: 1, y: 1 }}
         style={[
@@ -128,16 +144,19 @@ export function GradientHeader({
           {/* Fixed-height title row — keeps every page header the same
               vertical size regardless of whether trailing is an icon
               button (40px tall), a label (~14px), or absent. */}
-          <View style={s.titleRow}>
+          <View style={[s.titleRow, { paddingHorizontal: padH, height: titleHeight }]}>
             {showBack ? (
               <Pressable
                 onPress={handleBack}
                 hitSlop={10}
-                style={s.backBtn}
+                style={[
+                  s.backBtn,
+                  { width: backBtn, height: backBtn, borderRadius: backBtn / 2 },
+                ]}
                 accessibilityRole="button"
                 accessibilityLabel="Go back"
               >
-                <ChevronLeft size={20} color="#FFFFFF" strokeWidth={2.2} />
+                <ChevronLeft size={backIcon} color="#FFFFFF" strokeWidth={2.2} />
               </Pressable>
             ) : null}
             <Text
@@ -145,7 +164,7 @@ export function GradientHeader({
               numberOfLines={1}
               style={{
                 marginLeft: showBack ? 8 : 0,
-                fontSize: Platform.OS === 'android' ? 16 : 18,
+                fontSize: titleFont,
               }}
             >
               {title}
@@ -169,19 +188,12 @@ const s = StyleSheet.create({
   titleRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingHorizontal: 20,
-    height: Platform.OS === 'android' ? 48 : 52,
   },
   trailingSlot: {
-    minWidth: 40,
-    height: 40,
     alignItems: 'flex-end',
     justifyContent: 'center',
   },
   backBtn: {
-    width: 34,
-    height: 34,
-    borderRadius: 17,
     alignItems: 'center',
     justifyContent: 'center',
     backgroundColor: 'rgba(255,255,255,0.18)',

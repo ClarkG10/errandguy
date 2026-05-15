@@ -1,7 +1,7 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { CacheService, CacheTTL } from './cache.service';
 
-const MAPBOX_TOKEN = process.env.EXPO_PUBLIC_MAPBOX_TOKEN ?? '';
+const GOOGLE_MAPS_KEY = process.env.EXPO_PUBLIC_GOOGLE_MAPS_KEY ?? '';
 
 /**
  * Persistent store for recently chosen places. Backs the empty-state
@@ -17,7 +17,7 @@ const RECENT_PLACES_CAP = 8;
 
 export interface PlaceFeature {
   place_name: string;
-  /** `[lng, lat]` — Mapbox convention. */
+  /** `[lng, lat]` — kept for compatibility. */
   center: [number, number];
 }
 
@@ -25,34 +25,24 @@ function quantize(n: number): string {
   return n.toFixed(4);
 }
 
-/**
- * Forward + reverse geocoding with persistent cache.
- *
- * Reverse: keyed by quantised lng/lat (~11 m). The booking-details
- * screen used to fire a fresh network round-trip every time the map
- * settled — even when the user just dragged the pin a few metres.
- * This cuts that to one request per ~11 m grid cell per 24 h.
- *
- * Forward: keyed by trimmed lowercase query. Re-typing the same address
- * (very common when re-entering a flow) becomes free.
- */
 export const geocodingService = {
   /** Reverse a coordinate to a human-readable place name. */
   async reverse(lng: number, lat: number): Promise<string> {
-    if (!MAPBOX_TOKEN) return `${lat.toFixed(6)}, ${lng.toFixed(6)}`;
+    if (!GOOGLE_MAPS_KEY) return `${lat.toFixed(6)}, ${lng.toFixed(6)}`;
     const key = `geocode:rev:${quantize(lng)},${quantize(lat)}`;
     try {
       return await CacheService.getOrFetch<string>(
         key,
         async () => {
           const res = await fetch(
-            `https://api.mapbox.com/geocoding/v5/mapbox.places/${lng},${lat}.json?access_token=${MAPBOX_TOKEN}&language=en&limit=1`,
+            `https://maps.googleapis.com/maps/api/geocode/json?latlng=${lat},${lng}&key=${GOOGLE_MAPS_KEY}&language=en&result_type=street_address|route|sublocality|locality`,
           );
-          if (!res.ok) throw new Error(`mapbox_geocode_${res.status}`);
+          if (!res.ok) throw new Error(`google_geocode_${res.status}`);
           const data = await res.json();
-          const placeName = data.features?.[0]?.place_name;
+          if (data.status !== 'OK') throw new Error(`google_geocode_${data.status}`);
+          const placeName = data.results?.[0]?.formatted_address;
           if (typeof placeName !== 'string' || placeName.length === 0) {
-            throw new Error('mapbox_geocode_empty');
+            throw new Error('google_geocode_empty');
           }
           return placeName;
         },
@@ -63,14 +53,12 @@ export const geocodingService = {
     }
   },
 
-  /** Forward search — returns up to `limit` Philippines-scoped results.
-   *  Optional `types` narrows the search (e.g. 'address,poi,place').
+  /**
+   * Forward search — returns up to `limit` Philippines-scoped results.
    *
-   *  When `proximity` is supplied, Mapbox biases results to the area
-   *  around that point — without this, a search for "starbucks" returns
-   *  national hits instead of the cafe two blocks away. The proximity
-   *  is also baked into the cache key so a Manila search and a Cebu
-   *  search for the same query don't collide.
+   * Uses Google Places Autocomplete API which has far better coverage
+   * for Philippine addresses, barangay names, and landmarks than Mapbox.
+   * Optional `proximity` biases results toward a coordinate.
    */
   async search(
     query: string,
@@ -79,11 +67,8 @@ export const geocodingService = {
     proximity?: { lng: number; lat: number },
   ): Promise<PlaceFeature[]> {
     const trimmed = query.trim();
-    if (trimmed.length < 2 || !MAPBOX_TOKEN) return [];
+    if (trimmed.length < 2 || !GOOGLE_MAPS_KEY) return [];
     const typesKey = types ?? 'all';
-    // Quantise proximity to ~1 km grid so users walking around still
-    // share cache hits. Tighter than that and the cache would barely
-    // ever hit on a moving phone.
     const proxKey = proximity
       ? `${proximity.lng.toFixed(2)},${proximity.lat.toFixed(2)}`
       : 'none';
@@ -93,27 +78,58 @@ export const geocodingService = {
         key,
         async () => {
           const encoded = encodeURIComponent(trimmed);
-          const typesParam = types ? `&types=${encodeURIComponent(types)}` : '';
-          const proxParam = proximity
-            ? `&proximity=${proximity.lng},${proximity.lat}`
-            : '';
-          // autocomplete=true returns partial matches as the user types
-          // (e.g. "sm meg" → "SM Megamall"). Prior calls were missing
-          // these, which made the search feel broken on short inputs.
+          const locationBias = proximity
+            ? `&location=${proximity.lat},${proximity.lng}&radius=50000`
+            : `&location=12.8797,121.7740&radius=600000`; // PH center, 600 km radius
           const res = await fetch(
-            `https://api.mapbox.com/geocoding/v5/mapbox.places/${encoded}.json?access_token=${MAPBOX_TOKEN}&country=ph&limit=${limit}&language=en&autocomplete=true${typesParam}${proxParam}`,
+            `https://maps.googleapis.com/maps/api/place/autocomplete/json` +
+              `?input=${encoded}` +
+              `&key=${GOOGLE_MAPS_KEY}` +
+              `&language=en` +
+              `&components=country:ph` +
+              `&sessiontoken=errandguy` +
+              locationBias,
           );
-          if (!res.ok) throw new Error(`mapbox_geocode_${res.status}`);
+          if (!res.ok) throw new Error(`google_autocomplete_${res.status}`);
           const data = await res.json();
-          return ((data.features ?? []) as any[]).map((f) => ({
-            place_name: String(f.place_name ?? ''),
-            center: f.center as [number, number],
-          }));
+          if (data.status !== 'OK' && data.status !== 'ZERO_RESULTS') {
+            throw new Error(`google_autocomplete_${data.status}`);
+          }
+          const predictions = (data.predictions ?? []).slice(0, limit) as any[];
+          // Autocomplete only gives us a place_id — we need to resolve
+          // coordinates via Place Details. Do them in parallel (max 4
+          // at once so we don't hammer quota).
+          const results: PlaceFeature[] = [];
+          const batch = predictions.slice(0, 4);
+          await Promise.all(
+            batch.map(async (p: any) => {
+              try {
+                const detailRes = await fetch(
+                  `https://maps.googleapis.com/maps/api/place/details/json` +
+                    `?place_id=${p.place_id}` +
+                    `&fields=formatted_address,geometry` +
+                    `&key=${GOOGLE_MAPS_KEY}`,
+                );
+                const detail = await detailRes.json();
+                const loc = detail.result?.geometry?.location;
+                const addr = detail.result?.formatted_address ?? p.description;
+                if (loc?.lat != null && loc?.lng != null) {
+                  results.push({
+                    place_name: String(addr),
+                    center: [loc.lng, loc.lat],
+                  });
+                }
+              } catch {
+                // If details fail, still include with a rough center
+                results.push({
+                  place_name: String(p.description ?? ''),
+                  center: proximity ? [proximity.lng, proximity.lat] : [121.0, 14.6],
+                });
+              }
+            }),
+          );
+          return results;
         },
-        // Forward results are short-lived because proximity-biased
-        // results legitimately differ as the user moves. 5 min is
-        // enough to absorb the rapid-fire keystroke storm without
-        // leaking stale neighbourhood lists.
         CacheTTL.MEDIUM,
       );
     } catch {

@@ -16,9 +16,9 @@ import { ChevronRight, Wallet } from 'lucide-react-native';
 import * as Haptics from 'expo-haptics';
 import { Avatar } from '../../../components/ui/Avatar';
 import { Button } from '../../../components/ui/Button';
-import { ConfirmModal } from '../../../components/ui/ConfirmModal';
 import { GradientHeader } from '../../../components/ui/GradientHeader';
 import { LogoutSplash } from '../../../components/ui/LogoutSplash';
+import { InlineLogoutLink } from '../../../components/auth/InlineLogoutLink';
 import { Eyebrow, Hairline } from '../../../components/ui/Typography';
 import { EditProfileModal } from '../../../components/customer/EditProfileModal';
 import { useAuthStore } from '../../../stores/authStore';
@@ -42,7 +42,6 @@ export default function CustomerProfileScreen() {
 
   const [refreshing, setRefreshing] = useState(false);
   const [showEditModal, setShowEditModal] = useState(false);
-  const [showLogoutModal, setShowLogoutModal] = useState(false);
   const [loggingOut, setLoggingOut] = useState(false);
   const [showDeleteModal, setShowDeleteModal] = useState(false);
   const [deleteConfirmText, setDeleteConfirmText] = useState('');
@@ -69,17 +68,14 @@ export default function CustomerProfileScreen() {
     setRefreshing(false);
   }, [refreshUser]);
 
-  const handleLogout = () => setShowLogoutModal(true);
-
-  const confirmLogout = async () => {
-    setShowLogoutModal(false);
+  const confirmLogout = useCallback(async () => {
     setLoggingOut(true);
     try {
       await logout();
     } finally {
       setLoggingOut(false);
     }
-  };
+  }, [logout]);
 
   const handleDeleteAccount = useCallback(async () => {
     if (deleteConfirmText !== 'DELETE') return;
@@ -238,19 +234,13 @@ export default function CustomerProfileScreen() {
         {renderSection('PAYMENT', paymentMenu)}
         {renderSection('SUPPORT', supportMenu)}
 
-        {/* Logout / Delete — inline links, NOT cards. Demoted to match
-            their destructive nature (you have to want it). */}
-        <View className="items-center pt-2 pb-4 gap-4">
-          <Pressable
-            onPress={handleLogout}
-            hitSlop={8}
-            accessibilityRole="button"
-            accessibilityLabel="Log out"
-          >
-            <Text className="text-[14px] font-montserrat-bold text-textSecondary underline">
-              Log out
-            </Text>
-          </Pressable>
+        {/* Logout / Delete — inline tap-to-confirm. The previous
+            bottom-sheet flow felt heavy for an action that's already
+            reversible (re-login is one screen away). The inline
+            link arms on first tap and confirms on the second within
+            a 3s window — modern, non-disruptive, undoable. */}
+        <View className="items-center pt-2 pb-4 gap-3">
+          <InlineLogoutLink onConfirm={confirmLogout} />
           <Pressable
             onPress={() => setShowDeleteModal(true)}
             hitSlop={8}
@@ -268,7 +258,7 @@ export default function CustomerProfileScreen() {
       <Modal visible={showDeleteModal} transparent animationType="slide">
         <KeyboardAvoidingView
           style={{ flex: 1 }}
-          behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+          behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
         >
           <Pressable
             className="flex-1 bg-black/40 justify-end"
@@ -333,17 +323,6 @@ export default function CustomerProfileScreen() {
       <EditProfileModal
         visible={showEditModal}
         onClose={() => setShowEditModal(false)}
-      />
-
-      <ConfirmModal
-        visible={showLogoutModal}
-        title="Log out?"
-        message="You'll need to sign in again to access your account."
-        confirmLabel="Log out"
-        cancelLabel="Stay signed in"
-        destructive
-        onConfirm={confirmLogout}
-        onCancel={() => setShowLogoutModal(false)}
       />
 
       <LogoutSplash visible={loggingOut} />

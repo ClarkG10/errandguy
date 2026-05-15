@@ -24,7 +24,7 @@ import {
   Clock,
 } from 'lucide-react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import Mapbox from '@rnmapbox/maps';
+import MapView, { Marker, Polyline, PROVIDER_GOOGLE } from 'react-native-maps';
 import { useBookingStore } from '../../../stores/bookingStore';
 import { useChatStore } from '../../../stores/chatStore';
 import { useLocationStore } from '../../../stores/locationStore';
@@ -47,13 +47,12 @@ import { formatTime } from '../../../utils/formatDate';
 import { formatCurrency } from '../../../utils/formatCurrency';
 import { resolveImageUrl } from '../../../utils/resolveImageUrl';
 import { STATUS_LABELS } from '../../../constants/statusLabels';
-import { MAP_STYLE_URL } from '../../../constants/map';
+
 import { getErrandTypeRule } from '../../../constants/errandTypeRules';
 import type { Booking, BookingStatus, BookingStatusLog } from '../../../types';
 import { toast } from '../../../stores/toastStore';
 import { routeService } from '../../../services/route.service';
 
-const MAPBOX_TOKEN = process.env.EXPO_PUBLIC_MAPBOX_TOKEN ?? '';
 
 const CAN_CANCEL_STATUSES: BookingStatus[] = [
   'pending', 'matched', 'accepted', 'heading_to_pickup',
@@ -108,7 +107,7 @@ export default function TrackingScreen() {
   } | null>(null);
   const [previewLoading, setPreviewLoading] = useState(false);
   const [showSOSModal, setShowSOSModal] = useState(false);
-  const cameraRef = useRef<Mapbox.Camera>(null);
+  const mapRef = useRef<MapView>(null);
   // Tracks the last booking status we have already loaded statusLogs for.
   // Used to skip redundant /track refetches when realtime UPDATEs come in
   // for unrelated fields. Declared before the fetch effect that seeds it.
@@ -306,7 +305,6 @@ export default function TrackingScreen() {
     : '';
 
   useEffect(() => {
-    if (!MAPBOX_TOKEN) return;
     // Decide which segment to draw based on what data we actually have.
     // The previous logic merged the pre-dispatch fallback with the
     // live-runner case and ended up sending Directions a degenerate
@@ -458,13 +456,8 @@ export default function TrackingScreen() {
   }, [activeBooking, id, router]);
 
   // Route GeoJSON
-  const routeGeoJSON = useMemo(() => {
-    if (routeCoords.length === 0) return null;
-    return {
-      type: 'Feature' as const,
-      properties: {},
-      geometry: { type: 'LineString' as const, coordinates: routeCoords },
-    };
+  const routeMapCoords = useMemo(() => {
+    return routeCoords.map(([lng, lat]) => ({ latitude: lat, longitude: lng }));
   }, [routeCoords]);
 
   // Camera bounds covering pickup, dropoff, and runner.
@@ -530,6 +523,20 @@ export default function TrackingScreen() {
       paddingRight: 60,
     };
   }, [booking, stableRunnerPoint]);
+
+  // Fit map to all visible points whenever stable bounds change
+  useEffect(() => {
+    if (!cameraBounds || !mapRef.current) return;
+    const coords = [
+      { latitude: cameraBounds.ne[1], longitude: cameraBounds.ne[0] },
+      { latitude: cameraBounds.sw[1], longitude: cameraBounds.sw[0] },
+    ];
+    mapRef.current.fitToCoordinates(coords, {
+      edgePadding: { top: 60, bottom: 60, left: 60, right: 60 },
+      animated: true,
+    });
+  }, [cameraBounds]);
+
 
   const handleCancel = useCallback(() => {
     if (!id || isCancelling) return;
@@ -706,53 +713,46 @@ export default function TrackingScreen() {
     <View style={{ flex: 1, backgroundColor: '#fff' }}>
       {/* Live Map — fills the entire screen so the user can view it as a whole */}
       <View style={StyleSheet.absoluteFill}>
-        <Mapbox.MapView
+        <MapView
+          ref={mapRef}
           style={{ flex: 1 }}
-          styleURL={MAP_STYLE_URL}
-          logoEnabled={false}
-          attributionEnabled={false}
-          compassEnabled={false}
-          scaleBarEnabled={false}
+          provider={PROVIDER_GOOGLE}
+          showsUserLocation={false}
+          showsMyLocationButton={false}
+          showsCompass={false}
+          initialRegion={{
+            latitude: mapCenter[1],
+            longitude: mapCenter[0],
+            latitudeDelta: 0.05,
+            longitudeDelta: 0.05,
+          }}
         >
-          <Mapbox.Camera
-            ref={cameraRef}
-            {...(cameraBounds
-              ? { bounds: cameraBounds }
-              : { centerCoordinate: mapCenter, zoomLevel: 14 }
-            )}
-            animationDuration={1000}
-          />
-
-          {/* Pickup marker */}
+                    {/* Pickup marker */}
           {booking.pickup_lng && booking.pickup_lat && (
-            <Mapbox.MarkerView
-              id="pickup"
-              coordinate={[Number(booking.pickup_lng), Number(booking.pickup_lat)]}
+            <Marker
+              coordinate={{ latitude: Number(booking.pickup_lat), longitude: Number(booking.pickup_lng) }}
               anchor={{ x: 0.5, y: 0.5 }}
-              allowOverlap
             >
               <View className="items-center">
                 <View className="w-8 h-8 rounded-full bg-primary items-center justify-center border-2 border-white shadow-md">
                   <Text className="text-white text-[10px] font-montserrat-bold">P</Text>
                 </View>
               </View>
-            </Mapbox.MarkerView>
+            </Marker>
           )}
 
           {/* Dropoff marker */}
           {booking.dropoff_lng && booking.dropoff_lat && (
-            <Mapbox.MarkerView
-              id="dropoff"
-              coordinate={[Number(booking.dropoff_lng), Number(booking.dropoff_lat)]}
+            <Marker
+              coordinate={{ latitude: Number(booking.dropoff_lat), longitude: Number(booking.dropoff_lng) }}
               anchor={{ x: 0.5, y: 0.5 }}
-              allowOverlap
             >
               <View className="items-center">
                 <View className="w-8 h-8 rounded-full bg-danger items-center justify-center border-2 border-white shadow-md">
                   <Text className="text-white text-[10px] font-montserrat-bold">D</Text>
                 </View>
               </View>
-            </Mapbox.MarkerView>
+            </Marker>
           )}
 
           {/* Runner marker (moving) — branded pin with vehicle icon.
@@ -761,9 +761,8 @@ export default function TrackingScreen() {
               unmistakable "my runner is moving" cue beyond the pin
               just shifting position on the map. */}
           {runnerLocation && (
-            <Mapbox.MarkerView
-              id="runner"
-              coordinate={[Number(runnerLocation.lng), Number(runnerLocation.lat)]}
+            <Marker
+              coordinate={{ latitude: Number(runnerLocation.lat), longitude: Number(runnerLocation.lng) }}
               anchor={{ x: 0.5, y: 0.5 }}
             >
               <View style={styles.runnerMarkerWrap}>
@@ -799,37 +798,17 @@ export default function TrackingScreen() {
                   </View>
                 )}
               </View>
-            </Mapbox.MarkerView>
+            </Marker>
           )}
 
-          {/* Route line — cased so the polyline stays legible over
-              busy map tiles. Dark casing + bright fill is the same
-              treatment used on the runner navigator and matches the
-              pattern Mapbox/Google use for active routes. */}
-          {routeGeoJSON && (
-            <Mapbox.ShapeSource id="routeLine" shape={routeGeoJSON}>
-              <Mapbox.LineLayer
-                id="routeLineCasing"
-                style={{
-                  lineColor: '#1E3A8A',
-                  lineWidth: 8,
-                  lineCap: 'round',
-                  lineJoin: 'round',
-                  lineOpacity: 0.95,
-                }}
-              />
-              <Mapbox.LineLayer
-                id="routeLineLayer"
-                style={{
-                  lineColor: '#3B82F6',
-                  lineWidth: 5,
-                  lineCap: 'round',
-                  lineJoin: 'round',
-                }}
-              />
-            </Mapbox.ShapeSource>
+          {/* Route line */}
+          {routeMapCoords.length > 0 && (
+            <>
+              <Polyline coordinates={routeMapCoords} strokeColor="#1E3A8A" strokeWidth={8} lineJoin="round" />
+              <Polyline coordinates={routeMapCoords} strokeColor="#3B82F6" strokeWidth={5} lineJoin="round" />
+            </>
           )}
-        </Mapbox.MapView>
+        </MapView>
 
         {/* Realtime indicator — shows three states:
               1. Connecting (no realtime channel yet)

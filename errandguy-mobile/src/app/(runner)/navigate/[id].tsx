@@ -15,8 +15,7 @@ import {
   MapPin,
   Gauge,
 } from 'lucide-react-native';
-import Mapbox from '@rnmapbox/maps';
-import { MAP_STYLE_URL } from '../../../constants/map';
+import MapView, { Marker, Polyline, PROVIDER_GOOGLE } from 'react-native-maps';
 import { useRunnerStore } from '../../../stores/runnerStore';
 import { useLocationStore } from '../../../stores/locationStore';
 import { useForegroundInterval } from '../../../hooks/useForegroundInterval';
@@ -113,7 +112,7 @@ export default function NavigateScreen() {
   const [routeError, setRouteError] = useState(false);
   const [followCamera, setFollowCamera] = useState(true);
 
-  const cameraRef = useRef<Mapbox.Camera>(null);
+  const mapRef = useRef<MapView>(null);
 
   // Make sure GPS is streaming \u2014 the runner may have opened this
   // screen from a notification cold-start where the dashboard hasn't
@@ -257,12 +256,18 @@ export default function NavigateScreen() {
   // request and the runner hasn't moved far between refreshes.
   useForegroundInterval(() => { void fetchNav(); }, 60_000, !!origin && !!destination, false);
 
-  // Camera follow. We can't get device heading from the location store
-  // (it only persists lat/lng), but Mapbox's UserLocation puck gives
-  // us a course-up camera for free with `followUserMode: 'course'` and
-  // a UserTrackingMode on the camera. We toggle it off when the user
-  // pans the map and re-engage with the recenter button.
-  const followMode = followCamera ? Mapbox.UserTrackingMode.FollowWithCourse : undefined;
+  // Camera follow: when followCamera is true, animate to runner position on each location update.
+  useEffect(() => {
+    if (!followCamera || !origin) return;
+    mapRef.current?.animateCamera(
+      {
+        center: { latitude: origin.lat, longitude: origin.lng },
+        zoom: 17,
+        pitch: 50,
+      },
+      { duration: 500 },
+    );
+  }, [origin, followCamera]);
 
   const handleEndNavigation = useCallback(() => {
     router.back();
@@ -279,13 +284,9 @@ export default function NavigateScreen() {
   }, [booking, router]);
 
   // ── Render ──
-  const routeGeoJSON = useMemo(() => {
-    if (!navRoute || navRoute.coordinates.length === 0) return null;
-    return {
-      type: 'Feature' as const,
-      properties: {},
-      geometry: { type: 'LineString' as const, coordinates: navRoute.coordinates },
-    };
+  const routeMapCoords = useMemo(() => {
+    if (!navRoute || navRoute.coordinates.length === 0) return [];
+    return navRoute.coordinates.map(([lng, lat]) => ({ latitude: lat, longitude: lng }));
   }, [navRoute]);
 
   const currentStep: NavigationStep | null = navRoute?.steps[currentStepIdx] ?? null;
@@ -349,11 +350,15 @@ export default function NavigateScreen() {
 
   // Current speed in km/h \u2014 surfaced as a live HUD chip so the runner
   // gets the same "I'm moving" feedback drivers expect from a sat-nav.
+  // `speed` is provided by expo-location at runtime but isn't part of
+  // the lightweight `Coordinate` type we share with the map layer, so
+  // we read it through a tolerant cast.
+  const locWithSpeed = currentLocation as (typeof currentLocation & { speed?: number | null }) | null;
   const speedKmh = useMemo(() => {
-    const s = currentLocation?.speed;
+    const s = locWithSpeed?.speed;
     if (s == null || !Number.isFinite(s) || s <= 0) return null;
     return Math.round(s * 3.6);
-  }, [currentLocation?.speed]);
+  }, [locWithSpeed?.speed]);
 
   // Lookahead: the maneuver AFTER the current one. Shown as a small
   // "Then \u2026" line under the main banner so the runner can prep for
@@ -391,47 +396,33 @@ export default function NavigateScreen() {
     <View style={{ flex: 1, backgroundColor: '#0F172A' }}>
       {/* Full-screen map */}
       <View style={StyleSheet.absoluteFill}>
-        <Mapbox.MapView
+        <MapView
+          ref={mapRef}
           style={{ flex: 1 }}
-          styleURL={MAP_STYLE_URL}
-          logoEnabled={false}
-          attributionEnabled={false}
-          compassEnabled={false}
-          scaleBarEnabled={false}
-          onMapIdle={() => { /* no-op \u2014 follow toggling done via gestures below */ }}
+          provider={PROVIDER_GOOGLE}
+          showsUserLocation
+          showsMyLocationButton={false}
+          showsCompass={false}
+          toolbarEnabled={false}
+          initialRegion={origin ? {
+            latitude: origin.lat,
+            longitude: origin.lng,
+            latitudeDelta: 0.01,
+            longitudeDelta: 0.01,
+          } : {
+            latitude: 14.6,
+            longitude: 121.0,
+            latitudeDelta: 0.05,
+            longitudeDelta: 0.05,
+          }}
           onTouchMove={() => {
-            // Any user pan disengages course-follow until they tap recenter.
             if (followCamera) setFollowCamera(false);
           }}
         >
-          <Mapbox.Camera
-            ref={cameraRef}
-            zoomLevel={17}
-            pitch={50}
-            followUserLocation={followCamera}
-            followUserMode={followMode}
-            followZoomLevel={17}
-            followPitch={50}
-            animationMode="flyTo"
-            animationDuration={500}
-            {...(!followCamera && origin
-              ? { centerCoordinate: [origin.lng, origin.lat] }
-              : {})}
-          />
-
-          {/* User puck \u2014 Mapbox's native course-aware location pin. */}
-          <Mapbox.UserLocation
-            visible
-            showsUserHeadingIndicator
-            androidRenderMode="compass"
-          />
-
           {/* Destination marker */}
-          <Mapbox.MarkerView
-            id="nav-dest"
-            coordinate={[destination.lng, destination.lat]}
+          <Marker
+            coordinate={{ latitude: destination.lat, longitude: destination.lng }}
             anchor={{ x: 0.5, y: 1 }}
-            allowOverlap
           >
             <View className="items-center">
               <View
@@ -442,33 +433,26 @@ export default function NavigateScreen() {
                 <Flag size={18} color="#FFFFFF" />
               </View>
             </View>
-          </Mapbox.MarkerView>
+          </Marker>
 
-          {/* Route polyline (cased line for readability over busy maps) */}
-          {routeGeoJSON && (
-            <Mapbox.ShapeSource id="nav-route" shape={routeGeoJSON}>
-              <Mapbox.LineLayer
-                id="nav-route-casing"
-                style={{
-                  lineColor: '#1E40AF',
-                  lineWidth: 9,
-                  lineCap: 'round',
-                  lineJoin: 'round',
-                  lineOpacity: 0.95,
-                }}
+                    {/* Route polyline (cased line for readability over busy maps) */}
+          {routeMapCoords.length > 0 && (
+            <>
+              <Polyline
+                coordinates={routeMapCoords}
+                strokeColor="#1E40AF"
+                strokeWidth={9}
+                lineJoin="round"
               />
-              <Mapbox.LineLayer
-                id="nav-route-fill"
-                style={{
-                  lineColor: '#3B82F6',
-                  lineWidth: 6,
-                  lineCap: 'round',
-                  lineJoin: 'round',
-                }}
+              <Polyline
+                coordinates={routeMapCoords}
+                strokeColor="#3B82F6"
+                strokeWidth={6}
+                lineJoin="round"
               />
-            </Mapbox.ShapeSource>
+            </>
           )}
-        </Mapbox.MapView>
+        </MapView>
       </View>
 
       {/* Top maneuver banner \u2014 the navigation focal point. */}

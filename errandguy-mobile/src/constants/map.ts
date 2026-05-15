@@ -1,5 +1,7 @@
-/** Shared Mapbox styling constants for consistent map appearance */
-export const MAP_STYLE_URL = 'mapbox://styles/mapbox/streets-v12';
+/** Shared map styling constants */
+
+// Google Maps standard map style identifier (used for MapType)
+export const MAP_STYLE_URL = 'standard'; // kept for compat; not used by react-native-maps
 
 export const MAP_COLORS = {
   primary: '#2563EB',

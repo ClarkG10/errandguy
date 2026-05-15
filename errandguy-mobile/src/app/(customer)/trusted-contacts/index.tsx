@@ -28,6 +28,7 @@ import { BottomActionBar } from '../../../components/ui/BottomActionBar';
 import { Input } from '../../../components/ui/Input';
 import { Badge } from '../../../components/ui/Badge';
 import { EmptyState } from '../../../components/ui/EmptyState';
+import { ContactIllustration } from '../../../components/auth/OnboardingIllustrations';
 import { ContactsSkeleton } from '../../../components/ui/Skeleton';
 import { ConfirmModal } from '../../../components/ui/ConfirmModal';
 import type { TrustedContact } from '../../../types';
@@ -289,7 +290,7 @@ export default function TrustedContactsScreen() {
         renderItem={renderContact}
         ListEmptyComponent={
           <EmptyState
-            icon={UserPlus}
+            illustration={<ContactIllustration size={180} />}
             title="No trusted contacts"
             description="Add people you trust to be notified during emergencies"
           />

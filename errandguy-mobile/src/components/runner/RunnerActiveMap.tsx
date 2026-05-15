@@ -1,8 +1,7 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { View, Text, Pressable, Animated } from 'react-native';
+import MapView, { Marker, Polyline } from 'react-native-maps';
 import { Locate, Navigation } from 'lucide-react-native';
-import Mapbox from '@rnmapbox/maps';
-import { MAP_STYLE_URL } from '../../constants/map';
 import { useLocationStore } from '../../stores/locationStore';
 import { routeService } from '../../services/route.service';
 
@@ -11,38 +10,13 @@ interface RunnerActiveMapProps {
   pickupLng?: number | null;
   dropoffLat?: number | null;
   dropoffLng?: number | null;
-  /** Whether the runner is still in the pickup phase (decides which
-   *  destination to draw a route to and which marker to highlight). */
   inPickupPhase: boolean;
-  /** When true, render only one destination marker (queue / bills). */
   singleLocation?: boolean;
-  /** Approx ETA shown as overlay (minutes). Optional. */
   etaMinutes?: number | null;
-  /**
-   * 'card' (default) renders a rounded inset map with margin — used
-   * when embedded between other content. 'fill' renders edge-to-edge
-   * with no border/margin, intended for full-screen layouts where the
-   * map is the background and other UI is overlaid.
-   */
   variant?: 'card' | 'fill';
-  /**
-   * Pixel offset from the bottom of the map for the floating ETA pill
-   * and Recenter FAB. Pass an Animated.Value when the host screen has
-   * a draggable bottom sheet so the controls track the sheet edge and
-   * never sit underneath it. Defaults to 24 (just above safe area).
-   */
   bottomOffset?: number | Animated.Value | Animated.AnimatedInterpolation<number>;
 }
 
-/**
- * Compact live map for the runner's active errand.
- *
- * Shows the runner's current device location (pulsing blue dot) plus
- * pickup/dropoff markers and a routed line to whichever destination
- * matters right now. Pure UI — the upstream `locationStore` already
- * watches the GPS via `Location.watchPositionAsync` and pushes updates
- * to the backend, so this component only consumes the cached value.
- */
 export function RunnerActiveMap({
   pickupLat,
   pickupLng,
@@ -55,14 +29,8 @@ export function RunnerActiveMap({
   bottomOffset = 24,
 }: RunnerActiveMapProps) {
   const currentLocation = useLocationStore((s) => s.currentLocation);
-  const cameraRef = React.useRef<Mapbox.Camera>(null);
+  const mapRef = useRef<MapView>(null);
 
-  // Postgres `numeric` columns serialise as strings ("14.5995") in
-  // Laravel API responses unless the model explicitly casts them. The
-  // native Mapbox bindings reject string-typed coordinates with a
-  // "Expected to decode Double but found a string" error and the map
-  // crashes. Coerce + validate every coord here, once, so every render
-  // path below sees a finite number or null.
   const toFiniteNum = (v: unknown): number | null => {
     if (v == null) return null;
     const n = typeof v === 'number' ? v : Number(v);
@@ -75,10 +43,6 @@ export function RunnerActiveMap({
   const myLng = toFiniteNum(currentLocation?.lng);
   const myLat = toFiniteNum(currentLocation?.lat);
 
-  // Resolve the active destination based on phase. If the runner is
-  // supposed to be in pickup phase but pickup is missing (shouldn't
-  // happen for any current errand type but we guard anyway), fall
-  // back to dropoff so the map still draws something useful.
   const destLat = inPickupPhase ? (pLat ?? dLat) : (dLat ?? pLat);
   const destLng = inPickupPhase ? (pLng ?? dLng) : (dLng ?? pLng);
 
@@ -89,12 +53,8 @@ export function RunnerActiveMap({
 
   const [routeCoords, setRouteCoords] = useState<[number, number][]>([]);
 
-  // Fetch driving directions from runner → active destination. Re-runs
-  // when the destination flips (pickup → dropoff) or when the runner
-  // moves >300m from the previous fetch (cheap snap to grid).
   const runnerKey = useMemo(() => {
     if (!hasRunner) return '';
-    // Round to ~3 decimals (~110m) so we don't refetch every GPS tick.
     return `${myLat!.toFixed(3)},${myLng!.toFixed(3)}`;
   }, [hasRunner, myLat, myLng]);
 
@@ -102,61 +62,56 @@ export function RunnerActiveMap({
     if (!hasRunner || !hasDest) return;
     let cancelled = false;
     routeService
-      .getRoute(
-        { lng: myLng!, lat: myLat! },
-        { lng: destLng!, lat: destLat! },
-      )
+      .getRoute({ lng: myLng!, lat: myLat! }, { lng: destLng!, lat: destLat! })
       .then((res) => {
         if (cancelled || !res) return;
         setRouteCoords(res.coordinates);
       });
-    return () => {
-      cancelled = true;
-    };
-    // myLng/myLat intentionally excluded — runnerKey covers it.
+    return () => { cancelled = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [runnerKey, destLat, destLng, hasRunner, hasDest]);
 
-  const routeGeoJSON = useMemo(() => {
-    if (routeCoords.length === 0) return null;
-    return {
-      type: 'Feature' as const,
-      properties: {},
-      geometry: { type: 'LineString' as const, coordinates: routeCoords },
-    };
-  }, [routeCoords]);
+  const routeMapCoords = useMemo(
+    () => routeCoords.map(([lng, lat]) => ({ latitude: lat, longitude: lng })),
+    [routeCoords],
+  );
 
-  // Camera bounds covering both runner and active destination.
-  const bounds = useMemo(() => {
+  const fitBounds = useMemo(() => {
     if (!hasRunner || !hasDest) return undefined;
-    const lngs = [myLng!, destLng!];
     const lats = [myLat!, destLat!];
-    return {
-      ne: [Math.max(...lngs), Math.max(...lats)] as [number, number],
-      sw: [Math.min(...lngs), Math.min(...lats)] as [number, number],
-      paddingTop: 50,
-      paddingBottom: 70,
-      paddingLeft: 50,
-      paddingRight: 50,
-    };
+    const lngs = [myLng!, destLng!];
+    return [
+      { latitude: Math.max(...lats), longitude: Math.max(...lngs) },
+      { latitude: Math.min(...lats), longitude: Math.min(...lngs) },
+    ];
   }, [hasRunner, hasDest, myLng, myLat, destLat, destLng]);
 
-  const fallbackCenter = useMemo<[number, number]>(() => {
-    if (hasDest) return [destLng!, destLat!];
-    if (hasRunner) return [myLng!, myLat!];
-    return [121.0, 14.6]; // Manila
+  const fallbackRegion = useMemo(() => {
+    const lat = hasDest ? destLat! : hasRunner ? myLat! : 14.6;
+    const lng = hasDest ? destLng! : hasRunner ? myLng! : 121.0;
+    return { latitude: lat, longitude: lng, latitudeDelta: 0.04, longitudeDelta: 0.04 };
   }, [hasDest, hasRunner, myLng, myLat, destLat, destLng]);
 
+  useEffect(() => {
+    if (!mapRef.current || !fitBounds) return;
+    mapRef.current.fitToCoordinates(fitBounds, {
+      edgePadding: { top: 50, bottom: 70, left: 50, right: 50 },
+      animated: true,
+    });
+  }, [fitBounds]);
+
   const recenter = () => {
-    if (!cameraRef.current) return;
-    if (bounds) {
-      cameraRef.current.fitBounds(bounds.ne, bounds.sw, [50, 50, 70, 50], 600);
-    } else if (hasRunner) {
-      cameraRef.current.setCamera({
-        centerCoordinate: [myLng!, myLat!],
-        zoomLevel: 15,
-        animationDuration: 600,
+    if (!mapRef.current) return;
+    if (fitBounds) {
+      mapRef.current.fitToCoordinates(fitBounds, {
+        edgePadding: { top: 50, bottom: 70, left: 50, right: 50 },
+        animated: true,
       });
+    } else if (hasRunner) {
+      mapRef.current.animateToRegion(
+        { latitude: myLat!, longitude: myLng!, latitudeDelta: 0.015, longitudeDelta: 0.015 },
+        600,
+      );
     }
   };
 
@@ -184,32 +139,22 @@ export function RunnerActiveMap({
 
   return (
     <View className={containerCls}>
-      <Mapbox.MapView
+      <MapView
+        ref={mapRef}
         style={{ flex: 1 }}
-        styleURL={MAP_STYLE_URL}
-        logoEnabled={false}
-        attributionEnabled={false}
-        compassEnabled={false}
-        scaleBarEnabled={false}
+        provider="google"
+        initialRegion={fallbackRegion}
+        showsUserLocation
+        showsMyLocationButton={false}
+        showsCompass={false}
+        toolbarEnabled={false}
+        scrollEnabled={false}
+        zoomEnabled={false}
+        rotateEnabled={false}
+        pitchEnabled={false}
       >
-        <Mapbox.Camera
-          ref={cameraRef}
-          {...(bounds
-            ? { bounds }
-            : { centerCoordinate: fallbackCenter, zoomLevel: 14 })}
-          animationMode="easeTo"
-          animationDuration={500}
-        />
-
-        {/* Pickup marker (only when not single-location, or when in pickup
-            phase for single-location to indicate the task spot). */}
         {hasPickup && (
-          <Mapbox.MarkerView
-            id="r-pickup"
-            coordinate={[pLng!, pLat!]}
-            anchor={{ x: 0.5, y: 0.5 }}
-            allowOverlap
-          >
+          <Marker coordinate={{ latitude: pLat!, longitude: pLng! }} anchor={{ x: 0.5, y: 0.5 }}>
             <View
               className={`w-7 h-7 rounded-full items-center justify-center border-2 border-white ${
                 inPickupPhase ? 'bg-primary' : 'bg-primary/60'
@@ -217,17 +162,11 @@ export function RunnerActiveMap({
             >
               <View className="w-2 h-2 rounded-full bg-white" />
             </View>
-          </Mapbox.MarkerView>
+          </Marker>
         )}
 
-        {/* Dropoff marker — hidden for single-location errands. */}
         {hasDropoff && !singleLocation && (
-          <Mapbox.MarkerView
-            id="r-dropoff"
-            coordinate={[dLng!, dLat!]}
-            anchor={{ x: 0.5, y: 0.5 }}
-            allowOverlap
-          >
+          <Marker coordinate={{ latitude: dLat!, longitude: dLng! }} anchor={{ x: 0.5, y: 0.5 }}>
             <View
               className={`w-7 h-7 rounded-full items-center justify-center border-2 border-white ${
                 !inPickupPhase ? 'bg-danger' : 'bg-danger/60'
@@ -235,58 +174,25 @@ export function RunnerActiveMap({
             >
               <View className="w-2 h-2 rounded-full bg-white" />
             </View>
-          </Mapbox.MarkerView>
+          </Marker>
         )}
 
-        {/* Runner live marker */}
-        {hasRunner && (
-          <Mapbox.MarkerView
-            id="r-self"
-            coordinate={[myLng!, myLat!]}
-            anchor={{ x: 0.5, y: 0.5 }}
-            allowOverlap
-          >
-            <View className="w-8 h-8 rounded-full bg-blue-500/30 items-center justify-center">
-              <View className="w-4 h-4 rounded-full bg-blue-600 border-2 border-white" />
-            </View>
-          </Mapbox.MarkerView>
-        )}
-
-        {/* Route line runner → active destination.
-            Cased layer (dark outline + bright fill) keeps the polyline
-            legible on busy/satellite tiles where a single solid line
-            would disappear into the underlying road geometry. */}
-        {routeGeoJSON && (
-          <Mapbox.ShapeSource id="r-route" shape={routeGeoJSON}>
-            <Mapbox.LineLayer
-              id="r-route-casing"
-              style={{
-                lineColor: inPickupPhase ? '#1E3A8A' : '#7F1D1D',
-                lineWidth: 8,
-                lineCap: 'round',
-                lineJoin: 'round',
-                lineOpacity: 0.95,
-              }}
+        {routeMapCoords.length > 0 && (
+          <>
+            <Polyline
+              coordinates={routeMapCoords}
+              strokeColor={inPickupPhase ? '#1E3A8A' : '#7F1D1D'}
+              strokeWidth={8}
             />
-            <Mapbox.LineLayer
-              id="r-route-line"
-              style={{
-                lineColor: inPickupPhase ? '#3B82F6' : '#EF4444',
-                lineWidth: 5,
-                lineCap: 'round',
-                lineJoin: 'round',
-              }}
+            <Polyline
+              coordinates={routeMapCoords}
+              strokeColor={inPickupPhase ? '#3B82F6' : '#EF4444'}
+              strokeWidth={5}
             />
-          </Mapbox.ShapeSource>
+          </>
         )}
-      </Mapbox.MapView>
+      </MapView>
 
-      {/* ETA pill — sits bottom-left, above where the bottom sheet
-          peeks. The previous top-left position was fully hidden behind
-          the floating header card (and the iOS notch). bottomOffset
-          can be an Animated.Value so the host screen's draggable sheet
-          pushes both controls upward in lockstep — they're never
-          covered by sheet content. */}
       {etaMinutes != null && (
         <Animated.View
           style={{
@@ -311,8 +217,6 @@ export function RunnerActiveMap({
         </Animated.View>
       )}
 
-      {/* Recenter FAB — bottom-right, mirrors the ETA pill so both sit
-          clear of the sheet peek and the floating top bar. */}
       <Animated.View
         style={{
           position: 'absolute',
@@ -340,7 +244,7 @@ export function RunnerActiveMap({
             elevation: 6,
           }}
         >
-          <Locate size={18} color="#0F172A" />
+          <Locate size={20} color="#1D4ED8" />
         </Pressable>
       </Animated.View>
     </View>

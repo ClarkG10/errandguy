@@ -132,6 +132,24 @@ export default function ReviewScreen() {
     draftBooking.dropoff_lng,
   ]);
 
+  // Distance-based ETA per vehicle so the selector cards can preview
+  // travel time alongside fare. Returns undefined for single-location
+  // errands where distance isn't applicable.
+  const etaFor = (key: string): string | undefined => {
+    if (!estimate?.distance_km) return undefined;
+    const speeds: Record<string, number> = {
+      walk: 5,
+      bicycle: 15,
+      motorcycle: 35,
+      car: 30,
+    };
+    const speed = speeds[key] ?? 30;
+    const minutes = Math.round((estimate.distance_km / speed) * 60);
+    if (minutes < 1) return '< 1 min';
+    if (minutes >= 60) return `${Math.floor(minutes / 60)}h ${minutes % 60}m`;
+    return `${minutes} min`;
+  };
+
   const allVehicleOptions: VehicleOption[] = [
     {
       key: 'walk',
@@ -139,6 +157,7 @@ export default function ReviewScreen() {
       icon: VEHICLE_ICONS.walk,
       perKm: 0,
       estimatedTotal: estimate?.walk?.total_amount ?? 0,
+      eta: etaFor('walk'),
     },
     {
       key: 'bicycle',
@@ -146,6 +165,7 @@ export default function ReviewScreen() {
       icon: VEHICLE_ICONS.bicycle,
       perKm: 0,
       estimatedTotal: estimate?.bicycle?.total_amount ?? 0,
+      eta: etaFor('bicycle'),
     },
     {
       key: 'motorcycle',
@@ -153,6 +173,7 @@ export default function ReviewScreen() {
       icon: VEHICLE_ICONS.motorcycle,
       perKm: 0,
       estimatedTotal: estimate?.motorcycle?.total_amount ?? 0,
+      eta: etaFor('motorcycle'),
     },
     {
       key: 'car',
@@ -160,6 +181,7 @@ export default function ReviewScreen() {
       icon: VEHICLE_ICONS.car,
       perKm: 0,
       estimatedTotal: estimate?.car?.total_amount ?? 0,
+      eta: etaFor('car'),
     },
   ];
 
@@ -253,7 +275,12 @@ export default function ReviewScreen() {
         schedule_type: draftBooking.schedule_type ?? ('now' as const),
         scheduled_at: draftBooking.scheduled_at,
         payment_method: paymentMethodType ?? 'cash',
-        payment_method_id: draftBooking.payment_method_id,
+        // Sentinel id used by the selector for cash-on-delivery — the
+        // server has no real PaymentMethod row for cash, so we omit it.
+        payment_method_id:
+          draftBooking.payment_method_id === '__cash__'
+            ? undefined
+            : draftBooking.payment_method_id,
         promo_code: draftBooking.promo_code,
       };
 

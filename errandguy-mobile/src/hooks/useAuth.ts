@@ -1,6 +1,7 @@
 import { useCallback } from 'react';
 import { useAuthStore } from '../stores/authStore';
 import { authService } from '../services/auth.service';
+import { preloadAfterAuth } from '../services/preload.service';
 
 export function useAuth() {
   const {
@@ -22,6 +23,7 @@ export function useAuth() {
       const { user: userData, token: authToken } = response.data;
       await setToken(authToken);
       setUser(userData);
+      await preloadAfterAuth(userData?.role ?? null, userData?.id);
       return userData;
     },
     [setToken, setUser],
@@ -46,6 +48,7 @@ export function useAuth() {
       const { user: userData, token: authToken } = response.data;
       await setToken(authToken);
       setUser(userData);
+      await preloadAfterAuth(userData?.role ?? null, userData?.id);
       return userData;
     },
     [setToken, setUser],
@@ -57,6 +60,7 @@ export function useAuth() {
       const { user: userData, token: authToken } = response.data;
       await setToken(authToken);
       setUser(userData);
+      await preloadAfterAuth(userData?.role ?? null, userData?.id);
       return userData;
     },
     [setToken, setUser],

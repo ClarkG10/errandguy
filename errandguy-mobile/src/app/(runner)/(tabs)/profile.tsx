@@ -6,8 +6,8 @@ import * as Haptics from 'expo-haptics';
 import { Avatar } from '../../../components/ui/Avatar';
 import { Card } from '../../../components/ui/Card';
 import { Button } from '../../../components/ui/Button';
-import { ConfirmModal } from '../../../components/ui/ConfirmModal';
 import { LogoutSplash } from '../../../components/ui/LogoutSplash';
+import { InlineLogoutLink } from '../../../components/auth/InlineLogoutLink';
 import { GradientHeader } from '../../../components/ui/GradientHeader';
 import { PerformanceMetric } from '../../../components/runner/PerformanceMetric';
 import { useRunnerStore } from '../../../stores/runnerStore';
@@ -33,7 +33,6 @@ export default function RunnerProfileScreen() {
   const { runnerProfile, setRunnerProfile } = useRunnerStore();
   const [refreshing, setRefreshing] = useState(false);
   const [showDeleteModal, setShowDeleteModal] = useState(false);
-  const [showLogoutModal, setShowLogoutModal] = useState(false);
   const [loggingOut, setLoggingOut] = useState(false);
   const [deleteConfirmText, setDeleteConfirmText] = useState('');
   const [deleting, setDeleting] = useState(false);
@@ -64,12 +63,7 @@ export default function RunnerProfileScreen() {
     setRefreshing(false);
   }, [refreshAll]);
 
-  const handleLogout = () => {
-    setShowLogoutModal(true);
-  };
-
-  const confirmLogout = async () => {
-    setShowLogoutModal(false);
+  const confirmLogout = useCallback(async () => {
     setLoggingOut(true);
     try {
       await logout();
@@ -77,7 +71,7 @@ export default function RunnerProfileScreen() {
       setLoggingOut(false);
       router.replace('/(auth)/welcome' as any);
     }
-  };
+  }, [logout, router]);
 
   const handleDeleteAccount = useCallback(async () => {
     if (deleteConfirmText !== 'DELETE') return;
@@ -229,14 +223,11 @@ export default function RunnerProfileScreen() {
           </View>
         </View>
 
-        {/* Logout — plain text link, no card */}
-        <View className="px-5">
-          <Pressable
-            onPress={handleLogout}
-            className="py-4 items-center border-y border-divider"
-          >
-            <Text className="text-[14px] font-montserrat-bold text-textSecondary">Log out</Text>
-          </Pressable>
+        {/* Logout — inline tap-to-confirm. Replaces the prior
+            bottom-sheet flow. Modern, non-disruptive, and the action
+            is reversible (re-login is one screen away). */}
+        <View className="px-5 pt-2 items-center">
+          <InlineLogoutLink onConfirm={confirmLogout} />
         </View>
 
         {/* Delete Account — simple link */}
@@ -254,7 +245,7 @@ export default function RunnerProfileScreen() {
       <Modal visible={showDeleteModal} transparent animationType="slide">
         <KeyboardAvoidingView
           style={{ flex: 1 }}
-          behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+          behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
         >
           <Pressable
             className="flex-1 bg-black/40 justify-end"
@@ -302,17 +293,6 @@ export default function RunnerProfileScreen() {
           </Pressable>
         </KeyboardAvoidingView>
       </Modal>
-
-      <ConfirmModal
-        visible={showLogoutModal}
-        title="Log out?"
-        message="You'll go offline immediately and stop receiving errand requests."
-        confirmLabel="Log out"
-        cancelLabel="Stay signed in"
-        destructive
-        onConfirm={confirmLogout}
-        onCancel={() => setShowLogoutModal(false)}
-      />
 
       <LogoutSplash visible={loggingOut} />
     </View>

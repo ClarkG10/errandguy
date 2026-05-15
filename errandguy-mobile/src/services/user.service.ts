@@ -1,4 +1,5 @@
 import api from './api';
+import type { AxiosRequestConfig } from 'axios';
 import { invalidateQuery } from '../hooks/useQuery';
 import type { SavedAddress, TrustedContact } from '../types';
 
@@ -7,10 +8,13 @@ const invalidateAddresses = () => invalidateQuery(['user', 'addresses']);
 const invalidateContacts = () => invalidateQuery(['user', 'contacts']);
 
 export const userService = {
-  getProfile() {
-    // Profile is read on every screen mount and rarely changes \u2014 cache for 30s.
+  getProfile(config?: AxiosRequestConfig) {
+    // Profile is read on every screen mount and rarely changes — cache for 30s.
     // Mutations below explicitly invalidate the persisted query cache.
-    return api.get('/user/profile', { cacheTtlMs: 30_000 } as any);
+    // Callers may pass an AbortSignal via `config.signal` (e.g. the
+    // session-validation effect on the root layout) to cancel pending
+    // requests on unmount.
+    return api.get('/user/profile', { cacheTtlMs: 30_000, ...(config ?? {}) } as any);
   },
 
   updateProfile(data: {
@@ -42,7 +46,7 @@ export const userService = {
   },
 
   getAddresses() {
-    return api.get('/user/addresses', { cacheTtlMs: 60_000 } as any);
+    return api.get('/user/addresses', { cacheTtlMs: 60_000, silent: true } as any);
   },
 
   addAddress(data: Omit<SavedAddress, 'id' | 'user_id'>) {
@@ -64,7 +68,7 @@ export const userService = {
   },
 
   getTrustedContacts() {
-    return api.get('/user/trusted-contacts', { cacheTtlMs: 60_000 } as any);
+    return api.get('/user/trusted-contacts', { cacheTtlMs: 60_000, silent: true } as any);
   },
 
   addTrustedContact(data: Omit<TrustedContact, 'id' | 'user_id' | 'created_at' | 'updated_at'>) {

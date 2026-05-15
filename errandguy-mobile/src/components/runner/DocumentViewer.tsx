@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { View, Text, Modal, Pressable, ActivityIndicator, Dimensions, StatusBar } from 'react-native';
+import { View, Text, Modal, Pressable, ActivityIndicator, useWindowDimensions, StatusBar } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Image } from 'expo-image';
 import { X } from 'lucide-react-native';
@@ -11,8 +11,6 @@ interface DocumentViewerProps {
   onClose: () => void;
 }
 
-const { width: SW, height: SH } = Dimensions.get('window');
-
 /**
  * Full-screen previewer for an uploaded document image.
  *
@@ -23,6 +21,9 @@ const { width: SW, height: SH } = Dimensions.get('window');
 export function DocumentViewer({ visible, uri, title, onClose }: DocumentViewerProps) {
   const [loading, setLoading] = useState(true);
   const insets = useSafeAreaInsets();
+  // Track the live window dimensions so an orientation change while
+  // the viewer is open re-flows the image to fill the new viewport.
+  const { width: SW, height: SH } = useWindowDimensions();
 
   return (
     <Modal

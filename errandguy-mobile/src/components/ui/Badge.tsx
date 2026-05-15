@@ -1,7 +1,28 @@
 import React from 'react';
 import { View, Text } from 'react-native';
 
-type BadgeVariant = 'primary' | 'danger' | 'neutral';
+/**
+ * Compact label / count pill.
+ *
+ * Variants:
+ *  - `primary`  — solid brand blue. Notification counts, active flags.
+ *  - `soft`     — washed-blue background, blue text. Default for
+ *                 non-counter labels (e.g. "NEW", "PRO", status chips).
+ *  - `success`  — green for confirmed / paid / verified states.
+ *  - `warning`  — amber for pending / verification needed.
+ *  - `danger`   — red for unread error / cancelled.
+ *  - `neutral`  — slate for inactive / informational.
+ *
+ * Two sizes: `sm` (default, fits in a row of text) and `md` (sits in
+ * a card header).
+ */
+type BadgeVariant =
+  | 'primary'
+  | 'soft'
+  | 'success'
+  | 'warning'
+  | 'danger'
+  | 'neutral';
 type BadgeSize = 'sm' | 'md';
 
 interface BadgeProps {
@@ -13,6 +34,9 @@ interface BadgeProps {
 
 const variantClasses: Record<BadgeVariant, { bg: string; text: string }> = {
   primary: { bg: 'bg-primary', text: 'text-white' },
+  soft: { bg: 'bg-primary50', text: 'text-primary700' },
+  success: { bg: 'bg-successSoft', text: 'text-success' },
+  warning: { bg: 'bg-warningSoft', text: 'text-warning' },
   danger: { bg: 'bg-danger', text: 'text-white' },
   neutral: { bg: 'bg-divider', text: 'text-textSecondary' },
 };
@@ -32,7 +56,7 @@ export function Badge({
   return (
     <View
       className={`${bg} rounded-full items-center justify-center ${
-        isSmall ? 'min-w-[18px] h-[18px] px-1' : 'min-w-[24px] h-[24px] px-2'
+        isSmall ? 'min-w-[18px] h-[18px] px-1.5' : 'min-w-[24px] h-[24px] px-2.5'
       }`}
     >
       <Text

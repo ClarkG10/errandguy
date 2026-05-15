@@ -12,7 +12,7 @@ const invalidateEarnings = () => invalidateQuery(['runner', 'earnings']);
 
 export const runnerService = {
   getRunnerProfile() {
-    return api.get('/runner/profile', { cacheTtlMs: 30_000 } as any);
+    return api.get('/runner/profile', { cacheTtlMs: 30_000, silent: true } as any);
   },
 
   updateRunnerProfile(data: {
@@ -207,11 +207,11 @@ export const runnerService = {
   },
 
   getEarnings(period?: 'today' | 'week' | 'month') {
-    return api.get('/runner/earnings', { params: { period }, cacheTtlMs: 15_000 } as any);
+    return api.get('/runner/earnings', { params: { period }, cacheTtlMs: 15_000, silent: true } as any);
   },
 
   getEarningsHistory(params?: { page?: number; per_page?: number; date_from?: string; date_to?: string }) {
-    return api.get('/runner/earnings/history', { params, cacheTtlMs: 10_000 } as any);
+    return api.get('/runner/earnings/history', { params, cacheTtlMs: 10_000, silent: true } as any);
   },
 
   getErrandHistory(params?: {

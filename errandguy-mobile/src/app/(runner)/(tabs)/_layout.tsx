@@ -4,10 +4,10 @@ import { Platform, StyleSheet } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRunnerStore } from '../../../stores/runnerStore';
 import { TabBarItem } from '../../../components/ui/TabBarItem';
+import { TAB_BAR_HEIGHT as BAR_HEIGHT } from '../../../constants/tabLayout';
 
 const ACTIVE = '#2563EB';
 const INACTIVE = '#94A3B8';
-const BAR_HEIGHT = 56;
 
 export default function RunnerTabsLayout() {
   const isOnline = useRunnerStore((s) => s.isOnline);
@@ -19,6 +19,12 @@ export default function RunnerTabsLayout() {
       screenOptions={{
         headerShown: false,
         animation: 'shift',
+        // See customer tab layout for rationale — freezes off-screen
+        // tabs (so the History list stops re-rendering while the
+        // runner is on Home receiving GPS pings) and lazy-mounts
+        // each tab the first time it's focused.
+        freezeOnBlur: true,
+        lazy: true,
         tabBarActiveTintColor: ACTIVE,
         tabBarInactiveTintColor: INACTIVE,
         tabBarShowLabel: false,
@@ -26,18 +32,19 @@ export default function RunnerTabsLayout() {
         tabBarStyle: {
           backgroundColor: '#FFFFFF',
           borderTopWidth: StyleSheet.hairlineWidth,
-          borderTopColor: '#E2E8F0',
+          borderTopColor: '#E6EBF2',
           height: BAR_HEIGHT + bottomInset,
-          paddingTop: 4,
-          paddingBottom: bottomInset,
+          paddingTop: 8,
+          paddingBottom: bottomInset + 1,
+          paddingHorizontal: 10,
           ...Platform.select({
             ios: {
-              shadowColor: '#0F172A',
-              shadowOffset: { width: 0, height: -1 },
-              shadowOpacity: 0.04,
-              shadowRadius: 4,
+              shadowColor: '#1D4ED8',
+              shadowOffset: { width: 0, height: -4 },
+              shadowOpacity: 0.06,
+              shadowRadius: 14,
             },
-            android: { elevation: 4 },
+            android: { elevation: 10 },
           }),
         },
         tabBarItemStyle: {

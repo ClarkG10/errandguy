@@ -3,7 +3,7 @@ import { View, Text, ScrollView, RefreshControl, Pressable } from 'react-native'
 import { useRouter } from 'expo-router';
 import { MapPin } from 'lucide-react-native';
 import { GradientHeader } from '../../../components/ui/GradientHeader';
-import Mapbox from '@rnmapbox/maps';
+import MapView, { Marker, Circle, PROVIDER_GOOGLE } from 'react-native-maps';
 import Slider from '@react-native-community/slider';
 import { Card } from '../../../components/ui/Card';
 import { Button } from '../../../components/ui/Button';
@@ -12,7 +12,7 @@ import { useRunnerStore } from '../../../stores/runnerStore';
 import { useLocationStore } from '../../../stores/locationStore';
 import { runnerService } from '../../../services/runner.service';
 import { toast } from '../../../stores/toastStore';
-import { MAP_STYLE_URL } from '../../../constants/map';
+
 
 export default function WorkingAreasScreen() {
   const router = useRouter();
@@ -63,24 +63,6 @@ export default function WorkingAreasScreen() {
 
   const radiusKm = (radius / 1000).toFixed(1);
 
-  // Generate circle polygon for the working area
-  const circleGeoJSON = useMemo(() => {
-    if (!lat || !lng) return null;
-    const steps = 64;
-    const km = radius / 1000;
-    const coords: [number, number][] = [];
-    for (let i = 0; i <= steps; i++) {
-      const angle = (i / steps) * 2 * Math.PI;
-      const dLat = (km / 111.32) * Math.cos(angle);
-      const dLng = (km / (111.32 * Math.cos((lat * Math.PI) / 180))) * Math.sin(angle);
-      coords.push([lng + dLng, lat + dLat]);
-    }
-    return {
-      type: 'Feature' as const,
-      properties: {},
-      geometry: { type: 'Polygon' as const, coordinates: [coords] },
-    };
-  }, [lat, lng, radius]);
 
   return (
     <View className="flex-1 bg-background">
@@ -95,48 +77,35 @@ export default function WorkingAreasScreen() {
         {/* Map with circle overlay */}
         <View className="mx-5 h-56 rounded-xl overflow-hidden mb-4">
           {lat && lng ? (
-            <Mapbox.MapView
+            <MapView
               style={{ flex: 1 }}
-              styleURL={MAP_STYLE_URL}
-              logoEnabled={false}
-              attributionEnabled={false}
-              compassEnabled={false}
-              scaleBarEnabled={false}
+              provider={PROVIDER_GOOGLE}
+              scrollEnabled={false}
+              zoomEnabled={false}
+              rotateEnabled={false}
+              initialRegion={{
+                latitude: lat,
+                longitude: lng,
+                latitudeDelta: Math.max(0.01, radius / 55000),
+                longitudeDelta: Math.max(0.01, radius / 55000),
+              }}
             >
-              <Mapbox.Camera
-                centerCoordinate={[lng, lat]}
-                zoomLevel={Math.max(7, 14 - Math.log2(radius / 1000))}
-                animationDuration={500}
-              />
-
               {/* Center marker */}
-              <Mapbox.PointAnnotation id="center" coordinate={[lng, lat]}>
+              <Marker coordinate={{ latitude: lat, longitude: lng }}>
                 <View className="w-8 h-8 rounded-full bg-primary items-center justify-center border-2 border-white shadow-md">
                   <MapPin size={14} color="#FFFFFF" />
                 </View>
-              </Mapbox.PointAnnotation>
+              </Marker>
 
               {/* Radius circle */}
-              {circleGeoJSON && (
-                <Mapbox.ShapeSource id="radiusCircle" shape={circleGeoJSON}>
-                  <Mapbox.FillLayer
-                    id="radiusFill"
-                    style={{
-                      fillColor: '#2563EB',
-                      fillOpacity: 0.12,
-                    }}
-                  />
-                  <Mapbox.LineLayer
-                    id="radiusOutline"
-                    style={{
-                      lineColor: '#2563EB',
-                      lineWidth: 2,
-                      lineDasharray: [2, 2],
-                    }}
-                  />
-                </Mapbox.ShapeSource>
-              )}
-            </Mapbox.MapView>
+              <Circle
+                center={{ latitude: lat, longitude: lng }}
+                radius={radius}
+                fillColor="rgba(37,99,235,0.12)"
+                strokeColor="#2563EB"
+                strokeWidth={2}
+              />
+            </MapView>
           ) : (
             <View className="flex-1 bg-gray-100 items-center justify-center">
               <MapPin size={32} color="#94A3B8" />

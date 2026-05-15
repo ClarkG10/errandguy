@@ -1,38 +1,66 @@
 import React, { useRef, useState, useCallback } from 'react';
-import { View, Text, FlatList, TouchableOpacity, useWindowDimensions, StyleSheet } from 'react-native';
+import {
+  View,
+  Text,
+  FlatList,
+  Pressable,
+  useWindowDimensions,
+  StyleSheet,
+  Platform,
+} from 'react-native';
 import { useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { LinearGradient } from 'expo-linear-gradient';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as Haptics from 'expo-haptics';
 import { OnboardingSlide } from '../../components/auth/OnboardingSlide';
-import { DotIndicator } from '../../components/auth/DotIndicator';
 import { Button } from '../../components/ui/Button';
 
-const MASCOT = require('../../../assets/mascot.png');
+const ONBOARDING_1 = require('../../../assets/ONBOARDING-1.png');
+const ONBOARDING_2 = require('../../../assets/ONBOARDING-2.png');
+const ONBOARDING_3 = require('../../../assets/ONBOARDING-3.png');
 
+/**
+ * Welcome — iOS-styled onboarding carousel.
+ *
+ * The hero is a soft brand-blue gradient that bleeds behind the
+ * status bar. Slides paginate horizontally; the active slide is
+ * communicated with a row of capsule indicators (HIG page control).
+ *
+ * Business contracts preserved verbatim:
+ *   - AsyncStorage key `@onboarding_seen`
+ *   - Routes: `/(auth)/permissions`, `/(auth)/login`
+ *   - 3-slide content
+ *   - Light selection haptic on skip and next
+ */
 const slides = [
   {
     id: '1',
-    title: 'Book Any Errand',
+    eyebrow: 'WHAT IT DOES',
+    title: 'Book any errand',
     description:
-      'From deliveries to rides, get things done with a tap. Post any errand and let a trusted runner handle it.',
-    image: MASCOT,
+      'From deliveries to rides, get things done with a tap. Post any errand and a verified runner takes it from there.',
+    image: ONBOARDING_1,
   },
   {
     id: '2',
-    title: 'Real-Time Tracking',
+    eyebrow: 'HOW IT WORKS',
+    title: 'Real-time tracking',
     description:
-      'Know exactly where your runner is. Track every step of your errand on a live map in real time.',
-    image: MASCOT,
+      'Know exactly where your runner is. Every step appears on a live map until your errand is complete.',
+    image: ONBOARDING_2,
   },
   {
     id: '3',
-    title: 'Safe & Secure',
+    eyebrow: 'WHY YOU CAN TRUST IT',
+    title: 'Safe & secure',
     description:
-      'All runners are verified. Enjoy cashless payments, SOS alerts, and trip sharing with trusted contacts.',
-    image: MASCOT,
+      'All runners are verified. Cashless payments, SOS alerts and trip sharing keep every errand accountable.',
+    image: ONBOARDING_3,
   },
 ];
+
+const HERO_GRADIENT = ['#EFF6FF', '#FFFFFF'] as const;
 
 export default function WelcomeScreen() {
   const router = useRouter();
@@ -41,13 +69,13 @@ export default function WelcomeScreen() {
   const [activeIndex, setActiveIndex] = useState(0);
 
   const handleSkip = useCallback(async () => {
-    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    Haptics.selectionAsync().catch(() => {});
     await AsyncStorage.setItem('@onboarding_seen', 'true');
     router.push('/(auth)/permissions');
   }, [router]);
 
   const handleNext = useCallback(async () => {
-    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    Haptics.selectionAsync().catch(() => {});
     if (activeIndex === slides.length - 1) {
       await AsyncStorage.setItem('@onboarding_seen', 'true');
       router.push('/(auth)/permissions');
@@ -64,78 +92,178 @@ export default function WelcomeScreen() {
     },
   ).current;
 
-  const viewabilityConfig = useRef({ viewAreaCoveragePercentThreshold: 50 }).current;
+  const viewabilityConfig = useRef({
+    viewAreaCoveragePercentThreshold: 50,
+  }).current;
+
+  const isLast = activeIndex === slides.length - 1;
 
   return (
-    <SafeAreaView className="flex-1 bg-surface">
-      <View className="flex-row justify-end px-4 pt-2">
-        <TouchableOpacity
-          cssInterop={false}
-          style={ws.skipBtn}
-          activeOpacity={0.6}
-          onPress={handleSkip}
-          accessibilityLabel="Skip onboarding"
-          accessibilityRole="button"
-        >
-          <Text cssInterop={false} style={ws.skipText}>Skip</Text>
-        </TouchableOpacity>
-      </View>
-
-      <FlatList
-        ref={flatListRef}
-        data={slides}
-        horizontal
-        pagingEnabled
-        showsHorizontalScrollIndicator={false}
-        keyExtractor={(item) => item.id}
-        renderItem={({ item }) => (
-          <OnboardingSlide
-            image={item.image}
-            title={item.title}
-            description={item.description}
-          />
-        )}
-        onViewableItemsChanged={onViewableItemsChanged}
-        viewabilityConfig={viewabilityConfig}
-        getItemLayout={(_, index) => ({
-          length: width,
-          offset: width * index,
-          index,
-        })}
+    <View style={styles.root}>
+      <LinearGradient
+        colors={HERO_GRADIENT}
+        style={StyleSheet.absoluteFill}
+        start={{ x: 0.5, y: 0 }}
+        end={{ x: 0.5, y: 1 }}
       />
+      <SafeAreaView edges={['top']} style={{ flex: 1 }}>
+        <View style={styles.topBar}>
+          <View style={{ width: 56 }} />
+          <Pressable
+            onPress={handleSkip}
+            hitSlop={12}
+            accessibilityLabel="Skip onboarding"
+            accessibilityRole="button"
+            style={({ pressed }) => [
+              styles.skipBtn,
+              pressed ? { opacity: 0.55 } : null,
+            ]}
+          >
+            <Text style={styles.skipText}>Skip</Text>
+          </Pressable>
+        </View>
 
-      <View className="px-6 pb-6">
-        <DotIndicator total={slides.length} active={activeIndex} />
-        <View className="mt-6">
+        <FlatList
+          ref={flatListRef}
+          data={slides}
+          horizontal
+          pagingEnabled
+          showsHorizontalScrollIndicator={false}
+          keyExtractor={(item) => item.id}
+          renderItem={({ item }) => (
+            <OnboardingSlide
+              illustration={item.illustration}
+              image={item.image}
+              title={item.title}
+              description={item.description}
+            />
+          )}
+          onViewableItemsChanged={onViewableItemsChanged}
+          viewabilityConfig={viewabilityConfig}
+          getItemLayout={(_, index) => ({
+            length: width,
+            offset: width * index,
+            index,
+          })}
+        />
+
+        <View style={styles.footer}>
+          <View style={styles.pageIndicator}>
+            {slides.map((slide, i) => (
+              <View
+                key={slide.id}
+                style={[
+                  styles.pageDot,
+                  i === activeIndex ? styles.pageDotActive : null,
+                ]}
+              />
+            ))}
+          </View>
+
           <Button
-            title={activeIndex === slides.length - 1 ? 'Get Started' : 'Next'}
+            title={isLast ? 'Get Started' : 'Continue'}
             fullWidth
             size="lg"
             onPress={handleNext}
           />
+
+          <View style={styles.loginRow}>
+            <Pressable
+              onPress={() => router.push('/(auth)/login')}
+              hitSlop={12}
+              accessibilityLabel="Log in to existing account"
+              accessibilityRole="button"
+              style={({ pressed }) => [
+                styles.loginPressable,
+                pressed ? { opacity: 0.55 } : null,
+              ]}
+            >
+              <Text style={styles.loginText}>
+                Already have an account?{' '}
+                <Text style={styles.loginLink}>Log in</Text>
+              </Text>
+            </Pressable>
+          </View>
         </View>
-        <TouchableOpacity
-          cssInterop={false}
-          style={ws.loginLink}
-          activeOpacity={0.6}
-          onPress={() => router.push('/(auth)/login')}
-          accessibilityLabel="Log in to existing account"
-          accessibilityRole="button"
-        >
-          <Text cssInterop={false} style={ws.loginText}>
-            Have an account?{' '}
-            <Text cssInterop={false} style={ws.loginBold}>Login</Text>
-          </Text>
-        </TouchableOpacity>
-      </View>
-    </SafeAreaView>
+      </SafeAreaView>
+    </View>
   );
 }
 
-const ws = StyleSheet.create({
-  skipBtn: { padding: 8 },
-  skipText: { fontSize: 14, fontFamily: 'Quicksand_500Medium', color: '#2563EB' },
-  loginLink: { marginTop: 16, alignItems: 'center', padding: 8 },
-  loginText: { fontSize: 14, fontFamily: 'Quicksand_400Regular', color: '#94A3B8' },
-  loginBold: { color: '#0F172A', fontFamily: 'Quicksand_600SemiBold' },
+const FONT_BODY =
+  Platform.OS === 'ios' ? 'System' : 'Quicksand_400Regular';
+const FONT_SEMI =
+  Platform.OS === 'ios' ? 'System' : 'Quicksand_600SemiBold';
+
+const styles = StyleSheet.create({
+  root: { flex: 1, backgroundColor: '#FFFFFF' },
+  topBar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 16,
+    height: 44,
+  },
+  skipBtn: {
+    minWidth: 56,
+    height: 44,
+    paddingHorizontal: 8,
+    alignItems: 'flex-end',
+    justifyContent: 'center',
+  },
+  skipText: {
+    color: '#2563EB',
+    fontSize: 17,
+    fontFamily: FONT_BODY,
+    fontWeight: '500',
+    letterSpacing: -0.2,
+  },
+  footer: {
+    paddingHorizontal: 24,
+    paddingTop: 8,
+    paddingBottom: 16,
+    alignItems: 'stretch',
+  },
+  pageIndicator: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    marginBottom: 28,
+  },
+  pageDot: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+    backgroundColor: '#CBD5E1',
+  },
+  pageDotActive: {
+    width: 22,
+    backgroundColor: '#2563EB',
+  },
+  loginRow: {
+    width: '100%',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginTop: 18,
+  },
+  loginPressable: {
+    paddingVertical: 6,
+    paddingHorizontal: 8,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  loginText: {
+    fontFamily: FONT_BODY,
+    fontWeight: '400',
+    fontSize: 15,
+    color: '#64748B',
+    letterSpacing: -0.1,
+    textAlign: 'center',
+  },
+  loginLink: {
+    fontFamily: FONT_SEMI,
+    fontWeight: '600',
+    color: '#2563EB',
+  },
 });

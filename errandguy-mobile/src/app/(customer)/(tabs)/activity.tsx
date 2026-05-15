@@ -22,6 +22,7 @@ import { BookingDetailSheet } from '../../../components/customer/BookingDetailSh
 import { ActivitySkeleton } from '../../../components/ui/Skeleton';
 import type { Booking, BookingStatus } from '../../../types';
 import { toast } from '../../../stores/toastStore';
+import { TAB_CONTENT_BOTTOM_INSET } from '../../../constants/tabLayout';
 
 type FilterKey = 'all' | 'active' | 'completed' | 'cancelled';
 
@@ -32,12 +33,44 @@ const FILTERS: { key: FilterKey; label: string }[] = [
   { key: 'cancelled', label: 'Cancelled' },
 ];
 
-const FILTER_STATUS_MAP: Record<FilterKey, string | undefined> = {
-  all: undefined,
-  active: 'active',
-  completed: 'completed',
-  cancelled: 'cancelled',
-};
+// Filter buckets are applied client-side against the actual booking
+// status enum. The server doesn't ship aggregate filter keywords like
+// 'active' / 'cancelled' — passing them as `?status=active` returned
+// an empty list, which is why the previous Active/Cancelled tabs
+// always looked broken. Fetch the full list and filter locally.
+const ACTIVE_STATUSES = new Set<string>([
+  'pending',
+  'matched',
+  'accepted',
+  'en_route_pickup',
+  'arrived_pickup',
+  'picked_up',
+  'en_route_dropoff',
+  'arrived_dropoff',
+  'in_progress',
+  'negotiating',
+]);
+const COMPLETED_STATUSES = new Set<string>(['completed', 'delivered']);
+const CANCELLED_STATUSES = new Set<string>([
+  'cancelled',
+  'rejected',
+  'expired',
+  'no_runner',
+  'failed',
+]);
+
+function matchesFilter(status: string, filter: FilterKey): boolean {
+  switch (filter) {
+    case 'active':
+      return ACTIVE_STATUSES.has(status);
+    case 'completed':
+      return COMPLETED_STATUSES.has(status);
+    case 'cancelled':
+      return CANCELLED_STATUSES.has(status);
+    default:
+      return true;
+  }
+}
 
 export default function ActivityScreen() {
   const router = useRouter();
@@ -50,11 +83,15 @@ export default function ActivityScreen() {
   // staleTime is generous (2 min) because mutations (create/cancel/review)
   // call invalidateQuery(['bookings']) which forces an immediate refresh.
   // Without that signal, the list rarely needs to revalidate on focus.
+  // Single shared cache key — the same fetched list serves every tab,
+  // and switching filters becomes an instant client-side filter (no
+  // network roundtrip, no skeleton flash). This key matches the one
+  // seeded by `preloadAfterAuth` so the screen paints with real data
+  // on first navigation post-login.
   const page1Q = useQuery<Booking[]>(
-    ['bookings', 'activity', filter, userId],
+    ['bookings', 'activity', 'all', userId],
     async () => {
       const res = await bookingService.getBookings({
-        status: FILTER_STATUS_MAP[filter],
         page: 1,
         per_page: 15,
       });
@@ -81,8 +118,11 @@ export default function ActivityScreen() {
   }, [page1Q.data]);
 
   const bookings = useMemo(
-    () => [...(page1Q.data ?? []), ...extraPages],
-    [page1Q.data, extraPages],
+    () =>
+      [...(page1Q.data ?? []), ...extraPages].filter((b) =>
+        matchesFilter(b.status, filter),
+      ),
+    [page1Q.data, extraPages, filter],
   );
   const loading = page1Q.loading && !page1Q.data;
 
@@ -147,7 +187,6 @@ export default function ActivityScreen() {
     const nextPage = page + 1;
     try {
       const res = await bookingService.getBookings({
-        status: FILTER_STATUS_MAP[filter],
         page: nextPage,
         per_page: 15,
       });
@@ -267,7 +306,7 @@ export default function ActivityScreen() {
             />
           ) : null
         }
-        contentContainerStyle={{ paddingBottom: 24 }}
+        contentContainerStyle={{ paddingBottom: TAB_CONTENT_BOTTOM_INSET }}
       />
 
       {/* Booking Detail Sheet */}

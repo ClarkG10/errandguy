@@ -10,7 +10,7 @@ const invalidatePaymentMethods = () => {
 
 export const paymentService = {
   getPaymentMethods() {
-    return api.get('/payments/methods', { cacheTtlMs: 30_000 } as any);
+    return api.get('/payments/methods', { cacheTtlMs: 30_000, silent: true } as any);
   },
 
   addPaymentMethod(data: {
@@ -36,7 +36,7 @@ export const paymentService = {
   },
 
   getWalletBalance() {
-    return api.get('/wallet/balance', { cacheTtlMs: 15_000 } as any);
+    return api.get('/wallet/balance', { cacheTtlMs: 15_000, silent: true } as any);
   },
 
   topUpWallet(data: { amount: number; payment_method_id: string }) {
@@ -46,7 +46,7 @@ export const paymentService = {
   },
 
   getWalletTransactions(params?: { page?: number; per_page?: number }) {
-    return api.get('/wallet/transactions', { params, cacheTtlMs: 15_000 } as any);
+    return api.get('/wallet/transactions', { params, cacheTtlMs: 15_000, silent: true } as any);
   },
 
   getPaymentHistory(params?: { page?: number; per_page?: number }) {

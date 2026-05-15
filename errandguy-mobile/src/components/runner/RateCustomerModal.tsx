@@ -6,7 +6,6 @@ import {
   Pressable,
   Modal,
   KeyboardAvoidingView,
-  Platform,
   ScrollView,
   Keyboard,
   TouchableWithoutFeedback,
@@ -38,7 +37,7 @@ export function RateCustomerModal({
     <Modal visible transparent animationType="fade" onRequestClose={onSkip} statusBarTranslucent>
       <KeyboardAvoidingView
         style={{ flex: 1 }}
-        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+        behavior="padding"
       >
         <TouchableWithoutFeedback onPress={Keyboard.dismiss} accessible={false}>
           <View className="flex-1 bg-black/60 justify-center items-center px-6">

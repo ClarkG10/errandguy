@@ -1,5 +1,5 @@
 import React, { useState, useCallback, useRef, useEffect, useMemo } from 'react';
-import { View, Text, ScrollView, TextInput, RefreshControl, Pressable, Linking, KeyboardAvoidingView, Platform, Dimensions, Animated, PanResponder } from 'react-native';
+import { View, Text, ScrollView, TextInput, RefreshControl, Pressable, Linking, KeyboardAvoidingView, Platform, useWindowDimensions, Animated, PanResponder } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import {
@@ -565,7 +565,7 @@ export default function ActiveErrandScreen() {
   // so the runner can drag it up to read details or down to peek the
   // map. Snap targets keep gestures predictable; intermediate heights
   // are interpolated continuously while the finger is down.
-  const WIN_H = Dimensions.get('window').height;
+  const WIN_H = useWindowDimensions().height;
   const SNAP_COLLAPSED = 220;                       // header + sticky CTA
   const SNAP_MID = Math.round(WIN_H * 0.55);        // default
   const SNAP_EXPANDED = Math.round(WIN_H * 0.88);   // near full-screen
@@ -737,7 +737,12 @@ export default function ActiveErrandScreen() {
         {/* ── Draggable bottom sheet (absolute overlay) ────────── */}
         <KeyboardAvoidingView
           behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-          keyboardVerticalOffset={0}
+          // Floating-header errand sheet: a non-zero offset on iOS
+          // keeps the receipt amount / proof note / chat composer
+          // visible above the keyboard. Bumped to 140 to match the
+          // customer details flow — 90 wasn't enough on phones with a
+          // taller keyboard suggestion bar.
+          keyboardVerticalOffset={Platform.OS === 'ios' ? 140 : 0}
           style={{ position: 'absolute', left: 0, right: 0, bottom: 0 }}
         >
           <Animated.View

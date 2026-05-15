@@ -8,11 +8,12 @@ import {
   RefreshControl,
   ActivityIndicator,
 } from 'react-native';
-import { Search, MapPin, Navigation, CheckCircle, XCircle, MessageCircle } from 'lucide-react-native';
+import { Search, MapPin, Navigation, CheckCircle, XCircle, MessageCircle, ClipboardList } from 'lucide-react-native';
 import { useRouter } from 'expo-router';
 import { Card } from '../../../components/ui/Card';
 import { Badge } from '../../../components/ui/Badge';
 import { GradientHeader } from '../../../components/ui/GradientHeader';
+import { RunnerEmptyState } from '../../../components/ui/RunnerEmptyState';
 import { runnerService } from '../../../services/runner.service';
 import { useQuery } from '../../../hooks/useQuery';
 import { CacheTTL } from '../../../services/cache.service';
@@ -235,11 +236,12 @@ export default function HistoryScreen() {
         windowSize={5}
         removeClippedSubviews={true}
         ListEmptyComponent={
-          <View className="items-center py-20">
-            <Text className="text-sm font-montserrat text-textSecondary">
-              No errands found.
-            </Text>
-          </View>
+          <RunnerEmptyState
+            icon={ClipboardList}
+            eyebrow="No history yet"
+            title="No completed errands"
+            description="Once you finish a job it'll show up here with its payout."
+          />
         }
         ListFooterComponent={
           loadingMore ? (

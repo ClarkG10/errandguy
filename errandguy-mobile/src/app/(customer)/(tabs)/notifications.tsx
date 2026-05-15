@@ -8,16 +8,7 @@ import {
   ActivityIndicator,
 } from 'react-native';
 import { useRouter } from 'expo-router';
-import {
-  Bell,
-  Package,
-  CreditCard,
-  Tag,
-  MessageCircle,
-  AlertTriangle,
-  Info,
-} from 'lucide-react-native';
-import type { LucideIcon } from 'lucide-react-native';
+import { Bell } from 'lucide-react-native';
 import { GradientHeader } from '../../../components/ui/GradientHeader';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useNotificationStore } from '../../../stores/notificationStore';
@@ -28,27 +19,30 @@ import { CacheTTL } from '../../../services/cache.service';
 import { EmptyState } from '../../../components/ui/EmptyState';
 import { formatRelativeTime } from '../../../utils/formatDate';
 import type { AppNotification, NotificationType } from '../../../types';
-
-const TYPE_ICONS: Record<NotificationType, LucideIcon> = {
-  booking_update: Package,
-  payment: CreditCard,
-  promo: Tag,
-  chat: MessageCircle,
-  sos: AlertTriangle,
-  system: Info,
-  document_update: Info,
-};
+import { TAB_CONTENT_BOTTOM_INSET } from '../../../constants/tabLayout';
 
 const TYPE_COLORS: Record<NotificationType, string> = {
   booking_update: '#2563EB',
   payment: '#22C55E',
   promo: '#F59E0B',
-  // Aligned with brand primary so the chat icon matches the rest of the
-  // app instead of being a one-off lighter blue (#3B82F6).
+  // Aligned with brand primary so the chat row matches the rest of
+  // the app instead of being a one-off lighter blue (#3B82F6).
   chat: '#2563EB',
   sos: '#EF4444',
   system: '#94A3B8',
   document_update: '#8B5CF6',
+};
+
+// Short, capitalised label per type — reads as a tiny eyebrow on each
+// row, replacing the icon column the user asked us to remove.
+const TYPE_LABELS: Record<NotificationType, string> = {
+  booking_update: 'Booking',
+  payment: 'Payment',
+  promo: 'Promo',
+  chat: 'Message',
+  sos: 'Safety',
+  system: 'System',
+  document_update: 'Document',
 };
 
 export default function NotificationsScreen() {
@@ -191,55 +185,66 @@ export default function NotificationsScreen() {
 
   const renderNotification = useCallback(
     ({ item }: { item: AppNotification }) => {
-      const Icon = TYPE_ICONS[item.type] ?? Info;
       const color = TYPE_COLORS[item.type] ?? '#94A3B8';
+      const label = TYPE_LABELS[item.type] ?? 'Update';
 
       return (
         <Pressable
-          className="px-5 py-3.5 border-b border-divider"
-          // Unread row tint — was #F8FAFC which is identical to the
-          // background, so unread items had ZERO visual differentiation.
-          // Now uses a soft brand-tinted wash so the eye lands on what
-          // needs attention without the row reading as a colored chip.
+          className="flex-row border-b border-divider"
+          // Unread row tint — a soft brand-tinted wash so the eye lands
+          // on what needs attention without the row reading as a chip.
           style={!item.is_read ? { backgroundColor: '#EFF6FF' } : undefined}
           onPress={() => handleNotificationPress(item)}
           accessibilityRole="button"
-          accessibilityLabel={item.title}
+          accessibilityLabel={`${label}: ${item.title}`}
         >
-          <View className="flex-row">
-            {/* Stroke-only typographic icon — NOT a colored chip. The
-                unread accent rides on the right side as a dot, keeping
-                the row’s left edge aligned with section headers. */}
-            <View className="w-5 pt-0.5 items-center mr-3">
-              <Icon size={16} color={color} strokeWidth={1.8} />
-            </View>
-
-            <View className="flex-1">
-              <View className="flex-row items-start justify-between mb-0.5">
-                <Text
-                  className={`text-[14px] ${
-                    !item.is_read
-                      ? 'font-montserrat-bold text-textPrimary'
-                      : 'font-montserrat-semi text-textSecondary'
-                  } flex-1 mr-2`}
-                  numberOfLines={1}
-                >
-                  {item.title}
-                </Text>
-                {!item.is_read && (
-                  <View className="w-1.5 h-1.5 rounded-full bg-primary mt-1.5" />
-                )}
-              </View>
+          {/* Type-coloured left bar replaces the previous icon chip.
+              Reads as a deliberate visual category mark; takes zero
+              horizontal space away from the message itself. */}
+          <View
+            style={{
+              width: 3,
+              backgroundColor: !item.is_read ? color : 'transparent',
+            }}
+          />
+          <View className="flex-1 px-5 py-3.5">
+            <View className="flex-row items-center mb-1">
               <Text
-                className="text-[12px] font-montserrat text-textSecondary leading-[16px]"
-                numberOfLines={2}
+                className="text-[10px] font-montserrat-bold uppercase"
+                style={{ color, letterSpacing: 1.2 }}
+                numberOfLines={1}
               >
-                {item.body}
+                {label}
               </Text>
-              <Text className="text-[10px] font-montserrat text-textMuted mt-1.5">
-                {formatRelativeTime(item.created_at)}
+              <Text
+                className="text-[10px] font-montserrat text-textTertiary ml-2"
+                numberOfLines={1}
+              >
+                · {formatRelativeTime(item.created_at)}
               </Text>
+              {!item.is_read && (
+                <View
+                  className="ml-auto w-1.5 h-1.5 rounded-full"
+                  style={{ backgroundColor: color }}
+                />
+              )}
             </View>
+            <Text
+              className={`text-[14px] mb-0.5 ${
+                !item.is_read
+                  ? 'font-montserrat-bold text-textPrimary'
+                  : 'font-montserrat-semi text-textSecondary'
+              }`}
+              numberOfLines={1}
+            >
+              {item.title}
+            </Text>
+            <Text
+              className="text-[12px] font-montserrat text-textSecondary leading-[16px]"
+              numberOfLines={2}
+            >
+              {item.body}
+            </Text>
           </View>
         </Pressable>
       );
@@ -321,7 +326,7 @@ export default function NotificationsScreen() {
         maxToRenderPerBatch={10}
         windowSize={5}
         removeClippedSubviews={true}
-        contentContainerStyle={{ paddingTop: 4, paddingBottom: 24 }}
+        contentContainerStyle={{ paddingTop: 4, paddingBottom: TAB_CONTENT_BOTTOM_INSET }}
         onEndReached={handleLoadMore}
         onEndReachedThreshold={0.4}
         ListFooterComponent={

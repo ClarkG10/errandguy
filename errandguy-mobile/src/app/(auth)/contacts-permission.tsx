@@ -1,9 +1,11 @@
 import React, { useState, useEffect } from 'react';
-import { View, Text, StyleSheet } from 'react-native';
+import { View, Text, StyleSheet, Pressable, Image } from 'react-native';
 import { useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { Users, CheckCircle } from 'lucide-react-native';
+import { CheckCircle } from 'lucide-react-native';
 import { Button } from '../../components/ui/Button';
+
+const CONTACT_PERMISSION = require('../../../assets/contact-permission.png');
 
 // expo-contacts requires a native build and is not available in Expo Go.
 let Contacts: typeof import('expo-contacts') | null = null;
@@ -44,11 +46,7 @@ export default function ContactsPermissionScreen() {
   return (
     <SafeAreaView className="flex-1 bg-surface" style={s.container}>
       <View style={s.content}>
-        <View style={s.illustration}>
-          <View style={s.iconCircle}>
-            <Users size={36} color="#2563EB" />
-          </View>
-        </View>
+        <Image source={CONTACT_PERMISSION} style={s.illustration} resizeMode="contain" />
 
         <Text className="text-[26px] font-montserrat-semi text-textPrimary text-center" style={s.title}>
           Access your contacts
@@ -56,40 +54,30 @@ export default function ContactsPermissionScreen() {
         <Text className="text-[15px] font-montserrat text-textTertiary text-center" style={s.subtitle}>
           Quickly add recipients and trusted contacts from your phone when booking errands.
         </Text>
+
+        {granted && (
+          <View style={s.grantedInline}>
+            <CheckCircle size={16} color="#22C55E" />
+            <Text className="text-[13px] font-montserrat-semi text-success ml-1.5">
+              Contacts access enabled
+            </Text>
+          </View>
+        )}
       </View>
 
       <View style={s.footer}>
-        {granted ? (
-          <>
-            <View style={s.grantedBadge}>
-              <CheckCircle size={20} color="#22C55E" style={{ marginRight: 6 }} />
-              <Text className="text-[14px] font-montserrat-semi text-success">
-                Contacts access enabled
-              </Text>
-            </View>
-            <Button
-              title="Continue"
-              fullWidth
-              size="lg"
-              onPress={() => router.push('/(auth)/login')}
-            />
-          </>
-        ) : (
-          <>
-            <Button
-              title="Allow Contacts"
-              fullWidth
-              size="lg"
-              onPress={handleAllow}
-            />
-            <Text
-              className="text-[14px] font-montserrat text-textTertiary text-center"
-              style={s.skipText}
-              onPress={handleSkip}
-            >
+        <Button
+          title={granted ? 'Continue' : 'Allow Contacts'}
+          fullWidth
+          size="lg"
+          onPress={granted ? () => router.push('/(auth)/login') : handleAllow}
+        />
+        {!granted && (
+          <Pressable onPress={handleSkip} hitSlop={8} style={s.skipBtn}>
+            <Text className="text-[14px] font-montserrat text-textTertiary text-center">
               Not now
             </Text>
-          </>
+          </Pressable>
         )}
       </View>
     </SafeAreaView>
@@ -97,44 +85,20 @@ export default function ContactsPermissionScreen() {
 }
 
 const s = StyleSheet.create({
-  container: {
-    paddingHorizontal: 32,
-  },
-  content: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  illustration: {
-    marginBottom: 32,
-  },
-  iconCircle: {
-    width: 80,
-    height: 80,
-    borderRadius: 40,
-    backgroundColor: '#EFF6FF',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  title: {
-    marginBottom: 12,
-    lineHeight: 32,
-  },
-  subtitle: {
-    lineHeight: 22,
-    paddingHorizontal: 8,
-  },
-  footer: {
-    paddingBottom: 32,
-    gap: 16,
-  },
-  grantedBadge: {
+  container: { paddingHorizontal: 28 },
+  content: { flex: 1, justifyContent: 'center', alignItems: 'center' },
+  illustration: { width: 260, height: 260, marginBottom: 12 },
+  title: { marginBottom: 12, lineHeight: 32 },
+  subtitle: { lineHeight: 22, paddingHorizontal: 8 },
+  grantedInline: {
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'center',
-    paddingVertical: 12,
-  },
-  skipText: {
+    marginTop: 18,
+    paddingHorizontal: 12,
     paddingVertical: 8,
+    borderRadius: 999,
+    backgroundColor: '#ECFDF5',
   },
+  footer: { paddingBottom: 28, gap: 4 },
+  skipBtn: { paddingVertical: 12 },
 });

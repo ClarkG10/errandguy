@@ -96,24 +96,39 @@ export function useQuery<T>(
   fetcherRef.current = fetcher;
   // Track the in-flight revalidation so concurrent triggers share it.
   const inflightRef = useRef<Promise<void> | null>(null);
+  // Guards every async setState. Flips to false on unmount so a slow
+  // network response can't cause a `setState on unmounted component`
+  // warning (and the wasted re-render that comes with it). This is
+  // the cheaper alternative to spinning up a real AbortController on
+  // every single query — we still let the in-flight axios call
+  // finish so the response gets cached for the next mount.
+  const mountedRef = useRef(true);
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+    };
+  }, []);
 
   const revalidate = useCallback(async () => {
     if (inflightRef.current) return inflightRef.current;
     const promise = (async () => {
       try {
         const fresh = await fetcherRef.current();
-        setData(fresh);
-        setIsStale(false);
-        setError(null);
+        if (mountedRef.current) {
+          setData(fresh);
+          setIsStale(false);
+          setError(null);
+        }
         await CacheService.set<CachedEntry<T>>(
           cacheKey,
           { value: fresh, fetchedAt: Date.now() },
           ttl,
         );
       } catch (err) {
-        setError(err as Error);
+        if (mountedRef.current) setError(err as Error);
       } finally {
-        setLoading(false);
+        if (mountedRef.current) setLoading(false);
         inflightRef.current = null;
       }
     })();
@@ -129,7 +144,7 @@ export function useQuery<T>(
     let cancelled = false;
     (async () => {
       const cached = await CacheService.get<CachedEntry<T>>(cacheKey);
-      if (cancelled) return;
+      if (cancelled || !mountedRef.current) return;
       if (cached && cached.value !== undefined) {
         setData(cached.value);
         setLoading(false);

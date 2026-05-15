@@ -3,7 +3,7 @@ import { View, Text, ScrollView, Pressable, RefreshControl, TextInput, Keyboard,
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import { ChevronLeft, Plus, MapPin, Trash2, Pencil, Home, Briefcase, Star, X, Search } from 'lucide-react-native';
-import Mapbox from '@rnmapbox/maps';
+import MapView, { PROVIDER_GOOGLE } from 'react-native-maps';
 import { Button } from '../../../components/ui/Button';
 import { ConfirmModal } from '../../../components/ui/ConfirmModal';
 import { GradientHeader } from '../../../components/ui/GradientHeader';
@@ -14,9 +14,10 @@ import { useAuthStore } from '../../../stores/authStore';
 import { CacheTTL } from '../../../services/cache.service';
 import { userService } from '../../../services/user.service';
 import { geocodingService } from '../../../services/geocoding.service';
-import { MAP_STYLE_URL } from '../../../constants/map';
+
 import type { SavedAddress } from '../../../types';
 import { toast } from '../../../stores/toastStore';
+import { LocationIllustration } from '../../../components/auth/OnboardingIllustrations';
 
 type AddressLabel = 'home' | 'work' | 'other';
 
@@ -73,7 +74,7 @@ export default function AddressesScreen() {
   const [searchQuery, setSearchQuery] = useState('');
   const [searchResults, setSearchResults] = useState<Array<{ place_name: string; center: [number, number] }>>([]);
   const debouncedSearch = useDebounce(searchQuery, 400);
-  const cameraRef = useRef<Mapbox.Camera>(null);
+  const mapRef = useRef<MapView>(null);
   const geocodeTimeout = useRef<ReturnType<typeof setTimeout>>(undefined);
 
   const fetchAddresses = useCallback(async () => {
@@ -132,21 +133,15 @@ export default function AddressesScreen() {
     setNewAddress(item.place_name);
     setNewLng(item.center[0]);
     setNewLat(item.center[1]);
-    cameraRef.current?.setCamera({
-      centerCoordinate: item.center,
-      zoomLevel: 16,
-      animationDuration: 800,
-    });
+    mapRef.current?.animateToRegion({ latitude: item.center[1], longitude: item.center[0], latitudeDelta: 0.008, longitudeDelta: 0.008 }, 800);
   }, []);
 
-  const handleMapRegionDidChange = useCallback((feature: any) => {
-    const center = feature?.geometry?.coordinates as [number, number] | undefined;
-    if (!center) return;
+  const handleMapRegionDidChange = useCallback((region: { latitude: number; longitude: number }) => {
     if (geocodeTimeout.current) clearTimeout(geocodeTimeout.current);
     geocodeTimeout.current = setTimeout(async () => {
-      setNewLng(center[0]);
-      setNewLat(center[1]);
-      const addr = await reverseGeocode(center[0], center[1]);
+      setNewLng(region.longitude);
+      setNewLat(region.latitude);
+      const addr = await reverseGeocode(region.longitude, region.latitude);
       setNewAddress(addr);
     }, 300);
   }, [reverseGeocode]);
@@ -276,22 +271,18 @@ export default function AddressesScreen() {
             <View className="mb-4 rounded-2xl bg-surface overflow-hidden border border-divider">
               {/* Map Picker */}
               <View style={{ height: 180 }}>
-                <Mapbox.MapView
+                <MapView
                   style={{ flex: 1 }}
-                  styleURL={MAP_STYLE_URL}
-                  onRegionDidChange={handleMapRegionDidChange}
-                  attributionEnabled={false}
-                  logoEnabled={false}
-                  scaleBarEnabled={false}
-                >
-                  <Mapbox.Camera
-                    ref={cameraRef}
-                    defaultSettings={{
-                      centerCoordinate: newLat && newLng ? [newLng, newLat] : DEFAULT_CENTER,
-                      zoomLevel: 14,
-                    }}
-                  />
-                </Mapbox.MapView>
+                  ref={mapRef}
+                  provider={PROVIDER_GOOGLE}
+                  onRegionChangeComplete={handleMapRegionDidChange}
+                  initialRegion={{
+                    latitude: newLat && newLng ? newLat : DEFAULT_CENTER[1],
+                    longitude: newLat && newLng ? newLng : DEFAULT_CENTER[0],
+                    latitudeDelta: 0.01,
+                    longitudeDelta: 0.01,
+                  }}
+                />
                 {/* Center pin */}
                 <View
                   style={{ position: 'absolute', top: '50%', left: '50%', marginLeft: -12, marginTop: -24 }}
@@ -398,11 +389,9 @@ export default function AddressesScreen() {
 
           {/* Address List */}
           {!loading && addresses.length === 0 && !showAdd ? (
-            <View className="items-center py-16">
-              <View className="w-14 h-14 rounded-full bg-slate-100 items-center justify-center mb-3">
-                <MapPin size={24} color="#94A3B8" />
-              </View>
-              <Text className="text-sm font-montserrat-semi text-textSecondary">
+            <View className="items-center py-10">
+              <LocationIllustration size={180} />
+              <Text className="text-base font-montserrat-bold text-textPrimary mt-2">
                 No saved addresses
               </Text>
               <Text className="text-xs font-montserrat text-textTertiary mt-1">

@@ -1,19 +1,21 @@
-import React, { useEffect, useState } from 'react';
+import React, { useState } from 'react';
 import { View, Text, Pressable, ScrollView } from 'react-native';
-import { MapPin, ArrowRight, RefreshCw, Calendar } from 'lucide-react-native';
+import {
+  RefreshCw,
+  Calendar,
+  Hash,
+  Navigation as NavIcon,
+  ChevronRight,
+} from 'lucide-react-native';
 import { useRouter } from 'expo-router';
 import { BottomSheet } from '../ui/BottomSheet';
 import { Button } from '../ui/Button';
 import { PriceBreakdown } from '../ui/PriceBreakdown';
-import { StatusTimeline } from '../ui/StatusTimeline';
-import { Avatar } from '../ui/Avatar';
-import { RatingStars } from '../ui/RatingStars';
-import { Badge } from '../ui/Badge';
 import { bookingService } from '../../services/booking.service';
 import { formatCurrency } from '../../utils/formatCurrency';
 import { formatFullDate, formatTime } from '../../utils/formatDate';
 import { STATUS_LABELS, STATUS_COLORS } from '../../constants/statusLabels';
-import type { Booking, BookingStatusLog } from '../../types';
+import type { Booking } from '../../types';
 
 interface BookingDetailSheetProps {
   booking: Booking | null;
@@ -57,90 +59,152 @@ export function BookingDetailSheet({
     }
   };
 
+  const handleTrack = () => {
+    onClose();
+    router.push(`/(customer)/tracking/${booking.id}`);
+  };
+
+  const isLive = ['pending', 'matched', 'accepted', 'in_progress'].includes(
+    booking.status,
+  );
+
   return (
-    <BottomSheet
-      isVisible={isVisible}
-      onClose={onClose}
-      snapPoints={[0.75]}
-    >
-      <ScrollView className="px-5 pb-6" showsVerticalScrollIndicator={false}>
-        {/* Header */}
-        <View className="flex-row items-center justify-between mb-4">
-          <Text className="text-lg font-montserrat-semi text-textPrimary">
-            Booking Details
-          </Text>
+    <BottomSheet isVisible={isVisible} onClose={onClose} snapPoints={[0.85]}>
+      <ScrollView className="px-5 pb-8" showsVerticalScrollIndicator={false}>
+        {/* ── Hero header ── */}
+        <View className="items-center pt-1 pb-4">
           <View
-            className="px-2 py-1 rounded-full"
-            style={{ backgroundColor: statusColor + '20' }}
+            className="px-3 py-1 rounded-full mb-3"
+            style={{ backgroundColor: statusColor + '18' }}
           >
             <Text
-              className="text-xs font-montserrat-bold"
-              style={{ color: statusColor }}
+              className="text-[10px] font-montserrat-bold uppercase"
+              style={{ color: statusColor, letterSpacing: 1.4 }}
             >
               {statusLabel}
             </Text>
           </View>
-        </View>
-
-        {/* Booking Info */}
-        <View className="bg-surface border border-divider rounded-xl p-3 mb-4">
-          <Text className="text-xs font-montserrat text-textSecondary">
-            {booking.booking_number}
-          </Text>
-          <View className="flex-row items-center mt-1">
-            <Calendar size={12} color="#94A3B8" />
-            <Text className="text-xs font-montserrat text-textSecondary ml-1">
-              {formatFullDate(booking.created_at)} at{' '}
-              {formatTime(booking.created_at)}
-            </Text>
-          </View>
-          <Text className="text-sm font-montserrat-semi text-textPrimary mt-2">
+          <Text className="text-[20px] font-montserrat-bold text-textPrimary">
             {booking.errand_type?.name ?? 'Errand'}
           </Text>
+          <Text className="text-[26px] font-inter-semi text-textPrimary tabular-nums mt-1">
+            {formatCurrency(booking.total_amount)}
+          </Text>
         </View>
 
-        {/* Route */}
-        <View className="bg-surface border border-divider rounded-xl p-3 mb-4">
-          <View className="flex-row items-center mb-2">
-            <MapPin size={14} color="#2563EB" />
-            <Text
-              className="text-sm font-montserrat text-textPrimary ml-2 flex-1"
-              numberOfLines={2}
-            >
-              {booking.pickup_address}
+        {/* ── Meta strip ── */}
+        <View
+          className="flex-row items-center justify-between py-3 border-y border-divider mb-5"
+        >
+          <View className="flex-row items-center flex-1">
+            <Hash size={12} color="#94A3B8" strokeWidth={2} />
+            <Text className="text-[11px] font-montserrat text-textSecondary ml-1.5">
+              {booking.booking_number}
             </Text>
           </View>
           <View className="flex-row items-center">
-            <MapPin size={14} color="#EF4444" />
-            <Text
-              className="text-sm font-montserrat text-textPrimary ml-2 flex-1"
-              numberOfLines={2}
-            >
-              {booking.dropoff_address}
+            <Calendar size={12} color="#94A3B8" strokeWidth={2} />
+            <Text className="text-[11px] font-montserrat text-textSecondary ml-1.5">
+              {formatFullDate(booking.created_at)} · {formatTime(booking.created_at)}
             </Text>
           </View>
         </View>
 
-        {/* Payment */}
-        <View className="bg-surface border border-divider rounded-xl p-3 mb-4">
-          <Text className="text-sm font-montserrat-semi text-textPrimary mb-2">
-            Payment
-          </Text>
+        {/* ── Route — typographic two-line stack with hairline connector. */}
+        <Text
+          className="text-[10px] font-montserrat-bold uppercase text-textSecondary mb-2"
+          style={{ letterSpacing: 1.4 }}
+        >
+          Route
+        </Text>
+        <View className="mb-5">
+          <View className="flex-row items-center">
+            <View
+              style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: '#22C55E' }}
+            />
+            <View className="flex-1 ml-3">
+              <Text
+                className="text-[10px] font-montserrat-bold uppercase text-textSecondary"
+                style={{ letterSpacing: 1.2 }}
+              >
+                Pickup
+              </Text>
+              <Text className="text-[14px] font-montserrat-semi text-textPrimary" numberOfLines={2}>
+                {booking.pickup_address}
+              </Text>
+            </View>
+          </View>
+          <View
+            style={{
+              marginLeft: 3,
+              width: 2,
+              height: 14,
+              backgroundColor: '#E2E8F0',
+              marginVertical: 6,
+            }}
+          />
+          <View className="flex-row items-center">
+            <View
+              style={{ width: 8, height: 8, borderRadius: 2, backgroundColor: '#0F172A' }}
+            />
+            <View className="flex-1 ml-3">
+              <Text
+                className="text-[10px] font-montserrat-bold uppercase text-textSecondary"
+                style={{ letterSpacing: 1.2 }}
+              >
+                Drop-off
+              </Text>
+              <Text className="text-[14px] font-montserrat-semi text-textPrimary" numberOfLines={2}>
+                {booking.dropoff_address ?? '—'}
+              </Text>
+            </View>
+          </View>
+        </View>
+
+        {/* ── Payment breakdown ── */}
+        <Text
+          className="text-[10px] font-montserrat-bold uppercase text-textSecondary mb-2"
+          style={{ letterSpacing: 1.4 }}
+        >
+          Payment
+        </Text>
+        <View className="mb-5">
           <PriceBreakdown items={priceItems} total={booking.total_amount} />
         </View>
 
-        {/* Actions */}
-        {booking.status === 'completed' && (
-          <View className="gap-2">
+        {/* ── Actions ── */}
+        <View className="gap-2.5">
+          {isLive && (
             <Button
-              title="Re-book"
+              title="Track this errand"
+              icon={NavIcon}
+              onPress={handleTrack}
+              fullWidth
+            />
+          )}
+          {booking.status === 'completed' && (
+            <Button
+              title="Book again"
               icon={RefreshCw}
               onPress={handleRebook}
               loading={rebooking}
               fullWidth
             />
-          </View>
-        )}
+          )}
+          <Pressable
+            onPress={() => {
+              onClose();
+              router.push(`/(customer)/tracking/${booking.id}`);
+            }}
+            className="flex-row items-center justify-center py-2"
+            hitSlop={6}
+          >
+            <Text className="text-[12px] font-montserrat-bold text-primary mr-1">
+              View full details
+            </Text>
+            <ChevronRight size={14} color="#2563EB" strokeWidth={2.4} />
+          </Pressable>
+        </View>
       </ScrollView>
     </BottomSheet>
   );

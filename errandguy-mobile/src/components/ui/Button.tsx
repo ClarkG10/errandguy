@@ -8,28 +8,30 @@ import {
   View,
   type ViewStyle,
 } from 'react-native';
+import { LinearGradient } from 'expo-linear-gradient';
 import * as Haptics from 'expo-haptics';
 import type { LucideIcon } from 'lucide-react-native';
 import { ErrandLoader } from './ErrandLoader';
 import { useReducedMotion } from '../../hooks/useReducedMotion';
+import { useResponsive } from '../../constants/responsive';
+import { LightColors } from '../../constants/colors';
 
 /**
- * Modern CTA button — signature look.
+ * Modern blue-first CTA button.
  *
- * Design intent — the previous button read as a generic flat slab.
- * This iteration gives the primary CTA a recognisable, premium
- * silhouette without screaming for attention:
- *
- *  - Soft 14px radius. Distinctly squircle, never a pill.
- *  - Solid ink-dark primary by default with a real elevation shadow
- *    (not just an inner highlight) so the button visibly sits above
- *    the page — the way Linear, Revolut and Bolt CTAs do.
- *  - SIGNATURE TRAILING CHEVRON BUBBLE — on primary fullWidth CTAs the
- *    auto ArrowRight is rendered inside a small contrasting circle on
- *    the right edge. This is the recognisable "forward" gesture in
- *    modern fintech (Wise, Cash App, Monzo "continue" button).
- *  - Inner top highlight on filled variants for tactility.
- *  - Tighter press scale (0.98) — the previous 0.97 felt cheap.
+ * Redesign goals (May 2026):
+ *  - Primary CTA carries the brand colour directly (#2563EB) rather
+ *    than the previous near-black slab. The whole product now revolves
+ *    around blue, so the button reflects that identity.
+ *  - Sizes are smaller and tighter — the previous md was 50pt tall,
+ *    too bulky for a mobile-first product. The new sm/md/lg = 36/44/50
+ *    keeps Apple's 44×44 minimum tap target while reading lighter.
+ *  - Optional `gradient` variant applies the brand 3-stop gradient for
+ *    hero moments (auth Continue, "Book now"). Off by default — flat
+ *    blue is the production default.
+ *  - Brand-tinted elevation (blue shadow) so the button visibly lifts
+ *    off the page in keeping with the design language.
+ *  - Trailing chevron remains opt-in for multi-step flows.
  */
 
 type ButtonVariant = 'primary' | 'secondary' | 'outline' | 'danger' | 'ghost';
@@ -48,54 +50,55 @@ interface ButtonProps {
   trailingIcon?: LucideIcon | null;
   fullWidth?: boolean;
   disabled?: boolean;
+  /** Render the primary variant with a brand gradient. Hero use only
+   *  (welcome / book-now) — flat blue is the default. */
+  gradient?: boolean;
   onPress?: () => void;
   style?: ViewStyle;
   testID?: string;
   accessibilityHint?: string;
 }
 
+const PRIMARY_BG = LightColors.primary;       // #2563EB
+const PRIMARY_PRESSED = LightColors.primary700; // #1D4ED8
+const DANGER_BG = LightColors.danger;
+const SECONDARY_BG = LightColors.primary50;   // soft blue tint
+
 const variantStyles: Record<ButtonVariant, ViewStyle> = {
-  primary: { backgroundColor: '#0F172A' },
-  secondary: { backgroundColor: '#F1F5F9' },
+  primary: { backgroundColor: PRIMARY_BG },
+  secondary: { backgroundColor: SECONDARY_BG },
   outline: {
     backgroundColor: 'transparent',
-    borderWidth: 1,
-    borderColor: '#0F172A',
+    borderWidth: 1.25,
+    borderColor: PRIMARY_BG,
   },
-  danger: { backgroundColor: '#EF4444' },
+  danger: { backgroundColor: DANGER_BG },
   ghost: { backgroundColor: 'transparent' },
 };
 
 const variantTextColors: Record<ButtonVariant, string> = {
   primary: '#FFFFFF',
-  secondary: '#0F172A',
-  outline: '#0F172A',
+  secondary: PRIMARY_PRESSED,
+  outline: PRIMARY_BG,
   danger: '#FFFFFF',
-  ghost: '#0F172A',
+  ghost: PRIMARY_BG,
 };
 
 // Android renders the same fontSize visibly larger than iOS due to
-// font-metric differences. Trim ~1pt across the board on Android so
-// CTAs read at the same visual weight on both platforms.
+// font-metric differences. Trim ~1pt so CTAs read at the same visual
+// weight on both platforms.
 const ANDROID_TEXT_SCALE = Platform.OS === 'android' ? -1 : 0;
 const ANDROID_PAD_SCALE = Platform.OS === 'android' ? -2 : 0;
 
-const sizePadding: Record<ButtonSize, ViewStyle> = {
-  sm: { paddingVertical: 9 + ANDROID_PAD_SCALE, paddingHorizontal: 16, minHeight: 38 + ANDROID_PAD_SCALE },
-  md: { paddingVertical: 14 + ANDROID_PAD_SCALE, paddingHorizontal: 20, minHeight: 50 + ANDROID_PAD_SCALE },
-  lg: { paddingVertical: 16 + ANDROID_PAD_SCALE, paddingHorizontal: 22, minHeight: 54 + ANDROID_PAD_SCALE },
-};
-
-const sizeTextSizes: Record<ButtonSize, number> = {
-  sm: 13 + ANDROID_TEXT_SCALE,
-  md: 14.5 + ANDROID_TEXT_SCALE,
-  lg: 15.5 + ANDROID_TEXT_SCALE,
-};
-
-const iconSizes: Record<ButtonSize, number> = {
-  sm: 14,
-  md: 17,
-  lg: 19,
+// Reduced sizes — the previous md (50pt) read as oversized. Modern
+// fintech CTAs land around 44pt; we keep a 36/44/50 ladder, with a
+// fine-grained trim (~1pt vertical, ~0.5pt text) so secondary actions
+// read a touch lighter without crossing Apple's 44pt minimum target
+// on the primary `md` size.
+const BASE_SIZES: Record<ButtonSize, { padV: number; padH: number; minH: number; text: number; icon: number }> = {
+  sm: { padV: 6,  padH: 12, minH: 32, text: 12, icon: 14 },
+  md: { padV: 8, padH: 16, minH: 40, text: 13, icon: 16 },
+  lg: { padV: 11, padH: 18, minH: 46, text: 14.5, icon: 18 },
 };
 
 const PLATFORM_FONT = Platform.select({
@@ -113,6 +116,7 @@ export function Button({
   icon: Icon,
   trailingIcon,
   fullWidth = false,
+  gradient = false,
   onPress,
   style,
   testID,
@@ -120,13 +124,24 @@ export function Button({
 }: ButtonProps) {
   const scale = useRef(new Animated.Value(1)).current;
   const reduceMotion = useReducedMotion();
+  const { mScale } = useResponsive();
+
+  const base = BASE_SIZES[size];
+  const sizing: ViewStyle = {
+    paddingVertical: mScale(base.padV) + ANDROID_PAD_SCALE,
+    paddingHorizontal: mScale(base.padH),
+    minHeight: mScale(base.minH) + ANDROID_PAD_SCALE,
+  };
+  const textSize = mScale(base.text) + ANDROID_TEXT_SCALE;
+  const iconSize = mScale(base.icon);
 
   const isDisabled = disabled || loading;
+  const useGradient = gradient && variant === 'primary' && !isDisabled;
 
   const handlePressIn = () => {
     if (isDisabled || reduceMotion) return;
     Animated.spring(scale, {
-      toValue: 0.98,
+      toValue: 0.97,
       speed: 50,
       bounciness: 0,
       useNativeDriver: true,
@@ -148,31 +163,98 @@ export function Button({
     onPress?.();
   };
 
-  // Trailing icon is opt-in only — pass `trailingIcon={ArrowRight}`
-  // when it adds meaning (e.g. "Continue" steps in a flow). Auth and
-  // single-action CTAs (Login, Save, Get started) read cleaner without
-  // a decorative arrow.
   const Trailing = trailingIcon ?? null;
 
-  const contentColor =
-    variant === 'primary' || variant === 'danger' ? '#FFFFFF' : '#0F172A';
+  const contentColor = variantTextColors[variant];
 
-  // Lighter, modern elevation — the previous one read as 2014-era
-  // chunky-shadow. Stripe/Linear keep CTAs almost flat with a tiny
-  // colour-tinted shadow so the page feels calm.
+  // Brand-tinted elevation for filled CTAs only. Outline / ghost /
+  // secondary stay flat so the page hierarchy reads from the page
+  // surface upward.
   const elevationStyle: ViewStyle | null =
     !isDisabled && (variant === 'primary' || variant === 'danger')
       ? (Platform.select({
           ios: {
-            shadowColor: variant === 'danger' ? '#EF4444' : '#0F172A',
-            shadowOffset: { width: 0, height: 4 },
-            shadowOpacity: 0.10,
-            shadowRadius: 10,
+            shadowColor:
+              variant === 'danger' ? LightColors.danger : LightColors.primary700,
+            shadowOffset: { width: 0, height: 6 },
+            shadowOpacity: 0.18,
+            shadowRadius: 12,
           },
-          android: { elevation: 2 },
+          android: { elevation: 3 },
           default: {},
         }) as ViewStyle)
       : null;
+
+  // Inner content (icons + label + spinner) — extracted so it can be
+  // rendered identically inside a flat <Pressable> or wrapped inside a
+  // <LinearGradient>.
+  const renderContent = () => (
+    <>
+      {/* Subtle top inner highlight on filled variants. */}
+      {(variant === 'primary' || variant === 'danger') && !isDisabled && (
+        <View pointerEvents="none" style={bs.innerHighlight} />
+      )}
+
+      {loading ? (
+        <ErrandLoader
+          size={size === 'sm' ? 4 : size === 'md' ? 5 : 6}
+          color={contentColor}
+        />
+      ) : (
+        <>
+          {Icon && (
+            <Icon
+              size={iconSize}
+              color={contentColor}
+              strokeWidth={2}
+              style={{ marginRight: 8 }}
+            />
+          )}
+          <Text
+            style={[
+              bs.text,
+              {
+                fontSize: textSize,
+                color: contentColor,
+                fontFamily: PLATFORM_FONT,
+              },
+            ]}
+            numberOfLines={1}
+            ellipsizeMode="tail"
+          >
+            {title}
+          </Text>
+          {Trailing && (
+            <Trailing
+              size={iconSize}
+              color={contentColor}
+              strokeWidth={2.2}
+              style={{ marginLeft: 'auto', paddingLeft: 8 }}
+            />
+          )}
+        </>
+      )}
+    </>
+  );
+
+  // Pressable wrapping — when gradient is on, the gradient itself
+  // becomes the visible background; the Pressable handles the touch
+  // and is sized to fill the gradient.
+  const sharedPressableProps = {
+    accessibilityRole: 'button' as const,
+    accessibilityLabel: title,
+    accessibilityHint,
+    accessibilityState: { disabled: isDisabled, busy: loading },
+    testID,
+    disabled: isDisabled,
+    onPress: handlePress,
+    onPressIn: handlePressIn,
+    onPressOut: handlePressOut,
+    android_ripple:
+      variant === 'ghost' || variant === 'outline' || variant === 'secondary'
+        ? { color: 'rgba(37,99,235,0.10)', borderless: false }
+        : { color: 'rgba(255,255,255,0.16)', borderless: false },
+  };
 
   return (
     <Animated.View
@@ -182,73 +264,45 @@ export function Button({
         { transform: [{ scale }] },
       ]}
     >
-      <Pressable
-        accessibilityRole="button"
-        accessibilityLabel={title}
-        accessibilityHint={accessibilityHint}
-        accessibilityState={{ disabled: isDisabled, busy: loading }}
-        testID={testID}
-        style={[
-          bs.base,
-          variantStyles[variant],
-          sizePadding[size],
-          fullWidth && bs.full,
-          isDisabled && bs.disabled,
-          style,
-        ]}
-        disabled={isDisabled}
-        onPress={handlePress}
-        onPressIn={handlePressIn}
-        onPressOut={handlePressOut}
-        android_ripple={
-          variant === 'ghost' || variant === 'outline'
-            ? { color: 'rgba(15,23,42,0.08)', borderless: false }
-            : { color: 'rgba(255,255,255,0.12)', borderless: false }
-        }
-      >
-        {/* Subtle top inner highlight on filled variants. */}
-        {(variant === 'primary' || variant === 'danger') && !isDisabled && (
-          <View pointerEvents="none" style={bs.innerHighlight} />
-        )}
-
-        {loading ? (
-          <ErrandLoader
-            size={size === 'sm' ? 5 : size === 'md' ? 6 : 7}
-            color={contentColor}
+      {useGradient ? (
+        <Pressable
+          {...sharedPressableProps}
+          style={[
+            bs.base,
+            sizing,
+            fullWidth && bs.full,
+            isDisabled && bs.disabled,
+            style,
+          ]}
+        >
+          <LinearGradient
+            pointerEvents="none"
+            colors={[
+              LightColors.gradientStart,
+              LightColors.gradientMid,
+              LightColors.gradientEnd,
+            ]}
+            start={{ x: 0, y: 0 }}
+            end={{ x: 1, y: 1 }}
+            style={StyleSheet.absoluteFill}
           />
-        ) : (
-          <>
-            {Icon && (
-              <Icon
-                size={iconSizes[size]}
-                color={contentColor}
-                strokeWidth={2}
-                style={{ marginRight: 10 }}
-              />
-            )}
-            <Text
-              style={[
-                bs.text,
-                {
-                  fontSize: sizeTextSizes[size],
-                  color: variantTextColors[variant],
-                  fontFamily: PLATFORM_FONT,
-                },
-              ]}
-            >
-              {title}
-            </Text>
-            {Trailing && (
-              <Trailing
-                size={iconSizes[size]}
-                color={contentColor}
-                strokeWidth={2.2}
-                style={{ marginLeft: 'auto', paddingLeft: 10 }}
-              />
-            )}
-          </>
-        )}
-      </Pressable>
+          {renderContent()}
+        </Pressable>
+      ) : (
+        <Pressable
+          {...sharedPressableProps}
+          style={[
+            bs.base,
+            variantStyles[variant],
+            sizing,
+            fullWidth && bs.full,
+            isDisabled && bs.disabled,
+            style,
+          ]}
+        >
+          {renderContent()}
+        </Pressable>
+      )}
     </Animated.View>
   );
 }
@@ -258,9 +312,9 @@ const bs = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    // 12px — modern fintech radius. Distinctly squared off compared
-    // to the previous 14px squircle; reads as deliberate, not generic.
-    borderRadius: 12,
+    // 14px — friendlier than 12, still distinctly squircle. Matches
+    // the tightened global radius scale.
+    borderRadius: 14,
     overflow: 'hidden',
     position: 'relative',
   },
@@ -270,9 +324,10 @@ const bs = StyleSheet.create({
     left: 0,
     right: 0,
     height: 1,
-    backgroundColor: 'rgba(255,255,255,0.10)',
+    backgroundColor: 'rgba(255,255,255,0.14)',
   },
   full: { width: '100%' },
-  disabled: { opacity: 0.4 },
+  disabled: { opacity: 0.45 },
   text: { letterSpacing: 0.1 },
 });
+

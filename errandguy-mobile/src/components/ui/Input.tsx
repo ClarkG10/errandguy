@@ -10,6 +10,7 @@ import {
 } from 'react-native';
 import { Eye, EyeOff } from 'lucide-react-native';
 import type { LucideIcon } from 'lucide-react-native';
+import { useResponsive } from '../../constants/responsive';
 
 interface InputProps extends Omit<TextInputProps, 'onChange'> {
   label?: string;
@@ -46,32 +47,46 @@ export function Input({
   const [showPassword, setShowPassword] = useState(false);
   const isPassword = secureTextEntry !== undefined;
   const inputRef = useRef<TextInput>(null);
+  const { mScale } = useResponsive();
 
-  const borderColor = error ? '#EF4444' : focused ? '#0F172A' : '#E2E8F0';
+  // Blue focus ring — the previous slate ring read as inert. The
+  // brand-blue glow signals "active" and ties the form back to the
+  // primary CTA below it.
+  const borderColor = error ? '#EF4444' : focused ? '#2563EB' : '#E6EBF2';
   const labelColor = error ? '#EF4444' : '#475569';
+
+  // Responsive sizing — slightly tighter than the previous 50pt slab
+  // so the field reads as part of the modernised, lighter design
+  // language. Still well above the 44pt touch-target minimum.
+  const minH = mScale(46);
+  const minHMulti = mScale(92);
+  const padH = mScale(14);
+  const labelSize = mScale(11);
+  const inputSize = mScale(15);
+  const iconSize = mScale(18);
 
   return (
     <View style={fs.wrapper}>
       {label && (
-        <Text style={[fs.label, { color: labelColor }]}>{label}</Text>
+        <Text style={[fs.label, { color: labelColor, fontSize: labelSize }]}>{label}</Text>
       )}
       <Pressable
         style={[
           fs.container,
-          { borderColor },
+          { borderColor, minHeight: minH, paddingHorizontal: padH },
           focused && !error ? fs.focusedShadow : null,
-          multiline && fs.multiline,
+          multiline && [fs.multiline, { minHeight: minHMulti }],
         ]}
         onPress={() => inputRef.current?.focus()}
       >
         {LeftIcon && (
-          <LeftIcon size={18} color="#94A3B8" style={{ marginRight: 10 }} />
+          <LeftIcon size={iconSize} color="#94A3B8" style={{ marginRight: 10 }} />
         )}
         <TextInput
           ref={inputRef}
           accessibilityLabel={label || placeholder}
           accessibilityState={{ disabled: rest.editable === false }}
-          style={[fs.input, multiline && fs.inputMultiline]}
+          style={[fs.input, { fontSize: inputSize }, multiline && fs.inputMultiline]}
           value={value}
           onChangeText={onChangeText}
           placeholder={placeholder}
@@ -95,14 +110,14 @@ export function Input({
             style={{ marginLeft: 8 }}
           >
             {showPassword ? (
-              <EyeOff size={18} color="#94A3B8" />
+              <EyeOff size={iconSize} color="#94A3B8" />
             ) : (
-              <Eye size={18} color="#94A3B8" />
+              <Eye size={iconSize} color="#94A3B8" />
             )}
           </Pressable>
         )}
         {RightIcon && !isPassword && (
-          <RightIcon size={18} color="#94A3B8" style={{ marginLeft: 8 }} />
+          <RightIcon size={iconSize} color="#94A3B8" style={{ marginLeft: 8 }} />
         )}
       </Pressable>
       {error && (
@@ -121,7 +136,6 @@ export function Input({
 const fs = StyleSheet.create({
   wrapper: { marginBottom: 16 },
   label: {
-    fontSize: 11,
     fontFamily: 'Quicksand_700Bold',
     letterSpacing: 0.6,
     textTransform: 'uppercase',
@@ -134,28 +148,24 @@ const fs = StyleSheet.create({
     // with 1.5px border made every form field read as a fat pill.
     borderRadius: 12,
     backgroundColor: '#FFFFFF',
-    minHeight: 50,
     flexDirection: 'row',
     alignItems: 'center',
-    paddingHorizontal: 14,
   },
-  // Subtle focus ring — a soft ink-dark glow rather than a brand-blue
-  // border so the field communicates "active" without competing with
-  // the primary CTA below it.
+  // Soft brand-blue focus ring — visually echoes the primary CTA
+  // and reinforces the blue-first identity without screaming.
   focusedShadow: Platform.select({
     ios: {
-      shadowColor: '#0F172A',
+      shadowColor: '#2563EB',
       shadowOffset: { width: 0, height: 0 },
-      shadowOpacity: 0.08,
-      shadowRadius: 6,
+      shadowOpacity: 0.18,
+      shadowRadius: 8,
     },
     android: { elevation: 1 },
     default: {},
   }) as any,
-  multiline: { minHeight: 96, alignItems: 'flex-start', paddingVertical: 12 },
+  multiline: { alignItems: 'flex-start', paddingVertical: 12 },
   input: {
     flex: 1,
-    fontSize: 15,
     fontFamily: 'Quicksand_400Regular',
     color: '#0F172A',
     paddingVertical: 0,

@@ -100,7 +100,12 @@ api.interceptors.response.use(
     if (!(error?.config as ExtraConfig | undefined)?.silent) {
       apiActivity.done();
     }
-    if (__DEV__) {
+    const isCanceled =
+      error?.name === 'CanceledError' ||
+      error?.code === 'ERR_CANCELED' ||
+      error?.message === 'canceled';
+    const isSilent = !!(error?.config as ExtraConfig | undefined)?.silent;
+    if (__DEV__ && !isSilent && !isCanceled) {
       if (error.response) {
         // Silence expected 429s on the runner location endpoint. The
         // server throttles GPS pushes to 1/5s per runner; the mobile
@@ -122,9 +127,14 @@ api.interceptors.response.use(
           status === 429 && url.includes('/runner/location');
         const isClientValidation = status === 422;
         if (!isExpectedThrottle && !isClientValidation) {
+          // Lazy-serialize the response body only when actually printed.
+          // Calling `JSON.stringify` eagerly inside the template string
+          // ran on EVERY error including silent retries, which on the
+          // RN bridge during burst traffic was a measurable perf cost.
+          // `console.error` will stringify on demand when emitting.
           console.error(
             `❌ ${status} ${error.config?.method?.toUpperCase()} ${error.config?.url}`,
-            JSON.stringify(error.response.data).slice(0, 500),
+            error.response.data,
           );
         }
       } else {
@@ -210,6 +220,9 @@ api.request = function patchedRequest<T = any, R = AxiosResponse<T>, D = any>(
     const ttl = config.cacheTtlMs ?? DEFAULT_GET_CACHE_MS;
     const hit = microCache.get(key);
     if (hit && Date.now() - hit.ts < ttl) {
+      // Cache hit: never went through the request interceptor, so the
+      // activity bar was not bumped — nothing to balance here. Resolve
+      // synchronously to keep `await api.get(...)` fast.
       return Promise.resolve(hit.response as unknown as R);
     }
   }

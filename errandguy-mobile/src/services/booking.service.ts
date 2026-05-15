@@ -12,7 +12,10 @@ export const bookingService = {
   getBookings(params?: { status?: string; page?: number; per_page?: number }) {
     // Listing screens often re-mount during navigation — a 5s window
     // collapses repeated identical paginated requests into one call.
-    return api.get('/bookings', { params, cacheTtlMs: 5000 } as any);
+    // Silent: lists are revalidated in the background by useQuery and
+    // by pull-to-refresh; the latter has its own RefreshControl
+    // spinner, so the global API activity bar would just be noise.
+    return api.get('/bookings', { params, cacheTtlMs: 5000, silent: true } as any);
   },
 
   createBooking(data: {
@@ -47,7 +50,12 @@ export const bookingService = {
   },
 
   getBooking(id: string) {
-    return api.get(`/bookings/${id}`, { cacheTtlMs: 4000 } as any);
+    // Silent: the tracking screen revalidates this every few seconds
+    // (and the booking detail sheet too); leaving it un-silenced kept
+    // the global progress bar permanently visible during a live
+    // errand. The user-perceived loading state is conveyed by the
+    // tracking UI's own status pills, not by a top-of-screen blip.
+    return api.get(`/bookings/${id}`, { cacheTtlMs: 4000, silent: true } as any);
   },
 
   cancelBooking(id: string, reason?: string) {

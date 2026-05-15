@@ -12,12 +12,6 @@ import { useRouter } from 'expo-router';
 import { LinearGradient } from 'expo-linear-gradient';
 import {
   Package,
-  ShoppingCart,
-  UtensilsCrossed,
-  FileText,
-  Shirt,
-  Car,
-  PenTool,
   Bell,
   ArrowRight,
 } from 'lucide-react-native';
@@ -30,8 +24,10 @@ import { bookingService } from '../../../services/booking.service';
 import { configService } from '../../../services/config.service';
 import { useQuery } from '../../../hooks/useQuery';
 import { CacheTTL } from '../../../services/cache.service';
+import { TAB_CONTENT_BOTTOM_INSET } from '../../../constants/tabLayout';
 import { Avatar } from '../../../components/ui/Avatar';
 import { ActiveBookingCard } from '../../../components/customer/ActiveBookingCard';
+import { ErrandTypeIcon } from '../../../components/ui/ErrandTypeIcon';
 import { HomeSkeleton } from '../../../components/ui/Skeleton';
 import { STATUS_LABELS, STATUS_COLORS } from '../../../constants/statusLabels';
 import type { Booking, ErrandType } from '../../../types';
@@ -40,12 +36,6 @@ import { formatRelativeTime } from '../../../utils/formatDate';
 
 const ICON_MAP: Record<string, LucideIcon> = {
   Package,
-  ShoppingCart,
-  UtensilsCrossed,
-  FileText,
-  Shirt,
-  Car,
-  PenTool,
 };
 
 /**
@@ -181,7 +171,10 @@ export default function CustomerHomeScreen() {
       <ScrollView
         className="flex-1"
         showsVerticalScrollIndicator={false}
-        contentContainerStyle={{ paddingBottom: 32 }}
+        // Reserve room at the bottom so the floating QuickBookFAB
+        // never covers the last row (the previous 32pt left the FAB
+        // disc sitting on top of the price text).
+        contentContainerStyle={{ paddingBottom: TAB_CONTENT_BOTTOM_INSET }}
         refreshControl={
           <RefreshControl
             refreshing={refreshing}
@@ -273,7 +266,7 @@ export default function CustomerHomeScreen() {
         </LinearGradient>
 
         {/* Destination card — floats up over the gradient bottom edge. */}
-        <View className="px-5" style={{ marginTop: -22 }}>
+        <View className="px-5" style={{ marginTop: -14 }}>
           <Pressable
             onPress={() => startBooking()}
             accessibilityRole="button"
@@ -368,9 +361,17 @@ export default function CustomerHomeScreen() {
                       accessibilityRole="button"
                       accessibilityLabel={`Start a ${type.name} errand`}
                     >
-                      <Icon size={22} color="#FFFFFF" strokeWidth={2} />
+                      {type.icon_name ? (
+                        <ErrandTypeIcon
+                          name={type.icon_name}
+                          size="sm"
+                          variant="tinted"
+                        />
+                      ) : (
+                        <Icon size={22} color="#2563EB" strokeWidth={2} />
+                      )}
                       <Text
-                        className="text-[11px] font-montserrat-semi text-white text-center mt-2"
+                        className="text-[11px] font-montserrat-semi text-textPrimary text-center mt-2"
                         numberOfLines={1}
                       >
                         {type.name}
@@ -500,15 +501,15 @@ const hs = StyleSheet.create({
   },
   serviceTile: {
     borderRadius: 14,
-    backgroundColor: '#2563EB',
+    backgroundColor: '#F8FBFF',
+    borderWidth: 1,
+    borderColor: '#DCEBFF',
     minHeight: 88,
     justifyContent: 'center',
-    // Brand-tinted shadow so the tiles sit above the page surface,
-    // mirroring the depth on the destination card.
-    shadowColor: '#2563EB',
+    shadowColor: '#1D4ED8',
     shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.18,
+    shadowOpacity: 0.08,
     shadowRadius: 8,
-    elevation: 3,
+    elevation: 2,
   },
 });

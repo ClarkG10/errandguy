@@ -5,7 +5,7 @@ import {
   Pressable,
   Text,
   ActivityIndicator,
-  Dimensions,
+  useWindowDimensions,
   StatusBar,
 } from 'react-native';
 import { Image } from 'expo-image';
@@ -101,7 +101,7 @@ export function ImageLightbox({ uri, visible, onClose }: ImageLightboxProps) {
     }
   };
 
-  const { width, height } = Dimensions.get('window');
+  const { width, height } = useWindowDimensions();
 
   return (
     <Modal

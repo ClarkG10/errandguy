@@ -1,19 +1,37 @@
 <?php
 
+// Origins are env-driven so production never silently inherits a
+// wildcard. CORS_ALLOWED_ORIGINS is a comma-separated list, e.g.
+//   https://app.errandguy.app,https://admin.errandguy.app
+// In local dev we fall back to common Expo / Vite origins so the
+// mobile preview build and any in-house tooling keep working.
+$origins = array_filter(array_map('trim', explode(',', (string) env(
+    'CORS_ALLOWED_ORIGINS',
+    'http://localhost:3000,http://localhost:8081,http://127.0.0.1:3000'
+))));
+
 return [
     'paths' => ['api/*', 'sanctum/csrf-cookie'],
 
-    'allowed_methods' => ['*'],
+    'allowed_methods' => ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
 
-    'allowed_origins' => ['*'],
+    'allowed_origins' => $origins,
 
     'allowed_origins_patterns' => [],
 
-    'allowed_headers' => ['*'],
+    'allowed_headers' => [
+        'Accept',
+        'Authorization',
+        'Content-Type',
+        'X-Requested-With',
+        'X-CSRF-TOKEN',
+        'X-XSRF-TOKEN',
+        'X-Socket-Id',
+    ],
 
     'exposed_headers' => [],
 
-    'max_age' => 0,
+    'max_age' => 600,
 
     'supports_credentials' => false,
 ];

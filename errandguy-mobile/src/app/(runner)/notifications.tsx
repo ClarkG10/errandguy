@@ -21,6 +21,7 @@ import {
 import type { LucideIcon } from 'lucide-react-native';
 import { GradientHeader } from '../../components/ui/GradientHeader';
 import { EmptyState } from '../../components/ui/EmptyState';
+import { RunnerEmptyState } from '../../components/ui/RunnerEmptyState';
 import { useNotificationStore } from '../../stores/notificationStore';
 import { useAuthStore } from '../../stores/authStore';
 import { notificationService } from '../../services/notification.service';
@@ -302,10 +303,11 @@ export default function RunnerNotificationsScreen() {
           ) : null
         }
         ListEmptyComponent={
-          <EmptyState
+          <RunnerEmptyState
             icon={Bell}
+            eyebrow="Inbox clear"
             title="No notifications yet"
-            description="Errand offers, payouts, and updates will appear here."
+            description="Errand offers, payouts, and updates will land here as they happen."
           />
         }
       />

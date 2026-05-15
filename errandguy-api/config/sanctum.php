@@ -47,7 +47,9 @@ return [
     |
     */
 
-    'expiration' => null,
+    // Default 30 days. Override via SANCTUM_EXPIRATION (minutes).
+    // null disables expiry — do NOT use null in production.
+    'expiration' => env('SANCTUM_EXPIRATION', 60 * 24 * 30),
 
     /*
     |--------------------------------------------------------------------------

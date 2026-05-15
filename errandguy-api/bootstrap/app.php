@@ -18,6 +18,8 @@ return Application::configure(basePath: dirname(__DIR__))
         $middleware->api(prepend: [
             \App\Http\Middleware\LogApiRequests::class,
             \App\Http\Middleware\SecurityHeaders::class,
+            \App\Http\Middleware\LimitRequestSize::class,
+            \App\Http\Middleware\SanitizeInput::class,
             \Laravel\Sanctum\Http\Middleware\EnsureFrontendRequestsAreStateful::class,
         ]);
 
@@ -63,12 +65,14 @@ return Application::configure(basePath: dirname(__DIR__))
                 ?? $request->input('phone_or_email')
                 ?? $request->ip();
 
-            // Lock by BOTH the identifier and the originating IP so an
-            // attacker spraying credentials across many accounts from
-            // one IP also gets stopped. Two parallel limits compose.
+            // Hard cap of 5 attempts per 15 minutes per credential
+            // (login, register, password reset, social login, OTP
+            // verify all share this bucket). The parallel IP-bucket
+            // limit catches credential-spraying from a single source
+            // even when each identifier stays under its own cap.
             return [
-                Limit::perMinute(10)->by($identifier),
-                Limit::perMinute(30)->by('ip:' . $request->ip()),
+                Limit::perMinutes(15, 5)->by('auth:' . $identifier),
+                Limit::perMinutes(15, 30)->by('auth-ip:' . $request->ip()),
             ];
         });
 

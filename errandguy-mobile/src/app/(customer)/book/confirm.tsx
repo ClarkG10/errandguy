@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { View, Text, StyleSheet, Dimensions, AppState } from 'react-native';
+import { View, Text, StyleSheet, AppState } from 'react-native';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import { CheckCircle, XCircle } from 'lucide-react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -11,18 +11,18 @@ import Animated, {
   withTiming,
   Easing,
 } from 'react-native-reanimated';
-import Mapbox from '@rnmapbox/maps';
+import MapView, { PROVIDER_GOOGLE } from 'react-native-maps';
 import { useBookingStore } from '../../../stores/bookingStore';
 import { useBookingStatus } from '../../../hooks/useBookingStatus';
 import { useBackGuard } from '../../../hooks/useBackGuard';
+import { useForegroundInterval } from '../../../hooks/useForegroundInterval';
 import { bookingService } from '../../../services/booking.service';
 import { Button } from '../../../components/ui/Button';
 import { ConfirmModal } from '../../../components/ui/ConfirmModal';
 import type { BookingStatus } from '../../../types';
 import { toast } from '../../../stores/toastStore';
-import { MAP_STYLE_URL } from '../../../constants/map';
 
-const { width: SCREEN_WIDTH } = Dimensions.get('window');
+
 const PULSE_SIZE = 200;
 
 type SearchState = 'searching' | 'matched' | 'no_runner' | 'cancelled';
@@ -103,8 +103,9 @@ export default function ConfirmScreen() {
   );
   // Single safety-net poll. Primary source of truth is realtime via
   // useBookingStatus below — polling is only a fallback in case the
-  // socket ever drops.
-  const safetyPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  // socket ever drops. The poller itself lives further down in a
+  // `useForegroundInterval` so it pauses while backgrounded; setting
+  // `state` to anything other than 'searching' tears it down.
 
   // Deep-link / cold-launch guard: if we somehow landed here with no
   // bookingId in either route params or store, there's nothing to wait
@@ -146,23 +147,22 @@ export default function ConfirmScreen() {
       : [121.0, 14.6];
 
   // Countdown ticker — only runs while we're still searching.
-  useEffect(() => {
-    if (state !== 'searching') return;
-    const tick = () => {
-      const remaining = Math.max(
-        0,
-        Math.ceil((deadlineRef.current - Date.now()) / 1000),
-      );
-      setSecondsLeft(remaining);
-      if (remaining <= 0) {
-        setState('no_runner');
-        if (safetyPollRef.current) clearInterval(safetyPollRef.current);
-      }
-    };
-    tick(); // immediate sync (covers backgrounded-time-elapsed case)
-    const id = setInterval(tick, 1000);
-    return () => clearInterval(id);
-  }, [state]);
+  // Uses `useForegroundInterval` so the timer pauses when the app is
+  // backgrounded. The deadline is wall-clock based, so on resume we
+  // immediately recompute against `Date.now()` and account for any
+  // elapsed-while-suspended seconds in a single tick — no drift, no
+  // "frozen counter" UX, no double timeout.
+  const tickCountdown = useCallback(() => {
+    const remaining = Math.max(
+      0,
+      Math.ceil((deadlineRef.current - Date.now()) / 1000),
+    );
+    setSecondsLeft(remaining);
+    if (remaining <= 0) {
+      setState('no_runner');
+    }
+  }, []);
+  useForegroundInterval(tickCountdown, 1000, state === 'searching');
 
   // Resync booking status whenever the app comes back to the foreground —
   // realtime channels can miss events while suspended on Android.
@@ -212,14 +212,11 @@ export default function ConfirmScreen() {
         setTimeout(() => {
           if (bookingId) router.replace(`/(customer)/tracking/${bookingId}`);
         }, 1200);
-        if (safetyPollRef.current) clearInterval(safetyPollRef.current);
       } else if (status === 'cancelled') {
         setState('cancelled');
         setActiveBooking(null);
-        if (safetyPollRef.current) clearInterval(safetyPollRef.current);
       } else if ((status as string) === 'no_runner') {
         setState('no_runner');
-        if (safetyPollRef.current) clearInterval(safetyPollRef.current);
       }
     },
     [bookingId, router, setActiveBooking],
@@ -232,21 +229,24 @@ export default function ConfirmScreen() {
 
   // Fallback safety-net poll every 30s — only fires if realtime didn't
   // already transition us out of "searching". The axios layer dedupes any
-  // bursts, so this is effectively at most 2 requests per minute.
-  useEffect(() => {
-    if (!bookingId || state !== 'searching') return;
-    safetyPollRef.current = setInterval(async () => {
-      try {
-        const res = await bookingService.getBooking(bookingId);
-        reactToStatus(res.data.data);
-      } catch {
-        // ignore — realtime will catch up
-      }
-    }, 30000);
-    return () => {
-      if (safetyPollRef.current) clearInterval(safetyPollRef.current);
-    };
-  }, [bookingId, state, reactToStatus]);
+  // bursts, so this is effectively at most 2 requests per minute. Using
+  // `useForegroundInterval` so we don't burn cellular while suspended;
+  // the AppState listener already re-syncs immediately on resume above.
+  const pollSafetyNet = useCallback(async () => {
+    if (!bookingId) return;
+    try {
+      const res = await bookingService.getBooking(bookingId);
+      reactToStatus(res.data.data);
+    } catch {
+      // ignore — realtime will catch up
+    }
+  }, [bookingId, reactToStatus]);
+  useForegroundInterval(
+    pollSafetyNet,
+    30000,
+    !!bookingId && state === 'searching',
+    false, // skip immediate run — reactToStatus already fires from realtime
+  );
 
   const handleCancel = useCallback(() => {
     setShowCancelModal(true);
@@ -259,7 +259,6 @@ export default function ConfirmScreen() {
       await bookingService.cancelBooking(bookingId, 'Customer cancelled');
       setState('cancelled');
       setActiveBooking(null);
-      if (safetyPollRef.current) clearInterval(safetyPollRef.current);
       setShowCancelModal(false);
       router.replace('/(customer)/(tabs)');
     } catch {
@@ -299,24 +298,20 @@ export default function ConfirmScreen() {
   return (
     <View style={{ flex: 1 }}>
       {/* Background Map */}
-      <Mapbox.MapView
+      <MapView
         style={StyleSheet.absoluteFill}
-        styleURL={MAP_STYLE_URL}
-        logoEnabled={false}
-        attributionEnabled={false}
-        compassEnabled={false}
-        scaleBarEnabled={false}
+        provider={PROVIDER_GOOGLE}
         scrollEnabled={false}
         pitchEnabled={false}
         rotateEnabled={false}
         zoomEnabled={false}
-      >
-        <Mapbox.Camera
-          centerCoordinate={center}
-          zoomLevel={14}
-          animationMode="none"
-        />
-      </Mapbox.MapView>
+        initialRegion={{
+          latitude: center[1],
+          longitude: center[0],
+          latitudeDelta: 0.01,
+          longitudeDelta: 0.01,
+        }}
+      />
 
       {/* Pulse overlay centered on screen */}
       {state === 'searching' && <PulseOverlay />}

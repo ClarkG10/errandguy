@@ -7,6 +7,7 @@ import Animated, {
   withTiming,
   Easing,
 } from 'react-native-reanimated';
+import { useResponsive } from '../../constants/responsive';
 
 interface OTPInputProps {
   length?: number;
@@ -18,6 +19,23 @@ interface OTPInputProps {
 export function OTPInput({ length = 6, value, onChange, error }: OTPInputProps) {
   const inputs = useRef<(TextInput | null)[]>([]);
   const digits = value.split('').concat(Array(length - value.length).fill(''));
+  const { mScale, width: screenW, contentMaxWidth } = useResponsive();
+
+  // Cell sizing — prefer the moderate-scaled 48pt design width, but
+  // step down on narrow phones so 6 cells + margins always fit inside
+  // the available content column without overflowing horizontally.
+  // 24pt of side padding is reserved on each edge to match the form
+  // container and to leave room for the cells' shadow/border.
+  const designCellW = mScale(48);
+  const cellMargin = mScale(4);
+  const horizontalPad = mScale(24);
+  const usableW = Math.min(screenW, contentMaxWidth) - horizontalPad * 2;
+  const cellWidth = Math.max(
+    32,
+    Math.min(designCellW, Math.floor(usableW / length) - cellMargin * 2),
+  );
+  const cellHeight = Math.round(cellWidth * 1.25); // keep 4:5 ratio
+  const cellFont = Math.max(16, Math.round(cellWidth * 0.46));
 
   // Shake the cell row whenever an error message appears. We key off the
   // string itself so re-submitting the same wrong code still shakes (the
@@ -113,15 +131,15 @@ export function OTPInput({ length = 6, value, onChange, error }: OTPInputProps) 
             }}
             accessibilityLabel={`Digit ${index + 1} of ${length}`}
             style={{
-              width: 48,
-              height: 60,
-              marginHorizontal: 4,
+              width: cellWidth,
+              height: cellHeight,
+              marginHorizontal: cellMargin,
               borderWidth: filled ? 2 : 1,
               borderRadius: 12,
               borderColor,
               backgroundColor: bg,
               textAlign: 'center',
-              fontSize: 22,
+              fontSize: cellFont,
               fontFamily: Platform.OS === 'ios' ? 'Inter_600SemiBold' : 'Quicksand_700Bold',
               color: '#0F172A',
               padding: 0,

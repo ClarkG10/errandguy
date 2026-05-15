@@ -127,13 +127,17 @@ export const SignaturePad = forwardRef<SignaturePadHandle, SignaturePadProps>(
         // expo-file-system so the existing upload path can attach a
         // standard local file URI.
         return new Promise<string | null>((resolve) => {
-          // @ts-expect-error - toDataURL is a runtime method on the native ref
-          if (!svgRef.current?.toDataURL) {
+          // `toDataURL` is a runtime method on the native ref that the
+          // react-native-svg type definitions don't surface — narrow
+          // the ref through `unknown` so the cast is honest.
+          const native = svgRef.current as unknown as {
+            toDataURL?: (cb: (base64: string) => void) => void;
+          } | null;
+          if (!native?.toDataURL) {
             resolve(null);
             return;
           }
-          // @ts-expect-error - same as above
-          svgRef.current.toDataURL(async (base64: string) => {
+          native.toDataURL(async (base64: string) => {
             try {
               const path = `${FileSystem.cacheDirectory}signature-${Date.now()}.png`;
               await FileSystem.writeAsStringAsync(path, base64, {

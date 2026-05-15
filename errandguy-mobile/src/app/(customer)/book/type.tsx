@@ -25,6 +25,7 @@ import { BottomActionBar } from '../../../components/ui/BottomActionBar';
 import { ConfirmModal } from '../../../components/ui/ConfirmModal';
 import { BookingStepIndicator } from '../../../components/customer/BookingStepIndicator';
 import { GradientHeader } from '../../../components/ui/GradientHeader';
+import { ErrandTypeIcon } from '../../../components/ui/ErrandTypeIcon';
 import { formatCurrency } from '../../../utils/formatCurrency';
 import type { ErrandType } from '../../../types';
 import { toast } from '../../../stores/toastStore';
@@ -200,7 +201,6 @@ export default function TypeSelectionScreen() {
         ) : (
         <View className="flex-row flex-wrap justify-between">
           {errandTypes.map((type) => {
-            const Icon = ICON_MAP[type.icon_name] ?? Package;
             const isSelected = selectedId === type.id;
             const isTransportation = type.slug === 'transportation';
 
@@ -227,14 +227,14 @@ export default function TypeSelectionScreen() {
                 android_ripple={{ color: 'rgba(37,99,235,0.08)', borderless: false }}
                 onPress={() => setSelectedId(type.id)}
               >
-                <View className="flex-row items-center justify-between mb-3">
-                  <Icon
-                    size={22}
-                    color={isSelected ? '#2563EB' : '#475569'}
-                    strokeWidth={1.6}
+                <View className="flex-row items-start justify-between mb-2">
+                  <ErrandTypeIcon
+                    name={type.icon_name}
+                    size="md"
+                    variant={isSelected ? 'solid' : 'tinted'}
                   />
                   {isTransportation && (
-                    <Text className="text-[10px] font-montserrat-bold uppercase text-warning" style={{ letterSpacing: 1.2 }}>
+                    <Text className="text-[10px] font-montserrat-bold uppercase text-warning mt-1" style={{ letterSpacing: 1.2 }}>
                       Ride
                     </Text>
                   )}

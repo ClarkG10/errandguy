@@ -11,6 +11,7 @@ export const notificationService = {
     const isHeadPage = !params || (!params.page || params.page === 1);
     return api.get('/notifications', {
       params,
+      silent: true,
       ...(isHeadPage ? { cacheTtlMs: 15_000 } : {}),
     } as any);
   },

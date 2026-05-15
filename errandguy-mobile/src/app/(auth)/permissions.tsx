@@ -1,33 +1,19 @@
 import React, { useState, useEffect } from 'react';
-import { View, Text, StyleSheet } from 'react-native';
+import { View, Text, StyleSheet, Pressable, Image } from 'react-native';
 import { useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import * as Location from 'expo-location';
-import Svg, { Path, Circle as SvgCircle } from 'react-native-svg';
+import { CheckCircle } from 'lucide-react-native';
 import { Button } from '../../components/ui/Button';
 
-function LocationIcon({ size = 72 }: { size?: number }) {
-  return (
-    <Svg width={size} height={size} viewBox="0 0 64 64" fill="none">
-      {/* Outer ring */}
-      <SvgCircle cx="32" cy="32" r="28" stroke="#2563EB" strokeWidth="2" opacity={0.12} />
-      <SvgCircle cx="32" cy="32" r="20" stroke="#2563EB" strokeWidth="1.5" opacity={0.08} />
-      {/* Pin body */}
-      <Path
-        d="M32 14c-7.18 0-13 5.82-13 13 0 9.75 13 23 13 23s13-13.25 13-23c0-7.18-5.82-13-13-13z"
-        fill="#2563EB"
-        opacity={0.15}
-      />
-      <Path
-        d="M32 16c-6.07 0-11 4.93-11 11 0 8.25 11 19.5 11 19.5s11-11.25 11-19.5c0-6.07-4.93-11-11-11z"
-        fill="#2563EB"
-      />
-      {/* Inner dot */}
-      <SvgCircle cx="32" cy="27" r="4.5" fill="#fff" />
-    </Svg>
-  );
-}
+const LOCATION_PERMISSION = require('../../../assets/location-permission.png');
 
+/**
+ * Location permission screen.
+ *
+ * Uses the supplied location-permission artwork so the permission
+ * screen matches the refreshed onboarding asset pack.
+ */
 export default function LocationPermissionScreen() {
   const router = useRouter();
   const [granted, setGranted] = useState(false);
@@ -52,10 +38,7 @@ export default function LocationPermissionScreen() {
   return (
     <SafeAreaView className="flex-1 bg-surface" style={s.container}>
       <View style={s.content}>
-        {/* Illustration area */}
-        <View style={s.illustration}>
-          <LocationIcon size={80} />
-        </View>
+        <Image source={LOCATION_PERMISSION} style={s.illustration} resizeMode="contain" />
 
         <Text className="text-[26px] font-montserrat-semi text-textPrimary text-center" style={s.title}>
           Allow location access
@@ -63,39 +46,30 @@ export default function LocationPermissionScreen() {
         <Text className="text-[15px] font-montserrat text-textTertiary text-center" style={s.subtitle}>
           We use your location to find runners nearby and set accurate pickup and dropoff points.
         </Text>
+
+        {granted && (
+          <View style={s.grantedInline}>
+            <CheckCircle size={16} color="#22C55E" />
+            <Text className="text-[13px] font-montserrat-semi text-success ml-1.5">
+              Location access enabled
+            </Text>
+          </View>
+        )}
       </View>
 
       <View style={s.footer}>
-        {granted ? (
-          <>
-            <View style={s.grantedBadge}>
-              <Text className="text-[14px] font-montserrat-semi text-success">
-                Location access enabled
-              </Text>
-            </View>
-            <Button
-              title="Continue"
-              fullWidth
-              size="lg"
-              onPress={() => router.push('/(auth)/contacts-permission')}
-            />
-          </>
-        ) : (
-          <>
-            <Button
-              title="Allow Location"
-              fullWidth
-              size="lg"
-              onPress={handleAllow}
-            />
-            <Text
-              className="text-[14px] font-montserrat text-textTertiary text-center"
-              style={s.skipText}
-              onPress={handleSkip}
-            >
+        <Button
+          title={granted ? 'Continue' : 'Allow Location'}
+          fullWidth
+          size="lg"
+          onPress={granted ? () => router.push('/(auth)/contacts-permission') : handleAllow}
+        />
+        {!granted && (
+          <Pressable onPress={handleSkip} hitSlop={8} style={s.skipBtn}>
+            <Text className="text-[14px] font-montserrat text-textTertiary text-center">
               Not now
             </Text>
-          </>
+          </Pressable>
         )}
       </View>
     </SafeAreaView>
@@ -103,34 +77,20 @@ export default function LocationPermissionScreen() {
 }
 
 const s = StyleSheet.create({
-  container: {
-    paddingHorizontal: 32,
-  },
-  content: {
-    flex: 1,
-    justifyContent: 'center',
+  container: { paddingHorizontal: 28 },
+  content: { flex: 1, justifyContent: 'center', alignItems: 'center' },
+  illustration: { width: 260, height: 260, marginBottom: 12 },
+  title: { marginBottom: 12, lineHeight: 32 },
+  subtitle: { lineHeight: 22, paddingHorizontal: 8 },
+  grantedInline: {
+    flexDirection: 'row',
     alignItems: 'center',
-  },
-  illustration: {
-    marginBottom: 32,
-  },
-  title: {
-    marginBottom: 12,
-    lineHeight: 32,
-  },
-  subtitle: {
-    lineHeight: 22,
-    paddingHorizontal: 8,
-  },
-  footer: {
-    paddingBottom: 32,
-    gap: 16,
-  },
-  grantedBadge: {
-    alignItems: 'center',
-    paddingVertical: 12,
-  },
-  skipText: {
+    marginTop: 18,
+    paddingHorizontal: 12,
     paddingVertical: 8,
+    borderRadius: 999,
+    backgroundColor: '#ECFDF5',
   },
+  footer: { paddingBottom: 28, gap: 4 },
+  skipBtn: { paddingVertical: 12 },
 });

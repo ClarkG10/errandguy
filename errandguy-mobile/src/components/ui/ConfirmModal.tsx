@@ -2,6 +2,7 @@ import React from 'react';
 import { View, Text, Modal, Pressable, ScrollView } from 'react-native';
 import { MotiView } from 'moti';
 import { ErrandLoader } from './ErrandLoader';
+import { useResponsive } from '../../constants/responsive';
 
 interface ConfirmModalProps {
   visible: boolean;
@@ -26,6 +27,11 @@ export function ConfirmModal({
   onConfirm,
   onCancel,
 }: ConfirmModalProps) {
+  // NativeWind's `max-w-sm` doesn't apply on native, so we cap the
+  // dialog width imperatively. 420pt is the comfortable upper bound
+  // for a confirm dialog \u2014 wider feels like a sheet, not a prompt.
+  const { width } = useResponsive();
+  const dialogMaxWidth = Math.min(width - 48, 420);
   return (
     <Modal
       visible={visible}
@@ -38,7 +44,10 @@ export function ConfirmModal({
         className="flex-1 bg-black/50 justify-center items-center px-6"
         onPress={loading ? undefined : onCancel}
       >
-        <Pressable onPress={(e) => e.stopPropagation()} className="w-full max-w-sm">
+        <Pressable
+          onPress={(e) => e.stopPropagation()}
+          style={{ width: '100%', maxWidth: dialogMaxWidth }}
+        >
           <MotiView
             from={{ opacity: 0, scale: 0.92, translateY: 12 }}
             animate={{ opacity: 1, scale: 1, translateY: 0 }}

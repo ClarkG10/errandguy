@@ -10,6 +10,7 @@ import {
   StatusBar,
   StyleSheet,
 } from 'react-native';
+import { LinearGradient } from 'expo-linear-gradient';
 import * as Haptics from 'expo-haptics';
 import { useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -18,7 +19,10 @@ import { ChevronLeft, Check } from 'lucide-react-native';
 import { Input } from '../../components/ui/Input';
 import { Button } from '../../components/ui/Button';
 import { SocialLoginButton } from '../../components/auth/SocialLoginButton';
+import { AuthBrandMark } from '../../components/auth/OnboardingIllustrations';
+import { LogoutSplash } from '../../components/ui/LogoutSplash';
 import { useAuth } from '../../hooks/useAuth';
+import { preloadCoreImages } from '../../services/preload.service';
 import { useAuthStore } from '../../stores/authStore';
 import { toast } from '../../stores/toastStore';
 
@@ -57,6 +61,10 @@ export default function LoginScreen() {
       });
     }
   }, [rememberedCredentials, reset]);
+
+  useEffect(() => {
+    preloadCoreImages().catch(() => {});
+  }, []);
 
   const onSubmit = async (data: LoginFormData) => {
     setLoading(true);
@@ -122,12 +130,19 @@ export default function LoginScreen() {
           keyboardShouldPersistTaps="handled"
           showsVerticalScrollIndicator={false}
         >
-          {/* Brand-color hero — flat solid block (no gradient, no
-              curved bottom seam). Reads as a deliberate header band
-              that the form sits cleanly underneath. */}
-          <View style={s.heroBlock}>
+          {/* Brand hero — soft three-stop gradient with the brand
+              mark centred. Replaces the previous flat blue block,
+              which read as a stark header band. The gradient + mark
+              gives the screen a recognisable identity moment without
+              stealing focus from the form below. */}
+          <LinearGradient
+            colors={['#1E40AF', '#2563EB', '#3B82F6']}
+            start={{ x: 0, y: 0 }}
+            end={{ x: 1, y: 1 }}
+            style={s.heroBlock}
+          >
             <SafeAreaView edges={['top']}>
-              <View className="px-6 pt-2 pb-10">
+              <View className="px-6 pt-2 pb-9">
                 {!onboardingSeen && (
                   <TouchableOpacity
                     cssInterop={false}
@@ -140,30 +155,39 @@ export default function LoginScreen() {
                 )}
                 {onboardingSeen && <View style={{ height: 12 }} />}
 
+                <View className="items-center mt-2">
+                  <AuthBrandMark size={92} tintColor="#FFFFFF" />
+                </View>
+
                 <Text
-                  className="text-[11px] font-montserrat-bold uppercase mt-6"
+                  className="text-[11px] font-montserrat-bold uppercase text-center mt-4"
                   style={{ letterSpacing: 1.8, color: 'rgba(255,255,255,0.85)' }}
                 >
                   ErrandGuy
                 </Text>
                 <Text
-                  className="text-[26px] font-montserrat-bold text-white tracking-tight mt-2"
-                  style={{ lineHeight: 30 }}
+                  className="text-[24px] font-montserrat-bold text-white tracking-tight text-center mt-1.5"
+                  style={{ lineHeight: 28 }}
                 >
                   Welcome back.
                 </Text>
                 <Text
-                  className="text-[13px] font-montserrat mt-2"
+                  className="text-[13px] font-montserrat text-center mt-1.5"
                   style={{ color: 'rgba(255,255,255,0.85)' }}
                 >
-                  Sign in with your phone number or email
+                  Sign in to continue your errand.
                 </Text>
               </View>
             </SafeAreaView>
-          </View>
+          </LinearGradient>
 
-          {/* Form — flat seam, no overlap. */}
-          <View className="flex-1 bg-white px-6 pt-7">
+          {/* Form card — lifts up over the gradient bottom edge by
+              22pt so the seam reads as a deliberate elevated surface
+              rather than a flat join. */}
+          <View
+            className="flex-1 bg-white px-6 pt-7"
+            style={{ borderTopLeftRadius: 24, borderTopRightRadius: 24, marginTop: -22 }}
+          >
 
           {/* Identifier — auto-detects phone or email */}
           <Controller
@@ -280,13 +304,24 @@ export default function LoginScreen() {
           </View>
         </ScrollView>
       </KeyboardAvoidingView>
+      <LogoutSplash
+        visible={loading}
+        backgroundColor="#1D4ED8"
+        logoTintColor="#FFFFFF"
+        logoSize={172}
+      />
     </View>
   );
 }
 
 const s = StyleSheet.create({
   heroBlock: {
-    backgroundColor: '#2563EB',
+    // Gradient styling lives on the LinearGradient props — this
+    // wrapper just constrains the bottom radius so the form card
+    // can lift over a clean curved edge.
+    borderBottomLeftRadius: 28,
+    borderBottomRightRadius: 28,
+    overflow: 'hidden',
   },
   backBtn: {
     width: 38,

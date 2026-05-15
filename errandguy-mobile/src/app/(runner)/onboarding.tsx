@@ -25,7 +25,7 @@ import { userService } from '../../services/user.service';
 import type { DocumentType, RunnerDocument } from '../../types';
 import { toast } from '../../stores/toastStore';
 
-const MASCOT = require('../../../assets/mascot.png');
+const LOGO = require('../../../assets/logo-new.png');
 
 interface DocConfig {
   type: DocumentType;
@@ -310,7 +310,7 @@ export default function RunnerOnboardingScreen() {
         {/* Header */}
         <View className="items-center px-6 pt-4 pb-6">
           <Image
-            source={MASCOT}
+            source={LOGO}
             className="w-28 h-28 mb-3"
             resizeMode="contain"
           />
