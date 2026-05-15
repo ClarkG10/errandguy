@@ -2,6 +2,7 @@
 
 namespace App\Jobs;
 
+use App\Events\BookingStatusChanged;
 use App\Models\Booking;
 use App\Models\BookingStatusLog;
 use App\Services\MatchingService;
@@ -42,7 +43,10 @@ class MatchRunnerJob implements ShouldQueue
         $runner = $matchingService->findRunner($this->bookingId, $this->radiusOverrideKm);
 
         try {
-            DB::transaction(function () use ($runner) {
+            $newStatus = null; // 'matched' | 'no_runner' | null (race-skipped)
+            $matchedBooking = null;
+
+            DB::transaction(function () use ($runner, &$newStatus, &$matchedBooking) {
                 // Re-fetch with FOR UPDATE so a concurrent MatchRunnerJob
                 // (re-dispatch, retry, or admin reassign) cannot also flip
                 // the same row from `pending` to `matched`.
@@ -80,6 +84,8 @@ class MatchRunnerJob implements ShouldQueue
                     ]);
 
                     Log::info("Runner {$runner->user_id} matched to booking {$this->bookingId}");
+                    $newStatus = 'matched';
+                    $matchedBooking = $booking->fresh();
                 } else {
                     $booking->update(['status' => 'no_runner']);
 
@@ -91,8 +97,20 @@ class MatchRunnerJob implements ShouldQueue
                     ]);
 
                     Log::info("No runners found for booking {$this->bookingId}");
+                    $newStatus = 'no_runner';
+                    $matchedBooking = $booking->fresh();
                 }
             });
+
+            // Dispatch the status change event AFTER the transaction commits so
+            // listeners (notifications, push, audit) see the persisted row.
+            // Without this, downstream side-effects never fire when the system
+            // (vs. the runner) flips a booking out of `pending` — that was the
+            // root cause of "runner can't receive request" for fixed-mode
+            // bookings whose listeners depended on this event.
+            if ($newStatus && $matchedBooking) {
+                event(new BookingStatusChanged($matchedBooking, 'pending', $newStatus));
+            }
         } catch (Throwable $e) {
             Log::error("MatchRunnerJob failed for booking {$this->bookingId}: {$e->getMessage()}");
             throw $e; // let queue worker apply backoff/tries

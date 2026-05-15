@@ -25,7 +25,7 @@ import {
   Crosshair,
 } from 'lucide-react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import MapView, { Marker, Polyline, PROVIDER_GOOGLE } from 'react-native-maps';
+import { HereMapView, HereMarker, HerePolyline, type HereMapViewRef, type Region } from '../../../components/map';
 import * as Location from 'expo-location';
 import { useBookingStore } from '../../../stores/bookingStore';
 import { useImagePicker } from '../../../hooks/useImagePicker';
@@ -35,6 +35,7 @@ import { Input } from '../../../components/ui/Input';
 import { PhotoGrid } from '../../../components/customer/PhotoGrid';
 import { ImagePickerModal } from '../../../components/ui/ImagePickerModal';
 import { SavedAddressSheet } from '../../../components/customer/SavedAddressSheet';
+import { ExpandableSheet } from '../../../components/ui/ExpandableSheet';
 import { BookingStepIndicator } from '../../../components/customer/BookingStepIndicator';
 
 import { getErrandTypeRule } from '../../../constants/errandTypeRules';
@@ -265,7 +266,7 @@ export default function TaskDetailsScreen() {
   const [routeCoords, setRouteCoords] = useState<[number, number][]>([]);
 
   // Refs
-  const mapRef = useRef<MapView>(null);
+  const mapRef = useRef<HereMapViewRef>(null);
   const geocodeTimeout = useRef<ReturnType<typeof setTimeout>>(undefined);
   const skipNextGeocode = useRef(false);
 
@@ -341,6 +342,16 @@ export default function TaskDetailsScreen() {
   /* ── Map region handlers ── */
   const handleRegionChange = useCallback(() => {
     if (phase === 'details') return;
+    // When we're programmatically animating the map (after a search
+    // selection, "My Location" tap, or auto-detect on mount),
+    // skipNextGeocode is set to true so we can skip the geocoding call
+    // in handleRegionChangeComplete. We also skip clearing the address
+    // here so the address we've already resolved doesn't get wiped out
+    // during the animation.
+    if (skipNextGeocode.current) {
+      if (geocodeTimeout.current) clearTimeout(geocodeTimeout.current);
+      return;
+    }
     setIsMoving(true);
     setCurrentAddress('');
     if (geocodeTimeout.current) clearTimeout(geocodeTimeout.current);
@@ -361,7 +372,9 @@ export default function TaskDetailsScreen() {
       if (geocodeTimeout.current) clearTimeout(geocodeTimeout.current);
       geocodeTimeout.current = setTimeout(async () => {
         setCurrentCoord(center);
+        console.log(`[details] Reverse geocoding: [${center[1]}, ${center[0]}]`);
         const addr = await reverseGeocode(center[0], center[1]);
+        console.log(`[details] Geocode result: "${addr}"`);
         setCurrentAddress(addr);
       }, 300);
     },
@@ -502,17 +515,22 @@ export default function TaskDetailsScreen() {
         toast.warning('Please enable location permissions to use this feature.');
         return;
       }
+      console.log('[details] Getting current position…');
       const loc = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.High });
       const coords: [number, number] = [loc.coords.longitude, loc.coords.latitude];
+      console.log(`[details] Current position: lat=${loc.coords.latitude}, lng=${loc.coords.longitude}, accuracy=${loc.coords.accuracy}m`);
       skipNextGeocode.current = true;
       setCurrentCoord(coords);
       mapRef.current?.animateToRegion({
               latitude: coords[1], longitude: coords[0],
               latitudeDelta: 0.008, longitudeDelta: 0.008,
             }, 800);
+      console.log(`[details] Reverse geocoding current location…`);
       const addr = await reverseGeocode(coords[0], coords[1]);
+      console.log(`[details] Current location resolved: "${addr}"`);
       setCurrentAddress(addr);
-    } catch {
+    } catch (err) {
+      console.error('[details] handleMyLocation error:', err);
       toast.error('Could not get your location.');
     }
   }, [reverseGeocode]);
@@ -663,11 +681,10 @@ export default function TaskDetailsScreen() {
   return (
     <View style={{ flex: 1, backgroundColor: '#F8FAFC' }}>
       {/* ═══ MAP ═══ */}
-      <View style={phase === 'details' ? { height: SCREEN_HEIGHT * 0.36 } : { flex: 1 }}>
-        <MapView
+      <View style={{ flex: 1 }}>
+        <HereMapView
           style={{ flex: 1 }}
           ref={mapRef}
-          provider={PROVIDER_GOOGLE}
           onRegionChangeComplete={handleRegionChangeComplete}
           onRegionChange={handleRegionChange}
           onPress={() => {
@@ -683,32 +700,34 @@ export default function TaskDetailsScreen() {
         >
           {/* Frozen pickup marker */}
           {phase !== 'pickup' && draftBooking.pickup_lng != null && draftBooking.pickup_lat != null && (
-            <Marker
+            <HereMarker
               coordinate={{ latitude: draftBooking.pickup_lat, longitude: draftBooking.pickup_lng }}
               anchor={{ x: 0.5, y: 1 }}
+              id="pickup-marker"
             >
               <PulseMarker color="#2563EB" />
-            </Marker>
+            </HereMarker>
           )}
 
           {/* Frozen dropoff marker */}
           {phase === 'details' && draftBooking.dropoff_lng != null && draftBooking.dropoff_lat != null && (
-            <Marker
+            <HereMarker
               coordinate={{ latitude: draftBooking.dropoff_lat, longitude: draftBooking.dropoff_lng }}
               anchor={{ x: 0.5, y: 1 }}
+              id="dropoff-marker"
             >
               <PulseMarker color="#EF4444" />
-            </Marker>
+            </HereMarker>
           )}
 
           {/* Route polyline — cased for visibility over busy tiles. */}
           {routeMapCoords.length > 0 && (
             <>
-              <Polyline coordinates={routeMapCoords} strokeColor="#1E3A8A" strokeWidth={8} lineJoin="round" />
-              <Polyline coordinates={routeMapCoords} strokeColor="#3B82F6" strokeWidth={5} lineJoin="round" />
+              <HerePolyline id="route-outline" coordinates={routeMapCoords} strokeColor="#1E3A8A" strokeWidth={8} lineJoin="round" />
+              <HerePolyline id="route-fill" coordinates={routeMapCoords} strokeColor="#3B82F6" strokeWidth={5} lineJoin="round" />
             </>
           )}
-        </MapView>
+        </HereMapView>
 
         {/* Center pin overlay */}
         {phase !== 'details' && (
@@ -842,11 +861,31 @@ export default function TaskDetailsScreen() {
         )}
       </View>
 
-      {/* ═══ BOTTOM PANEL ═══ */}
+      {/* ═══ BOTTOM PANEL (expandable sheet) ═══ */}
+      <ExpandableSheet
+        initial={phase === 'details' ? 'half' : 'peek'}
+        snapPoints={{ peek: 0.35, half: 0.60, full: 0.93 }}
+        footer={
+          phase !== 'details' ? (
+            <Button
+              title={phase === 'pickup' ? `Confirm ${rule.pickupLabel}` : `Confirm ${rule.dropoffLabel}`}
+              onPress={handleConfirmLocation}
+              disabled={!currentAddress || isMoving}
+              fullWidth
+            />
+          ) : (
+            <View>
+              {(errors.pickup || errors.dropoff) && (
+                <Text style={st.errorText}>{errors.pickup || errors.dropoff}</Text>
+              )}
+              <Button title="Continue" onPress={handleContinue} fullWidth />
+            </View>
+          )
+        }
+      >
       {phase !== 'details' ? (
         /* ── Pickup / Dropoff card ── */
-        <View style={st.bottomCard}>
-          <View style={st.dragHandle} />
+        <View style={{ paddingHorizontal: 20, paddingTop: 12, paddingBottom: 32 }}>
           <Text style={st.cardTitle}>
             {phase === 'pickup' ? `Set ${rule.pickupLabel.toLowerCase()}` : `Set ${rule.dropoffLabel.toLowerCase()}`}
           </Text>
@@ -875,32 +914,15 @@ export default function TaskDetailsScreen() {
             </Pressable>
           </View>
 
-          <Button
-            title={phase === 'pickup' ? `Confirm ${rule.pickupLabel}` : `Confirm ${rule.dropoffLabel}`}
-            onPress={handleConfirmLocation}
-            disabled={!currentAddress || isMoving}
-            fullWidth
-          />
+          {/* Confirm CTA lives in the sheet `footer` so it stays visible. */}
         </View>
       ) : (
         /* ── Details sheet ── */
         <KeyboardAvoidingView
-          style={st.detailsSheet}
-          // Android transparent layouts don't auto-resize on input
-          // focus. Forcing `height` makes the sheet shrink so the
-          // focused input stays above the keyboard. iOS uses padding.
+          style={{ flex: 1, paddingHorizontal: 20, paddingTop: 12 }}
           behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-          // Floating-header sheet with a sticky route summary at top —
-          // the offset has to compensate for the gradient header AND
-          // the bottom CTA / contact-name fields, otherwise the input
-          // the user is typing into stays buried under the keyboard
-          // (the previous offset of 90 wasn't enough on iPhones with
-          // taller keyboards). 140 keeps every input above the
-          // keyboard on iPhone SE → 16 Pro Max.
           keyboardVerticalOffset={Platform.OS === 'ios' ? 140 : 0}
         >
-          <View style={st.dragHandle} />
-
           {/* Route summary strip — tappable to change */}
           <View style={st.routeSummary}>
             <Pressable style={st.routePoint} onPress={() => handleChangeLocation('pickup')}>
@@ -1090,15 +1112,11 @@ export default function TaskDetailsScreen() {
             )}
           </ScrollView>
 
-          {/* Continue CTA */}
-          <View style={st.continueCta}>
-            {(errors.pickup || errors.dropoff) && (
-              <Text style={st.errorText}>{errors.pickup || errors.dropoff}</Text>
-            )}
-            <Button title="Continue" onPress={handleContinue} fullWidth />
-          </View>
+          {/* Continue CTA lives in the sheet `footer` so it stays visible
+              regardless of keyboard / scroll position. */}
         </KeyboardAvoidingView>
       )}
+      </ExpandableSheet>
 
       {/* Saved Address Sheet */}
       <SavedAddressSheet

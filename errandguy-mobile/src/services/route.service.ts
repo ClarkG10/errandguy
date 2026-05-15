@@ -1,6 +1,12 @@
 import { CacheService, CacheTTL } from './cache.service';
 
-const GOOGLE_MAPS_KEY = process.env.EXPO_PUBLIC_GOOGLE_MAPS_KEY ?? '';
+const HERE_API_KEY = process.env.EXPO_PUBLIC_HERE_API_KEY ?? '';
+
+if (!HERE_API_KEY) {
+  console.error('[route] EXPO_PUBLIC_HERE_API_KEY is EMPTY — routes will not load.');
+} else {
+  console.log(`[route] HERE API key loaded (${HERE_API_KEY.slice(0, 8)}…)`);
+}
 
 export interface RouteResult {
   /** Polyline coordinates as `[lng, lat]` pairs in route order. */
@@ -11,46 +17,107 @@ export interface RouteResult {
   durationSeconds: number;
 }
 
-/**
- * Decode a Google Maps encoded polyline string into [lng, lat] pairs.
- * Google uses lat,lng order in its encoding — we flip to [lng, lat] so
- * all consumers (react-native-maps Polyline, route matching, etc.) get
- * the same [lng, lat] convention as the old Mapbox implementation.
- */
-function decodePolyline(encoded: string): [number, number][] {
+export interface NavigationStep {
+  instruction: string;
+  distanceMeters: number;
+  durationSeconds: number;
+  maneuverType: string;
+  maneuverModifier: string | null;
+  /** [lng, lat] point where the maneuver happens. */
+  location: [number, number];
+  /** Polyline geometry of just this step. */
+  geometry: [number, number][];
+  bearingAfter: number | null;
+}
+
+export interface NavigationRoute extends RouteResult {
+  steps: NavigationStep[];
+}
+
+// ---------------------------------------------------------------------------
+// HERE Flexible Polyline decoder
+// Ref: https://github.com/heremaps/flexible-polyline
+// ---------------------------------------------------------------------------
+
+// Decoding table: index = (charCode - 45), value = 6-bit integer (-1 = invalid)
+const FLEX_DEC: number[] = (() => {
+  const t = new Array(128).fill(-1);
+  t[45]  = 62; // '-'
+  t[95]  = 63; // '_'
+  for (let c = 48; c <= 57; c++) t[c] = c - 48 + 52;  // '0'-'9' -> 52-61
+  for (let c = 65; c <= 90; c++) t[c] = c - 65;        // 'A'-'Z' -> 0-25
+  for (let c = 97; c <= 122; c++) t[c] = c - 97 + 26;  // 'a'-'z' -> 26-51
+  return t;
+})();
+
+function flexDecodeUnsigned(s: string, i: number): [number, number] {
+  let result = 0, shift = 0;
+  while (i < s.length) {
+    const code = s.charCodeAt(i);
+    const v = code < FLEX_DEC.length ? FLEX_DEC[code] : -1;
+    if (v < 0) throw new Error(`flexpolyline: invalid char '${s[i]}' at ${i}`);
+    result |= (v & 0x1f) << shift;
+    i++;
+    if ((v & 0x20) === 0) break; // last chunk
+    shift += 5;
+  }
+  return [result, i];
+}
+
+// HERE flexible-polyline format version (always 1).
+const FLEX_FORMAT_VERSION = 1;
+
+function flexDecodeFlexPolyline(encoded: string): [number, number][] {
+  let i = 0;
+  // Read version byte first — the spec prepends a version integer before the
+  // precision/thirdDim header. The HERE Router v8 API always emits version 1
+  // ('B' in the encoding table). Without this read the decoder incorrectly
+  // uses the version char as the header and gets precision=1/factor=10, which
+  // produces coordinates that are 100 000x off — MapLibre silently drops the
+  // layer and the polyline never appears.
+  let [version, vi] = flexDecodeUnsigned(encoded, i);
+  i = vi;
+  if (version !== FLEX_FORMAT_VERSION) {
+    throw new Error(`flexpolyline: unsupported version ${version}`);
+  }
+  // Read header (precision / third-dim type / third-dim precision)
+  let [header, ni] = flexDecodeUnsigned(encoded, i);
+  i = ni;
+  const precision2d = header & 0xf;
+  const thirdDim = (header >> 4) & 0x7;
+  const precision3d = (header >> 7) & 0xf;
+  const factor2d = Math.pow(10, precision2d);
+  const factor3d = thirdDim > 0 ? Math.pow(10, precision3d) : 1;
+
   const coords: [number, number][] = [];
-  let index = 0;
-  let lat = 0;
-  let lng = 0;
-  while (index < encoded.length) {
-    let shift = 0;
-    let result = 0;
-    let byte: number;
-    do {
-      byte = encoded.charCodeAt(index++) - 63;
-      result |= (byte & 0x1f) << shift;
-      shift += 5;
-    } while (byte >= 0x20);
-    lat += result & 1 ? ~(result >> 1) : result >> 1;
+  let lat = 0, lng = 0, z = 0;
 
-    shift = 0;
-    result = 0;
-    do {
-      byte = encoded.charCodeAt(index++) - 63;
-      result |= (byte & 0x1f) << shift;
-      shift += 5;
-    } while (byte >= 0x20);
-    lng += result & 1 ? ~(result >> 1) : result >> 1;
+  while (i < encoded.length) {
+    let val: number;
+    [val, i] = flexDecodeUnsigned(encoded, i);
+    lat += (val & 1) ? ~(val >> 1) : val >> 1;
 
-    coords.push([lng / 1e5, lat / 1e5]);
+    [val, i] = flexDecodeUnsigned(encoded, i);
+    lng += (val & 1) ? ~(val >> 1) : val >> 1;
+
+    if (thirdDim > 0) {
+      [val, i] = flexDecodeUnsigned(encoded, i);
+      z += (val & 1) ? ~(val >> 1) : val >> 1;
+      void (z / factor3d); // unused but consumed
+    }
+    // HERE decodes lat first then lng; return as [lng, lat] for GeoJSON/MapLibre
+    coords.push([lng / factor2d, lat / factor2d]);
   }
   return coords;
 }
 
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
 function quantize(n: unknown): string {
   const v = typeof n === 'number' ? n : Number(n);
-  if (!Number.isFinite(v)) return 'NaN';
-  return v.toFixed(4);
+  return Number.isFinite(v) ? v.toFixed(4) : 'NaN';
 }
 
 function isFiniteCoord(n: unknown): n is number {
@@ -58,214 +125,164 @@ function isFiniteCoord(n: unknown): n is number {
   return Number.isFinite(v);
 }
 
-/** Google Directions API travel mode mapping */
-const GOOGLE_MODE: Record<DirectionsProfile, string> = {
-  driving: 'driving',
-  cycling: 'bicycling',
-  walking: 'walking',
-};
-
 export type DirectionsProfile = 'driving' | 'cycling' | 'walking';
 
-/**
- * In-memory route fetcher with persistent (AsyncStorage) cache layer.
- *
- * Design notes:
- * - Routes are deterministic for a given pair of pins (within ~11m), so
- *   we cache them aggressively. Mapbox Directions has a generous free
- *   tier but per-MAU rate limits — repeated mounts of the booking
- *   review or tracking screen would otherwise burn the same call.
- * - Errors are returned, not thrown. The previous call sites all used
- *   `.catch(() => {})` and silently dropped failures, which made
- *   "polyline missing" look like a Mapbox outage when it was actually
- *   a 401/429 from a bad/exhausted token.
- * - We deliberately do NOT auto-retry on 429; that would just compound
- *   the rate-limit situation. Caller decides.
- */
+const HERE_TRANSPORT_MODE: Record<DirectionsProfile, string> = {
+  driving: 'car',
+  cycling: 'bicycle',
+  walking: 'pedestrian',
+};
+
+// ---------------------------------------------------------------------------
+// HERE Routing API v8
+// ---------------------------------------------------------------------------
+
+interface HereRouteRaw {
+  coords: [number, number][];
+  distanceMeters: number;
+  durationSeconds: number;
+  steps?: NavigationStep[];
+}
+
+async function fetchHereRoute(
+  from: { lng: number; lat: number },
+  to: { lng: number; lat: number },
+  profile: DirectionsProfile,
+  withSteps: boolean,
+): Promise<HereRouteRaw | null> {
+  if (!HERE_API_KEY) return null;
+  const mode = HERE_TRANSPORT_MODE[profile];
+  const returnFields = withSteps ? 'polyline,summary,actions,instructions' : 'polyline,summary';
+  const url =
+    `https://router.hereapi.com/v8/routes` +
+    `?origin=${from.lat},${from.lng}` +
+    `&destination=${to.lat},${to.lng}` +
+    `&transportMode=${mode}` +
+    `&return=${returnFields}` +
+    `&apiKey=${HERE_API_KEY}`;
+  console.log(`[route] Fetching: (${from.lat},${from.lng}) → (${to.lat},${to.lng}) [${mode}]`);
+  const res = await fetch(url);
+  if (!res.ok) {
+    console.error(`[route] HTTP error: ${res.status}`);
+    return null;
+  }
+  const data = await res.json();
+  if (data.status) {
+    // HERE error responses include a "status" field with the HTTP code
+    console.error(`[route] API error:`, data.title ?? data.status, data.cause ?? '');
+    return null;
+  }
+  const section = data.routes?.[0]?.sections?.[0];
+  if (!section?.polyline) {
+    console.warn('[route] No route section or polyline in response');
+    return null;
+  }
+
+  let coords: [number, number][];
+  try {
+    coords = flexDecodeFlexPolyline(section.polyline);
+  } catch (decodeErr) {
+    console.error('[route] Polyline decode error:', decodeErr);
+    return null;
+  }
+
+  const summary = section.summary ?? {};
+  const distanceMeters: number = summary.length ?? 0;
+  const durationSeconds: number = summary.duration ?? 0;
+  console.log(`[route] ✓ ${coords.length} points, ${distanceMeters}m, ${durationSeconds}s`);
+
+  if (!withSteps) {
+    return { coords, distanceMeters, durationSeconds };
+  }
+
+  const actions: any[] = section.actions ?? [];
+  const steps: NavigationStep[] = actions.map((action, idx) => {
+    const startOff: number = action.offset ?? 0;
+    const endOff: number = actions[idx + 1]?.offset ?? coords.length;
+    const stepGeometry = coords.slice(startOff, endOff);
+    const location: [number, number] = coords[startOff] ?? [from.lng, from.lat];
+    return {
+      instruction: action.instruction ?? '',
+      distanceMeters: action.length ?? 0,
+      durationSeconds: action.duration ?? 0,
+      maneuverType: action.action ?? 'continue',
+      maneuverModifier: action.direction ?? null,
+      location,
+      geometry: stepGeometry,
+      bearingAfter: null,
+    } satisfies NavigationStep;
+  });
+
+  return { coords, distanceMeters, durationSeconds, steps };
+}
+
+// ---------------------------------------------------------------------------
+// Public service
+// ---------------------------------------------------------------------------
+
 export const routeService = {
-  /**
-   * Fetch a driving route with cache. Returns `null` only when the
-   * request fails (network, invalid key, etc.). Always inspect the
-   * return — never assume non-null.
-   */
   async getRoute(
     from: { lng: number; lat: number },
     to: { lng: number; lat: number },
     profile: DirectionsProfile = 'driving',
   ): Promise<RouteResult | null> {
-    if (!GOOGLE_MAPS_KEY) return null;
-    const fLng = Number(from?.lng);
-    const fLat = Number(from?.lat);
-    const tLng = Number(to?.lng);
-    const tLat = Number(to?.lat);
-    if (
-      !isFiniteCoord(fLng) ||
-      !isFiniteCoord(fLat) ||
-      !isFiniteCoord(tLng) ||
-      !isFiniteCoord(tLat)
-    ) {
+    const fLng = Number(from?.lng), fLat = Number(from?.lat);
+    const tLng = Number(to?.lng),   tLat = Number(to?.lat);
+    if (!isFiniteCoord(fLng) || !isFiniteCoord(fLat) || !isFiniteCoord(tLng) || !isFiniteCoord(tLat)) {
+      console.warn('[route.getRoute] Invalid coordinates:', { from, to });
       return null;
     }
-
-    const key = `route:${profile}:${quantize(fLng)},${quantize(fLat)}:${quantize(tLng)},${quantize(tLat)}`;
+    const key = `route4:${profile}:${quantize(fLng)},${quantize(fLat)}:${quantize(tLng)},${quantize(tLat)}`;
     try {
       return await CacheService.getOrFetch<RouteResult>(
         key,
         async () => {
-          const mode = GOOGLE_MODE[profile];
-          const url =
-            `https://maps.googleapis.com/maps/api/directions/json` +
-            `?origin=${fLat},${fLng}` +
-            `&destination=${tLat},${tLng}` +
-            `&mode=${mode}` +
-            `&region=ph` +
-            `&key=${GOOGLE_MAPS_KEY}`;
-          const res = await fetch(url);
-          if (!res.ok) throw new Error(`google_directions_${res.status}`);
-          const data = await res.json();
-          if (data.status !== 'OK') throw new Error(`google_directions_${data.status}`);
-          const leg = data.routes?.[0]?.legs?.[0];
-          const polyline = data.routes?.[0]?.overview_polyline?.points;
-          if (!polyline || !leg) throw new Error('google_directions_empty');
-          return {
-            coordinates: decodePolyline(polyline),
-            distanceMeters: leg.distance?.value ?? 0,
-            durationSeconds: leg.duration?.value ?? 0,
-          };
+          const r = await fetchHereRoute({ lng: fLng, lat: fLat }, { lng: tLng, lat: tLat }, profile, false);
+          if (!r) throw new Error('here_routing_failed');
+          return { coordinates: r.coords, distanceMeters: r.distanceMeters, durationSeconds: r.durationSeconds };
         },
         CacheTTL.LONG,
       );
-    } catch {
+    } catch (err) {
+      console.error('[route.getRoute] Failed:', err);
       return null;
     }
   },
 
-  /** Bypass cache and force a fresh fetch (used by retry buttons). */
   async refreshRoute(
     from: { lng: number; lat: number },
     to: { lng: number; lat: number },
     profile: DirectionsProfile = 'driving',
   ): Promise<RouteResult | null> {
-    const fLng = Number(from?.lng);
-    const fLat = Number(from?.lat);
-    const tLng = Number(to?.lng);
-    const tLat = Number(to?.lat);
-    if (
-      !isFiniteCoord(fLng) ||
-      !isFiniteCoord(fLat) ||
-      !isFiniteCoord(tLng) ||
-      !isFiniteCoord(tLat)
-    ) {
-      return null;
-    }
-    const key = `route:${profile}:${quantize(fLng)},${quantize(fLat)}:${quantize(tLng)},${quantize(tLat)}`;
+    const fLng = Number(from?.lng), fLat = Number(from?.lat);
+    const tLng = Number(to?.lng),   tLat = Number(to?.lat);
+    if (!isFiniteCoord(fLng) || !isFiniteCoord(fLat) || !isFiniteCoord(tLng) || !isFiniteCoord(tLat)) return null;
+    const key = `route4:${profile}:${quantize(fLng)},${quantize(fLat)}:${quantize(tLng)},${quantize(tLat)}`;
     await CacheService.remove(key);
     return this.getRoute(from, to, profile);
   },
 
-  /**
-   * Navigation-grade fetch: returns the polyline + per-step turn-by-turn
-   * maneuvers. Used by the runner navigation screen to drive the
-   * "in 200 m, turn right onto …" banner.
-   *
-   * Not cached — the runner's origin moves continuously and stale
-   * steps would point at intersections they've already passed.
-   */
   async getNavigationRoute(
     from: { lng: number; lat: number },
     to: { lng: number; lat: number },
     profile: DirectionsProfile = 'driving',
   ): Promise<NavigationRoute | null> {
-    if (!GOOGLE_MAPS_KEY) return null;
-    const fLng = Number(from?.lng);
-    const fLat = Number(from?.lat);
-    const tLng = Number(to?.lng);
-    const tLat = Number(to?.lat);
-    if (
-      !isFiniteCoord(fLng) ||
-      !isFiniteCoord(fLat) ||
-      !isFiniteCoord(tLng) ||
-      !isFiniteCoord(tLat)
-    ) {
+    const fLng = Number(from?.lng), fLat = Number(from?.lat);
+    const tLng = Number(to?.lng),   tLat = Number(to?.lat);
+    if (!isFiniteCoord(fLng) || !isFiniteCoord(fLat) || !isFiniteCoord(tLng) || !isFiniteCoord(tLat)) {
+      console.warn('[route.getNavigationRoute] Invalid coordinates:', { from, to });
       return null;
     }
     try {
-      const mode = GOOGLE_MODE[profile];
-      const url =
-        `https://maps.googleapis.com/maps/api/directions/json` +
-        `?origin=${fLat},${fLng}` +
-        `&destination=${tLat},${tLng}` +
-        `&mode=${mode}` +
-        `&region=ph` +
-        `&key=${GOOGLE_MAPS_KEY}`;
-      const res = await fetch(url);
-      if (!res.ok) return null;
-      const data = await res.json();
-      if (data.status !== 'OK') return null;
-      const route = data.routes?.[0];
-      const leg = route?.legs?.[0];
-      const polyline = route?.overview_polyline?.points;
-      if (!polyline || !leg) return null;
-
-      const coords = decodePolyline(polyline);
-
-      const steps: NavigationStep[] = (leg.steps ?? []).map((s: any) => {
-        const stepCoords = decodePolyline(s.polyline?.points ?? '');
-        const maneuver = s.maneuver ?? '';
-        // Google uses combined strings like "turn-right", "turn-left",
-        // "roundabout-left". Split at first dash to get type + modifier.
-        const dashIdx = maneuver.indexOf('-');
-        const maneuverType = dashIdx > 0 ? maneuver.slice(0, dashIdx) : (maneuver || 'continue');
-        const maneuverModifier = dashIdx > 0 ? maneuver.slice(dashIdx + 1) : null;
-        // Strip HTML from Google's instruction string (<b>, <div>, etc.)
-        const instruction = (s.html_instructions ?? '')
-          .replace(/<[^>]+>/g, ' ')
-          .replace(/\s{2,}/g, ' ')
-          .trim();
-        const startLat = s.start_location?.lat ?? fLat;
-        const startLng = s.start_location?.lng ?? fLng;
-        return {
-          instruction,
-          distanceMeters: s.distance?.value ?? 0,
-          durationSeconds: s.duration?.value ?? 0,
-          maneuverType,
-          maneuverModifier: maneuverModifier ? maneuverModifier.replace(/-/g, ' ') : null,
-          location: [startLng, startLat] as [number, number],
-          geometry: stepCoords,
-          bearingAfter: null, // Google Directions doesn't provide bearing
-        } satisfies NavigationStep;
-      });
-
-      return {
-        coordinates: coords,
-        distanceMeters: leg.distance?.value ?? 0,
-        durationSeconds: leg.duration?.value ?? 0,
-        steps,
-      };
-    } catch {
+      const r = await fetchHereRoute({ lng: fLng, lat: fLat }, { lng: tLng, lat: tLat }, profile, true);
+      if (!r || !r.steps) {
+        console.error('[route.getNavigationRoute] No result from HERE Routing');
+        return null;
+      }
+      return { coordinates: r.coords, distanceMeters: r.distanceMeters, durationSeconds: r.durationSeconds, steps: r.steps };
+    } catch (err) {
+      console.error('[route.getNavigationRoute] Error:', err);
       return null;
     }
   },
 };
-export interface NavigationStep {
-  /** Plain English instruction, e.g. "Turn right onto Quezon Ave". */
-  instruction: string;
-  /** Distance covered by this step in metres. */
-  distanceMeters: number;
-  /** Estimated time to traverse this step in seconds. */
-  durationSeconds: number;
-  /** Maneuver type ("turn", "merge", "arrive", …). */
-  maneuverType: string;
-  /** Modifier ("left", "right", "slight left", …) or null when n/a. */
-  maneuverModifier: string | null;
-  /** [lng, lat] point where the maneuver happens. */
-  location: [number, number];
-  /** Polyline geometry of just this step (for off-route detection). */
-  geometry: [number, number][];
-  /** Compass bearing AFTER the maneuver, 0–359, or null. */
-  bearingAfter: number | null;
-}
-
-export interface NavigationRoute extends RouteResult {
-  steps: NavigationStep[];
-}

@@ -24,7 +24,7 @@ import {
   Clock,
 } from 'lucide-react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import MapView, { Marker, Polyline, PROVIDER_GOOGLE } from 'react-native-maps';
+import { HereMapView, HereMarker, HerePolyline, type HereMapViewRef } from '../../../components/map';
 import { useBookingStore } from '../../../stores/bookingStore';
 import { useChatStore } from '../../../stores/chatStore';
 import { useLocationStore } from '../../../stores/locationStore';
@@ -107,7 +107,7 @@ export default function TrackingScreen() {
   } | null>(null);
   const [previewLoading, setPreviewLoading] = useState(false);
   const [showSOSModal, setShowSOSModal] = useState(false);
-  const mapRef = useRef<MapView>(null);
+  const mapRef = useRef<HereMapViewRef>(null);
   // Tracks the last booking status we have already loaded statusLogs for.
   // Used to skip redundant /track refetches when realtime UPDATEs come in
   // for unrelated fields. Declared before the fetch effect that seeds it.
@@ -713,11 +713,9 @@ export default function TrackingScreen() {
     <View style={{ flex: 1, backgroundColor: '#fff' }}>
       {/* Live Map — fills the entire screen so the user can view it as a whole */}
       <View style={StyleSheet.absoluteFill}>
-        <MapView
+        <HereMapView
           ref={mapRef}
           style={{ flex: 1 }}
-          provider={PROVIDER_GOOGLE}
-          showsUserLocation={false}
           showsMyLocationButton={false}
           showsCompass={false}
           initialRegion={{
@@ -729,41 +727,40 @@ export default function TrackingScreen() {
         >
                     {/* Pickup marker */}
           {booking.pickup_lng && booking.pickup_lat && (
-            <Marker
+            <HereMarker
               coordinate={{ latitude: Number(booking.pickup_lat), longitude: Number(booking.pickup_lng) }}
               anchor={{ x: 0.5, y: 0.5 }}
+              id="pickup-marker"
             >
               <View className="items-center">
                 <View className="w-8 h-8 rounded-full bg-primary items-center justify-center border-2 border-white shadow-md">
                   <Text className="text-white text-[10px] font-montserrat-bold">P</Text>
                 </View>
               </View>
-            </Marker>
+            </HereMarker>
           )}
 
           {/* Dropoff marker */}
           {booking.dropoff_lng && booking.dropoff_lat && (
-            <Marker
+            <HereMarker
               coordinate={{ latitude: Number(booking.dropoff_lat), longitude: Number(booking.dropoff_lng) }}
               anchor={{ x: 0.5, y: 0.5 }}
+              id="dropoff-marker"
             >
               <View className="items-center">
                 <View className="w-8 h-8 rounded-full bg-danger items-center justify-center border-2 border-white shadow-md">
                   <Text className="text-white text-[10px] font-montserrat-bold">D</Text>
                 </View>
               </View>
-            </Marker>
+            </HereMarker>
           )}
 
-          {/* Runner marker (moving) — branded pin with vehicle icon.
-              A pulse ring expands+fades behind the inner pin whenever
-              the runner's reported speed > 0, so the customer gets an
-              unmistakable "my runner is moving" cue beyond the pin
-              just shifting position on the map. */}
+          {/* Runner marker (moving) */}
           {runnerLocation && (
-            <Marker
+            <HereMarker
               coordinate={{ latitude: Number(runnerLocation.lat), longitude: Number(runnerLocation.lng) }}
               anchor={{ x: 0.5, y: 0.5 }}
+              id="runner-marker"
             >
               <View style={styles.runnerMarkerWrap}>
                 <View style={styles.runnerMarkerOuter}>
@@ -798,17 +795,17 @@ export default function TrackingScreen() {
                   </View>
                 )}
               </View>
-            </Marker>
+            </HereMarker>
           )}
 
           {/* Route line */}
           {routeMapCoords.length > 0 && (
             <>
-              <Polyline coordinates={routeMapCoords} strokeColor="#1E3A8A" strokeWidth={8} lineJoin="round" />
-              <Polyline coordinates={routeMapCoords} strokeColor="#3B82F6" strokeWidth={5} lineJoin="round" />
+              <HerePolyline id="route-outline" coordinates={routeMapCoords} strokeColor="#1E3A8A" strokeWidth={8} lineJoin="round" />
+              <HerePolyline id="route-fill" coordinates={routeMapCoords} strokeColor="#3B82F6" strokeWidth={5} lineJoin="round" />
             </>
           )}
-        </MapView>
+        </HereMapView>
 
         {/* Realtime indicator — shows three states:
               1. Connecting (no realtime channel yet)
@@ -971,6 +968,37 @@ export default function TrackingScreen() {
             )}
           </View>
         )}
+        footer={
+          (isTransportation && !sosActive) || sosActive || canCancel ? (
+            <View style={{ gap: 8 }}>
+              {isTransportation && !sosActive && (
+                <Button
+                  title="Emergency SOS"
+                  variant="danger"
+                  icon={Shield}
+                  onPress={handleSOS}
+                  fullWidth
+                />
+              )}
+              {sosActive && (
+                <View className="bg-danger/10 border border-danger rounded-xl p-3 items-center">
+                  <Text className="text-sm font-montserrat-bold text-danger">
+                    SOS Active — Help is on the way
+                  </Text>
+                </View>
+              )}
+              {canCancel && (
+                <Button
+                  title={isCancelling ? 'Cancelling...' : 'Cancel Errand'}
+                  variant="outline"
+                  onPress={handleCancel}
+                  disabled={isCancelling}
+                  fullWidth
+                />
+              )}
+            </View>
+          ) : null
+        }
       >
         <ScrollView
           className="flex-1 px-5 pt-2"
@@ -1282,27 +1310,10 @@ export default function TrackingScreen() {
           </>
         )}
 
-        {/* Bottom Actions */}
+        {/* Note: SOS / Cancel actions live in the sheet `footer` so they
+            remain visible regardless of snap. We keep only the contextual
+            shopping-paid notice here, since it's informational. */}
         <View className="pb-6 pt-4 gap-2">
-          {isTransportation && !sosActive && (
-            <Button
-              title="Emergency SOS"
-              variant="danger"
-              icon={Shield}
-              onPress={handleSOS}
-              fullWidth
-            />
-          )}
-          {sosActive && (
-            <View className="bg-danger/10 border border-danger rounded-xl p-3 items-center">
-              <Text className="text-sm font-montserrat-bold text-danger">
-                SOS Active — Help is on the way
-              </Text>
-            </View>
-          )}
-          {canCancel && (
-            <Button title={isCancelling ? 'Cancelling...' : 'Cancel Errand'} variant="outline" onPress={handleCancel} disabled={isCancelling} fullWidth />
-          )}
           {isShopping && booking.picked_up_at && CAN_CANCEL_STATUSES.includes(booking.status) === false && booking.status !== 'completed' && booking.status !== 'cancelled' && (
             <View className="bg-warning/10 border border-warning/40 rounded-xl p-3">
               <Text className="text-xs font-montserrat-semi text-warning text-center">

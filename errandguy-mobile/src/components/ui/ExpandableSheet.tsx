@@ -9,6 +9,7 @@ import Animated, {
   interpolate,
   Extrapolation,
 } from 'react-native-reanimated';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 const { height: SCREEN_HEIGHT } = Dimensions.get('window');
 const SPRING = { damping: 22, stiffness: 220, mass: 0.9 } as const;
@@ -25,6 +26,12 @@ interface ExpandableSheetProps {
   renderHandle?: () => React.ReactNode;
   /** Children scroll inside the sheet body. Use a ScrollView for long content. */
   children: React.ReactNode;
+  /**
+   * Sticky footer rendered ABOVE the sheet at the bottom of the screen. Always
+   * visible regardless of snap position, so primary CTAs (Continue, Cancel,
+   * SOS) never get clipped when the user collapses the sheet to peek.
+   */
+  footer?: React.ReactNode;
 }
 
 /**
@@ -39,7 +46,9 @@ export function ExpandableSheet({
   onSnapChange,
   renderHandle,
   children,
+  footer,
 }: ExpandableSheetProps) {
+  const insets = useSafeAreaInsets();
   const peekY = SCREEN_HEIGHT * (1 - snapPoints.peek);
   const halfY = SCREEN_HEIGHT * (1 - snapPoints.half);
   const fullY = SCREEN_HEIGHT * (1 - snapPoints.full);
@@ -131,7 +140,8 @@ export function ExpandableSheet({
             shadowOffset: { width: 0, height: -4 },
             shadowOpacity: 0.12,
             shadowRadius: 12,
-            elevation: 12,
+            elevation: 24,
+            zIndex: 999,
           },
           sheetStyle,
         ]}
@@ -154,8 +164,34 @@ export function ExpandableSheet({
             </View>
           </Pressable>
         </GestureDetector>
-        <View style={{ flex: 1 }}>{children}</View>
+        <View style={{ flex: 1, paddingBottom: footer ? 88 + insets.bottom : 0 }}>{children}</View>
       </Animated.View>
+      {/* Sticky CTA — sits above the sheet, always visible. */}
+      {footer ? (
+        <View
+          pointerEvents="box-none"
+          style={{
+            position: 'absolute',
+            left: 0,
+            right: 0,
+            bottom: 0,
+            paddingHorizontal: 16,
+            paddingTop: 10,
+            paddingBottom: Math.max(insets.bottom, 12),
+            backgroundColor: '#FFFFFF',
+            borderTopWidth: 1,
+            borderTopColor: '#E2E8F0',
+            shadowColor: '#000',
+            shadowOffset: { width: 0, height: -2 },
+            shadowOpacity: 0.08,
+            shadowRadius: 8,
+            elevation: 28,
+            zIndex: 1000,
+          }}
+        >
+          {footer}
+        </View>
+      ) : null}
     </>
   );
 }

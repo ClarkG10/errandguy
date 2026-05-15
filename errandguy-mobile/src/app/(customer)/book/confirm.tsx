@@ -11,7 +11,7 @@ import Animated, {
   withTiming,
   Easing,
 } from 'react-native-reanimated';
-import MapView, { PROVIDER_GOOGLE } from 'react-native-maps';
+import { HereMapView } from '../../../components/map';
 import { useBookingStore } from '../../../stores/bookingStore';
 import { useBookingStatus } from '../../../hooks/useBookingStatus';
 import { useBackGuard } from '../../../hooks/useBackGuard';
@@ -298,9 +298,8 @@ export default function ConfirmScreen() {
   return (
     <View style={{ flex: 1 }}>
       {/* Background Map */}
-      <MapView
+      <HereMapView
         style={StyleSheet.absoluteFill}
-        provider={PROVIDER_GOOGLE}
         scrollEnabled={false}
         pitchEnabled={false}
         rotateEnabled={false}

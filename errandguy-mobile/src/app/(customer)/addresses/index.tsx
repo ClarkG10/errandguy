@@ -3,7 +3,7 @@ import { View, Text, ScrollView, Pressable, RefreshControl, TextInput, Keyboard,
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import { ChevronLeft, Plus, MapPin, Trash2, Pencil, Home, Briefcase, Star, X, Search } from 'lucide-react-native';
-import MapView, { PROVIDER_GOOGLE } from 'react-native-maps';
+import { HereMapView, type HereMapViewRef } from '../../../components/map';
 import { Button } from '../../../components/ui/Button';
 import { ConfirmModal } from '../../../components/ui/ConfirmModal';
 import { GradientHeader } from '../../../components/ui/GradientHeader';
@@ -74,7 +74,7 @@ export default function AddressesScreen() {
   const [searchQuery, setSearchQuery] = useState('');
   const [searchResults, setSearchResults] = useState<Array<{ place_name: string; center: [number, number] }>>([]);
   const debouncedSearch = useDebounce(searchQuery, 400);
-  const mapRef = useRef<MapView>(null);
+  const mapRef = useRef<HereMapViewRef>(null);
   const geocodeTimeout = useRef<ReturnType<typeof setTimeout>>(undefined);
 
   const fetchAddresses = useCallback(async () => {
@@ -271,10 +271,9 @@ export default function AddressesScreen() {
             <View className="mb-4 rounded-2xl bg-surface overflow-hidden border border-divider">
               {/* Map Picker */}
               <View style={{ height: 180 }}>
-                <MapView
+                <HereMapView
                   style={{ flex: 1 }}
                   ref={mapRef}
-                  provider={PROVIDER_GOOGLE}
                   onRegionChangeComplete={handleMapRegionDidChange}
                   initialRegion={{
                     latitude: newLat && newLng ? newLat : DEFAULT_CENTER[1],

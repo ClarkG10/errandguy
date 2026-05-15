@@ -3,7 +3,7 @@ import { View, Text, ScrollView, RefreshControl, Pressable } from 'react-native'
 import { useRouter } from 'expo-router';
 import { MapPin } from 'lucide-react-native';
 import { GradientHeader } from '../../../components/ui/GradientHeader';
-import MapView, { Marker, Circle, PROVIDER_GOOGLE } from 'react-native-maps';
+import { HereMapView, HereMarker, HereCircle } from '../../../components/map';
 import Slider from '@react-native-community/slider';
 import { Card } from '../../../components/ui/Card';
 import { Button } from '../../../components/ui/Button';
@@ -77,9 +77,8 @@ export default function WorkingAreasScreen() {
         {/* Map with circle overlay */}
         <View className="mx-5 h-56 rounded-xl overflow-hidden mb-4">
           {lat && lng ? (
-            <MapView
+            <HereMapView
               style={{ flex: 1 }}
-              provider={PROVIDER_GOOGLE}
               scrollEnabled={false}
               zoomEnabled={false}
               rotateEnabled={false}
@@ -91,21 +90,22 @@ export default function WorkingAreasScreen() {
               }}
             >
               {/* Center marker */}
-              <Marker coordinate={{ latitude: lat, longitude: lng }}>
+              <HereMarker coordinate={{ latitude: lat, longitude: lng }} id="center-marker">
                 <View className="w-8 h-8 rounded-full bg-primary items-center justify-center border-2 border-white shadow-md">
                   <MapPin size={14} color="#FFFFFF" />
                 </View>
-              </Marker>
+              </HereMarker>
 
               {/* Radius circle */}
-              <Circle
+              <HereCircle
+                id="working-area"
                 center={{ latitude: lat, longitude: lng }}
                 radius={radius}
                 fillColor="rgba(37,99,235,0.12)"
                 strokeColor="#2563EB"
                 strokeWidth={2}
               />
-            </MapView>
+            </HereMapView>
           ) : (
             <View className="flex-1 bg-gray-100 items-center justify-center">
               <MapPin size={32} color="#94A3B8" />

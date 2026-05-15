@@ -1,17 +1,14 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { CacheService, CacheTTL } from './cache.service';
 
-const GOOGLE_MAPS_KEY = process.env.EXPO_PUBLIC_GOOGLE_MAPS_KEY ?? '';
+const HERE_API_KEY = process.env.EXPO_PUBLIC_HERE_API_KEY ?? '';
 
-/**
- * Persistent store for recently chosen places. Backs the empty-state
- * suggestion list in the booking search sheet so the user doesn't have
- * to retype "home" / "office" / their favourite cafe every booking.
- *
- * MRU semantics: most recently selected is first. Capped at 8 entries
- * to avoid bloat. De-duplicated by quantised coordinate (so picking the
- * exact same pin twice doesn't push two rows in).
- */
+if (!HERE_API_KEY) {
+  console.error('[geocoding] EXPO_PUBLIC_HERE_API_KEY is EMPTY — geocoding disabled. Check your .env file.');
+} else {
+  console.log(`[geocoding] HERE API key loaded (${HERE_API_KEY.slice(0, 8)}…)`);
+}
+
 const RECENT_PLACES_KEY = '@errandguy:recent_places';
 const RECENT_PLACES_CAP = 8;
 
@@ -28,119 +25,96 @@ function quantize(n: number): string {
 export const geocodingService = {
   /** Reverse a coordinate to a human-readable place name. */
   async reverse(lng: number, lat: number): Promise<string> {
-    if (!GOOGLE_MAPS_KEY) return `${lat.toFixed(6)}, ${lng.toFixed(6)}`;
-    const key = `geocode:rev:${quantize(lng)},${quantize(lat)}`;
+    if (!HERE_API_KEY) {
+      return `${lat.toFixed(6)}, ${lng.toFixed(6)}`;
+    }
+    const key = `geocode:here:rev:${quantize(lng)},${quantize(lat)}`;
     try {
       return await CacheService.getOrFetch<string>(
         key,
         async () => {
-          const res = await fetch(
-            `https://maps.googleapis.com/maps/api/geocode/json?latlng=${lat},${lng}&key=${GOOGLE_MAPS_KEY}&language=en&result_type=street_address|route|sublocality|locality`,
-          );
-          if (!res.ok) throw new Error(`google_geocode_${res.status}`);
+          const url =
+            `https://revgeocode.search.hereapi.com/v1/revgeocode` +
+            `?at=${lat},${lng}` +
+            `&lang=en-US` +
+            `&apiKey=${HERE_API_KEY}`;
+          console.log(`[geocoding.reverse] Fetching: at=${lat},${lng}`);
+          const res = await fetch(url);
+          if (!res.ok) throw new Error(`here_revgeocode_http_${res.status}`);
           const data = await res.json();
-          if (data.status !== 'OK') throw new Error(`google_geocode_${data.status}`);
-          const placeName = data.results?.[0]?.formatted_address;
-          if (typeof placeName !== 'string' || placeName.length === 0) {
-            throw new Error('google_geocode_empty');
-          }
+          console.log(`[geocoding.reverse] items: ${data.items?.length ?? 0}`);
+          const item = data.items?.[0];
+          if (!item) throw new Error('here_revgeocode_empty');
+          const placeName: string = item.address?.label ?? item.title ?? '';
+          if (!placeName) throw new Error('here_revgeocode_no_label');
+          console.log(`[geocoding.reverse] ✓ resolved to: "${placeName}"`);
           return placeName;
         },
-        CacheTTL.STATIC, // 24 h
+        CacheTTL.STATIC,
       );
-    } catch {
+    } catch (err) {
+      console.error('[geocoding.reverse] Error:', err);
       return `${lat.toFixed(6)}, ${lng.toFixed(6)}`;
     }
   },
 
   /**
    * Forward search — returns up to `limit` Philippines-scoped results.
-   *
-   * Uses Google Places Autocomplete API which has far better coverage
-   * for Philippine addresses, barangay names, and landmarks than Mapbox.
-   * Optional `proximity` biases results toward a coordinate.
+   * Uses HERE Discover API (no billing required, generous free tier).
    */
   async search(
     query: string,
     limit = 8,
-    types?: string,
+    _types?: string,
     proximity?: { lng: number; lat: number },
   ): Promise<PlaceFeature[]> {
     const trimmed = query.trim();
-    if (trimmed.length < 2 || !GOOGLE_MAPS_KEY) return [];
-    const typesKey = types ?? 'all';
+    if (trimmed.length < 2) return [];
+    if (!HERE_API_KEY) return [];
     const proxKey = proximity
       ? `${proximity.lng.toFixed(2)},${proximity.lat.toFixed(2)}`
       : 'none';
-    const key = `geocode:fwd:${trimmed.toLowerCase()}:${limit}:${typesKey}:${proxKey}`;
+    const key = `geocode:here:fwd:${trimmed.toLowerCase()}:${limit}:${proxKey}`;
     try {
       return await CacheService.getOrFetch<PlaceFeature[]>(
         key,
         async () => {
           const encoded = encodeURIComponent(trimmed);
-          const locationBias = proximity
-            ? `&location=${proximity.lat},${proximity.lng}&radius=50000`
-            : `&location=12.8797,121.7740&radius=600000`; // PH center, 600 km radius
-          const res = await fetch(
-            `https://maps.googleapis.com/maps/api/place/autocomplete/json` +
-              `?input=${encoded}` +
-              `&key=${GOOGLE_MAPS_KEY}` +
-              `&language=en` +
-              `&components=country:ph` +
-              `&sessiontoken=errandguy` +
-              locationBias,
-          );
-          if (!res.ok) throw new Error(`google_autocomplete_${res.status}`);
+          // Proximity: use caller-supplied point or center of Philippines
+          const at = proximity
+            ? `${proximity.lat},${proximity.lng}`
+            : `12.8797,121.7740`;
+          const url =
+            `https://discover.search.hereapi.com/v1/discover` +
+            `?q=${encoded}` +
+            `&in=countryCode:PHL` +
+            `&at=${at}` +
+            `&lang=en` +
+            `&limit=${limit}` +
+            `&apiKey=${HERE_API_KEY}`;
+          console.log(`[geocoding.search] Query: "${trimmed}", proximity: ${proxKey}`);
+          const res = await fetch(url);
+          if (!res.ok) throw new Error(`here_discover_http_${res.status}`);
           const data = await res.json();
-          if (data.status !== 'OK' && data.status !== 'ZERO_RESULTS') {
-            throw new Error(`google_autocomplete_${data.status}`);
-          }
-          const predictions = (data.predictions ?? []).slice(0, limit) as any[];
-          // Autocomplete only gives us a place_id — we need to resolve
-          // coordinates via Place Details. Do them in parallel (max 4
-          // at once so we don't hammer quota).
-          const results: PlaceFeature[] = [];
-          const batch = predictions.slice(0, 4);
-          await Promise.all(
-            batch.map(async (p: any) => {
-              try {
-                const detailRes = await fetch(
-                  `https://maps.googleapis.com/maps/api/place/details/json` +
-                    `?place_id=${p.place_id}` +
-                    `&fields=formatted_address,geometry` +
-                    `&key=${GOOGLE_MAPS_KEY}`,
-                );
-                const detail = await detailRes.json();
-                const loc = detail.result?.geometry?.location;
-                const addr = detail.result?.formatted_address ?? p.description;
-                if (loc?.lat != null && loc?.lng != null) {
-                  results.push({
-                    place_name: String(addr),
-                    center: [loc.lng, loc.lat],
-                  });
-                }
-              } catch {
-                // If details fail, still include with a rough center
-                results.push({
-                  place_name: String(p.description ?? ''),
-                  center: proximity ? [proximity.lng, proximity.lat] : [121.0, 14.6],
-                });
-              }
-            }),
-          );
+          const items: any[] = data.items ?? [];
+          const results = items
+            .filter((item) => item.position)
+            .slice(0, limit)
+            .map((item) => ({
+              place_name: String(item.address?.label ?? item.title ?? ''),
+              center: [item.position.lng, item.position.lat] as [number, number],
+            }));
+          console.log(`[geocoding.search] ✓ returning ${results.length} results`);
           return results;
         },
         CacheTTL.MEDIUM,
       );
-    } catch {
+    } catch (err) {
+      console.error('[geocoding.search] Error:', err);
       return [];
     }
   },
 
-  /**
-   * Read the user's recent destinations (most-recent first). Safe to
-   * call from render — never throws.
-   */
   async getRecent(limit: number = RECENT_PLACES_CAP): Promise<PlaceFeature[]> {
     try {
       const raw = await AsyncStorage.getItem(RECENT_PLACES_KEY);
@@ -163,10 +137,6 @@ export const geocodingService = {
     }
   },
 
-  /**
-   * Promote a place to the top of the recents list. Dedupes by ~11 m
-   * grid cell so re-picking the exact same pin doesn't grow the list.
-   */
   async addRecent(place: PlaceFeature): Promise<void> {
     if (!place?.place_name || !Array.isArray(place.center)) return;
     try {
@@ -182,7 +152,6 @@ export const geocodingService = {
     }
   },
 
-  /** Wipe recents (e.g. on logout). */
   async clearRecent(): Promise<void> {
     try {
       await AsyncStorage.removeItem(RECENT_PLACES_KEY);

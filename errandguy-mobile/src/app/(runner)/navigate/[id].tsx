@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { View, Text, Pressable, StyleSheet, ActivityIndicator, Animated } from 'react-native';
+import { View, Text, Pressable, StyleSheet, ActivityIndicator, Animated, ScrollView } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import {
@@ -15,12 +15,13 @@ import {
   MapPin,
   Gauge,
 } from 'lucide-react-native';
-import MapView, { Marker, Polyline, PROVIDER_GOOGLE } from 'react-native-maps';
+import { HereMapView, HereMarker, HerePolyline, type HereMapViewRef } from '../../../components/map';
 import { useRunnerStore } from '../../../stores/runnerStore';
 import { useLocationStore } from '../../../stores/locationStore';
 import { useForegroundInterval } from '../../../hooks/useForegroundInterval';
 import { runnerService } from '../../../services/runner.service';
 import { routeService, type NavigationRoute, type NavigationStep } from '../../../services/route.service';
+import { ExpandableSheet } from '../../../components/ui/ExpandableSheet';
 import { getErrandTypeRule } from '../../../constants/errandTypeRules';
 import { toast } from '../../../stores/toastStore';
 import type { Booking } from '../../../types';
@@ -112,7 +113,7 @@ export default function NavigateScreen() {
   const [routeError, setRouteError] = useState(false);
   const [followCamera, setFollowCamera] = useState(true);
 
-  const mapRef = useRef<MapView>(null);
+  const mapRef = useRef<HereMapViewRef>(null);
 
   // Make sure GPS is streaming \u2014 the runner may have opened this
   // screen from a notification cold-start where the dashboard hasn't
@@ -260,11 +261,7 @@ export default function NavigateScreen() {
   useEffect(() => {
     if (!followCamera || !origin) return;
     mapRef.current?.animateCamera(
-      {
-        center: { latitude: origin.lat, longitude: origin.lng },
-        zoom: 17,
-        pitch: 50,
-      },
+      { center: { latitude: origin.lat, longitude: origin.lng }, zoom: 17, pitch: 50 },
       { duration: 500 },
     );
   }, [origin, followCamera]);
@@ -396,10 +393,9 @@ export default function NavigateScreen() {
     <View style={{ flex: 1, backgroundColor: '#0F172A' }}>
       {/* Full-screen map */}
       <View style={StyleSheet.absoluteFill}>
-        <MapView
+        <HereMapView
           ref={mapRef}
           style={{ flex: 1 }}
-          provider={PROVIDER_GOOGLE}
           showsUserLocation
           showsMyLocationButton={false}
           showsCompass={false}
@@ -415,14 +411,15 @@ export default function NavigateScreen() {
             latitudeDelta: 0.05,
             longitudeDelta: 0.05,
           }}
-          onTouchMove={() => {
+          onPanDrag={() => {
             if (followCamera) setFollowCamera(false);
           }}
         >
           {/* Destination marker */}
-          <Marker
+          <HereMarker
             coordinate={{ latitude: destination.lat, longitude: destination.lng }}
             anchor={{ x: 0.5, y: 1 }}
+            id="destination-marker"
           >
             <View className="items-center">
               <View
@@ -433,18 +430,20 @@ export default function NavigateScreen() {
                 <Flag size={18} color="#FFFFFF" />
               </View>
             </View>
-          </Marker>
+          </HereMarker>
 
                     {/* Route polyline (cased line for readability over busy maps) */}
           {routeMapCoords.length > 0 && (
             <>
-              <Polyline
+              <HerePolyline
+                id="route-outline"
                 coordinates={routeMapCoords}
                 strokeColor="#1E40AF"
                 strokeWidth={9}
                 lineJoin="round"
               />
-              <Polyline
+              <HerePolyline
+                id="route-fill"
                 coordinates={routeMapCoords}
                 strokeColor="#3B82F6"
                 strokeWidth={6}
@@ -452,7 +451,7 @@ export default function NavigateScreen() {
               />
             </>
           )}
-        </MapView>
+        </HereMapView>
       </View>
 
       {/* Top maneuver banner \u2014 the navigation focal point. */}
@@ -644,58 +643,80 @@ export default function NavigateScreen() {
         </Pressable>
       )}
 
-      {/* Bottom ETA / actions bar \u2014 always visible. */}
-      <View
-        className="absolute left-0 right-0 bottom-0 bg-white px-5 pt-4"
-        style={{
-          shadowColor: '#000',
-          shadowOpacity: 0.18,
-          shadowRadius: 14,
-          shadowOffset: { width: 0, height: -4 },
-          elevation: 10,
-        }}
+      {/* Bottom panel — expandable ETA / step sheet */}
+      <ExpandableSheet
+        initial="peek"
+        snapPoints={{ peek: 0.18, half: 0.52, full: 0.90 }}
       >
-        <View className="flex-row items-end justify-between">
-          <View className="flex-1">
-            <Text className="text-[28px] font-montserrat-bold text-textPrimary leading-tight">
-              {remainingDuration != null ? fmtDuration(remainingDuration) : '\u2014'}
-            </Text>
-            <Text className="text-[11px] font-montserrat text-textSecondary mt-0.5">
-              {remainingDistance != null ? fmtDistance(remainingDistance) : ''}
-              {remainingDuration != null && remainingDistance != null ? ' \u00b7 ' : ''}
-              {remainingDuration != null ? `arrives ${fmtArrival(remainingDuration)}` : ''}
-            </Text>
+        {/* ETA summary row — always visible at peek */}
+        <View className="px-5 pt-2 pb-2">
+          <View className="flex-row items-end justify-between">
+            <View className="flex-1">
+              <Text className="text-[28px] font-montserrat-bold text-textPrimary leading-tight">
+                {remainingDuration != null ? fmtDuration(remainingDuration) : '\u2014'}
+              </Text>
+              <Text className="text-[11px] font-montserrat text-textSecondary mt-0.5">
+                {remainingDistance != null ? fmtDistance(remainingDistance) : ''}
+                {remainingDuration != null && remainingDistance != null ? ' \u00b7 ' : ''}
+                {remainingDuration != null ? `arrives ${fmtArrival(remainingDuration)}` : ''}
+              </Text>
+            </View>
+            {arrivedSoon ? (
+              <Pressable
+                onPress={handleArrived}
+                className="px-5 py-3 rounded-full bg-success ml-3"
+              >
+                <Text className="text-white text-sm font-montserrat-bold">I&apos;ve Arrived</Text>
+              </Pressable>
+            ) : (
+              <Pressable
+                onPress={handleEndNavigation}
+                className="px-5 py-3 rounded-full bg-gray-200 ml-3"
+              >
+                <Text className="text-textPrimary text-sm font-montserrat-bold">End</Text>
+              </Pressable>
+            )}
           </View>
-          {arrivedSoon ? (
+          {routeError && (
             <Pressable
-              onPress={handleArrived}
-              className="px-5 py-3 rounded-full bg-success ml-3"
+              onPress={fetchNav}
+              className="mt-3 mb-1 self-center px-4 py-1.5 rounded-full bg-danger/10"
             >
-              <Text className="text-white text-sm font-montserrat-bold">I&apos;ve Arrived</Text>
-            </Pressable>
-          ) : (
-            <Pressable
-              onPress={handleEndNavigation}
-              className="px-5 py-3 rounded-full bg-gray-200 ml-3"
-            >
-              <Text className="text-textPrimary text-sm font-montserrat-bold">End</Text>
+              <Text className="text-danger text-[11px] font-montserrat-bold uppercase tracking-wider">
+                Retry route
+              </Text>
             </Pressable>
           )}
         </View>
 
-        {routeError && (
-          <Pressable
-            onPress={fetchNav}
-            className="mt-3 mb-1 self-center px-4 py-1.5 rounded-full bg-danger/10"
-          >
-            <Text className="text-danger text-[11px] font-montserrat-bold uppercase tracking-wider">
-              Retry route
-            </Text>
-          </Pressable>
+        {/* Upcoming steps list — visible when sheet is expanded to half / full */}
+        {navRoute && navRoute.steps.length > currentStepIdx + 1 && (
+          <>
+            <View style={{ height: 1, backgroundColor: '#E2E8F0', marginHorizontal: 20, marginBottom: 4 }} />
+            <ScrollView
+              showsVerticalScrollIndicator={false}
+              contentContainerStyle={{ paddingHorizontal: 20, paddingBottom: 24 }}
+            >
+              {navRoute.steps.slice(currentStepIdx + 1).map((step, idx) => (
+                <View key={idx} style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 10, borderBottomWidth: 1, borderBottomColor: '#F1F5F9' }}>
+                  <View style={{ width: 36, height: 36, borderRadius: 18, backgroundColor: '#F1F5F9', alignItems: 'center', justifyContent: 'center', marginRight: 12, flexShrink: 0 }}>
+                    <ManeuverIcon type={step.maneuverType} modifier={step.maneuverModifier} size={18} color="#374151" />
+                  </View>
+                  <View style={{ flex: 1 }}>
+                    <Text style={{ fontSize: 13, fontFamily: 'Quicksand_500Medium', color: '#0F172A' }} numberOfLines={2}>
+                      {step.instruction}
+                    </Text>
+                    <Text style={{ fontSize: 11, fontFamily: 'Quicksand_400Regular', color: '#64748B', marginTop: 2 }}>
+                      {fmtDistance(step.distanceMeters)}
+                    </Text>
+                  </View>
+                </View>
+              ))}
+            </ScrollView>
+          </>
         )}
-
         <SafeAreaView edges={['bottom']} />
-      </View>
+      </ExpandableSheet>
     </View>
   );
 }

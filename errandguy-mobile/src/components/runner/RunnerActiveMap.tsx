@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { View, Text, Pressable, Animated } from 'react-native';
-import MapView, { Marker, Polyline } from 'react-native-maps';
+import { HereMapView, HereMarker, HerePolyline, type HereMapViewRef } from '../map';
 import { Locate, Navigation } from 'lucide-react-native';
 import { useLocationStore } from '../../stores/locationStore';
 import { routeService } from '../../services/route.service';
@@ -29,7 +29,7 @@ export function RunnerActiveMap({
   bottomOffset = 24,
 }: RunnerActiveMapProps) {
   const currentLocation = useLocationStore((s) => s.currentLocation);
-  const mapRef = useRef<MapView>(null);
+  const mapRef = useRef<HereMapViewRef>(null);
 
   const toFiniteNum = (v: unknown): number | null => {
     if (v == null) return null;
@@ -139,22 +139,20 @@ export function RunnerActiveMap({
 
   return (
     <View className={containerCls}>
-      <MapView
+      <HereMapView
         ref={mapRef}
         style={{ flex: 1 }}
-        provider="google"
-        initialRegion={fallbackRegion}
         showsUserLocation
         showsMyLocationButton={false}
         showsCompass={false}
-        toolbarEnabled={false}
         scrollEnabled={false}
         zoomEnabled={false}
         rotateEnabled={false}
         pitchEnabled={false}
+        initialRegion={fallbackRegion}
       >
         {hasPickup && (
-          <Marker coordinate={{ latitude: pLat!, longitude: pLng! }} anchor={{ x: 0.5, y: 0.5 }}>
+          <HereMarker coordinate={{ latitude: pLat!, longitude: pLng! }} anchor={{ x: 0.5, y: 0.5 }} id="pickup-marker">
             <View
               className={`w-7 h-7 rounded-full items-center justify-center border-2 border-white ${
                 inPickupPhase ? 'bg-primary' : 'bg-primary/60'
@@ -162,11 +160,11 @@ export function RunnerActiveMap({
             >
               <View className="w-2 h-2 rounded-full bg-white" />
             </View>
-          </Marker>
+          </HereMarker>
         )}
 
         {hasDropoff && !singleLocation && (
-          <Marker coordinate={{ latitude: dLat!, longitude: dLng! }} anchor={{ x: 0.5, y: 0.5 }}>
+          <HereMarker coordinate={{ latitude: dLat!, longitude: dLng! }} anchor={{ x: 0.5, y: 0.5 }} id="dropoff-marker">
             <View
               className={`w-7 h-7 rounded-full items-center justify-center border-2 border-white ${
                 !inPickupPhase ? 'bg-danger' : 'bg-danger/60'
@@ -174,24 +172,26 @@ export function RunnerActiveMap({
             >
               <View className="w-2 h-2 rounded-full bg-white" />
             </View>
-          </Marker>
+          </HereMarker>
         )}
 
         {routeMapCoords.length > 0 && (
           <>
-            <Polyline
+            <HerePolyline
+              id="route-outline"
               coordinates={routeMapCoords}
               strokeColor={inPickupPhase ? '#1E3A8A' : '#7F1D1D'}
               strokeWidth={8}
             />
-            <Polyline
+            <HerePolyline
+              id="route-fill"
               coordinates={routeMapCoords}
               strokeColor={inPickupPhase ? '#3B82F6' : '#EF4444'}
               strokeWidth={5}
             />
           </>
         )}
-      </MapView>
+      </HereMapView>
 
       {etaMinutes != null && (
         <Animated.View

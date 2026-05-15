@@ -66,12 +66,7 @@
         }
       ],
       "expo-font",
-      [
-        "react-native-maps",
-        {
-          "googleMapsApiKey": "$(EXPO_PUBLIC_GOOGLE_MAPS_KEY)"
-        }
-      ],
+
       "expo-image"
     ],
     "web": {
