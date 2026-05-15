@@ -672,9 +672,22 @@ export default function TrackingScreen() {
         return { title: 'Finding you a runner', subtitle: 'Usually takes under a minute.', accent: 'warning' };
       case 'no_runner':
         return { title: 'No runner available', subtitle: 'Try again in a few minutes.', accent: 'danger' };
+      // `matched` is a transient state where the system has assigned a
+      // runner but the runner hasn't tapped Accept yet. Conflating it
+      // with `accepted` lies to the customer ("John accepted" when John
+      // hasn't responded). Keep the two visually and verbally distinct.
       case 'matched':
+        return {
+          title: runnerName ? `${runnerName} was matched` : 'Runner matched',
+          subtitle: 'Waiting for them to accept the request.',
+          accent: 'warning',
+        };
       case 'accepted':
-        return { title: runnerName ? `${runnerName} accepted` : 'Runner accepted', subtitle: 'Getting ready to head out.', accent: 'brand' };
+        return {
+          title: runnerName ? `${runnerName} accepted` : 'Runner accepted',
+          subtitle: 'Getting ready to head out.',
+          accent: 'brand',
+        };
       case 'heading_to_pickup':
         return { title: 'Heading to pickup', subtitle: runnerName ? `${runnerName} is on the way.` : undefined, accent: 'brand' };
       case 'arrived_at_pickup':
