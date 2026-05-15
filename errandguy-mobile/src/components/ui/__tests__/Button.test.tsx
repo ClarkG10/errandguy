@@ -2,7 +2,7 @@ import React from 'react';
 import { render, fireEvent } from '@testing-library/react-native';
 import { Button } from '../Button';
 
-const mockImpactAsync = jest.fn();
+const mockImpactAsync = jest.fn(() => Promise.resolve());
 jest.mock('expo-haptics', () => ({
   impactAsync: (...args: unknown[]) => mockImpactAsync(...args),
   ImpactFeedbackStyle: { Light: 'Light', Medium: 'Medium', Heavy: 'Heavy' },

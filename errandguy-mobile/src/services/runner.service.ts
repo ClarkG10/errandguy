@@ -44,10 +44,20 @@ export const runnerService = {
     return p;
   },
 
-  updateLocation(coords: Coordinate & { heading?: number; speed?: number }) {
+  updateLocation(
+    coords: Coordinate & { heading?: number; speed?: number; booking_id?: string | null },
+  ) {
     // Silent: GPS push fires every ~5s while the runner is online; it
     // has zero user-facing intent and shouldn't pin the global progress
     // bar.
+    //
+    // booking_id is forwarded explicitly so the backend doesn't have to
+    // rely on its 30s cache lookup of the runner's active booking. That
+    // cache used to leave the first ~30s of pings tagged with NULL —
+    // and the customer's realtime channel filters by `booking_id=eq.…`,
+    // so those pings never reached the tracking screen. Sending the id
+    // from the client closes the race for the common case (runner
+    // already on an active errand).
     return api.post('/runner/location', coords, { silent: true } as any);
   },
 

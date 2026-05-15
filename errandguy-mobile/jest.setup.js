@@ -56,22 +56,26 @@ jest.mock('expo-router', () => ({
   Tabs: { Screen: 'Tabs.Screen' },
 }));
 
-// Mock @rnmapbox/maps
-jest.mock('@rnmapbox/maps', () => ({
-  default: {
-    setAccessToken: jest.fn(),
-    StyleURL: { Street: 'mapbox://styles/mapbox/streets-v12' },
-  },
-  MapView: 'MapView',
+// Mock @maplibre/maplibre-react-native (replaces the older @rnmapbox/maps
+// dependency \u2014 keep the mocked surface aligned with what
+// `src/components/map/index.tsx` actually imports so test suites that
+// pull in the map wrapper transitively don't blow up at module load.)
+jest.mock('@maplibre/maplibre-react-native', () => ({
+  Map: 'Map',
   Camera: 'Camera',
-  MarkerView: 'MarkerView',
-  PointAnnotation: 'PointAnnotation',
-  ShapeSource: 'ShapeSource',
-  LineLayer: 'LineLayer',
-  FillLayer: 'FillLayer',
+  CameraRef: 'CameraRef',
   UserLocation: 'UserLocation',
+  GeoJSONSource: 'GeoJSONSource',
+  Layer: 'Layer',
+  Marker: 'Marker',
 }));
-
+// Mock AsyncStorage — the package ships a Jest mock at
+// `mock/async-storage` but importing it via jest.mock wires the right
+// in-memory shim so stores that depend on AsyncStorage (authStore,
+// bookingStore, etc.) load cleanly under jest-expo.
+jest.mock('@react-native-async-storage/async-storage', () =>
+  require('@react-native-async-storage/async-storage/jest/async-storage-mock'),
+);
 // Mock lottie-react-native
 jest.mock('lottie-react-native', () => 'LottieView');
 

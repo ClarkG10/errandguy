@@ -469,16 +469,20 @@ export default function ActiveErrandScreen() {
     fetchedQ.mutate(optimistic);
     updateErrandStatus(status as BookingStatus);
 
-    if (status === 'completed') {
-      // Open the rate modal right away; the network call continues in
-      // the background. If it fails, the rate submission's own retry
-      // path handles it — we still want the runner to be able to
-      // start their next job without waiting for a slow upload.
-      setShowRate(true);
-    }
-
     runnerService
       .advanceErrandStatus(booking.id, status, opts)
+      .then(() => {
+        // Only open the rate modal AFTER the server confirms the status
+        // flip to `completed`. Opening it on the optimistic update used
+        // to fire POST /runner/errand/{id}/review while the booking row
+        // was still mid-transition on the server, which BookingPolicy
+        // correctly rejected with a 403 (status !== completed). The
+        // race surfaced as a noisy "❌ 403 … review" log on every
+        // completion.
+        if (status === 'completed') {
+          setShowRate(true);
+        }
+      })
       .catch((err: any) => {
         // Revert optimistic state and surface the error.
         fetchedQ.mutate(prev);
@@ -567,13 +571,17 @@ export default function ActiveErrandScreen() {
   // are interpolated continuously while the finger is down.
   const WIN_H = useWindowDimensions().height;
   const SNAP_COLLAPSED = 220;                       // header + sticky CTA
-  const SNAP_MID = Math.round(WIN_H * 0.55);        // default
+  const SNAP_MID = Math.round(WIN_H * 0.55);        // expanded for details
   const SNAP_EXPANDED = Math.round(WIN_H * 0.88);   // near full-screen
   const SNAPS = useMemo(() => [SNAP_COLLAPSED, SNAP_MID, SNAP_EXPANDED], [SNAP_COLLAPSED, SNAP_MID, SNAP_EXPANDED]);
 
-  const sheetHeight = useRef(new Animated.Value(SNAP_MID)).current;
-  const sheetHeightStartRef = useRef<number>(SNAP_MID);
-  const currentSheetHeightRef = useRef<number>(SNAP_MID);
+  // Default to the COLLAPSED snap so the map dominates the screen on
+  // mount — the runner's primary need is "where am I going" not "what
+  // are the trip details". The sticky CTA at the bottom of the sheet
+  // keeps the next action one tap away regardless of snap height.
+  const sheetHeight = useRef(new Animated.Value(SNAP_COLLAPSED)).current;
+  const sheetHeightStartRef = useRef<number>(SNAP_COLLAPSED);
+  const currentSheetHeightRef = useRef<number>(SNAP_COLLAPSED);
 
   // Track the current sheet height in a ref so the pan responder can
   // resume drags from wherever the sheet currently sits. No state

@@ -11,6 +11,7 @@ use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Bus\Dispatchable;
 use Illuminate\Queue\InteractsWithQueue;
 use Illuminate\Queue\SerializesModels;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Throwable;
@@ -109,6 +110,15 @@ class MatchRunnerJob implements ShouldQueue
             // root cause of "runner can't receive request" for fixed-mode
             // bookings whose listeners depended on this event.
             if ($newStatus && $matchedBooking) {
+                // Bust the runner's active-booking cache so the very next
+                // /runner/location push tags the row with this booking_id.
+                // Without this the customer's realtime subscription
+                // (filter: booking_id=eq.…) silently drops up to ~30s of
+                // pings, which is exactly the window during which the
+                // runner appears as a static dot to the customer.
+                if ($newStatus === 'matched' && $runner) {
+                    Cache::forget("runner_active_booking_id:{$runner->user_id}");
+                }
                 event(new BookingStatusChanged($matchedBooking, 'pending', $newStatus));
             }
         } catch (Throwable $e) {

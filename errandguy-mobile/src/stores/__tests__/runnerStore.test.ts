@@ -49,7 +49,10 @@ describe('runnerStore', () => {
       act(() => useRunnerStore.getState().acceptErrand(booking));
 
       const state = useRunnerStore.getState();
-      expect(state.currentErrand).toEqual(booking);
+      // The store flips status to 'accepted' on accept so the home
+      // dashboard reflects the new state immediately without waiting
+      // on the server round-trip.
+      expect(state.currentErrand).toEqual({ ...booking, status: 'accepted' });
       expect(state.incomingRequest).toBeNull();
     });
   });

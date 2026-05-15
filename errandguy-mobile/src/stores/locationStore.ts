@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 import * as Location from 'expo-location';
 import { runnerService } from '../services/runner.service';
+import { useRunnerStore } from './runnerStore';
 import type { Coordinate, RunnerLocation } from '../types';
 
 interface LocationState {
@@ -104,10 +105,18 @@ export const useLocationStore = create<LocationState>((set, get) => ({
           currentLocation: { lat: coords.lat, lng: coords.lng },
         });
         // Send location to backend so customer can track runner in realtime.
-        runnerService.updateLocation(coords).catch(() => {
-          // Network drop — keep the watcher alive; the next valid fix
-          // will retry. Resetting `lastSent` would just spam the queue.
-        });
+        // Pass the active booking id explicitly so the row is written with
+        // booking_id set immediately — without this the backend resolves
+        // the booking via a 30s cache, leaving the first few pings after
+        // a match tagged NULL and invisible to the customer's realtime
+        // subscription (which filters on booking_id=eq.…).
+        const activeErrandId = useRunnerStore.getState().currentErrand?.id ?? null;
+        runnerService
+          .updateLocation({ ...coords, booking_id: activeErrandId })
+          .catch(() => {
+            // Network drop — keep the watcher alive; the next valid fix
+            // will retry. Resetting `lastSent` would just spam the queue.
+          });
       },
     );
 

@@ -22,6 +22,13 @@ class UpdateLocationRequest extends FormRequest
             'heading' => ['nullable', 'numeric'],
             'speed' => ['nullable', 'numeric'],
             'accuracy' => ['nullable', 'numeric', 'min:0'],
+            // Optional: the runner's app passes the active booking id so
+            // the location row is written with booking_id immediately,
+            // bypassing the 30s server-side cache lookup that used to
+            // leave early-match pings tagged NULL and invisible to the
+            // customer's realtime subscription. Validated as a UUID; the
+            // controller still verifies the runner actually owns it.
+            'booking_id' => ['nullable', 'uuid'],
         ];
     }
 
