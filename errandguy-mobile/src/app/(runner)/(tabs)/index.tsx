@@ -5,7 +5,6 @@ import {
   ScrollView,
   RefreshControl,
   Pressable,
-  StyleSheet,
   Platform,
   StatusBar,
 } from 'react-native';
@@ -31,6 +30,7 @@ import { ActiveRunnerErrandCard } from '../../../components/runner/ActiveRunnerE
 import { Avatar } from '../../../components/ui/Avatar';
 import { useRunnerStore } from '../../../stores/runnerStore';
 import { useLocationStore } from '../../../stores/locationStore';
+import { ensureLocationPermission, getCurrentCoords } from '../../../utils/locationPermission';
 import { useAuthStore } from '../../../stores/authStore';
 import { useNotificationStore } from '../../../stores/notificationStore';
 import { runnerService } from '../../../services/runner.service';
@@ -42,6 +42,7 @@ import { useIncomingRequest } from '../../../hooks/useIncomingRequest';
 import { useForegroundInterval } from '../../../hooks/useForegroundInterval';
 import type { Booking } from '../../../types';
 import { toast } from '../../../stores/toastStore';
+import { LightColors, Elevation } from '../../../constants/colors';
 
 /**
  * Runner Home — radically simplified.
@@ -223,20 +224,19 @@ export default function RunnerHomeScreen() {
         if (currentLocation) {
           coords = { lat: currentLocation.lat, lng: currentLocation.lng };
         } else {
-          const { status } = await Location.getForegroundPermissionsAsync();
-          if (status !== 'granted') {
-            const req = await Location.requestForegroundPermissionsAsync();
-            if (req.status !== 'granted') {
-              setLocationGranted(false);
-              toast.warning(
-                'Location permission is required to go online. Enable it in Settings to start receiving errands.',
-              );
-              return;
-            }
-            setLocationGranted(true);
+          // Robust fix: permission + timeout + last-known fallback so going
+          // online never hangs on weak GPS.
+          const pos = await getCurrentCoords({
+            feature: 'go online and receive errands',
+            accuracy: Location.Accuracy.High,
+          });
+          if (!pos) {
+            setLocationGranted(false);
+            toast.error('Could not get your location. Check GPS and try again.');
+            return;
           }
-          const loc = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.High });
-          coords = { lat: loc.coords.latitude, lng: loc.coords.longitude };
+          setLocationGranted(true);
+          coords = { lat: pos.lat, lng: pos.lng };
         }
       }
       await runnerService.toggleOnline(value, coords);
@@ -329,7 +329,7 @@ export default function RunnerHomeScreen() {
 
   return (
     <View className="flex-1 bg-background">
-      {Platform.OS === 'ios' && <StatusBar barStyle="light-content" />}
+      {Platform.OS === 'ios' && <StatusBar barStyle="dark-content" />}
 
       <ScrollView
         className="flex-1"
@@ -338,28 +338,22 @@ export default function RunnerHomeScreen() {
           <RefreshControl
             refreshing={refreshing}
             onRefresh={onRefresh}
-            tintColor="#FFFFFF"
-            colors={['#2563EB']}
-            progressBackgroundColor="#1D4ED8"
+            tintColor={LightColors.textSecondary}
+            colors={[LightColors.primary]}
+            progressBackgroundColor={LightColors.surface}
           />
         }
         contentContainerStyle={{ paddingBottom: 32 }}
       >
         {/* ==========================================================
-            HERO — bold blue gradient, runs from top to ~360px tall.
-            Contains greeting row, the huge today-earnings figure with
-            week subtotal, and a primary "Go Online / Go Offline" CTA
-            anchored to the bottom of the gradient. The active-errand
-            card (when present) floats up over the gradient's bottom
-            edge so the trip in progress is the very first thing the
-            runner sees.
+            HERO — tokenized greeting header on the canvas, then a
+            blue-gradient earnings card ("balance card" pattern from
+            the reference designs) that also carries the online-status
+            power toggle. The active-errand card (when present) sits
+            directly under it so a trip in progress is the first thing
+            the runner sees.
             ========================================================== */}
-        <LinearGradient
-          colors={['#1D4ED8', '#2563EB', '#3B82F6']}
-          start={{ x: 0, y: 0 }}
-          end={{ x: 1, y: 1 }}
-          style={hs.heroGradient}
-        >
+        <View className="bg-background">
           <SafeAreaView edges={['top']}>
             {/* Greeting row */}
             <View className="flex-row items-center px-5 pt-2 pb-3">
@@ -372,14 +366,11 @@ export default function RunnerHomeScreen() {
                 <Avatar uri={user?.avatar_url} name={user?.full_name} size="sm" />
               </Pressable>
               <View className="flex-1 ml-3">
-                <Text
-                  className="text-[11px] font-montserrat"
-                  style={{ color: 'rgba(255,255,255,0.8)' }}
-                >
+                <Text className="text-[11px] font-montserrat text-textSecondary">
                   Welcome back
                 </Text>
                 <Text
-                  className="text-[15px] font-montserrat-bold text-white"
+                  className="text-[15px] font-montserrat-bold text-textPrimary"
                   numberOfLines={1}
                 >
                   {firstName}
@@ -396,147 +387,136 @@ export default function RunnerHomeScreen() {
                 }
                 className="relative w-10 h-10 items-center justify-center"
               >
-                <Bell size={22} color="#FFFFFF" strokeWidth={1.8} />
+                <Bell size={22} color={LightColors.ink} strokeWidth={1.8} />
                 {unreadCount > 0 && (
                   <View
-                    className="absolute"
+                    className="absolute bg-danger"
                     style={{
                       top: 8,
                       right: 8,
                       width: 8,
                       height: 8,
                       borderRadius: 4,
-                      backgroundColor: '#F87171',
                       borderWidth: 1.5,
-                      borderColor: '#1D4ED8',
+                      borderColor: LightColors.background,
                     }}
                   />
                 )}
               </Pressable>
             </View>
 
-            {/* HUGE today earnings — the entire reason a runner opens
-                this app. Big numerals, tiny eyebrow, week comparison
-                inline below so they read context without a second card. */}
-            <View className="px-5 pt-3 pb-5">
-              <Text
-                className="text-[10px] font-montserrat-bold uppercase"
-                style={{ letterSpacing: 1.6, color: 'rgba(255,255,255,0.78)' }}
+            {/* Earnings hero — blue gradient balance card. Big white
+                numerals, week comparison inline below, and the online
+                power toggle anchored to the card's right edge. */}
+            <View className="px-5 pt-1 pb-5">
+              <LinearGradient
+                colors={[
+                  LightColors.gradientStart,
+                  LightColors.gradientMid,
+                  LightColors.gradientEnd,
+                ]}
+                start={{ x: 0, y: 0 }}
+                end={{ x: 1, y: 1 }}
+                style={{ borderRadius: 24, padding: 20, ...Elevation.md }}
               >
-                Today's earnings
-              </Text>
-              <Text
-                className="text-white font-inter-semi tabular-nums mt-1"
-                style={{
-                  fontSize: 44,
-                  lineHeight: 48,
-                  letterSpacing: -1.2,
-                }}
-              >
-                {formatCurrency(todayEarnings)}
-              </Text>
-              <View className="flex-row items-center mt-2">
-                <TrendingUp
-                  size={12}
-                  color="rgba(255,255,255,0.85)"
-                  strokeWidth={2}
-                />
-                <Text
-                  className="text-[12px] font-montserrat ml-1.5"
-                  style={{ color: 'rgba(255,255,255,0.85)' }}
-                >
-                  This week ·{' '}
-                  <Text className="font-montserrat-bold tabular-nums">
-                    {formatCurrency(weekEarnings)}
-                  </Text>
-                </Text>
-              </View>
-            </View>
+                <View className="flex-row items-center">
+                  <View className="flex-1 pr-4">
+                    <Text
+                      className="text-[10px] font-montserrat-bold uppercase text-white/80"
+                      style={{ letterSpacing: 1.6 }}
+                    >
+                      Today's earnings
+                    </Text>
+                    <Text
+                      className="font-inter-semi tabular-nums text-white mt-1"
+                      style={{ fontSize: 38, lineHeight: 44, letterSpacing: -1 }}
+                    >
+                      {formatCurrency(todayEarnings)}
+                    </Text>
+                    <View className="flex-row items-center mt-2">
+                      <TrendingUp
+                        size={12}
+                        color="rgba(255,255,255,0.8)"
+                        strokeWidth={2}
+                      />
+                      <Text className="text-[12px] font-montserrat text-white/80 ml-1.5">
+                        This week ·{' '}
+                        <Text className="font-montserrat-bold tabular-nums text-white">
+                          {formatCurrency(weekEarnings)}
+                        </Text>
+                      </Text>
+                    </View>
+                  </View>
 
-            {/* Primary CTA — icon-only circular power button. The
-                action is so well-known (and there are only two states)
-                that the label is redundant; the colour and icon alone
-                carry the meaning. White circle when offline, dark
-                slate when online, muted translucent when verification
-                is pending. */}
-            <View className="items-center pb-6">
-              <Pressable
-                onPress={() => handleToggleOnline(!isOnline)}
-                disabled={togglingOnline || !canGoOnline}
-                accessibilityRole="button"
-                accessibilityState={{ disabled: !canGoOnline, busy: togglingOnline }}
-                accessibilityLabel={
-                  !canGoOnline
-                    ? 'Verification required'
-                    : isOnline
-                    ? 'Go offline'
-                    : 'Go online'
-                }
-                className="items-center justify-center rounded-full"
-                style={{
-                  width: 96,
-                  height: 96,
-                  backgroundColor: !canGoOnline
-                    ? 'rgba(255,255,255,0.18)'
-                    : isOnline
-                    ? 'rgba(15,23,42,0.92)'
-                    : '#FFFFFF',
-                  opacity: togglingOnline ? 0.7 : 1,
-                  shadowColor: '#000',
-                  shadowOpacity: 0.22,
-                  shadowRadius: 14,
-                  shadowOffset: { width: 0, height: 6 },
-                  elevation: 8,
-                }}
-              >
-                <Power
-                  size={42}
-                  color={
-                    !canGoOnline
-                      ? '#FFFFFF'
-                      : isOnline
-                      ? '#FFFFFF'
-                      : '#2563EB'
-                  }
-                  strokeWidth={2.2}
-                />
-              </Pressable>
-              {/* Status caption under the CTA — quiet, white-on-blue */}
-              {canGoOnline ? (
-                <View className="flex-row items-center justify-center mt-3">
+                  {/* Online-status toggle — white circle when offline,
+                      translucent inset when online, muted when the
+                      runner can't go online yet. */}
+                  <Pressable
+                    onPress={() => handleToggleOnline(!isOnline)}
+                    disabled={togglingOnline || !canGoOnline}
+                    accessibilityRole="button"
+                    accessibilityState={{ disabled: !canGoOnline, busy: togglingOnline }}
+                    accessibilityLabel={
+                      !canGoOnline
+                        ? 'Verification required'
+                        : isOnline
+                        ? 'Go offline'
+                        : 'Go online'
+                    }
+                    className="items-center justify-center rounded-full"
+                    style={{
+                      width: 72,
+                      height: 72,
+                      backgroundColor: !canGoOnline
+                        ? 'rgba(255,255,255,0.25)'
+                        : isOnline
+                        ? 'rgba(255,255,255,0.18)'
+                        : LightColors.surface,
+                      borderWidth: isOnline ? 1.5 : 0,
+                      borderColor: 'rgba(255,255,255,0.55)',
+                      opacity: togglingOnline ? 0.7 : 1,
+                    }}
+                  >
+                    <Power
+                      size={32}
+                      color={
+                        !canGoOnline
+                          ? 'rgba(255,255,255,0.7)'
+                          : isOnline
+                          ? LightColors.textInverse
+                          : LightColors.primary
+                      }
+                      strokeWidth={2.2}
+                    />
+                  </Pressable>
+                </View>
+                {/* Status caption — quiet, rides on the card */}
+                <View className="flex-row items-center mt-4 pt-3 border-t border-white/20">
                   <View
+                    className="rounded-full"
                     style={{
                       width: 6,
                       height: 6,
-                      borderRadius: 3,
                       backgroundColor: isOnline
-                        ? '#34D399'
-                        : 'rgba(255,255,255,0.55)',
+                        ? LightColors.success
+                        : 'rgba(255,255,255,0.6)',
                       marginRight: 6,
                     }}
                   />
-                  <Text
-                    className="text-[11px] font-montserrat"
-                    style={{ color: 'rgba(255,255,255,0.9)' }}
-                  >
-                    {isOnline
+                  <Text className="text-[11px] font-montserrat text-white/85">
+                    {!canGoOnline
+                      ? 'Verification required'
+                      : isOnline
                       ? 'You\u2019re online \u00b7 receiving requests'
                       : locationGranted === false
                       ? 'Location off \u00b7 enable to start'
-                      : 'Tap to go online'}
+                      : 'Tap the power button to go online'}
                   </Text>
                 </View>
-              ) : (
-                <Text
-                  className="text-[11px] font-montserrat mt-3"
-                  style={{ color: 'rgba(255,255,255,0.85)' }}
-                >
-                  Verification required
-                </Text>
-              )}
+              </LinearGradient>
             </View>
           </SafeAreaView>
-        </LinearGradient>
+        </View>
 
         {/* Verification banner — overlaps the bottom of the hero so it
             reads as a top-priority blocker, not an afterthought. */}
@@ -563,13 +543,8 @@ export default function RunnerHomeScreen() {
             </View>
             <Pressable
               onPress={async () => {
-                const req = await Location.requestForegroundPermissionsAsync();
-                setLocationGranted(req.status === 'granted');
-                if (req.status !== 'granted') {
-                  toast.warning(
-                    'Permission still off. Open device Settings to allow location for ErrandGuy.',
-                  );
-                }
+                const ok = await ensureLocationPermission({ feature: 'appear on the map for customers' });
+                setLocationGranted(ok);
               }}
               accessibilityRole="button"
               accessibilityLabel="Enable location"
@@ -628,7 +603,12 @@ export default function RunnerHomeScreen() {
                 >
                   {Number(user?.avg_rating ?? 0).toFixed(1)}
                 </Text>
-                <Star size={13} color="#F59E0B" fill="#F59E0B" style={{ marginLeft: 4 }} />
+                <Star
+                  size={13}
+                  color={LightColors.warning}
+                  fill={LightColors.warning}
+                  style={{ marginLeft: 4 }}
+                />
               </View>
               <Text
                 className="text-[10px] font-montserrat uppercase text-textSecondary mt-1"
@@ -707,14 +687,16 @@ export default function RunnerHomeScreen() {
                   accessibilityLabel={label}
                   className="bg-surface px-4 py-4 rounded-2xl border border-divider flex-row items-center"
                 >
-                  <Icon size={18} color="#475569" strokeWidth={1.8} style={{ marginRight: 12 }} />
+                  <View className="w-10 h-10 rounded-full bg-primaryLight items-center justify-center mr-3">
+                    <Icon size={18} color={LightColors.primary} strokeWidth={1.8} />
+                  </View>
                   <Text
                     className="flex-1 text-[13px] font-montserrat-bold text-textPrimary"
                     numberOfLines={1}
                   >
                     {label}
                   </Text>
-                  <ChevronRight size={14} color="#CBD5E1" />
+                  <ChevronRight size={14} color={LightColors.textMuted} />
                 </Pressable>
               </View>
             ))}
@@ -748,7 +730,7 @@ export default function RunnerHomeScreen() {
                 className="flex-row items-center py-3.5"
                 style={
                   idx < recentErrands.length - 1
-                    ? { borderBottomWidth: 1, borderBottomColor: '#E2E8F0' }
+                    ? { borderBottomWidth: 1, borderBottomColor: LightColors.divider }
                     : undefined
                 }
                 onPress={() => router.push(`/(runner)/errand/${errand.id}` as any)}
@@ -771,7 +753,7 @@ export default function RunnerHomeScreen() {
                 <Text className="text-[14px] font-inter-semi tabular-nums text-textPrimary">
                   {formatCurrency(errand.runner_payout ?? errand.total_amount)}
                 </Text>
-                <ChevronRight size={16} color="#CBD5E1" style={{ marginLeft: 8 }} />
+                <ChevronRight size={16} color={LightColors.textMuted} style={{ marginLeft: 8 }} />
               </Pressable>
             ))}
           </View>
@@ -790,11 +772,4 @@ export default function RunnerHomeScreen() {
   );
 }
 
-const hs = StyleSheet.create({
-  heroGradient: {
-    borderBottomLeftRadius: 28,
-    borderBottomRightRadius: 28,
-    overflow: 'hidden',
-  },
-});
 

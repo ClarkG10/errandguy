@@ -1,6 +1,7 @@
 import React from 'react';
 import { View, Text } from 'react-native';
 import { Check, X } from 'lucide-react-native';
+import { LightColors } from '../../constants/colors';
 
 interface PasswordStrengthIndicatorProps {
   password: string;
@@ -19,7 +20,14 @@ function getStrength(password: string): number {
   return requirements.filter((r) => r.test(password)).length;
 }
 
-const strengthColors = ['#EF4444', '#EF4444', '#F59E0B', '#F59E0B', '#22C55E', '#22C55E'];
+const strengthColors = [
+  LightColors.danger,
+  LightColors.danger,
+  LightColors.warning,
+  LightColors.warning,
+  LightColors.success,
+  LightColors.success,
+];
 const strengthLabels = ['', 'Weak', 'Weak', 'Fair', 'Good', 'Strong'];
 
 export function PasswordStrengthIndicator({ password }: PasswordStrengthIndicatorProps) {
@@ -35,7 +43,8 @@ export function PasswordStrengthIndicator({ password }: PasswordStrengthIndicato
             key={level}
             className="flex-1 h-1 rounded-full"
             style={{
-              backgroundColor: strength >= level ? strengthColors[strength] : '#E2E8F0',
+              backgroundColor:
+                strength >= level ? strengthColors[strength] : LightColors.divider,
             }}
           />
         ))}
@@ -51,9 +60,9 @@ export function PasswordStrengthIndicator({ password }: PasswordStrengthIndicato
         return (
           <View key={req.label} className="flex-row items-center mb-1">
             {passed ? (
-              <Check size={14} color="#22C55E" />
+              <Check size={14} color={LightColors.success} />
             ) : (
-              <X size={14} color="#94A3B8" />
+              <X size={14} color={LightColors.textMuted} />
             )}
             <Text
               className={`text-xs font-montserrat ml-1.5 ${passed ? 'text-success' : 'text-textSecondary'}`}

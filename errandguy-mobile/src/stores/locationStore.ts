@@ -2,6 +2,7 @@ import { create } from 'zustand';
 import * as Location from 'expo-location';
 import { runnerService } from '../services/runner.service';
 import { useRunnerStore } from './runnerStore';
+import { ensureLocationPermission } from '../utils/locationPermission';
 import type { Coordinate, RunnerLocation } from '../types';
 
 interface LocationState {
@@ -37,8 +38,11 @@ export const useLocationStore = create<LocationState>((set, get) => ({
       set({ watchId: null, isTracking: false });
     }
 
-    const { status } = await Location.requestForegroundPermissionsAsync();
-    if (status !== 'granted') {
+    // ensureLocationPermission handles the "denied once, can't re-prompt"
+    // case by offering a deep-link into Settings — without it the runner
+    // could get permanently stuck unable to go Online after a single deny.
+    const ok = await ensureLocationPermission({ feature: 'share your live location with customers' });
+    if (!ok) {
       // Caller (e.g. runner home toggle) needs to know permission was
       // denied so it can show an actionable toast — otherwise the
       // runner appears Online but never emits GPS and the customer

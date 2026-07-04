@@ -1,6 +1,7 @@
 import React from 'react';
 import { View, Image, type ViewStyle } from 'react-native';
 import Svg, { Circle, Ellipse, Path, Rect } from 'react-native-svg';
+import { LightColors } from '../../constants/colors';
 
 export type ErrandIconName =
   | 'Package'
@@ -65,34 +66,34 @@ const ASSET_ART: Partial<Record<ErrandIconName, number>> = {
 
 const VARIANT_PALETTE: Record<Variant, Palette> = {
   solid: {
-    ink: '#0F172A',
-    primary: '#2563EB',
-    soft: '#93C5FD',
-    wash: '#DBEAFE',
-    line: '#BFDBFE',
-    paper: '#FFFFFF',
-    shadow: 'rgba(37,99,235,0.18)',
-    accent: '#F59E0B',
+    ink: LightColors.textPrimary,
+    primary: LightColors.primary,
+    soft: LightColors.primaryMuted,
+    wash: LightColors.primarySoft,
+    line: LightColors.primary200,
+    paper: LightColors.surface,
+    shadow: `${LightColors.primary}2E`,
+    accent: LightColors.warning,
   },
   tinted: {
-    ink: '#1E293B',
-    primary: '#2563EB',
-    soft: '#BFDBFE',
-    wash: '#EFF6FF',
-    line: '#DBEAFE',
-    paper: '#FFFFFF',
-    shadow: 'rgba(15,23,42,0.09)',
-    accent: '#F59E0B',
+    ink: LightColors.textPrimary,
+    primary: LightColors.primary,
+    soft: LightColors.primary200,
+    wash: LightColors.primaryLight,
+    line: LightColors.primarySoft,
+    paper: LightColors.surface,
+    shadow: `${LightColors.textPrimary}17`,
+    accent: LightColors.warning,
   },
   ghost: {
-    ink: '#FFFFFF',
-    primary: '#FFFFFF',
-    soft: 'rgba(255,255,255,0.62)',
-    wash: 'rgba(255,255,255,0.18)',
-    line: 'rgba(255,255,255,0.45)',
-    paper: 'rgba(255,255,255,0.96)',
-    shadow: 'rgba(255,255,255,0.16)',
-    accent: '#FBBF24',
+    ink: LightColors.textInverse,
+    primary: LightColors.textInverse,
+    soft: `${LightColors.textInverse}9E`,
+    wash: `${LightColors.textInverse}2E`,
+    line: `${LightColors.textInverse}73`,
+    paper: `${LightColors.textInverse}F5`,
+    shadow: `${LightColors.textInverse}29`,
+    accent: LightColors.warning,
   },
 };
 

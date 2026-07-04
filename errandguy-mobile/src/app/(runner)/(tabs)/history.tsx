@@ -24,6 +24,7 @@ import { useDebounce } from '../../../hooks/useDebounce';
 import { HistorySkeleton } from '../../../components/ui/Skeleton';
 import type { Booking } from '../../../types';
 import { toast } from '../../../stores/toastStore';
+import { LightColors } from '../../../constants/colors';
 
 export default function HistoryScreen() {
   const router = useRouter();
@@ -113,50 +114,81 @@ export default function HistoryScreen() {
     ({ item }: { item: Booking }) => {
       const isCompleted = item.status === 'completed';
       return (
-        <Pressable
-          className="flex-row items-center px-5 py-3.5 border-b border-divider"
+        <Card
+          className="mx-5 mb-3"
           onPress={() => router.push(`/(runner)/errand/${item.id}` as any)}
+          accessibilityLabel={`${item.errand_type?.name ?? 'Errand'}, ${formatCurrency(item.runner_payout ?? item.total_amount)}`}
         >
-          <View className="flex-1 pr-3">
-            <View className="flex-row items-center mb-1">
-              <Text className="text-[14px] font-montserrat-bold text-textPrimary" numberOfLines={1}>
+          {/* Top row — type + status badge left, date + fare right */}
+          <View className="flex-row items-start mb-3">
+            <View className="flex-1 pr-3">
+              <Text
+                className="text-[14px] font-montserrat-bold text-textPrimary"
+                numberOfLines={1}
+              >
                 {item.errand_type?.name ?? 'Errand'}
               </Text>
-              <Text className="text-[11px] font-montserrat text-textMuted ml-2">
+              <View className="flex-row items-center mt-1">
+                <Badge
+                  label={isCompleted ? 'Completed' : 'Cancelled'}
+                  variant={isCompleted ? 'success' : 'danger'}
+                />
+              </View>
+            </View>
+            <View className="items-end">
+              <Text className="text-[11px] font-montserrat text-textMuted">
                 {new Date(item.completed_at ?? item.created_at).toLocaleDateString([], {
                   month: 'short',
                   day: 'numeric',
                 })}
               </Text>
-            </View>
-            <Text className="text-[12px] font-montserrat text-textSecondary" numberOfLines={1}>
-              {item.pickup_address}
-            </Text>
-            {item.dropoff_address ? (
-              <Text className="text-[12px] font-montserrat text-textMuted" numberOfLines={1}>
-                → {item.dropoff_address}
+              <Text
+                className={`text-[15px] font-inter-semi tabular-nums mt-0.5 ${
+                  isCompleted ? 'text-textPrimary' : 'text-textMuted'
+                }`}
+              >
+                {formatCurrency(item.runner_payout ?? item.total_amount)}
               </Text>
-            ) : null}
+            </View>
           </View>
-          <View className="items-end">
-            <Text
-              className={`text-[15px] font-inter tabular-nums ${
-                isCompleted ? 'text-textPrimary' : 'text-textMuted'
-              }`}
-              style={{ fontWeight: '600' }}
-            >
-              {formatCurrency(item.runner_payout ?? item.total_amount)}
-            </Text>
-            <Text
-              className={`text-[10px] font-montserrat-bold uppercase mt-0.5 ${
-                isCompleted ? 'text-success' : 'text-danger'
-              }`}
-              style={{ letterSpacing: 1 }}
-            >
-              {isCompleted ? 'Paid' : 'Cancelled'}
-            </Text>
+
+          {/* Route — pickup/dropoff timeline beads */}
+          <View className="flex-row">
+            <View className="items-center mr-3" style={{ width: 10 }}>
+              <View className="w-2.5 h-2.5 rounded-full border-2 border-primary bg-surface mt-1" />
+              {item.dropoff_address ? (
+                <>
+                  <View
+                    className="flex-1 my-0.5"
+                    style={{
+                      width: 1,
+                      borderLeftWidth: 1,
+                      borderStyle: 'dashed',
+                      borderLeftColor: LightColors.dividerStrong,
+                    }}
+                  />
+                  <View className="w-2.5 h-2.5 rounded-full bg-primary mb-1" />
+                </>
+              ) : null}
+            </View>
+            <View className="flex-1">
+              <Text
+                className="text-[12px] font-montserrat text-textSecondary"
+                numberOfLines={1}
+              >
+                {item.pickup_address}
+              </Text>
+              {item.dropoff_address ? (
+                <Text
+                  className="text-[12px] font-montserrat text-textSecondary mt-2"
+                  numberOfLines={1}
+                >
+                  {item.dropoff_address}
+                </Text>
+              ) : null}
+            </View>
           </View>
-        </Pressable>
+        </Card>
       );
     },
     [router],
@@ -186,11 +218,11 @@ export default function HistoryScreen() {
       {/* Search — thin underline input, no card */}
       <View className="px-5 mb-2">
         <View className="flex-row items-center border-b border-divider pb-2">
-          <Search size={16} color="#94A3B8" strokeWidth={1.6} />
+          <Search size={16} color={LightColors.textMuted} strokeWidth={1.6} />
           <TextInput
             className="flex-1 ml-2 text-[14px] font-montserrat text-textPrimary"
             placeholder="Search errands"
-            placeholderTextColor="#94A3B8"
+            placeholderTextColor={LightColors.textMuted}
             value={search}
             onChangeText={setSearch}
           />
@@ -206,7 +238,7 @@ export default function HistoryScreen() {
               key={s}
               onPress={() => setStatusFilter(s)}
               className="pr-5 pb-2.5 -mb-px"
-              style={active ? { borderBottomWidth: 2, borderBottomColor: '#2563EB' } : undefined}
+              style={active ? { borderBottomWidth: 2, borderBottomColor: LightColors.primary } : undefined}
               hitSlop={6}
             >
               <Text
@@ -228,7 +260,7 @@ export default function HistoryScreen() {
         data={filteredErrands}
         renderItem={renderItem}
         keyExtractor={(item) => item.id}
-        contentContainerStyle={{ paddingBottom: 24 }}
+        contentContainerStyle={{ paddingTop: 8, paddingBottom: 24 }}
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
         onEndReached={onEndReached}
         onEndReachedThreshold={0.3}
@@ -246,7 +278,7 @@ export default function HistoryScreen() {
         ListFooterComponent={
           loadingMore ? (
             <View className="py-4 items-center justify-center">
-              <ActivityIndicator color="#2563EB" />
+              <ActivityIndicator color={LightColors.primary} />
             </View>
           ) : null
         }

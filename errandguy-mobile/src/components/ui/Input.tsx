@@ -11,6 +11,7 @@ import {
 import { Eye, EyeOff } from 'lucide-react-native';
 import type { LucideIcon } from 'lucide-react-native';
 import { useResponsive } from '../../constants/responsive';
+import { LightColors } from '../../constants/colors';
 
 interface InputProps extends Omit<TextInputProps, 'onChange'> {
   label?: string;
@@ -20,13 +21,16 @@ interface InputProps extends Omit<TextInputProps, 'onChange'> {
 }
 
 /**
- * Form input with a static caption-style label.
+ * Filled-style form input with a static caption label.
  *
- * The previous version used `Animated` to float the label between two
- * positions, but with `useNativeDriver: false` it forced a layout pass
- * on every keystroke, which the user perceived as a glitch (label
- * jitter, cursor jump). A static caption label removes the animation
- * entirely and matches what iOS / Material 3 ship today.
+ * 2026 "clean & airy" pass: rest state is a soft muted fill with no
+ * visible border (the border is transparent but keeps its width so
+ * focusing never shifts layout); focus swaps to a white fill with a
+ * 1.5px brand-blue border + soft glow. Labels are sentence-case 13px —
+ * the old uppercase micro-labels read dated.
+ *
+ * The label is static (not floating) — a previous floating-label
+ * version forced a layout pass per keystroke and felt glitchy.
  */
 export function Input({
   label,
@@ -49,19 +53,24 @@ export function Input({
   const inputRef = useRef<TextInput>(null);
   const { mScale } = useResponsive();
 
-  // Blue focus ring — the previous slate ring read as inert. The
-  // brand-blue glow signals "active" and ties the form back to the
-  // primary CTA below it.
-  const borderColor = error ? '#EF4444' : focused ? '#2563EB' : '#E6EBF2';
-  const labelColor = error ? '#EF4444' : '#475569';
+  // Filled → focused transition: muted fill at rest, white + blue
+  // border when active. Border width is constant so focus never
+  // shifts layout.
+  const borderColor = error
+    ? LightColors.danger
+    : focused
+      ? LightColors.primary
+      : 'transparent';
+  const backgroundColor =
+    focused || error ? LightColors.surface : LightColors.surfaceMuted;
+  const labelColor = error ? LightColors.danger : LightColors.textSecondary;
 
-  // Responsive sizing — slightly tighter than the previous 50pt slab
-  // so the field reads as part of the modernised, lighter design
-  // language. Still well above the 44pt touch-target minimum.
-  const minH = mScale(46);
-  const minHMulti = mScale(92);
-  const padH = mScale(14);
-  const labelSize = mScale(11);
+  // Generous 2026 sizing — a 52pt field breathes and is comfortably
+  // above the 44pt touch-target minimum.
+  const minH = mScale(52);
+  const minHMulti = mScale(96);
+  const padH = mScale(16);
+  const labelSize = mScale(13);
   const inputSize = mScale(15);
   const iconSize = mScale(18);
 
@@ -73,14 +82,14 @@ export function Input({
       <Pressable
         style={[
           fs.container,
-          { borderColor, minHeight: minH, paddingHorizontal: padH },
+          { borderColor, backgroundColor, minHeight: minH, paddingHorizontal: padH },
           focused && !error ? fs.focusedShadow : null,
           multiline && [fs.multiline, { minHeight: minHMulti }],
         ]}
         onPress={() => inputRef.current?.focus()}
       >
         {LeftIcon && (
-          <LeftIcon size={iconSize} color="#94A3B8" style={{ marginRight: 10 }} />
+          <LeftIcon size={iconSize} color={LightColors.textMuted} style={{ marginRight: 10 }} />
         )}
         <TextInput
           ref={inputRef}
@@ -90,7 +99,7 @@ export function Input({
           value={value}
           onChangeText={onChangeText}
           placeholder={placeholder}
-          placeholderTextColor="#CBD5E1"
+          placeholderTextColor={LightColors.dividerStrong}
           secureTextEntry={isPassword && !showPassword}
           keyboardType={keyboardType}
           maxLength={maxLength}
@@ -110,14 +119,14 @@ export function Input({
             style={{ marginLeft: 8 }}
           >
             {showPassword ? (
-              <EyeOff size={iconSize} color="#94A3B8" />
+              <EyeOff size={iconSize} color={LightColors.textMuted} />
             ) : (
-              <Eye size={iconSize} color="#94A3B8" />
+              <Eye size={iconSize} color={LightColors.textMuted} />
             )}
           </Pressable>
         )}
         {RightIcon && !isPassword && (
-          <RightIcon size={iconSize} color="#94A3B8" style={{ marginLeft: 8 }} />
+          <RightIcon size={iconSize} color={LightColors.textMuted} style={{ marginLeft: 8 }} />
         )}
       </Pressable>
       {error && (
@@ -136,18 +145,18 @@ export function Input({
 const fs = StyleSheet.create({
   wrapper: { marginBottom: 16 },
   label: {
-    fontFamily: 'Quicksand_700Bold',
-    letterSpacing: 0.6,
-    textTransform: 'uppercase',
+    // Sentence-case medium label — friendlier than the previous
+    // uppercase tracked micro-label.
+    fontFamily: 'Quicksand_500Medium',
     marginBottom: 8,
     marginLeft: 2,
   },
   container: {
-    borderWidth: 1,
-    // 12px to match Button + tile radii. The previous 14px combined
-    // with 1.5px border made every form field read as a fat pill.
-    borderRadius: 12,
-    backgroundColor: '#FFFFFF',
+    // Constant 1.5px border (transparent at rest) so the focus border
+    // appears without any layout shift.
+    borderWidth: 1.5,
+    // 16px — matches Button; soft squircle on the generous scale.
+    borderRadius: 16,
     flexDirection: 'row',
     alignItems: 'center',
   },
@@ -155,7 +164,7 @@ const fs = StyleSheet.create({
   // and reinforces the blue-first identity without screaming.
   focusedShadow: Platform.select({
     ios: {
-      shadowColor: '#2563EB',
+      shadowColor: LightColors.primary,
       shadowOffset: { width: 0, height: 0 },
       shadowOpacity: 0.18,
       shadowRadius: 8,
@@ -167,7 +176,7 @@ const fs = StyleSheet.create({
   input: {
     flex: 1,
     fontFamily: 'Quicksand_400Regular',
-    color: '#0F172A',
+    color: LightColors.textPrimary,
     paddingVertical: 0,
   },
   inputMultiline: {
@@ -177,7 +186,7 @@ const fs = StyleSheet.create({
   error: {
     fontSize: 12,
     fontFamily: 'Quicksand_400Regular',
-    color: '#EF4444',
+    color: LightColors.danger,
     marginTop: 4,
     marginLeft: 4,
   },

@@ -2,6 +2,7 @@ import React from 'react';
 import { View, Text } from 'react-native';
 import { Image } from 'expo-image';
 import { CheckCircle } from 'lucide-react-native';
+import { LightColors } from '../../constants/colors';
 
 type AvatarSize = 'sm' | 'md' | 'lg' | 'xl';
 
@@ -52,7 +53,7 @@ export function Avatar({
           height: container,
           borderRadius: container / 2,
           overflow: 'hidden',
-          backgroundColor: '#EFF4FF',
+          backgroundColor: LightColors.surfaceTinted,
         }}
       >
         {uri ? (
@@ -83,7 +84,7 @@ export function Avatar({
       )}
       {isVerified && (
         <View className="absolute -bottom-0.5 -right-0.5">
-          <CheckCircle size={dot + 2} color="#2563EB" fill="#DBEAFE" />
+          <CheckCircle size={dot + 2} color={LightColors.primary} fill={LightColors.primarySoft} />
         </View>
       )}
     </View>

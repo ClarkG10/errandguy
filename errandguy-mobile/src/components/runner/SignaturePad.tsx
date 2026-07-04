@@ -2,6 +2,7 @@ import React, { useImperativeHandle, useRef, useState, forwardRef } from 'react'
 import { View, PanResponder, type LayoutChangeEvent } from 'react-native';
 import Svg, { Path } from 'react-native-svg';
 import * as FileSystem from 'expo-file-system/legacy';
+import { LightColors } from '../../constants/colors';
 
 /**
  * Imperative handle exposed to parents — `clear()` wipes the canvas
@@ -45,7 +46,7 @@ interface SignaturePadProps {
  */
 export const SignaturePad = forwardRef<SignaturePadHandle, SignaturePadProps>(
   function SignaturePad(
-    { height = 180, strokeColor = '#0F172A', strokeWidth = 2.5, onBegin },
+    { height = 180, strokeColor = LightColors.textPrimary, strokeWidth = 2.5, onBegin },
     ref,
   ) {
     // Each path is a separate stroke (pen down → pen up). Keeping them
@@ -157,10 +158,10 @@ export const SignaturePad = forwardRef<SignaturePadHandle, SignaturePadProps>(
         onLayout={onLayout}
         style={{
           height,
-          backgroundColor: '#FFFFFF',
-          borderRadius: 12,
+          backgroundColor: LightColors.surface,
+          borderRadius: 16,
           borderWidth: 1,
-          borderColor: '#E2E8F0',
+          borderColor: LightColors.divider,
           overflow: 'hidden',
         }}
         {...panResponder.panHandlers}

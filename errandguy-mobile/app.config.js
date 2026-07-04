@@ -24,6 +24,7 @@ module.exports = ({ config }) => {
         },
       ],
       'expo-font',
+      'expo-web-browser',
       [
         'react-native-maps',
         {

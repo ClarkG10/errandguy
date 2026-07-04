@@ -2,6 +2,7 @@ import React, { useEffect, useState, useCallback } from 'react';
 import { View, Text, ScrollView, RefreshControl, Platform } from 'react-native';
 import { useRouter } from 'expo-router';
 import { CheckCircle, Clock, XCircle } from 'lucide-react-native';
+import { LightColors } from '../../../constants/colors';
 import { GradientHeader } from '../../../components/ui/GradientHeader';
 import { Card } from '../../../components/ui/Card';
 import { DocumentUploadCard } from '../../../components/runner/DocumentUploadCard';
@@ -114,19 +115,19 @@ export default function DocumentsScreen() {
           <Card
             className={`p-4 ${
               verificationStatus === 'approved'
-                ? 'bg-green-50'
+                ? 'bg-successSoft'
                 : verificationStatus === 'rejected'
-                ? 'bg-red-50'
-                : 'bg-blue-50'
+                ? 'bg-dangerSoft'
+                : 'bg-primaryLight'
             }`}
           >
             <View className="flex-row items-center gap-3">
               {verificationStatus === 'approved' ? (
-                <CheckCircle size={24} color="#22C55E" />
+                <CheckCircle size={24} color={LightColors.success} />
               ) : verificationStatus === 'rejected' ? (
-                <XCircle size={24} color="#EF4444" />
+                <XCircle size={24} color={LightColors.danger} />
               ) : (
-                <Clock size={24} color="#2563EB" />
+                <Clock size={24} color={LightColors.primary} />
               )}
               <View>
                 <Text className="text-sm font-montserrat-bold text-textPrimary">

@@ -9,6 +9,7 @@ import Animated, {
   withDelay,
   Easing,
 } from 'react-native-reanimated';
+import { LightColors } from '../../constants/colors';
 
 interface ErrandLoaderProps {
   /** Dot diameter */
@@ -57,7 +58,7 @@ function Dot({ size, color, delay }: { size: number; color: string; delay: numbe
   );
 }
 
-export function ErrandLoader({ size = 8, color = '#fff' }: ErrandLoaderProps) {
+export function ErrandLoader({ size = 8, color = LightColors.textInverse }: ErrandLoaderProps) {
   const stagger = DURATION * 0.4;
   return (
     <View style={[styles.container, { gap: DOT_GAP }]}>

@@ -1,6 +1,5 @@
 import React from 'react';
-import { View, Text, StyleSheet, Platform } from 'react-native';
-import { LinearGradient } from 'expo-linear-gradient';
+import { View, Text, StyleSheet } from 'react-native';
 import { Button } from './Button';
 import type { LucideIcon } from 'lucide-react-native';
 import { LightColors } from '../../constants/colors';
@@ -18,13 +17,12 @@ interface EmptyStateProps {
 }
 
 /**
- * Modern empty state — premium illustration affordance.
+ * Modern empty state — calm layered disc.
  *
- * Replaces the previous flat tinted square with a layered, gradient
- * illustration disc:
+ * 2026 "clean & airy" pass: the gradient disc is retired (gradient
+ * budget belongs to the two hero screens + FAB). Instead:
  *  - Outer soft halo (blue50, low opacity) gives perceived depth.
- *  - Inner gradient disc carries the brand blues.
- *  - White stroked icon sits centred for crisp legibility.
+ *  - Inner soft-tinted disc with a brand-blue stroked icon.
  *
  * Used everywhere a list / collection has no items yet (no errands,
  * no notifications, no saved addresses, no chat history). Forms a
@@ -45,15 +43,10 @@ export function EmptyState({
       ) : Icon ? (
         // Outer halo — large, very soft. Pure cosmetic depth cue.
         <View style={styles.halo}>
-          {/* Inner gradient disc carries the brand identity. */}
-          <LinearGradient
-            colors={[LightColors.gradientMid, LightColors.gradientStart]}
-            start={{ x: 0, y: 0 }}
-            end={{ x: 1, y: 1 }}
-            style={styles.disc}
-          >
-            <Icon size={32} color="#FFFFFF" strokeWidth={1.9} />
-          </LinearGradient>
+          {/* Inner soft disc with a brand-blue icon — quiet, airy. */}
+          <View style={styles.disc}>
+            <Icon size={32} color={LightColors.primary} strokeWidth={1.9} />
+          </View>
         </View>
       ) : null}
       <Text className="text-lg font-montserrat-bold text-textPrimary mt-5 text-center">
@@ -83,7 +76,7 @@ const styles = StyleSheet.create({
     width: 112,
     height: 112,
     borderRadius: 56,
-    backgroundColor: 'rgba(37,99,235,0.08)',
+    backgroundColor: `${LightColors.primary}14`,
     alignItems: 'center',
     justifyContent: 'center',
   },
@@ -91,17 +84,8 @@ const styles = StyleSheet.create({
     width: 76,
     height: 76,
     borderRadius: 38,
+    backgroundColor: LightColors.primary50,
     alignItems: 'center',
     justifyContent: 'center',
-    ...Platform.select({
-      ios: {
-        shadowColor: LightColors.primary700,
-        shadowOffset: { width: 0, height: 8 },
-        shadowOpacity: 0.28,
-        shadowRadius: 16,
-      },
-      android: { elevation: 6 },
-      default: {},
-    }),
   },
 });

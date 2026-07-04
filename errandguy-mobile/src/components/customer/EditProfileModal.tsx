@@ -8,6 +8,7 @@ import { ImagePickerModal } from '../ui/ImagePickerModal';
 import { Input } from '../ui/Input';
 import { Button } from '../ui/Button';
 import { toast } from '../../stores/toastStore';
+import { LightColors } from '../../constants/colors';
 
 interface EditProfileModalProps {
   visible: boolean;
@@ -88,7 +89,7 @@ export function EditProfileModal({ visible, onClose }: EditProfileModalProps) {
                 Edit Profile
               </Text>
               <Pressable onPress={onClose} hitSlop={10}>
-                <X size={24} color="#475569" />
+                <X size={24} color={LightColors.textSecondary} />
               </Pressable>
             </View>
 

@@ -2,15 +2,12 @@ import React, { useState, useEffect } from 'react';
 import {
   View,
   Text,
-  TouchableOpacity,
   Pressable,
   ScrollView,
   KeyboardAvoidingView,
   Platform,
   StatusBar,
-  StyleSheet,
 } from 'react-native';
-import { LinearGradient } from 'expo-linear-gradient';
 import * as Haptics from 'expo-haptics';
 import { useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -25,6 +22,7 @@ import { useAuth } from '../../hooks/useAuth';
 import { preloadCoreImages } from '../../services/preload.service';
 import { useAuthStore } from '../../stores/authStore';
 import { toast } from '../../stores/toastStore';
+import { LightColors } from '../../constants/colors';
 
 interface LoginFormData {
   identifier: string;
@@ -52,13 +50,9 @@ export default function LoginScreen() {
     defaultValues: { identifier: '', password: '' },
   });
 
-  // Pre-fill remembered identifier (NEVER password — see authStore).
   useEffect(() => {
     if (rememberedCredentials?.identifier) {
-      reset({
-        identifier: rememberedCredentials.identifier,
-        password: '',
-      });
+      reset({ identifier: rememberedCredentials.identifier, password: '' });
     }
   }, [rememberedCredentials, reset]);
 
@@ -74,13 +68,7 @@ export default function LoginScreen() {
         ? { phone: id, password: data.password }
         : { email: id, password: data.password };
       await login(loginData);
-
-      // Success haptic — a satisfying confirmation that's standard
-      // on iOS banking / fintech apps. Quiet failures are forgivable;
-      // a quiet success makes the app feel slow.
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
-
-      // Save or clear remembered identifier (no password).
       if (rememberMe) {
         await setRememberedCredentials({ identifier: id });
       } else {
@@ -89,7 +77,6 @@ export default function LoginScreen() {
     } catch (error: any) {
       const status = error?.status;
       let message: string;
-
       if (!status) {
         message = 'Unable to reach the server. Check your internet connection.';
       } else if (status === 401) {
@@ -109,7 +96,6 @@ export default function LoginScreen() {
       } else {
         message = error.message || 'Login failed. Please try again.';
       }
-
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error).catch(() => {});
       toast.error(message);
     } finally {
@@ -118,94 +104,52 @@ export default function LoginScreen() {
   };
 
   return (
-    <View className="flex-1 bg-white">
-      <StatusBar barStyle="light-content" />
+    <SafeAreaView className="flex-1 bg-background" edges={['top', 'bottom']}>
+      <StatusBar barStyle="dark-content" />
       <KeyboardAvoidingView
         className="flex-1"
         behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
       >
         <ScrollView
           className="flex-1"
-          contentContainerStyle={{ flexGrow: 1 }}
+          contentContainerStyle={{ flexGrow: 1, paddingHorizontal: 24 }}
           keyboardShouldPersistTaps="handled"
           showsVerticalScrollIndicator={false}
         >
-          {/* Brand hero — soft three-stop gradient with the brand
-              mark centred. Replaces the previous flat blue block,
-              which read as a stark header band. The gradient + mark
-              gives the screen a recognisable identity moment without
-              stealing focus from the form below. */}
-          <LinearGradient
-            colors={['#1E40AF', '#2563EB', '#3B82F6']}
-            start={{ x: 0, y: 0 }}
-            end={{ x: 1, y: 1 }}
-            style={s.heroBlock}
-          >
-            <SafeAreaView edges={['top']}>
-              <View className="px-6 pt-2 pb-9">
-                {!onboardingSeen && (
-                  <TouchableOpacity
-                    cssInterop={false}
-                    style={s.backBtn}
-                    activeOpacity={0.6}
-                    onPress={() => router.canGoBack() ? router.back() : router.replace('/(auth)/welcome')}
-                  >
-                    <ChevronLeft size={22} color="#FFFFFF" strokeWidth={2.2} />
-                  </TouchableOpacity>
-                )}
-                {onboardingSeen && <View style={{ height: 12 }} />}
+          {/* Back (only when arriving from onboarding) */}
+          {!onboardingSeen && (
+            <Pressable
+              onPress={() => (router.canGoBack() ? router.back() : router.replace('/(auth)/welcome'))}
+              hitSlop={10}
+              className="w-10 h-10 rounded-full items-center justify-center bg-surface mt-2"
+              accessibilityRole="button"
+              accessibilityLabel="Go back"
+            >
+              <ChevronLeft size={22} color={LightColors.ink} strokeWidth={2.2} />
+            </Pressable>
+          )}
 
-                <View className="items-center mt-2">
-                  <AuthBrandMark size={92} tintColor="#FFFFFF" />
-                </View>
+          {/* Brand + heading — simple, left-aligned, generous whitespace. */}
+          <View className="mt-8 mb-8">
+            <AuthBrandMark size={56} tintColor={LightColors.primary} />
+            <Text className="text-[28px] font-montserrat-bold text-ink mt-6" style={{ letterSpacing: -0.4 }}>
+              Welcome back
+            </Text>
+            <Text className="text-[15px] font-montserrat text-textSecondary mt-1.5">
+              Sign in to continue your errand.
+            </Text>
+          </View>
 
-                <Text
-                  className="text-[11px] font-montserrat-bold uppercase text-center mt-4"
-                  style={{ letterSpacing: 1.8, color: 'rgba(255,255,255,0.85)' }}
-                >
-                  ErrandGuy
-                </Text>
-                <Text
-                  className="text-[24px] font-montserrat-bold text-white tracking-tight text-center mt-1.5"
-                  style={{ lineHeight: 28 }}
-                >
-                  Welcome back.
-                </Text>
-                <Text
-                  className="text-[13px] font-montserrat text-center mt-1.5"
-                  style={{ color: 'rgba(255,255,255,0.85)' }}
-                >
-                  Sign in to continue your errand.
-                </Text>
-              </View>
-            </SafeAreaView>
-          </LinearGradient>
-
-          {/* Form card — lifts up over the gradient bottom edge by
-              22pt so the seam reads as a deliberate elevated surface
-              rather than a flat join. */}
-          <View
-            className="flex-1 bg-white px-6 pt-7"
-            style={{ borderTopLeftRadius: 24, borderTopRightRadius: 24, marginTop: -22 }}
-          >
-
-          {/* Identifier — auto-detects phone or email */}
+          {/* Fields */}
           <Controller
             control={control}
             name="identifier"
             rules={{
               required: 'Phone or email is required',
-              validate: (val) =>
-                isPhone(val) || isEmail(val) || 'Enter a valid phone or email',
+              validate: (val) => isPhone(val) || isEmail(val) || 'Enter a valid phone or email',
             }}
             render={({ field: { onChange, value } }) => {
-              // Swap the keyboard the moment the user starts typing
-              // digits or +63 — a phone-pad on a digits-first input is
-              // both faster and a tactile cue that the field auto-detects.
-              // Falls back to email-address keyboard otherwise so '@' / '.'
-              // stay one tap away.
-              const looksLikePhone =
-                value.length > 0 && /^[+0-9]/.test(value);
+              const looksLikePhone = value.length > 0 && /^[+0-9]/.test(value);
               return (
                 <Input
                   label="Phone or Email"
@@ -243,164 +187,66 @@ export default function LoginScreen() {
             )}
           />
 
-          {/* Remember Me + Forgot Password row */}
-          <View style={s.rememberRow}>
-            <Pressable
-              style={s.rememberBtn}
-              onPress={() => setRememberMe(!rememberMe)}
-              hitSlop={8}
-            >
-              <View style={[s.checkbox, rememberMe && s.checkboxChecked]}>
-                {rememberMe && <Check size={12} color="#fff" strokeWidth={3} />}
+          {/* Remember + forgot */}
+          <View className="flex-row items-center justify-between mt-1 mb-6">
+            <Pressable className="flex-row items-center" onPress={() => setRememberMe(!rememberMe)} hitSlop={8}>
+              <View
+                className="w-5 h-5 rounded-md items-center justify-center border"
+                style={{
+                  backgroundColor: rememberMe ? LightColors.primary : LightColors.surface,
+                  borderColor: rememberMe ? LightColors.primary : LightColors.dividerStrong,
+                }}
+              >
+                {rememberMe && <Check size={12} color={LightColors.textInverse} strokeWidth={3} />}
               </View>
-              <Text cssInterop={false} style={s.rememberText}>Remember me</Text>
+              <Text className="text-[13px] font-montserrat text-textTertiary ml-2">Remember me</Text>
             </Pressable>
-            <TouchableOpacity
-              cssInterop={false}
-              activeOpacity={0.6}
-              onPress={() => router.push('/(auth)/forgot-password')}
-            >
-              <Text cssInterop={false} style={s.forgotText}>
-                Forgot password?
-              </Text>
-            </TouchableOpacity>
+            <Pressable onPress={() => router.push('/(auth)/forgot-password')} hitSlop={8}>
+              <Text className="text-[13px] font-montserrat-semi text-primary">Forgot password?</Text>
+            </Pressable>
           </View>
 
-          <Button
-            title="Login"
+          {/* Primary CTA */}
+          <Button title="Log in" fullWidth size="lg" loading={loading} onPress={handleSubmit(onSubmit)} />
 
-            fullWidth
-            size="lg"
-            loading={loading}
-            onPress={handleSubmit(onSubmit)}
-          />
-
-          {/* Social Login */}
-          <View style={s.dividerRow}>
-            <View style={s.dividerLine} />
-            <Text cssInterop={false} style={s.dividerText}>or</Text>
-            <View style={s.dividerLine} />
+          {/* Divider */}
+          <View className="flex-row items-center my-6">
+            <View className="flex-1 h-px bg-divider" />
+            <Text className="text-[12px] font-montserrat text-textMuted mx-3">or continue with</Text>
+            <View className="flex-1 h-px bg-divider" />
           </View>
 
-          <View style={s.socialRow}>
-            <SocialLoginButton provider="google" onPress={() => {}} />
-            <SocialLoginButton provider="facebook" onPress={() => {}} />
+          {/* Social */}
+          <View className="flex-row" style={{ gap: 12 }}>
+            <SocialLoginButton
+              provider="google"
+              onPress={() =>
+                toast.info('Google sign-in is being finalized. Please use your phone or email for now.')
+              }
+            />
+            <SocialLoginButton
+              provider="facebook"
+              onPress={() =>
+                toast.info('Facebook sign-in is being finalized. Please use your phone or email for now.')
+              }
+            />
           </View>
 
-          {/* Spacer pushes signup link toward bottom */}
-          <View style={{ flex: 1 }} />
-
-          <View style={s.signupRow}>
-            <Text cssInterop={false} style={s.signupText}>New here?</Text>
-            <TouchableOpacity
-              cssInterop={false}
-              activeOpacity={0.6}
-              onPress={() => router.push('/(auth)/register')}
-              style={s.signupBtn}
-            >
-              <Text cssInterop={false} style={s.signupBtnText}>Create account</Text>
-            </TouchableOpacity>
-          </View>
+          {/* Sign up */}
+          <View className="flex-row items-center justify-center mt-auto pt-8 pb-2">
+            <Text className="text-[14px] font-montserrat text-textMuted">New here? </Text>
+            <Pressable onPress={() => router.push('/(auth)/register')} hitSlop={8}>
+              <Text className="text-[14px] font-montserrat-bold text-primary">Create account</Text>
+            </Pressable>
           </View>
         </ScrollView>
       </KeyboardAvoidingView>
       <LogoutSplash
         visible={loading}
-        backgroundColor="#1D4ED8"
-        logoTintColor="#FFFFFF"
+        backgroundColor={LightColors.primaryDark}
+        logoTintColor={LightColors.textInverse}
         logoSize={172}
       />
-    </View>
+    </SafeAreaView>
   );
 }
-
-const s = StyleSheet.create({
-  heroBlock: {
-    // Gradient styling lives on the LinearGradient props — this
-    // wrapper just constrains the bottom radius so the form card
-    // can lift over a clean curved edge.
-    borderBottomLeftRadius: 28,
-    borderBottomRightRadius: 28,
-    overflow: 'hidden',
-  },
-  backBtn: {
-    width: 38,
-    height: 38,
-    borderRadius: 19,
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: 'rgba(255,255,255,0.16)',
-  },
-  forgotText: { fontSize: 13, fontFamily: 'Quicksand_500Medium', color: '#2563EB' },
-  rememberRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    marginBottom: 28,
-    marginTop: 4,
-  },
-  rememberBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-  },
-  checkbox: {
-    width: 20,
-    height: 20,
-    borderRadius: 6,
-    borderWidth: 1.5,
-    borderColor: '#CBD5E1',
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: '#fff',
-  },
-  checkboxChecked: {
-    backgroundColor: '#2563EB',
-    borderColor: '#2563EB',
-  },
-  rememberText: {
-    fontSize: 13,
-    fontFamily: 'Quicksand_400Regular',
-    color: '#64748B',
-  },
-  dividerRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginTop: 24,
-    marginBottom: 24,
-  },
-  dividerLine: { flex: 1, height: 1, backgroundColor: '#E2E8F0' },
-  dividerText: {
-    fontSize: 13,
-    fontFamily: 'Quicksand_400Regular',
-    color: '#94A3B8',
-    marginHorizontal: 16,
-  },
-  socialRow: {
-    flexDirection: 'row',
-    gap: 12,
-    marginBottom: 8,
-  },
-  signupRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 6,
-    marginBottom: 32,
-    paddingVertical: 8,
-  },
-  signupText: {
-    fontSize: 14,
-    fontFamily: 'Quicksand_400Regular',
-    color: '#94A3B8',
-  },
-  signupBtn: {
-    paddingVertical: 2,
-    paddingHorizontal: 2,
-  },
-  signupBtnText: {
-    fontSize: 14,
-    fontFamily: 'Quicksand_600SemiBold',
-    color: '#0F172A',
-  },
-});

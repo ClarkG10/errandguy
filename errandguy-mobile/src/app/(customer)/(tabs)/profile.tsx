@@ -12,10 +12,21 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter, useFocusEffect } from 'expo-router';
-import { ChevronRight, Wallet } from 'lucide-react-native';
+import {
+  ChevronRight,
+  Wallet,
+  UserRound,
+  MapPin,
+  Users,
+  CreditCard,
+  HelpCircle,
+  Flag,
+} from 'lucide-react-native';
+import type { LucideIcon } from 'lucide-react-native';
 import * as Haptics from 'expo-haptics';
 import { Avatar } from '../../../components/ui/Avatar';
 import { Button } from '../../../components/ui/Button';
+import { Card } from '../../../components/ui/Card';
 import { GradientHeader } from '../../../components/ui/GradientHeader';
 import { LogoutSplash } from '../../../components/ui/LogoutSplash';
 import { InlineLogoutLink } from '../../../components/auth/InlineLogoutLink';
@@ -25,10 +36,12 @@ import { useAuthStore } from '../../../stores/authStore';
 import { useAuth } from '../../../hooks/useAuth';
 import { userService } from '../../../services/user.service';
 import { formatCurrency } from '../../../utils/formatCurrency';
+import { LightColors } from '../../../constants/colors';
 import { toast } from '../../../stores/toastStore';
 
 interface MenuItem {
   label: string;
+  icon: LucideIcon;
   route?: string;
   trailing?: React.ReactNode;
   onPress?: () => void;
@@ -95,63 +108,84 @@ export default function CustomerProfileScreen() {
   }, [deleteConfirmText, logout, router]);
 
   const accountMenu: MenuItem[] = [
-    { label: 'Edit Profile', onPress: () => setShowEditModal(true) },
-    { label: 'Saved Addresses', route: '/(customer)/addresses' },
-    { label: 'Trusted Contacts', route: '/(customer)/trusted-contacts' },
+    {
+      label: 'Edit Profile',
+      icon: UserRound,
+      onPress: () => setShowEditModal(true),
+    },
+    { label: 'Saved Addresses', icon: MapPin, route: '/(customer)/addresses' },
+    {
+      label: 'Trusted Contacts',
+      icon: Users,
+      route: '/(customer)/trusted-contacts',
+    },
   ];
 
   const paymentMenu: MenuItem[] = [
     {
       label: 'Wallet',
+      icon: Wallet,
       route: '/(customer)/wallet',
       trailing: (
         <View className="flex-row items-center">
-          <Text className="text-[13px] font-montserrat-bold text-primary mr-2">
+          <Text className="text-[13px] font-inter-semi text-primary mr-2">
             {formatCurrency(user?.wallet_balance ?? 0)}
           </Text>
-          <ChevronRight size={16} color="#CBD5E1" />
+          <ChevronRight size={16} color={LightColors.textMuted} />
         </View>
       ),
     },
-    { label: 'Payment Methods', route: '/(customer)/wallet' },
+    {
+      label: 'Payment Methods',
+      icon: CreditCard,
+      route: '/(customer)/wallet',
+    },
   ];
 
   const supportMenu: MenuItem[] = [
-    { label: 'Help & Support', route: '/(customer)/help' },
-    { label: 'Report an Issue', route: '/(customer)/help' },
+    { label: 'Help & Support', icon: HelpCircle, route: '/(customer)/help' },
+    { label: 'Report an Issue', icon: Flag, route: '/(customer)/help' },
   ];
 
-  const renderMenuItem = (item: MenuItem, isLast: boolean) => (
-    <React.Fragment key={item.label}>
-      <Pressable
-        onPress={() => {
-          if (item.onPress) item.onPress();
-          else if (item.route) router.push(item.route as any);
-        }}
-        className="flex-row items-center justify-between py-3.5"
-        accessibilityRole="button"
-        accessibilityLabel={item.label}
-      >
-        <Text className="text-[15px] font-montserrat-semi text-textPrimary">
-          {item.label}
-        </Text>
-        {item.trailing ?? <ChevronRight size={16} color="#CBD5E1" />}
-      </Pressable>
-      {!isLast && <Hairline />}
-    </React.Fragment>
-  );
+  const renderMenuItem = (item: MenuItem, isLast: boolean) => {
+    const RowIcon = item.icon;
+    return (
+      <React.Fragment key={item.label}>
+        <Pressable
+          onPress={() => {
+            if (item.onPress) item.onPress();
+            else if (item.route) router.push(item.route as any);
+          }}
+          className="flex-row items-center py-3"
+          accessibilityRole="button"
+          accessibilityLabel={item.label}
+        >
+          {/* Leading icon chip — soft blue circle + primary icon. */}
+          <View className="w-10 h-10 rounded-full bg-primaryLight items-center justify-center mr-3">
+            <RowIcon size={18} color={LightColors.primary} strokeWidth={1.9} />
+          </View>
+          <Text className="flex-1 text-[15px] font-montserrat-semi text-textPrimary">
+            {item.label}
+          </Text>
+          {item.trailing ?? (
+            <ChevronRight size={16} color={LightColors.textMuted} />
+          )}
+        </Pressable>
+        {!isLast && <Hairline />}
+      </React.Fragment>
+    );
+  };
 
-  // Helper for the section blocks below — a typographic eyebrow
-  // followed by hairline-separated rows. No card chrome around the
-  // group; reads as a definition list.
+  // Section blocks — an eyebrow label above a white Card that groups
+  // the rows, hairline-separated, per the grouped-list reference.
   const renderSection = (label: string, items: MenuItem[]) => (
-    <View className="px-5 mb-6">
-      <Eyebrow className="mb-1">{label}</Eyebrow>
-      <View>
+    <View className="px-5 mb-5">
+      <Eyebrow className="mb-2">{label}</Eyebrow>
+      <Card padding="none" className="px-4 py-1">
         {items.map((item, idx) =>
           renderMenuItem(item, idx === items.length - 1),
         )}
-      </View>
+      </Card>
     </View>
   );
 
@@ -198,7 +232,7 @@ export default function CustomerProfileScreen() {
               </Text>
             ) : null}
           </View>
-          <ChevronRight size={18} color="#CBD5E1" />
+          <ChevronRight size={18} color={LightColors.textMuted} />
         </Pressable>
 
         {/* Wallet — NOT a colored hero card. Hairline-bounded row with
@@ -223,7 +257,7 @@ export default function CustomerProfileScreen() {
             accessibilityRole="button"
             accessibilityLabel="Top up wallet"
           >
-            <Wallet size={14} color="#2563EB" />
+            <Wallet size={14} color={LightColors.primary} />
             <Text className="text-[12px] font-montserrat-bold text-primary underline">
               Top up
             </Text>
@@ -287,12 +321,12 @@ export default function CustomerProfileScreen() {
                   value={deleteConfirmText}
                   onChangeText={setDeleteConfirmText}
                   placeholder="DELETE"
-                  placeholderTextColor="#CBD5E1"
+                  placeholderTextColor={LightColors.dividerStrong}
                   autoCapitalize="characters"
                   style={{
                     fontFamily: 'Quicksand_400Regular',
                     fontSize: 15,
-                    color: '#0F172A',
+                    color: LightColors.textPrimary,
                   }}
                 />
               </View>

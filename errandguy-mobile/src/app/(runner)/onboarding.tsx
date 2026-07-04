@@ -24,6 +24,7 @@ import { runnerService } from '../../services/runner.service';
 import { userService } from '../../services/user.service';
 import type { DocumentType, RunnerDocument } from '../../types';
 import { toast } from '../../stores/toastStore';
+import { LightColors } from '../../constants/colors';
 
 const LOGO = require('../../../assets/logo-new.png');
 
@@ -173,24 +174,24 @@ export default function RunnerOnboardingScreen() {
     const isUploading = uploading === doc.type;
     const Icon = doc.icon;
 
-    let statusColor = '#94A3B8';
+    let statusColor: string = LightColors.textMuted;
     let statusText = 'Not uploaded';
     let StatusIcon = ChevronRight;
 
     if (existing) {
       switch (existing.status) {
         case 'approved':
-          statusColor = '#22C55E';
+          statusColor = LightColors.success;
           statusText = 'Approved';
           StatusIcon = CheckCircle;
           break;
         case 'pending':
-          statusColor = '#F59E0B';
+          statusColor = LightColors.warning;
           statusText = 'Under review';
           StatusIcon = Clock;
           break;
         case 'rejected':
-          statusColor = '#EF4444';
+          statusColor = LightColors.danger;
           statusText = 'Rejected — tap to re-upload';
           StatusIcon = ChevronRight;
           break;
@@ -222,7 +223,7 @@ export default function RunnerOnboardingScreen() {
                   resizeMode="cover"
                 />
                 <View className="absolute inset-0 bg-black/20 items-center justify-center">
-                  <Eye size={14} color="#FFF" />
+                  <Eye size={14} color={LightColors.textInverse} />
                 </View>
               </Pressable>
             ) : (
@@ -298,7 +299,7 @@ export default function RunnerOnboardingScreen() {
           onPress={handleLogout}
           className="w-9 h-9 rounded-full items-center justify-center"
         >
-          <LogOut size={18} color="#94A3B8" />
+          <LogOut size={18} color={LightColors.textMuted} />
         </Pressable>
       </View>
 
@@ -344,9 +345,9 @@ export default function RunnerOnboardingScreen() {
 
         {/* Info Card */}
         <View className="px-5 mb-6">
-          <Card className="p-4 bg-blue-50">
+          <Card className="p-4 bg-primaryLight">
             <View className="flex-row items-start gap-3">
-              <Clock size={18} color="#2563EB" />
+              <Clock size={18} color={LightColors.primary} />
               <View className="flex-1">
                 <Text className="text-sm font-montserrat-semi text-primary">
                   Verification takes 1–2 business days

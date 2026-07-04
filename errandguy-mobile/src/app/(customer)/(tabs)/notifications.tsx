@@ -8,8 +8,19 @@ import {
   ActivityIndicator,
 } from 'react-native';
 import { useRouter } from 'expo-router';
-import { Bell } from 'lucide-react-native';
+import {
+  Bell,
+  Package,
+  CreditCard,
+  Gift,
+  MessageCircle,
+  AlertTriangle,
+  Info,
+  FileText,
+} from 'lucide-react-native';
+import type { LucideIcon } from 'lucide-react-native';
 import { GradientHeader } from '../../../components/ui/GradientHeader';
+import { LightColors } from '../../../constants/colors';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useNotificationStore } from '../../../stores/notificationStore';
 import { useAuthStore } from '../../../stores/authStore';
@@ -21,20 +32,52 @@ import { formatRelativeTime } from '../../../utils/formatDate';
 import type { AppNotification, NotificationType } from '../../../types';
 import { TAB_CONTENT_BOTTOM_INSET } from '../../../constants/tabLayout';
 
-const TYPE_COLORS: Record<NotificationType, string> = {
-  booking_update: '#2563EB',
-  payment: '#22C55E',
-  promo: '#F59E0B',
-  // Aligned with brand primary so the chat row matches the rest of
-  // the app instead of being a one-off lighter blue (#3B82F6).
-  chat: '#2563EB',
-  sos: '#EF4444',
-  system: '#94A3B8',
-  document_update: '#8B5CF6',
+// Per-type presentation: a lucide icon inside a soft-tinted chip plus
+// the accent used for the eyebrow label and unread dot. Blue-first —
+// only payment/promo/sos borrow the existing status semantics.
+const TYPE_META: Record<
+  NotificationType,
+  { icon: LucideIcon; color: string; chipClass: string }
+> = {
+  booking_update: {
+    icon: Package,
+    color: LightColors.primary,
+    chipClass: 'bg-primaryLight',
+  },
+  payment: {
+    icon: CreditCard,
+    color: LightColors.success,
+    chipClass: 'bg-successSoft',
+  },
+  promo: {
+    icon: Gift,
+    color: LightColors.warning,
+    chipClass: 'bg-warningSoft',
+  },
+  chat: {
+    icon: MessageCircle,
+    color: LightColors.primary,
+    chipClass: 'bg-primaryLight',
+  },
+  sos: {
+    icon: AlertTriangle,
+    color: LightColors.danger,
+    chipClass: 'bg-dangerSoft',
+  },
+  system: {
+    icon: Info,
+    color: LightColors.textTertiary,
+    chipClass: 'bg-surfaceMuted',
+  },
+  document_update: {
+    icon: FileText,
+    color: LightColors.primary,
+    chipClass: 'bg-primaryLight',
+  },
 };
 
 // Short, capitalised label per type — reads as a tiny eyebrow on each
-// row, replacing the icon column the user asked us to remove.
+// row.
 const TYPE_LABELS: Record<NotificationType, string> = {
   booking_update: 'Booking',
   payment: 'Payment',
@@ -185,68 +228,67 @@ export default function NotificationsScreen() {
 
   const renderNotification = useCallback(
     ({ item }: { item: AppNotification }) => {
-      const color = TYPE_COLORS[item.type] ?? '#94A3B8';
+      const meta = TYPE_META[item.type] ?? TYPE_META.system;
       const label = TYPE_LABELS[item.type] ?? 'Update';
+      const TypeIcon = meta.icon;
 
       return (
-        <Pressable
-          className="flex-row border-b border-divider"
-          // Unread row tint — a soft brand-tinted wash so the eye lands
-          // on what needs attention without the row reading as a chip.
-          style={!item.is_read ? { backgroundColor: '#EFF6FF' } : undefined}
-          onPress={() => handleNotificationPress(item)}
-          accessibilityRole="button"
-          accessibilityLabel={`${label}: ${item.title}`}
-        >
-          {/* Type-coloured left bar replaces the previous icon chip.
-              Reads as a deliberate visual category mark; takes zero
-              horizontal space away from the message itself. */}
-          <View
-            style={{
-              width: 3,
-              backgroundColor: !item.is_read ? color : 'transparent',
-            }}
-          />
-          <View className="flex-1 px-5 py-3.5">
-            <View className="flex-row items-center mb-1">
-              <Text
-                className="text-[10px] font-montserrat-bold uppercase"
-                style={{ color, letterSpacing: 1.2 }}
-                numberOfLines={1}
-              >
-                {label}
-              </Text>
-              <Text
-                className="text-[10px] font-montserrat text-textTertiary ml-2"
-                numberOfLines={1}
-              >
-                · {formatRelativeTime(item.created_at)}
-              </Text>
-              {!item.is_read && (
-                <View
-                  className="ml-auto w-1.5 h-1.5 rounded-full"
-                  style={{ backgroundColor: color }}
-                />
-              )}
+        <View className="px-5 pb-2">
+          <Pressable
+            // White card row; unread rows get the soft brand-tinted
+            // wash (primaryLight) so the eye lands on what needs
+            // attention without the row reading as a chip.
+            className={`flex-row rounded-xl border border-divider p-3.5 ${
+              item.is_read ? 'bg-surface' : 'bg-primaryLight'
+            }`}
+            onPress={() => handleNotificationPress(item)}
+            accessibilityRole="button"
+            accessibilityLabel={`${label}: ${item.title}`}
+          >
+            {/* Type icon chip — soft tinted circle + type accent icon. */}
+            <View
+              className={`w-10 h-10 rounded-full items-center justify-center ${meta.chipClass}`}
+            >
+              <TypeIcon size={18} color={meta.color} strokeWidth={1.9} />
             </View>
-            <Text
-              className={`text-[14px] mb-0.5 ${
-                !item.is_read
-                  ? 'font-montserrat-bold text-textPrimary'
-                  : 'font-montserrat-semi text-textSecondary'
-              }`}
-              numberOfLines={1}
-            >
-              {item.title}
-            </Text>
-            <Text
-              className="text-[12px] font-montserrat text-textSecondary leading-[16px]"
-              numberOfLines={2}
-            >
-              {item.body}
-            </Text>
-          </View>
-        </Pressable>
+            <View className="flex-1 ml-3">
+              <View className="flex-row items-center mb-0.5">
+                <Text
+                  className="text-[10px] font-montserrat-bold uppercase"
+                  style={{ color: meta.color, letterSpacing: 1.2 }}
+                  numberOfLines={1}
+                >
+                  {label}
+                </Text>
+                <Text
+                  className="text-[10px] font-montserrat text-textTertiary ml-2"
+                  numberOfLines={1}
+                >
+                  · {formatRelativeTime(item.created_at)}
+                </Text>
+                {!item.is_read && (
+                  <View className="ml-auto w-1.5 h-1.5 rounded-full bg-primary" />
+                )}
+              </View>
+              <Text
+                className={`text-[14px] mb-0.5 ${
+                  !item.is_read
+                    ? 'font-montserrat-bold text-textPrimary'
+                    : 'font-montserrat-semi text-textSecondary'
+                }`}
+                numberOfLines={1}
+              >
+                {item.title}
+              </Text>
+              <Text
+                className="text-[12px] font-montserrat text-textSecondary leading-[16px]"
+                numberOfLines={2}
+              >
+                {item.body}
+              </Text>
+            </View>
+          </Pressable>
+        </View>
       );
     },
     [handleNotificationPress],
@@ -332,7 +374,7 @@ export default function NotificationsScreen() {
         ListFooterComponent={
           loadingMore ? (
             <View className="py-4 items-center">
-              <ActivityIndicator size="small" color="#2563EB" />
+              <ActivityIndicator size="small" color={LightColors.primary} />
             </View>
           ) : !hasMore && notifications.length > 0 ? (
             <View className="py-4 items-center">

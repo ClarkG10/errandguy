@@ -11,6 +11,7 @@ import {
 import { Image } from 'expo-image';
 import { Download, X } from 'lucide-react-native';
 import { toast } from '../../stores/toastStore';
+import { LightColors } from '../../constants/colors';
 
 /**
  * Both `expo-media-library` and `expo-file-system` are native modules.
@@ -134,7 +135,7 @@ export function ImageLightbox({ uri, visible, onClose }: ImageLightboxProps) {
           accessibilityRole="button"
           accessibilityLabel="Close image"
         >
-          <X size={22} color="#FFFFFF" />
+          <X size={22} color={LightColors.textInverse} />
         </Pressable>
 
         {/* Bottom download button. */}
@@ -144,8 +145,8 @@ export function ImageLightbox({ uri, visible, onClose }: ImageLightboxProps) {
           hitSlop={8}
           className="absolute bottom-12 self-center flex-row items-center px-5 py-3 rounded-full"
           style={{
-            backgroundColor: 'rgba(255,255,255,0.95)',
-            shadowColor: '#000',
+            backgroundColor: `${LightColors.surface}F2`,
+            shadowColor: LightColors.ink,
             shadowOpacity: 0.3,
             shadowRadius: 12,
             shadowOffset: { width: 0, height: 4 },
@@ -156,9 +157,9 @@ export function ImageLightbox({ uri, visible, onClose }: ImageLightboxProps) {
           accessibilityLabel="Save image to photos"
         >
           {downloading ? (
-            <ActivityIndicator size="small" color="#0F172A" />
+            <ActivityIndicator size="small" color={LightColors.textPrimary} />
           ) : (
-            <Download size={18} color="#0F172A" />
+            <Download size={18} color={LightColors.textPrimary} />
           )}
           <Text className="ml-2 text-sm font-montserrat-bold text-textPrimary">
             {downloading ? 'Saving…' : 'Save to Photos'}

@@ -27,5 +27,5 @@ export const STATUS_COLORS: Record<BookingStatus, string> = {
   delivered: '#22C55E',
   completed: '#22C55E',
   cancelled: '#EF4444',
-  no_runner: '#9CA3AF',
+  no_runner: '#94A3B8', // slate-400 — matches textMuted so grays stay on one ramp
 };

@@ -4,6 +4,7 @@ import { HereMapView, HereMarker, HerePolyline, type HereMapViewRef } from '../m
 import { Locate, Navigation } from 'lucide-react-native';
 import { useLocationStore } from '../../stores/locationStore';
 import { routeService } from '../../services/route.service';
+import { LightColors } from '../../constants/colors';
 
 interface RunnerActiveMapProps {
   pickupLat?: number | null;
@@ -124,7 +125,7 @@ export function RunnerActiveMap({
             : 'mx-5 h-48 bg-gray-100 rounded-2xl items-center justify-center mb-4'
         }
       >
-        <Navigation size={28} color="#94A3B8" />
+        <Navigation size={28} color={LightColors.textMuted} />
         <Text className="text-xs font-montserrat text-textSecondary mt-2">
           Map unavailable
         </Text>
@@ -180,13 +181,13 @@ export function RunnerActiveMap({
             <HerePolyline
               id="route-outline"
               coordinates={routeMapCoords}
-              strokeColor={inPickupPhase ? '#1E3A8A' : '#7F1D1D'}
+              strokeColor={inPickupPhase ? LightColors.primary900 : LightColors.dangerDark}
               strokeWidth={8}
             />
             <HerePolyline
               id="route-fill"
               coordinates={routeMapCoords}
-              strokeColor={inPickupPhase ? '#3B82F6' : '#EF4444'}
+              strokeColor={inPickupPhase ? LightColors.primary500 : LightColors.danger}
               strokeWidth={5}
             />
           </>
@@ -199,14 +200,14 @@ export function RunnerActiveMap({
             position: 'absolute',
             left: 12,
             bottom: bottomOffset as unknown as number,
-            backgroundColor: '#FFFFFF',
+            backgroundColor: LightColors.surface,
             paddingHorizontal: 12,
             paddingVertical: 6,
             borderRadius: 999,
-            shadowColor: '#0F172A',
+            shadowColor: LightColors.ink,
             shadowOffset: { width: 0, height: 2 },
-            shadowOpacity: 0.18,
-            shadowRadius: 8,
+            shadowOpacity: 0.12,
+            shadowRadius: 10,
             elevation: 6,
             zIndex: 20,
           }}
@@ -234,17 +235,17 @@ export function RunnerActiveMap({
             width: 44,
             height: 44,
             borderRadius: 22,
-            backgroundColor: '#FFFFFF',
+            backgroundColor: LightColors.surface,
             alignItems: 'center',
             justifyContent: 'center',
-            shadowColor: '#0F172A',
+            shadowColor: LightColors.ink,
             shadowOffset: { width: 0, height: 2 },
-            shadowOpacity: 0.18,
-            shadowRadius: 8,
+            shadowOpacity: 0.12,
+            shadowRadius: 10,
             elevation: 6,
           }}
         >
-          <Locate size={20} color="#1D4ED8" />
+          <Locate size={20} color={LightColors.primaryDark} />
         </Pressable>
       </Animated.View>
     </View>

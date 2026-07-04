@@ -2,6 +2,7 @@ import React from 'react';
 import { View, Text, StyleSheet } from 'react-native';
 import type { LucideIcon } from 'lucide-react-native';
 import { useResponsive } from '../../constants/responsive';
+import { LightColors } from '../../constants/colors';
 
 interface TabBarItemProps {
   Icon: LucideIcon;
@@ -15,8 +16,8 @@ interface TabBarItemProps {
   offsetX?: number;
 }
 
-const ACTIVE = '#2563EB';
-const INACTIVE = '#94A3B8';
+const ACTIVE = LightColors.primary;
+const INACTIVE = LightColors.textMuted;
 
 /**
  * A single tab-bar entry — clean iOS-style.
@@ -122,14 +123,14 @@ const s = StyleSheet.create({
     top: -2,
     right: -4,
     paddingHorizontal: 4,
-    backgroundColor: '#EF4444',
+    backgroundColor: LightColors.danger,
     borderWidth: 1.5,
-    borderColor: '#FFFFFF',
+    borderColor: LightColors.surface,
     alignItems: 'center',
     justifyContent: 'center',
   },
   badgeText: {
-    color: '#FFFFFF',
+    color: LightColors.textInverse,
     fontFamily: 'Quicksand_700Bold',
     lineHeight: 11,
   },
@@ -140,9 +141,9 @@ const s = StyleSheet.create({
     width: 8,
     height: 8,
     borderRadius: 4,
-    backgroundColor: '#22C55E',
+    backgroundColor: LightColors.success,
     borderWidth: 1.5,
-    borderColor: '#FFFFFF',
+    borderColor: LightColors.surface,
   },
 });
 

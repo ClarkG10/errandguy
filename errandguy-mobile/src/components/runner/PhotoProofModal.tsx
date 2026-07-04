@@ -5,6 +5,7 @@ import { MotiView } from 'moti';
 import { Camera, X } from 'lucide-react-native';
 import { Button } from '../ui/Button';
 import { useImagePicker } from '../../hooks/useImagePicker';
+import { LightColors } from '../../constants/colors';
 
 interface PhotoProofModalProps {
   type: 'pickup' | 'delivery';
@@ -68,7 +69,7 @@ export function PhotoProofModal({ type, onConfirm, onClose }: PhotoProofModalPro
                 {type === 'pickup' ? 'Pickup Photo' : 'Delivery Photo'}
               </Text>
               <Pressable onPress={onClose} disabled={submitting}>
-                <X size={24} color="#64748B" />
+                <X size={24} color={LightColors.textTertiary} />
               </Pressable>
             </View>
 
@@ -84,7 +85,7 @@ export function PhotoProofModal({ type, onConfirm, onClose }: PhotoProofModalPro
                   onPress={handleCapture}
                   className="h-48 bg-gray-100 rounded-xl items-center justify-center border-2 border-dashed border-divider"
                 >
-                  <Camera size={40} color="#94A3B8" />
+                  <Camera size={40} color={LightColors.textMuted} />
                   <Text className="text-sm font-montserrat text-textSecondary mt-2">
                     Take Photo
                   </Text>

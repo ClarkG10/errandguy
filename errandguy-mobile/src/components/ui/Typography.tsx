@@ -1,6 +1,7 @@
 import React from 'react';
 import { View, Text, Pressable } from 'react-native';
 import type { LucideIcon } from 'lucide-react-native';
+import { LightColors } from '../../constants/colors';
 
 /**
  * Typography primitives for the modernized design language.
@@ -35,11 +36,11 @@ interface EyebrowProps {
   className?: string;
 }
 
-export function Eyebrow({ children, color = '#64748B', className = '' }: EyebrowProps) {
+export function Eyebrow({ children, color = LightColors.textTertiary, className = '' }: EyebrowProps) {
   return (
     <Text
       className={`text-[10px] font-montserrat-bold uppercase ${className}`}
-      style={{ color, letterSpacing: 1.4 }}
+      style={{ color, letterSpacing: 1.2 }}
     >
       {children}
     </Text>
@@ -57,11 +58,11 @@ interface SectionHeaderProps {
 }
 
 const TONE: Record<NonNullable<SectionHeaderProps['tone']>, string> = {
-  neutral: '#64748B',
-  brand: '#2563EB',
-  success: '#16A34A',
-  danger: '#EF4444',
-  warning: '#D97706',
+  neutral: LightColors.textTertiary,
+  brand: LightColors.primary,
+  success: LightColors.success,
+  danger: LightColors.danger,
+  warning: LightColors.warning,
 };
 
 export function SectionHeader({ eyebrow, title, subtitle, action, tone = 'neutral' }: SectionHeaderProps) {
@@ -70,7 +71,7 @@ export function SectionHeader({ eyebrow, title, subtitle, action, tone = 'neutra
     <View className="flex-row items-end justify-between mb-3">
       <View className="flex-1 pr-3">
         {eyebrow ? <Eyebrow color={accent}>{eyebrow}</Eyebrow> : null}
-        <Text className="text-base font-montserrat-bold text-textPrimary mt-0.5">
+        <Text className="text-lg font-montserrat-bold text-textPrimary mt-0.5">
           {title}
         </Text>
         {subtitle ? (
@@ -122,10 +123,10 @@ interface StatProps {
 }
 
 const STAT_TONE: Record<NonNullable<StatProps['tone']>, string> = {
-  default: '#0F172A',
-  brand: '#2563EB',
-  success: '#16A34A',
-  danger: '#EF4444',
+  default: LightColors.textPrimary,
+  brand: LightColors.primary,
+  success: LightColors.success,
+  danger: LightColors.danger,
 };
 
 const STAT_SIZE: Record<NonNullable<StatProps['size']>, string> = {
@@ -190,9 +191,9 @@ interface LinkButtonProps {
 }
 
 const LINK_TONE: Record<NonNullable<LinkButtonProps['tone']>, string> = {
-  brand: '#2563EB',
-  neutral: '#64748B',
-  danger: '#EF4444',
+  brand: LightColors.primary,
+  neutral: LightColors.textTertiary,
+  danger: LightColors.danger,
 };
 
 export function LinkButton({
@@ -203,7 +204,7 @@ export function LinkButton({
   tone = 'brand',
   disabled,
 }: LinkButtonProps) {
-  const color = disabled ? '#CBD5E1' : LINK_TONE[tone];
+  const color = disabled ? LightColors.dividerStrong : LINK_TONE[tone];
   return (
     <Pressable
       onPress={disabled ? undefined : onPress}

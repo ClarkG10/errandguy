@@ -1,6 +1,7 @@
 import React from 'react';
 import { ActivityIndicator, Platform, View, Text, ViewStyle } from 'react-native';
 import { ErrandLoader } from './ErrandLoader';
+import { LightColors } from '../../constants/colors';
 
 export interface SpinnerProps {
   /**
@@ -22,7 +23,7 @@ export interface SpinnerProps {
 export function Spinner({
   kind = 'auto',
   size = 'small',
-  color = '#2563EB',
+  color = LightColors.primary,
 }: SpinnerProps) {
   const useBrand =
     kind === 'brand' || (kind === 'auto' && Platform.OS === 'android');
@@ -73,7 +74,7 @@ export function CenteredLoader({
           style={{
             marginTop: 12,
             fontSize: 13,
-            color: '#64748B',
+            color: LightColors.textTertiary,
             fontFamily: Platform.select({ ios: 'System', android: 'Montserrat_500Medium' }),
           }}
         >

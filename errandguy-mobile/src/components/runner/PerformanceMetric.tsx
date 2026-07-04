@@ -1,5 +1,6 @@
 import React from 'react';
 import { View, Text } from 'react-native';
+import { LightColors } from '../../constants/colors';
 
 interface PerformanceMetricProps {
   /** Number for raw metrics (auto-rounded for percentages); string for
@@ -13,7 +14,7 @@ interface PerformanceMetricProps {
 export function PerformanceMetric({
   value,
   label,
-  color = '#2563EB',
+  color = LightColors.primary,
   suffix = '%',
 }: PerformanceMetricProps) {
   const displayValue =

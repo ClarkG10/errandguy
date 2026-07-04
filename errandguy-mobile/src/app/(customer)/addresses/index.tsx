@@ -5,6 +5,7 @@ import { useRouter } from 'expo-router';
 import { ChevronLeft, Plus, MapPin, Trash2, Pencil, Home, Briefcase, Star, X, Search } from 'lucide-react-native';
 import { HereMapView, type HereMapViewRef } from '../../../components/map';
 import { Button } from '../../../components/ui/Button';
+import { Card } from '../../../components/ui/Card';
 import { ConfirmModal } from '../../../components/ui/ConfirmModal';
 import { GradientHeader } from '../../../components/ui/GradientHeader';
 import { Skeleton } from '../../../components/ui/Skeleton';
@@ -14,6 +15,7 @@ import { useAuthStore } from '../../../stores/authStore';
 import { CacheTTL } from '../../../services/cache.service';
 import { userService } from '../../../services/user.service';
 import { geocodingService } from '../../../services/geocoding.service';
+import { LightColors, Elevation } from '../../../constants/colors';
 
 import type { SavedAddress } from '../../../types';
 import { toast } from '../../../stores/toastStore';
@@ -287,33 +289,37 @@ export default function AddressesScreen() {
                   style={{ position: 'absolute', top: '50%', left: '50%', marginLeft: -12, marginTop: -24 }}
                   pointerEvents="none"
                 >
-                  <MapPin size={24} color="#2563EB" fill="#2563EB" />
+                  <MapPin
+                    size={24}
+                    color={LightColors.primary}
+                    fill={LightColors.primary}
+                  />
                 </View>
 
                 {/* Search overlay */}
                 <View style={{ position: 'absolute', top: 8, left: 8, right: 8 }}>
                   <View
                     className="flex-row items-center bg-white/95 rounded-lg px-2.5 py-1.5"
-                    style={{ shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.08, shadowRadius: 3, elevation: 2 }}
+                    style={Elevation.sm}
                   >
-                    <Search size={14} color="#94A3B8" />
+                    <Search size={14} color={LightColors.textMuted} />
                     <TextInput
                       className="flex-1 text-xs font-montserrat text-textPrimary ml-2 py-0"
                       placeholder="Search location..."
-                      placeholderTextColor="#94A3B8"
+                      placeholderTextColor={LightColors.textMuted}
                       value={searchQuery}
                       onChangeText={setSearchQuery}
                     />
                     {searchQuery.length > 0 && (
                       <Pressable onPress={() => { setSearchQuery(''); setSearchResults([]); }}>
-                        <X size={14} color="#94A3B8" />
+                        <X size={14} color={LightColors.textMuted} />
                       </Pressable>
                     )}
                   </View>
                   {searchResults.length > 0 && (
                     <View
                       className="bg-white rounded-lg mt-1 overflow-hidden"
-                      style={{ shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.1, shadowRadius: 4, elevation: 3 }}
+                      style={Elevation.md}
                     >
                       {searchResults.map((item, i) => (
                         <Pressable
@@ -351,7 +357,14 @@ export default function AddressesScreen() {
                             : 'border-divider bg-background'
                         }`}
                       >
-                        <LabelIcon size={12} color={newLabel === label ? '#FFFFFF' : '#64748B'} />
+                        <LabelIcon
+                          size={12}
+                          color={
+                            newLabel === label
+                              ? LightColors.textInverse
+                              : LightColors.textTertiary
+                          }
+                        />
                         <Text
                           className={`text-[11px] font-montserrat-semi capitalize ml-1.5 ${
                             newLabel === label ? 'text-white' : 'text-textSecondary'
@@ -369,7 +382,7 @@ export default function AddressesScreen() {
                   <TextInput
                     className="border border-divider rounded-lg px-3 py-2 mb-3 text-xs font-montserrat text-textPrimary bg-background"
                     placeholder="e.g. Mark's house, Gym, School..."
-                    placeholderTextColor="#94A3B8"
+                    placeholderTextColor={LightColors.textMuted}
                     value={customLabel}
                     onChangeText={setCustomLabel}
                   />
@@ -401,33 +414,48 @@ export default function AddressesScreen() {
             addresses.map((addr) => {
               const Icon = LABEL_ICONS[addr.label] ?? MapPin;
               return (
-                <Pressable
+                <Card
                   key={addr.id}
-                  className="flex-row items-center px-1 py-3.5 border-b border-divider"
                   onPress={() => handleEdit(addr)}
+                  padding="sm"
+                  className="mb-2.5"
+                  accessibilityLabel={`Edit ${addr.label} address`}
                 >
-                  <Icon size={18} color="#475569" strokeWidth={1.6} style={{ marginRight: 14 }} />
-                  <View className="flex-1 mr-2">
-                    <Text className="text-[14px] font-montserrat-bold text-textPrimary capitalize">
-                      {addr.label}
-                    </Text>
-                    <Text className="text-[12px] font-montserrat text-textMuted mt-0.5" numberOfLines={2}>
-                      {addr.address}
-                    </Text>
+                  <View className="flex-row items-center">
+                    {/* Leading icon chip — soft blue circle, primary icon. */}
+                    <View className="w-10 h-10 rounded-full bg-primaryLight items-center justify-center mr-3">
+                      <Icon
+                        size={18}
+                        color={LightColors.primary}
+                        strokeWidth={1.9}
+                      />
+                    </View>
+                    <View className="flex-1 mr-2">
+                      <Text className="text-[14px] font-montserrat-bold text-textPrimary capitalize">
+                        {addr.label}
+                      </Text>
+                      <Text className="text-[12px] font-montserrat text-textSecondary mt-0.5" numberOfLines={2}>
+                        {addr.address}
+                      </Text>
+                    </View>
+                    <Pressable
+                      onPress={(e) => {
+                        e.stopPropagation();
+                        handleDelete(addr.id);
+                      }}
+                      accessibilityRole="button"
+                      accessibilityLabel={`Delete ${addr.label} address`}
+                      className="w-9 h-9 items-center justify-center"
+                      hitSlop={8}
+                    >
+                      <Trash2
+                        size={15}
+                        color={LightColors.danger}
+                        strokeWidth={1.6}
+                      />
+                    </Pressable>
                   </View>
-                  <Pressable
-                    onPress={(e) => {
-                      e.stopPropagation();
-                      handleDelete(addr.id);
-                    }}
-                    accessibilityRole="button"
-                    accessibilityLabel={`Delete ${addr.label} address`}
-                    className="w-9 h-9 items-center justify-center"
-                    hitSlop={8}
-                  >
-                    <Trash2 size={15} color="#EF4444" strokeWidth={1.6} />
-                  </Pressable>
-                </Pressable>
+                </Card>
               );
             })
           )}

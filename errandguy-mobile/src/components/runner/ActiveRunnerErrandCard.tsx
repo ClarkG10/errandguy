@@ -10,6 +10,7 @@ import {
 import { ArrowRight, MapPin, Navigation, Package } from 'lucide-react-native';
 import { Avatar } from '../ui/Avatar';
 import { formatCurrency } from '../../utils/formatCurrency';
+import { LightColors, Elevation } from '../../constants/colors';
 import type { Booking, BookingStatus } from '../../types';
 
 interface ActiveRunnerErrandCardProps {
@@ -115,7 +116,7 @@ export function ActiveRunnerErrandCard({
       accessibilityRole="button"
       accessibilityLabel={`Active errand for ${customerName}: ${copy.title}`}
       accessibilityHint="Open the errand to update status or navigate"
-      android_ripple={{ color: 'rgba(37,99,235,0.06)' }}
+      android_ripple={{ color: `${LightColors.primary}0F` }}
       style={({ pressed }) => [
         styles.card,
         pressed && { opacity: 0.96, transform: [{ scale: 0.995 }] },
@@ -151,9 +152,9 @@ export function ActiveRunnerErrandCard({
       <View style={styles.addrRow}>
         <View style={styles.addrIconWrap}>
           {showingDropoff ? (
-            <MapPin size={13} color="#EF4444" />
+            <MapPin size={13} color={LightColors.danger} />
           ) : (
-            <MapPin size={13} color="#2563EB" />
+            <MapPin size={13} color={LightColors.primary} />
           )}
         </View>
         <Text style={styles.addrText} numberOfLines={2}>
@@ -164,9 +165,9 @@ export function ActiveRunnerErrandCard({
       {/* CTA */}
       <Animated.View style={[styles.ctaWrap, { transform: [{ scale: chipScale }] }]}>
         <View style={styles.ctaInner}>
-          <ActiveIcon size={14} color="#FFF" />
+          <ActiveIcon size={14} color={LightColors.textInverse} />
           <Text style={styles.ctaText}>{copy.cta}</Text>
-          <ArrowRight size={14} color="#FFF" />
+          <ArrowRight size={14} color={LightColors.textInverse} />
         </View>
       </Animated.View>
     </Pressable>
@@ -175,18 +176,14 @@ export function ActiveRunnerErrandCard({
 
 const styles = StyleSheet.create({
   card: {
-    backgroundColor: '#FFF',
+    backgroundColor: LightColors.surface,
     borderRadius: 20,
     padding: 14,
     overflow: 'hidden',
-    // Premium soft shadow with a hint of brand tint.
-    shadowColor: '#1D4ED8',
-    shadowOffset: { width: 0, height: 6 },
-    shadowOpacity: 0.10,
-    shadowRadius: 14,
-    elevation: 4,
+    // Soft diffuse card lift from the shared elevation scale.
+    ...Elevation.sm,
     borderWidth: 1,
-    borderColor: '#E2E8F0',
+    borderColor: LightColors.divider,
   },
   headerRow: {
     flexDirection: 'row',
@@ -197,27 +194,27 @@ const styles = StyleSheet.create({
     width: 4,
     height: 14,
     borderRadius: 2,
-    backgroundColor: '#2563EB',
+    backgroundColor: LightColors.primary,
     marginRight: 8,
   },
   headerLabel: {
     flex: 1,
     fontSize: 11,
     fontFamily: 'Quicksand_700Bold',
-    color: '#475569',
+    color: LightColors.textSecondary,
     letterSpacing: 0.4,
     textTransform: 'uppercase',
   },
   amountChip: {
-    backgroundColor: '#DBEAFE',
+    backgroundColor: LightColors.primarySoft,
     borderRadius: 999,
     paddingHorizontal: 10,
     paddingVertical: 4,
   },
   amountChipText: {
     fontSize: 12,
-    fontFamily: 'Quicksand_700Bold',
-    color: '#1D4ED8',
+    fontFamily: 'Inter_600SemiBold',
+    color: LightColors.primaryDark,
   },
   bodyRow: {
     flexDirection: 'row',
@@ -231,19 +228,19 @@ const styles = StyleSheet.create({
   titleText: {
     fontSize: 15,
     fontFamily: 'Quicksand_700Bold',
-    color: '#0F172A',
+    color: LightColors.textPrimary,
   },
   subText: {
     fontSize: 11,
     fontFamily: 'Quicksand_500Medium',
-    color: '#64748B',
+    color: LightColors.textTertiary,
     marginTop: 2,
   },
   addrRow: {
     flexDirection: 'row',
     alignItems: 'flex-start',
-    backgroundColor: '#F8FAFC',
-    borderRadius: 12,
+    backgroundColor: LightColors.surfaceMuted,
+    borderRadius: 16,
     padding: 10,
     marginBottom: 12,
   },
@@ -255,7 +252,7 @@ const styles = StyleSheet.create({
     flex: 1,
     fontSize: 12,
     fontFamily: 'Quicksand_500Medium',
-    color: '#334155',
+    color: LightColors.textSecondary,
     lineHeight: 17,
   },
   ctaWrap: {
@@ -265,15 +262,15 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: '#2563EB',
-    borderRadius: 12,
+    backgroundColor: LightColors.primary,
+    borderRadius: 16,
     paddingVertical: 11,
     gap: 8,
   },
   ctaText: {
     fontSize: 13,
     fontFamily: 'Quicksand_700Bold',
-    color: '#FFF',
+    color: LightColors.textInverse,
     marginHorizontal: 4,
   },
 });

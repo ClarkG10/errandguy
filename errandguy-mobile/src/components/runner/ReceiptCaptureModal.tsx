@@ -7,6 +7,7 @@ import { Button } from '../ui/Button';
 import { Input } from '../ui/Input';
 import { useImagePicker } from '../../hooks/useImagePicker';
 import { formatCurrency } from '../../utils/formatCurrency';
+import { LightColors } from '../../constants/colors';
 
 interface ReceiptCaptureModalProps {
   visible: boolean;
@@ -77,13 +78,13 @@ export function ReceiptCaptureModal({
 
             <View className="flex-row items-center justify-between mb-3">
               <View className="flex-row items-center gap-2">
-                <ReceiptIcon size={22} color="#2563EB" />
+                <ReceiptIcon size={22} color={LightColors.primary} />
                 <Text className="text-lg font-montserrat-bold text-textPrimary">
                   Receipt &amp; Actual Cost
                 </Text>
               </View>
               <Pressable onPress={onClose} disabled={submitting}>
-                <X size={24} color="#64748B" />
+                <X size={24} color={LightColors.textTertiary} />
               </Pressable>
             </View>
 
@@ -123,7 +124,7 @@ export function ReceiptCaptureModal({
                     onPress={handleCapture}
                     className="h-40 bg-gray-100 rounded-xl items-center justify-center border-2 border-dashed border-divider"
                   >
-                    <Camera size={36} color="#94A3B8" />
+                    <Camera size={36} color={LightColors.textMuted} />
                     <Text className="text-sm font-montserrat text-textSecondary mt-2">
                       Take photo of receipt
                     </Text>

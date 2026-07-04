@@ -13,16 +13,17 @@ import {
   type AppStateStatus,
 } from 'react-native';
 import { Image } from 'expo-image';
-import { useRouter, useLocalSearchParams } from 'expo-router';
-import { ArrowLeft, Send, Camera, Phone, Check, CheckCheck, Clock, AlertCircle, RotateCw } from 'lucide-react-native';
+import { useLocalSearchParams } from 'expo-router';
+import { Send, Camera, Phone, Check, CheckCheck, Clock, AlertCircle, RotateCw } from 'lucide-react-native';
 import { ActivityIndicator } from 'react-native';
-import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useAuthStore } from '../../../stores/authStore';
 import { useBookingStore } from '../../../stores/bookingStore';
 import { useChat } from '../../../hooks/useChat';
-import { Avatar } from '../../../components/ui/Avatar';
+import { GradientHeader } from '../../../components/ui/GradientHeader';
 import { ImagePickerModal } from '../../../components/ui/ImagePickerModal';
 import { ImageLightbox } from '../../../components/ui/ImageLightbox';
+import { LightColors } from '../../../constants/colors';
 import { formatTime } from '../../../utils/formatDate';
 import { buildChatRows, type ChatRow } from '../../../utils/chatList';
 import { resolveImageUrl } from '../../../utils/resolveImageUrl';
@@ -31,7 +32,6 @@ import type { Message } from '../../../types';
 import { toast } from '../../../stores/toastStore';
 
 export default function ChatScreen() {
-  const router = useRouter();
   const { bookingId } = useLocalSearchParams<{ bookingId: string }>();
   const user = useAuthStore((s) => s.user);
   const activeBooking = useBookingStore((s) => s.activeBooking);
@@ -222,7 +222,12 @@ export default function ChatScreen() {
             >
               <Image
                 source={{ uri: resolveImageUrl(m.image_url)! }}
-                style={{ width: 220, height: 220, borderRadius: 16, backgroundColor: '#E2E8F0' }}
+                style={{
+                  width: 220,
+                  height: 220,
+                  borderRadius: 16,
+                  backgroundColor: LightColors.divider,
+                }}
                 contentFit="cover"
                 transition={150}
                 cachePolicy="memory-disk"
@@ -247,29 +252,29 @@ export default function ChatScreen() {
                 </Text>
                 {m.pending ? (
                   <>
-                    <Clock size={10} color="#94A3B8" />
+                    <Clock size={10} color={LightColors.textMuted} />
                     <Text className="text-[10px] font-montserrat text-textSecondary ml-1">
                       Sending
                     </Text>
                   </>
                 ) : m.failed ? (
                   <>
-                    <AlertCircle size={11} color="#DC2626" />
+                    <AlertCircle size={11} color={LightColors.dangerDark} />
                     <Text className="text-[10px] font-montserrat-semi text-danger ml-1">
                       Failed · Tap to retry
                     </Text>
-                    <RotateCw size={10} color="#DC2626" style={{ marginLeft: 4 }} />
+                    <RotateCw size={10} color={LightColors.dangerDark} style={{ marginLeft: 4 }} />
                   </>
                 ) : m.read_at ? (
                   <>
-                    <CheckCheck size={11} color="#2563EB" />
+                    <CheckCheck size={11} color={LightColors.primary} />
                     <Text className="text-[10px] font-montserrat text-primary ml-0.5">
                       Read
                     </Text>
                   </>
                 ) : (
                   <>
-                    <Check size={11} color="#94A3B8" />
+                    <Check size={11} color={LightColors.textMuted} />
                     <Text className="text-[10px] font-montserrat text-textSecondary ml-0.5">
                       Sent
                     </Text>
@@ -295,7 +300,7 @@ export default function ChatScreen() {
                 ? m.failed
                   ? 'bg-danger rounded-br-sm'
                   : 'bg-primary rounded-br-sm'
-                : 'bg-divider rounded-bl-sm'
+                : 'bg-surface border border-divider rounded-bl-sm'
             }`}
             style={isMe && m.pending ? { opacity: 0.75 } : undefined}
           >
@@ -349,29 +354,29 @@ export default function ChatScreen() {
             >
               {m.pending ? (
                 <>
-                  <Clock size={10} color="#94A3B8" />
+                  <Clock size={10} color={LightColors.textMuted} />
                   <Text className="text-[10px] font-montserrat text-textSecondary ml-1">
                     Sending
                   </Text>
                 </>
               ) : m.failed ? (
                 <>
-                  <AlertCircle size={11} color="#DC2626" />
+                  <AlertCircle size={11} color={LightColors.dangerDark} />
                   <Text className="text-[10px] font-montserrat-semi text-danger ml-1">
                     Failed · Tap to retry
                   </Text>
-                  <RotateCw size={10} color="#DC2626" style={{ marginLeft: 4 }} />
+                  <RotateCw size={10} color={LightColors.dangerDark} style={{ marginLeft: 4 }} />
                 </>
               ) : m.read_at ? (
                 <>
-                  <CheckCheck size={11} color="#2563EB" />
+                  <CheckCheck size={11} color={LightColors.primary} />
                   <Text className="text-[10px] font-montserrat text-primary ml-0.5">
                     Read
                   </Text>
                 </>
               ) : (
                 <>
-                  <Check size={11} color="#94A3B8" />
+                  <Check size={11} color={LightColors.textMuted} />
                   <Text className="text-[10px] font-montserrat text-textSecondary ml-0.5">
                     Sent
                   </Text>
@@ -386,32 +391,28 @@ export default function ChatScreen() {
   );
 
   return (
-    <SafeAreaView className="flex-1 bg-background" edges={['top']}>
-      {/* Header */}
-      <View className="flex-row items-center px-5 py-3 border-b border-divider">
-        <Pressable
-          onPress={() => router.canGoBack() ? router.back() : router.replace('/(customer)/(tabs)/activity')}
-          accessibilityRole="button"
-          accessibilityLabel="Back to activity"
-          hitSlop={8}
-          className="mr-3 w-9 h-9 rounded-xl bg-surface items-center justify-center"
-          style={{ shadowColor: '#0F172A', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.04, shadowRadius: 6, elevation: 1 }}
-        >
-          <ArrowLeft size={20} color="#0F172A" />
-        </Pressable>
-        <Avatar size="sm" />
-        <Text className="text-base font-montserrat-bold text-textPrimary ml-3 flex-1">
-          {runnerName}
-        </Text>
-        <Pressable
-          className="p-2"
-          onPress={handleCallRunner}
-          disabled={!runnerPhone}
-          hitSlop={8}
-        >
-          <Phone size={20} color={runnerPhone ? '#2563EB' : '#94A3B8'} />
-        </Pressable>
-      </View>
+    <View className="flex-1 bg-background">
+      <GradientHeader
+        title={runnerName}
+        showBack
+        fallbackHref="/(customer)/(tabs)/activity"
+        flush
+        trailing={
+          <Pressable
+            className="p-2"
+            onPress={handleCallRunner}
+            disabled={!runnerPhone}
+            hitSlop={8}
+            accessibilityRole="button"
+            accessibilityLabel="Call runner"
+          >
+            <Phone
+              size={20}
+              color={runnerPhone ? LightColors.primary : LightColors.textMuted}
+            />
+          </Pressable>
+        }
+      />
 
       <KeyboardAvoidingView
         className="flex-1"
@@ -464,7 +465,7 @@ export default function ChatScreen() {
           ListFooterComponent={
             loadingOlder ? (
               <View className="py-3 items-center">
-                <ActivityIndicator size="small" color="#2563EB" />
+                <ActivityIndicator size="small" color={LightColors.primary} />
               </View>
             ) : null
           }
@@ -487,7 +488,7 @@ export default function ChatScreen() {
               // Explicit height keeps the pill from stretching to fill
               // the ScrollView's cross-axis when a parent flex bounds it.
               style={{ height: 32 }}
-              className={`px-3 items-center justify-center rounded-full ${sending ? 'bg-gray-100' : 'bg-primaryLight'}`}
+              className={`px-3 items-center justify-center rounded-full ${sending ? 'bg-surfaceMuted' : 'bg-primaryLight'}`}
               onPress={() => handleSend(msg)}
               disabled={sending}
             >
@@ -512,7 +513,10 @@ export default function ChatScreen() {
             accessibilityRole="button"
             accessibilityLabel="Attach a photo"
           >
-            <Camera size={24} color={sending ? '#94A3B8' : '#475569'} />
+            <Camera
+              size={24}
+              color={sending ? LightColors.textMuted : LightColors.textSecondary}
+            />
           </Pressable>
           <TextInput
             className="flex-1 bg-background border border-divider rounded-2xl px-4 py-2.5 text-sm font-montserrat text-textPrimary"
@@ -520,7 +524,7 @@ export default function ChatScreen() {
             value={inputText}
             onChangeText={setInputText}
             placeholder="Type a message..."
-            placeholderTextColor="#94A3B8"
+            placeholderTextColor={LightColors.textMuted}
             multiline
             // “Send on Enter” feels wrong on a multiline composer — leave
             // the platform's default newline behaviour and rely on the
@@ -530,7 +534,7 @@ export default function ChatScreen() {
           />
           <Pressable
             className={`ml-2 mb-1 w-10 h-10 rounded-full items-center justify-center ${
-              sending || !inputText.trim() ? 'bg-gray-300' : 'bg-primary'
+              sending || !inputText.trim() ? 'bg-dividerStrong' : 'bg-primary'
             }`}
             onPress={() => handleSend()}
             disabled={sending || !inputText.trim()}
@@ -539,9 +543,9 @@ export default function ChatScreen() {
             accessibilityState={{ disabled: sending || !inputText.trim() }}
           >
             {sending ? (
-              <ActivityIndicator size="small" color="#FFFFFF" />
+              <ActivityIndicator size="small" color={LightColors.textInverse} />
             ) : (
-              <Send size={18} color="#FFFFFF" />
+              <Send size={18} color={LightColors.textInverse} />
             )}
           </Pressable>
         </View>
@@ -560,6 +564,6 @@ export default function ChatScreen() {
         visible={previewUri !== null}
         onClose={() => setPreviewUri(null)}
       />
-    </SafeAreaView>
+    </View>
   );
 }

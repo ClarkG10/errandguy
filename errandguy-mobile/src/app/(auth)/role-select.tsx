@@ -7,6 +7,7 @@ import { Button } from '../../components/ui/Button';
 import { useAuth } from '../../hooks/useAuth';
 import { userService } from '../../services/user.service';
 import { toast } from '../../stores/toastStore';
+import { LightColors } from '../../constants/colors';
 import type { UserRole } from '../../types';
 
 type RoleOption = {
@@ -63,7 +64,7 @@ export default function RoleSelectScreen() {
   };
 
   return (
-    <SafeAreaView className="flex-1 bg-surface px-6">
+    <SafeAreaView className="flex-1 bg-background px-6">
       <View style={{ flex: 1, justifyContent: 'center' }}>
         <Text
           className="text-[10px] font-montserrat-bold uppercase text-primary mb-3 text-center"
@@ -94,11 +95,19 @@ export default function RoleSelectScreen() {
               >
                 {/* Selected indicator */}
                 <View style={[s.radio, isSelected && s.radioSelected]}>
-                  {isSelected && <Check size={14} color="#fff" strokeWidth={3} />}
+                  {isSelected && (
+                    <Check size={14} color={LightColors.textInverse} strokeWidth={3} />
+                  )}
                 </View>
 
                 <View style={s.cardHeader}>
-                  <Icon size={28} color={isSelected ? '#2563EB' : '#64748B'} />
+                  {/* Icon chip — primaryLight circle with a primary icon. */}
+                  <View style={[s.iconChip, isSelected && s.iconChipSelected]}>
+                    <Icon
+                      size={22}
+                      color={isSelected ? LightColors.primary : LightColors.textTertiary}
+                    />
+                  </View>
                   <View style={{ flex: 1 }}>
                     <Text className="text-[18px] font-montserrat-semi text-textPrimary">
                       {item.title}
@@ -144,13 +153,13 @@ const s = StyleSheet.create({
     borderRadius: 20,
     padding: 20,
     borderWidth: 2,
-    borderColor: '#E2E8F0',
-    backgroundColor: '#FAFBFC',
+    borderColor: LightColors.divider,
+    backgroundColor: LightColors.surface,
     position: 'relative',
   },
   cardSelected: {
-    borderColor: '#2563EB',
-    backgroundColor: '#EFF6FF',
+    borderColor: LightColors.primary,
+    backgroundColor: LightColors.primaryLight,
   },
   radio: {
     position: 'absolute',
@@ -160,13 +169,24 @@ const s = StyleSheet.create({
     height: 24,
     borderRadius: 12,
     borderWidth: 2,
-    borderColor: '#CBD5E1',
+    borderColor: LightColors.dividerStrong,
     alignItems: 'center',
     justifyContent: 'center',
   },
   radioSelected: {
-    borderColor: '#2563EB',
-    backgroundColor: '#2563EB',
+    borderColor: LightColors.primary,
+    backgroundColor: LightColors.primary,
+  },
+  iconChip: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: LightColors.surfaceMuted,
+  },
+  iconChipSelected: {
+    backgroundColor: LightColors.primarySoft,
   },
   cardHeader: {
     flexDirection: 'row',
@@ -176,7 +196,7 @@ const s = StyleSheet.create({
   },
   features: {
     gap: 8,
-    paddingLeft: 42,
+    paddingLeft: 58,
   },
   featureRow: {
     flexDirection: 'row',
@@ -187,9 +207,9 @@ const s = StyleSheet.create({
     width: 6,
     height: 6,
     borderRadius: 3,
-    backgroundColor: '#CBD5E1',
+    backgroundColor: LightColors.dividerStrong,
   },
   featureDotSelected: {
-    backgroundColor: '#2563EB',
+    backgroundColor: LightColors.primary,
   },
 });

@@ -4,9 +4,11 @@ import { useRouter } from 'expo-router';
 import { Check, PersonStanding, Bike, Car } from 'lucide-react-native';
 import type { LucideIcon } from 'lucide-react-native';
 import { GradientHeader } from '../../../components/ui/GradientHeader';
+import { LightColors } from '../../../constants/colors';
 import { Input } from '../../../components/ui/Input';
 import { Button } from '../../../components/ui/Button';
 import { Card } from '../../../components/ui/Card';
+import { BottomActionBar } from '../../../components/ui/BottomActionBar';
 import { useRunnerStore } from '../../../stores/runnerStore';
 import { runnerService } from '../../../services/runner.service';
 import type { VehicleType } from '../../../types';
@@ -60,8 +62,8 @@ export default function VehicleScreen() {
         showsVerticalScrollIndicator={false}
         contentContainerStyle={{ paddingBottom: 40 }}
       >
-        <Text className="text-sm font-montserrat-bold text-textPrimary mb-3">
-          Vehicle Type
+        <Text className="text-[10px] font-montserrat-bold uppercase text-textSecondary mt-5 mb-3 ml-1" style={{ letterSpacing: 1.4 }}>
+          Vehicle type
         </Text>
 
         <View className="flex-row flex-wrap gap-3 mb-6">
@@ -77,7 +79,7 @@ export default function VehicleScreen() {
               >
                 <opt.Icon
                   size={26}
-                  color={selected ? '#2563EB' : '#64748B'}
+                  color={selected ? LightColors.primary : LightColors.textTertiary}
                   strokeWidth={1.8}
                   style={{ marginBottom: 6 }}
                 />
@@ -90,7 +92,7 @@ export default function VehicleScreen() {
                 </Text>
                 {selected && (
                   <View className="absolute top-2 right-2">
-                    <Check size={16} color="#2563EB" />
+                    <Check size={16} color={LightColors.primary} />
                   </View>
                 )}
               </Pressable>
@@ -99,22 +101,32 @@ export default function VehicleScreen() {
         </View>
 
         {(vehicleType === 'motorcycle' || vehicleType === 'car') && (
-          <Input
-            label="Plate Number"
-            value={plate}
-            onChangeText={setPlate}
-            placeholder="ABC 1234"
-            autoCapitalize="characters"
-          />
+          <>
+            <Text className="text-[10px] font-montserrat-bold uppercase text-textSecondary mb-2 ml-1" style={{ letterSpacing: 1.4 }}>
+              Plate details
+            </Text>
+            <Card padding="md">
+              <Input
+                label="Plate Number"
+                value={plate}
+                onChangeText={setPlate}
+                placeholder="ABC 1234"
+                autoCapitalize="characters"
+              />
+            </Card>
+          </>
         )}
+      </ScrollView>
 
+      <BottomActionBar>
         <Button
           title="Save Changes"
           onPress={handleSave}
           loading={loading}
           fullWidth
+          size="lg"
         />
-      </ScrollView>
+      </BottomActionBar>
     </View>
   );
 }

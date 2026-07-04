@@ -4,12 +4,15 @@ import { useRouter } from 'expo-router';
 import {
   ChevronDown,
   ChevronUp,
+  ChevronRight,
   MessageCircle,
   Mail,
   Phone,
 } from 'lucide-react-native';
 import { Card } from '../../../components/ui/Card';
 import { GradientHeader } from '../../../components/ui/GradientHeader';
+import { SectionHeader } from '../../../components/ui/Typography';
+import { LightColors } from '../../../constants/colors';
 
 interface FAQ {
   question: string;
@@ -62,9 +65,7 @@ export default function HelpScreen() {
         contentContainerStyle={{ paddingBottom: 40 }}
       >
         {/* FAQ Section */}
-        <Text className="text-sm font-montserrat-bold text-textSecondary uppercase tracking-wider mb-3">
-          Frequently Asked Questions
-        </Text>
+        <SectionHeader title="Frequently Asked Questions" />
 
         <Card className="p-0 overflow-hidden mb-6">
           {FAQS.map((faq, idx) => (
@@ -76,13 +77,13 @@ export default function HelpScreen() {
                 onPress={() => toggle(idx)}
                 className="flex-row items-center justify-between p-4"
               >
-                <Text className="text-sm font-montserrat-bold text-textPrimary flex-1 mr-3">
+                <Text className="text-[14px] font-montserrat-semi text-textPrimary flex-1 mr-3">
                   {faq.question}
                 </Text>
                 {expanded === idx ? (
-                  <ChevronUp size={18} color="#94A3B8" />
+                  <ChevronUp size={18} color={LightColors.textMuted} />
                 ) : (
-                  <ChevronDown size={18} color="#94A3B8" />
+                  <ChevronDown size={18} color={LightColors.textMuted} />
                 )}
               </Pressable>
               {expanded === idx && (
@@ -97,35 +98,39 @@ export default function HelpScreen() {
         </Card>
 
         {/* Contact Section */}
-        <Text className="text-sm font-montserrat-bold text-textSecondary uppercase tracking-wider mb-3">
-          Contact Us
-        </Text>
+        <SectionHeader title="Contact Us" />
 
         <Card className="p-0 overflow-hidden">
           <Pressable
             onPress={() => Linking.openURL('mailto:support@errandguy.app')}
             className="flex-row items-center gap-3 p-4 border-b border-divider"
           >
-            <Mail size={20} color="#475569" />
-            <View>
-              <Text className="text-sm font-montserrat-bold text-textPrimary">Email Support</Text>
-              <Text className="text-xs font-montserrat text-textSecondary">
+            <View className="w-10 h-10 rounded-full bg-primaryLight items-center justify-center">
+              <Mail size={18} color={LightColors.primary} strokeWidth={1.8} />
+            </View>
+            <View className="flex-1">
+              <Text className="text-[14px] font-montserrat-semi text-textPrimary">Email Support</Text>
+              <Text className="text-sm font-montserrat text-textSecondary">
                 support@errandguy.app
               </Text>
             </View>
+            <ChevronRight size={16} color={LightColors.textMuted} strokeWidth={1.5} />
           </Pressable>
 
           <Pressable
             onPress={() => Linking.openURL('tel:+639123456789')}
             className="flex-row items-center gap-3 p-4"
           >
-            <Phone size={20} color="#475569" />
-            <View>
-              <Text className="text-sm font-montserrat-bold text-textPrimary">Phone Support</Text>
-              <Text className="text-xs font-montserrat text-textSecondary">
+            <View className="w-10 h-10 rounded-full bg-primaryLight items-center justify-center">
+              <Phone size={18} color={LightColors.primary} strokeWidth={1.8} />
+            </View>
+            <View className="flex-1">
+              <Text className="text-[14px] font-montserrat-semi text-textPrimary">Phone Support</Text>
+              <Text className="text-sm font-montserrat text-textSecondary">
                 +63 912 345 6789
               </Text>
             </View>
+            <ChevronRight size={16} color={LightColors.textMuted} strokeWidth={1.5} />
           </Pressable>
         </Card>
       </ScrollView>

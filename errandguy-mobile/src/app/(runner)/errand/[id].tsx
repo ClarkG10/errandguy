@@ -8,7 +8,6 @@ import {
   MapPin,
   Navigation,
   CheckCircle,
-  Circle,
   ShoppingBag,
   ShieldAlert,
   ChevronDown,
@@ -16,6 +15,7 @@ import {
   AlertTriangle,
 } from 'lucide-react-native';
 import { JourneyBeads } from '../../../components/ui/JourneyBeads';
+import { StatusTimeline } from '../../../components/ui/StatusTimeline';
 import { CurrentStepHero } from '../../../components/ui/CurrentStepHero';
 import { Avatar } from '../../../components/ui/Avatar';
 import { Button } from '../../../components/ui/Button';
@@ -41,6 +41,7 @@ import { CacheTTL } from '../../../services/cache.service';
 import { runnerService } from '../../../services/runner.service';
 import type { Booking } from '../../../types';
 import { STATUS_LABELS } from '../../../constants/statusLabels';
+import { Elevation, LightColors } from '../../../constants/colors';
 import { getErrandTypeRule } from '../../../constants/errandTypeRules';
 import { formatCurrency } from '../../../utils/formatCurrency';
 import type { BookingStatus } from '../../../types';
@@ -684,14 +685,8 @@ export default function ActiveErrandScreen() {
         >
           <View className="px-4 pt-2" pointerEvents="box-none">
             <View
-              className="flex-row items-stretch bg-white rounded-2xl"
-              style={{
-                shadowColor: '#0F172A',
-                shadowOffset: { width: 0, height: 4 },
-                shadowOpacity: 0.12,
-                shadowRadius: 10,
-                elevation: 4,
-              }}
+              className="flex-row items-stretch bg-surface rounded-2xl"
+              style={Elevation.md}
             >
               <View className="w-12 items-center justify-center">
                 <BackButton
@@ -713,7 +708,7 @@ export default function ActiveErrandScreen() {
                   {isTransportation ? 'Passenger ride' : 'Active errand'}
                 </Text>
                 <Text
-                  className="text-[10px] font-montserrat text-textTertiary mt-0.5"
+                  className="text-[10px] font-inter text-textTertiary mt-0.5"
                   style={{ letterSpacing: 0.4 }}
                 >
                   {booking.booking_number}
@@ -728,9 +723,9 @@ export default function ActiveErrandScreen() {
                   accessibilityLabel="Open chat with customer"
                   hitSlop={6}
                 >
-                  <MessageCircle size={20} color="#0F172A" strokeWidth={1.8} />
+                  <MessageCircle size={20} color={LightColors.textPrimary} strokeWidth={1.8} />
                   {unreadForBooking > 0 && (
-                    <View className="absolute top-1 right-1 min-w-[16px] h-[16px] px-1 bg-danger rounded-full items-center justify-center border-[1.5px] border-white">
+                    <View className="absolute top-1 right-1 min-w-[16px] h-[16px] px-1 bg-danger rounded-full items-center justify-center border-[1.5px] border-surface">
                       <Text className="text-[9px] text-white font-montserrat-bold leading-[12px]">
                         {unreadForBooking > 9 ? '9+' : String(unreadForBooking)}
                       </Text>
@@ -754,12 +749,14 @@ export default function ActiveErrandScreen() {
           style={{ position: 'absolute', left: 0, right: 0, bottom: 0 }}
         >
           <Animated.View
-            className="bg-white"
+            className="bg-surface rounded-t-3xl"
             style={{
               height: sheetHeight,
-              shadowColor: '#000',
-              shadowOpacity: 0.12,
-              shadowRadius: 12,
+              // Sheet lift — upward offset is intentional so the shadow
+              // reads above the sheet edge; softened to the airy scale.
+              shadowColor: LightColors.ink,
+              shadowOpacity: 0.08,
+              shadowRadius: 16,
               shadowOffset: { width: 0, height: -2 },
               elevation: 12,
             }}
@@ -772,7 +769,7 @@ export default function ActiveErrandScreen() {
               accessibilityRole="adjustable"
               accessibilityLabel="Drag to resize details panel"
             >
-              <View className="w-12 h-1 rounded-full bg-gray-300" />
+              <View className="w-10 h-1 rounded-full bg-dividerStrong" />
             </View>
 
             {/* Header line — always visible.
@@ -809,14 +806,14 @@ export default function ActiveErrandScreen() {
                       accessibilityLabel="Open turn-by-turn navigation"
                       className="flex-1 h-11 rounded-xl bg-primary flex-row items-center justify-center"
                       style={{
-                        shadowColor: '#2563EB',
-                        shadowOpacity: 0.18,
-                        shadowRadius: 6,
+                        shadowColor: LightColors.primary,
+                        shadowOpacity: 0.12,
+                        shadowRadius: 8,
                         shadowOffset: { width: 0, height: 2 },
                         elevation: 2,
                       }}
                     >
-                      <Navigation size={16} color="#FFFFFF" strokeWidth={2.2} />
+                      <Navigation size={16} color={LightColors.textInverse} strokeWidth={2.2} />
                       <Text className="text-white text-[13px] font-montserrat-bold ml-2">
                         Navigate
                       </Text>
@@ -836,9 +833,9 @@ export default function ActiveErrandScreen() {
                       }}
                       accessibilityRole="button"
                       accessibilityLabel="Open in system maps"
-                      className="h-11 px-4 rounded-xl border border-divider bg-white flex-row items-center justify-center"
+                      className="h-11 px-4 rounded-xl border border-divider bg-surface flex-row items-center justify-center"
                     >
-                      <MapPin size={15} color="#0F172A" strokeWidth={1.8} />
+                      <MapPin size={15} color={LightColors.textPrimary} strokeWidth={1.8} />
                       <Text className="text-textPrimary text-[13px] font-montserrat-semi ml-1.5">
                         Maps
                       </Text>
@@ -861,7 +858,7 @@ export default function ActiveErrandScreen() {
               keyboardShouldPersistTaps="handled"
             >
               {/* ── Customer pill ─────────────────────────────── */}
-              <View className="flex-row items-center bg-surface rounded-2xl p-3 mb-3">
+              <View className="flex-row items-center bg-surface border border-divider rounded-2xl p-3 mb-3">
                 <Avatar name={customerName} size="md" />
                 <View className="flex-1 ml-3 mr-2">
                   <Text
@@ -884,10 +881,10 @@ export default function ActiveErrandScreen() {
                   accessibilityLabel="Call customer"
                   hitSlop={6}
                   className={`w-10 h-10 rounded-full items-center justify-center mr-2 ${
-                    customerPhone ? 'bg-primaryLight' : 'bg-gray-100'
+                    customerPhone ? 'bg-primaryLight' : 'bg-surfaceMuted'
                   }`}
                 >
-                  <Phone size={17} color={customerPhone ? '#2563EB' : '#94A3B8'} strokeWidth={2} />
+                  <Phone size={17} color={customerPhone ? LightColors.primary : LightColors.textMuted} strokeWidth={2} />
                 </Pressable>
                 <Pressable
                   onPress={() => router.push(`/(runner)/chat/${booking.id}` as any)}
@@ -900,9 +897,9 @@ export default function ActiveErrandScreen() {
                   hitSlop={6}
                   className="w-10 h-10 rounded-full bg-primaryLight items-center justify-center"
                 >
-                  <MessageCircle size={17} color="#2563EB" strokeWidth={2} />
+                  <MessageCircle size={17} color={LightColors.primary} strokeWidth={2} />
                   {unreadForBooking > 0 && (
-                    <View className="absolute -top-0.5 -right-0.5 min-w-[16px] h-[16px] px-1 bg-danger rounded-full items-center justify-center border-[1.5px] border-white">
+                    <View className="absolute -top-0.5 -right-0.5 min-w-[16px] h-[16px] px-1 bg-danger rounded-full items-center justify-center border-[1.5px] border-surface">
                       <Text className="text-[9px] text-white font-montserrat-bold leading-[12px]">
                         {unreadForBooking > 9 ? '9+' : String(unreadForBooking)}
                       </Text>
@@ -922,13 +919,13 @@ export default function ActiveErrandScreen() {
                   </Text>
                   <View className="flex-row items-center gap-2">
                     <TextInput
-                      className="flex-1 bg-white border border-divider rounded-xl px-4 py-3 text-center text-xl font-montserrat-bold text-textPrimary tracking-[12px]"
+                      className="flex-1 bg-surface border border-divider rounded-xl px-4 py-3 text-center text-xl font-inter-semi text-textPrimary tracking-[12px]"
                       value={pinInput}
                       onChangeText={(t) => setPinInput(t.replace(/\D/g, '').slice(0, 4))}
                       keyboardType="number-pad"
                       maxLength={4}
                       placeholder="• • • •"
-                      placeholderTextColor="#94A3B8"
+                      placeholderTextColor={LightColors.textMuted}
                     />
                     <Button
                       title="Verify"
@@ -940,8 +937,8 @@ export default function ActiveErrandScreen() {
                 </View>
               )}
               {pinVerified && isTransportation && (
-                <View className="mb-3 flex-row items-center gap-2 bg-success/10 px-3 py-2.5 rounded-xl">
-                  <CheckCircle size={16} color="#22C55E" />
+                <View className="mb-3 flex-row items-center gap-2 bg-successSoft px-3 py-2.5 rounded-xl">
+                  <CheckCircle size={16} color={LightColors.success} />
                   <Text className="text-[12px] font-montserrat-bold text-success">
                     PIN verified — ready to start
                   </Text>
@@ -949,12 +946,12 @@ export default function ActiveErrandScreen() {
               )}
 
               {/* ── Payout strip (always visible) ─────────────── */}
-              <View className="flex-row items-center justify-between bg-surface rounded-2xl px-4 py-3 mb-3">
+              <View className="flex-row items-center justify-between bg-surface border border-divider rounded-2xl px-4 py-3 mb-3">
                 <View>
                   <Text className="text-[10px] font-montserrat-bold uppercase text-textTertiary" style={{ letterSpacing: 1 }}>
                     Your payout
                   </Text>
-                  <Text className="text-[18px] font-montserrat-bold text-textPrimary mt-0.5">
+                  <Text className="text-[18px] font-inter-semi tabular-nums text-textPrimary mt-0.5">
                     {formatCurrency(booking.runner_payout ?? booking.total_amount)}
                   </Text>
                 </View>
@@ -963,7 +960,7 @@ export default function ActiveErrandScreen() {
                     <Text className="text-[10px] font-montserrat-bold uppercase text-warning" style={{ letterSpacing: 1 }}>
                       Budget
                     </Text>
-                    <Text className="text-[14px] font-montserrat-bold text-warning mt-0.5">
+                    <Text className="text-[14px] font-inter-semi tabular-nums text-warning mt-0.5">
                       {formatCurrency(booking.shopping_budget)}
                     </Text>
                   </View>
@@ -982,18 +979,18 @@ export default function ActiveErrandScreen() {
                   Trip details
                 </Text>
                 {detailsOpen ? (
-                  <ChevronUp size={14} color="#64748B" />
+                  <ChevronUp size={14} color={LightColors.textTertiary} />
                 ) : (
-                  <ChevronDown size={14} color="#64748B" />
+                  <ChevronDown size={14} color={LightColors.textTertiary} />
                 )}
               </Pressable>
 
               {detailsOpen && (
                 <View className="mt-2">
                   {isShoppingErrand && booking.shopping_budget != null && (
-                    <View className="bg-amber-50 border border-amber-200 rounded-xl p-3 mb-3 flex-row gap-2">
-                      <ShoppingBag size={14} color="#B45309" />
-                      <Text className="flex-1 text-[11px] font-montserrat text-amber-800 leading-[15px]">
+                    <View className="bg-warningLight border border-warningSoft rounded-xl p-3 mb-3 flex-row gap-2">
+                      <ShoppingBag size={14} color={LightColors.warning} />
+                      <Text className="flex-1 text-[11px] font-montserrat text-textSecondary leading-[15px]">
                         Don't exceed {formatCurrency(booking.shopping_budget)}. Capture the receipt at pickup — the customer is charged the actual cost.
                       </Text>
                     </View>
@@ -1012,43 +1009,17 @@ export default function ActiveErrandScreen() {
                     Progress
                   </Text>
                   <View className="mb-3">
-                    {timelineSteps.map((step, idx) => {
-                      const isCompleted = idx < currentStatusIdx;
-                      const isCurrent = idx === currentStatusIdx;
-                      return (
-                        <View key={step} className="flex-row items-start gap-3 mb-2">
-                          <View className="items-center" style={{ width: 20 }}>
-                            {isCompleted ? (
-                              <CheckCircle size={18} color="#22C55E" />
-                            ) : isCurrent ? (
-                              <View className="w-[18px] h-[18px] rounded-full bg-primary items-center justify-center">
-                                <View className="w-2 h-2 rounded-full bg-white" />
-                              </View>
-                            ) : (
-                              <Circle size={18} color="#CBD5E1" />
-                            )}
-                            {idx < timelineSteps.length - 1 && (
-                              <View
-                                className={`w-0.5 h-4 mt-0.5 ${
-                                  isCompleted ? 'bg-success' : 'bg-divider'
-                                }`}
-                              />
-                            )}
-                          </View>
-                          <Text
-                            className={`text-[13px] font-montserrat ${
-                              isCurrent
-                                ? 'text-primary font-montserrat-bold'
-                                : isCompleted
-                                ? 'text-textPrimary'
-                                : 'text-gray-400'
-                            }`}
-                          >
-                            {STATUS_LABELS[step] ?? step}
-                          </Text>
-                        </View>
-                      );
-                    })}
+                    <StatusTimeline
+                      steps={timelineSteps.map((step, idx) => ({
+                        label: STATUS_LABELS[step] ?? step,
+                        status:
+                          idx < currentStatusIdx
+                            ? ('completed' as const)
+                            : idx === currentStatusIdx
+                            ? ('current' as const)
+                            : ('pending' as const),
+                      }))}
+                    />
                   </View>
 
                   {!isReadOnly && (
@@ -1058,10 +1029,10 @@ export default function ActiveErrandScreen() {
                       accessibilityRole="button"
                       accessibilityLabel={sosActive ? 'SOS already triggered' : 'Trigger emergency SOS'}
                       className={`flex-row items-center justify-center gap-2 rounded-xl py-2.5 border mt-1 mb-3 ${
-                        sosActive ? 'bg-danger border-danger' : 'bg-white border-danger/40'
+                        sosActive ? 'bg-danger border-danger' : 'bg-surface border-danger/40'
                       }`}
                     >
-                      <ShieldAlert size={15} color={sosActive ? '#FFFFFF' : '#EF4444'} />
+                      <ShieldAlert size={15} color={sosActive ? LightColors.textInverse : LightColors.danger} />
                       <Text
                         className={`text-[12px] font-montserrat-bold ${
                           sosActive ? 'text-white' : 'text-danger'
@@ -1084,7 +1055,7 @@ export default function ActiveErrandScreen() {
                     hitSlop={6}
                     className="flex-row items-center self-start gap-1.5 mb-1"
                   >
-                    <AlertTriangle size={12} color="#94A3B8" />
+                    <AlertTriangle size={12} color={LightColors.textMuted} />
                     <Text className="text-[11px] font-montserrat-semi text-textTertiary underline">
                       Report an issue
                     </Text>
@@ -1099,7 +1070,7 @@ export default function ActiveErrandScreen() {
                 Supabase Realtime, and is mirrored on the customer
                 tracking screen within ~5s. */}
             {!isReadOnly ? (
-              <View className="px-5 pt-3 pb-3 border-t border-divider bg-white">
+              <View className="px-5 pt-3 pb-3 border-t border-divider bg-surface">
                 <Text className="text-[10px] font-montserrat-bold text-textTertiary uppercase tracking-wider mb-1.5 text-center">
                   Tap to advance — customer is notified instantly
                 </Text>
@@ -1113,7 +1084,7 @@ export default function ActiveErrandScreen() {
                 />
               </View>
             ) : (
-              <View className="px-5 pt-3 pb-3 border-t border-divider bg-white items-center">
+              <View className="px-5 pt-3 pb-3 border-t border-divider bg-surface items-center">
                 <Text className="text-[11px] font-montserrat text-textTertiary uppercase tracking-wider mb-0.5">
                   Read-only view
                 </Text>
@@ -1123,7 +1094,7 @@ export default function ActiveErrandScreen() {
               </View>
             )}
           </Animated.View>
-          <SafeAreaView edges={['bottom']} style={{ backgroundColor: 'white' }} />
+          <SafeAreaView edges={['bottom']} style={{ backgroundColor: LightColors.surface }} />
         </KeyboardAvoidingView>
       </View>
 

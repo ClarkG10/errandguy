@@ -25,6 +25,7 @@ import { ExpandableSheet } from '../../../components/ui/ExpandableSheet';
 import { getErrandTypeRule } from '../../../constants/errandTypeRules';
 import { toast } from '../../../stores/toastStore';
 import type { Booking } from '../../../types';
+import { LightColors } from '../../../constants/colors';
 
 /**
  * Statuses where the runner is travelling toward the pickup pin.
@@ -50,7 +51,7 @@ function distMeters(a: { lat: number; lng: number }, b: { lat: number; lng: numb
  * \u2014 lucide doesn't ship every variant, and the modifier fallback
  * keeps the banner readable for unmapped types.
  */
-function ManeuverIcon({ type, modifier, size = 28, color = '#0F172A' }: {
+function ManeuverIcon({ type, modifier, size = 28, color = LightColors.textPrimary }: {
   type: string;
   modifier: string | null;
   size?: number;
@@ -365,7 +366,7 @@ export default function NavigateScreen() {
   if (!booking) {
     return (
       <View className="flex-1 bg-background items-center justify-center">
-        <ActivityIndicator size="small" color="#2563EB" />
+        <ActivityIndicator size="small" color={LightColors.primary} />
         <Text className="mt-3 text-xs font-montserrat text-textSecondary">Preparing navigation\u2026</Text>
       </View>
     );
@@ -374,7 +375,7 @@ export default function NavigateScreen() {
   if (!destination) {
     return (
       <SafeAreaView className="flex-1 bg-background items-center justify-center px-8" edges={['top']}>
-        <AlertTriangle size={28} color="#DC2626" />
+        <AlertTriangle size={28} color={LightColors.dangerDark} />
         <Text className="text-base font-montserrat-bold text-textPrimary mt-3 mb-1">No destination</Text>
         <Text className="text-xs font-montserrat text-textSecondary text-center mb-4">
           This errand doesn't have a navigable destination right now.
@@ -390,7 +391,7 @@ export default function NavigateScreen() {
   }
 
   return (
-    <View style={{ flex: 1, backgroundColor: '#0F172A' }}>
+    <View style={{ flex: 1, backgroundColor: LightColors.textPrimary }}>
       {/* Full-screen map */}
       <View style={StyleSheet.absoluteFill}>
         <HereMapView
@@ -427,7 +428,7 @@ export default function NavigateScreen() {
                   inPickupPhase ? 'bg-primary' : 'bg-danger'
                 }`}
               >
-                <Flag size={18} color="#FFFFFF" />
+                <Flag size={18} color={LightColors.textInverse} />
               </View>
             </View>
           </HereMarker>
@@ -438,14 +439,14 @@ export default function NavigateScreen() {
               <HerePolyline
                 id="route-outline"
                 coordinates={routeMapCoords}
-                strokeColor="#1E40AF"
+                strokeColor={LightColors.primary900}
                 strokeWidth={9}
                 lineJoin="round"
               />
               <HerePolyline
                 id="route-fill"
                 coordinates={routeMapCoords}
-                strokeColor="#3B82F6"
+                strokeColor={LightColors.primary500}
                 strokeWidth={6}
                 lineJoin="round"
               />
@@ -459,9 +460,9 @@ export default function NavigateScreen() {
         <View
           className="mx-3 mt-2 rounded-2xl bg-primary px-4 py-3.5 flex-row items-center"
           style={{
-            shadowColor: '#000',
-            shadowOpacity: 0.25,
-            shadowRadius: 12,
+            shadowColor: LightColors.ink,
+            shadowOpacity: 0.14,
+            shadowRadius: 16,
             shadowOffset: { width: 0, height: 6 },
             elevation: 8,
           }}
@@ -471,11 +472,11 @@ export default function NavigateScreen() {
               <ManeuverIcon
                 type={currentStep.maneuverType}
                 modifier={currentStep.maneuverModifier}
-                color="#FFFFFF"
+                color={LightColors.textInverse}
                 size={26}
               />
             ) : (
-              <ArrowUp size={26} color="#FFFFFF" />
+              <ArrowUp size={26} color={LightColors.textInverse} />
             )}
           </View>
           <View className="flex-1">
@@ -510,7 +511,7 @@ export default function NavigateScreen() {
             accessibilityRole="button"
             accessibilityLabel="End navigation"
           >
-            <X size={18} color="#FFFFFF" />
+            <X size={18} color={LightColors.textInverse} />
           </Pressable>
         </View>
 
@@ -546,9 +547,9 @@ export default function NavigateScreen() {
             accessibilityLabel="Dismiss trip summary"
             className="rounded-2xl bg-white px-4 py-3.5 flex-row items-center"
             style={{
-              shadowColor: '#000',
-              shadowOpacity: 0.22,
-              shadowRadius: 14,
+              shadowColor: LightColors.ink,
+              shadowOpacity: 0.12,
+              shadowRadius: 18,
               shadowOffset: { width: 0, height: 6 },
               elevation: 8,
             }}
@@ -556,7 +557,7 @@ export default function NavigateScreen() {
             <View className={`w-11 h-11 rounded-full items-center justify-center mr-3 ${
               inPickupPhase ? 'bg-primary/15' : 'bg-danger/15'
             }`}>
-              <MapPin size={20} color={inPickupPhase ? '#2563EB' : '#DC2626'} strokeWidth={2.2} />
+              <MapPin size={20} color={inPickupPhase ? LightColors.primary : LightColors.dangerDark} strokeWidth={2.2} />
             </View>
             <View className="flex-1">
               <Text className="text-[10px] font-montserrat-bold uppercase text-textTertiary" style={{ letterSpacing: 1.2 }}>
@@ -595,9 +596,9 @@ export default function NavigateScreen() {
           style={{
             bottom: 220,
             zIndex: 20,
-            shadowColor: '#000',
-            shadowOpacity: 0.18,
-            shadowRadius: 6,
+            shadowColor: LightColors.ink,
+            shadowOpacity: 0.12,
+            shadowRadius: 8,
             shadowOffset: { width: 0, height: 2 },
             elevation: 12,
           }}
@@ -611,7 +612,7 @@ export default function NavigateScreen() {
             </Text>
           </View>
           <View className="flex-row items-center mt-0.5">
-            <Gauge size={9} color="#94A3B8" />
+            <Gauge size={9} color={LightColors.textMuted} />
             <Text className="text-[8px] font-montserrat text-textTertiary ml-0.5 uppercase" style={{ letterSpacing: 0.6 }}>
               Speed
             </Text>
@@ -632,14 +633,14 @@ export default function NavigateScreen() {
           style={{
             bottom: 220,
             zIndex: 20,
-            shadowColor: '#000',
-            shadowOpacity: 0.25,
-            shadowRadius: 8,
+            shadowColor: LightColors.ink,
+            shadowOpacity: 0.14,
+            shadowRadius: 10,
             shadowOffset: { width: 0, height: 3 },
             elevation: 12,
           }}
         >
-          <Locate size={22} color="#0F172A" strokeWidth={2.2} />
+          <Locate size={22} color={LightColors.textPrimary} strokeWidth={2.2} />
         </Pressable>
       )}
 
@@ -692,21 +693,21 @@ export default function NavigateScreen() {
         {/* Upcoming steps list — visible when sheet is expanded to half / full */}
         {navRoute && navRoute.steps.length > currentStepIdx + 1 && (
           <>
-            <View style={{ height: 1, backgroundColor: '#E2E8F0', marginHorizontal: 20, marginBottom: 4 }} />
+            <View style={{ height: 1, backgroundColor: LightColors.surfaceMuted, marginHorizontal: 20, marginBottom: 4 }} />
             <ScrollView
               showsVerticalScrollIndicator={false}
               contentContainerStyle={{ paddingHorizontal: 20, paddingBottom: 24 }}
             >
               {navRoute.steps.slice(currentStepIdx + 1).map((step, idx) => (
-                <View key={idx} style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 10, borderBottomWidth: 1, borderBottomColor: '#F1F5F9' }}>
-                  <View style={{ width: 36, height: 36, borderRadius: 18, backgroundColor: '#F1F5F9', alignItems: 'center', justifyContent: 'center', marginRight: 12, flexShrink: 0 }}>
-                    <ManeuverIcon type={step.maneuverType} modifier={step.maneuverModifier} size={18} color="#374151" />
+                <View key={idx} style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 10, borderBottomWidth: 1, borderBottomColor: LightColors.divider }}>
+                  <View style={{ width: 36, height: 36, borderRadius: 18, backgroundColor: LightColors.surfaceMuted, alignItems: 'center', justifyContent: 'center', marginRight: 12, flexShrink: 0 }}>
+                    <ManeuverIcon type={step.maneuverType} modifier={step.maneuverModifier} size={18} color={LightColors.textSecondary} />
                   </View>
                   <View style={{ flex: 1 }}>
-                    <Text style={{ fontSize: 13, fontFamily: 'Quicksand_500Medium', color: '#0F172A' }} numberOfLines={2}>
+                    <Text style={{ fontSize: 13, fontFamily: 'Quicksand_500Medium', color: LightColors.textPrimary }} numberOfLines={2}>
                       {step.instruction}
                     </Text>
-                    <Text style={{ fontSize: 11, fontFamily: 'Quicksand_400Regular', color: '#64748B', marginTop: 2 }}>
+                    <Text style={{ fontSize: 11, fontFamily: 'Quicksand_400Regular', color: LightColors.textTertiary, marginTop: 2 }}>
                       {fmtDistance(step.distanceMeters)}
                     </Text>
                   </View>

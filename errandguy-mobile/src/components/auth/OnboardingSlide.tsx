@@ -51,7 +51,10 @@ export function OnboardingSlide({
         ) : null}
       </View>
       <View className="flex-[0.4] items-center px-2">
-        <Text className="text-2xl font-montserrat-bold text-textPrimary text-center mb-3 tracking-tight">
+        <Text
+          className="font-montserrat-bold text-textPrimary text-center mb-3 tracking-tight"
+          style={{ fontSize: 34, lineHeight: 40 }}
+        >
           {title}
         </Text>
         <Text className="text-base font-montserrat text-textSecondary text-center leading-6 max-w-[320px]">

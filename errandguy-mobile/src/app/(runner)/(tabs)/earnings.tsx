@@ -1,9 +1,12 @@
 import React, { useMemo, useState, useCallback } from 'react';
 import { View, Text, ScrollView, RefreshControl, Pressable } from 'react-native';
 import { useRouter } from 'expo-router';
+import { LinearGradient } from 'expo-linear-gradient';
+import { Wallet } from 'lucide-react-native';
 import { Card } from '../../../components/ui/Card';
 import { Button } from '../../../components/ui/Button';
-import { Eyebrow, Hairline } from '../../../components/ui/Typography';
+import { EmptyState } from '../../../components/ui/EmptyState';
+import { Eyebrow, Hairline, KeyValueRow } from '../../../components/ui/Typography';
 import { GradientHeader } from '../../../components/ui/GradientHeader';
 import { useRunnerStore } from '../../../stores/runnerStore';
 import { useAuthStore } from '../../../stores/authStore';
@@ -12,6 +15,7 @@ import { useQuery } from '../../../hooks/useQuery';
 import { CacheTTL } from '../../../services/cache.service';
 import { formatCurrency } from '../../../utils/formatCurrency';
 import type { Booking } from '../../../types';
+import { LightColors, Elevation } from '../../../constants/colors';
 
 type Period = 'today' | 'week' | 'month';
 
@@ -114,54 +118,47 @@ export default function EarningsScreen() {
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
         contentContainerStyle={{ paddingBottom: 24 }}
       >
-        {/* Hero Card — premium dark fintech treatment.
-            Previous version was a flat solid blue panel; the runner kept
-            confusing it with the brand's primary CTA. Slate-900 reads as
-            "trustworthy money" and lets the amount be the loudest thing
-            on screen. */}
-        <View
-          className="mx-5 mb-4 rounded-3xl p-6 overflow-hidden"
+        {/* Hero Card — brand blue gradient balance card (same language
+            as the wallet / runner-home hero). White numerals are the
+            loudest thing on screen. */}
+        <LinearGradient
+          colors={[
+            LightColors.gradientStart,
+            LightColors.gradientMid,
+            LightColors.gradientEnd,
+          ]}
+          start={{ x: 0, y: 0 }}
+          end={{ x: 1, y: 1 }}
           style={{
-            backgroundColor: '#0F172A',
-            shadowColor: '#0F172A',
-            shadowOffset: { width: 0, height: 8 },
-            shadowOpacity: 0.18,
-            shadowRadius: 20,
-            elevation: 6,
+            marginHorizontal: 20,
+            marginBottom: 16,
+            borderRadius: 24,
+            padding: 24,
+            ...Elevation.md,
           }}
         >
-          <View
-            pointerEvents="none"
-            style={{
-              position: 'absolute',
-              top: -50,
-              right: -40,
-              width: 170,
-              height: 170,
-              borderRadius: 85,
-              backgroundColor: '#22C55E',
-              opacity: 0.18,
-            }}
-          />
-          <Text className="text-xs font-montserrat-semi text-white/60 uppercase tracking-wider">
+          <Text
+            className="text-xs font-montserrat-semi text-white/70 uppercase"
+            style={{ letterSpacing: 1.2 }}
+          >
             {periodLabel[period]}
           </Text>
           <Text className="text-4xl font-inter-semi tabular-nums text-white mt-1">
             {formatCurrency(earningsData?.total_earnings ?? 0)}
           </Text>
           <View className="flex-row items-center mt-3">
-            <View className="bg-white/10 px-2.5 py-1 rounded-md">
+            <View className="bg-white/15 px-2.5 py-1 rounded-full">
               <Text className="text-[11px] font-montserrat-semi text-white">
                 {earningsData?.total_errands ?? 0} errands
               </Text>
             </View>
-            <View className="bg-white/10 px-2.5 py-1 rounded-md ml-2">
+            <View className="bg-white/15 px-2.5 py-1 rounded-full ml-2">
               <Text className="text-[11px] font-montserrat-semi text-white">
                 Avg {formatCurrency(earningsData?.avg_per_errand ?? 0)}
               </Text>
             </View>
           </View>
-        </View>
+        </LinearGradient>
 
         {/* Period Selector — underline-style tab strip. Less rounded,
             no nested pills, no background fills. The active tab
@@ -175,7 +172,7 @@ export default function EarningsScreen() {
               accessibilityState={{ selected: period === p }}
               hitSlop={6}
               className="pr-5 pb-2.5 -mb-px"
-              style={period === p ? { borderBottomWidth: 2, borderBottomColor: '#2563EB' } : undefined}
+              style={period === p ? { borderBottomWidth: 2, borderBottomColor: LightColors.primary } : undefined}
             >
               <Text
                 className={`text-[13px] ${
@@ -190,40 +187,34 @@ export default function EarningsScreen() {
           ))}
         </View>
 
-        {/* Breakdown — typographic key/value rows, no card chrome,
-            bounded by a subtle hairline above and below. */}
-        <View className="mx-5 mb-6 py-2 border-y border-divider">
-          <View className="flex-row items-center justify-between py-2">
-            <Text className="text-[13px] font-montserrat text-textSecondary">Total errands</Text>
-            <Text className="text-[14px] font-inter-semi tabular-nums text-textPrimary">
-              {earningsData?.total_errands ?? 0}
-            </Text>
-          </View>
-          <Hairline />
-          <View className="flex-row items-center justify-between py-2">
-            <Text className="text-[13px] font-montserrat text-textSecondary">Avg per errand</Text>
-            <Text className="text-[14px] font-inter-semi tabular-nums text-textPrimary">
-              {formatCurrency(earningsData?.avg_per_errand ?? 0)}
-            </Text>
-          </View>
-          <Hairline />
-          <View className="flex-row items-center justify-between py-2">
-            <Text className="text-[14px] font-montserrat-bold text-textPrimary">Total</Text>
-            <Text className="text-[16px] font-inter-semi tabular-nums text-primary">
-              {formatCurrency(earningsData?.total_earnings ?? 0)}
-            </Text>
-          </View>
-        </View>
+        {/* Breakdown — white card with key/value rows. */}
+        <Card className="mx-5 mb-6" padding="lg">
+          <KeyValueRow
+            label="Total errands"
+            value={String(earningsData?.total_errands ?? 0)}
+          />
+          <Hairline className="my-1" />
+          <KeyValueRow
+            label="Avg per errand"
+            value={formatCurrency(earningsData?.avg_per_errand ?? 0)}
+          />
+          <Hairline className="my-1" />
+          <KeyValueRow
+            label="Total"
+            value={formatCurrency(earningsData?.total_earnings ?? 0)}
+            emphasis
+          />
+        </Card>
 
         {/* Per-Errand Earnings List — hairline rows grouped by day. */}
         <View className="px-5 mb-6">
           <Eyebrow className="mb-2">Per-errand</Eyebrow>
           {earningsList.length === 0 ? (
-            <View className="py-6">
-              <Text className="text-[13px] font-montserrat text-textSecondary">
-                No earnings yet for this period.
-              </Text>
-            </View>
+            <EmptyState
+              icon={Wallet}
+              title="No earnings yet"
+              description="Completed errands for this period will show up here."
+            />
           ) : (
             earningsByDay.map((group) => (
               <View key={group.label} className="mb-4">

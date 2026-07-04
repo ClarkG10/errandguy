@@ -30,6 +30,7 @@ import {
   Layer,
   Marker,
 } from '@maplibre/maplibre-react-native';
+import { LightColors } from '../../constants/colors';
 
 const HERE_API_KEY = process.env.EXPO_PUBLIC_HERE_API_KEY ?? '';
 
@@ -331,7 +332,7 @@ interface HerePolylineProps {
 export function HerePolyline({
   id,
   coordinates,
-  strokeColor = '#2563EB',
+  strokeColor = LightColors.primary,
   strokeWidth = 4,
   lineJoin = 'round',
 }: HerePolylineProps) {
@@ -433,8 +434,8 @@ export function HereCircle({
   id = 'circle',
   center,
   radius,
-  fillColor = 'rgba(37,99,235,0.12)',
-  strokeColor = '#2563EB',
+  fillColor = `${LightColors.primary}1F`,
+  strokeColor = LightColors.primary,
   strokeWidth = 2,
 }: HereCircleProps) {
   const circleId = `${id}-${center.latitude.toFixed(4)}-${center.longitude.toFixed(4)}`;

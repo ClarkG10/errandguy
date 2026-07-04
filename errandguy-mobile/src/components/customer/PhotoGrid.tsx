@@ -2,6 +2,7 @@ import React from 'react';
 import { View, Pressable, Text } from 'react-native';
 import { Image } from 'expo-image';
 import { X, Plus, Camera } from 'lucide-react-native';
+import { LightColors } from '../../constants/colors';
 
 interface PhotoGridProps {
   photos: string[];
@@ -38,7 +39,7 @@ export function PhotoGrid({
               className="absolute top-1 right-1 w-5 h-5 rounded-full bg-danger items-center justify-center"
               onPress={() => onRemove(index)}
             >
-              <X size={12} color="#FFFFFF" />
+              <X size={12} color={LightColors.textInverse} />
             </Pressable>
           </View>
         ))}
@@ -47,7 +48,7 @@ export function PhotoGrid({
             className="w-20 h-20 rounded-lg border-2 border-dashed border-divider items-center justify-center bg-surface"
             onPress={onAdd}
           >
-            <Camera size={24} color="#94A3B8" />
+            <Camera size={24} color={LightColors.textMuted} />
             <Text className="text-[10px] font-montserrat text-textSecondary mt-1">
               Add
             </Text>

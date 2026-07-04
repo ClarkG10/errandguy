@@ -3,6 +3,7 @@ import { View, Text, Modal, Pressable, ScrollView } from 'react-native';
 import { MotiView } from 'moti';
 import { ErrandLoader } from './ErrandLoader';
 import { useResponsive } from '../../constants/responsive';
+import { LightColors } from '../../constants/colors';
 
 interface ConfirmModalProps {
   visible: boolean;
@@ -41,7 +42,8 @@ export function ConfirmModal({
       onRequestClose={loading ? undefined : onCancel}
     >
       <Pressable
-        className="flex-1 bg-black/50 justify-center items-center px-6"
+        className="flex-1 justify-center items-center px-6"
+        style={{ backgroundColor: `${LightColors.ink}73` }}
         onPress={loading ? undefined : onCancel}
       >
         <Pressable
@@ -52,7 +54,7 @@ export function ConfirmModal({
             from={{ opacity: 0, scale: 0.92, translateY: 12 }}
             animate={{ opacity: 1, scale: 1, translateY: 0 }}
             transition={{ type: 'spring', damping: 22, stiffness: 240, mass: 0.7 }}
-            className="bg-white overflow-hidden"
+            className="bg-surface overflow-hidden rounded-2xl"
             style={{ maxHeight: '80%' }}
           >
             {/* Long copy is allowed to scroll inside the dialog — a
@@ -72,7 +74,7 @@ export function ConfirmModal({
             </ScrollView>
             <View className="flex-row border-t border-divider">
               <Pressable
-                className="flex-1 py-4 items-center border-r border-divider active:bg-gray-50"
+                className="flex-1 py-4 items-center border-r border-divider active:bg-surfaceMuted"
                 onPress={onCancel}
                 disabled={loading}
               >
@@ -81,14 +83,14 @@ export function ConfirmModal({
                 </Text>
               </Pressable>
               <Pressable
-                className="flex-1 py-4 items-center active:bg-gray-50"
+                className="flex-1 py-4 items-center active:bg-surfaceMuted"
                 onPress={onConfirm}
                 disabled={loading}
               >
                 {loading ? (
                   <ErrandLoader
                     size={5}
-                    color={destructive ? '#EF4444' : '#2563EB'}
+                    color={destructive ? LightColors.danger : LightColors.primary}
                   />
                 ) : (
                   <Text

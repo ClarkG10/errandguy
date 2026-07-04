@@ -4,6 +4,7 @@ import { Image } from 'expo-image';
 import { ChevronDown, ChevronUp } from 'lucide-react-native';
 import { Card } from '../ui/Card';
 import { resolveImageUrl } from '../../utils/resolveImageUrl';
+import { LightColors } from '../../constants/colors';
 
 interface ErrandDetailsCardProps {
   description?: string | null;
@@ -34,9 +35,9 @@ export function ErrandDetailsCard({
           Errand Details
         </Text>
         {expanded ? (
-          <ChevronUp size={18} color="#64748B" />
+          <ChevronUp size={18} color={LightColors.textTertiary} />
         ) : (
-          <ChevronDown size={18} color="#64748B" />
+          <ChevronDown size={18} color={LightColors.textTertiary} />
         )}
       </Pressable>
 
@@ -94,7 +95,7 @@ export function ErrandDetailsCard({
                     >
                       <Image
                         source={{ uri }}
-                        style={{ width: 96, height: 96, borderRadius: 12, backgroundColor: '#E2E8F0' }}
+                        style={{ width: 96, height: 96, borderRadius: 16, backgroundColor: LightColors.surfaceMuted }}
                         contentFit="cover"
                         transition={150}
                         cachePolicy="memory-disk"

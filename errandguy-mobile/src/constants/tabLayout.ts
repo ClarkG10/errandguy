@@ -17,9 +17,24 @@
 export const TAB_BAR_HEIGHT = 64;
 
 /**
- * Generous bottom padding for scrollable content inside a tab.
- * Equals tab-bar height + FAB diameter + breathing room. Safe for
- * both notched and non-notched devices because the safe-area inset
- * is added on top of this by the OS via the tab bar style itself.
+ * Gap between the floating pill tab bar and the OS safe-area edge.
+ * The bar detaches from the screen bottom (2026 pill-nav pattern);
+ * this is the breathing room under it. On devices with no bottom
+ * inset (older Android hardware nav) the bar still floats this far
+ * off the very bottom edge.
  */
-export const TAB_CONTENT_BOTTOM_INSET = 132;
+export const TAB_BAR_FLOAT_GAP = 12;
+
+/**
+ * Side margin of the floating pill bar.
+ */
+export const TAB_BAR_SIDE_MARGIN = 16;
+
+/**
+ * Generous bottom padding for scrollable content inside a tab.
+ * Equals tab-bar height + float gap + FAB clearance + breathing
+ * room. The safe-area inset is added on top of this by each screen's
+ * scroll container as needed — content scrolls behind the floating
+ * pill, so the padding only has to clear the pill + FAB stack.
+ */
+export const TAB_CONTENT_BOTTOM_INSET = 148;

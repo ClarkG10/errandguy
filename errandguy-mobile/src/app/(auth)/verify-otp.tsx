@@ -10,6 +10,7 @@ import { useCountdown } from '../../hooks/useCountdown';
 import { authService } from '../../services/auth.service';
 import { useAuthStore } from '../../stores/authStore';
 import { toast } from '../../stores/toastStore';
+import { LightColors } from '../../constants/colors';
 
 export default function VerifyOTPScreen() {
   const router = useRouter();
@@ -93,12 +94,12 @@ export default function VerifyOTPScreen() {
   };
 
   return (
-    <SafeAreaView className="flex-1 bg-surface">
+    <SafeAreaView className="flex-1 bg-background">
       <Pressable
-        className="mt-2 ml-6 mb-8 w-10 h-10 rounded-full items-center justify-center"
+        className="mt-2 ml-6 mb-8 w-10 h-10 rounded-full items-center justify-center bg-surface border border-divider"
         onPress={() => router.canGoBack() ? router.back() : router.replace('/(auth)/login')}
       >
-        <ChevronLeft size={24} color="#0F172A" strokeWidth={2} />
+        <ChevronLeft size={24} color={LightColors.textPrimary} strokeWidth={2} />
       </Pressable>
 
       <View className="px-6">

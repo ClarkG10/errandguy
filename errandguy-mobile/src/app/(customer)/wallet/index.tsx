@@ -7,35 +7,38 @@ import {
   Pressable,
 } from 'react-native';
 import { useRouter } from 'expo-router';
+import { LinearGradient } from 'expo-linear-gradient';
 import {
-  ArrowLeft,
   ArrowUpCircle,
   ArrowDownCircle,
   RotateCcw,
   Star,
   Wallet,
+  Check,
+  Plus,
 } from 'lucide-react-native';
 import type { LucideIcon } from 'lucide-react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
 import { useWalletStore } from '../../../stores/walletStore';
 import { useAuthStore } from '../../../stores/authStore';
 import { paymentService } from '../../../services/payment.service';
 import { useQuery } from '../../../hooks/useQuery';
 import { CacheTTL } from '../../../services/cache.service';
-import { Button } from '../../../components/ui/Button';
+import { Card } from '../../../components/ui/Card';
 import { EmptyState } from '../../../components/ui/EmptyState';
 import { GradientHeader } from '../../../components/ui/GradientHeader';
+import { Hairline } from '../../../components/ui/Typography';
 import { formatCurrency } from '../../../utils/formatCurrency';
 import { formatRelativeTime } from '../../../utils/formatDate';
+import { LightColors, Elevation } from '../../../constants/colors';
 import type { WalletTransaction, WalletTransactionType } from '../../../types';
 import { toast } from '../../../stores/toastStore';
 
 const TX_ICONS: Record<WalletTransactionType, { icon: LucideIcon; color: string }> = {
-  top_up: { icon: ArrowUpCircle, color: '#22C55E' },
-  payment: { icon: ArrowDownCircle, color: '#EF4444' },
-  refund: { icon: RotateCcw, color: '#2563EB' },
-  payout: { icon: ArrowDownCircle, color: '#F59E0B' },
-  bonus: { icon: Star, color: '#F59E0B' },
+  top_up: { icon: ArrowUpCircle, color: LightColors.success },
+  payment: { icon: ArrowDownCircle, color: LightColors.danger },
+  refund: { icon: RotateCcw, color: LightColors.primary },
+  payout: { icon: ArrowDownCircle, color: LightColors.warning },
+  bonus: { icon: Star, color: LightColors.warning },
 };
 
 export default function WalletScreen() {
@@ -119,10 +122,11 @@ export default function WalletScreen() {
 
       return (
         <View className="flex-row items-center px-5 py-3.5 border-b border-divider">
-          {/* Stroke-only icon — no filled tile. Reads as a typographic
-              affordance, not a colored chip, which lets the amount on
-              the right carry the visual weight. */}
-          <Icon size={18} color={config.color} strokeWidth={1.8} />
+          {/* Soft muted chip keeps the type icon glanceable while the
+              amount on the right carries the visual weight. */}
+          <View className="w-9 h-9 rounded-full bg-surfaceMuted items-center justify-center">
+            <Icon size={17} color={config.color} strokeWidth={1.8} />
+          </View>
           <View className="flex-1 ml-3">
             <Text
               className="text-[14px] font-montserrat-bold text-textPrimary"
@@ -161,61 +165,37 @@ export default function WalletScreen() {
         fallbackHref="/(customer)/(tabs)/profile"
       />
 
-      {/* Balance Card
-          A solid blue tile competed visually with the brand primary
-          everywhere else and made the wallet feel like just another
-          CTA. We swapped to a deep slate card (premium fintech feel)
-          with a subtle blue accent ring around the amount and a
-          slightly recessed top-up pill. The amount now uses our
-          tabular-nums Inter face on a #0F172A base for proper
-          currency emphasis. */}
-      <View
-        className="mx-5 mb-4 rounded-2xl p-6 overflow-hidden"
+      {/* Balance Card — the wallet's hero. Brand three-stop gradient
+          (ride-hailing "cash card" pattern), rounded-2xl, white
+          tabular-nums amount carrying the emphasis. This is the one
+          place outside CTAs where a full blue fill is intentional:
+          the balance IS the product here. */}
+      <LinearGradient
+        colors={[
+          LightColors.gradientStart,
+          LightColors.gradientMid,
+          LightColors.gradientEnd,
+        ]}
+        start={{ x: 0, y: 0 }}
+        end={{ x: 1, y: 1 }}
+        // Plain style (not className) — LinearGradient isn't NativeWind-
+        // registered, so tailwind classes would be silently dropped.
         style={{
-          backgroundColor: '#0F172A',
-          // Tighter shadow — the previous 20px blur read as a marketing
-          // hero card, not a tappable surface. 12 + lower opacity sits
-          // closer to native iOS card shadows.
-          shadowColor: '#0F172A',
-          shadowOffset: { width: 0, height: 6 },
-          shadowOpacity: 0.12,
-          shadowRadius: 12,
-          elevation: 4,
+          marginHorizontal: 20,
+          marginBottom: 16,
+          padding: 24,
+          overflow: 'hidden',
+          borderRadius: 24,
+          ...Elevation.primary,
         }}
       >
-        {/* Decorative blue glow blob — adds depth without painting the
-            whole card brand-blue. */}
-        <View
-          pointerEvents="none"
-          style={{
-            position: 'absolute',
-            top: -40,
-            right: -40,
-            width: 160,
-            height: 160,
-            borderRadius: 80,
-            backgroundColor: '#2563EB',
-            opacity: 0.22,
-          }}
-        />
-        <View
-          pointerEvents="none"
-          style={{
-            position: 'absolute',
-            bottom: -60,
-            left: -30,
-            width: 140,
-            height: 140,
-            borderRadius: 70,
-            backgroundColor: '#3B82F6',
-            opacity: 0.12,
-          }}
-        />
-
         <View className="flex-row items-center justify-between mb-1">
-          <Text className="text-xs font-montserrat-semi text-white/60 uppercase tracking-wider">
-            Available Balance
-          </Text>
+          <View className="flex-row items-center">
+            <Wallet size={14} color="rgba(255,255,255,0.7)" strokeWidth={2} />
+            <Text className="ml-2 text-xs font-montserrat-semi text-white/60 uppercase tracking-wider">
+              Available Balance
+            </Text>
+          </View>
           <View className="flex-row items-center bg-white/10 px-2 py-0.5 rounded-md">
             <Text className="text-[10px] font-montserrat-semi text-white">
               PHP
@@ -235,7 +215,7 @@ export default function WalletScreen() {
           <Pressable
             onPress={() => router.push('/(customer)/wallet/top-up')}
             className="flex-1 bg-white py-3.5 items-center"
-            style={{ borderRadius: 12 }}
+            style={{ borderRadius: 16 }}
             accessibilityRole="button"
             accessibilityLabel="Add money to wallet"
           >
@@ -246,7 +226,7 @@ export default function WalletScreen() {
           <Pressable
             onPress={() => router.push('/(customer)/(tabs)/activity' as any)}
             className="flex-1 py-3.5 items-center"
-            style={{ borderRadius: 12, borderWidth: 1, borderColor: 'rgba(255,255,255,0.18)' }}
+            style={{ borderRadius: 16, borderWidth: 1, borderColor: 'rgba(255,255,255,0.18)' }}
             accessibilityRole="button"
             accessibilityLabel="View bookings"
           >
@@ -255,6 +235,48 @@ export default function WalletScreen() {
             </Text>
           </Pressable>
         </View>
+      </LinearGradient>
+
+      {/* Payment Methods — white card of rows (icon chip • label •
+          check) with an "+ Add payment method" footer row in primary
+          text, matching the reference wallet layout. */}
+      <View className="px-5 mb-2">
+        <Text
+          className="text-[10px] font-montserrat-bold uppercase text-textSecondary mb-2"
+          style={{ letterSpacing: 1.4 }}
+        >
+          Payment methods
+        </Text>
+        <Card padding="none" className="px-4">
+          <View className="flex-row items-center py-3.5">
+            <View className="w-10 h-10 rounded-full bg-primaryLight items-center justify-center mr-3">
+              <Wallet size={18} color={LightColors.primary} strokeWidth={1.9} />
+            </View>
+            <View className="flex-1">
+              <Text className="text-[14px] font-montserrat-semi text-textPrimary">
+                ErrandGuy Wallet
+              </Text>
+              <Text className="text-[11px] font-montserrat text-textSecondary mt-0.5">
+                Pay errands with your balance
+              </Text>
+            </View>
+            <Check size={18} color={LightColors.primary} strokeWidth={2.2} />
+          </View>
+          <Hairline />
+          <Pressable
+            onPress={() => router.push('/(customer)/wallet/top-up')}
+            className="flex-row items-center py-3.5"
+            accessibilityRole="button"
+            accessibilityLabel="Add payment method"
+          >
+            <View className="w-10 h-10 rounded-full bg-primaryLight items-center justify-center mr-3">
+              <Plus size={18} color={LightColors.primary} strokeWidth={2.2} />
+            </View>
+            <Text className="flex-1 text-[14px] font-montserrat-bold text-primary">
+              Add payment method
+            </Text>
+          </Pressable>
+        </Card>
       </View>
 
       {/* Transactions section header — typographic eyebrow above the

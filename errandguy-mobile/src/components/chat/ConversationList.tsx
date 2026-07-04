@@ -1,15 +1,16 @@
 import React, { useCallback, useMemo } from 'react';
-import { View, Text, FlatList, Pressable, RefreshControl } from 'react-native';
+import { View, Text, FlatList, RefreshControl } from 'react-native';
 import { useRouter } from 'expo-router';
 import { MessageCircle, Image as ImageIcon, Info } from 'lucide-react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
 import { Avatar } from '../ui/Avatar';
+import { Card } from '../ui/Card';
 import { EmptyState } from '../ui/EmptyState';
-import { BackButton } from '../ui/BackButton';
+import { GradientHeader } from '../ui/GradientHeader';
 import { useQuery } from '../../hooks/useQuery';
 import { CacheTTL } from '../../services/cache.service';
 import { chatService } from '../../services/chat.service';
 import { useAuthStore } from '../../stores/authStore';
+import { LightColors } from '../../constants/colors';
 import type { Conversation } from '../../types';
 
 /** Renders the chat inbox. The same component drives the customer and
@@ -101,125 +102,124 @@ export function ConversationList({ chatHrefPrefix, fallbackHref }: Props) {
         : STATUS_LABEL[item.status] ?? item.status;
 
       return (
-        <Pressable
-          onPress={() => router.push(`${chatHrefPrefix}/${item.booking_id}` as any)}
-          className="flex-row items-center px-4 py-2.5 active:bg-surface"
-          accessibilityRole="button"
+        <Card
+          onPress={() =>
+            router.push(`${chatHrefPrefix}/${item.booking_id}` as any)
+          }
+          padding="sm"
+          className="mx-5 mb-2.5"
           accessibilityLabel={`Open chat with ${item.counterparty?.full_name ?? 'participant'}`}
           accessibilityHint={
             unread ? `${item.unread_count} unread messages` : undefined
           }
         >
-          <View>
-            <Avatar
-              uri={item.counterparty?.avatar_url}
-              name={item.counterparty?.full_name ?? '?'}
-              size="md"
-            />
-            {unread && (
-              <View
-                style={{
-                  position: 'absolute',
-                  top: -2,
-                  right: -2,
-                  minWidth: 18,
-                  height: 18,
-                  borderRadius: 9,
-                  paddingHorizontal: 4,
-                  backgroundColor: '#DC2626',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  borderWidth: 2,
-                  borderColor: '#FFFFFF',
-                }}
-              >
-                <Text className="text-[10px] font-montserrat-bold text-white">
-                  {item.unread_count > 9 ? '9+' : item.unread_count}
+          <View className="flex-row items-center">
+            <View>
+              <Avatar
+                uri={item.counterparty?.avatar_url}
+                name={item.counterparty?.full_name ?? '?'}
+                size="md"
+              />
+              {unread && (
+                <View
+                  className="bg-danger"
+                  style={{
+                    position: 'absolute',
+                    top: -2,
+                    right: -2,
+                    minWidth: 18,
+                    height: 18,
+                    borderRadius: 9,
+                    paddingHorizontal: 4,
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    borderWidth: 2,
+                    borderColor: LightColors.surface,
+                  }}
+                >
+                  <Text className="text-[10px] font-montserrat-bold text-white">
+                    {item.unread_count > 9 ? '9+' : item.unread_count}
+                  </Text>
+                </View>
+              )}
+            </View>
+
+            <View className="flex-1 ml-3">
+              <View className="flex-row items-center justify-between">
+                <Text
+                  className={`text-sm ${
+                    unread
+                      ? 'font-montserrat-bold text-textPrimary'
+                      : 'font-montserrat-semi text-textPrimary'
+                  }`}
+                  numberOfLines={1}
+                >
+                  {item.counterparty?.full_name ?? 'Errand partner'}
+                </Text>
+                <Text
+                  className={`text-[11px] ml-2 ${
+                    unread
+                      ? 'font-montserrat-bold text-primary'
+                      : 'font-montserrat text-textMuted'
+                  }`}
+                >
+                  {timeAgo(lm?.created_at ?? null)}
                 </Text>
               </View>
-            )}
-          </View>
 
-          <View className="flex-1 ml-3">
-            <View className="flex-row items-center justify-between">
               <Text
-                className={`text-sm ${
-                  unread
-                    ? 'font-montserrat-bold text-textPrimary'
-                    : 'font-montserrat-semi text-textPrimary'
-                }`}
+                className="text-[11px] font-montserrat text-textTertiary mt-0.5"
                 numberOfLines={1}
               >
-                {item.counterparty?.full_name ?? 'Errand partner'}
+                {subtitle}
               </Text>
-              <Text
-                className={`text-[11px] ml-2 ${
-                  unread ? 'font-montserrat-bold text-primary' : 'font-montserrat text-textTertiary'
-                }`}
-              >
-                {timeAgo(lm?.created_at ?? null)}
-              </Text>
-            </View>
 
-            <Text
-              className="text-[11px] font-montserrat text-textTertiary mt-0.5"
-              numberOfLines={1}
-            >
-              {subtitle}
-            </Text>
-
-            <View className="flex-row items-center mt-1">
-              {lm?.is_image && (
-                <ImageIcon size={12} color="#94A3B8" style={{ marginRight: 4 }} />
-              )}
-              {lm?.is_system && (
-                <Info size={12} color="#94A3B8" style={{ marginRight: 4 }} />
-              )}
-              <Text
-                className={`flex-1 text-xs ${
-                  unread
-                    ? 'font-montserrat-semi text-textPrimary'
-                    : 'font-montserrat text-textSecondary'
-                }`}
-                numberOfLines={1}
-              >
-                {preview}
-              </Text>
+              <View className="flex-row items-center mt-1">
+                {lm?.is_image && (
+                  <ImageIcon
+                    size={12}
+                    color={LightColors.textMuted}
+                    style={{ marginRight: 4 }}
+                  />
+                )}
+                {lm?.is_system && (
+                  <Info
+                    size={12}
+                    color={LightColors.textMuted}
+                    style={{ marginRight: 4 }}
+                  />
+                )}
+                <Text
+                  className={`flex-1 text-xs ${
+                    unread
+                      ? 'font-montserrat-semi text-textPrimary'
+                      : 'font-montserrat text-textSecondary'
+                  }`}
+                  numberOfLines={1}
+                >
+                  {preview}
+                </Text>
+              </View>
             </View>
           </View>
-        </Pressable>
+        </Card>
       );
     },
     [chatHrefPrefix, router],
   );
 
   return (
-    <SafeAreaView className="flex-1 bg-background" edges={['top']}>
-      {/* Typographic eyebrow + title header */}
-      <View className="flex-row items-end px-5 pt-3 pb-3">
-        <View className="mr-3 mb-1">
-          <BackButton fallbackHref={fallbackHref} />
-        </View>
-        <View>
-          <Text
-            className="text-[10px] font-montserrat-bold uppercase text-textSecondary"
-            style={{ letterSpacing: 1.4 }}
-          >
-            Inbox
-          </Text>
-          <Text className="text-[24px] font-montserrat-bold text-textPrimary">
-            Messages
-          </Text>
-        </View>
-      </View>
+    <View className="flex-1 bg-background">
+      <GradientHeader
+        title="Messages"
+        showBack
+        fallbackHref={fallbackHref}
+      />
 
       <FlatList
         data={sorted}
         keyExtractor={(c) => c.booking_id}
         renderItem={renderRow}
-        ItemSeparatorComponent={() => (
-          <View className="h-px bg-border ml-[76px]" />
-        )}
         refreshControl={
           <RefreshControl
             refreshing={conversationsQ.loading && !!conversationsQ.data}
@@ -239,6 +239,6 @@ export function ConversationList({ chatHrefPrefix, fallbackHref }: Props) {
           sorted.length === 0 ? { flexGrow: 1 } : { paddingBottom: 24 }
         }
       />
-    </SafeAreaView>
+    </View>
   );
 }

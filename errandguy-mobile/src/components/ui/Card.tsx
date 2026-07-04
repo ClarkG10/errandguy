@@ -1,5 +1,6 @@
 import React from 'react';
-import { View, Pressable, StyleSheet, type ViewStyle } from 'react-native';
+import { View, Pressable, type ViewStyle } from 'react-native';
+import { LightColors, Elevation } from '../../constants/colors';
 
 /**
  * Neutral container. Three tones cover every spot in the redesign:
@@ -14,7 +15,7 @@ import { View, Pressable, StyleSheet, type ViewStyle } from 'react-native';
  * density without per-instance className overrides.
  */
 type CardTone = 'default' | 'tinted' | 'outline';
-type CardPadding = 'none' | 'sm' | 'md' | 'lg';
+type CardPadding = 'none' | 'sm' | 'md' | 'lg' | 'xl';
 
 interface CardProps {
   children: React.ReactNode;
@@ -30,18 +31,6 @@ interface CardProps {
   testID?: string;
 }
 
-const shadow = StyleSheet.create({
-  // Tightened, brand-tinted lift — lets the blue accents on the page
-  // remain the focal point without competing with heavy card shadows.
-  card: {
-    shadowColor: '#0F172A',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.05,
-    shadowRadius: 10,
-    elevation: 1,
-  },
-});
-
 const TONE_CLASS: Record<CardTone, string> = {
   default: 'bg-surface',
   tinted: 'bg-primary50',
@@ -53,6 +42,7 @@ const PADDING_CLASS: Record<CardPadding, string> = {
   sm: 'p-3',
   md: 'p-4',
   lg: 'p-5',
+  xl: 'p-6',
 };
 
 export function Card({
@@ -66,21 +56,20 @@ export function Card({
   accessibilityHint,
   testID,
 }: CardProps) {
-  // 14px — matches the new global radius scale. Cards are calmer
-  // containers; a hairline of white-on-background already does most
-  // of the visual work, the radius just softens the edge.
+  // rounded-2xl (24px) — big soft corners on a white surface with a
+  // diffuse Elevation.sm shadow are the core of the airy card language.
   const useShadow = tone === 'default';
-  const cardClass = `${TONE_CLASS[tone]} rounded-lg ${PADDING_CLASS[padding]} ${className}`;
+  const cardClass = `${TONE_CLASS[tone]} rounded-2xl ${PADDING_CLASS[padding]} ${className}`;
 
   if (onPress) {
     return (
       <Pressable
         className={cardClass}
         style={({ pressed }) => [
-          useShadow && shadow.card,
-          // Subtle press feedback for tappable cards: slight inset feel
-          // via opacity + tiny scale. Native ripple on Android.
-          pressed && { opacity: 0.94, transform: [{ scale: 0.995 }] },
+          useShadow && Elevation.sm,
+          // Subtle press feedback for tappable cards: a gentle scale-in
+          // reads more tactile than opacity alone. Ripple on Android.
+          pressed && { opacity: 0.96, transform: [{ scale: 0.98 }] },
           style,
         ]}
         onPress={onPress}
@@ -88,7 +77,7 @@ export function Card({
         accessibilityLabel={accessibilityLabel}
         accessibilityHint={accessibilityHint}
         testID={testID}
-        android_ripple={{ color: 'rgba(37,99,235,0.10)' }}
+        android_ripple={{ color: `${LightColors.primary}1A` }}
       >
         {children}
       </Pressable>
@@ -98,7 +87,7 @@ export function Card({
   return (
     <View
       className={cardClass}
-      style={[useShadow && shadow.card, style]}
+      style={[useShadow && Elevation.sm, style]}
       testID={testID}
     >
       {children}

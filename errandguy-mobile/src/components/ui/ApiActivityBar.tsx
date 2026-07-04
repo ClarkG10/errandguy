@@ -11,6 +11,7 @@ import Animated, {
 } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useApiActivityStore } from '../../stores/apiActivityStore';
+import { LightColors } from '../../constants/colors';
 
 /**
  * Thin top-of-screen progress bar that animates whenever there's at
@@ -108,7 +109,7 @@ const styles = StyleSheet.create({
     right: 0,
     top: 0,
     bottom: 0,
-    backgroundColor: 'rgba(37,99,235,0.12)',
+    backgroundColor: `${LightColors.primary}1F`,
   },
   bar: {
     position: 'absolute',
@@ -116,7 +117,7 @@ const styles = StyleSheet.create({
     bottom: 0,
     left: 0,
     width: '40%',
-    backgroundColor: '#2563EB',
+    backgroundColor: LightColors.primary,
     borderRadius: 2,
   },
 });

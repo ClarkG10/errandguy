@@ -3,6 +3,7 @@ import { View, Text, Pressable, ScrollView } from 'react-native';
 import { Footprints, Bike, Truck, Car, Check } from 'lucide-react-native';
 import type { LucideIcon } from 'lucide-react-native';
 import { formatCurrency } from '../../utils/formatCurrency';
+import { LightColors } from '../../constants/colors';
 
 interface VehicleOption {
   key: string;
@@ -84,19 +85,19 @@ export function VehicleTypeSelector({
               accessibilityLabel={`${opt.label}${
                 opt.estimatedTotal > 0 ? ` ${formatCurrency(opt.estimatedTotal)}` : ''
               }`}
+              // Ride-hailing selection pattern — chosen card fills solid
+              // brand blue with white content; the rest stay quiet white.
               style={{
                 width: 132,
-                borderRadius: 16,
+                borderRadius: 20,
                 paddingVertical: 14,
                 paddingHorizontal: 12,
-                borderWidth: isSelected ? 2 : 1,
-                borderColor: isSelected ? '#2563EB' : '#E2E8F0',
-                backgroundColor: isSelected ? '#EFF6FF' : '#FFFFFF',
-                shadowColor: isSelected ? '#2563EB' : '#0F172A',
-                shadowOffset: { width: 0, height: 4 },
-                shadowOpacity: isSelected ? 0.12 : 0.04,
-                shadowRadius: isSelected ? 12 : 6,
-                elevation: isSelected ? 3 : 1,
+                backgroundColor: isSelected ? LightColors.primary : LightColors.surface,
+                shadowColor: isSelected ? LightColors.primaryDark : LightColors.textPrimary,
+                shadowOffset: { width: 0, height: isSelected ? 8 : 2 },
+                shadowOpacity: isSelected ? 0.22 : 0.04,
+                shadowRadius: isSelected ? 18 : 12,
+                elevation: isSelected ? 5 : 1,
               }}
             >
               {/* Top row: icon + selection check */}
@@ -104,30 +105,32 @@ export function VehicleTypeSelector({
                 <View
                   className="w-11 h-11 rounded-xl items-center justify-center"
                   style={{
-                    backgroundColor: isSelected ? '#2563EB' : '#F1F5F9',
+                    backgroundColor: isSelected
+                      ? 'rgba(255,255,255,0.18)'
+                      : LightColors.surfaceMuted,
                   }}
                 >
                   <Icon
                     size={20}
-                    color={isSelected ? '#FFFFFF' : '#475569'}
+                    color={isSelected ? LightColors.textInverse : LightColors.textSecondary}
                     strokeWidth={2.2}
                   />
                 </View>
                 {isSelected ? (
                   <View
                     className="w-5 h-5 rounded-full items-center justify-center"
-                    style={{ backgroundColor: '#2563EB' }}
+                    style={{ backgroundColor: 'rgba(255,255,255,0.25)' }}
                   >
-                    <Check size={12} color="#FFFFFF" strokeWidth={3} />
+                    <Check size={12} color={LightColors.textInverse} strokeWidth={3} />
                   </View>
                 ) : isCheapest ? (
                   <View
                     className="px-1.5 py-0.5 rounded-md"
-                    style={{ backgroundColor: '#DCFCE7' }}
+                    style={{ backgroundColor: LightColors.successSoft }}
                   >
                     <Text
                       className="text-[9px] font-montserrat-bold"
-                      style={{ color: '#15803D', letterSpacing: 0.4 }}
+                      style={{ color: LightColors.success, letterSpacing: 0.4 }}
                     >
                       BEST
                     </Text>
@@ -138,13 +141,17 @@ export function VehicleTypeSelector({
               {/* Label + tagline */}
               <Text
                 className={`text-[14px] font-montserrat-bold mt-3 ${
-                  isSelected ? 'text-primary' : 'text-textPrimary'
+                  isSelected ? 'text-white' : 'text-textPrimary'
                 }`}
               >
                 {opt.label}
               </Text>
               {tagline && (
-                <Text className="text-[10px] font-montserrat text-textSecondary mt-0.5">
+                <Text
+                  className={`text-[10px] font-montserrat mt-0.5 ${
+                    isSelected ? 'text-white/75' : 'text-textSecondary'
+                  }`}
+                >
                   {tagline}
                 </Text>
               )}
@@ -154,7 +161,7 @@ export function VehicleTypeSelector({
                 {opt.estimatedTotal > 0 ? (
                   <Text
                     className={`text-[15px] font-inter-semi tabular-nums ${
-                      isSelected ? 'text-primary' : 'text-textPrimary'
+                      isSelected ? 'text-white' : 'text-textPrimary'
                     }`}
                   >
                     {formatCurrency(opt.estimatedTotal)}
@@ -166,7 +173,11 @@ export function VehicleTypeSelector({
                   />
                 )}
                 {opt.eta && (
-                  <Text className="text-[10px] font-montserrat text-textSecondary mt-0.5">
+                  <Text
+                    className={`text-[10px] font-montserrat mt-0.5 ${
+                      isSelected ? 'text-white/75' : 'text-textSecondary'
+                    }`}
+                  >
                     ~{opt.eta}
                   </Text>
                 )}

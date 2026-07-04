@@ -76,9 +76,6 @@ jest.mock('@maplibre/maplibre-react-native', () => ({
 jest.mock('@react-native-async-storage/async-storage', () =>
   require('@react-native-async-storage/async-storage/jest/async-storage-mock'),
 );
-// Mock lottie-react-native
-jest.mock('lottie-react-native', () => 'LottieView');
-
 // Mock expo-location
 jest.mock('expo-location', () => ({
   requestForegroundPermissionsAsync: jest.fn(() => Promise.resolve({ status: 'granted' })),

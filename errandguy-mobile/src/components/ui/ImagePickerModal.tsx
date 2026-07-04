@@ -19,6 +19,7 @@ import {
   Check,
   Upload,
 } from 'lucide-react-native';
+import { LightColors } from '../../constants/colors';
 
 // Preview size is computed inside the component now (was a module-level
 // const) so rotating an iPad or resizing iOS split view re-flows the
@@ -119,7 +120,8 @@ export function ImagePickerModal({
       onRequestClose={handleClose}
     >
       <Pressable
-        className="flex-1 bg-black/50 justify-end"
+        className="flex-1 justify-end"
+        style={{ backgroundColor: `${LightColors.ink}73` }}
         onPress={handleClose}
       >
         <Pressable onPress={(e) => e.stopPropagation()}>
@@ -128,7 +130,7 @@ export function ImagePickerModal({
             animate={{ translateY: 0, opacity: 1 }}
             exit={{ translateY: 400, opacity: 0 }}
             transition={{ type: 'timing', duration: 240 }}
-            className="bg-surface pb-12"
+            className="bg-surface pb-12 rounded-t-3xl overflow-hidden"
           >
             {/* Handle bar */}
             <View className="items-center pt-3 pb-1">
@@ -149,9 +151,9 @@ export function ImagePickerModal({
               </View>
               <Pressable
                 onPress={handleClose}
-                className="w-9 h-9 rounded-full bg-gray-100 items-center justify-center"
+                className="w-9 h-9 rounded-full bg-surfaceMuted items-center justify-center"
               >
-                <X size={18} color="#64748B" />
+                <X size={18} color={LightColors.textTertiary} />
               </Pressable>
             </View>
 
@@ -169,7 +171,7 @@ export function ImagePickerModal({
                     transition={{ type: 'spring', delay: 100 }}
                     className="w-14 h-14 rounded-2xl bg-primary items-center justify-center"
                   >
-                    <Camera size={26} color="#FFF" />
+                    <Camera size={26} color={LightColors.textInverse} />
                   </MotiView>
                   <View className="flex-1">
                     <Text className="text-base font-montserrat-semi text-textPrimary">
@@ -192,7 +194,7 @@ export function ImagePickerModal({
                     transition={{ type: 'spring', delay: 200 }}
                     className="w-14 h-14 rounded-2xl bg-blue-400 items-center justify-center"
                   >
-                    <ImageIcon size={26} color="#FFF" />
+                    <ImageIcon size={26} color={LightColors.textInverse} />
                   </MotiView>
                   <View className="flex-1">
                     <Text className="text-base font-montserrat-semi text-textPrimary">
@@ -215,7 +217,7 @@ export function ImagePickerModal({
                   style={{
                     width: PREVIEW_SIZE,
                     height: PREVIEW_SIZE,
-                    shadowColor: '#000',
+                    shadowColor: LightColors.ink,
                     shadowOffset: { width: 0, height: 4 },
                     shadowOpacity: 0.12,
                     shadowRadius: 12,
@@ -231,7 +233,7 @@ export function ImagePickerModal({
                   )}
                   {uploading && (
                     <View className="absolute inset-0 bg-black/40 items-center justify-center">
-                      <ActivityIndicator size="large" color="#FFF" />
+                      <ActivityIndicator size="large" color={LightColors.textInverse} />
                       <Text className="text-white font-montserrat-semi text-sm mt-3">
                         Uploading…
                       </Text>
@@ -244,9 +246,9 @@ export function ImagePickerModal({
                   <Pressable
                     onPress={handleRetake}
                     disabled={uploading}
-                    className="flex-1 flex-row items-center justify-center gap-2 py-4 rounded-2xl bg-gray-100 active:bg-gray-200"
+                    className="flex-1 flex-row items-center justify-center gap-2 py-4 rounded-2xl bg-surfaceMuted active:bg-divider"
                   >
-                    <RotateCcw size={18} color="#64748B" />
+                    <RotateCcw size={18} color={LightColors.textTertiary} />
                     <Text className="text-sm font-montserrat-semi text-textSecondary">
                       Retake
                     </Text>
@@ -257,9 +259,9 @@ export function ImagePickerModal({
                     className="flex-1 flex-row items-center justify-center gap-2 py-4 rounded-2xl bg-primary active:bg-blue-700"
                   >
                     {uploading ? (
-                      <ActivityIndicator size="small" color="#FFF" />
+                      <ActivityIndicator size="small" color={LightColors.textInverse} />
                     ) : (
-                      <Check size={18} color="#FFF" />
+                      <Check size={18} color={LightColors.textInverse} />
                     )}
                     <Text className="text-sm font-montserrat-semi text-white">
                       {uploading ? 'Uploading…' : 'Use Photo'}

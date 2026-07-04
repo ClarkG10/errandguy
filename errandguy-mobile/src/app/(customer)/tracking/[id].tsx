@@ -22,8 +22,11 @@ import {
   ChevronDown,
   ChevronUp,
   Clock,
+  MapPin,
+  X,
 } from 'lucide-react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { LinearGradient } from 'expo-linear-gradient';
 import { HereMapView, HereMarker, HerePolyline, type HereMapViewRef } from '../../../components/map';
 import { useBookingStore } from '../../../stores/bookingStore';
 import { useChatStore } from '../../../stores/chatStore';
@@ -39,7 +42,6 @@ import { Avatar } from '../../../components/ui/Avatar';
 import { RatingStars } from '../../../components/ui/RatingStars';
 import { StatusTimeline } from '../../../components/ui/StatusTimeline';
 import { JourneyBeads } from '../../../components/ui/JourneyBeads';
-import { CurrentStepHero } from '../../../components/ui/CurrentStepHero';
 import { Button } from '../../../components/ui/Button';
 import { ConfirmModal } from '../../../components/ui/ConfirmModal';
 import { ExpandableSheet } from '../../../components/ui/ExpandableSheet';
@@ -47,6 +49,7 @@ import { formatTime } from '../../../utils/formatDate';
 import { formatCurrency } from '../../../utils/formatCurrency';
 import { resolveImageUrl } from '../../../utils/resolveImageUrl';
 import { STATUS_LABELS } from '../../../constants/statusLabels';
+import { LightColors, Elevation } from '../../../constants/colors';
 
 import { getErrandTypeRule } from '../../../constants/errandTypeRules';
 import type { Booking, BookingStatus, BookingStatusLog } from '../../../types';
@@ -107,6 +110,10 @@ export default function TrackingScreen() {
   } | null>(null);
   const [previewLoading, setPreviewLoading] = useState(false);
   const [showSOSModal, setShowSOSModal] = useState(false);
+  // Live map is opt-in to keep HERE tile spend down: the status, runner card
+  // and timeline in the sheet below already tell the customer what's happening.
+  // The map only mounts (and only then requests tiles) when they tap to open it.
+  const [showMap, setShowMap] = useState(false);
   const mapRef = useRef<HereMapViewRef>(null);
   // Tracks the last booking status we have already loaded statusLogs for.
   // Used to skip redundant /track refetches when realtime UPDATEs come in
@@ -723,9 +730,40 @@ export default function TrackingScreen() {
     : [121.0, 14.6]; // Manila default
 
   return (
-    <View style={{ flex: 1, backgroundColor: '#fff' }}>
-      {/* Live Map — fills the entire screen so the user can view it as a whole */}
+    <View style={{ flex: 1, backgroundColor: LightColors.background }}>
+      {/* Live Map — opt-in. Default backdrop is a static brand gradient with
+          a "View live map" CTA; the HereMapView (and its tile requests) only
+          mount once the customer taps it. */}
       <View style={StyleSheet.absoluteFill}>
+        {!showMap && (
+          <>
+            <LinearGradient
+              colors={[
+                LightColors.gradientStart,
+                LightColors.gradientMid,
+                LightColors.gradientEnd,
+              ]}
+              start={{ x: 0, y: 0 }}
+              end={{ x: 1, y: 1 }}
+              style={StyleSheet.absoluteFill}
+            />
+            <View className="flex-1 items-center justify-center" style={{ paddingBottom: 240 }}>
+              <Pressable
+                onPress={() => setShowMap(true)}
+                accessibilityRole="button"
+                accessibilityLabel="View live map"
+                className="flex-row items-center bg-surface rounded-full px-5 py-3"
+                style={Elevation.md}
+              >
+                <MapPin size={18} color={LightColors.primary} strokeWidth={2.2} />
+                <Text className="ml-2 text-[13px] font-montserrat-bold text-textPrimary">
+                  View live map
+                </Text>
+              </Pressable>
+            </View>
+          </>
+        )}
+        {showMap && (
         <HereMapView
           ref={mapRef}
           style={{ flex: 1 }}
@@ -797,7 +835,7 @@ export default function TrackingScreen() {
                     />
                   )}
                   <View style={styles.runnerMarkerInner}>
-                    <Bike size={16} color="#FFFFFF" strokeWidth={2.4} />
+                    <Bike size={16} color={LightColors.textInverse} strokeWidth={2.4} />
                   </View>
                 </View>
                 {runnerLocation.speed != null && runnerLocation.speed > 0 && (
@@ -814,11 +852,25 @@ export default function TrackingScreen() {
           {/* Route line */}
           {routeMapCoords.length > 0 && (
             <>
-              <HerePolyline id="route-outline" coordinates={routeMapCoords} strokeColor="#1E3A8A" strokeWidth={8} lineJoin="round" />
-              <HerePolyline id="route-fill" coordinates={routeMapCoords} strokeColor="#3B82F6" strokeWidth={5} lineJoin="round" />
+              <HerePolyline id="route-outline" coordinates={routeMapCoords} strokeColor={LightColors.primary900} strokeWidth={8} lineJoin="round" />
+              <HerePolyline id="route-fill" coordinates={routeMapCoords} strokeColor={LightColors.primary500} strokeWidth={5} lineJoin="round" />
             </>
           )}
         </HereMapView>
+        )}
+        {showMap && (
+          <Pressable
+            onPress={() => setShowMap(false)}
+            accessibilityRole="button"
+            accessibilityLabel="Hide map"
+            hitSlop={8}
+            className="absolute bottom-3 left-3 flex-row items-center bg-surface rounded-full px-3 py-1.5"
+            style={Elevation.md}
+          >
+            <X size={14} color={LightColors.textPrimary} strokeWidth={2.4} />
+            <Text className="ml-1 text-[10px] font-montserrat-bold text-textPrimary">Hide map</Text>
+          </Pressable>
+        )}
 
         {/* Realtime indicator — shows three states:
               1. Connecting (no realtime channel yet)
@@ -829,9 +881,9 @@ export default function TrackingScreen() {
             just sitting at a red light. */}
         {booking.runner_id && (
           <View
-            className="absolute bottom-3 right-3 flex-row items-center bg-white rounded-full pl-2 pr-3 py-1.5"
+            className="absolute bottom-3 right-3 flex-row items-center bg-surface rounded-full pl-2 pr-3 py-1.5"
             style={{
-              shadowColor: '#000',
+              shadowColor: LightColors.ink,
               shadowOpacity: 0.12,
               shadowRadius: 6,
               shadowOffset: { width: 0, height: 2 },
@@ -844,7 +896,7 @@ export default function TrackingScreen() {
                   ? runnerLocation?.speed != null && runnerLocation.speed > 0
                     ? 'bg-success'
                     : 'bg-primary'
-                  : 'bg-gray-400'
+                  : 'bg-textMuted'
               }`} />
               {isConnected && runnerLocation?.speed != null && runnerLocation.speed > 0 && (
                 <Animated.View
@@ -854,7 +906,7 @@ export default function TrackingScreen() {
                     width: 10,
                     height: 10,
                     borderRadius: 5,
-                    backgroundColor: '#22C55E',
+                    backgroundColor: LightColors.success,
                     opacity: runnerPulse.interpolate({ inputRange: [0, 1], outputRange: [0.5, 0] }),
                     transform: [{ scale: runnerPulse.interpolate({ inputRange: [0, 1], outputRange: [1, 2.6] }) }],
                   }}
@@ -908,7 +960,7 @@ export default function TrackingScreen() {
         <View className="px-3 pt-2" pointerEvents="box-none">
           <View
             className="flex-row items-stretch rounded-2xl overflow-hidden"
-            style={[styles.floatingShadow, { backgroundColor: '#2563EB' }]}
+            style={[styles.floatingShadow, { backgroundColor: LightColors.primary }]}
           >
             <Pressable
               onPress={() => router.canGoBack() ? router.back() : router.replace('/(customer)/(tabs)')}
@@ -917,7 +969,7 @@ export default function TrackingScreen() {
               hitSlop={8}
               className="w-12 items-center justify-center"
             >
-              <ArrowLeft size={22} color="#FFFFFF" strokeWidth={2.2} />
+              <ArrowLeft size={22} color={LightColors.textInverse} strokeWidth={2.2} />
             </Pressable>
             <View className="flex-1 py-3 pr-3 justify-center">
               <Text
@@ -973,7 +1025,7 @@ export default function TrackingScreen() {
             />
             {booking.runner_id && (
               <View className="flex-row items-center justify-end -mt-1 mb-1">
-                <View className={`w-1.5 h-1.5 rounded-full mr-1 ${isConnected ? 'bg-success' : 'bg-gray-400'}`} />
+                <View className={`w-1.5 h-1.5 rounded-full mr-1 ${isConnected ? 'bg-success' : 'bg-textMuted'}`} />
                 <Text className="text-[9px] font-montserrat text-textTertiary uppercase" style={{ letterSpacing: 1 }}>
                   {isConnected ? 'Live' : 'Reconnecting'}
                 </Text>
@@ -1018,21 +1070,53 @@ export default function TrackingScreen() {
           showsVerticalScrollIndicator={false}
           contentContainerStyle={{ paddingBottom: 40 }}
         >
-        {/* Hero — verb-led "what's happening right now" with optional
-            ETA pill or terminal-state label. Sits at the very top of
-            the sheet content so it's the first thing visible when the
-            sheet expands from peek. */}
-        <View className="mb-3">
-          <CurrentStepHero
-            eyebrow={`STEP ${Math.min(currentStatusIndex + 1, steps.length)} OF ${steps.length}`}
-            title={heroCopy.title}
-            subtitle={heroCopy.subtitle}
-            etaMinutes={heroEtaLabel ? null : (runnerLocation ? eta.minutes : null)}
-            etaLabel={heroEtaLabel}
-            accent={heroCopy.accent}
-            Icon={Clock}
-          />
-        </View>
+        {/* Hero — modern "what's happening right now" headline that leads
+            with a big ETA (like "Arriving in 10 min" on ride-hailing
+            references). ETA number is oversized on the left; the status
+            verb sits under an accent eyebrow. */}
+        {(() => {
+          const heroAccent =
+            heroCopy.accent === 'success'
+              ? LightColors.success
+              : heroCopy.accent === 'danger'
+                ? LightColors.danger
+                : LightColors.primary;
+          const showEta = !heroEtaLabel && runnerLocation && eta.minutes != null;
+          return (
+            <View className="mb-4">
+              <View className="flex-row items-center mb-2">
+                <Clock size={13} color={heroAccent} strokeWidth={2.4} />
+                <Text
+                  className="text-[10px] font-montserrat-bold uppercase ml-1.5"
+                  style={{ color: heroAccent, letterSpacing: 1.4 }}
+                >
+                  {`Step ${Math.min(currentStatusIndex + 1, steps.length)} of ${steps.length}`}
+                </Text>
+              </View>
+              <View className="flex-row items-end justify-between">
+                <Text
+                  className="flex-1 text-[24px] font-montserrat-bold text-textPrimary pr-3"
+                  style={{ lineHeight: 28 }}
+                >
+                  {showEta ? `Arriving in ${eta.minutes} min` : heroCopy.title}
+                </Text>
+                {heroEtaLabel && (
+                  <View
+                    className="rounded-full px-3.5 py-1.5"
+                    style={{ backgroundColor: `${heroAccent}1A` }}
+                  >
+                    <Text className="text-[12px] font-montserrat-bold" style={{ color: heroAccent }}>
+                      {heroEtaLabel}
+                    </Text>
+                  </View>
+                )}
+              </View>
+              <Text className="text-[13px] font-montserrat text-textSecondary mt-1.5">
+                {showEta ? heroCopy.title : heroCopy.subtitle}
+              </Text>
+            </View>
+          );
+        })()}
 
         {/* Transportation PIN */}
         {isTransportation && booking.ride_pin && (
@@ -1046,85 +1130,118 @@ export default function TrackingScreen() {
           </View>
         )}
 
-        {/* ── Runner pill ─────────────────────────────────
-            Mirrors the runner errand "customer pill" so both sides
-            of the trip see the same identity card pattern: avatar +
-            name/rating on the left, circular icon-only actions on
-            the right. Wrapped in a soft surface card so it reads as
-            a contained section instead of free-floating row. */}
+        {/* ── Runner card ─────────────────────────────────
+            Modern, spacious identity card: a clean top row (large avatar +
+            name/rating, verified) over a hairline divider, then a labelled
+            action row of icon-chip buttons. Reads like the reference
+            "your driver is coming" cards — airy, one clear section. */}
         {booking.runner_id && (
-          <View className="flex-row items-center bg-surface rounded-2xl p-3 mb-3">
-            <Avatar
-              size="md"
-              uri={booking.runner?.avatar_url ?? undefined}
-              name={booking.runner?.full_name}
-              isVerified
-            />
-            <View className="flex-1 ml-3 mr-2">
-              <Text
-                className="text-[14px] font-montserrat-bold text-textPrimary"
-                numberOfLines={1}
-              >
-                {booking.runner?.full_name ?? 'Your runner'}
-              </Text>
-              <View className="flex-row items-center mt-0.5">
-                <RatingStars
-                  value={Number(booking.runner?.avg_rating ?? 0)}
-                  size={11}
-                  readonly
-                />
-                {booking.runner?.total_ratings ? (
-                  <Text className="text-[10px] font-montserrat text-textTertiary ml-1.5">
-                    ({booking.runner.total_ratings})
-                  </Text>
-                ) : null}
-              </View>
-            </View>
-            <Pressable
-              accessibilityRole="button"
-              accessibilityLabel="Call runner"
-              hitSlop={6}
-              className="w-10 h-10 rounded-full bg-primaryLight items-center justify-center mr-2"
-              onPress={handleCall}
-            >
-              <Phone size={17} color="#2563EB" strokeWidth={2} />
-            </Pressable>
-            <Pressable
-              accessibilityRole="button"
-              accessibilityLabel={
-                unreadForBooking > 0
-                  ? `Open chat, ${unreadForBooking} unread message${unreadForBooking === 1 ? '' : 's'}`
-                  : 'Open chat with runner'
-              }
-              hitSlop={6}
-              className="w-10 h-10 rounded-full bg-primaryLight items-center justify-center mr-2"
-              onPress={() => router.push(`/(customer)/chat/${booking.id}`)}
-            >
-              <MessageCircle size={17} color="#2563EB" strokeWidth={2} />
-              {unreadForBooking > 0 && (
-                <View className="absolute -top-0.5 -right-0.5 min-w-[16px] h-4 px-1 bg-danger rounded-full items-center justify-center border-[1.5px] border-white">
-                  <Text className="text-[9px] text-white font-montserrat-bold leading-[11px]">
-                    {unreadForBooking > 9 ? '9+' : String(unreadForBooking)}
+          <View className="bg-surface rounded-3xl p-4 mb-3" style={Elevation.sm}>
+            <View className="flex-row items-center">
+              <Avatar
+                size="lg"
+                uri={booking.runner?.avatar_url ?? undefined}
+                name={booking.runner?.full_name}
+                isVerified
+              />
+              <View className="flex-1 ml-3.5">
+                <Text
+                  className="text-[16px] font-montserrat-bold text-textPrimary"
+                  numberOfLines={1}
+                >
+                  {booking.runner?.full_name ?? 'Your runner'}
+                </Text>
+                <View className="flex-row items-center mt-1">
+                  <RatingStars
+                    value={Number(booking.runner?.avg_rating ?? 0)}
+                    size={13}
+                    readonly
+                  />
+                  <Text className="text-[11px] font-inter-medium text-textTertiary ml-1.5">
+                    {Number(booking.runner?.avg_rating ?? 0).toFixed(1)}
+                    {booking.runner?.total_ratings ? ` · ${booking.runner.total_ratings} trips` : ''}
                   </Text>
                 </View>
-              )}
-            </Pressable>
-            <Pressable
-              accessibilityRole="button"
-              accessibilityLabel="Share trip with a contact"
-              hitSlop={6}
-              className="w-10 h-10 rounded-full bg-primaryLight items-center justify-center"
-              onPress={handleShareTrip}
-            >
-              <Share2 size={17} color="#2563EB" strokeWidth={2} />
-            </Pressable>
+              </View>
+              <View className="rounded-full px-3 py-1.5" style={{ backgroundColor: LightColors.primaryLight }}>
+                <Text className="text-[10px] font-montserrat-bold uppercase" style={{ color: LightColors.primary, letterSpacing: 0.8 }}>
+                  {isPickupPhase ? 'On the way' : 'In transit'}
+                </Text>
+              </View>
+            </View>
+
+            <View className="h-px bg-divider my-3.5" />
+
+            {/* Action row — evenly spaced icon-chip buttons with labels. */}
+            <View className="flex-row">
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel="Call runner"
+                onPress={handleCall}
+                className="flex-1 items-center"
+                hitSlop={6}
+              >
+                <View className="w-11 h-11 rounded-full items-center justify-center mb-1.5" style={{ backgroundColor: LightColors.primaryLight }}>
+                  <Phone size={18} color={LightColors.primary} strokeWidth={2} />
+                </View>
+                <Text className="text-[11px] font-montserrat-semi text-textSecondary">Call</Text>
+              </Pressable>
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel={
+                  unreadForBooking > 0
+                    ? `Open chat, ${unreadForBooking} unread message${unreadForBooking === 1 ? '' : 's'}`
+                    : 'Open chat with runner'
+                }
+                onPress={() => router.push(`/(customer)/chat/${booking.id}`)}
+                className="flex-1 items-center"
+                hitSlop={6}
+              >
+                <View className="w-11 h-11 rounded-full items-center justify-center mb-1.5" style={{ backgroundColor: LightColors.primaryLight }}>
+                  <MessageCircle size={18} color={LightColors.primary} strokeWidth={2} />
+                  {unreadForBooking > 0 && (
+                    <View className="absolute -top-0.5 -right-0.5 min-w-[16px] h-4 px-1 bg-danger rounded-full items-center justify-center border-[1.5px] border-white">
+                      <Text className="text-[9px] text-white font-montserrat-bold leading-[11px]">
+                        {unreadForBooking > 9 ? '9+' : String(unreadForBooking)}
+                      </Text>
+                    </View>
+                  )}
+                </View>
+                <Text className="text-[11px] font-montserrat-semi text-textSecondary">Message</Text>
+              </Pressable>
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel="Share trip with a contact"
+                onPress={handleShareTrip}
+                className="flex-1 items-center"
+                hitSlop={6}
+              >
+                <View className="w-11 h-11 rounded-full items-center justify-center mb-1.5" style={{ backgroundColor: LightColors.primaryLight }}>
+                  <Share2 size={18} color={LightColors.primary} strokeWidth={2} />
+                </View>
+                <Text className="text-[11px] font-montserrat-semi text-textSecondary">Share</Text>
+              </Pressable>
+            </View>
           </View>
         )}
 
-        {/* Trip details — collapsed by default. We deliberately use a
-            text-only toggle (not a card / not a button) so it reads as
-            an inline disclosure, not another CTA competing with the
-            real actions below. The chevron rotates as a subtle hint. */}
+        {/* Always-visible trip route — the timeline is the heart of the
+            tracking screen, so it's surfaced by default (not hidden behind
+            a toggle like before). */}
+        <View className="mb-2">
+          <Text className="text-[11px] font-montserrat-bold uppercase text-textSecondary mb-3" style={{ letterSpacing: 1.4 }}>
+            Trip route
+          </Text>
+          <StatusTimeline steps={timelineSteps} />
+        </View>
+
+        {/* Extra details (shopping summary + proof photos) — collapsed,
+            and only rendered when there's actually something to reveal. */}
+        {((isShopping && booking.shopping_budget != null) ||
+          booking.pickup_photo_url ||
+          booking.delivery_photo_url ||
+          booking.signature_url) ? (
+        <>
         <Pressable
           onPress={() => setDetailsOpen((v) => !v)}
           accessibilityRole="button"
@@ -1136,9 +1253,9 @@ export default function TrackingScreen() {
             {detailsOpen ? 'Hide trip details' : 'Trip details'}
           </Text>
           {detailsOpen ? (
-            <ChevronUp size={14} color="#64748B" />
+            <ChevronUp size={14} color={LightColors.textTertiary} />
           ) : (
-            <ChevronDown size={14} color="#64748B" />
+            <ChevronDown size={14} color={LightColors.textTertiary} />
           )}
         </Pressable>
         <View className="h-px bg-divider mb-2" />
@@ -1245,7 +1362,7 @@ export default function TrackingScreen() {
                   >
                     <ExpoImage
                       source={{ uri }}
-                      style={{ width: '100%', height: 120, borderRadius: 12, backgroundColor: '#E2E8F0' }}
+                      style={{ width: '100%', height: 120, borderRadius: 16, backgroundColor: LightColors.divider }}
                       contentFit="cover"
                       transition={150}
                       cachePolicy="memory-disk"
@@ -1272,7 +1389,7 @@ export default function TrackingScreen() {
                   >
                     <ExpoImage
                       source={{ uri }}
-                      style={{ width: '100%', height: 120, borderRadius: 12, backgroundColor: '#E2E8F0' }}
+                      style={{ width: '100%', height: 120, borderRadius: 16, backgroundColor: LightColors.divider }}
                       contentFit="cover"
                       transition={150}
                       cachePolicy="memory-disk"
@@ -1303,7 +1420,7 @@ export default function TrackingScreen() {
                   >
                     <ExpoImage
                       source={{ uri }}
-                      style={{ width: '100%', height: 120, borderRadius: 12, backgroundColor: '#FFFFFF', borderWidth: 1, borderColor: '#E2E8F0' }}
+                      style={{ width: '100%', height: 120, borderRadius: 16, backgroundColor: LightColors.surface, borderWidth: 1, borderColor: LightColors.divider }}
                       contentFit="contain"
                       transition={150}
                       cachePolicy="memory-disk"
@@ -1317,11 +1434,10 @@ export default function TrackingScreen() {
             </View>
           </View>
         )}
-
-        {/* Status Timeline */}
-        <StatusTimeline steps={timelineSteps} />
           </>
         )}
+        </>
+        ) : null}
 
         {/* Note: SOS / Cancel actions live in the sheet `footer` so they
             remain visible regardless of snap. We keep only the contextual
@@ -1383,7 +1499,7 @@ export default function TrackingScreen() {
 
 const styles = StyleSheet.create({
   floatingShadow: {
-    shadowColor: '#000',
+    shadowColor: LightColors.ink,
     shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.12,
     shadowRadius: 8,
@@ -1397,13 +1513,13 @@ const styles = StyleSheet.create({
     width: 64,
     height: 64,
     borderRadius: 32,
-    backgroundColor: '#22C55E',
+    backgroundColor: LightColors.success,
   },
   runnerMarkerOuter: {
     width: 56,
     height: 56,
     borderRadius: 28,
-    backgroundColor: 'rgba(37, 99, 235, 0.22)',
+    backgroundColor: `${LightColors.primary}38`,
     alignItems: 'center',
     justifyContent: 'center',
   },
@@ -1411,12 +1527,12 @@ const styles = StyleSheet.create({
     width: 40,
     height: 40,
     borderRadius: 20,
-    backgroundColor: '#2563EB',
+    backgroundColor: LightColors.primary,
     alignItems: 'center',
     justifyContent: 'center',
     borderWidth: 3,
-    borderColor: '#FFFFFF',
-    shadowColor: '#0F172A',
+    borderColor: LightColors.surface,
+    shadowColor: LightColors.textPrimary,
     shadowOffset: { width: 0, height: 3 },
     shadowOpacity: 0.3,
     shadowRadius: 8,
@@ -1424,13 +1540,13 @@ const styles = StyleSheet.create({
   },
   runnerSpeedBadge: {
     marginTop: 4,
-    backgroundColor: 'rgba(15, 23, 42, 0.85)',
+    backgroundColor: `${LightColors.textPrimary}D9`,
     borderRadius: 999,
     paddingHorizontal: 8,
     paddingVertical: 2,
   },
   runnerSpeedText: {
-    color: '#FFFFFF',
+    color: LightColors.textInverse,
     fontSize: 9,
     fontFamily: 'Quicksand_600SemiBold',
     letterSpacing: 0.2,

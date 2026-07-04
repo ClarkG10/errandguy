@@ -5,6 +5,7 @@ import { Upload, CheckCircle, XCircle, Clock } from 'lucide-react-native';
 import { Card } from '../ui/Card';
 import { Badge } from '../ui/Badge';
 import type { DocumentStatus } from '../../types';
+import { LightColors } from '../../constants/colors';
 
 interface DocumentUploadCardProps {
   documentType: string;
@@ -17,9 +18,9 @@ interface DocumentUploadCardProps {
 }
 
 const STATUS_CONFIG: Record<string, { icon: typeof CheckCircle; color: string; label: string }> = {
-  pending: { icon: Clock, color: '#F59E0B', label: 'Pending' },
-  approved: { icon: CheckCircle, color: '#22C55E', label: 'Approved' },
-  rejected: { icon: XCircle, color: '#EF4444', label: 'Rejected' },
+  pending: { icon: Clock, color: LightColors.warning, label: 'Pending' },
+  approved: { icon: CheckCircle, color: LightColors.success, label: 'Approved' },
+  rejected: { icon: XCircle, color: LightColors.danger, label: 'Rejected' },
 };
 
 export function DocumentUploadCard({
@@ -69,8 +70,8 @@ export function DocumentUploadCard({
             style={{
               width: '100%',
               height: 140,
-              borderRadius: 10,
-              backgroundColor: '#F1F5F9',
+              borderRadius: 16,
+              backgroundColor: LightColors.surfaceMuted,
             }}
             contentFit="cover"
             cachePolicy="memory-disk"
@@ -92,7 +93,7 @@ export function DocumentUploadCard({
         onPress={onUpload}
         className="flex-row items-center justify-center gap-2 py-2 rounded-lg border border-dashed border-primary bg-primaryLight"
       >
-        <Upload size={14} color="#2563EB" />
+        <Upload size={14} color={LightColors.primary} />
         <Text className="text-xs font-montserrat-bold text-primary">
           {!fileUrl ? 'Upload' : status === 'rejected' ? 'Re-upload' : 'Replace'}
         </Text>

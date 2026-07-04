@@ -6,16 +6,28 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { useBookingStore } from '../../../stores/bookingStore';
 import { bookingService } from '../../../services/booking.service';
 import { Avatar } from '../../../components/ui/Avatar';
+import { Card } from '../../../components/ui/Card';
 import { RatingStars } from '../../../components/ui/RatingStars';
 import { PriceBreakdown } from '../../../components/ui/PriceBreakdown';
 import { Button } from '../../../components/ui/Button';
 import { Input } from '../../../components/ui/Input';
 import { formatCurrency } from '../../../utils/formatCurrency';
 import { formatDateTime } from '../../../utils/formatDate';
+import { LightColors } from '../../../constants/colors';
 import type { Booking } from '../../../types';
 import { toast } from '../../../stores/toastStore';
 
 const TIP_OPTIONS = [20, 50, 100];
+
+// Quick compliment tags — tapping one appends the phrase into the
+// comment field (purely a text shortcut; the review payload is
+// unchanged). Selected state derives from the comment content.
+const QUICK_TAGS = [
+  'Fast delivery',
+  'Friendly',
+  'Great communication',
+  'Careful with items',
+];
 
 export default function RateScreen() {
   const router = useRouter();
@@ -80,7 +92,7 @@ export default function RateScreen() {
       >
         {/* Success Header */}
         <View className="items-center pt-8 pb-6">
-          <CheckCircle size={64} color="#22C55E" />
+          <CheckCircle size={64} color={LightColors.success} />
           <Text className="text-2xl font-montserrat-bold text-textPrimary mt-4">
             Errand Completed!
           </Text>
@@ -98,7 +110,7 @@ export default function RateScreen() {
 
         {/* Receipt */}
         {booking && (
-          <View className="mx-5 bg-surface border border-divider rounded-xl p-4 mb-6">
+          <Card className="mx-5 mb-6">
             <Text className="text-base font-montserrat-bold text-textPrimary mb-3">
               Receipt
             </Text>
@@ -106,20 +118,60 @@ export default function RateScreen() {
               items={priceItems}
               total={booking.total_amount}
             />
-          </View>
+          </Card>
         )}
 
         {/* Rating Section */}
-        <View className="mx-5 bg-surface border border-divider rounded-xl p-4 mb-6">
+        <Card className="mx-5 mb-6">
           <View className="items-center mb-4">
-            <Avatar size="lg" />
+            <Avatar
+              size="xl"
+              uri={booking?.runner?.avatar_url ?? undefined}
+              name={booking?.runner?.full_name}
+            />
             <Text className="text-base font-montserrat-bold text-textPrimary mt-2">
-              Rate your Runner
+              {booking?.runner?.full_name
+                ? `Rate ${booking.runner.full_name.split(' ')[0]}`
+                : 'Rate your Runner'}
             </Text>
           </View>
           <View className="items-center mb-4">
             <RatingStars value={rating} onChange={setRating} size={36} />
           </View>
+
+          {/* Quick tags — pill chips; tapping appends the phrase to the
+              comment. Selected = soft blue fill + primary border. */}
+          <View className="flex-row flex-wrap gap-2 mb-4">
+            {QUICK_TAGS.map((tag) => {
+              const selected = comment.includes(tag);
+              return (
+                <Pressable
+                  key={tag}
+                  onPress={() => {
+                    if (selected) return;
+                    setComment((prev) => (prev ? `${prev} ${tag}` : tag));
+                  }}
+                  className={`px-3.5 py-2 rounded-full border ${
+                    selected
+                      ? 'bg-primaryLight border-primary'
+                      : 'bg-surface border-divider'
+                  }`}
+                  accessibilityRole="button"
+                  accessibilityState={{ selected }}
+                  accessibilityLabel={`Add "${tag}" to your comment`}
+                >
+                  <Text
+                    className={`text-xs font-montserrat-semi ${
+                      selected ? 'text-primary' : 'text-textSecondary'
+                    }`}
+                  >
+                    {tag}
+                  </Text>
+                </Pressable>
+              );
+            })}
+          </View>
+
           <Input
             label="Comment (optional)"
             value={comment}
@@ -129,10 +181,10 @@ export default function RateScreen() {
             numberOfLines={3}
             maxLength={500}
           />
-        </View>
+        </Card>
 
         {/* Tip Section */}
-        <View className="mx-5 bg-surface border border-divider rounded-xl p-4 mb-6">
+        <Card className="mx-5 mb-6">
           <Text className="text-base font-montserrat-bold text-textPrimary mb-3">
             Leave a Tip (optional)
           </Text>
@@ -183,7 +235,7 @@ export default function RateScreen() {
               </Text>
             </Pressable>
           </View>
-        </View>
+        </Card>
 
         {/* Submit */}
         <View className="mx-5 gap-3">

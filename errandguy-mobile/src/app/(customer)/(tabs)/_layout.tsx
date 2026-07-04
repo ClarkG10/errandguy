@@ -1,14 +1,19 @@
 import { Tabs } from 'expo-router';
 import { Home, ClipboardList, Bell, User } from 'lucide-react-native';
-import { Platform, StyleSheet, View } from 'react-native';
+import { Platform, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useNotificationStore } from '../../../stores/notificationStore';
 import { TabBarItem } from '../../../components/ui/TabBarItem';
 import { QuickBookFAB } from '../../../components/ui/QuickBookFAB';
-import { TAB_BAR_HEIGHT as BAR_HEIGHT } from '../../../constants/tabLayout';
+import {
+  TAB_BAR_HEIGHT as BAR_HEIGHT,
+  TAB_BAR_FLOAT_GAP,
+  TAB_BAR_SIDE_MARGIN,
+} from '../../../constants/tabLayout';
+import { LightColors } from '../../../constants/colors';
 
-const ACTIVE = '#2563EB';
-const INACTIVE = '#94A3B8';
+const ACTIVE = LightColors.primary;
+const INACTIVE = LightColors.textMuted;
 
 export default function CustomerTabsLayout() {
   const unreadCount = useNotificationStore((s) => s.unreadCount);
@@ -38,28 +43,36 @@ export default function CustomerTabsLayout() {
         tabBarInactiveTintColor: INACTIVE,
         tabBarShowLabel: false,
         tabBarHideOnKeyboard: true,
+        // Floating pill nav — the bar detaches from the screen bottom
+        // and hovers as a rounded capsule (2026 pattern). Content
+        // scrolls behind it; the safe-area inset lifts it clear of
+        // the Android nav bar / iOS home indicator, with a minimum
+        // float gap on inset-less devices.
         tabBarStyle: {
-          backgroundColor: '#FFFFFF',
-          borderTopWidth: StyleSheet.hairlineWidth,
-          borderTopColor: '#E6EBF2',
-          height: BAR_HEIGHT + bottomInset,
-          paddingTop: 8,
-          paddingBottom: bottomInset + 1,
-          paddingHorizontal: 10,
-          // Lighter, brand-tinted lift — keeps the bar feeling like a
-          // floating surface rather than a heavy slab.
+          position: 'absolute',
+          left: TAB_BAR_SIDE_MARGIN,
+          right: TAB_BAR_SIDE_MARGIN,
+          bottom: Math.max(bottomInset, TAB_BAR_FLOAT_GAP) + TAB_BAR_FLOAT_GAP / 2,
+          backgroundColor: LightColors.surface,
+          borderTopWidth: 0,
+          borderRadius: 999,
+          height: BAR_HEIGHT,
+          paddingTop: 6,
+          paddingBottom: 6,
+          paddingHorizontal: 14,
+          // Soft diffuse lift so the pill reads as a floating surface.
           ...Platform.select({
             ios: {
-              shadowColor: '#1D4ED8',
-              shadowOffset: { width: 0, height: -4 },
-              shadowOpacity: 0.06,
-              shadowRadius: 14,
+              shadowColor: LightColors.textPrimary,
+              shadowOffset: { width: 0, height: 10 },
+              shadowOpacity: 0.1,
+              shadowRadius: 24,
             },
-            android: { elevation: 10 },
+            android: { elevation: 12 },
           }),
         },
         tabBarItemStyle: {
-          height: BAR_HEIGHT,
+          height: BAR_HEIGHT - 12,
           paddingTop: 0,
           paddingBottom: 0,
           paddingHorizontal: 2,

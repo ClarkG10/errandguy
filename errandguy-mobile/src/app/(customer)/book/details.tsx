@@ -23,10 +23,12 @@ import {
   ChevronUp,
   UserPlus,
   Crosshair,
+  Map as MapIcon,
 } from 'lucide-react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { HereMapView, HereMarker, HerePolyline, type HereMapViewRef, type Region } from '../../../components/map';
 import * as Location from 'expo-location';
+import { ensureLocationPermission, getCurrentCoords } from '../../../utils/locationPermission';
 import { useBookingStore } from '../../../stores/bookingStore';
 import { useImagePicker } from '../../../hooks/useImagePicker';
 import { useDebounce } from '../../../hooks/useDebounce';
@@ -39,6 +41,7 @@ import { ExpandableSheet } from '../../../components/ui/ExpandableSheet';
 import { BookingStepIndicator } from '../../../components/customer/BookingStepIndicator';
 
 import { getErrandTypeRule } from '../../../constants/errandTypeRules';
+import { LightColors, Elevation } from '../../../constants/colors';
 import type { SavedAddress } from '../../../types';
 import { toast } from '../../../stores/toastStore';
 import { geocodingService } from '../../../services/geocoding.service';
@@ -79,17 +82,17 @@ function PulseMarker({ color }: { color: string }) {
           borderRadius: 15,
           backgroundColor: color,
           borderWidth: 3,
-          borderColor: '#FFF',
+          borderColor: LightColors.surface,
           alignItems: 'center',
           justifyContent: 'center',
-          shadowColor: '#000',
+          shadowColor: LightColors.ink,
           shadowOffset: { width: 0, height: 2 },
           shadowOpacity: 0.3,
           shadowRadius: 4,
           elevation: 5,
         }}
       >
-        <View style={{ width: 10, height: 10, borderRadius: 5, backgroundColor: '#FFF' }} />
+        <View style={{ width: 10, height: 10, borderRadius: 5, backgroundColor: LightColors.surface }} />
       </View>
     </View>
   );
@@ -118,17 +121,17 @@ function CenterPin({ color, isMoving }: { color: string; isMoving: boolean }) {
             borderRadius: 23,
             backgroundColor: color,
             borderWidth: 3,
-            borderColor: '#FFF',
+            borderColor: LightColors.surface,
             alignItems: 'center',
             justifyContent: 'center',
-            shadowColor: '#000',
+            shadowColor: LightColors.ink,
             shadowOffset: { width: 0, height: 4 },
             shadowOpacity: 0.3,
             shadowRadius: 8,
             elevation: 8,
           }}
         >
-          <View style={{ width: 16, height: 16, borderRadius: 8, backgroundColor: '#FFF' }} />
+          <View style={{ width: 16, height: 16, borderRadius: 8, backgroundColor: LightColors.surface }} />
         </View>
         <View
           style={{
@@ -183,6 +186,11 @@ export default function TaskDetailsScreen() {
         : ('pickup' as const);
 
   const [phase, setPhase] = useState<'pickup' | 'dropoff' | 'details'>(initialPhase);
+  // Cost control: the HERE map is opt-in. Until the user explicitly taps
+  // "Select on map" the MapView is NOT mounted at all — zero tile /
+  // raster requests. Address entry defaults to search + saved places +
+  // current location, which only hit the (cached) geocoding endpoints.
+  const [mapOpen, setMapOpen] = useState(false);
   const [currentAddress, setCurrentAddress] = useState('');
   const [isMoving, setIsMoving] = useState(false);
   const [currentCoord, setCurrentCoord] = useState<[number, number] | null>(null);
@@ -270,7 +278,7 @@ export default function TaskDetailsScreen() {
   const geocodeTimeout = useRef<ReturnType<typeof setTimeout>>(undefined);
   const skipNextGeocode = useRef(false);
 
-  const pinColor = phase === 'pickup' ? '#2563EB' : '#EF4444';
+  const pinColor = phase === 'pickup' ? LightColors.primary : LightColors.danger;
 
   /* ── Reverse geocode (cached) ──
      Same coordinate within ~11 m re-uses the cached place name for 24 h.
@@ -399,6 +407,8 @@ export default function TaskDetailsScreen() {
       updateDraft({ dropoff_address: currentAddress, dropoff_lat: lat, dropoff_lng: lng });
       setPhase('details');
     }
+    // Location picked — unmount the map again so we stop consuming tiles.
+    setMapOpen(false);
   }, [phase, currentCoord, currentAddress, updateDraft, rule.singleLocation]);
 
   /* ── Back ── */
@@ -510,28 +520,31 @@ export default function TaskDetailsScreen() {
   /* ── My location ── */
   const handleMyLocation = useCallback(async () => {
     try {
-      const { status } = await Location.requestForegroundPermissionsAsync();
-      if (status !== 'granted') {
-        toast.warning('Please enable location permissions to use this feature.');
+      setIsMoving(true);
+      // getCurrentCoords handles permission + a timeout + last-known fallback,
+      // so this never hangs forever on weak GPS or a simulator with no fix.
+      const pos = await getCurrentCoords({
+        feature: 'set your pickup point',
+        accuracy: Location.Accuracy.High,
+      });
+      if (!pos) {
+        toast.error('Could not get your location. Try searching instead.');
         return;
       }
-      console.log('[details] Getting current position…');
-      const loc = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.High });
-      const coords: [number, number] = [loc.coords.longitude, loc.coords.latitude];
-      console.log(`[details] Current position: lat=${loc.coords.latitude}, lng=${loc.coords.longitude}, accuracy=${loc.coords.accuracy}m`);
+      const coords: [number, number] = [pos.lng, pos.lat];
       skipNextGeocode.current = true;
       setCurrentCoord(coords);
       mapRef.current?.animateToRegion({
-              latitude: coords[1], longitude: coords[0],
-              latitudeDelta: 0.008, longitudeDelta: 0.008,
-            }, 800);
-      console.log(`[details] Reverse geocoding current location…`);
+        latitude: coords[1], longitude: coords[0],
+        latitudeDelta: 0.008, longitudeDelta: 0.008,
+      }, 800);
       const addr = await reverseGeocode(coords[0], coords[1]);
-      console.log(`[details] Current location resolved: "${addr}"`);
       setCurrentAddress(addr);
     } catch (err) {
       console.error('[details] handleMyLocation error:', err);
       toast.error('Could not get your location.');
+    } finally {
+      setIsMoving(false);
     }
   }, [reverseGeocode]);
 
@@ -547,8 +560,12 @@ export default function TaskDetailsScreen() {
             }, 800);
   }, []);
 
-  /* ── Fetch route (cached) ── */
+  /* ── Fetch route (cached) ──
+     Only when the map is actually mounted — the polyline is its sole
+     consumer, so skipping the fetch while the map is closed saves a
+     routing call per booking. */
   useEffect(() => {
+    if (!mapOpen) return;
     if (phase !== 'details') return;
     if (!draftBooking.pickup_lat || !draftBooking.dropoff_lat) return;
     let cancelled = false;
@@ -659,7 +676,10 @@ export default function TaskDetailsScreen() {
     let cancelled = false;
     (async () => {
       try {
-        const { status } = await Location.requestForegroundPermissionsAsync();
+        // Silent check only — auto-fill must never pop a dialog on screen
+        // load. If not already granted we simply skip; the "My location"
+        // button (which calls ensureLocationPermission) handles prompting.
+        const { status } = await Location.getForegroundPermissionsAsync();
         if (status !== 'granted' || cancelled) return;
         const loc = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
         if (cancelled) return;
@@ -679,9 +699,14 @@ export default function TaskDetailsScreen() {
 
   /* ── Render ── */
   return (
-    <View style={{ flex: 1, backgroundColor: '#F8FAFC' }}>
-      {/* ═══ MAP ═══ */}
+    <View style={{ flex: 1, backgroundColor: LightColors.background }}>
+      {/* ═══ MAP ═══
+          Opt-in: the map is NOT auto-shown. By default the user picks a
+          location via search / current / saved (all of which set the
+          address directly). Tapping "Select on map" mounts the map for
+          pin-drag fine-tuning — so no HERE tiles load unless requested. */}
       <View style={{ flex: 1 }}>
+        {mapOpen && (
         <HereMapView
           style={{ flex: 1 }}
           ref={mapRef}
@@ -692,8 +717,8 @@ export default function TaskDetailsScreen() {
             Keyboard.dismiss();
           }}
           initialRegion={{
-            latitude: initialCenter[1],
-            longitude: initialCenter[0],
+            latitude: (currentCoord ?? initialCenter)[1],
+            longitude: (currentCoord ?? initialCenter)[0],
             latitudeDelta: 0.01,
             longitudeDelta: 0.01,
           }}
@@ -705,7 +730,7 @@ export default function TaskDetailsScreen() {
               anchor={{ x: 0.5, y: 1 }}
               id="pickup-marker"
             >
-              <PulseMarker color="#2563EB" />
+              <PulseMarker color={LightColors.primary} />
             </HereMarker>
           )}
 
@@ -716,26 +741,40 @@ export default function TaskDetailsScreen() {
               anchor={{ x: 0.5, y: 1 }}
               id="dropoff-marker"
             >
-              <PulseMarker color="#EF4444" />
+              <PulseMarker color={LightColors.danger} />
             </HereMarker>
           )}
 
           {/* Route polyline — cased for visibility over busy tiles. */}
           {routeMapCoords.length > 0 && (
             <>
-              <HerePolyline id="route-outline" coordinates={routeMapCoords} strokeColor="#1E3A8A" strokeWidth={8} lineJoin="round" />
-              <HerePolyline id="route-fill" coordinates={routeMapCoords} strokeColor="#3B82F6" strokeWidth={5} lineJoin="round" />
+              <HerePolyline id="route-outline" coordinates={routeMapCoords} strokeColor={LightColors.primary900} strokeWidth={8} lineJoin="round" />
+              <HerePolyline id="route-fill" coordinates={routeMapCoords} strokeColor={LightColors.primary500} strokeWidth={5} lineJoin="round" />
             </>
           )}
         </HereMapView>
+        )}
 
-        {/* Center pin overlay */}
-        {phase !== 'details' && (
+        {/* Center pin overlay — only meaningful while the map is open. */}
+        {mapOpen && phase !== 'details' && (
           <View style={st.centerPinWrap} pointerEvents="none">
             <View style={{ transform: [{ translateY: -32 }] }}>
               <CenterPin color={pinColor} isMoving={isMoving} />
             </View>
           </View>
+        )}
+
+        {/* Close-map button — collapse back to address entry (keeps selection). */}
+        {mapOpen && (
+          <Pressable
+            onPress={() => setMapOpen(false)}
+            accessibilityRole="button"
+            accessibilityLabel="Close map"
+            hitSlop={8}
+            style={st.closeMapBtn}
+          >
+            <X size={18} color={LightColors.textPrimary} strokeWidth={2.4} />
+          </Pressable>
         )}
 
         {/* ── Floating header ── */}
@@ -748,7 +787,7 @@ export default function TaskDetailsScreen() {
               hitSlop={8}
               style={st.backBtn}
             >
-              <ArrowLeft size={20} color="#0F172A" />
+              <ArrowLeft size={20} color={LightColors.textPrimary} />
             </Pressable>
             <Text style={st.phaseTitle}>
               {phase === 'pickup' ? 'Set pickup' : phase === 'dropoff' ? 'Set dropoff' : 'Add details'}
@@ -766,7 +805,7 @@ export default function TaskDetailsScreen() {
           {phase !== 'details' && (
             <View style={st.searchWrap}>
               <View style={st.searchBar}>
-                <Search size={18} color="#94A3B8" />
+                <Search size={18} color={LightColors.textMuted} />
                 <TextInput
                   style={st.searchInput}
                   placeholder={
@@ -774,7 +813,7 @@ export default function TaskDetailsScreen() {
                       ? `Search ${rule.pickupLabel.toLowerCase()}...`
                       : `Search ${rule.dropoffLabel.toLowerCase()}...`
                   }
-                  placeholderTextColor="#94A3B8"
+                  placeholderTextColor={LightColors.textMuted}
                   value={searchQuery}
                   onChangeText={(t) => {
                     setSearchQuery(t);
@@ -791,7 +830,7 @@ export default function TaskDetailsScreen() {
                       setShowSearch(false);
                     }}
                   >
-                    <X size={16} color="#94A3B8" />
+                    <X size={16} color={LightColors.textMuted} />
                   </Pressable>
                 )}
               </View>
@@ -832,13 +871,13 @@ export default function TaskDetailsScreen() {
                         style={st.searchResultItem}
                         onPress={() => handleSearchSelect(item)}
                       >
-                        <View style={[st.searchResultDot, { backgroundColor: '#94A3B833' }]}>
+                        <View style={[st.searchResultDot, { backgroundColor: `${LightColors.textMuted}33` }]}>
                           <View
                             style={{
                               width: 6,
                               height: 6,
                               borderRadius: 3,
-                              backgroundColor: '#64748B',
+                              backgroundColor: LightColors.textTertiary,
                             }}
                           />
                         </View>
@@ -853,10 +892,28 @@ export default function TaskDetailsScreen() {
           )}
         </SafeAreaView>
 
-        {/* My location button */}
-        {phase !== 'details' && (
+        {/* No-map hint — fills the space when the map is closed so the
+            screen reads as a clean address-entry view, not an empty map
+            placeholder waiting for a tap. */}
+        {!mapOpen && phase !== 'details' && (
+          <View pointerEvents="none" style={st.noMapHint}>
+            <View style={st.noMapHintIcon}>
+              <MapIcon size={30} color={LightColors.primaryMuted} strokeWidth={1.6} />
+            </View>
+            <Text style={st.noMapHintTitle}>
+              Find your {phase === 'pickup' ? rule.pickupLabel.toLowerCase() : rule.dropoffLabel.toLowerCase()}
+            </Text>
+            <Text style={st.noMapHintText}>
+              Search above, use your current location, or pick a saved place — tap “Map” to drop a pin.
+            </Text>
+          </View>
+        )}
+
+        {/* My location button — only over the map (redundant with the
+            sheet's "Current" action when the map is closed). */}
+        {mapOpen && phase !== 'details' && (
           <Pressable style={st.myLocationBtn} onPress={handleMyLocation}>
-            <Crosshair size={20} color="#2563EB" />
+            <Crosshair size={20} color={LightColors.primary} />
           </Pressable>
         )}
       </View>
@@ -895,23 +952,33 @@ export default function TaskDetailsScreen() {
               <View style={[st.addressDotInner, { backgroundColor: pinColor }]} />
             </View>
             <Text style={st.addressText} numberOfLines={2}>
-              {isMoving ? 'Moving...' : currentAddress || 'Move the map to select'}
+              {isMoving
+                ? 'Moving...'
+                : currentAddress ||
+                  (mapOpen ? 'Move the map to select' : 'Search, use current, or select on map')}
             </Text>
           </View>
 
           {/* Quick actions */}
           <View style={st.quickActions}>
             <Pressable style={st.quickBtn} onPress={handleMyLocation} accessibilityRole="button" accessibilityLabel="Use current location">
-              <Navigation size={14} color="#2563EB" />
+              <Navigation size={14} color={LightColors.primary} />
               <Text style={st.quickBtnText}>Current</Text>
             </Pressable>
             {/* Saved addresses are useful for pickup too — a runner picking up
                 from your home or office is the most common pattern. Previously
                 this was hidden during pickup, forcing users to type or pan. */}
             <Pressable style={st.quickBtn} onPress={() => setShowSavedSheet(true)} accessibilityRole="button" accessibilityLabel="Choose from saved addresses">
-              <Bookmark size={14} color="#2563EB" />
+              <Bookmark size={14} color={LightColors.primary} />
               <Text style={st.quickBtnText}>Saved</Text>
             </Pressable>
+            {/* Opt-in map — mounts the map only when the user wants pin-drag. */}
+            {!mapOpen && (
+              <Pressable style={st.quickBtn} onPress={() => setMapOpen(true)} accessibilityRole="button" accessibilityLabel="Select location on map">
+                <MapIcon size={14} color={LightColors.primary} />
+                <Text style={st.quickBtnText}>Map</Text>
+              </Pressable>
+            )}
           </View>
 
           {/* Confirm CTA lives in the sheet `footer` so it stays visible. */}
@@ -926,7 +993,7 @@ export default function TaskDetailsScreen() {
           {/* Route summary strip — tappable to change */}
           <View style={st.routeSummary}>
             <Pressable style={st.routePoint} onPress={() => handleChangeLocation('pickup')}>
-              <View style={[st.routeDot, { backgroundColor: '#2563EB' }]} />
+              <View style={[st.routeDot, { backgroundColor: LightColors.primary }]} />
               <Text style={st.routeAddr} numberOfLines={1}>
                 {draftBooking.pickup_address}
               </Text>
@@ -934,9 +1001,15 @@ export default function TaskDetailsScreen() {
             </Pressable>
             {!rule.singleLocation && (
               <>
-                <View style={st.routeConnector} />
+                {/* Dashed connector between the pickup/dropoff beads —
+                    matches the trip-timeline language used elsewhere. */}
+                <View style={st.routeConnector}>
+                  {Array.from({ length: 3 }).map((_, i) => (
+                    <View key={i} style={st.routeConnectorDash} />
+                  ))}
+                </View>
                 <Pressable style={st.routePoint} onPress={() => handleChangeLocation('dropoff')}>
-                  <View style={[st.routeDot, { backgroundColor: '#EF4444' }]} />
+                  <View style={[st.routeDot, { backgroundColor: LightColors.danger }]} />
                   <Text style={st.routeAddr} numberOfLines={1}>
                     {draftBooking.dropoff_address}
                   </Text>
@@ -1042,14 +1115,14 @@ export default function TaskDetailsScreen() {
                   style={st.contactToggle}
                   onPress={() => setShowPickupContact(!showPickupContact)}
                 >
-                  <UserPlus size={14} color="#2563EB" />
+                  <UserPlus size={14} color={LightColors.primary} />
                   <Text style={st.contactToggleText}>
                     {showPickupContact ? 'Hide' : 'Add'} {rule.pickupLabel.toLowerCase()} contact
                   </Text>
                   {showPickupContact ? (
-                    <ChevronUp size={14} color="#2563EB" />
+                    <ChevronUp size={14} color={LightColors.primary} />
                   ) : (
-                    <ChevronDown size={14} color="#2563EB" />
+                    <ChevronDown size={14} color={LightColors.primary} />
                   )}
                 </Pressable>
                 {showPickupContact && (
@@ -1080,14 +1153,14 @@ export default function TaskDetailsScreen() {
                   style={st.contactToggle}
                   onPress={() => setShowDropoffContact(!showDropoffContact)}
                 >
-                  <UserPlus size={14} color="#2563EB" />
+                  <UserPlus size={14} color={LightColors.primary} />
                   <Text style={st.contactToggleText}>
                     {showDropoffContact ? 'Hide' : 'Add'} {rule.dropoffLabel.toLowerCase()} contact
                   </Text>
                   {showDropoffContact ? (
-                    <ChevronUp size={14} color="#2563EB" />
+                    <ChevronUp size={14} color={LightColors.primary} />
                   ) : (
-                    <ChevronDown size={14} color="#2563EB" />
+                    <ChevronDown size={14} color={LightColors.primary} />
                   )}
                 </Pressable>
                 {showDropoffContact && (
@@ -1161,10 +1234,10 @@ const st = StyleSheet.create({
     marginTop: 10,
     marginHorizontal: 16,
     backgroundColor: 'rgba(255,255,255,0.96)',
-    borderRadius: 16,
+    borderRadius: 20,
     paddingVertical: 10,
     paddingHorizontal: 12,
-    shadowColor: '#0F172A',
+    shadowColor: LightColors.textPrimary,
     shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.08,
     shadowRadius: 8,
@@ -1174,10 +1247,10 @@ const st = StyleSheet.create({
     width: 42,
     height: 42,
     borderRadius: 21,
-    backgroundColor: '#FFFFFF',
+    backgroundColor: LightColors.surface,
     alignItems: 'center',
     justifyContent: 'center',
-    shadowColor: '#000',
+    shadowColor: LightColors.ink,
     shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.12,
     shadowRadius: 6,
@@ -1197,7 +1270,7 @@ const st = StyleSheet.create({
   phaseTitle: {
     fontSize: 16,
     fontFamily: 'Quicksand_500Medium',
-    color: '#0F172A',
+    color: LightColors.textPrimary,
     marginLeft: 12,
   },
   searchWrap: {
@@ -1207,11 +1280,11 @@ const st = StyleSheet.create({
   searchBar: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#FFFFFF',
-    borderRadius: 14,
+    backgroundColor: LightColors.surface,
+    borderRadius: 16,
     paddingHorizontal: 14,
     height: 48,
-    shadowColor: '#000',
+    shadowColor: LightColors.ink,
     shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.1,
     shadowRadius: 8,
@@ -1221,14 +1294,14 @@ const st = StyleSheet.create({
     flex: 1,
     fontSize: 14,
     fontFamily: 'Quicksand_400Regular',
-    color: '#0F172A',
+    color: LightColors.textPrimary,
     marginLeft: 10,
   },
   searchResults: {
-    backgroundColor: '#FFFFFF',
-    borderRadius: 12,
+    backgroundColor: LightColors.surface,
+    borderRadius: 16,
     marginTop: 6,
-    shadowColor: '#000',
+    shadowColor: LightColors.ink,
     shadowOffset: { width: 0, height: 4 },
     shadowOpacity: 0.12,
     shadowRadius: 12,
@@ -1241,7 +1314,7 @@ const st = StyleSheet.create({
     paddingHorizontal: 14,
     paddingVertical: 12,
     borderBottomWidth: 1,
-    borderBottomColor: '#F1F5F9',
+    borderBottomColor: LightColors.divider,
   },
   searchResultDot: {
     width: 28,
@@ -1255,12 +1328,12 @@ const st = StyleSheet.create({
     flex: 1,
     fontSize: 13,
     fontFamily: 'Quicksand_400Regular',
-    color: '#0F172A',
+    color: LightColors.textPrimary,
   },
   recentHeading: {
     fontSize: 11,
     fontFamily: 'Quicksand_700Bold',
-    color: '#64748B',
+    color: LightColors.textTertiary,
     letterSpacing: 0.5,
     textTransform: 'uppercase',
     paddingHorizontal: 14,
@@ -1274,23 +1347,69 @@ const st = StyleSheet.create({
     width: 48,
     height: 48,
     borderRadius: 24,
-    backgroundColor: '#FFFFFF',
+    backgroundColor: LightColors.surface,
     alignItems: 'center',
     justifyContent: 'center',
-    shadowColor: '#000',
+    shadowColor: LightColors.ink,
     shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.15,
-    shadowRadius: 6,
+    shadowOpacity: 0.12,
+    shadowRadius: 8,
+    elevation: 4,
+  },
+  noMapHint: {
+    position: 'absolute',
+    top: 190,
+    left: 32,
+    right: 32,
+    alignItems: 'center',
+  },
+  noMapHintIcon: {
+    width: 64,
+    height: 64,
+    borderRadius: 32,
+    backgroundColor: LightColors.primaryLight,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 14,
+  },
+  noMapHintTitle: {
+    fontSize: 16,
+    fontFamily: 'Quicksand_700Bold',
+    color: LightColors.textPrimary,
+    marginBottom: 6,
+    textAlign: 'center',
+  },
+  noMapHintText: {
+    fontSize: 13,
+    fontFamily: 'Quicksand_400Regular',
+    color: LightColors.textSecondary,
+    textAlign: 'center',
+    lineHeight: 19,
+  },
+  closeMapBtn: {
+    position: 'absolute',
+    right: 16,
+    top: 120,
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: LightColors.surface,
+    alignItems: 'center',
+    justifyContent: 'center',
+    shadowColor: LightColors.ink,
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.12,
+    shadowRadius: 8,
     elevation: 4,
   },
   bottomCard: {
-    backgroundColor: '#FFFFFF',
-    borderTopLeftRadius: 24,
-    borderTopRightRadius: 24,
+    backgroundColor: LightColors.surface,
+    borderTopLeftRadius: 28,
+    borderTopRightRadius: 28,
     paddingHorizontal: 20,
     paddingTop: 12,
     paddingBottom: 32,
-    shadowColor: '#000',
+    shadowColor: LightColors.ink,
     shadowOffset: { width: 0, height: -4 },
     shadowOpacity: 0.08,
     shadowRadius: 12,
@@ -1300,14 +1419,14 @@ const st = StyleSheet.create({
     width: 36,
     height: 4,
     borderRadius: 2,
-    backgroundColor: '#E2E8F0',
+    backgroundColor: LightColors.divider,
     alignSelf: 'center',
     marginBottom: 16,
   },
   cardTitle: {
     fontSize: 17,
     fontFamily: 'Quicksand_500Medium',
-    color: '#0F172A',
+    color: LightColors.textPrimary,
     marginBottom: 14,
   },
   addressRow: {
@@ -1332,7 +1451,7 @@ const st = StyleSheet.create({
     flex: 1,
     fontSize: 14,
     fontFamily: 'Quicksand_400Regular',
-    color: '#0F172A',
+    color: LightColors.textPrimary,
   },
   quickActions: {
     flexDirection: 'row',
@@ -1342,7 +1461,7 @@ const st = StyleSheet.create({
   quickBtn: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#EFF6FF',
+    backgroundColor: LightColors.primaryLight,
     paddingHorizontal: 14,
     paddingVertical: 8,
     borderRadius: 20,
@@ -1350,18 +1469,18 @@ const st = StyleSheet.create({
   quickBtnText: {
     fontSize: 12,
     fontFamily: 'Quicksand_500Medium',
-    color: '#2563EB',
+    color: LightColors.primary,
     marginLeft: 6,
   },
   detailsSheet: {
     flex: 1,
-    backgroundColor: '#FFFFFF',
-    borderTopLeftRadius: 24,
-    borderTopRightRadius: 24,
+    backgroundColor: LightColors.surface,
+    borderTopLeftRadius: 28,
+    borderTopRightRadius: 28,
     paddingHorizontal: 20,
     paddingTop: 12,
     marginTop: -16,
-    shadowColor: '#000',
+    shadowColor: LightColors.ink,
     shadowOffset: { width: 0, height: -4 },
     shadowOpacity: 0.08,
     shadowRadius: 12,
@@ -1385,20 +1504,26 @@ const st = StyleSheet.create({
     flex: 1,
     fontSize: 13,
     fontFamily: 'Quicksand_400Regular',
-    color: '#0F172A',
+    color: LightColors.textPrimary,
   },
   changeLink: {
     fontSize: 11,
     fontFamily: 'Quicksand_500Medium',
-    color: '#2563EB',
+    color: LightColors.primary,
     marginLeft: 8,
   },
   routeConnector: {
     width: 2,
     height: 24,
-    backgroundColor: '#E2E8F0',
     marginLeft: 4,
     marginVertical: 4,
+    justifyContent: 'space-between',
+  },
+  routeConnectorDash: {
+    width: 2,
+    height: 5,
+    borderRadius: 1,
+    backgroundColor: LightColors.dividerStrong,
   },
   contactToggle: {
     flexDirection: 'row',
@@ -1406,21 +1531,21 @@ const st = StyleSheet.create({
     marginBottom: 12,
   },
   helperNote: {
-    backgroundColor: '#EFF6FF',
-    borderRadius: 12,
+    backgroundColor: LightColors.primaryLight,
+    borderRadius: 16,
     padding: 12,
     marginBottom: 14,
   },
   helperNoteText: {
     fontSize: 12,
     fontFamily: 'Quicksand_500Medium',
-    color: '#1D4ED8',
+    color: LightColors.primaryDark,
     lineHeight: 17,
   },
   contactToggleText: {
     fontSize: 12,
     fontFamily: 'Quicksand_500Medium',
-    color: '#2563EB',
+    color: LightColors.primary,
     marginLeft: 6,
     marginRight: 2,
   },
@@ -1428,12 +1553,12 @@ const st = StyleSheet.create({
     paddingVertical: 12,
     paddingBottom: 28,
     borderTopWidth: 1,
-    borderTopColor: '#F1F5F9',
+    borderTopColor: LightColors.divider,
   },
   errorText: {
     fontSize: 12,
     fontFamily: 'Quicksand_400Regular',
-    color: '#EF4444',
+    color: LightColors.danger,
     marginBottom: 8,
   },
 });

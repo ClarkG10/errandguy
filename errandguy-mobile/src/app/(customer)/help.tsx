@@ -1,6 +1,5 @@
 import React, { useState } from 'react';
 import { View, Text, ScrollView, Pressable, Linking } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
 import {
   ChevronDown,
   ChevronUp,
@@ -8,8 +7,10 @@ import {
   Phone,
   MessageCircle,
 } from 'lucide-react-native';
-import { BackButton } from '../../components/ui/BackButton';
+import { Card } from '../../components/ui/Card';
 import { GradientHeader } from '../../components/ui/GradientHeader';
+import { Hairline } from '../../components/ui/Typography';
+import { LightColors } from '../../constants/colors';
 
 interface FAQ {
   question: string;
@@ -70,17 +71,17 @@ export default function CustomerHelpScreen() {
         contentContainerStyle={{ paddingBottom: 32 }}
       >
         <Text
-          className="text-[10px] font-montserrat-bold uppercase text-textSecondary mb-1"
+          className="text-[10px] font-montserrat-bold uppercase text-textSecondary mb-2"
           style={{ letterSpacing: 1.4 }}
         >
           Frequently asked
         </Text>
 
-        <View className="border-t border-divider">
+        <Card padding="none" className="px-4 py-1">
           {FAQS.map((faq, idx) => {
             const isOpen = expanded === idx;
             return (
-              <View key={idx} className="border-b border-divider">
+              <View key={idx}>
                 <Pressable
                   onPress={() => toggle(idx)}
                   className="flex-row items-center py-4"
@@ -92,9 +93,17 @@ export default function CustomerHelpScreen() {
                     {faq.question}
                   </Text>
                   {isOpen ? (
-                    <ChevronUp size={16} color="#94A3B8" strokeWidth={1.6} />
+                    <ChevronUp
+                      size={16}
+                      color={LightColors.textMuted}
+                      strokeWidth={1.6}
+                    />
                   ) : (
-                    <ChevronDown size={16} color="#94A3B8" strokeWidth={1.6} />
+                    <ChevronDown
+                      size={16}
+                      color={LightColors.textMuted}
+                      strokeWidth={1.6}
+                    />
                   )}
                 </Pressable>
                 {isOpen && (
@@ -104,29 +113,32 @@ export default function CustomerHelpScreen() {
                     </Text>
                   </View>
                 )}
+                {idx < FAQS.length - 1 && <Hairline />}
               </View>
             );
           })}
-        </View>
+        </Card>
 
         <Text
-          className="text-[10px] font-montserrat-bold uppercase text-textSecondary mt-8 mb-1"
+          className="text-[10px] font-montserrat-bold uppercase text-textSecondary mt-8 mb-2"
           style={{ letterSpacing: 1.4 }}
         >
           Still need help?
         </Text>
-        <View className="border-t border-divider">
+        <Card padding="none" className="px-4 py-1">
           <Pressable
             onPress={() =>
               Linking.openURL(
                 'mailto:support@errandguy.ph?subject=ErrandGuy%20Support',
               )
             }
-            className="flex-row items-center py-4 border-b border-divider"
+            className="flex-row items-center py-3"
             accessibilityRole="button"
             accessibilityLabel="Email support"
           >
-            <Mail size={18} color="#475569" strokeWidth={1.6} />
+            <View className="w-10 h-10 rounded-full bg-primaryLight items-center justify-center">
+              <Mail size={18} color={LightColors.primary} strokeWidth={1.9} />
+            </View>
             <View className="flex-1 ml-3">
               <Text className="text-[14px] font-montserrat-semi text-textPrimary">
                 Email support
@@ -136,13 +148,16 @@ export default function CustomerHelpScreen() {
               </Text>
             </View>
           </Pressable>
+          <Hairline />
           <Pressable
             onPress={() => Linking.openURL('tel:+639171234567')}
-            className="flex-row items-center py-4 border-b border-divider"
+            className="flex-row items-center py-3"
             accessibilityRole="button"
             accessibilityLabel="Call support"
           >
-            <Phone size={18} color="#475569" strokeWidth={1.6} />
+            <View className="w-10 h-10 rounded-full bg-primaryLight items-center justify-center">
+              <Phone size={18} color={LightColors.primary} strokeWidth={1.9} />
+            </View>
             <View className="flex-1 ml-3">
               <Text className="text-[14px] font-montserrat-semi text-textPrimary">
                 Hotline
@@ -152,17 +167,24 @@ export default function CustomerHelpScreen() {
               </Text>
             </View>
           </Pressable>
+          <Hairline />
           <Pressable
             onPress={() =>
               Linking.openURL(
                 'mailto:support@errandguy.ph?subject=ErrandGuy%20Issue%20Report&body=Booking%20number%3A%20%0AIssue%3A%20',
               )
             }
-            className="flex-row items-center py-4 border-b border-divider"
+            className="flex-row items-center py-3"
             accessibilityRole="button"
             accessibilityLabel="Report an issue"
           >
-            <MessageCircle size={18} color="#475569" strokeWidth={1.6} />
+            <View className="w-10 h-10 rounded-full bg-primaryLight items-center justify-center">
+              <MessageCircle
+                size={18}
+                color={LightColors.primary}
+                strokeWidth={1.9}
+              />
+            </View>
             <View className="flex-1 ml-3">
               <Text className="text-[14px] font-montserrat-semi text-textPrimary">
                 Report an issue
@@ -172,7 +194,7 @@ export default function CustomerHelpScreen() {
               </Text>
             </View>
           </Pressable>
-        </View>
+        </Card>
       </ScrollView>
     </View>
   );

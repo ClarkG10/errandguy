@@ -1,5 +1,6 @@
 import React from 'react';
 import { View, Text, Platform } from 'react-native';
+import { LightColors } from '../../constants/colors';
 
 const STEP_LABELS = ['Type', 'Details', 'Schedule', 'Review'] as const;
 
@@ -59,13 +60,13 @@ export function BookingStepIndicator({
                   isCompleted || isActive ? 'bg-primary' : 'bg-surface'
                 }`}
                 style={[
-                  isUpcoming ? { borderWidth: 1.5, borderColor: '#E2E8F0' } : null,
+                  isUpcoming ? { borderWidth: 1.5, borderColor: LightColors.divider } : null,
                   isActive
                     ? {
-                        shadowColor: '#2563EB',
+                        shadowColor: LightColors.primary,
                         shadowOffset: { width: 0, height: 2 },
-                        shadowOpacity: 0.25,
-                        shadowRadius: 6,
+                        shadowOpacity: 0.14,
+                        shadowRadius: 8,
                         elevation: 3,
                       }
                     : null,
@@ -74,7 +75,7 @@ export function BookingStepIndicator({
                 {isCompleted ? (
                   <Text
                     style={{
-                      color: '#FFFFFF',
+                      color: LightColors.textInverse,
                       fontSize: 14,
                       lineHeight: 16,
                       fontWeight: '700',
@@ -113,7 +114,7 @@ export function BookingStepIndicator({
                 style={{
                   flex: 1,
                   height: 2,
-                  backgroundColor: isCompleted ? '#2563EB' : '#E2E8F0',
+                  backgroundColor: isCompleted ? LightColors.primary : LightColors.divider,
                   marginTop: 12,
                   borderRadius: 1,
                 }}

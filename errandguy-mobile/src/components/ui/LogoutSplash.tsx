@@ -2,6 +2,7 @@ import React from 'react';
 import { Modal, View, StyleSheet } from 'react-native';
 import { Image } from 'expo-image';
 import { MotiView } from 'moti';
+import { LightColors } from '../../constants/colors';
 
 const LOGO = require('../../../assets/logo-new.png');
 
@@ -22,7 +23,7 @@ interface LogoutSplashProps {
  */
 export function LogoutSplash({
   visible,
-  backgroundColor = '#FFFFFF',
+  backgroundColor = LightColors.surface,
   logoTintColor,
   logoSize = 156,
 }: LogoutSplashProps) {
@@ -62,7 +63,7 @@ export function LogoutSplash({
 const styles = StyleSheet.create({
   curtain: {
     flex: 1,
-    backgroundColor: '#FFFFFF',
+    backgroundColor: LightColors.surface,
     alignItems: 'center',
     justifyContent: 'center',
   },

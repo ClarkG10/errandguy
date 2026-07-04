@@ -9,23 +9,25 @@ import {
   Platform,
 } from 'react-native';
 import { useRouter } from 'expo-router';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as Haptics from 'expo-haptics';
 import { OnboardingSlide } from '../../components/auth/OnboardingSlide';
 import { Button } from '../../components/ui/Button';
+import { LightColors } from '../../constants/colors';
 
 const ONBOARDING_1 = require('../../../assets/ONBOARDING-1.png');
 const ONBOARDING_2 = require('../../../assets/ONBOARDING-2.png');
 const ONBOARDING_3 = require('../../../assets/ONBOARDING-3.png');
 
 /**
- * Welcome — iOS-styled onboarding carousel.
+ * Welcome — onboarding carousel on a clean white canvas.
  *
- * The hero is a soft brand-blue gradient that bleeds behind the
- * status bar. Slides paginate horizontally; the active slide is
- * communicated with a row of capsule indicators (HIG page control).
+ * Reference aesthetic: large friendly illustration area, big bold
+ * two-line heading, short secondary subtitle, dot page indicators in
+ * primary, and a bottom row pairing a ghost "Skip" with a solid pill
+ * primary "Next" button.
  *
  * Business contracts preserved verbatim:
  *   - AsyncStorage key `@onboarding_seen`
@@ -60,10 +62,11 @@ const slides = [
   },
 ];
 
-const HERO_GRADIENT = ['#EFF6FF', '#FFFFFF'] as const;
+const HERO_GRADIENT = [LightColors.primaryLight, LightColors.surface] as const;
 
 export default function WelcomeScreen() {
   const router = useRouter();
+  const insets = useSafeAreaInsets();
   const { width } = useWindowDimensions();
   const flatListRef = useRef<FlatList>(null);
   const [activeIndex, setActiveIndex] = useState(0);
@@ -107,22 +110,6 @@ export default function WelcomeScreen() {
         end={{ x: 0.5, y: 1 }}
       />
       <SafeAreaView edges={['top']} style={{ flex: 1 }}>
-        <View style={styles.topBar}>
-          <View style={{ width: 56 }} />
-          <Pressable
-            onPress={handleSkip}
-            hitSlop={12}
-            accessibilityLabel="Skip onboarding"
-            accessibilityRole="button"
-            style={({ pressed }) => [
-              styles.skipBtn,
-              pressed ? { opacity: 0.55 } : null,
-            ]}
-          >
-            <Text style={styles.skipText}>Skip</Text>
-          </Pressable>
-        </View>
-
         <FlatList
           ref={flatListRef}
           data={slides}
@@ -147,7 +134,7 @@ export default function WelcomeScreen() {
           })}
         />
 
-        <View style={styles.footer}>
+        <View style={[styles.footer, { paddingBottom: Math.max(insets.bottom, 12) }]}>
           <View style={styles.pageIndicator}>
             {slides.map((slide, i) => (
               <View
@@ -160,12 +147,29 @@ export default function WelcomeScreen() {
             ))}
           </View>
 
-          <Button
-            title={isLast ? 'Get Started' : 'Continue'}
-            fullWidth
-            size="lg"
-            onPress={handleNext}
-          />
+          {/* Bottom action row — ghost Skip + solid pill Next (reference layout). */}
+          <View style={styles.actionRow}>
+            <Pressable
+              onPress={handleSkip}
+              hitSlop={12}
+              accessibilityLabel="Skip onboarding"
+              accessibilityRole="button"
+              style={({ pressed }) => [
+                styles.skipBtn,
+                pressed ? { opacity: 0.55 } : null,
+              ]}
+            >
+              <Text style={styles.skipText}>Skip</Text>
+            </Pressable>
+            <View style={styles.nextBtnWrap}>
+              <Button
+                title={isLast ? 'Get Started' : 'Next'}
+                fullWidth
+                size="lg"
+                onPress={handleNext}
+              />
+            </View>
+          </View>
 
           <View style={styles.loginRow}>
             <Pressable
@@ -196,32 +200,11 @@ const FONT_SEMI =
   Platform.OS === 'ios' ? 'System' : 'Quicksand_600SemiBold';
 
 const styles = StyleSheet.create({
-  root: { flex: 1, backgroundColor: '#FFFFFF' },
-  topBar: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingHorizontal: 16,
-    height: 44,
-  },
-  skipBtn: {
-    minWidth: 56,
-    height: 44,
-    paddingHorizontal: 8,
-    alignItems: 'flex-end',
-    justifyContent: 'center',
-  },
-  skipText: {
-    color: '#2563EB',
-    fontSize: 17,
-    fontFamily: FONT_BODY,
-    fontWeight: '500',
-    letterSpacing: -0.2,
-  },
+  root: { flex: 1, backgroundColor: LightColors.surface },
   footer: {
     paddingHorizontal: 24,
     paddingTop: 8,
-    paddingBottom: 16,
+    // Bottom padding applied inline — respects the home-indicator inset.
     alignItems: 'stretch',
   },
   pageIndicator: {
@@ -235,12 +218,33 @@ const styles = StyleSheet.create({
     width: 6,
     height: 6,
     borderRadius: 3,
-    backgroundColor: '#CBD5E1',
+    backgroundColor: LightColors.dividerStrong,
   },
   pageDotActive: {
     width: 22,
-    backgroundColor: '#2563EB',
+    backgroundColor: LightColors.primary,
   },
+  actionRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+  },
+  skipBtn: {
+    minWidth: 72,
+    minHeight: 54,
+    paddingHorizontal: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: 16,
+  },
+  skipText: {
+    color: LightColors.primary,
+    fontSize: 16,
+    fontFamily: FONT_SEMI,
+    fontWeight: '600',
+    letterSpacing: -0.2,
+  },
+  nextBtnWrap: { flex: 1 },
   loginRow: {
     width: '100%',
     alignItems: 'center',
@@ -257,13 +261,13 @@ const styles = StyleSheet.create({
     fontFamily: FONT_BODY,
     fontWeight: '400',
     fontSize: 15,
-    color: '#64748B',
+    color: LightColors.textTertiary,
     letterSpacing: -0.1,
     textAlign: 'center',
   },
   loginLink: {
     fontFamily: FONT_SEMI,
     fontWeight: '600',
-    color: '#2563EB',
+    color: LightColors.primary,
   },
 });

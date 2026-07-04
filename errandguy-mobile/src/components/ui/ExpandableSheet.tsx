@@ -10,6 +10,7 @@ import Animated, {
   Extrapolation,
 } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { LightColors } from '../../constants/colors';
 
 const { height: SCREEN_HEIGHT } = Dimensions.get('window');
 const SPRING = { damping: 22, stiffness: 220, mass: 0.9 } as const;
@@ -123,7 +124,7 @@ export function ExpandableSheet({
       {/* Backdrop appears only when sheet is near full so the map stays visible. */}
       <Animated.View
         pointerEvents="none"
-        style={[StyleSheet.absoluteFill, { backgroundColor: '#000' }, backdropStyle]}
+        style={[StyleSheet.absoluteFill, { backgroundColor: LightColors.ink }, backdropStyle]}
       />
       <Animated.View
         style={[
@@ -133,13 +134,13 @@ export function ExpandableSheet({
             right: 0,
             top: 0,
             height: SCREEN_HEIGHT,
-            backgroundColor: '#FFFFFF',
-            borderTopLeftRadius: 24,
-            borderTopRightRadius: 24,
-            shadowColor: '#000',
-            shadowOffset: { width: 0, height: -4 },
-            shadowOpacity: 0.12,
-            shadowRadius: 12,
+            backgroundColor: LightColors.surface,
+            borderTopLeftRadius: 28,
+            borderTopRightRadius: 28,
+            shadowColor: LightColors.textPrimary,
+            shadowOffset: { width: 0, height: -10 },
+            shadowOpacity: 0.08,
+            shadowRadius: 24,
             elevation: 24,
             zIndex: 999,
           },
@@ -178,13 +179,11 @@ export function ExpandableSheet({
             paddingHorizontal: 16,
             paddingTop: 10,
             paddingBottom: Math.max(insets.bottom, 12),
-            backgroundColor: '#FFFFFF',
-            borderTopWidth: 1,
-            borderTopColor: '#E2E8F0',
-            shadowColor: '#000',
-            shadowOffset: { width: 0, height: -2 },
-            shadowOpacity: 0.08,
-            shadowRadius: 8,
+            backgroundColor: LightColors.surface,
+            shadowColor: LightColors.textPrimary,
+            shadowOffset: { width: 0, height: -6 },
+            shadowOpacity: 0.06,
+            shadowRadius: 16,
             elevation: 28,
             zIndex: 1000,
           }}
@@ -203,9 +202,9 @@ const styles = StyleSheet.create({
     paddingBottom: 4,
   },
   handleBar: {
-    width: 40,
-    height: 5,
-    borderRadius: 3,
-    backgroundColor: '#CBD5E1',
+    width: 36,
+    height: 4,
+    borderRadius: 2,
+    backgroundColor: LightColors.dividerStrong,
   },
 });

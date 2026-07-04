@@ -5,6 +5,7 @@ import { Image } from 'expo-image';
 import { X, Eraser, CheckCircle2 } from 'lucide-react-native';
 import { Button } from '../ui/Button';
 import { SignaturePad, type SignaturePadHandle } from './SignaturePad';
+import { LightColors } from '../../constants/colors';
 
 interface CompletionModalProps {
   bookingId: string;
@@ -80,7 +81,7 @@ export function CompletionModal({
             {title}
           </Text>
           <Pressable onPress={onClose} hitSlop={12}>
-            <X size={24} color="#64748B" />
+            <X size={24} color={LightColors.textTertiary} />
           </Pressable>
         </View>
 
@@ -123,7 +124,7 @@ export function CompletionModal({
                 onPress={handleClear}
                 className="flex-row items-center justify-center gap-2 mb-4"
               >
-                <Eraser size={14} color="#64748B" />
+                <Eraser size={14} color={LightColors.textTertiary} />
                 <Text className="text-xs font-montserrat text-textSecondary">
                   Clear Signature
                 </Text>
@@ -141,7 +142,7 @@ export function CompletionModal({
           <>
             {/* Confirm-only flow: no customer present to sign. */}
             <View className="bg-primaryLight rounded-xl p-4 mb-4 flex-row items-start gap-3">
-              <CheckCircle2 size={20} color="#2563EB" />
+              <CheckCircle2 size={20} color={LightColors.primary} />
               <Text className="flex-1 text-sm font-montserrat text-textPrimary leading-5">
                 {subtitle ??
                   'Tap confirm to mark this errand as completed. The customer will be notified immediately.'}

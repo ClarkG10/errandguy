@@ -4,6 +4,7 @@ import { useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { CheckCircle } from 'lucide-react-native';
 import { Button } from '../../components/ui/Button';
+import { LightColors } from '../../constants/colors';
 
 const CONTACT_PERMISSION = require('../../../assets/contact-permission.png');
 
@@ -44,7 +45,7 @@ export default function ContactsPermissionScreen() {
   };
 
   return (
-    <SafeAreaView className="flex-1 bg-surface" style={s.container}>
+    <SafeAreaView className="flex-1 bg-background" style={s.container}>
       <View style={s.content}>
         <Image source={CONTACT_PERMISSION} style={s.illustration} resizeMode="contain" />
 
@@ -57,7 +58,7 @@ export default function ContactsPermissionScreen() {
 
         {granted && (
           <View style={s.grantedInline}>
-            <CheckCircle size={16} color="#22C55E" />
+            <CheckCircle size={16} color={LightColors.success} />
             <Text className="text-[13px] font-montserrat-semi text-success ml-1.5">
               Contacts access enabled
             </Text>
@@ -97,7 +98,7 @@ const s = StyleSheet.create({
     paddingHorizontal: 12,
     paddingVertical: 8,
     borderRadius: 999,
-    backgroundColor: '#ECFDF5',
+    backgroundColor: LightColors.successLight,
   },
   footer: { paddingBottom: 28, gap: 4 },
   skipBtn: { paddingVertical: 12 },

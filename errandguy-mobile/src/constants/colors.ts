@@ -38,16 +38,19 @@ export const LightColors = {
   primaryMuted: '#93C5FD',
   primarySoft: '#DBEAFE',
 
-  // Brand gradient stops (used by GradientHeader, hero CTAs, FAB).
-  gradientStart: '#1D4ED8',
+  // Brand gradient stops (hero moments only: home hero, welcome, FAB).
+  // Deliberately calm — deep → core → core reads as a subtle sheen
+  // rather than a candy gradient. Three stops kept so call sites
+  // expecting a triple don't break.
+  gradientStart: '#1E40AF',
   gradientMid: '#2563EB',
-  gradientEnd: '#3B82F6',
+  gradientEnd: '#2563EB',
 
-  // Surfaces.
+  // Surfaces — neutral near-white canvas; blue lives in accents only.
   surface: '#FFFFFF',
-  surfaceMuted: '#F8FAFC',
-  surfaceTinted: '#F0F6FF',
-  background: '#F5F8FF',
+  surfaceMuted: '#F4F6F8',
+  surfaceTinted: '#EFF4FF',
+  background: '#F7F8FA',
 
   // Ink / text.
   ink: '#0B1220',
@@ -58,7 +61,7 @@ export const LightColors = {
   textInverse: '#FFFFFF',
 
   // Lines.
-  divider: '#E6EBF2',
+  divider: '#ECEFF3',
   dividerStrong: '#CBD5E1',
 
   // Status.
@@ -135,29 +138,37 @@ export type ColorToken = keyof typeof LightColors;
  * of truth so individual components stop hand-rolling shadow values.
  */
 export const Elevation = {
-  // Card-level lift — almost imperceptible, just enough to separate
-  // a card from the page.
+  // Card-level lift — soft and diffuse: bigger offset + radius,
+  // lower opacity, so cards float rather than sit on a hard edge.
   sm: {
     shadowColor: '#0F172A',
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.05,
-    shadowRadius: 6,
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.04,
+    shadowRadius: 12,
     elevation: 1,
   },
-  // Sticky bars, sheets.
+  // Prominent cards, sticky bars.
   md: {
     shadowColor: '#0F172A',
-    shadowOffset: { width: 0, height: 4 },
+    shadowOffset: { width: 0, height: 6 },
+    shadowOpacity: 0.06,
+    shadowRadius: 16,
+    elevation: 2,
+  },
+  // Sheets, bottom action bars, floating chrome.
+  lg: {
+    shadowColor: '#0F172A',
+    shadowOffset: { width: 0, height: 10 },
     shadowOpacity: 0.08,
-    shadowRadius: 12,
-    elevation: 3,
+    shadowRadius: 24,
+    elevation: 5,
   },
   // Brand-tinted lift for primary CTAs and the QuickBook FAB.
   primary: {
     shadowColor: '#1D4ED8',
     shadowOffset: { width: 0, height: 8 },
-    shadowOpacity: 0.28,
-    shadowRadius: 16,
-    elevation: 6,
+    shadowOpacity: 0.18,
+    shadowRadius: 18,
+    elevation: 5,
   },
 } as const;

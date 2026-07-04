@@ -2,6 +2,7 @@ import React from 'react';
 import { View, Pressable, Text, Modal } from 'react-native';
 import { MotiView } from 'moti';
 import { X } from 'lucide-react-native';
+import { LightColors } from '../../constants/colors';
 
 interface FloatingModalProps {
   isVisible: boolean;
@@ -25,7 +26,8 @@ export function FloatingModal({
       onRequestClose={onClose}
     >
       <Pressable
-        className="flex-1 bg-black/40 justify-center items-center px-5"
+        className="flex-1 justify-center items-center px-5"
+        style={{ backgroundColor: `${LightColors.ink}73` }}
         onPress={onClose}
       >
         <Pressable onPress={(e) => e.stopPropagation()}>
@@ -33,7 +35,7 @@ export function FloatingModal({
             from={{ opacity: 0, scale: 0.96 }}
             animate={{ opacity: 1, scale: 1 }}
             transition={{ type: 'timing', duration: 200 }}
-            className="bg-surface p-7 w-full min-w-[300px]"
+            className="bg-surface p-7 w-full min-w-[300px] rounded-2xl overflow-hidden"
           >
             {title && (
               <View className="flex-row items-center justify-between mb-4">
@@ -41,7 +43,7 @@ export function FloatingModal({
                   {title}
                 </Text>
                 <Pressable onPress={onClose} className="p-1">
-                  <X size={20} color="#475569" />
+                  <X size={20} color={LightColors.textSecondary} />
                 </Pressable>
               </View>
             )}

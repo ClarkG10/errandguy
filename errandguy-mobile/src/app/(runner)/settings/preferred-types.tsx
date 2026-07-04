@@ -4,6 +4,7 @@ import { useRouter } from 'expo-router';
 import { Check } from 'lucide-react-native';
 import { GradientHeader } from '../../../components/ui/GradientHeader';
 import { Card } from '../../../components/ui/Card';
+import { LightColors } from '../../../constants/colors';
 import { Button } from '../../../components/ui/Button';
 import { BottomActionBar } from '../../../components/ui/BottomActionBar';
 import { useRunnerStore } from '../../../stores/runnerStore';
@@ -103,8 +104,8 @@ export default function PreferredTypesScreen() {
         </Text>
         {types.map((type) => (
           <Pressable key={type.slug} onPress={() => toggleType(type.slug)}>
-            <Card className={`mb-2 p-4 flex-row items-center justify-between ${type.selected ? 'border-primary' : ''}`}>
-              <Text className="text-sm font-montserrat-bold text-textPrimary">
+            <Card className={`mb-2 p-4 flex-row items-center justify-between border ${type.selected ? 'border-primary' : 'border-transparent'}`}>
+              <Text className="text-[14px] font-montserrat-semi text-textPrimary">
                 {type.name}
               </Text>
               <View
@@ -112,7 +113,7 @@ export default function PreferredTypesScreen() {
                   type.selected ? 'bg-primary' : 'border-2 border-divider'
                 }`}
               >
-                {type.selected && <Check size={14} color="#FFFFFF" />}
+                {type.selected && <Check size={14} color={LightColors.textInverse} />}
               </View>
             </Card>
           </Pressable>

@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { View, Text, TextInput, Pressable } from 'react-native';
 import Slider from '@react-native-community/slider';
 import { formatCurrency } from '../../utils/formatCurrency';
+import { LightColors } from '../../constants/colors';
 
 interface OfferSliderProps {
   value: number;
@@ -85,7 +86,7 @@ export function OfferSlider({
             keyboardType="number-pad"
             returnKeyType="done"
             placeholder={String(recommendedMin ?? min)}
-            placeholderTextColor="#94A3B8"
+            placeholderTextColor={LightColors.textMuted}
             className="flex-1 text-3xl font-montserrat-bold text-primary p-0"
             style={{ paddingVertical: 0 }}
             accessibilityLabel="Offer amount"
@@ -103,9 +104,9 @@ export function OfferSlider({
         maximumValue={sliderMax}
         step={5}
         onSlidingComplete={onChange}
-        minimumTrackTintColor="#2563EB"
-        maximumTrackTintColor="#E2E8F0"
-        thumbTintColor="#2563EB"
+        minimumTrackTintColor={LightColors.primary}
+        maximumTrackTintColor={LightColors.divider}
+        thumbTintColor={LightColors.primary}
       />
 
       <View className="flex-row justify-between mt-1">

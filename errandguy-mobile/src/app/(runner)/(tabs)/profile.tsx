@@ -1,7 +1,21 @@
 import React, { useCallback, useState } from 'react';
 import { View, Text, ScrollView, Pressable, RefreshControl, Modal, TextInput, KeyboardAvoidingView, Platform } from 'react-native';
 import { useRouter, useFocusEffect } from 'expo-router';
-import { ChevronRight, Star, BadgeCheck } from 'lucide-react-native';
+import {
+  ChevronRight,
+  Star,
+  BadgeCheck,
+  UserRound,
+  FileCheck2,
+  Car,
+  Wallet,
+  ListChecks,
+  MapPinned,
+  Bell,
+  LifeBuoy,
+  FileText,
+  type LucideIcon,
+} from 'lucide-react-native';
 import * as Haptics from 'expo-haptics';
 import { Avatar } from '../../../components/ui/Avatar';
 import { Card } from '../../../components/ui/Card';
@@ -15,10 +29,13 @@ import { useAuthStore } from '../../../stores/authStore';
 import { runnerService } from '../../../services/runner.service';
 import { userService } from '../../../services/user.service';
 import { toast } from '../../../stores/toastStore';
+import { LightColors } from '../../../constants/colors';
 
 interface MenuItem {
   label: string;
   route?: string;
+  /** Leading icon rendered in a soft blue chip. */
+  icon?: LucideIcon;
   /** Optional destructive accent for the label (e.g. red "Delete"). */
   color?: string;
   trailing?: React.ReactNode;
@@ -93,36 +110,47 @@ export default function RunnerProfileScreen() {
   const isVerified = runnerProfile?.verification_status === 'approved';
 
   const accountMenu: MenuItem[] = [
-    { label: 'Edit Profile', route: '/(runner)/settings/edit-profile' },
-    { label: 'Documents & Verification', route: '/(runner)/settings/documents' },
-    { label: 'Vehicle Information', route: '/(runner)/settings/vehicle' },
-    { label: 'Payout Settings', route: '/(runner)/payout' },
-    { label: 'Preferred Errand Types', route: '/(runner)/settings/preferred-types' },
-    { label: 'Working Areas', route: '/(runner)/settings/working-areas' },
+    { label: 'Edit Profile', icon: UserRound, route: '/(runner)/settings/edit-profile' },
+    { label: 'Documents & Verification', icon: FileCheck2, route: '/(runner)/settings/documents' },
+    { label: 'Vehicle Information', icon: Car, route: '/(runner)/settings/vehicle' },
+    { label: 'Payout Settings', icon: Wallet, route: '/(runner)/payout' },
+    { label: 'Preferred Errand Types', icon: ListChecks, route: '/(runner)/settings/preferred-types' },
+    { label: 'Working Areas', icon: MapPinned, route: '/(runner)/settings/working-areas' },
   ];
 
   const settingsMenu: MenuItem[] = [
-    { label: 'Notification Preferences', route: '/(runner)/settings/notifications' },
-    { label: 'Help & Support', route: '/(runner)/settings/help' },
-    { label: 'Terms & Privacy', route: '/(runner)/settings/terms' },
+    { label: 'Notification Preferences', icon: Bell, route: '/(runner)/settings/notifications' },
+    { label: 'Help & Support', icon: LifeBuoy, route: '/(runner)/settings/help' },
+    { label: 'Terms & Privacy', icon: FileText, route: '/(runner)/settings/terms' },
   ];
 
-  const renderMenuItem = (item: MenuItem, _idx: number, _arr: MenuItem[]) => (
+  const renderMenuItem = (item: MenuItem, idx: number, arr: MenuItem[]) => (
     <Pressable
       key={item.label}
       onPress={() => {
         if (item.onPress) item.onPress();
         else if (item.route) router.push(item.route as any);
       }}
-      className="flex-row items-center justify-between py-4 border-b border-divider"
+      accessibilityRole="button"
+      accessibilityLabel={item.label}
+      className={`flex-row items-center py-3.5 ${
+        idx < arr.length - 1 ? 'border-b border-divider' : ''
+      }`}
     >
+      {item.icon ? (
+        <View className="w-10 h-10 rounded-full bg-primaryLight items-center justify-center mr-3">
+          <item.icon size={18} color={LightColors.primary} strokeWidth={1.8} />
+        </View>
+      ) : null}
       <Text
-        className="text-[14px] font-montserrat-semi text-textPrimary"
+        className="flex-1 text-[14px] font-montserrat-semi text-textPrimary"
         style={item.color ? { color: item.color } : undefined}
       >
         {item.label}
       </Text>
-      {item.trailing ?? <ChevronRight size={16} color="#CBD5E1" strokeWidth={1.5} />}
+      {item.trailing ?? (
+        <ChevronRight size={16} color={LightColors.textMuted} strokeWidth={1.5} />
+      )}
     </Pressable>
   );
 
@@ -145,7 +173,7 @@ export default function RunnerProfileScreen() {
               {user?.full_name ?? 'Runner'}
             </Text>
             <View className="flex-row items-center mt-1">
-              <Star size={11} color="#F59E0B" fill="#F59E0B" />
+              <Star size={11} color={LightColors.warning} fill={LightColors.warning} />
               <Text className="text-[12px] font-inter tabular-nums text-textSecondary ml-1">
                 {Number(user?.avg_rating ?? 0).toFixed(1)}
               </Text>
@@ -155,7 +183,7 @@ export default function RunnerProfileScreen() {
             </View>
             {isVerified && (
               <View className="flex-row items-center mt-1.5">
-                <BadgeCheck size={12} color="#2563EB" strokeWidth={2} />
+                <BadgeCheck size={12} color={LightColors.primary} strokeWidth={2} />
                 <Text className="text-[11px] font-montserrat-bold text-primary ml-1">Verified runner</Text>
               </View>
             )}
@@ -172,20 +200,24 @@ export default function RunnerProfileScreen() {
               value={runnerProfile?.acceptance_rate ?? 0}
               label="Acceptance"
               color={
-                (runnerProfile?.acceptance_rate ?? 0) < 70 ? '#F97316' : '#22C55E'
+                (runnerProfile?.acceptance_rate ?? 0) < 70
+                  ? LightColors.warning
+                  : LightColors.success
               }
             />
             <PerformanceMetric
               value={runnerProfile?.completion_rate ?? 0}
               label="Completion"
               color={
-                (runnerProfile?.completion_rate ?? 0) < 80 ? '#F97316' : '#22C55E'
+                (runnerProfile?.completion_rate ?? 0) < 80
+                  ? LightColors.warning
+                  : LightColors.success
               }
             />
             <PerformanceMetric
               value={Number(user?.avg_rating ?? 0).toFixed(1)}
               label="Rating"
-              color="#F59E0B"
+              color={LightColors.warning}
               suffix="★"
             />
           </View>
@@ -203,24 +235,24 @@ export default function RunnerProfileScreen() {
           </View>
         </View>
 
-        {/* Account Menu — definition-list pattern, no card */}
-        <View className="px-5 mb-6">
-          <Text className="text-[10px] font-montserrat-bold uppercase text-textSecondary mb-1" style={{ letterSpacing: 1.4 }}>
+        {/* Account Menu — list rows with icon chips inside a Card */}
+        <View className="px-5 mb-4">
+          <Text className="text-[10px] font-montserrat-bold uppercase text-textSecondary mb-2" style={{ letterSpacing: 1.4 }}>
             Account
           </Text>
-          <View className="border-t border-divider">
+          <Card padding="sm" className="px-4">
             {accountMenu.map((item, idx, arr) => renderMenuItem(item, idx, arr))}
-          </View>
+          </Card>
         </View>
 
         {/* Settings Menu */}
         <View className="px-5 mb-6">
-          <Text className="text-[10px] font-montserrat-bold uppercase text-textSecondary mb-1" style={{ letterSpacing: 1.4 }}>
+          <Text className="text-[10px] font-montserrat-bold uppercase text-textSecondary mb-2" style={{ letterSpacing: 1.4 }}>
             Preferences
           </Text>
-          <View className="border-t border-divider">
+          <Card padding="sm" className="px-4">
             {settingsMenu.map((item, idx, arr) => renderMenuItem(item, idx, arr))}
-          </View>
+          </Card>
         </View>
 
         {/* Logout — inline tap-to-confirm. Replaces the prior
@@ -270,9 +302,13 @@ export default function RunnerProfileScreen() {
                   value={deleteConfirmText}
                   onChangeText={setDeleteConfirmText}
                   placeholder="DELETE"
-                  placeholderTextColor="#CBD5E1"
+                  placeholderTextColor={LightColors.textMuted}
                   autoCapitalize="characters"
-                  style={{ fontFamily: 'Quicksand_400Regular', fontSize: 15, color: '#0F172A' }}
+                  style={{
+                    fontFamily: 'Quicksand_400Regular',
+                    fontSize: 15,
+                    color: LightColors.textPrimary,
+                  }}
                 />
               </View>
               <Button

@@ -1,6 +1,7 @@
 import React from 'react';
 import { View, Text } from 'react-native';
 import type { LucideIcon } from 'lucide-react-native';
+import { LightColors } from '../../constants/colors';
 
 /**
  * CurrentStepHero — the deliberately UN-card-shaped "what's happening
@@ -40,10 +41,10 @@ interface CurrentStepHeroProps {
 }
 
 const ACCENT: Record<NonNullable<CurrentStepHeroProps['accent']>, { color: string; pillBg: string }> = {
-  brand: { color: '#2563EB', pillBg: 'rgba(37, 99, 235, 0.10)' },
-  danger: { color: '#EF4444', pillBg: 'rgba(239, 68, 68, 0.10)' },
-  success: { color: '#16A34A', pillBg: 'rgba(22, 163, 74, 0.10)' },
-  warning: { color: '#D97706', pillBg: 'rgba(217, 119, 6, 0.10)' },
+  brand: { color: LightColors.primary, pillBg: `${LightColors.primary}1A` },
+  danger: { color: LightColors.danger, pillBg: `${LightColors.danger}1A` },
+  success: { color: LightColors.success, pillBg: `${LightColors.success}1A` },
+  warning: { color: LightColors.warning, pillBg: `${LightColors.warning}1A` },
 };
 
 export function CurrentStepHero({

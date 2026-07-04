@@ -1,6 +1,7 @@
 import React, { useMemo, useState, useRef, useCallback, useEffect } from 'react';
 import { View, Text, Pressable, ScrollView, StyleSheet, type NativeScrollEvent, type NativeSyntheticEvent } from 'react-native';
 import dayjs from 'dayjs';
+import { LightColors } from '../../constants/colors';
 
 interface DateTimePickerProps {
   value: string | undefined;
@@ -245,15 +246,15 @@ const ps = StyleSheet.create({
   separator: {
     fontSize: 22,
     fontFamily: 'Quicksand_600SemiBold',
-    color: '#0F172A',
+    color: LightColors.textPrimary,
   },
   wheelContainer: {
     width: 100,
     overflow: 'hidden',
-    borderRadius: 12,
-    backgroundColor: '#F8FAFC',
+    borderRadius: 16,
+    backgroundColor: LightColors.surfaceMuted,
     borderWidth: 1,
-    borderColor: '#E2E8F0',
+    borderColor: LightColors.divider,
   },
   highlight: {
     position: 'absolute',
@@ -261,7 +262,7 @@ const ps = StyleSheet.create({
     left: 4,
     right: 4,
     height: ITEM_HEIGHT,
-    backgroundColor: '#DBEAFE',
+    backgroundColor: LightColors.primarySoft,
     borderRadius: 8,
     zIndex: 1,
   },
@@ -273,11 +274,11 @@ const ps = StyleSheet.create({
   wheelText: {
     fontSize: 15,
     fontFamily: 'Quicksand_500Medium',
-    color: '#334155',
+    color: LightColors.textSecondary,
   },
   wheelTextSelected: {
     fontFamily: 'Quicksand_700Bold',
-    color: '#1D4ED8',
+    color: LightColors.primaryDark,
     fontSize: 17,
   },
 });

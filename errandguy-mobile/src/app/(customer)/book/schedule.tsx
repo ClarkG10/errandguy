@@ -11,6 +11,7 @@ import { BottomActionBar } from '../../../components/ui/BottomActionBar';
 import { ScheduleToggle } from '../../../components/customer/ScheduleToggle';
 import { DateTimePicker } from '../../../components/customer/DateTimePicker';
 import { BookingStepIndicator } from '../../../components/customer/BookingStepIndicator';
+import { LightColors } from '../../../constants/colors';
 import type { ScheduleType } from '../../../types';
 
 // Legacy local labels kept only as documentation of the canonical order.
@@ -96,7 +97,7 @@ export default function ScheduleScreen() {
         <View className="px-5 -mt-2 pb-3">
           <Text
             className="text-[10px] font-montserrat-bold uppercase"
-            style={{ letterSpacing: 1.4, color: 'rgba(255,255,255,0.78)' }}
+            style={{ letterSpacing: 1.4, color: LightColors.textSecondary }}
           >
             New errand · Step 3
           </Text>
@@ -115,7 +116,7 @@ export default function ScheduleScreen() {
           // Soft info card — flat panel with subtle background, no
           // accent stripe.
           <View className="flex-row items-start bg-primaryLight rounded-xl p-4">
-            <Info size={18} color="#2563EB" style={{ marginTop: 2 }} />
+            <Info size={18} color={LightColors.primary} style={{ marginTop: 2 }} />
             <Text className="text-sm font-montserrat text-textPrimary ml-3 flex-1">
               Your errand will be matched to a runner immediately after booking.
             </Text>
@@ -132,7 +133,7 @@ export default function ScheduleScreen() {
             {quickPicks.length > 0 && (
               <View className="mb-6">
                 <View className="flex-row items-center mb-2">
-                  <Zap size={12} color="#2563EB" strokeWidth={2} />
+                  <Zap size={12} color={LightColors.primary} strokeWidth={2} />
                   <Text className="text-[10px] font-montserrat-bold uppercase text-textSecondary ml-1.5" style={{ letterSpacing: 1.4 }}>
                     Quick pick
                   </Text>
@@ -155,9 +156,9 @@ export default function ScheduleScreen() {
                         className="px-4 py-3 bg-surface"
                         style={{
                           minWidth: 110,
-                          borderRadius: 12,
+                          borderRadius: 16,
                           borderWidth: isSelected ? 2 : 1,
-                          borderColor: isSelected ? '#2563EB' : '#E2E8F0',
+                          borderColor: isSelected ? LightColors.primary : LightColors.divider,
                         }}
                       >
                         <Text

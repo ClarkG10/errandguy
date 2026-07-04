@@ -30,6 +30,7 @@ import { ActiveBookingCard } from '../../../components/customer/ActiveBookingCar
 import { ErrandTypeIcon } from '../../../components/ui/ErrandTypeIcon';
 import { HomeSkeleton } from '../../../components/ui/Skeleton';
 import { STATUS_LABELS, STATUS_COLORS } from '../../../constants/statusLabels';
+import { LightColors, Elevation } from '../../../constants/colors';
 import type { Booking, ErrandType } from '../../../types';
 import { formatCurrency } from '../../../utils/formatCurrency';
 import { formatRelativeTime } from '../../../utils/formatDate';
@@ -167,7 +168,7 @@ export default function CustomerHomeScreen() {
 
   return (
     <View className="flex-1 bg-background">
-      <StatusBar barStyle="light-content" />
+      <StatusBar barStyle="dark-content" />
       <ScrollView
         className="flex-1"
         showsVerticalScrollIndicator={false}
@@ -179,44 +180,68 @@ export default function CustomerHomeScreen() {
           <RefreshControl
             refreshing={refreshing}
             onRefresh={onRefresh}
-            tintColor="#FFFFFF"
-            colors={['#2563EB']}
+            tintColor={LightColors.primary}
+            colors={[LightColors.primary]}
           />
         }
       >
-        {/* Brand-color header band — gives the home screen real
-            colour presence and visual depth. The hero destination
-            card floats up over the bottom edge of the gradient so it
-            reads as the primary surface. */}
-        <LinearGradient
-          colors={['#1D4ED8', '#2563EB', '#3B82F6']}
-          start={{ x: 0, y: 0 }}
-          end={{ x: 1, y: 1 }}
-          style={hs.headerGradient}
-        >
-          <SafeAreaView edges={['top']}>
-            <View className="flex-row items-center px-5 pt-2 pb-3">
+        {/* Brand hero — ride-hailing home pattern with floating chrome
+            (avatar, greeting pill, bell). We deliberately do NOT render a
+            live map here: a decorative home map would stream billed HERE
+            tiles on every visit. Instead a static brand gradient fills the
+            top; tapping it starts a booking (where the map opens on demand),
+            same as the destination card. */}
+        <View style={hs.mapHero}>
+          <Pressable
+            style={StyleSheet.absoluteFill}
+            onPress={() => startBooking()}
+            accessibilityRole="button"
+            accessibilityLabel="Start a new booking"
+          >
+            <LinearGradient
+              pointerEvents="none"
+              colors={[
+                LightColors.gradientStart,
+                LightColors.gradientMid,
+                LightColors.gradientEnd,
+              ]}
+              start={{ x: 0, y: 0 }}
+              end={{ x: 1, y: 1 }}
+              style={StyleSheet.absoluteFill}
+            />
+            {/* Fade the hero into the canvas so the content below reads
+                as one continuous surface. */}
+            <LinearGradient
+              pointerEvents="none"
+              colors={[
+                `${LightColors.background}00`,
+                `${LightColors.background}00`,
+                LightColors.background,
+              ]}
+              style={hs.mapFade}
+            />
+          </Pressable>
+
+          <SafeAreaView edges={['top']} pointerEvents="box-none">
+            <View className="flex-row items-center px-5 pt-2" pointerEvents="box-none">
               <Pressable
                 onPress={() => router.push('/(customer)/(tabs)/profile')}
                 hitSlop={6}
                 accessibilityRole="button"
                 accessibilityLabel="Open profile"
+                style={hs.floatingChip}
               >
                 <Avatar uri={user?.avatar_url} name={user?.full_name} size="sm" />
               </Pressable>
-              <View className="flex-1 ml-3">
-                <Text className="text-[11px] font-montserrat" style={{ color: 'rgba(255,255,255,0.78)' }}>
-                  {greeting}
-                </Text>
+              <View style={[hs.floatingChip, hs.greetingPill]} pointerEvents="none">
                 <Text
-                  className="text-[14px] font-montserrat-bold text-white"
+                  className="text-[12px] font-montserrat-bold text-textPrimary"
                   numberOfLines={1}
                 >
-                  {firstName}
+                  {greeting}, {firstName}
                 </Text>
               </View>
               <Pressable
-                className="relative w-10 h-10 items-center justify-center"
                 hitSlop={8}
                 onPress={() => router.push('/(customer)/(tabs)/notifications')}
                 accessibilityRole="button"
@@ -225,53 +250,35 @@ export default function CustomerHomeScreen() {
                     ? `${unreadCount} unread notifications`
                     : 'Notifications'
                 }
+                style={hs.floatingChip}
               >
-                <Bell size={22} color="#FFFFFF" strokeWidth={1.8} />
+                <Bell size={20} color={LightColors.ink} strokeWidth={1.9} />
                 {unreadCount > 0 && (
                   <View
-                    className="absolute"
+                    className="absolute bg-danger"
                     style={{
                       top: 8,
                       right: 8,
                       width: 8,
                       height: 8,
                       borderRadius: 4,
-                      backgroundColor: '#F87171',
                       borderWidth: 1.5,
-                      borderColor: '#1D4ED8',
+                      borderColor: LightColors.surface,
                     }}
                   />
                 )}
               </Pressable>
             </View>
-
-            {/* Hero copy on the gradient — white text for contrast.
-                Bottom padding leaves clear room for the destination
-                card to float up without crowding the subtitle. */}
-            <View className="px-5 pt-1 pb-10">
-              <Text
-                className="text-[24px] font-montserrat-bold text-white"
-                style={{ lineHeight: 28, letterSpacing: -0.3 }}
-              >
-                Where to?
-              </Text>
-              <Text
-                className="text-[13px] font-montserrat mt-1.5"
-                style={{ color: 'rgba(255,255,255,0.85)', lineHeight: 18 }}
-              >
-                Tap below to start a new errand.
-              </Text>
-            </View>
           </SafeAreaView>
-        </LinearGradient>
+        </View>
 
-        {/* Destination card — floats up over the gradient bottom edge. */}
-        <View className="px-5" style={{ marginTop: -14 }}>
+        {/* Destination card — floats up over the map's faded edge. */}
+        <View className="px-5" style={{ marginTop: -44 }}>
           <Pressable
             onPress={() => startBooking()}
             accessibilityRole="button"
             accessibilityLabel="Start a new booking"
-            className="bg-white px-4 py-4"
+            className="bg-surface px-4 py-4"
             style={hs.searchBox}
           >
             <View className="flex-row items-center">
@@ -288,7 +295,7 @@ export default function CustomerHomeScreen() {
                 marginLeft: 7,
                 width: 2,
                 height: 14,
-                backgroundColor: '#E2E8F0',
+                backgroundColor: LightColors.divider,
               }}
             />
             <View className="flex-row items-center">
@@ -298,18 +305,22 @@ export default function CustomerHomeScreen() {
                   width: 8,
                   height: 8,
                   borderRadius: 2,
-                  backgroundColor: '#0F172A',
+                  backgroundColor: LightColors.textPrimary,
                   marginLeft: 4,
                 }}
               />
-              <Text className="ml-3 text-[14px] font-montserrat-bold text-textPrimary flex-1">
-                Where to?
+              <Text className="ml-3 text-[15px] font-montserrat-bold text-textPrimary flex-1">
+                Where are you going?
               </Text>
               {/* Signature chevron bubble — same gesture used on the
                   primary CTA, tying the destination prompt to the
                   app's primary forward-action vocabulary. */}
               <View style={hs.chevronBubble}>
-                <ArrowRight size={16} color="#FFFFFF" strokeWidth={2.4} />
+                <ArrowRight
+                  size={16}
+                  color={LightColors.textInverse}
+                  strokeWidth={2.4}
+                />
               </View>
             </View>
           </Pressable>
@@ -368,7 +379,13 @@ export default function CustomerHomeScreen() {
                           variant="tinted"
                         />
                       ) : (
-                        <Icon size={22} color="#2563EB" strokeWidth={2} />
+                        <View className="w-10 h-10 rounded-full bg-primaryLight items-center justify-center">
+                          <Icon
+                            size={20}
+                            color={LightColors.primary}
+                            strokeWidth={2}
+                          />
+                        </View>
                       )}
                       <Text
                         className="text-[11px] font-montserrat-semi text-textPrimary text-center mt-2"
@@ -407,14 +424,18 @@ export default function CustomerHomeScreen() {
               </Pressable>
             </View>
             {recentBookings.map((booking, idx) => {
-              const statusColor = STATUS_COLORS[booking.status] ?? '#94A3B8';
+              const statusColor =
+                STATUS_COLORS[booking.status] ?? LightColors.textMuted;
               return (
                 <Pressable
                   key={booking.id}
                   className="flex-row items-center py-3.5"
                   style={
                     idx < recentBookings.length - 1
-                      ? { borderBottomWidth: 1, borderBottomColor: '#E2E8F0' }
+                      ? {
+                          borderBottomWidth: 1,
+                          borderBottomColor: LightColors.divider,
+                        }
                       : undefined
                   }
                   onPress={() =>
@@ -461,27 +482,46 @@ export default function CustomerHomeScreen() {
 }
 
 const hs = StyleSheet.create({
-  headerGradient: {
-    paddingBottom: 0,
-    // Slight bottom rounding for a more deliberate header silhouette.
-    borderBottomLeftRadius: 24,
-    borderBottomRightRadius: 24,
+  mapHero: {
+    height: 300,
+    backgroundColor: LightColors.divider,
+    overflow: 'hidden',
+  },
+  mapFade: {
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    bottom: 0,
+    height: 110,
+  },
+  // White floating chrome chips over the map — avatar, greeting, bell.
+  floatingChip: {
+    minWidth: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: LightColors.surface,
+    alignItems: 'center',
+    justifyContent: 'center',
+    ...Elevation.md,
+  },
+  greetingPill: {
+    flex: 0,
+    marginHorizontal: 10,
+    paddingHorizontal: 14,
+    borderRadius: 999,
+    marginRight: 'auto',
   },
   searchBox: {
-    borderRadius: 14,
-    // No border — the elevation does the visual lifting now that
-    // the card sits on a coloured surface above the gradient.
-    shadowColor: '#0F172A',
-    shadowOffset: { width: 0, height: 6 },
-    shadowOpacity: 0.10,
-    shadowRadius: 14,
-    elevation: 4,
+    borderRadius: 20,
+    // No border — a soft diffuse lift does the visual work now that
+    // the card floats over the gradient edge.
+    ...Elevation.md,
   },
   pickupRing: {
     width: 16,
     height: 16,
     borderRadius: 8,
-    backgroundColor: 'rgba(34,197,94,0.12)',
+    backgroundColor: LightColors.successSoft,
     alignItems: 'center',
     justifyContent: 'center',
   },
@@ -489,27 +529,23 @@ const hs = StyleSheet.create({
     width: 8,
     height: 8,
     borderRadius: 4,
-    backgroundColor: '#22C55E',
+    backgroundColor: LightColors.success,
   },
   chevronBubble: {
     width: 32,
     height: 32,
     borderRadius: 16,
-    backgroundColor: '#0F172A',
+    backgroundColor: LightColors.primary,
     alignItems: 'center',
     justifyContent: 'center',
   },
   serviceTile: {
-    borderRadius: 14,
-    backgroundColor: '#F8FBFF',
-    borderWidth: 1,
-    borderColor: '#DCEBFF',
+    // Airy white tiles — no tinted fill, no border; a soft diffuse
+    // shadow separates them from the neutral canvas.
+    borderRadius: 16,
+    backgroundColor: LightColors.surface,
     minHeight: 88,
     justifyContent: 'center',
-    shadowColor: '#1D4ED8',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.08,
-    shadowRadius: 8,
-    elevation: 2,
+    ...Elevation.sm,
   },
 });

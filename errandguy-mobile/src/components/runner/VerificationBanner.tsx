@@ -2,6 +2,7 @@ import React from 'react';
 import { View, Text, Pressable } from 'react-native';
 import { AlertCircle, XCircle, RefreshCw, CheckCircle } from 'lucide-react-native';
 import type { VerificationStatus } from '../../types';
+import { LightColors } from '../../constants/colors';
 
 interface VerificationBannerProps {
   status: VerificationStatus;
@@ -20,14 +21,14 @@ const CONFIG: Record<VerificationStatus, {
     icon: AlertCircle,
     bg: 'bg-yellow-50',
     text: 'text-yellow-800',
-    color: '#F59E0B',
+    color: LightColors.warning,
     message: 'Your account is under review. Verification typically takes 1-2 business days.',
   },
   rejected: {
     icon: XCircle,
     bg: 'bg-red-50',
     text: 'text-red-800',
-    color: '#EF4444',
+    color: LightColors.danger,
     message: 'Your verification was rejected. Please review and re-submit your documents.',
     action: 'View Details',
   },
@@ -35,7 +36,7 @@ const CONFIG: Record<VerificationStatus, {
     icon: RefreshCw,
     bg: 'bg-orange-50',
     text: 'text-orange-800',
-    color: '#F97316',
+    color: LightColors.warning,
     message: 'Some documents need to be re-submitted. Please upload updated documents.',
     action: 'Re-submit',
   },
@@ -43,7 +44,7 @@ const CONFIG: Record<VerificationStatus, {
     icon: CheckCircle,
     bg: 'bg-green-50',
     text: 'text-green-800',
-    color: '#22C55E',
+    color: LightColors.success,
     message: 'Your account is verified and approved.',
   },
 };

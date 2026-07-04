@@ -9,6 +9,7 @@ import Animated, {
   interpolate,
 } from 'react-native-reanimated';
 import { useReducedMotion } from '../../hooks/useReducedMotion';
+import { LightColors, Elevation } from '../../constants/colors';
 
 // ── Shimmer bar ───────────────────────────────────────────────
 // Uses a pure Reanimated sliding overlay instead of expo-linear-gradient to
@@ -24,9 +25,9 @@ interface SkeletonProps {
 export function Skeleton({
   width = '100%',
   height = 16,
-  // 10px so skeleton blocks read as the same family as 12px form
-  // elements / cards without looking like fat pills next to text.
-  borderRadius = 10,
+  // 12px so skeleton blocks read as the same family as the new
+  // 16/20px form elements / cards without looking like fat pills.
+  borderRadius = 12,
   style,
 }: SkeletonProps) {
   const progress = useSharedValue(0);
@@ -69,7 +70,7 @@ export function Skeleton({
           width: width as any,
           height,
           borderRadius,
-          backgroundColor: '#E2E8F0',
+          backgroundColor: LightColors.divider,
           overflow: 'hidden',
         },
         style,
@@ -83,7 +84,7 @@ export function Skeleton({
               top: 0,
               bottom: 0,
               width: 200,
-              backgroundColor: '#FFFFFF',
+              backgroundColor: LightColors.surface,
             },
             animatedStyle,
           ]}
@@ -133,7 +134,7 @@ export function HomeSkeleton() {
         {/* Service cards grid */}
         <View className="flex-row flex-wrap" style={{ gap: 10 }}>
           {[1, 2, 3, 4, 5, 6].map((i) => (
-            <View key={i} className="items-center py-4" style={{ width: '30%', flexGrow: 1, minWidth: 100, backgroundColor: '#F8FAFC', borderRadius: 16 }}>
+            <View key={i} className="items-center py-4" style={{ width: '30%', flexGrow: 1, minWidth: 100, backgroundColor: LightColors.surfaceMuted, borderRadius: 16 }}>
               <Skeleton width={44} height={44} borderRadius={12} style={{ marginBottom: 8 }} />
               <Skeleton width={52} height={10} />
             </View>
@@ -148,7 +149,7 @@ export function HomeSkeleton() {
           <View
             key={i}
             className="bg-surface rounded-2xl p-4 mb-2.5"
-            style={{ shadowColor: '#0F172A', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.04, shadowRadius: 8, elevation: 1 }}
+            style={Elevation.sm}
           >
             <View className="flex-row items-center">
               <Skeleton width={40} height={40} borderRadius={12} />
@@ -184,7 +185,7 @@ export function ActivitySkeleton() {
         <View
           key={i}
           className="bg-surface rounded-xl p-4 mb-3"
-          style={{ borderWidth: 1, borderColor: '#F1F5F9' }}
+          style={{ borderWidth: 1, borderColor: LightColors.divider }}
         >
           <View className="flex-row items-center mb-3">
             <Skeleton width={32} height={32} borderRadius={8} />
@@ -260,7 +261,7 @@ export function ContactsSkeleton() {
         <View
           key={i}
           className="bg-surface rounded-xl p-4 mb-3"
-          style={{ borderWidth: 1, borderColor: '#F1F5F9' }}
+          style={{ borderWidth: 1, borderColor: LightColors.divider }}
         >
           <View className="flex-row items-center mb-2">
             <SkeletonCircle size={40} />
@@ -301,7 +302,7 @@ export function RunnerHomeSkeleton() {
           <View
             key={i}
             className="flex-1 bg-surface rounded-xl p-3 items-center"
-            style={{ borderWidth: 1, borderColor: '#F1F5F9' }}
+            style={{ borderWidth: 1, borderColor: LightColors.divider }}
           >
             <SkeletonCircle size={28} style={{ marginBottom: 8 }} />
             <Skeleton width="50%" height={18} style={{ marginBottom: 4 }} />
@@ -318,7 +319,7 @@ export function RunnerHomeSkeleton() {
         <View
           key={i}
           className="bg-surface rounded-xl p-4 mb-3"
-          style={{ borderWidth: 1, borderColor: '#F1F5F9' }}
+          style={{ borderWidth: 1, borderColor: LightColors.divider }}
         >
           <View className="flex-row justify-between mb-2">
             <Skeleton width="45%" height={14} />
@@ -354,7 +355,7 @@ export function HistorySkeleton() {
         <View
           key={i}
           className="bg-surface rounded-xl p-4 mb-3"
-          style={{ borderWidth: 1, borderColor: '#F1F5F9' }}
+          style={{ borderWidth: 1, borderColor: LightColors.divider }}
         >
           <View className="flex-row justify-between mb-3">
             <Skeleton width="40%" height={14} />

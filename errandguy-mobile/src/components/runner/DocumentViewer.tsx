@@ -3,6 +3,7 @@ import { View, Text, Modal, Pressable, ActivityIndicator, useWindowDimensions, S
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Image } from 'expo-image';
 import { X } from 'lucide-react-native';
+import { LightColors } from '../../constants/colors';
 
 interface DocumentViewerProps {
   visible: boolean;
@@ -49,7 +50,7 @@ export function DocumentViewer({ visible, uri, title, onClose }: DocumentViewerP
             style={{
               flex: 1,
               fontSize: 16,
-              color: '#FFFFFF',
+              color: LightColors.textInverse,
               fontFamily: 'Quicksand_600SemiBold',
             }}
             numberOfLines={1}
@@ -63,7 +64,7 @@ export function DocumentViewer({ visible, uri, title, onClose }: DocumentViewerP
             accessibilityLabel="Close preview"
             style={{ width: 36, height: 36, alignItems: 'center', justifyContent: 'center' }}
           >
-            <X size={26} color="#FFFFFF" />
+            <X size={26} color={LightColors.textInverse} />
           </Pressable>
         </View>
 
@@ -87,7 +88,7 @@ export function DocumentViewer({ visible, uri, title, onClose }: DocumentViewerP
               />
               {loading && (
                 <View style={{ position: 'absolute' }}>
-                  <ActivityIndicator color="#FFFFFF" size="large" />
+                  <ActivityIndicator color={LightColors.textInverse} size="large" />
                 </View>
               )}
             </>

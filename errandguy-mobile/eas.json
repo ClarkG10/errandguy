@@ -7,11 +7,11 @@
     "development": {
       "developmentClient": true,
       "distribution": "internal",
-      "ios": {
-        "simulator": true
+      "android": {
+        "buildType": "apk"
       },
       "env": {
-        "EXPO_PUBLIC_API_URL": "http://localhost:8000/api/v1"
+        "EXPO_PUBLIC_API_URL": "https://errandguy-4stnztcd.on-forge.com/api/v1"
       }
     },
     "preview": {

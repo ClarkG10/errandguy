@@ -8,6 +8,7 @@ import Animated, {
   Easing,
 } from 'react-native-reanimated';
 import { useResponsive } from '../../constants/responsive';
+import { LightColors } from '../../constants/colors';
 
 interface OTPInputProps {
   length?: number;
@@ -108,21 +109,21 @@ export function OTPInput({ length = 6, value, onChange, error }: OTPInputProps) 
         accessibilityLabel={`One-time code, ${length} digits`}
       >
         {Array.from({ length }).map((_, index) => {
-          // Modern OTP cell: larger 52×62 box with Inter tabular numerics
-          // (matches every other numeric in the app), 12px radius, and a
-          // 2px ink-dark border on a filled cell so the eye reads progress
-          // at a glance. Filled cells lift onto a soft surface tint.
+          // Filled-style OTP cell matching Input: muted fill at rest
+          // (no visible border), white + ink border once a digit lands
+          // so the eye reads progress at a glance. Inter tabular
+          // numerics match every other numeric in the app.
           const filled = !!digits[index];
           const borderColor = error
-            ? '#EF4444'
+            ? LightColors.danger
             : filled
-              ? '#0F172A'
-              : '#E2E8F0';
+              ? LightColors.textPrimary
+              : 'transparent';
           const bg = error
-            ? '#FEF2F2'
+            ? LightColors.dangerSoft
             : filled
-              ? '#F8FAFC'
-              : '#FFFFFF';
+              ? LightColors.surface
+              : LightColors.surfaceMuted;
           return (
           <TextInput
             key={index}
@@ -134,14 +135,14 @@ export function OTPInput({ length = 6, value, onChange, error }: OTPInputProps) 
               width: cellWidth,
               height: cellHeight,
               marginHorizontal: cellMargin,
-              borderWidth: filled ? 2 : 1,
-              borderRadius: 12,
+              borderWidth: filled ? 2 : 1.5,
+              borderRadius: 16,
               borderColor,
               backgroundColor: bg,
               textAlign: 'center',
               fontSize: cellFont,
               fontFamily: Platform.OS === 'ios' ? 'Inter_600SemiBold' : 'Quicksand_700Bold',
-              color: '#0F172A',
+              color: LightColors.textPrimary,
               padding: 0,
             }}
             value={digits[index]}

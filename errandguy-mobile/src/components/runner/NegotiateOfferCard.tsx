@@ -5,6 +5,7 @@ import { Card } from '../ui/Card';
 import { Badge } from '../ui/Badge';
 import { formatCurrency } from '../../utils/formatCurrency';
 import type { Booking } from '../../types';
+import { LightColors } from '../../constants/colors';
 
 interface NegotiateOfferCardProps {
   booking: Booking;
@@ -30,7 +31,7 @@ export function NegotiateOfferCard({ booking, onPress }: NegotiateOfferCardProps
           />
           {remainingMin > 0 && (
             <View className="flex-row items-center gap-1">
-              <Clock size={12} color="#F59E0B" />
+              <Clock size={12} color={LightColors.warning} />
               <Text className="text-xs font-montserrat text-warning">
                 {remainingMin}m left
               </Text>
@@ -39,13 +40,13 @@ export function NegotiateOfferCard({ booking, onPress }: NegotiateOfferCardProps
         </View>
 
         <View className="flex-row items-start gap-2 mb-2">
-          <MapPin size={14} color="#22C55E" />
+          <MapPin size={14} color={LightColors.success} />
           <Text className="text-xs font-montserrat text-textSecondary flex-1" numberOfLines={1}>
             {booking.pickup_address}
           </Text>
         </View>
         <View className="flex-row items-start gap-2 mb-3">
-          <Navigation size={14} color="#EF4444" />
+          <Navigation size={14} color={LightColors.danger} />
           <Text className="text-xs font-montserrat text-textSecondary flex-1" numberOfLines={1}>
             {booking.dropoff_address}
           </Text>

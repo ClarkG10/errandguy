@@ -27,6 +27,7 @@ import { resolveImageUrl } from '../../../utils/resolveImageUrl';
 import { buildChatRows, type ChatRow } from '../../../utils/chatList';
 import { RUNNER_QUICK_MESSAGES } from '../../../constants/quickMessages';
 import { toast } from '../../../stores/toastStore';
+import { LightColors } from '../../../constants/colors';
 
 export default function RunnerChatScreen() {
   const router = useRouter();
@@ -218,7 +219,7 @@ export default function RunnerChatScreen() {
             >
               <Image
                 source={{ uri: resolveImageUrl(m.image_url)! }}
-                style={{ width: 220, height: 220, borderRadius: 16, backgroundColor: '#E2E8F0' }}
+                style={{ width: 220, height: 220, borderRadius: 16, backgroundColor: LightColors.dividerStrong }}
                 contentFit="cover"
                 transition={150}
                 cachePolicy="memory-disk"
@@ -238,29 +239,29 @@ export default function RunnerChatScreen() {
                 </Text>
                 {m.pending ? (
                   <>
-                    <Clock size={10} color="#94A3B8" />
+                    <Clock size={10} color={LightColors.textMuted} />
                     <Text className="text-[10px] font-montserrat text-textSecondary ml-1">
                       Sending
                     </Text>
                   </>
                 ) : m.failed ? (
                   <>
-                    <AlertCircle size={11} color="#DC2626" />
+                    <AlertCircle size={11} color={LightColors.dangerDark} />
                     <Text className="text-[10px] font-montserrat-semi text-danger ml-1">
                       Failed · Tap to retry
                     </Text>
-                    <RotateCw size={10} color="#DC2626" style={{ marginLeft: 4 }} />
+                    <RotateCw size={10} color={LightColors.dangerDark} style={{ marginLeft: 4 }} />
                   </>
                 ) : m.read_at ? (
                   <>
-                    <CheckCheck size={11} color="#2563EB" />
+                    <CheckCheck size={11} color={LightColors.primary} />
                     <Text className="text-[10px] font-montserrat text-primary ml-0.5">
                       Read
                     </Text>
                   </>
                 ) : (
                   <>
-                    <Check size={11} color="#94A3B8" />
+                    <Check size={11} color={LightColors.textMuted} />
                     <Text className="text-[10px] font-montserrat text-textSecondary ml-0.5">
                       Sent
                     </Text>
@@ -335,29 +336,29 @@ export default function RunnerChatScreen() {
               </Text>
               {m.pending ? (
                 <>
-                  <Clock size={10} color="#94A3B8" />
+                  <Clock size={10} color={LightColors.textMuted} />
                   <Text className="text-[10px] font-montserrat text-textSecondary ml-1">
                     Sending
                   </Text>
                 </>
               ) : m.failed ? (
                 <>
-                  <AlertCircle size={11} color="#DC2626" />
+                  <AlertCircle size={11} color={LightColors.dangerDark} />
                   <Text className="text-[10px] font-montserrat-semi text-danger ml-1">
                     Failed · Tap to retry
                   </Text>
-                  <RotateCw size={10} color="#DC2626" style={{ marginLeft: 4 }} />
+                  <RotateCw size={10} color={LightColors.dangerDark} style={{ marginLeft: 4 }} />
                 </>
               ) : m.read_at ? (
                 <>
-                  <CheckCheck size={11} color="#2563EB" />
+                  <CheckCheck size={11} color={LightColors.primary} />
                   <Text className="text-[10px] font-montserrat text-primary ml-0.5">
                     Read
                   </Text>
                 </>
               ) : (
                 <>
-                  <Check size={11} color="#94A3B8" />
+                  <Check size={11} color={LightColors.textMuted} />
                   <Text className="text-[10px] font-montserrat text-textSecondary ml-0.5">
                     Sent
                   </Text>
@@ -400,7 +401,7 @@ export default function RunnerChatScreen() {
           disabled={!customerPhone}
           hitSlop={8}
         >
-          <Phone size={20} color={customerPhone ? '#2563EB' : '#94A3B8'} />
+          <Phone size={20} color={customerPhone ? LightColors.primary : LightColors.textMuted} />
         </Pressable>
       </View>
 
@@ -450,7 +451,7 @@ export default function RunnerChatScreen() {
           ListFooterComponent={
             loadingOlder ? (
               <View className="py-3 items-center">
-                <ActivityIndicator size="small" color="#2563EB" />
+                <ActivityIndicator size="small" color={LightColors.primary} />
               </View>
             ) : null
           }
@@ -498,13 +499,13 @@ export default function RunnerChatScreen() {
             accessibilityLabel="Attach a photo"
             className="mb-1.5"
           >
-            <Camera size={24} color={sending ? '#94A3B8' : '#475569'} />
+            <Camera size={24} color={sending ? LightColors.textMuted : LightColors.textSecondary} />
           </Pressable>
           <TextInput
             className="flex-1 bg-surface border border-divider rounded-2xl px-4 py-2.5 text-sm font-montserrat text-textPrimary"
             style={{ maxHeight: 120, minHeight: 40 }}
             placeholder="Type a message..."
-            placeholderTextColor="#94A3B8"
+            placeholderTextColor={LightColors.textMuted}
             value={input}
             onChangeText={setInput}
             multiline
@@ -522,9 +523,9 @@ export default function RunnerChatScreen() {
             accessibilityState={{ disabled: !input.trim() || sending }}
           >
             {sending ? (
-              <ActivityIndicator size="small" color={!input.trim() ? '#94A3B8' : '#FFFFFF'} />
+              <ActivityIndicator size="small" color={!input.trim() ? LightColors.textMuted : LightColors.textInverse} />
             ) : (
-              <Send size={18} color={!input.trim() || sending ? '#94A3B8' : '#FFFFFF'} />
+              <Send size={18} color={!input.trim() || sending ? LightColors.textMuted : LightColors.textInverse} />
             )}
           </Pressable>
         </View>

@@ -1,6 +1,7 @@
 import React, { useState, useCallback, useEffect, useMemo } from 'react';
 import { View, Text, ScrollView, TextInput, RefreshControl, Pressable, KeyboardAvoidingView, Platform } from 'react-native';
 import { useRouter } from 'expo-router';
+import { LinearGradient } from 'expo-linear-gradient';
 import { Wallet, CreditCard, Smartphone, Clock, CheckCircle2, XCircle } from 'lucide-react-native';
 import { Card } from '../../../components/ui/Card';
 import { Button } from '../../../components/ui/Button';
@@ -15,6 +16,7 @@ import { CacheTTL } from '../../../services/cache.service';
 import { formatCurrency } from '../../../utils/formatCurrency';
 import { toast } from '../../../stores/toastStore';
 import type { WalletTransaction } from '../../../types';
+import { LightColors, Elevation } from '../../../constants/colors';
 
 const MIN_PAYOUT = 100;
 
@@ -164,49 +166,34 @@ export default function PayoutScreen() {
         contentContainerStyle={{ paddingBottom: 40 }}
         keyboardShouldPersistTaps="handled"
       >
-        {/* Balance Card — switched from a flat primary-tinted Card to a
-            slate fintech panel so the available-for-payout amount feels
-            more like a bank statement than another marketing CTA. */}
+        {/* Balance Card — brand blue gradient balance summary, matching
+            the earnings hero and wallet cards. */}
         <View className="px-5 mb-4">
-          <View
-            className="rounded-3xl p-6 overflow-hidden"
-            style={{
-              backgroundColor: '#0F172A',
-              shadowColor: '#0F172A',
-              shadowOffset: { width: 0, height: 8 },
-              shadowOpacity: 0.18,
-              shadowRadius: 20,
-              elevation: 6,
-            }}
+          <LinearGradient
+            colors={[
+              LightColors.gradientStart,
+              LightColors.gradientMid,
+              LightColors.gradientEnd,
+            ]}
+            start={{ x: 0, y: 0 }}
+            end={{ x: 1, y: 1 }}
+            style={{ borderRadius: 24, padding: 24, ...Elevation.md }}
           >
-            <View
-              pointerEvents="none"
-              style={{
-                position: 'absolute',
-                top: -50,
-                right: -40,
-                width: 170,
-                height: 170,
-                borderRadius: 85,
-                backgroundColor: '#22C55E',
-                opacity: 0.18,
-              }}
-            />
             <View className="flex-row items-center mb-2">
-              <View className="w-9 h-9 rounded-full bg-white/10 items-center justify-center mr-2.5">
-                <Wallet size={18} color="#FFFFFF" />
+              <View className="w-9 h-9 rounded-full bg-white/15 items-center justify-center mr-2.5">
+                <Wallet size={18} color={LightColors.textInverse} />
               </View>
-              <Text className="text-xs font-montserrat-semi text-white/60 uppercase tracking-wider">
+              <Text className="text-xs font-montserrat-semi text-white/70 uppercase tracking-wider">
                 Available for payout
               </Text>
             </View>
             <Text className="text-4xl font-inter-semi tabular-nums text-white">
               {formatCurrency(balance)}
             </Text>
-            <Text className="text-[11px] font-montserrat text-white/50 mt-1">
+            <Text className="text-[11px] font-montserrat text-white/60 mt-1">
               Withdraw anytime · Min {formatCurrency(MIN_PAYOUT)}
             </Text>
-          </View>
+          </LinearGradient>
         </View>
 
         {/* Pending payout banner — if a payout request is still being
@@ -215,12 +202,12 @@ export default function PayoutScreen() {
         {pendingPayout && (
           <View className="px-5 mb-4">
             <Card className="flex-row items-center gap-3 p-3 bg-warningLight">
-              <Clock size={18} color="#B45309" />
+              <Clock size={18} color={LightColors.warning} />
               <View className="flex-1">
-                <Text className="text-sm font-montserrat-semi" style={{ color: '#B45309' }}>
+                <Text className="text-sm font-montserrat-semi text-warning">
                   Payout in progress
                 </Text>
-                <Text className="text-xs font-montserrat mt-0.5" style={{ color: '#92400E' }}>
+                <Text className="text-xs font-montserrat mt-0.5 text-textSecondary">
                   {formatCurrency(Math.abs(Number(pendingPayout.amount ?? 0)))} · submitted{' '}
                   {new Date(pendingPayout.created_at).toLocaleDateString([], { month: 'short', day: 'numeric' })}.
                   You can request another after this one is paid out.
@@ -238,7 +225,7 @@ export default function PayoutScreen() {
           <TextInput
             className="bg-surface border border-divider rounded-xl px-3 py-3 text-base font-inter-semi text-textPrimary mb-2"
             placeholder="₱0.00"
-            placeholderTextColor="#94A3B8"
+            placeholderTextColor={LightColors.textMuted}
             value={amountInput}
             onChangeText={(v) => setAmountInput(sanitizeAmount(v))}
             keyboardType="decimal-pad"
@@ -286,7 +273,11 @@ export default function PayoutScreen() {
                 const StatusIcon =
                   status === 'completed' ? CheckCircle2 : status === 'failed' ? XCircle : Clock;
                 const statusColor =
-                  status === 'completed' ? '#16A34A' : status === 'failed' ? '#DC2626' : '#B45309';
+                  status === 'completed'
+                    ? LightColors.success
+                    : status === 'failed'
+                    ? LightColors.danger
+                    : LightColors.warning;
                 const statusLabel =
                   status === 'completed' ? 'Paid' : status === 'failed' ? 'Failed' : 'Pending';
                 return (
@@ -335,18 +326,20 @@ export default function PayoutScreen() {
 
         {/* Bank Account */}
         <View className="px-5 mb-4">
-          <View className="flex-row items-center gap-2 mb-2">
-            <CreditCard size={16} color="#475569" />
-            <Text className="text-sm font-montserrat-bold text-textSecondary">
-              Bank Account
-            </Text>
-          </View>
           <Card className="p-4">
+            <View className="flex-row items-center mb-3">
+              <View className="w-10 h-10 rounded-full bg-primaryLight items-center justify-center mr-3">
+                <CreditCard size={18} color={LightColors.primary} strokeWidth={1.8} />
+              </View>
+              <Text className="text-sm font-montserrat-bold text-textPrimary">
+                Bank Account
+              </Text>
+            </View>
             <Text className="text-xs font-montserrat text-textSecondary mb-1">Bank Name</Text>
             <TextInput
               className="bg-surface border border-divider rounded-xl px-3 py-2.5 text-sm font-montserrat text-textPrimary mb-3"
               placeholder="e.g. BDO, BPI, Metrobank"
-              placeholderTextColor="#94A3B8"
+              placeholderTextColor={LightColors.textMuted}
               value={bankName}
               onChangeText={setBankName}
             />
@@ -354,7 +347,7 @@ export default function PayoutScreen() {
             <TextInput
               className="bg-surface border border-divider rounded-xl px-3 py-2.5 text-sm font-montserrat text-textPrimary"
               placeholder="Enter account number"
-              placeholderTextColor="#94A3B8"
+              placeholderTextColor={LightColors.textMuted}
               value={bankAccount}
               onChangeText={setBankAccount}
               keyboardType="number-pad"
@@ -364,18 +357,20 @@ export default function PayoutScreen() {
 
         {/* E-Wallet */}
         <View className="px-5 mb-4">
-          <View className="flex-row items-center gap-2 mb-2">
-            <Smartphone size={16} color="#475569" />
-            <Text className="text-sm font-montserrat-bold text-textSecondary">
-              E-Wallet
-            </Text>
-          </View>
           <Card className="p-4">
+            <View className="flex-row items-center mb-3">
+              <View className="w-10 h-10 rounded-full bg-primaryLight items-center justify-center mr-3">
+                <Smartphone size={18} color={LightColors.primary} strokeWidth={1.8} />
+              </View>
+              <Text className="text-sm font-montserrat-bold text-textPrimary">
+                E-Wallet
+              </Text>
+            </View>
             <Text className="text-xs font-montserrat text-textSecondary mb-1">E-Wallet Number</Text>
             <TextInput
               className="bg-surface border border-divider rounded-xl px-3 py-2.5 text-sm font-montserrat text-textPrimary"
               placeholder="e.g. GCash, Maya number"
-              placeholderTextColor="#94A3B8"
+              placeholderTextColor={LightColors.textMuted}
               value={ewalletNumber}
               onChangeText={setEwalletNumber}
               keyboardType="phone-pad"

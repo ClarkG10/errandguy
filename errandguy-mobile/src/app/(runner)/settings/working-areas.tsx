@@ -3,6 +3,7 @@ import { View, Text, ScrollView, RefreshControl, Pressable } from 'react-native'
 import { useRouter } from 'expo-router';
 import { MapPin } from 'lucide-react-native';
 import { GradientHeader } from '../../../components/ui/GradientHeader';
+import { LightColors } from '../../../constants/colors';
 import { HereMapView, HereMarker, HereCircle } from '../../../components/map';
 import Slider from '@react-native-community/slider';
 import { Card } from '../../../components/ui/Card';
@@ -92,7 +93,7 @@ export default function WorkingAreasScreen() {
               {/* Center marker */}
               <HereMarker coordinate={{ latitude: lat, longitude: lng }} id="center-marker">
                 <View className="w-8 h-8 rounded-full bg-primary items-center justify-center border-2 border-white shadow-md">
-                  <MapPin size={14} color="#FFFFFF" />
+                  <MapPin size={14} color={LightColors.textInverse} />
                 </View>
               </HereMarker>
 
@@ -101,14 +102,14 @@ export default function WorkingAreasScreen() {
                 id="working-area"
                 center={{ latitude: lat, longitude: lng }}
                 radius={radius}
-                fillColor="rgba(37,99,235,0.12)"
-                strokeColor="#2563EB"
+                fillColor={`${LightColors.primary}1F`}
+                strokeColor={LightColors.primary}
                 strokeWidth={2}
               />
             </HereMapView>
           ) : (
-            <View className="flex-1 bg-gray-100 items-center justify-center">
-              <MapPin size={32} color="#94A3B8" />
+            <View className="flex-1 bg-surfaceMuted items-center justify-center">
+              <MapPin size={32} color={LightColors.textMuted} />
               <Text className="text-sm font-montserrat text-textSecondary mt-2">
                 Enable location to view map
               </Text>
@@ -150,9 +151,9 @@ export default function WorkingAreasScreen() {
               step={500}
               value={radius}
               onValueChange={setRadius}
-              minimumTrackTintColor="#2563EB"
-              maximumTrackTintColor="#E2E8F0"
-              thumbTintColor="#2563EB"
+              minimumTrackTintColor={LightColors.primary}
+              maximumTrackTintColor={LightColors.divider}
+              thumbTintColor={LightColors.primary}
             />
             <View className="flex-row justify-between mt-1">
               <Text className="text-[10px] font-montserrat text-textSecondary">1 km</Text>

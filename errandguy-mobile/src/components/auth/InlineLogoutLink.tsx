@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { Pressable, Text, View, StyleSheet } from 'react-native';
 import * as Haptics from 'expo-haptics';
+import { LightColors } from '../../constants/colors';
 import Animated, {
   useSharedValue,
   useAnimatedStyle,
@@ -141,11 +142,11 @@ const s = StyleSheet.create({
   label: {
     fontSize: 14,
     fontFamily: 'Montserrat_700Bold',
-    color: '#64748B',
+    color: LightColors.textTertiary,
     textDecorationLine: 'underline',
   },
   labelArmed: {
-    color: '#DC2626',
+    color: LightColors.dangerDark,
     textDecorationLine: 'none',
   },
   barTrack: {
@@ -153,17 +154,17 @@ const s = StyleSheet.create({
     width: 132,
     height: 2,
     borderRadius: 1,
-    backgroundColor: '#FEE2E2',
+    backgroundColor: LightColors.dangerSoft,
     overflow: 'hidden',
   },
   barFill: {
     height: '100%',
-    backgroundColor: '#DC2626',
+    backgroundColor: LightColors.dangerDark,
   },
   cancelBtn: { paddingVertical: 4, paddingHorizontal: 8 },
   cancelText: {
     fontSize: 12,
     fontFamily: 'Montserrat_400Regular',
-    color: '#94A3B8',
+    color: LightColors.textMuted,
   },
 });

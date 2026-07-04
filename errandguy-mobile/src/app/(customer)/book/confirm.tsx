@@ -11,7 +11,7 @@ import Animated, {
   withTiming,
   Easing,
 } from 'react-native-reanimated';
-import { HereMapView } from '../../../components/map';
+import { LinearGradient } from 'expo-linear-gradient';
 import { useBookingStore } from '../../../stores/bookingStore';
 import { useBookingStatus } from '../../../hooks/useBookingStatus';
 import { useBackGuard } from '../../../hooks/useBackGuard';
@@ -21,6 +21,7 @@ import { Button } from '../../../components/ui/Button';
 import { ConfirmModal } from '../../../components/ui/ConfirmModal';
 import type { BookingStatus } from '../../../types';
 import { toast } from '../../../stores/toastStore';
+import { LightColors, Elevation } from '../../../constants/colors';
 
 
 const PULSE_SIZE = 200;
@@ -62,8 +63,8 @@ function PulseRing({ delay }: { delay: number }) {
           height: PULSE_SIZE,
           borderRadius: PULSE_SIZE / 2,
           borderWidth: 2,
-          borderColor: '#2563EB',
-          backgroundColor: 'rgba(37, 99, 235, 0.08)',
+          borderColor: LightColors.primary,
+          backgroundColor: `${LightColors.primary}14`,
         },
         style,
       ]}
@@ -139,13 +140,6 @@ export default function ConfirmScreen() {
   // IMPORTANT: Laravel casts decimal columns to strings (e.g. "8.94120787");
   // Mapbox.Camera.centerCoordinate decodes via Codable as Double and silently
   // falls back to the globe view when it sees a string. Coerce with Number().
-  const pickupLng = Number(activeBooking?.pickup_lng ?? draftBooking?.pickup_lng ?? 121.0);
-  const pickupLat = Number(activeBooking?.pickup_lat ?? draftBooking?.pickup_lat ?? 14.6);
-  const center: [number, number] =
-    Number.isFinite(pickupLng) && Number.isFinite(pickupLat)
-      ? [pickupLng, pickupLat]
-      : [121.0, 14.6];
-
   // Countdown ticker — only runs while we're still searching.
   // Uses `useForegroundInterval` so the timer pauses when the app is
   // backgrounded. The deadline is wall-clock based, so on resume we
@@ -297,19 +291,19 @@ export default function ConfirmScreen() {
 
   return (
     <View style={{ flex: 1 }}>
-      {/* Background Map */}
-      <HereMapView
+      {/* Static brand backdrop — the "searching" screen used to render a live
+          map behind the pulse, which streamed billed HERE tiles for the whole
+          wait. A gradient reads the same and costs nothing. The live map opens
+          on demand later, on the tracking screen. */}
+      <LinearGradient
+        colors={[
+          LightColors.gradientStart,
+          LightColors.gradientMid,
+          LightColors.gradientEnd,
+        ]}
+        start={{ x: 0, y: 0 }}
+        end={{ x: 1, y: 1 }}
         style={StyleSheet.absoluteFill}
-        scrollEnabled={false}
-        pitchEnabled={false}
-        rotateEnabled={false}
-        zoomEnabled={false}
-        initialRegion={{
-          latitude: center[1],
-          longitude: center[0],
-          latitudeDelta: 0.01,
-          longitudeDelta: 0.01,
-        }}
       />
 
       {/* Pulse overlay centered on screen */}
@@ -362,7 +356,7 @@ export default function ConfirmScreen() {
 
           {state === 'matched' && (
             <>
-              <CheckCircle size={48} color="#22C55E" style={{ alignSelf: 'center' }} />
+              <CheckCircle size={48} color={LightColors.success} style={{ alignSelf: 'center' }} />
               <Text className="text-xl font-montserrat-bold text-textPrimary mt-4 text-center">
                 Runner Found!
               </Text>
@@ -374,7 +368,7 @@ export default function ConfirmScreen() {
 
           {state === 'no_runner' && (
             <>
-              <XCircle size={48} color="#F59E0B" style={{ alignSelf: 'center' }} />
+              <XCircle size={48} color={LightColors.warning} style={{ alignSelf: 'center' }} />
               <Text className="text-xl font-montserrat-bold text-textPrimary mt-4 text-center">
                 No runners available
               </Text>
@@ -414,7 +408,7 @@ export default function ConfirmScreen() {
 
           {state === 'cancelled' && (
             <>
-              <XCircle size={48} color="#EF4444" style={{ alignSelf: 'center' }} />
+              <XCircle size={48} color={LightColors.danger} style={{ alignSelf: 'center' }} />
               <Text className="text-xl font-montserrat-bold text-textPrimary mt-4 text-center">
                 Booking Cancelled
               </Text>
@@ -455,30 +449,27 @@ const cs = StyleSheet.create({
     width: 14,
     height: 14,
     borderRadius: 7,
-    backgroundColor: '#2563EB',
+    backgroundColor: LightColors.primary,
     borderWidth: 3,
-    borderColor: '#fff',
+    borderColor: LightColors.surface,
     elevation: 4,
-    shadowColor: '#000',
+    shadowColor: LightColors.ink,
     shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.2,
-    shadowRadius: 4,
+    shadowOpacity: 0.14,
+    shadowRadius: 5,
   },
   overlay: {
     ...StyleSheet.absoluteFillObject,
   },
   card: {
-    backgroundColor: '#fff',
-    borderTopLeftRadius: 24,
-    borderTopRightRadius: 24,
+    backgroundColor: LightColors.surface,
+    borderTopLeftRadius: 28,
+    borderTopRightRadius: 28,
     paddingHorizontal: 24,
     paddingTop: 28,
     paddingBottom: 32,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: -4 },
-    shadowOpacity: 0.1,
-    shadowRadius: 12,
-    elevation: 10,
+    ...Elevation.lg,
+    shadowOffset: { width: 0, height: -10 },
   },
   countdownWrap: {
     marginTop: 18,
@@ -487,14 +478,14 @@ const cs = StyleSheet.create({
   countdownTime: {
     fontSize: 36,
     fontFamily: 'Inter_600SemiBold',
-    color: '#0F172A',
+    color: LightColors.textPrimary,
     letterSpacing: 1,
     fontVariant: ['tabular-nums'],
   },
   countdownLabel: {
     fontSize: 12,
     fontFamily: 'Quicksand_500Medium',
-    color: '#64748B',
+    color: LightColors.textTertiary,
     marginTop: 4,
     textAlign: 'center',
   },
@@ -502,13 +493,13 @@ const cs = StyleSheet.create({
     width: '100%',
     height: 6,
     borderRadius: 3,
-    backgroundColor: '#E2E8F0',
+    backgroundColor: LightColors.divider,
     marginTop: 12,
     overflow: 'hidden',
   },
   progressFill: {
     height: '100%',
-    backgroundColor: '#2563EB',
+    backgroundColor: LightColors.primary,
     borderRadius: 3,
   },
 });

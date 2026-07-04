@@ -1,6 +1,7 @@
 import React from 'react';
 import { View, Pressable } from 'react-native';
 import { Star } from 'lucide-react-native';
+import { LightColors } from '../../constants/colors';
 
 interface RatingStarsProps {
   value: number;
@@ -29,8 +30,8 @@ export function RatingStars({
           >
             <Star
               size={size}
-              color="#F59E0B"
-              fill={filled ? '#F59E0B' : halfFilled ? '#FDE68A' : 'transparent'}
+              color={LightColors.warning}
+              fill={filled ? LightColors.warning : halfFilled ? LightColors.warningSoft : 'transparent'}
             />
           </Pressable>
         );

@@ -16,6 +16,7 @@ import { Input } from '../../components/ui/Input';
 import { Button } from '../../components/ui/Button';
 import { authService } from '../../services/auth.service';
 import { toast } from '../../stores/toastStore';
+import { LightColors } from '../../constants/colors';
 
 interface ForgotPasswordFormData {
   email: string;
@@ -61,17 +62,22 @@ export default function ForgotPasswordScreen() {
   };
 
   return (
-    <SafeAreaView className="flex-1 bg-surface">
+    <SafeAreaView className="flex-1 bg-background">
       <Pressable
-        className="mt-2 ml-4 w-10 h-10 rounded-full items-center justify-center"
+        className="mt-2 ml-4 w-10 h-10 rounded-full items-center justify-center bg-surface border border-divider"
         onPress={() => router.canGoBack() ? router.back() : router.replace('/(auth)/login')}
       >
-        <ChevronLeft size={24} color="#0F172A" strokeWidth={2} />
+        <ChevronLeft size={24} color={LightColors.textPrimary} strokeWidth={2} />
       </Pressable>
 
       {sent ? (
         <View className="flex-1 justify-center items-center px-8">
-          <MailCheck size={64} color="#2563EB" strokeWidth={1.6} style={{ marginBottom: 20 }} />
+          <MailCheck
+            size={64}
+            color={LightColors.primary}
+            strokeWidth={1.6}
+            style={{ marginBottom: 20 }}
+          />
           <Text className="text-2xl font-montserrat-semi text-textPrimary mb-2 text-center">
             Check your email
           </Text>
@@ -157,7 +163,7 @@ const fs = StyleSheet.create({
   linkText: {
     fontSize: 14,
     fontFamily: 'Quicksand_400Regular',
-    color: '#94A3B8',
+    color: LightColors.textMuted,
   },
   linkBtn: {
     paddingVertical: 2,
@@ -166,6 +172,6 @@ const fs = StyleSheet.create({
   linkBtnText: {
     fontSize: 14,
     fontFamily: 'Quicksand_600SemiBold',
-    color: '#0F172A',
+    color: LightColors.primary,
   },
 });

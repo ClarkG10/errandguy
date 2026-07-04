@@ -21,6 +21,7 @@ import { OfferSlider } from '../../../components/customer/OfferSlider';
 import { BookingStepIndicator } from '../../../components/customer/BookingStepIndicator';
 import { formatCurrency } from '../../../utils/formatCurrency';
 import { getErrandTypeRule, type VehicleKey } from '../../../constants/errandTypeRules';
+import { LightColors } from '../../../constants/colors';
 import type { PricingMode } from '../../../types';
 import { toast } from '../../../stores/toastStore';
 
@@ -312,7 +313,7 @@ export default function ReviewScreen() {
         <View className="px-5 -mt-2 pb-3">
           <Text
             className="text-[10px] font-montserrat-bold uppercase"
-            style={{ letterSpacing: 1.4, color: 'rgba(255,255,255,0.78)' }}
+            style={{ letterSpacing: 1.4, color: LightColors.textSecondary }}
           >
             New errand · Step 4
           </Text>
@@ -330,7 +331,7 @@ export default function ReviewScreen() {
         <View className="mb-5 py-3 border-y border-divider">
           <View className="flex-row items-center mb-2.5">
             <View
-              style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: '#22C55E' }}
+              style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: LightColors.primary }}
             />
             <View className="flex-1 ml-3">
               <Text
@@ -349,12 +350,12 @@ export default function ReviewScreen() {
               marginLeft: 3,
               width: 2,
               height: 12,
-              backgroundColor: '#E2E8F0',
+              backgroundColor: LightColors.divider,
             }}
           />
           <View className="flex-row items-center mt-2.5">
             <View
-              style={{ width: 8, height: 8, borderRadius: 2, backgroundColor: '#0F172A' }}
+              style={{ width: 8, height: 8, borderRadius: 2, backgroundColor: LightColors.ink }}
             />
             <View className="flex-1 ml-3">
               <Text
@@ -374,14 +375,14 @@ export default function ReviewScreen() {
         {estimate?.distance_km != null && (
           <View className="flex-row items-center mb-5" style={{ gap: 16 }}>
             <View className="flex-row items-center">
-              <Route size={13} color="#64748B" strokeWidth={1.8} />
+              <Route size={13} color={LightColors.textTertiary} strokeWidth={1.8} />
               <Text className="text-[12px] font-inter tabular-nums text-textSecondary ml-1.5">
                 {estimate.distance_km.toFixed(1)} km
               </Text>
             </View>
             {getEstimatedTime() && (
               <View className="flex-row items-center">
-                <Clock size={13} color="#64748B" strokeWidth={1.8} />
+                <Clock size={13} color={LightColors.textTertiary} strokeWidth={1.8} />
                 <Text className="text-[12px] font-inter tabular-nums text-textSecondary ml-1.5">
                   ~{getEstimatedTime()}
                 </Text>
@@ -419,7 +420,7 @@ export default function ReviewScreen() {
                   }
                 }}
                 className="pr-5 pb-2.5 -mb-px"
-                style={active ? { borderBottomWidth: 2, borderBottomColor: '#2563EB' } : undefined}
+                style={active ? { borderBottomWidth: 2, borderBottomColor: LightColors.primary } : undefined}
                 hitSlop={6}
               >
                 <Text

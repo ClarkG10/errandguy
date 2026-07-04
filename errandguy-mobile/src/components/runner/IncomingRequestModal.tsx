@@ -7,6 +7,7 @@ import { Button } from '../ui/Button';
 import { formatCurrency } from '../../utils/formatCurrency';
 import { getErrandTypeRule } from '../../constants/errandTypeRules';
 import type { Booking } from '../../types';
+import { LightColors } from '../../constants/colors';
 
 interface IncomingRequestModalProps {
   booking: Booking;
@@ -101,7 +102,7 @@ export function IncomingRequestModal({
   }, [onDecline, accepting, declining]);
 
   const progress = remaining / timeoutSeconds;
-  const ringColor = remaining <= 5 ? '#EF4444' : remaining <= 10 ? '#F59E0B' : '#2563EB';
+  const ringColor = remaining <= 5 ? LightColors.danger : remaining <= 10 ? LightColors.warning : LightColors.primary;
 
   return (
     <View className="absolute inset-0 bg-black/60 justify-center items-center px-6 z-50">
@@ -149,14 +150,14 @@ export function IncomingRequestModal({
         {/* Addresses — hide dropoff for on-site / single-location errands. */}
         <View className="mb-3">
           <View className="flex-row items-start gap-2 mb-1">
-            <MapPin size={14} color="#22C55E" />
+            <MapPin size={14} color={LightColors.success} />
             <Text className="text-xs font-montserrat text-textSecondary flex-1" numberOfLines={2}>
               {booking.pickup_address}
             </Text>
           </View>
           {showDropoff && (
             <View className="flex-row items-start gap-2">
-              <Navigation size={14} color="#EF4444" />
+              <Navigation size={14} color={LightColors.danger} />
               <Text className="text-xs font-montserrat text-textSecondary flex-1" numberOfLines={2}>
                 {booking.dropoff_address}
               </Text>
@@ -167,7 +168,7 @@ export function IncomingRequestModal({
         {/* Shopping Budget banner — runner needs to know spend ceiling before accepting. */}
         {isShopping && booking.shopping_budget != null && (
           <View className="flex-row items-center gap-2 bg-amber-50 border border-amber-200 rounded-xl p-2.5 mb-3">
-            <ShoppingBag size={14} color="#B45309" />
+            <ShoppingBag size={14} color={LightColors.warning} />
             <Text className="text-xs font-montserrat text-amber-800 flex-1">
               Customer budget cap
             </Text>
@@ -181,7 +182,7 @@ export function IncomingRequestModal({
             given the slate fintech treatment so it visually wins. */}
         <View
           className="flex-row items-center justify-between mb-4 rounded-xl p-3 overflow-hidden"
-          style={{ backgroundColor: '#0F172A' }}
+          style={{ backgroundColor: LightColors.textPrimary }}
         >
           <View
             pointerEvents="none"
@@ -192,12 +193,12 @@ export function IncomingRequestModal({
               width: 90,
               height: 90,
               borderRadius: 45,
-              backgroundColor: '#2563EB',
+              backgroundColor: LightColors.primary,
               opacity: 0.22,
             }}
           />
           <View className="flex-row items-center gap-1.5">
-            <Truck size={14} color="#FFFFFF" />
+            <Truck size={14} color={LightColors.textInverse} />
             <Text className="text-xs font-inter tabular-nums text-white/80">
               {booking.distance_km != null && booking.distance_km > 0
                 ? `${booking.distance_km} km`

@@ -2,6 +2,7 @@ import React, { useState, useCallback } from 'react';
 import { View, Text, Pressable, ActivityIndicator, TextInput } from 'react-native';
 import { X, Check, Tag } from 'lucide-react-native';
 import { configService } from '../../services/config.service';
+import { LightColors } from '../../constants/colors';
 
 interface PromoCodeInputProps {
   appliedCode: string | undefined;
@@ -40,13 +41,13 @@ export function PromoCodeInput({
   if (appliedCode) {
     return (
       <View className="flex-row items-center bg-success/10 rounded-2xl px-4 py-3 mb-4">
-        <Tag size={16} color="#22C55E" />
+        <Tag size={16} color={LightColors.success} />
         <Text className="text-sm font-montserrat-bold text-success ml-2 flex-1">
           {appliedCode}
         </Text>
-        <Check size={16} color="#22C55E" />
+        <Check size={16} color={LightColors.success} />
         <Pressable onPress={onRemove} className="ml-2" hitSlop={8}>
-          <X size={16} color="#94A3B8" />
+          <X size={16} color={LightColors.textMuted} />
         </Pressable>
       </View>
     );
@@ -71,7 +72,7 @@ export function PromoCodeInput({
             : 'border-divider'
         }`}
       >
-        <Tag size={16} color="#94A3B8" />
+        <Tag size={16} color={LightColors.textMuted} />
         <TextInput
           value={code}
           onChangeText={(t) => {
@@ -82,7 +83,7 @@ export function PromoCodeInput({
           onBlur={() => setFocused(false)}
           onSubmitEditing={handleApply}
           placeholder="Enter promo code"
-          placeholderTextColor="#94A3B8"
+          placeholderTextColor={LightColors.textMuted}
           autoCapitalize="characters"
           autoCorrect={false}
           returnKeyType="done"
@@ -99,7 +100,7 @@ export function PromoCodeInput({
           accessibilityLabel="Apply promo code"
         >
           {loading ? (
-            <ActivityIndicator size="small" color="#FFFFFF" />
+            <ActivityIndicator size="small" color={LightColors.textInverse} />
           ) : (
             <Text
               className={`text-sm font-montserrat-bold ${

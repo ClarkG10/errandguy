@@ -15,6 +15,7 @@ import {
   CheckCircle2,
 } from 'lucide-react-native';
 import { Avatar } from '../ui/Avatar';
+import { LightColors, Elevation } from '../../constants/colors';
 import { STATUS_LABELS } from '../../constants/statusLabels';
 import { formatCurrency } from '../../utils/formatCurrency';
 import type { Booking, BookingStatus } from '../../types';
@@ -82,11 +83,11 @@ function headlineFor(
   }
 }
 
-const PRIMARY = '#2563EB';
-const TEXT_PRIMARY = '#0F172A';
-const TEXT_SECONDARY = '#64748B';
-const BORDER = '#E2E8F0';
-const TRACK_EMPTY = '#E2E8F0';
+const PRIMARY = LightColors.primary;
+const TEXT_PRIMARY = LightColors.textPrimary;
+const TEXT_SECONDARY = LightColors.textTertiary;
+const BORDER = LightColors.divider;
+const TRACK_EMPTY = LightColors.divider;
 
 export function ActiveBookingCard({ booking, onPress }: ActiveBookingCardProps) {
   const phase = PHASE_BY_STATUS[booking.status];
@@ -179,7 +180,11 @@ export function ActiveBookingCard({ booking, onPress }: ActiveBookingCardProps) 
             </Text>
             {booking.runner.avg_rating != null && (
               <View style={styles.ratingRow}>
-                <Star size={11} color="#F59E0B" fill="#F59E0B" />
+                <Star
+                  size={11}
+                  color={LightColors.warning}
+                  fill={LightColors.warning}
+                />
                 <Text style={styles.ratingText}>
                   {Number(booking.runner.avg_rating).toFixed(1)}
                 </Text>
@@ -194,7 +199,11 @@ export function ActiveBookingCard({ booking, onPress }: ActiveBookingCardProps) 
           </View>
           <View style={styles.trackPill}>
             <Text style={styles.trackPillText}>Track</Text>
-            <ArrowRight size={13} color="#FFFFFF" style={{ marginLeft: 3 }} />
+            <ArrowRight
+              size={13}
+              color={LightColors.textInverse}
+              style={{ marginLeft: 3 }}
+            />
           </View>
         </View>
       ) : (
@@ -218,7 +227,11 @@ export function ActiveBookingCard({ booking, onPress }: ActiveBookingCardProps) 
           </View>
           <View style={styles.trackPill}>
             <Text style={styles.trackPillText}>View</Text>
-            <ArrowRight size={13} color="#FFFFFF" style={{ marginLeft: 3 }} />
+            <ArrowRight
+              size={13}
+              color={LightColors.textInverse}
+              style={{ marginLeft: 3 }}
+            />
           </View>
         </View>
       )}
@@ -278,16 +291,12 @@ function StageLabel({ label, done }: { label: string; done: boolean }) {
 
 const styles = StyleSheet.create({
   card: {
-    backgroundColor: '#FFFFFF',
+    backgroundColor: LightColors.surface,
     borderRadius: 18,
     padding: 16,
     borderWidth: 1,
     borderColor: BORDER,
-    shadowColor: '#0F172A',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.06,
-    shadowRadius: 10,
-    elevation: 2,
+    ...Elevation.md,
   },
   statusRow: {
     flexDirection: 'row',
@@ -314,7 +323,7 @@ const styles = StyleSheet.create({
     textTransform: 'uppercase',
   },
   amountChip: {
-    backgroundColor: '#EFF4FF',
+    backgroundColor: LightColors.primaryLight,
     borderRadius: 999,
     paddingHorizontal: 10,
     paddingVertical: 3,
@@ -334,8 +343,8 @@ const styles = StyleSheet.create({
   infoRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#F8FAFC',
-    borderRadius: 12,
+    backgroundColor: LightColors.surfaceMuted,
+    borderRadius: 16,
     padding: 10,
   },
   infoMeta: {
@@ -368,7 +377,7 @@ const styles = StyleSheet.create({
     width: 32,
     height: 32,
     borderRadius: 8,
-    backgroundColor: '#EFF4FF',
+    backgroundColor: LightColors.primaryLight,
     alignItems: 'center',
     justifyContent: 'center',
   },
@@ -394,7 +403,7 @@ const styles = StyleSheet.create({
   trackPillText: {
     fontSize: 11,
     fontFamily: 'Quicksand_700Bold',
-    color: '#FFFFFF',
+    color: LightColors.textInverse,
   },
   progressTrack: {
     flexDirection: 'row',

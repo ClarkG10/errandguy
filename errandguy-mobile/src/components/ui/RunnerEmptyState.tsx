@@ -2,6 +2,7 @@ import React from 'react';
 import { View, Text, StyleSheet } from 'react-native';
 import type { LucideIcon } from 'lucide-react-native';
 import { Button } from './Button';
+import { LightColors } from '../../constants/colors';
 
 interface RunnerEmptyStateProps {
   icon?: LucideIcon;
@@ -44,7 +45,7 @@ export function RunnerEmptyState({
     <View style={s.wrap}>
       {Icon ? (
         <View style={s.glyph}>
-          <Icon size={26} color="#64748B" strokeWidth={1.6} />
+          <Icon size={26} color={LightColors.textTertiary} strokeWidth={1.6} />
         </View>
       ) : null}
 
@@ -74,8 +75,8 @@ const s = StyleSheet.create({
     height: 60,
     borderRadius: 30,
     borderWidth: 1.2,
-    borderColor: '#CBD5E1',
-    backgroundColor: '#F8FAFC',
+    borderColor: LightColors.dividerStrong,
+    backgroundColor: LightColors.background,
     alignItems: 'center',
     justifyContent: 'center',
     marginBottom: 18,
@@ -85,13 +86,13 @@ const s = StyleSheet.create({
     fontFamily: 'Quicksand_700Bold',
     letterSpacing: 1.6,
     textTransform: 'uppercase',
-    color: '#64748B',
+    color: LightColors.textTertiary,
     marginBottom: 8,
   },
   title: {
     fontSize: 16,
     fontFamily: 'Quicksand_700Bold',
-    color: '#0F172A',
+    color: LightColors.textPrimary,
     textAlign: 'center',
     marginBottom: 6,
     letterSpacing: -0.2,
@@ -99,7 +100,7 @@ const s = StyleSheet.create({
   description: {
     fontSize: 13,
     fontFamily: 'Quicksand_400Regular',
-    color: '#64748B',
+    color: LightColors.textTertiary,
     textAlign: 'center',
     lineHeight: 18,
     maxWidth: 280,

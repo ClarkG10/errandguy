@@ -9,10 +9,7 @@ import {
   KeyboardAvoidingView,
   Platform,
 } from 'react-native';
-import { useRouter } from 'expo-router';
 import {
-  ArrowLeft,
-  UserPlus,
   Star,
   Pencil,
   Trash2,
@@ -25,12 +22,14 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { userService } from '../../../services/user.service';
 import { Button } from '../../../components/ui/Button';
 import { BottomActionBar } from '../../../components/ui/BottomActionBar';
+import { GradientHeader } from '../../../components/ui/GradientHeader';
 import { Input } from '../../../components/ui/Input';
 import { Badge } from '../../../components/ui/Badge';
 import { EmptyState } from '../../../components/ui/EmptyState';
 import { ContactIllustration } from '../../../components/auth/OnboardingIllustrations';
 import { ContactsSkeleton } from '../../../components/ui/Skeleton';
 import { ConfirmModal } from '../../../components/ui/ConfirmModal';
+import { LightColors } from '../../../constants/colors';
 import type { TrustedContact } from '../../../types';
 import { toast } from '../../../stores/toastStore';
 
@@ -39,7 +38,6 @@ const MAX_CONTACTS = 5;
 const CACHE_KEY = '@trusted_contacts_cache';
 
 export default function TrustedContactsScreen() {
-  const router = useRouter();
   const [contacts, setContacts] = useState<TrustedContact[]>([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -200,7 +198,7 @@ export default function TrustedContactsScreen() {
         <View className="flex-row items-center bg-surface rounded-xl mx-5 mb-3 p-4 border border-divider">
           {/* Drag handle placeholder */}
           <View className="mr-3">
-            <GripVertical size={18} color="#94A3B8" />
+            <GripVertical size={18} color={LightColors.textMuted} />
           </View>
 
           <View className="flex-1">
@@ -209,7 +207,11 @@ export default function TrustedContactsScreen() {
                 {item.name}
               </Text>
               {isPrimary && (
-                <Star size={14} color="#F59E0B" fill="#F59E0B" />
+                <Star
+                  size={14}
+                  color={LightColors.warning}
+                  fill={LightColors.warning}
+                />
               )}
               <Badge
                 label={item.relationship}
@@ -218,7 +220,7 @@ export default function TrustedContactsScreen() {
               />
             </View>
             <View className="flex-row items-center gap-1">
-              <Phone size={12} color="#64748B" />
+              <Phone size={12} color={LightColors.textTertiary} />
               <Text className="text-xs font-montserrat text-textSecondary">
                 {maskPhone(item.phone)}
               </Text>
@@ -230,13 +232,13 @@ export default function TrustedContactsScreen() {
               onPress={() => openEditModal(item)}
               className="w-8 h-8 rounded-full bg-primaryLight items-center justify-center"
             >
-              <Pencil size={14} color="#2563EB" />
+              <Pencil size={14} color={LightColors.primary} />
             </Pressable>
             <Pressable
               onPress={() => handleDelete(item)}
-              className="w-8 h-8 rounded-full bg-red-50 items-center justify-center"
+              className="w-8 h-8 rounded-full bg-dangerSoft items-center justify-center"
             >
-              <Trash2 size={14} color="#EF4444" />
+              <Trash2 size={14} color={LightColors.danger} />
             </Pressable>
           </View>
         </View>
@@ -254,28 +256,17 @@ export default function TrustedContactsScreen() {
   }
 
   return (
-    <SafeAreaView className="flex-1 bg-background" edges={['top']}>
-      {/* Header */}
-      <View className="flex-row items-center justify-between px-5 py-4">
-        <View className="flex-row items-center">
-          <Pressable
-            onPress={() => router.canGoBack() ? router.back() : router.replace('/(customer)/(tabs)/profile')}
-            accessibilityRole="button"
-            accessibilityLabel="Go back"
-            hitSlop={8}
-            className="mr-3 w-9 h-9 rounded-xl bg-surface items-center justify-center"
-            style={{ shadowColor: '#0F172A', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.04, shadowRadius: 6, elevation: 1 }}
-          >
-            <ArrowLeft size={20} color="#0F172A" />
-          </Pressable>
-          <Text className="text-xl font-montserrat-bold text-textPrimary">
-            Trusted Contacts
+    <View className="flex-1 bg-background">
+      <GradientHeader
+        title="Trusted Contacts"
+        showBack
+        fallbackHref="/(customer)/(tabs)/profile"
+        trailing={
+          <Text className="text-xs font-montserrat text-textSecondary">
+            {contacts.length}/{MAX_CONTACTS}
           </Text>
-        </View>
-        <Text className="text-xs font-montserrat text-textSecondary">
-          {contacts.length}/{MAX_CONTACTS}
-        </Text>
-      </View>
+        }
+      />
 
       {/* Info banner */}
       <View className="mx-5 mb-4 p-3 bg-primaryLight rounded-xl">
@@ -321,7 +312,7 @@ export default function TrustedContactsScreen() {
                   {editingId ? 'Edit Contact' : 'Add Contact'}
                 </Text>
                 <Pressable onPress={() => setModalVisible(false)} hitSlop={12}>
-                  <X size={24} color="#64748B" />
+                  <X size={24} color={LightColors.textTertiary} />
                 </Pressable>
               </View>
 
@@ -394,6 +385,6 @@ export default function TrustedContactsScreen() {
         onConfirm={confirmDelete}
         onCancel={() => setPendingDelete(null)}
       />
-    </SafeAreaView>
+    </View>
   );
 }

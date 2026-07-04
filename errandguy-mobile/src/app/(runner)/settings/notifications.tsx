@@ -4,6 +4,7 @@ import { useRouter } from 'expo-router';
 import { Bell, MessageSquare, Star, AlertTriangle } from 'lucide-react-native';
 import { GradientHeader } from '../../../components/ui/GradientHeader';
 import { Card } from '../../../components/ui/Card';
+import { LightColors } from '../../../constants/colors';
 import type { LucideIcon } from 'lucide-react-native';
 
 interface NotifPref {
@@ -71,12 +72,14 @@ export default function NotificationsScreen() {
               }`}
             >
               <View className="flex-row items-center gap-3 flex-1 mr-3">
-                <pref.icon size={20} color="#475569" />
+                <View className="w-10 h-10 rounded-full bg-primaryLight items-center justify-center">
+                  <pref.icon size={18} color={LightColors.primary} strokeWidth={1.8} />
+                </View>
                 <View className="flex-1">
-                  <Text className="text-sm font-montserrat-bold text-textPrimary">
+                  <Text className="text-[14px] font-montserrat-semi text-textPrimary">
                     {pref.label}
                   </Text>
-                  <Text className="text-xs font-montserrat text-textSecondary mt-0.5">
+                  <Text className="text-sm font-montserrat text-textSecondary mt-0.5">
                     {pref.description}
                   </Text>
                 </View>
@@ -84,8 +87,8 @@ export default function NotificationsScreen() {
               <Switch
                 value={prefs[pref.key]}
                 onValueChange={() => toggle(pref.key)}
-                trackColor={{ false: '#CBD5E1', true: '#93C5FD' }}
-                thumbColor={prefs[pref.key] ? '#2563EB' : '#F1F5F9'}
+                trackColor={{ false: LightColors.dividerStrong, true: LightColors.primaryMuted }}
+                thumbColor={prefs[pref.key] ? LightColors.primary : LightColors.surface}
               />
             </View>
           ))}

@@ -1,10 +1,12 @@
 import React, { useState } from 'react';
 import { View, Text, ScrollView, KeyboardAvoidingView, Platform } from 'react-native';
 import { useRouter } from 'expo-router';
-// ArrowLeft is now provided by the shared <BackButton> primitive.
 import { GradientHeader } from '../../../components/ui/GradientHeader';
 import { Input } from '../../../components/ui/Input';
 import { Button } from '../../../components/ui/Button';
+import { BottomActionBar } from '../../../components/ui/BottomActionBar';
+import { Avatar } from '../../../components/ui/Avatar';
+import { Card } from '../../../components/ui/Card';
 import { useAuthStore } from '../../../stores/authStore';
 import { userService } from '../../../services/user.service';
 import { toast } from '../../../stores/toastStore';
@@ -55,7 +57,24 @@ export default function EditProfileScreen() {
           showsVerticalScrollIndicator={false}
           contentContainerStyle={{ paddingBottom: 40 }}
         >
-          <View className="mt-2">
+          {/* Avatar identity header — grounds the form with who you're editing. */}
+          <View className="items-center pt-5 pb-6">
+            <Avatar uri={user?.avatar_url} name={user?.full_name} size="xl" />
+            <Text className="text-[16px] font-montserrat-bold text-textPrimary mt-3" numberOfLines={1}>
+              {user?.full_name ?? 'Runner'}
+            </Text>
+            {user?.email ? (
+              <Text className="text-[12px] font-montserrat text-textSecondary mt-0.5" numberOfLines={1}>
+                {user.email}
+              </Text>
+            ) : null}
+          </View>
+
+          {/* Fields grouped in a single card, per the settings reference. */}
+          <Text className="text-[10px] font-montserrat-bold uppercase text-textSecondary mb-2 ml-1" style={{ letterSpacing: 1.4 }}>
+            Personal details
+          </Text>
+          <Card padding="md">
             <Input
               label="Full Name"
               value={fullName}
@@ -63,7 +82,6 @@ export default function EditProfileScreen() {
               placeholder="Enter your full name"
               autoCapitalize="words"
             />
-
             <Input
               label="Phone Number"
               value={phone}
@@ -72,7 +90,6 @@ export default function EditProfileScreen() {
               keyboardType="phone-pad"
               maxLength={13}
             />
-
             <Input
               label="Email Address"
               value={email}
@@ -81,16 +98,20 @@ export default function EditProfileScreen() {
               keyboardType="email-address"
               autoCapitalize="none"
             />
-          </View>
-
-          <Button
-            title="Save Changes"
-            onPress={handleSave}
-            loading={loading}
-            fullWidth
-          />
+          </Card>
         </ScrollView>
       </KeyboardAvoidingView>
+
+      {/* Sticky save bar — primary action lives in the thumb zone. */}
+      <BottomActionBar>
+        <Button
+          title="Save Changes"
+          onPress={handleSave}
+          loading={loading}
+          fullWidth
+          size="lg"
+        />
+      </BottomActionBar>
     </View>
   );
 }

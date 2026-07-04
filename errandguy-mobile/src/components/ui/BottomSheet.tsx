@@ -17,6 +17,7 @@ import Animated, {
   runOnJS,
 } from 'react-native-reanimated';
 import { useKeyboard } from '../../hooks/useKeyboard';
+import { LightColors } from '../../constants/colors';
 
 const { height: SCREEN_HEIGHT } = Dimensions.get('window');
 // Smooth, non-bouncy slide-up. Critically damped so the sheet glides
@@ -140,13 +141,15 @@ export function BottomSheet({
           style={[
             { height: sheetHeight },
             // Edge-to-edge sheet (no floating side margins) — modern
-            // apps anchor sheets to the screen edges. A subtle top
-            // shadow gives depth.
+            // apps anchor sheets to the screen edges. Big soft top
+            // corners + a diffuse top shadow give depth.
             {
-              shadowColor: '#0F172A',
-              shadowOffset: { width: 0, height: -4 },
-              shadowOpacity: 0.12,
-              shadowRadius: 16,
+              borderTopLeftRadius: 28,
+              borderTopRightRadius: 28,
+              shadowColor: LightColors.textPrimary,
+              shadowOffset: { width: 0, height: -10 },
+              shadowOpacity: 0.08,
+              shadowRadius: 24,
               elevation: 12,
             },
             animatedStyle,

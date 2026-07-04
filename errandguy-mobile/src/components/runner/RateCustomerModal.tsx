@@ -13,6 +13,7 @@ import {
 import { Avatar } from '../ui/Avatar';
 import { RatingStars } from '../ui/RatingStars';
 import { Button } from '../ui/Button';
+import { LightColors } from '../../constants/colors';
 
 interface RateCustomerModalProps {
   customerName: string;
@@ -65,7 +66,7 @@ export function RateCustomerModal({
                 <TextInput
                   className="bg-surface border border-divider rounded-xl p-3 text-sm font-montserrat text-textPrimary min-h-[80px] mb-4"
                   placeholder="Leave a comment (optional)"
-                  placeholderTextColor="#94A3B8"
+                  placeholderTextColor={LightColors.textMuted}
                   multiline
                   maxLength={200}
                   value={comment}

@@ -2,6 +2,7 @@ import React from 'react';
 import { Pressable, Platform } from 'react-native';
 import { useRouter } from 'expo-router';
 import { ArrowLeft } from 'lucide-react-native';
+import { LightColors } from '../../constants/colors';
 
 interface BackButtonProps {
   /** Where to fall back to when there's nothing on the navigation stack. */
@@ -63,12 +64,12 @@ export function BackButton({
       hitSlop={8}
       android_ripple={
         Platform.OS === 'android'
-          ? { color: 'rgba(15,23,42,0.08)', borderless: true, radius: 22 }
+          ? { color: `${LightColors.textPrimary}14`, borderless: true, radius: 22 }
           : undefined
       }
       style={({ pressed }) => [
         {
-          shadowColor: '#0F172A',
+          shadowColor: LightColors.textPrimary,
           shadowOffset: { width: 0, height: 1 },
           shadowOpacity: 0.04,
           shadowRadius: 6,
@@ -78,9 +79,9 @@ export function BackButton({
           ? { opacity: 0.7, transform: [{ scale: 0.94 }] }
           : null,
       ]}
-      className={`${dimension} rounded-xl bg-surface items-center justify-center ${className ?? ''}`}
+      className={`${dimension} rounded-full bg-surface items-center justify-center ${className ?? ''}`}
     >
-      <ArrowLeft size={20} color="#0F172A" />
+      <ArrowLeft size={20} color={LightColors.textPrimary} />
     </Pressable>
   );
 }

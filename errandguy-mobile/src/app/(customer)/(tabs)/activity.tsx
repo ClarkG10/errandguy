@@ -21,6 +21,7 @@ import { RecentErrandItem } from '../../../components/customer/RecentErrandItem'
 import { BookingDetailSheet } from '../../../components/customer/BookingDetailSheet';
 import { ActivitySkeleton } from '../../../components/ui/Skeleton';
 import type { Booking, BookingStatus } from '../../../types';
+import { LightColors } from '../../../constants/colors';
 import { toast } from '../../../stores/toastStore';
 import { TAB_CONTENT_BOTTOM_INSET } from '../../../constants/tabLayout';
 
@@ -222,11 +223,10 @@ export default function ActivityScreen() {
         }}
       />
 
-      {/* Filter chips — underline-only style. Active filter has a 2px
-          brand underline and bold weight; inactive is muted text. No
-          colored fills, no rounded pills — reads as a tab strip rather
-          than a row of buttons. */}
-      <View className="flex-row px-5 mt-3 mb-3 border-b border-divider">
+      {/* Segmented filter pills — selected pill is a solid brand-blue
+          capsule with white text; unselected pills sit on the muted
+          surface tint so the row reads as one segmented control. */}
+      <View className="flex-row px-5 mt-1 mb-3" style={{ gap: 8 }}>
         {FILTERS.map((f) => {
           const active = filter === f.key;
           return (
@@ -234,15 +234,16 @@ export default function ActivityScreen() {
               key={f.key}
               onPress={() => setFilter(f.key)}
               hitSlop={6}
-              className="pr-5 pb-2.5 -mb-px"
-              style={active ? { borderBottomWidth: 2, borderBottomColor: '#2563EB' } : undefined}
+              className={`px-4 py-2 rounded-full ${
+                active ? 'bg-primary' : 'bg-surfaceMuted'
+              }`}
               accessibilityRole="tab"
               accessibilityState={{ selected: active }}
             >
               <Text
                 className={`text-[13px] ${
                   active
-                    ? 'font-montserrat-bold text-textPrimary'
+                    ? 'font-montserrat-bold text-white'
                     : 'font-montserrat-semi text-textSecondary'
                 }`}
               >
@@ -287,7 +288,7 @@ export default function ActivityScreen() {
         ListFooterComponent={
           loadingMore ? (
             <View className="py-4 items-center">
-              <ActivityIndicator size="small" color="#2563EB" />
+              <ActivityIndicator size="small" color={LightColors.primary} />
             </View>
           ) : !hasMore && bookings.length > 0 ? (
             <View className="py-4 items-center">

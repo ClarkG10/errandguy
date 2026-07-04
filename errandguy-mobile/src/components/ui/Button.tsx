@@ -5,7 +5,6 @@ import {
   Animated,
   StyleSheet,
   Platform,
-  View,
   type ViewStyle,
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -19,18 +18,17 @@ import { LightColors } from '../../constants/colors';
 /**
  * Modern blue-first CTA button.
  *
- * Redesign goals (May 2026):
- *  - Primary CTA carries the brand colour directly (#2563EB) rather
- *    than the previous near-black slab. The whole product now revolves
- *    around blue, so the button reflects that identity.
- *  - Sizes are smaller and tighter — the previous md was 50pt tall,
- *    too bulky for a mobile-first product. The new sm/md/lg = 36/44/50
- *    keeps Apple's 44×44 minimum tap target while reading lighter.
- *  - Optional `gradient` variant applies the brand 3-stop gradient for
- *    hero moments (auth Continue, "Book now"). Off by default — flat
- *    blue is the production default.
- *  - Brand-tinted elevation (blue shadow) so the button visibly lifts
- *    off the page in keeping with the design language.
+ * Redesign goals (July 2026 — "clean & airy"):
+ *  - Primary CTA carries the brand colour directly (#2563EB); it is
+ *    the single strong accent on an otherwise neutral canvas.
+ *  - CTAs are generous again — sm/md/lg ≈ 38/48/54. A taller primary
+ *    button with soft corners (r16) reads confident and easy to hit;
+ *    the airy canvas around it keeps the page from feeling heavy.
+ *  - Optional `gradient` variant applies the brand gradient for hero
+ *    moments only (welcome / book-now). Off by default — flat blue is
+ *    the production default.
+ *  - Elevation is a soft diffuse blue tint (low opacity, large radius)
+ *    rather than a punchy drop shadow.
  *  - Trailing chevron remains opt-in for multi-step flows.
  */
 
@@ -77,10 +75,10 @@ const variantStyles: Record<ButtonVariant, ViewStyle> = {
 };
 
 const variantTextColors: Record<ButtonVariant, string> = {
-  primary: '#FFFFFF',
+  primary: LightColors.textInverse,
   secondary: PRIMARY_PRESSED,
   outline: PRIMARY_BG,
-  danger: '#FFFFFF',
+  danger: LightColors.textInverse,
   ghost: PRIMARY_BG,
 };
 
@@ -90,15 +88,13 @@ const variantTextColors: Record<ButtonVariant, string> = {
 const ANDROID_TEXT_SCALE = Platform.OS === 'android' ? -1 : 0;
 const ANDROID_PAD_SCALE = Platform.OS === 'android' ? -2 : 0;
 
-// Reduced sizes — the previous md (50pt) read as oversized. Modern
-// fintech CTAs land around 44pt; we keep a 36/44/50 ladder, with a
-// fine-grained trim (~1pt vertical, ~0.5pt text) so secondary actions
-// read a touch lighter without crossing Apple's 44pt minimum target
-// on the primary `md` size.
+// Generous 2026 ladder — 38/48/54. Taller CTAs with soft corners
+// read confident and are comfortably above Apple's 44pt minimum on
+// md/lg; sm stays compact for inline/secondary actions.
 const BASE_SIZES: Record<ButtonSize, { padV: number; padH: number; minH: number; text: number; icon: number }> = {
-  sm: { padV: 6,  padH: 12, minH: 32, text: 12, icon: 14 },
-  md: { padV: 8, padH: 16, minH: 40, text: 13, icon: 16 },
-  lg: { padV: 11, padH: 18, minH: 46, text: 14.5, icon: 18 },
+  sm: { padV: 8,  padH: 14, minH: 38, text: 13, icon: 15 },
+  md: { padV: 12, padH: 18, minH: 48, text: 15, icon: 17 },
+  lg: { padV: 14, padH: 20, minH: 54, text: 16, icon: 18 },
 };
 
 const PLATFORM_FONT = Platform.select({
@@ -167,9 +163,10 @@ export function Button({
 
   const contentColor = variantTextColors[variant];
 
-  // Brand-tinted elevation for filled CTAs only. Outline / ghost /
-  // secondary stay flat so the page hierarchy reads from the page
-  // surface upward.
+  // Brand-tinted elevation for filled CTAs only — soft and diffuse
+  // (low opacity, large radius) so the button floats rather than pops.
+  // Outline / ghost / secondary stay flat so the page hierarchy reads
+  // from the page surface upward.
   const elevationStyle: ViewStyle | null =
     !isDisabled && (variant === 'primary' || variant === 'danger')
       ? (Platform.select({
@@ -177,8 +174,8 @@ export function Button({
             shadowColor:
               variant === 'danger' ? LightColors.danger : LightColors.primary700,
             shadowOffset: { width: 0, height: 6 },
-            shadowOpacity: 0.18,
-            shadowRadius: 12,
+            shadowOpacity: 0.14,
+            shadowRadius: 16,
           },
           android: { elevation: 3 },
           default: {},
@@ -190,11 +187,6 @@ export function Button({
   // <LinearGradient>.
   const renderContent = () => (
     <>
-      {/* Subtle top inner highlight on filled variants. */}
-      {(variant === 'primary' || variant === 'danger') && !isDisabled && (
-        <View pointerEvents="none" style={bs.innerHighlight} />
-      )}
-
       {loading ? (
         <ErrandLoader
           size={size === 'sm' ? 4 : size === 'md' ? 5 : 6}
@@ -252,8 +244,8 @@ export function Button({
     onPressOut: handlePressOut,
     android_ripple:
       variant === 'ghost' || variant === 'outline' || variant === 'secondary'
-        ? { color: 'rgba(37,99,235,0.10)', borderless: false }
-        : { color: 'rgba(255,255,255,0.16)', borderless: false },
+        ? { color: `${LightColors.primary}1A`, borderless: false }
+        : { color: `${LightColors.textInverse}29`, borderless: false },
   };
 
   return (
@@ -312,19 +304,10 @@ const bs = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    // 14px — friendlier than 12, still distinctly squircle. Matches
-    // the tightened global radius scale.
-    borderRadius: 14,
+    // Full pill — matches the reference ride-hailing CTA language.
+    borderRadius: 999,
     overflow: 'hidden',
     position: 'relative',
-  },
-  innerHighlight: {
-    position: 'absolute',
-    top: 0,
-    left: 0,
-    right: 0,
-    height: 1,
-    backgroundColor: 'rgba(255,255,255,0.14)',
   },
   full: { width: '100%' },
   disabled: { opacity: 0.45 },

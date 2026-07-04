@@ -6,19 +6,21 @@ import { ChevronLeft } from 'lucide-react-native';
 import { useRouter } from 'expo-router';
 import type { LucideIcon } from 'lucide-react-native';
 import { useResponsive } from '../../constants/responsive';
+import { LightColors } from '../../constants/colors';
 
 /**
- * Brand-color page header — used on every customer (and runner) page
- * for visual consistency. Slim by default; pages that need a hero
- * (home, auth) wrap their own LinearGradient with extra body content.
+ * Page header used on every customer (and runner) page.
  *
- * Pattern: blue gradient band with rounded bottom corners, white
- * title left, optional trailing action right, optional back chevron.
+ * 2026 "clean & airy" pass: the default is now a flat `soft` variant —
+ * background-colored band, ink title, circular muted back button — so
+ * the brand gradient stops shouting from every screen. The gradient
+ * budget is two hero moments (customer home, auth welcome) plus the
+ * QuickBook FAB; pages that truly need the brand band can opt back in
+ * with `variant="brand"`.
  *
  * The wrapping `View` adds a default 16px bottom margin so screen
- * content below the header always has visible breathing room from
- * the brand band — without each consumer having to remember to add
- * `mt-4` themselves.
+ * content below the header always has visible breathing room —
+ * without each consumer having to remember to add `mt-4` themselves.
  */
 interface TrailingAction {
   icon?: LucideIcon;
@@ -33,16 +35,28 @@ interface GradientHeaderProps {
   showBack?: boolean;
   fallbackHref?: string;
   trailing?: TrailingAction | React.ReactNode;
-  /** Extra content rendered under the title row, still on the gradient. */
+  /** Extra content rendered under the title row, still on the band. */
   children?: React.ReactNode;
-  /** Round the bottom corners. Off by default — only the home hero uses it. */
+  /** Round the bottom corners. Off by default — only the brand hero uses it. */
   rounded?: boolean;
   /** Drop the default 16px bottom margin (e.g. when the next element is
    *  meant to overlap the header, like a search pill). */
   flush?: boolean;
+  /** `soft` (default): flat background band, ink text, muted circular
+   *  back button. `brand`: legacy blue gradient band — reserved for
+   *  hero moments. */
+  variant?: 'soft' | 'brand';
 }
 
-export const HEADER_COLORS = ['#1E40AF', '#2563EB', '#3B82F6'] as const;
+export const HEADER_COLORS = [
+  LightColors.gradientStart,
+  LightColors.gradientMid,
+  LightColors.gradientEnd,
+] as const;
+
+// Muted circle behind the back chevron on the soft variant — one step
+// deeper than the canvas so it reads as a control.
+const SOFT_BACK_BG = LightColors.divider;
 
 export function GradientHeader({
   title,
@@ -52,9 +66,12 @@ export function GradientHeader({
   children,
   rounded = false,
   flush = false,
+  variant = 'soft',
 }: GradientHeaderProps) {
   const router = useRouter();
   const { mScale } = useResponsive();
+
+  const soft = variant === 'soft';
 
   // Header chrome scales moderately so it stays balanced on narrow
   // phones (~10% smaller) without growing oversized on tablets
@@ -62,11 +79,13 @@ export function GradientHeader({
   // delta because Material vs Human-Interface guidelines disagree.
   const padH = mScale(20);
   const titleHeight = mScale(Platform.OS === 'android' ? 48 : 52);
-  const titleFont = mScale(Platform.OS === 'android' ? 16 : 18);
+  const titleFont = mScale(Platform.OS === 'android' ? 17 : 19);
   const trailingSlot = mScale(40);
-  const backBtn = mScale(34);
+  const backBtn = mScale(36);
   const trailingIcon = mScale(22);
   const backIcon = mScale(20);
+
+  const contentColor = soft ? LightColors.ink : LightColors.textInverse;
 
   const handleBack = () => {
     if (router.canGoBack()) router.back();
@@ -91,7 +110,7 @@ export function GradientHeader({
           accessibilityRole="button"
           accessibilityLabel={t.accessibilityLabel ?? t.label ?? 'Action'}
         >
-          <Icon size={trailingIcon} color="#FFFFFF" strokeWidth={1.9} />
+          <Icon size={trailingIcon} color={contentColor} strokeWidth={1.9} />
           {t.badge && t.badge > 0 ? (
             <View
               className="absolute"
@@ -101,9 +120,9 @@ export function GradientHeader({
                 width: 8,
                 height: 8,
                 borderRadius: 4,
-                backgroundColor: '#F87171',
+                backgroundColor: LightColors.danger,
                 borderWidth: 1.5,
-                borderColor: '#1D4ED8',
+                borderColor: soft ? LightColors.background : LightColors.primaryDark,
               }}
             />
           ) : null}
@@ -119,7 +138,10 @@ export function GradientHeader({
           accessibilityRole="button"
           accessibilityLabel={t.accessibilityLabel ?? t.label}
         >
-          <Text className="text-[12px] font-montserrat-bold text-white">
+          <Text
+            className="text-[12px] font-montserrat-bold"
+            style={{ color: soft ? LightColors.primary : LightColors.textInverse }}
+          >
             {t.label}
           </Text>
         </Pressable>
@@ -127,6 +149,67 @@ export function GradientHeader({
     }
     return <View style={[s.trailingSlot, slotStyle]} />;
   };
+
+  const inner = (
+    <SafeAreaView edges={['top']}>
+      {/* Fixed-height title row — keeps every page header the same
+          vertical size regardless of whether trailing is an icon
+          button (40px tall), a label (~14px), or absent. */}
+      <View style={[s.titleRow, { paddingHorizontal: padH, height: titleHeight }]}>
+        {showBack ? (
+          <Pressable
+            onPress={handleBack}
+            hitSlop={10}
+            style={[
+              s.backBtn,
+              {
+                width: backBtn,
+                height: backBtn,
+                borderRadius: backBtn / 2,
+                backgroundColor: soft ? SOFT_BACK_BG : `${LightColors.textInverse}2E`,
+              },
+            ]}
+            accessibilityRole="button"
+            accessibilityLabel="Go back"
+          >
+            <ChevronLeft size={backIcon} color={contentColor} strokeWidth={2.2} />
+          </Pressable>
+        ) : null}
+        <Text
+          className="flex-1 font-montserrat-bold"
+          numberOfLines={1}
+          style={{
+            marginLeft: showBack ? 10 : 0,
+            fontSize: titleFont,
+            color: contentColor,
+          }}
+        >
+          {title}
+        </Text>
+        {renderTrailing()}
+      </View>
+      {/* Children render under the title row with a small bottom
+          gutter so the band has weight even on slim headers. */}
+      {children ? <View style={{ paddingBottom: 8 }}>{children}</View> : null}
+    </SafeAreaView>
+  );
+
+  if (soft) {
+    return (
+      <>
+        {Platform.OS === 'ios' && <StatusBar barStyle="dark-content" />}
+        <View
+          style={[
+            { backgroundColor: LightColors.background },
+            rounded ? s.gradientRounded : undefined,
+            !flush && { marginBottom: 16 },
+          ]}
+        >
+          {inner}
+        </View>
+      </>
+    );
+  }
 
   return (
     <>
@@ -140,41 +223,7 @@ export function GradientHeader({
           !flush && { marginBottom: 16 },
         ]}
       >
-        <SafeAreaView edges={['top']}>
-          {/* Fixed-height title row — keeps every page header the same
-              vertical size regardless of whether trailing is an icon
-              button (40px tall), a label (~14px), or absent. */}
-          <View style={[s.titleRow, { paddingHorizontal: padH, height: titleHeight }]}>
-            {showBack ? (
-              <Pressable
-                onPress={handleBack}
-                hitSlop={10}
-                style={[
-                  s.backBtn,
-                  { width: backBtn, height: backBtn, borderRadius: backBtn / 2 },
-                ]}
-                accessibilityRole="button"
-                accessibilityLabel="Go back"
-              >
-                <ChevronLeft size={backIcon} color="#FFFFFF" strokeWidth={2.2} />
-              </Pressable>
-            ) : null}
-            <Text
-              className="flex-1 font-montserrat-bold text-white"
-              numberOfLines={1}
-              style={{
-                marginLeft: showBack ? 8 : 0,
-                fontSize: titleFont,
-              }}
-            >
-              {title}
-            </Text>
-            {renderTrailing()}
-          </View>
-          {/* Children render under the title row with a small bottom
-              gutter so the brand band has weight even on slim headers. */}
-          {children ? <View style={{ paddingBottom: 8 }}>{children}</View> : null}
-        </SafeAreaView>
+        {inner}
       </LinearGradient>
     </>
   );
@@ -196,6 +245,5 @@ const s = StyleSheet.create({
   backBtn: {
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: 'rgba(255,255,255,0.18)',
   },
 });

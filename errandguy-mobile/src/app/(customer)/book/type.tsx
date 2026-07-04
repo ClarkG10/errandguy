@@ -27,6 +27,7 @@ import { BookingStepIndicator } from '../../../components/customer/BookingStepIn
 import { GradientHeader } from '../../../components/ui/GradientHeader';
 import { ErrandTypeIcon } from '../../../components/ui/ErrandTypeIcon';
 import { formatCurrency } from '../../../utils/formatCurrency';
+import { LightColors, Elevation } from '../../../constants/colors';
 import type { ErrandType } from '../../../types';
 import { toast } from '../../../stores/toastStore';
 
@@ -158,7 +159,7 @@ export default function TypeSelectionScreen() {
         <View className="px-5 -mt-2 pb-3">
           <Text
             className="text-[10px] font-montserrat-bold uppercase"
-            style={{ letterSpacing: 1.4, color: 'rgba(255,255,255,0.78)' }}
+            style={{ letterSpacing: 1.4, color: LightColors.textSecondary }}
           >
             New errand · Step 1
           </Text>
@@ -178,8 +179,8 @@ export default function TypeSelectionScreen() {
           <RefreshControl
             refreshing={errandTypesQ.loading && errandTypes.length > 0}
             onRefresh={() => errandTypesQ.refresh()}
-            tintColor="#2563EB"
-            colors={['#2563EB']}
+            tintColor={LightColors.primary}
+            colors={[LightColors.primary]}
           />
         }
       >
@@ -189,7 +190,7 @@ export default function TypeSelectionScreen() {
               <View
                 key={`skeleton-${i}`}
                 className="w-[48%] mb-3 p-4 bg-surface"
-                style={{ height: 148, borderRadius: 12, borderWidth: 1, borderColor: '#E2E8F0', opacity: 0.6 }}
+                style={{ height: 148, borderRadius: 16, borderWidth: 1, borderColor: LightColors.divider, opacity: 0.6 }}
               >
                 <View className="w-11 h-11 rounded-xl bg-divider mb-3" />
                 <View className="h-3 w-3/4 rounded-full bg-divider mb-2" />
@@ -210,49 +211,62 @@ export default function TypeSelectionScreen() {
                 accessibilityRole="button"
                 accessibilityLabel={`${type.name}. ${type.description ?? ''}`}
                 accessibilityState={{ selected: isSelected }}
-                // 12px corners (was 2xl/16) so tiles read more like cards
-                // less like pills. Selected state replaces the tinted
-                // bg+border combo with a solid 2px primary border on a
-                // surface background — cleaner, no color-fill
-                // duplication with the icon and label colors.
-                className="w-[48%] mb-3 p-4 bg-surface"
+                // Ride-hailing selection pattern: the chosen tile fills
+                // solid brand blue with white content; unselected tiles
+                // are quiet white cards on a soft shadow. One glance
+                // tells you what's picked — no border bookkeeping.
+                className="w-[48%] mb-3 p-4"
                 style={({ pressed }) => [
                   {
-                    borderRadius: 12,
-                    borderWidth: isSelected ? 2 : 1,
-                    borderColor: isSelected ? '#2563EB' : '#E2E8F0',
+                    borderRadius: 20,
+                    backgroundColor: isSelected ? LightColors.primary : LightColors.surface,
                   },
+                  isSelected
+                    ? { ...Elevation.primary, shadowOpacity: 0.22 }
+                    : Elevation.sm,
                   pressed ? { opacity: 0.92, transform: [{ scale: 0.985 }] } : null,
                 ]}
-                android_ripple={{ color: 'rgba(37,99,235,0.08)', borderless: false }}
+                android_ripple={{ color: `${LightColors.primary}14`, borderless: false }}
                 onPress={() => setSelectedId(type.id)}
               >
                 <View className="flex-row items-start justify-between mb-2">
                   <ErrandTypeIcon
                     name={type.icon_name}
                     size="md"
-                    variant={isSelected ? 'solid' : 'tinted'}
+                    variant={isSelected ? 'ghost' : 'tinted'}
                   />
                   {isTransportation && (
-                    <Text className="text-[10px] font-montserrat-bold uppercase text-warning mt-1" style={{ letterSpacing: 1.2 }}>
+                    <Text
+                      className={`text-[10px] font-montserrat-bold uppercase mt-1 ${
+                        isSelected ? 'text-white/80' : 'text-warning'
+                      }`}
+                      style={{ letterSpacing: 1.2 }}
+                    >
                       Ride
                     </Text>
                   )}
                 </View>
+                {/* Colors set via inline style (not className) so the
+                    selected-state white text can never be purged or lose
+                    the class-resolution race — on a solid blue card,
+                    invisible white-on-white was the failure mode. */}
                 <Text
-                  className={`text-[14px] font-montserrat-bold mb-1 ${
-                    isSelected ? 'text-primary' : 'text-textPrimary'
-                  }`}
+                  className="text-[14px] font-montserrat-bold mb-1"
+                  style={{ color: isSelected ? LightColors.textInverse : LightColors.textPrimary }}
                 >
                   {type.name}
                 </Text>
                 <Text
-                  className="text-[11px] font-montserrat text-textSecondary mb-3 leading-[14px]"
+                  className="text-[11px] font-montserrat mb-3 leading-[14px]"
+                  style={{ color: isSelected ? `${LightColors.textInverse}BF` : LightColors.textSecondary }}
                   numberOfLines={2}
                 >
                   {type.description}
                 </Text>
-                <Text className="text-[11px] font-inter tabular-nums text-textMuted">
+                <Text
+                  className="text-[11px] font-inter tabular-nums"
+                  style={{ color: isSelected ? `${LightColors.textInverse}D9` : LightColors.textMuted }}
+                >
                   From {formatCurrency(type.base_fee)}
                 </Text>
               </Pressable>
@@ -262,7 +276,7 @@ export default function TypeSelectionScreen() {
         )}
         {!loadingTypes && errandTypes.length === 0 && (
           <View className="items-center py-16">
-            <ActivityIndicator size="small" color="#94A3B8" />
+            <ActivityIndicator size="small" color={LightColors.textMuted} />
             <Text className="mt-3 text-sm font-montserrat text-textTertiary text-center">
               No errand types available right now.{'\n'}Pull down or tap back to retry.
             </Text>
@@ -274,7 +288,7 @@ export default function TypeSelectionScreen() {
       {/* Bottom CTA */}
       <BottomActionBar
         divider={false}
-        style={{ shadowColor: '#0F172A', shadowOffset: { width: 0, height: -2 }, shadowOpacity: 0.04, shadowRadius: 8, elevation: 4 }}
+        style={{ shadowColor: LightColors.textPrimary, shadowOffset: { width: 0, height: -2 }, shadowOpacity: 0.04, shadowRadius: 8, elevation: 4 }}
       >
         <Button
           title="Continue"

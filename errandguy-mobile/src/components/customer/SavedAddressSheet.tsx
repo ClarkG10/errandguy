@@ -7,6 +7,7 @@ import { userService } from '../../services/user.service';
 import { useQuery } from '../../hooks/useQuery';
 import { CacheTTL } from '../../services/cache.service';
 import { useAuthStore } from '../../stores/authStore';
+import { LightColors } from '../../constants/colors';
 import type { SavedAddress } from '../../types';
 
 interface SavedAddressSheetProps {
@@ -71,18 +72,18 @@ export function SavedAddressSheet({
             accessibilityLabel="Close saved addresses"
             hitSlop={8}
           >
-            <X size={24} color="#475569" />
+            <X size={24} color={LightColors.textSecondary} />
           </Pressable>
         </View>
 
         {loading ? (
           <View className="items-center py-8">
-            <ActivityIndicator color="#2563EB" />
+            <ActivityIndicator color={LightColors.primary} />
           </View>
         ) : addresses.length === 0 ? (
           <View className="items-center py-8">
             <View className="w-14 h-14 rounded-full bg-primary50 items-center justify-center mb-3">
-              <MapPin size={26} color="#2563EB" />
+              <MapPin size={26} color={LightColors.primary} />
             </View>
             <Text className="text-sm font-montserrat-semi text-textPrimary">
               No saved addresses yet
@@ -95,7 +96,7 @@ export function SavedAddressSheet({
               accessibilityRole="button"
               className="mt-4 flex-row items-center gap-2 bg-primary rounded-xl px-4 py-2.5"
             >
-              <Plus size={16} color="#FFFFFF" />
+              <Plus size={16} color={LightColors.textInverse} />
               <Text className="text-sm font-montserrat-semi text-white">
                 Add an address
               </Text>
@@ -107,7 +108,7 @@ export function SavedAddressSheet({
             keyExtractor={(item) => item.id}
             renderItem={({ item }) => (
               <Pressable
-                android_ripple={{ color: '#E2E8F0', borderless: false }}
+                android_ripple={{ color: LightColors.divider, borderless: false }}
                 className="flex-row items-center border-b border-divider py-3"
                 onPress={() => {
                   onSelect(item);
@@ -122,9 +123,9 @@ export function SavedAddressSheet({
                   }`}
                 >
                   {item.is_default ? (
-                    <Star size={16} color="#FFFFFF" fill="#FFFFFF" />
+                    <Star size={16} color={LightColors.textInverse} fill={LightColors.textInverse} />
                   ) : (
-                    <MapPin size={16} color="#2563EB" />
+                    <MapPin size={16} color={LightColors.primary} />
                   )}
                 </View>
                 <View className="flex-1">
@@ -156,7 +157,7 @@ export function SavedAddressSheet({
                 accessibilityLabel="Manage saved addresses"
                 className="flex-row items-center justify-center gap-2 mt-3 py-3 rounded-xl bg-primary50"
               >
-                <Plus size={16} color="#2563EB" />
+                <Plus size={16} color={LightColors.primary} />
                 <Text className="text-sm font-montserrat-semi text-primary">
                   Manage addresses
                 </Text>

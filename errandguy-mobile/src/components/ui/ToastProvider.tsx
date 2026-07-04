@@ -18,15 +18,18 @@ import {
   Package,
 } from 'lucide-react-native';
 import { useToastStore, type ToastVariant } from '../../stores/toastStore';
+import { LightColors } from '../../constants/colors';
+
+const INVERSE = LightColors.textInverse;
 
 const VARIANT_CONFIG: Record<
   ToastVariant,
   { bg: string; icon: typeof CheckCircle; iconColor: string; textColor: string }
 > = {
-  success: { bg: '#059669', icon: CheckCircle, iconColor: '#fff', textColor: '#fff' },
-  error: { bg: '#EF4444', icon: AlertCircle, iconColor: '#fff', textColor: '#fff' },
-  info: { bg: '#2563EB', icon: Package, iconColor: '#fff', textColor: '#fff' },
-  warning: { bg: '#F59E0B', icon: AlertTriangle, iconColor: '#fff', textColor: '#fff' },
+  success: { bg: LightColors.success, icon: CheckCircle, iconColor: INVERSE, textColor: INVERSE },
+  error: { bg: LightColors.danger, icon: AlertCircle, iconColor: INVERSE, textColor: INVERSE },
+  info: { bg: LightColors.primary, icon: Package, iconColor: INVERSE, textColor: INVERSE },
+  warning: { bg: LightColors.warning, icon: AlertTriangle, iconColor: INVERSE, textColor: INVERSE },
 };
 
 const SHOW_DURATION = 4000;
@@ -125,15 +128,16 @@ const styles = StyleSheet.create({
   card: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingHorizontal: 14,
+    paddingHorizontal: 16,
     paddingVertical: 12,
-    borderRadius: 14,
+    // Full pill — floats like a capsule notification.
+    borderRadius: 999,
     gap: 10,
-    // shadow
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.15,
-    shadowRadius: 10,
+    // Soft diffuse lift (Elevation.md language).
+    shadowColor: LightColors.textPrimary,
+    shadowOffset: { width: 0, height: 6 },
+    shadowOpacity: 0.1,
+    shadowRadius: 16,
     elevation: 8,
   },
   message: {

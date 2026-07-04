@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useRef } from 'react';
 import { View, Text, Animated, Easing, Pressable } from 'react-native';
 import type { BookingStatus } from '../../types';
+import { LightColors } from '../../constants/colors';
 
 /**
  * Distinctive horizontal "journey beads" — replaces the verbose vertical
@@ -114,7 +115,7 @@ export function JourneyBeads({ status, accent = 'brand', onPress, showLabel = tr
     return () => loop.stop();
   }, [pulse, status]);
 
-  const activeColor = accent === 'danger' ? '#EF4444' : '#2563EB';
+  const activeColor = accent === 'danger' ? LightColors.danger : LightColors.primary;
   const activePhase = PHASES[activeIdx];
   const counter = useMemo(
     () => `${String(activeIdx + 1).padStart(2, '0')} / ${String(PHASES.length).padStart(2, '0')}`,
@@ -196,7 +197,7 @@ export function JourneyBeads({ status, accent = 'brand', onPress, showLabel = tr
                         borderRadius: baseSize / 2,
                         backgroundColor: isCompleted ? activeColor : 'transparent',
                         borderWidth: isCompleted ? 0 : 1.5,
-                        borderColor: '#CBD5E1',
+                        borderColor: LightColors.dividerStrong,
                       }}
                     />
                   );

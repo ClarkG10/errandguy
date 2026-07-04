@@ -7,6 +7,7 @@ import { paymentService } from '../../services/payment.service';
 import { useQuery } from '../../hooks/useQuery';
 import { CacheTTL } from '../../services/cache.service';
 import { useAuthStore } from '../../stores/authStore';
+import { LightColors } from '../../constants/colors';
 import type { PaymentMethod, PaymentMethodType } from '../../types';
 
 interface PaymentMethodSelectorProps {
@@ -102,14 +103,14 @@ export function PaymentMethodSelector({
         onPress={() => setShowSheet(true)}
       >
         {loading ? (
-          <ActivityIndicator size="small" color="#2563EB" />
+          <ActivityIndicator size="small" color={LightColors.primary} />
         ) : isCashSelected ? (
           <>
             <View
               className="w-10 h-10 rounded-full items-center justify-center"
-              style={{ backgroundColor: '#ECFDF5' }}
+              style={{ backgroundColor: LightColors.successLight }}
             >
-              <Banknote size={20} color="#16A34A" />
+              <Banknote size={20} color={LightColors.success} />
             </View>
             <View className="flex-1 ml-3">
               <Text className="text-[14px] font-montserrat-bold text-textPrimary">
@@ -127,9 +128,9 @@ export function PaymentMethodSelector({
           <>
             <View
               className="w-10 h-10 rounded-full items-center justify-center"
-              style={{ backgroundColor: '#EFF6FF' }}
+              style={{ backgroundColor: LightColors.primaryLight }}
             >
-              <Icon size={20} color="#2563EB" />
+              <Icon size={20} color={LightColors.primary} />
             </View>
             <View className="flex-1 ml-3">
               <Text className="text-[14px] font-montserrat-bold text-textPrimary">
@@ -147,7 +148,7 @@ export function PaymentMethodSelector({
           </>
         ) : (
           <>
-            <CreditCard size={20} color="#94A3B8" />
+            <CreditCard size={20} color={LightColors.textMuted} />
             <Text className="text-sm font-montserrat text-textSecondary ml-3 flex-1">
               Select payment method
             </Text>
@@ -166,7 +167,7 @@ export function PaymentMethodSelector({
               Payment Methods
             </Text>
             <Pressable onPress={() => setShowSheet(false)}>
-              <X size={24} color="#475569" />
+              <X size={24} color={LightColors.textSecondary} />
             </Pressable>
           </View>
 
@@ -189,7 +190,7 @@ export function PaymentMethodSelector({
                     setShowSheet(false);
                   }}
                 >
-                  <MethodIcon size={20} color="#2563EB" />
+                  <MethodIcon size={20} color={LightColors.primary} />
                   <View className="flex-1 ml-3">
                     <Text className="text-sm font-montserrat-bold text-textPrimary">
                       {item.label}
@@ -200,7 +201,7 @@ export function PaymentMethodSelector({
                       </Text>
                     )}
                   </View>
-                  {isSelected && <Check size={20} color="#2563EB" />}
+                  {isSelected && <Check size={20} color={LightColors.primary} />}
                   {item.is_default && !isSelected && (
                     <Text className="text-[10px] font-montserrat text-primary bg-primaryLight px-2 py-0.5 rounded">
                       Default
@@ -222,9 +223,9 @@ export function PaymentMethodSelector({
           >
             <View
               className="w-9 h-9 rounded-full items-center justify-center"
-              style={{ backgroundColor: '#ECFDF5' }}
+              style={{ backgroundColor: LightColors.successLight }}
             >
-              <Banknote size={18} color="#16A34A" />
+              <Banknote size={18} color={LightColors.success} />
             </View>
             <View className="flex-1 ml-3">
               <Text className="text-sm font-montserrat-bold text-textPrimary">
@@ -234,7 +235,7 @@ export function PaymentMethodSelector({
                 {CASH_OPTION.description}
               </Text>
             </View>
-            {selectedId === CASH_OPTION.id && <Check size={20} color="#2563EB" />}
+            {selectedId === CASH_OPTION.id && <Check size={20} color={LightColors.primary} />}
           </Pressable>
         </View>
       </BottomSheet>

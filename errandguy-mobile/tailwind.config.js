@@ -43,13 +43,14 @@ module.exports = {
         'primary-900': '#1E3A8A',
         primary900: '#1E3A8A',
 
-        // Surfaces — three white-to-blue tints stack cleanly.
+        // Surfaces — neutral near-white canvas; muted fill for inputs
+        // and chips, faint blue tint reserved for selected states.
         surface: '#FFFFFF',
-        'surface-muted': '#F8FAFC',
-        surfaceMuted: '#F8FAFC',
-        'surface-tinted': '#F0F6FF',
-        surfaceTinted: '#F0F6FF',
-        background: '#F5F8FF',
+        'surface-muted': '#F4F6F8',
+        surfaceMuted: '#F4F6F8',
+        'surface-tinted': '#EFF4FF',
+        surfaceTinted: '#EFF4FF',
+        background: '#F7F8FA',
 
         // Ink / text.
         ink: '#0B1220',
@@ -63,7 +64,7 @@ module.exports = {
         textInverse: '#FFFFFF',
 
         // Lines.
-        divider: '#E6EBF2',
+        divider: '#ECEFF3',
         'divider-strong': '#CBD5E1',
         dividerStrong: '#CBD5E1',
 
@@ -115,14 +116,14 @@ module.exports = {
         'inter-semi': ['Inter_600SemiBold'],
       },
       borderRadius: {
-        // Tighter modern scale. 10/12/14/16 reads as a deliberate
-        // production system rather than the previous 8/12/16/20.
-        sm: '10px',
-        md: '12px',
-        lg: '14px',
-        xl: '18px',
-        '2xl': '22px',
-        '3xl': '28px',
+        // Generous 2026 scale — one notch up across the board so
+        // cards (lg/xl) and sheets (3xl) read soft and airy.
+        sm: '12px',
+        md: '14px',
+        lg: '16px',
+        xl: '20px',
+        '2xl': '24px',
+        '3xl': '32px',
         full: '9999px',
       },
       fontSize: {
@@ -132,7 +133,10 @@ module.exports = {
         lg: '17px',
         xl: '19px',
         '2xl': '22px',
-        '3xl': '28px',
+        '3xl': '30px',
+        // Display size for screen heroes (home headline, earnings
+        // total, fare on review).
+        '4xl': '34px',
       },
     },
   },

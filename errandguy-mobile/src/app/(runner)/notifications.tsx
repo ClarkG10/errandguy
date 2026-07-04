@@ -29,6 +29,7 @@ import { useQuery } from '../../hooks/useQuery';
 import { CacheTTL } from '../../services/cache.service';
 import { formatRelativeTime } from '../../utils/formatDate';
 import type { AppNotification, NotificationType } from '../../types';
+import { LightColors } from '../../constants/colors';
 
 const TYPE_ICONS: Record<NotificationType, LucideIcon> = {
   booking_update: Package,
@@ -41,13 +42,13 @@ const TYPE_ICONS: Record<NotificationType, LucideIcon> = {
 };
 
 const TYPE_COLORS: Record<NotificationType, string> = {
-  booking_update: '#2563EB',
-  payment: '#22C55E',
-  promo: '#F59E0B',
-  chat: '#2563EB',
-  sos: '#EF4444',
-  system: '#94A3B8',
-  document_update: '#8B5CF6',
+  booking_update: LightColors.primary,
+  payment: LightColors.success,
+  promo: LightColors.warning,
+  chat: LightColors.primary,
+  sos: LightColors.danger,
+  system: LightColors.textMuted,
+  document_update: LightColors.info,
 };
 
 export default function RunnerNotificationsScreen() {
@@ -169,16 +170,19 @@ export default function RunnerNotificationsScreen() {
   const renderNotification = useCallback(
     ({ item }: { item: AppNotification }) => {
       const Icon = TYPE_ICONS[item.type] ?? Info;
-      const color = TYPE_COLORS[item.type] ?? '#94A3B8';
+      const color = TYPE_COLORS[item.type] ?? LightColors.textMuted;
 
       return (
         <Pressable
-          android_ripple={{ color: '#F1F5F9', borderless: false }}
+          android_ripple={{ color: LightColors.surfaceMuted, borderless: false }}
           className="px-5 py-3.5 border-b border-divider"
           onPress={() => handleNotificationPress(item)}
         >
           <View className="flex-row">
-            <View className="w-9 items-center pt-0.5">
+            <View
+              className="w-10 h-10 rounded-full items-center justify-center mr-3"
+              style={{ backgroundColor: `${color}15` }}
+            >
               <Icon size={18} color={color} strokeWidth={1.7} />
             </View>
             <View className="flex-1">
@@ -194,7 +198,7 @@ export default function RunnerNotificationsScreen() {
                   {item.title}
                 </Text>
                 {!item.is_read && (
-                  <View style={{ width: 6, height: 6, borderRadius: 3, backgroundColor: '#2563EB' }} />
+                  <View className="bg-primary" style={{ width: 6, height: 6, borderRadius: 3 }} />
                 )}
               </View>
               <Text
@@ -292,7 +296,7 @@ export default function RunnerNotificationsScreen() {
         ListFooterComponent={
           loadingMore ? (
             <View className="py-4 items-center">
-              <ActivityIndicator size="small" color="#2563EB" />
+              <ActivityIndicator size="small" color={LightColors.primary} />
             </View>
           ) : !hasMore && notifications.length > 0 ? (
             <View className="py-4 items-center">

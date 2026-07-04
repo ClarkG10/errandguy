@@ -16,6 +16,7 @@ import { formatCurrency } from '../../utils/formatCurrency';
 import { formatFullDate, formatTime } from '../../utils/formatDate';
 import { STATUS_LABELS, STATUS_COLORS } from '../../constants/statusLabels';
 import type { Booking } from '../../types';
+import { LightColors } from '../../constants/colors';
 
 interface BookingDetailSheetProps {
   booking: Booking | null;
@@ -33,7 +34,7 @@ export function BookingDetailSheet({
 
   if (!booking) return null;
 
-  const statusColor = STATUS_COLORS[booking.status] ?? '#94A3B8';
+  const statusColor = STATUS_COLORS[booking.status] ?? LightColors.textMuted;
   const statusLabel = STATUS_LABELS[booking.status] ?? booking.status;
 
   const priceItems = [
@@ -97,13 +98,13 @@ export function BookingDetailSheet({
           className="flex-row items-center justify-between py-3 border-y border-divider mb-5"
         >
           <View className="flex-row items-center flex-1">
-            <Hash size={12} color="#94A3B8" strokeWidth={2} />
+            <Hash size={12} color={LightColors.textMuted} strokeWidth={2} />
             <Text className="text-[11px] font-montserrat text-textSecondary ml-1.5">
               {booking.booking_number}
             </Text>
           </View>
           <View className="flex-row items-center">
-            <Calendar size={12} color="#94A3B8" strokeWidth={2} />
+            <Calendar size={12} color={LightColors.textMuted} strokeWidth={2} />
             <Text className="text-[11px] font-montserrat text-textSecondary ml-1.5">
               {formatFullDate(booking.created_at)} · {formatTime(booking.created_at)}
             </Text>
@@ -120,7 +121,7 @@ export function BookingDetailSheet({
         <View className="mb-5">
           <View className="flex-row items-center">
             <View
-              style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: '#22C55E' }}
+              style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: LightColors.success }}
             />
             <View className="flex-1 ml-3">
               <Text
@@ -139,13 +140,13 @@ export function BookingDetailSheet({
               marginLeft: 3,
               width: 2,
               height: 14,
-              backgroundColor: '#E2E8F0',
+              backgroundColor: LightColors.surfaceMuted,
               marginVertical: 6,
             }}
           />
           <View className="flex-row items-center">
             <View
-              style={{ width: 8, height: 8, borderRadius: 2, backgroundColor: '#0F172A' }}
+              style={{ width: 8, height: 8, borderRadius: 2, backgroundColor: LightColors.textPrimary }}
             />
             <View className="flex-1 ml-3">
               <Text
@@ -202,7 +203,7 @@ export function BookingDetailSheet({
             <Text className="text-[12px] font-montserrat-bold text-primary mr-1">
               View full details
             </Text>
-            <ChevronRight size={14} color="#2563EB" strokeWidth={2.4} />
+            <ChevronRight size={14} color={LightColors.primary} strokeWidth={2.4} />
           </Pressable>
         </View>
       </ScrollView>

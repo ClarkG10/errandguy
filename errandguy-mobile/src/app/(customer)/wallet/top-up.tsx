@@ -1,12 +1,11 @@
 import React, { useCallback, useState } from 'react';
 import { View, Text, Pressable, ScrollView } from 'react-native';
 import { useRouter } from 'expo-router';
-import { ArrowLeft } from 'lucide-react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
 import { useWalletStore } from '../../../stores/walletStore';
 import { paymentService } from '../../../services/payment.service';
 import { Button } from '../../../components/ui/Button';
 import { BottomActionBar } from '../../../components/ui/BottomActionBar';
+import { GradientHeader } from '../../../components/ui/GradientHeader';
 import { Input } from '../../../components/ui/Input';
 import { PaymentMethodSelector } from '../../../components/customer/PaymentMethodSelector';
 import { formatCurrency } from '../../../utils/formatCurrency';
@@ -84,23 +83,12 @@ export default function TopUpScreen() {
   }, [displayAmount, paymentMethodId, addTransaction, router]);
 
   return (
-    <SafeAreaView className="flex-1 bg-background" edges={['top']}>
-      {/* Header */}
-      <View className="flex-row items-center px-5 py-4">
-        <Pressable
-          onPress={() => router.canGoBack() ? router.back() : router.replace('/(customer)/wallet')}
-          accessibilityRole="button"
-          accessibilityLabel="Go back"
-          hitSlop={8}
-          className="mr-3 w-10 h-10 rounded-xl bg-surface items-center justify-center"
-          style={{ shadowColor: '#0F172A', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.04, shadowRadius: 6, elevation: 1 }}
-        >
-          <ArrowLeft size={20} color="#0F172A" />
-        </Pressable>
-        <Text className="text-xl font-montserrat-bold text-textPrimary">
-          Add Money
-        </Text>
-      </View>
+    <View className="flex-1 bg-background">
+      <GradientHeader
+        title="Add Money"
+        showBack
+        fallbackHref="/(customer)/wallet"
+      />
 
       <ScrollView className="flex-1 px-5" showsVerticalScrollIndicator={false}>
         {/* Quick Amounts */}
@@ -172,6 +160,6 @@ export default function TopUpScreen() {
           fullWidth
         />
       </BottomActionBar>
-    </SafeAreaView>
+    </View>
   );
 }

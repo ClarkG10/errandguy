@@ -23,6 +23,7 @@ import { useImagePicker } from '../../hooks/useImagePicker';
 import { userService } from '../../services/user.service';
 import { authService } from '../../services/auth.service';
 import { toast } from '../../stores/toastStore';
+import { LightColors } from '../../constants/colors';
 
 interface RegisterFormData {
   full_name: string;
@@ -146,8 +147,8 @@ export default function RegisterScreen() {
   };
 
   return (
-    <View className="flex-1 bg-white">
-      <StatusBar barStyle="light-content" />
+    <View className="flex-1 bg-background">
+      <StatusBar barStyle="dark-content" />
       <KeyboardAvoidingView
         className="flex-1"
         behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
@@ -158,47 +159,48 @@ export default function RegisterScreen() {
           keyboardShouldPersistTaps="handled"
           showsVerticalScrollIndicator={false}
         >
-          {/* Brand-color hero — flat solid block, same pattern as login. */}
-          <View style={rs.heroBlock}>
+          {/* Light airy hero — same flat background pattern as login. */}
+          <View className="bg-background" style={rs.heroBlock}>
             <SafeAreaView edges={['top']}>
-              <View className="px-6 pt-2 pb-10">
+              <View className="px-6 pt-2 pb-9">
                 <Pressable
                   style={rs.backBtn}
                   onPress={() => router.canGoBack() ? router.back() : router.replace('/(auth)/login')}
                 >
-                  <ChevronLeft size={22} color="#FFFFFF" strokeWidth={2.2} />
+                  <ChevronLeft size={22} color={LightColors.ink} strokeWidth={2.2} />
                 </Pressable>
                 <Text
-                  className="text-[11px] font-montserrat-bold uppercase mt-6"
-                  style={{ letterSpacing: 1.8, color: 'rgba(255,255,255,0.85)' }}
+                  className="text-[11px] font-montserrat-bold uppercase mt-6 text-primary"
+                  style={{ letterSpacing: 1.8 }}
                 >
                   Get started
                 </Text>
                 <Text
-                  className="text-[26px] font-montserrat-bold text-white tracking-tight mt-2"
+                  className="text-[26px] font-montserrat-bold text-ink tracking-tight mt-2"
                   style={{ lineHeight: 30 }}
                 >
                   Create your account.
                 </Text>
-                <Text
-                  className="text-[13px] font-montserrat mt-2"
-                  style={{ color: 'rgba(255,255,255,0.85)' }}
-                >
+                <Text className="text-[13px] font-montserrat mt-2 text-textSecondary">
                   Let’s set up your profile
                 </Text>
               </View>
             </SafeAreaView>
           </View>
 
-          <View className="flex-1 bg-white px-6 pt-7">
+          {/* Form card lifts over the hero's curved bottom edge. */}
+          <View
+            className="flex-1 bg-surface px-6 pt-7"
+            style={{ borderTopLeftRadius: 24, borderTopRightRadius: 24, marginTop: -22 }}
+          >
 
           {/* Avatar Upload */}
           <Pressable className="self-center mb-6" onPress={pickImage}>
-            <View className="w-24 h-24 rounded-full bg-primary50 items-center justify-center overflow-hidden border-2 border-primary">
+            <View className="w-24 h-24 rounded-full bg-primaryLight items-center justify-center overflow-hidden border-2 border-primary">
               {image ? (
                 <Image source={{ uri: image.uri }} className="w-full h-full" />
               ) : (
-                <Camera size={28} color="#2563EB" />
+                <Camera size={28} color={LightColors.primary} />
               )}
             </View>
             <Text className="text-xs font-montserrat-semi text-primary text-center mt-1">
@@ -352,7 +354,7 @@ export default function RegisterScreen() {
               }`}
             >
               {termsAccepted && (
-                <Check size={14} color="#FFFFFF" strokeWidth={3} />
+                <Check size={14} color={LightColors.textInverse} strokeWidth={3} />
               )}
             </View>
             <Text className="flex-1 text-sm font-montserrat text-textSecondary">
@@ -391,7 +393,12 @@ export default function RegisterScreen() {
 
 const rs = StyleSheet.create({
   heroBlock: {
-    backgroundColor: '#2563EB',
+    // Background colour lives on the className — this wrapper just
+    // constrains the bottom radius so the form card can lift over a
+    // clean curved edge (same seam treatment as login).
+    borderBottomLeftRadius: 28,
+    borderBottomRightRadius: 28,
+    overflow: 'hidden',
   },
   backBtn: {
     width: 38,
@@ -399,7 +406,7 @@ const rs = StyleSheet.create({
     borderRadius: 19,
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: 'rgba(255,255,255,0.16)',
+    backgroundColor: LightColors.divider,
   },
   loginRow: {
     flexDirection: 'row',
@@ -413,7 +420,7 @@ const rs = StyleSheet.create({
   loginText: {
     fontSize: 14,
     fontFamily: 'Quicksand_400Regular',
-    color: '#94A3B8',
+    color: LightColors.textMuted,
   },
   loginBtn: {
     paddingVertical: 2,
@@ -422,6 +429,6 @@ const rs = StyleSheet.create({
   loginBtnText: {
     fontSize: 14,
     fontFamily: 'Quicksand_600SemiBold',
-    color: '#0F172A',
+    color: LightColors.primary,
   },
 });

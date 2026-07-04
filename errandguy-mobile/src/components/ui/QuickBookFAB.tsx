@@ -99,9 +99,11 @@ export function QuickBookFAB({
   // — still well above the 44pt touch-target minimum.
   const SIZE = mScale(52);
   const ICON = mScale(22);
-  // Dock into the tab bar's top edge so the disc feels integrated
-  // with the navigation shell instead of floating above content.
-  const bottom = insets.bottom + tabBarHeight - SIZE / 2 - mScale(6);
+  // Dock into the floating pill bar's top edge so the disc feels
+  // integrated with the navigation shell. The pill bottom mirrors the
+  // tab layout formula: max(inset, gap) + gap/2.
+  const pillBottom = Math.max(insets.bottom, 12) + 6;
+  const bottom = pillBottom + tabBarHeight - SIZE / 2 - mScale(6);
   // Centre-positioned so the FAB sits visually above the tab bar's
   // empty mid-gap (between Activity and Alerts). Uses transform-based
   // centring so it works for any device width and respects the
@@ -164,7 +166,7 @@ export function QuickBookFAB({
         onPressIn={handlePressIn}
         onPressOut={handlePressOut}
         android_ripple={{
-          color: 'rgba(255,255,255,0.18)',
+          color: `${LightColors.textInverse}2E`,
           borderless: true,
           radius: SIZE / 2,
         }}
@@ -191,7 +193,7 @@ export function QuickBookFAB({
           style={StyleSheet.absoluteFill}
         />
         <View pointerEvents="none" style={styles.innerHighlight} />
-        <Plus size={ICON} color="#FFFFFF" strokeWidth={2.6} />
+        <Plus size={ICON} color={LightColors.textInverse} strokeWidth={2.6} />
       </Pressable>
     </Animated.View>
   );
@@ -199,18 +201,18 @@ export function QuickBookFAB({
 
 const styles = StyleSheet.create({
   fab: {
-    backgroundColor: '#2563EB',
+    backgroundColor: LightColors.primary,
     alignItems: 'center',
     justifyContent: 'center',
     overflow: 'hidden',
-    // Brand-tinted shadow so the FAB lifts off the page without
-    // looking heavy. Matches the elevation language used by Button.
+    // Brand-tinted shadow — soft and diffuse so the FAB floats
+    // rather than pops. Matches the Elevation.primary language.
     ...Platform.select({
       ios: {
-        shadowColor: '#1D4ED8',
-        shadowOffset: { width: 0, height: 10 },
-        shadowOpacity: 0.36,
-        shadowRadius: 16,
+        shadowColor: LightColors.primaryDark,
+        shadowOffset: { width: 0, height: 8 },
+        shadowOpacity: 0.18,
+        shadowRadius: 18,
       },
       android: { elevation: 9 },
       default: {},
@@ -222,6 +224,6 @@ const styles = StyleSheet.create({
     left: 0,
     right: 0,
     height: 1,
-    backgroundColor: 'rgba(255,255,255,0.28)',
+    backgroundColor: `${LightColors.textInverse}47`,
   },
 });

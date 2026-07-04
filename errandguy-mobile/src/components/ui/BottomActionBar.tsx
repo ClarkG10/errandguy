@@ -1,6 +1,7 @@
 import React from 'react';
 import { View, type ViewProps } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { LightColors, Elevation } from '../../constants/colors';
 
 interface BottomActionBarProps extends ViewProps {
   /** Background color for the bar — defaults to surface white. */
@@ -20,14 +21,16 @@ interface BottomActionBarProps extends ViewProps {
  */
 export function BottomActionBar({
   children,
-  background = '#F8FAFC',
-  divider = true,
+  background = LightColors.surface,
+  divider = false,
   style,
   ...rest
 }: BottomActionBarProps) {
   const insets = useSafeAreaInsets();
   // Always keep at least 12 px of breathing room even when the OS
-  // reports zero inset (older Android, dev builds without insets).
+  // reports zero inset (older Android with hardware nav, dev builds
+  // without insets). Devices with a 3-button bar / gesture bar / home
+  // indicator get their full inset on top of the bar padding.
   const bottom = Math.max(insets.bottom, 12);
 
   return (
@@ -41,10 +44,14 @@ export function BottomActionBar({
           bottom: 0,
           backgroundColor: background,
           paddingHorizontal: 20,
-          paddingTop: 14,
+          paddingTop: 16,
           paddingBottom: bottom,
           borderTopWidth: divider ? 1 : 0,
-          borderTopColor: '#E2E8F0',
+          borderTopColor: LightColors.divider,
+          // Soft diffuse lift replaces the hairline — the bar floats
+          // above the content instead of being fenced off from it.
+          ...Elevation.lg,
+          shadowOffset: { width: 0, height: -10 },
         },
         style,
       ]}
