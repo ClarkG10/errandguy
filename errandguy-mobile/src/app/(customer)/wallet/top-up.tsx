@@ -1,7 +1,6 @@
 import React, { useCallback, useState } from 'react';
 import { View, Text, Pressable, ScrollView } from 'react-native';
 import { useRouter } from 'expo-router';
-import * as WebBrowser from 'expo-web-browser';
 import { ShieldCheck } from 'lucide-react-native';
 import { paymentService } from '../../../services/payment.service';
 import { Button } from '../../../components/ui/Button';
@@ -9,6 +8,7 @@ import { BottomActionBar } from '../../../components/ui/BottomActionBar';
 import { GradientHeader } from '../../../components/ui/GradientHeader';
 import { Input } from '../../../components/ui/Input';
 import { formatCurrency } from '../../../utils/formatCurrency';
+import { openCheckoutUrl } from '../../../utils/browser';
 import { LightColors } from '../../../constants/colors';
 import { toast } from '../../../stores/toastStore';
 
@@ -68,7 +68,7 @@ export default function TopUpScreen() {
         return;
       }
 
-      await WebBrowser.openBrowserAsync(checkoutUrl);
+      await openCheckoutUrl(checkoutUrl);
       // Back from the payment page — the balance updates once the webhook
       // confirms. Tell the user and return to the wallet, which refetches.
       toast.info('Your balance will update once your payment is confirmed.');

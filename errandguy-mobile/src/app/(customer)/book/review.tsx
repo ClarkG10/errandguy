@@ -1,7 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { View, Text, ScrollView, Pressable, StyleSheet } from 'react-native';
 import * as Haptics from 'expo-haptics';
-import * as WebBrowser from 'expo-web-browser';
 import { useRouter } from 'expo-router';
 import { ArrowLeft, Footprints, Bike, Truck, Car, MapPin, Clock, Route } from 'lucide-react-native';
 import type { LucideIcon } from 'lucide-react-native';
@@ -21,6 +20,7 @@ import { PaymentMethodSelector } from '../../../components/customer/PaymentMetho
 import { OfferSlider } from '../../../components/customer/OfferSlider';
 import { BookingStepIndicator } from '../../../components/customer/BookingStepIndicator';
 import { formatCurrency } from '../../../utils/formatCurrency';
+import { openCheckoutUrl } from '../../../utils/browser';
 import { getErrandTypeRule, type VehicleKey } from '../../../constants/errandTypeRules';
 import { LightColors } from '../../../constants/colors';
 import type { PricingMode } from '../../../types';
@@ -295,7 +295,7 @@ export default function ReviewScreen() {
       // Online payment (card/gcash/maya) → open the Xendit hosted checkout
       // so the customer can pay. Wallet/cash return no URL and skip this.
       if (checkoutUrl) {
-        await WebBrowser.openBrowserAsync(checkoutUrl);
+        await openCheckoutUrl(checkoutUrl);
       }
       router.replace(`/(customer)/book/confirm?bookingId=${booking.id}`);
     } catch (err: any) {
