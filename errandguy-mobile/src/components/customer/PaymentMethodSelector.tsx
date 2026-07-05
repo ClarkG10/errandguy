@@ -23,15 +23,27 @@ const METHOD_ICONS: Record<PaymentMethodType, LucideIcon> = {
   cash: Banknote,
 };
 
-// Synthetic "cash" entry. Backend accepts `payment_method: 'cash'` with
-// no `payment_method_id`, so we sentinel the id locally and the booking
-// payload simply omits the id field when this is the selection.
-const CASH_OPTION = {
-  id: '__cash__',
-  type: 'cash' as PaymentMethodType,
-  label: 'Cash on Delivery',
-  description: 'Pay your runner directly when the errand is complete',
-};
+// Universal settlement choices. None of these require a pre-saved/tokenised
+// method: wallet deducts the in-app balance, cash is collected on delivery,
+// and gcash/maya/card route through a Xendit hosted checkout at booking time.
+// Their ids are sentinels (prefixed "__") so the booking payload omits
+// payment_method_id for them (see review.tsx).
+interface StandardOption {
+  id: string;
+  type: PaymentMethodType;
+  label: string;
+  description: string;
+}
+
+const STANDARD_OPTIONS: StandardOption[] = [
+  { id: '__wallet__', type: 'wallet', label: 'ErrandGuy Wallet', description: 'Pay instantly from your wallet balance' },
+  { id: '__gcash__', type: 'gcash', label: 'GCash', description: 'Pay online via GCash' },
+  { id: '__maya__', type: 'maya', label: 'Maya', description: 'Pay online via Maya' },
+  { id: '__card__', type: 'card', label: 'Credit / Debit Card', description: 'Pay online with your card' },
+  { id: '__cash__', type: 'cash', label: 'Cash on Delivery', description: 'Pay your runner directly when the errand is complete' },
+];
+
+const CASH_OPTION = STANDARD_OPTIONS[STANDARD_OPTIONS.length - 1];
 
 export function PaymentMethodSelector({
   selectedId,
@@ -85,13 +97,56 @@ export function PaymentMethodSelector({
     onSelectRef.current(CASH_OPTION.id, CASH_OPTION.type);
   }, [methodsQ.data, selectedId]);
 
+  const selectedStandard = STANDARD_OPTIONS.find((o) => o.id === selectedId);
   const selectedMethod = methods.find((m) => m.id === selectedId);
-  const isCashSelected = selectedId === CASH_OPTION.id;
-  const Icon = isCashSelected
-    ? Banknote
-    : selectedMethod
-      ? METHOD_ICONS[selectedMethod.type] ?? CreditCard
-      : CreditCard;
+  const activeType = selectedStandard?.type ?? selectedMethod?.type;
+  const isCash = activeType === 'cash';
+  const ActiveIcon = activeType ? METHOD_ICONS[activeType] ?? CreditCard : CreditCard;
+  const activeLabel = selectedStandard?.label ?? selectedMethod?.label;
+  const activeSub =
+    selectedStandard?.description ??
+    (selectedMethod?.last_four ? `••••${selectedMethod.last_four}` : undefined);
+
+  const renderRow = (opt: {
+    id: string;
+    type: PaymentMethodType;
+    label: string;
+    sub?: string;
+    isDefault?: boolean;
+  }) => {
+    const RowIcon = METHOD_ICONS[opt.type] ?? CreditCard;
+    const isSelected = selectedId === opt.id;
+    const cash = opt.type === 'cash';
+    return (
+      <Pressable
+        key={opt.id}
+        className={`flex-row items-center rounded-xl px-2 py-3 ${isSelected ? 'bg-primaryLight' : ''}`}
+        onPress={() => {
+          onSelect(opt.id, opt.type);
+          setShowSheet(false);
+        }}
+      >
+        <View
+          className="w-10 h-10 rounded-full items-center justify-center"
+          style={{ backgroundColor: cash ? LightColors.successLight : LightColors.primaryLight }}
+        >
+          <RowIcon size={19} color={cash ? LightColors.success : LightColors.primary} />
+        </View>
+        <View className="flex-1 ml-3">
+          <Text className="text-sm font-montserrat-bold text-textPrimary">{opt.label}</Text>
+          {opt.sub ? (
+            <Text className="text-xs font-montserrat text-textSecondary mt-0.5">{opt.sub}</Text>
+          ) : null}
+        </View>
+        {isSelected && <Check size={20} color={LightColors.primary} />}
+        {opt.isDefault && !isSelected && (
+          <Text className="text-[10px] font-montserrat text-primary bg-primaryLight px-2 py-0.5 rounded">
+            Default
+          </Text>
+        )}
+      </Pressable>
+    );
+  };
 
   return (
     <View className="mb-4">
@@ -104,54 +159,25 @@ export function PaymentMethodSelector({
       >
         {loading ? (
           <ActivityIndicator size="small" color={LightColors.primary} />
-        ) : isCashSelected ? (
-          <>
-            <View
-              className="w-10 h-10 rounded-full items-center justify-center"
-              style={{ backgroundColor: LightColors.successLight }}
-            >
-              <Banknote size={20} color={LightColors.success} />
-            </View>
-            <View className="flex-1 ml-3">
-              <Text className="text-[14px] font-montserrat-bold text-textPrimary">
-                {CASH_OPTION.label}
-              </Text>
-              <Text className="text-[11px] font-montserrat text-textSecondary">
-                Pay on delivery
-              </Text>
-            </View>
-            <Text className="text-xs font-montserrat-bold text-primary">
-              Change
-            </Text>
-          </>
-        ) : selectedMethod ? (
-          <>
-            <View
-              className="w-10 h-10 rounded-full items-center justify-center"
-              style={{ backgroundColor: LightColors.primaryLight }}
-            >
-              <Icon size={20} color={LightColors.primary} />
-            </View>
-            <View className="flex-1 ml-3">
-              <Text className="text-[14px] font-montserrat-bold text-textPrimary">
-                {selectedMethod.label}
-              </Text>
-              {selectedMethod.last_four && (
-                <Text className="text-[11px] font-montserrat text-textSecondary">
-                  ••••{selectedMethod.last_four}
-                </Text>
-              )}
-            </View>
-            <Text className="text-xs font-montserrat-bold text-primary">
-              Change
-            </Text>
-          </>
         ) : (
           <>
-            <CreditCard size={20} color={LightColors.textMuted} />
-            <Text className="text-sm font-montserrat text-textSecondary ml-3 flex-1">
-              Select payment method
-            </Text>
+            <View
+              className="w-10 h-10 rounded-full items-center justify-center"
+              style={{ backgroundColor: isCash ? LightColors.successLight : LightColors.primaryLight }}
+            >
+              <ActiveIcon size={20} color={isCash ? LightColors.success : LightColors.primary} />
+            </View>
+            <View className="flex-1 ml-3">
+              <Text className="text-[14px] font-montserrat-bold text-textPrimary">
+                {activeLabel ?? 'Select payment method'}
+              </Text>
+              {activeSub ? (
+                <Text className="text-[11px] font-montserrat text-textSecondary">
+                  {activeSub}
+                </Text>
+              ) : null}
+            </View>
+            <Text className="text-xs font-montserrat-bold text-primary">Change</Text>
           </>
         )}
       </Pressable>
@@ -159,84 +185,35 @@ export function PaymentMethodSelector({
       <BottomSheet
         isVisible={showSheet}
         onClose={() => setShowSheet(false)}
-        snapPoints={[0.5]}
+        snapPoints={[0.6]}
       >
         <View className="px-5 pb-6">
-          <View className="flex-row items-center justify-between mb-4">
+          <View className="flex-row items-center justify-between mb-2">
             <Text className="text-lg font-montserrat-bold text-textPrimary">
-              Payment Methods
+              Payment Method
             </Text>
             <Pressable onPress={() => setShowSheet(false)}>
               <X size={24} color={LightColors.textSecondary} />
             </Pressable>
           </View>
 
-          {methods.length === 0 ? (
-            <Text className="text-xs font-montserrat text-textSecondary text-center pb-3">
-              You haven't added any cards or wallets yet.
-            </Text>
-          ) : null}
-          {methods.map((item) => {
-              const MethodIcon = METHOD_ICONS[item.type] ?? CreditCard;
-              const isSelected = selectedId === item.id;
-              return (
-                <Pressable
-                  key={item.id}
-                  className={`flex-row items-center border-b border-divider py-3 ${
-                    isSelected ? 'bg-primaryLight/30' : ''
-                  }`}
-                  onPress={() => {
-                    onSelect(item.id, item.type);
-                    setShowSheet(false);
-                  }}
-                >
-                  <MethodIcon size={20} color={LightColors.primary} />
-                  <View className="flex-1 ml-3">
-                    <Text className="text-sm font-montserrat-bold text-textPrimary">
-                      {item.label}
-                    </Text>
-                    {item.last_four && (
-                      <Text className="text-xs font-montserrat text-textSecondary">
-                        ••••{item.last_four}
-                      </Text>
-                    )}
-                  </View>
-                  {isSelected && <Check size={20} color={LightColors.primary} />}
-                  {item.is_default && !isSelected && (
-                    <Text className="text-[10px] font-montserrat text-primary bg-primaryLight px-2 py-0.5 rounded">
-                      Default
-                    </Text>
-                  )}
-                </Pressable>
-              );
-            })}
+          {/* Saved cards/e-wallets, if any (future — added via Xendit). */}
+          {methods.map((item) =>
+            renderRow({
+              id: item.id,
+              type: item.type,
+              label: item.label,
+              sub: item.last_four ? `••••${item.last_four}` : undefined,
+              isDefault: item.is_default,
+            }),
+          )}
 
-          {/* Cash on Delivery — always available as a final fallback. */}
-          <Pressable
-            className={`flex-row items-center py-3 ${
-              selectedId === CASH_OPTION.id ? 'bg-primaryLight/30' : ''
-            }`}
-            onPress={() => {
-              onSelect(CASH_OPTION.id, CASH_OPTION.type);
-              setShowSheet(false);
-            }}
-          >
-            <View
-              className="w-9 h-9 rounded-full items-center justify-center"
-              style={{ backgroundColor: LightColors.successLight }}
-            >
-              <Banknote size={18} color={LightColors.success} />
-            </View>
-            <View className="flex-1 ml-3">
-              <Text className="text-sm font-montserrat-bold text-textPrimary">
-                {CASH_OPTION.label}
-              </Text>
-              <Text className="text-xs font-montserrat text-textSecondary">
-                {CASH_OPTION.description}
-              </Text>
-            </View>
-            {selectedId === CASH_OPTION.id && <Check size={20} color={LightColors.primary} />}
-          </Pressable>
+          {/* Universal options — always available, no saved method needed.
+              Online options (GCash/Maya/Card) route through a secure Xendit
+              checkout page at booking/top-up time. */}
+          {STANDARD_OPTIONS.map((opt) =>
+            renderRow({ id: opt.id, type: opt.type, label: opt.label, sub: opt.description }),
+          )}
         </View>
       </BottomSheet>
     </View>

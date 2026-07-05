@@ -277,12 +277,13 @@ export default function ReviewScreen() {
         schedule_type: draftBooking.schedule_type ?? ('now' as const),
         scheduled_at: draftBooking.scheduled_at,
         payment_method: paymentMethodType ?? 'cash',
-        // Sentinel id used by the selector for cash-on-delivery — the
-        // server has no real PaymentMethod row for cash, so we omit it.
-        payment_method_id:
-          draftBooking.payment_method_id === '__cash__'
-            ? undefined
-            : draftBooking.payment_method_id,
+        // Sentinel ids (prefixed "__") are the universal choices
+        // (wallet/gcash/maya/card/cash) that have no saved PaymentMethod
+        // row — omit payment_method_id for them; online ones settle via a
+        // Xendit hosted checkout.
+        payment_method_id: draftBooking.payment_method_id?.startsWith('__')
+          ? undefined
+          : draftBooking.payment_method_id,
         promo_code: draftBooking.promo_code,
       };
 
