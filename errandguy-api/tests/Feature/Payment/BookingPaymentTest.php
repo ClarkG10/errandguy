@@ -119,6 +119,52 @@ class BookingPaymentTest extends TestCase
         ]);
     }
 
+    public function test_cancelling_a_paid_wallet_booking_refunds_the_wallet(): void
+    {
+        Bus::fake();
+        $this->customer->update(['wallet_balance' => 5000]);
+
+        $this->actingAs($this->customer)
+            ->postJson('/api/v1/bookings', [...$this->base, 'payment_method' => 'wallet'])
+            ->assertCreated();
+        $booking = Booking::firstOrFail();
+        $fare = (float) $booking->total_amount;
+        $this->assertEquals(5000 - $fare, (float) $this->customer->fresh()->wallet_balance);
+
+        // Pending booking (no runner) → free cancellation → full refund.
+        $this->actingAs($this->customer)
+            ->postJson("/api/v1/bookings/{$booking->id}/cancel", ['reason' => 'Changed my mind'])
+            ->assertOk();
+
+        $this->assertEquals('refunded', $booking->fresh()->payment_status);
+        $this->assertEquals(5000, (float) $this->customer->fresh()->wallet_balance);
+        $this->assertDatabaseHas('wallet_transactions', [
+            'user_id' => $this->customer->id, 'type' => 'refund',
+        ]);
+        $this->assertDatabaseHas('payments', [
+            'booking_id' => $booking->id, 'status' => 'refunded',
+        ]);
+    }
+
+    public function test_cancelling_a_cash_booking_refunds_nothing(): void
+    {
+        Bus::fake();
+        $this->actingAs($this->customer)
+            ->postJson('/api/v1/bookings', [...$this->base, 'payment_method' => 'cash'])
+            ->assertCreated();
+        $booking = Booking::firstOrFail();
+
+        $this->actingAs($this->customer)
+            ->postJson("/api/v1/bookings/{$booking->id}/cancel", ['reason' => 'Changed my mind'])
+            ->assertOk();
+
+        // Cash collected nothing → stays unpaid, no refund transaction.
+        $this->assertEquals('unpaid', $booking->fresh()->payment_status);
+        $this->assertDatabaseMissing('wallet_transactions', [
+            'user_id' => $this->customer->id, 'type' => 'refund',
+        ]);
+    }
+
     public function test_invoice_paid_webhook_marks_booking_paid(): void
     {
         Bus::fake();

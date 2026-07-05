@@ -368,6 +368,27 @@ class BookingController extends Controller
             'trip_share_active' => false,
         ]);
 
+        // Refund money already collected, minus the cancellation fee, to the
+        // customer's wallet. Applies to wallet AND online bookings that were
+        // already paid; cash bookings collected nothing so there's nothing to
+        // refund. The kept fee is the platform/runner compensation.
+        if ($booking->payment_status === 'paid') {
+            $refundable = round(max(0, (float) $booking->total_amount - (float) $policy['fee']), 2);
+            if ($refundable > 0) {
+                app(WalletService::class)->refund($booking->customer_id, $refundable, $booking->id);
+                Payment::where('booking_id', $booking->id)
+                    ->where('status', 'completed')
+                    ->latest()
+                    ->first()
+                    ?->update([
+                        'status' => 'refunded',
+                        'refund_amount' => $refundable,
+                        'refunded_at' => now(),
+                    ]);
+            }
+            $booking->update(['payment_status' => 'refunded']);
+        }
+
         BookingStatusLog::create([
             'booking_id' => $booking->id,
             'status' => 'cancelled',
