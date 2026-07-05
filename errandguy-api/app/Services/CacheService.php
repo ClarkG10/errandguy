@@ -118,6 +118,64 @@ class CacheService
         Cache::forget('app_config');
     }
 
+    /**
+     * Stale-while-revalidate cache.
+     *
+     * Serves cached data INSTANTLY, and once it passes the soft TTL returns
+     * the (still valid) stale value immediately while refreshing it in the
+     * BACKGROUND — so users never wait for a recompute, and the cache is
+     * kept warm without a periodic cron.
+     *
+     * Lifecycle for a key:
+     *   - cold (nothing cached)      → compute synchronously, cache, return.
+     *   - fresh (now < soft TTL)     → return cached value.
+     *   - stale (soft ≤ now < hard)  → return stale value NOW; schedule a
+     *                                   background refresh (deduped by a lock).
+     *   - expired (now ≥ hard TTL)   → treated as cold (recompute sync).
+     *
+     * The background refresh runs after the HTTP response is flushed
+     * (dispatch()->afterResponse()), so it needs no queue worker and never
+     * delays the request. A short lock prevents a refresh stampede when many
+     * requests hit a stale key at once.
+     *
+     * @param int $softTtl seconds the value is considered fresh
+     * @param int $hardTtl seconds the value physically survives in the store
+     */
+    public static function swr(string $key, int $softTtl, int $hardTtl, \Closure $callback): mixed
+    {
+        $entry = Cache::get($key);
+        $now = time();
+
+        if (is_array($entry) && array_key_exists('value', $entry)) {
+            $freshUntil = (int) ($entry['fresh_until'] ?? 0);
+
+            if ($now < $freshUntil) {
+                return $entry['value']; // fresh
+            }
+
+            // Stale: return it immediately, refresh in the background (once).
+            $lockKey = "{$key}:swr-refresh";
+            if (Cache::add($lockKey, 1, 30)) {
+                dispatch(function () use ($key, $softTtl, $hardTtl, $callback, $lockKey) {
+                    try {
+                        $value = $callback();
+                        Cache::put($key, ['value' => $value, 'fresh_until' => time() + $softTtl], $hardTtl);
+                    } finally {
+                        Cache::forget($lockKey);
+                    }
+                })->afterResponse();
+            }
+
+            return $entry['value'];
+        }
+
+        // Cold (or hard-expired) — compute now.
+        $value = $callback();
+        Cache::put($key, ['value' => $value, 'fresh_until' => $now + $softTtl], $hardTtl);
+
+        return $value;
+    }
+
     // -------------------------------------------------------
     // Commonly used cache key builders
     // -------------------------------------------------------

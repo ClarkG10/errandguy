@@ -62,8 +62,10 @@ Route::prefix('v1')->group(function () {
 
     // Public config routes (no auth required)
     Route::get('/errand-types', function () {
+        // Stale-while-revalidate: instant reads, refreshed in the background
+        // ~hourly so admin edits propagate without a 24h wait or a cron.
         return response()->json([
-            'data' => \App\Services\CacheService::rememberStatic('errand_types:active', fn () =>
+            'data' => \App\Services\CacheService::swr('errand_types:active', 3600, 86400, fn () =>
                 \App\Models\ErrandType::where('is_active', true)->orderBy('sort_order')->get()->toArray()
             ),
         ]);
