@@ -74,6 +74,24 @@ export function PaymentMethodSelector({
   const methods = methodsQ.data ?? [];
   const loading = methodsQ.loading && !methodsQ.data;
 
+  // Operator-enabled methods. Until loaded we optimistically show all; once
+  // loaded we render only the enabled subset so a disabled method (which the
+  // server would reject at booking time) never appears.
+  const availableQ = useQuery<Array<{ type: PaymentMethodType }>>(
+    ['available-methods'],
+    async () => {
+      const res = await paymentService.getAvailableMethods();
+      return (res.data?.data ?? []) as Array<{ type: PaymentMethodType }>;
+    },
+    { staleTime: 5 * 60_000, ttl: CacheTTL.MEDIUM },
+  );
+  const enabledTypes = availableQ.data
+    ? new Set(availableQ.data.map((m) => m.type))
+    : null;
+  const visibleStandard = enabledTypes
+    ? STANDARD_OPTIONS.filter((o) => enabledTypes.has(o.type))
+    : STANDARD_OPTIONS;
+
   // Auto-select default once on first successful load.
   // Fallback: when the user has no saved methods (or no default flagged),
   // auto-pick Cash on Delivery. The booking server treats `cash` as the
@@ -92,9 +110,12 @@ export function PaymentMethodSelector({
       onSelectRef.current(def.id, def.type);
       return;
     }
-    // No default — fall back to Cash on Delivery.
+    // No saved default — pick a sensible enabled option: prefer Cash if it's
+    // offered, otherwise the first available method.
     autoSelectedRef.current = true;
-    onSelectRef.current(CASH_OPTION.id, CASH_OPTION.type);
+    const fallback =
+      visibleStandard.find((o) => o.type === 'cash') ?? visibleStandard[0] ?? CASH_OPTION;
+    onSelectRef.current(fallback.id, fallback.type);
   }, [methodsQ.data, selectedId]);
 
   const selectedStandard = STANDARD_OPTIONS.find((o) => o.id === selectedId);
@@ -208,10 +229,9 @@ export function PaymentMethodSelector({
             }),
           )}
 
-          {/* Universal options — always available, no saved method needed.
-              Online options (GCash/Maya/Card) route through a secure Xendit
-              checkout page at booking/top-up time. */}
-          {STANDARD_OPTIONS.map((opt) =>
+          {/* Operator-enabled options. Online ones (GCash/Maya/Card) route
+              through a secure Xendit checkout page at booking/top-up time. */}
+          {visibleStandard.map((opt) =>
             renderRow({ id: opt.id, type: opt.type, label: opt.label, sub: opt.description }),
           )}
         </View>

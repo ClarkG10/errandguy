@@ -13,6 +13,11 @@ export const paymentService = {
     return api.get('/payments/methods', { cacheTtlMs: 30_000, silent: true } as any);
   },
 
+  // Platform-offered methods (operator-managed). The selector shows only these.
+  getAvailableMethods() {
+    return api.get('/payments/available-methods', { cacheTtlMs: 60_000, silent: true } as any);
+  },
+
   addPaymentMethod(data: {
     type: 'card' | 'gcash' | 'maya';
     gateway_token: string;

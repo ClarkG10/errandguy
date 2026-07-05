@@ -161,6 +161,8 @@ Route::prefix('v1')->group(function () {
 
         // Payment routes
         Route::prefix('payments')->group(function () {
+            // Platform-offered methods (operator-managed via admin).
+            Route::get('/available-methods', [PaymentMethodController::class, 'available']);
             Route::get('/methods', [PaymentMethodController::class, 'index']);
             Route::post('/methods', [PaymentMethodController::class, 'store']);
             Route::delete('/methods/{id}', [PaymentMethodController::class, 'destroy']);
@@ -279,6 +281,10 @@ Route::prefix('v1')->group(function () {
             Route::get('/payouts', [AdminPayoutController::class, 'index']);
             Route::post('/payouts/{id}/complete', [AdminPayoutController::class, 'markCompleted']);
             Route::post('/payouts/{id}/fail', [AdminPayoutController::class, 'markFailed']);
+
+            // Manage which payment methods the platform offers.
+            Route::get('/payment-methods', [\App\Http\Controllers\Admin\PaymentSettingController::class, 'index']);
+            Route::put('/payment-methods', [\App\Http\Controllers\Admin\PaymentSettingController::class, 'update']);
         });
     });
 

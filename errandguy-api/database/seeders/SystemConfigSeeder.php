@@ -60,6 +60,11 @@ class SystemConfigSeeder extends Seeder
                 'value' => '5',
                 'description' => 'Maximum number of trusted contacts per user',
             ],
+            [
+                'key' => 'enabled_payment_methods',
+                'value' => 'wallet,gcash,maya,card,cash',
+                'description' => 'CSV of payment methods offered to customers (managed via admin). Valid: wallet,gcash,maya,card,cash',
+            ],
         ];
 
         foreach ($configs as $config) {

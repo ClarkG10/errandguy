@@ -4,11 +4,30 @@ namespace App\Http\Controllers\Payment;
 
 use App\Http\Controllers\Controller;
 use App\Models\PaymentMethod;
+use App\Services\CacheService;
+use App\Services\PaymentMethodCatalog;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 
 class PaymentMethodController extends Controller
 {
+    /**
+     * The payment methods currently OFFERED by the platform (operator-managed
+     * via admin). The app renders exactly this set in its selector so a
+     * disabled method never appears. Cached with background refresh.
+     */
+    public function available(): JsonResponse
+    {
+        return response()->json([
+            'data' => CacheService::swr(
+                'payments:available_methods',
+                300,   // fresh 5 min
+                3600,  // survive 1 h
+                fn () => PaymentMethodCatalog::enabled(),
+            ),
+        ]);
+    }
+
     public function index(Request $request): JsonResponse
     {
         $methods = PaymentMethod::where('user_id', $request->user()->id)

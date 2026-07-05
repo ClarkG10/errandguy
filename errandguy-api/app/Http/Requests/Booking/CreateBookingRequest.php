@@ -68,7 +68,8 @@ class CreateBookingRequest extends FormRequest
                 Rule::in(['walk', 'bicycle', 'motorcycle', 'car']),
             ],
             'customer_offer' => ['required_if:pricing_mode,negotiate', 'nullable', 'numeric', 'min:0'],
-            'payment_method' => ['required', Rule::in(['card', 'gcash', 'maya', 'wallet', 'cash'])],
+            // Only methods the operator currently offers are accepted.
+            'payment_method' => ['required', Rule::in(\App\Services\PaymentMethodCatalog::enabledTypes())],
             // Optional: online payments use a Xendit hosted invoice where the
             // customer picks GCash/Maya/card, so a pre-saved method isn't
             // required. When provided it must belong to the requesting user.
