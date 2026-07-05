@@ -89,12 +89,17 @@ export default function ActivityScreen() {
   // network roundtrip, no skeleton flash). This key matches the one
   // seeded by `preloadAfterAuth` so the screen paints with real data
   // on first navigation post-login.
+  // Server-side filtering: each tab fetches its own paginated slice by
+  // passing the aggregate status bucket (active/completed/cancelled). The
+  // API understands these keywords now, so we no longer download the whole
+  // history and filter locally (which was slow and wrong under pagination).
   const page1Q = useQuery<Booking[]>(
-    ['bookings', 'activity', 'all', userId],
+    ['bookings', 'activity', filter, userId],
     async () => {
       const res = await bookingService.getBookings({
         page: 1,
         per_page: 15,
+        status: filter === 'all' ? undefined : filter,
       });
       return (res.data.data ?? []) as Booking[];
     },
@@ -118,12 +123,11 @@ export default function ActivityScreen() {
     if (page1Q.data) setHasMore((page1Q.data.length ?? 0) >= 15);
   }, [page1Q.data]);
 
+  // Server already returns only the rows for the active tab, so no local
+  // status filtering is needed — just concatenate the paged results.
   const bookings = useMemo(
-    () =>
-      [...(page1Q.data ?? []), ...extraPages].filter((b) =>
-        matchesFilter(b.status, filter),
-      ),
-    [page1Q.data, extraPages, filter],
+    () => [...(page1Q.data ?? []), ...extraPages],
+    [page1Q.data, extraPages],
   );
   const loading = page1Q.loading && !page1Q.data;
 
@@ -190,6 +194,7 @@ export default function ActivityScreen() {
       const res = await bookingService.getBookings({
         page: nextPage,
         per_page: 15,
+        status: filter === 'all' ? undefined : filter,
       });
       const data: Booking[] = res.data.data ?? [];
       setExtraPages((prev) => [...prev, ...data]);

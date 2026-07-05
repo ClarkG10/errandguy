@@ -46,8 +46,24 @@ class BookingController extends Controller
             ])
             ->orderByDesc('created_at');
 
+        // Status filtering supports both exact statuses AND the aggregate
+        // buckets the app's Activity tabs use (active / completed /
+        // cancelled). Previously only an exact match worked, so passing
+        // ?status=active returned an empty list and the app was forced to
+        // download everything and filter client-side (slow + wrong under
+        // pagination). Filtering server-side fixes both.
         if ($request->filled('status')) {
-            $query->where('status', $request->input('status'));
+            $status = $request->input('status');
+            $completed = ['completed', 'delivered'];
+            $cancelled = ['cancelled', 'no_runner', 'expired', 'rejected', 'failed'];
+
+            match ($status) {
+                'all' => null,
+                'active' => $query->whereNotIn('status', array_merge($completed, $cancelled)),
+                'completed' => $query->whereIn('status', $completed),
+                'cancelled' => $query->whereIn('status', $cancelled),
+                default => $query->where('status', $status),
+            };
         }
 
         if ($request->filled('errand_type_id')) {
