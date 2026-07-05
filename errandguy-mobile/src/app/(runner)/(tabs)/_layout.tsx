@@ -1,5 +1,4 @@
 import { Tabs } from 'expo-router';
-import { Home, DollarSign, Clock, User } from 'lucide-react-native';
 import { Platform } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRunnerStore } from '../../../stores/runnerStore';
@@ -69,12 +68,7 @@ export default function RunnerTabsLayout() {
         options={{
           title: 'Home',
           tabBarIcon: ({ focused }) => (
-            <TabBarItem
-              Icon={Home}
-              label="Home"
-              focused={focused}
-              showOnlineDot={isOnline}
-            />
+            <TabBarItem name="home" focused={focused} showOnlineDot={isOnline} />
           ),
         }}
       />
@@ -83,7 +77,7 @@ export default function RunnerTabsLayout() {
         options={{
           title: 'Earnings',
           tabBarIcon: ({ focused }) => (
-            <TabBarItem Icon={DollarSign} label="Earnings" focused={focused} />
+            <TabBarItem name="wallet" focused={focused} />
           ),
         }}
       />
@@ -92,7 +86,7 @@ export default function RunnerTabsLayout() {
         options={{
           title: 'History',
           tabBarIcon: ({ focused }) => (
-            <TabBarItem Icon={Clock} label="History" focused={focused} />
+            <TabBarItem name="time" focused={focused} />
           ),
         }}
       />
@@ -101,7 +95,7 @@ export default function RunnerTabsLayout() {
         options={{
           title: 'Profile',
           tabBarIcon: ({ focused }) => (
-            <TabBarItem Icon={User} label="Profile" focused={focused} />
+            <TabBarItem name="person" focused={focused} />
           ),
         }}
       />

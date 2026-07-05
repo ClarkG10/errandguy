@@ -1,12 +1,22 @@
 import React from 'react';
 import { View, Text, StyleSheet } from 'react-native';
-import type { LucideIcon } from 'lucide-react-native';
+import { Ionicons } from '@expo/vector-icons';
 import { useResponsive } from '../../constants/responsive';
 import { LightColors } from '../../constants/colors';
 
+/** Base Ionicons names used by the tab bars. The `-outline` variant is
+ *  rendered when inactive; the solid (base) glyph when active. */
+export type TabIconName =
+  | 'home'
+  | 'receipt'
+  | 'notifications'
+  | 'person'
+  | 'wallet'
+  | 'time';
+
 interface TabBarItemProps {
-  Icon: LucideIcon;
-  label: string;
+  /** Base Ionicons name (without the `-outline` suffix). */
+  name: TabIconName;
   focused: boolean;
   badgeCount?: number;
   showOnlineDot?: boolean;
@@ -20,21 +30,16 @@ const ACTIVE = LightColors.primary;
 const INACTIVE = LightColors.textMuted;
 
 /**
- * A single tab-bar entry — clean iOS-style.
+ * A single tab-bar entry — icon only.
  *
- * Active state is conveyed by:
- *   • icon colour shift (slate → brand blue)
- *   • slightly heavier icon stroke
- *   • bold label
- *   • a tiny 4pt brand dot directly under the label
- *
- * No coloured pill behind the icon — the previous soft-blue chip
- * read as visual noise on a list-heavy app where the user looks at
- * the bar dozens of times an hour. The dot is enough.
+ * Active state is conveyed entirely by the icon: a solid (filled) glyph in
+ * brand blue when focused, the outline variant in muted slate when not.
+ * No label and no active dot — the outline→solid swap is the whole
+ * affordance. The notification badge and runner online dot stay because
+ * they carry information, not selection state.
  */
 export function TabBarItem({
-  Icon,
-  label,
+  name,
   focused,
   badgeCount,
   showOnlineDot,
@@ -42,19 +47,18 @@ export function TabBarItem({
 }: TabBarItemProps) {
   const { mScale } = useResponsive();
   const color = focused ? ACTIVE : INACTIVE;
+  const iconName = (focused ? name : `${name}-outline`) as React.ComponentProps<
+    typeof Ionicons
+  >['name'];
 
-  // Sizes scale moderately with screen width.
-  const slot = mScale(64);
-  const iconBox = mScale(28);
-  const iconSize = mScale(22);
-  const labelSize = mScale(10.5);
+  const slot = mScale(56);
+  const iconSize = mScale(26);
   const badgeSize = mScale(16);
-  const dotSize = mScale(4);
 
   return (
     <View style={[s.wrap, { width: slot, transform: [{ translateX: offsetX }] }]}>
-      <View style={[s.iconBox, { width: iconBox, height: iconBox }]}>
-        <Icon size={iconSize} color={color} strokeWidth={focused ? 2.4 : 1.8} />
+      <View style={s.iconBox}>
+        <Ionicons name={iconName} size={iconSize} color={color} />
         {!!badgeCount && badgeCount > 0 && (
           <View
             style={[
@@ -72,29 +76,6 @@ export function TabBarItem({
         )}
         {showOnlineDot && <View style={s.onlineDot} />}
       </View>
-      <Text
-        allowFontScaling={false}
-        style={[
-          s.label,
-          { color, fontSize: labelSize, fontWeight: focused ? '700' : '500' },
-        ]}
-        numberOfLines={1}
-      >
-        {label}
-      </Text>
-      {/* Active indicator — a tiny brand dot. Reserved space when
-          inactive so the label position never shifts on tab change. */}
-      <View
-        style={[
-          s.activeDot,
-          {
-            width: dotSize,
-            height: dotSize,
-            borderRadius: dotSize / 2,
-            backgroundColor: focused ? ACTIVE : 'transparent',
-          },
-        ]}
-      />
     </View>
   );
 }
@@ -102,26 +83,17 @@ export function TabBarItem({
 const s = StyleSheet.create({
   wrap: {
     alignItems: 'center',
-    justifyContent: 'flex-start',
-    paddingTop: 4,
+    justifyContent: 'center',
   },
   iconBox: {
     alignItems: 'center',
     justifyContent: 'center',
     position: 'relative',
   },
-  label: {
-    marginTop: 2,
-    letterSpacing: 0.1,
-    fontFamily: 'Quicksand_500Medium',
-  },
-  activeDot: {
-    marginTop: 3,
-  },
   badge: {
     position: 'absolute',
-    top: -2,
-    right: -4,
+    top: -6,
+    right: -9,
     paddingHorizontal: 4,
     backgroundColor: LightColors.danger,
     borderWidth: 1.5,
@@ -136,14 +108,13 @@ const s = StyleSheet.create({
   },
   onlineDot: {
     position: 'absolute',
-    top: 1,
-    right: 1,
-    width: 8,
-    height: 8,
-    borderRadius: 4,
+    top: -2,
+    right: -2,
+    width: 9,
+    height: 9,
+    borderRadius: 4.5,
     backgroundColor: LightColors.success,
     borderWidth: 1.5,
     borderColor: LightColors.surface,
   },
 });
-

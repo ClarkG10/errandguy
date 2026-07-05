@@ -1,5 +1,4 @@
 import { Tabs } from 'expo-router';
-import { Home, ClipboardList, Bell, User } from 'lucide-react-native';
 import { Platform, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useNotificationStore } from '../../../stores/notificationStore';
@@ -84,7 +83,7 @@ export default function CustomerTabsLayout() {
         options={{
           title: 'Home',
           tabBarIcon: ({ focused }) => (
-            <TabBarItem Icon={Home} label="Home" focused={focused} offsetX={-6} />
+            <TabBarItem name="home" focused={focused} offsetX={-6} />
           ),
         }}
       />
@@ -93,7 +92,7 @@ export default function CustomerTabsLayout() {
         options={{
           title: 'Activity',
           tabBarIcon: ({ focused }) => (
-            <TabBarItem Icon={ClipboardList} label="Activity" focused={focused} offsetX={-22} />
+            <TabBarItem name="receipt" focused={focused} offsetX={-22} />
           ),
         }}
       />
@@ -103,8 +102,7 @@ export default function CustomerTabsLayout() {
           title: 'Alerts',
           tabBarIcon: ({ focused }) => (
             <TabBarItem
-              Icon={Bell}
-              label="Alerts"
+              name="notifications"
               focused={focused}
               offsetX={22}
               badgeCount={unreadCount}
@@ -117,7 +115,7 @@ export default function CustomerTabsLayout() {
         options={{
           title: 'Profile',
           tabBarIcon: ({ focused }) => (
-            <TabBarItem Icon={User} label="Profile" focused={focused} offsetX={6} />
+            <TabBarItem name="person" focused={focused} offsetX={6} />
           ),
         }}
       />

@@ -13,6 +13,7 @@ import {
   Quicksand_600SemiBold,
   Quicksand_700Bold,
 } from '@expo-google-fonts/quicksand';
+import { Ionicons } from '@expo/vector-icons';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { configureReanimatedLogger, ReanimatedLogLevel } from 'react-native-reanimated';
@@ -25,7 +26,13 @@ import { useNotifications } from '../hooks/useNotifications';
 import { ToastProvider } from '../components/ui/ToastProvider';
 import { ApiActivityBar } from '../components/ui/ApiActivityBar';
 import { applySystemFontOnIOS } from '../utils/systemFont';
+import { installErrorLogging } from '../utils/errorLogging';
 import '../../global.css';
+
+// Surface uncaught JS errors + unhandled promise rejections clearly in the
+// `npx expo start` terminal so crashes are diagnosable at a glance. Runs at
+// module load, before any screen mounts. See utils/errorLogging.ts.
+installErrorLogging();
 
 // Suppress known third-party / native-module-not-linked warnings so the
 // dev console isn't flooded on every hot-reload. These are all expected
@@ -102,6 +109,9 @@ export default function RootLayout() {
     Quicksand_500Medium,
     Quicksand_600SemiBold,
     Quicksand_700Bold,
+    // Preload the Ionicons glyph font used by the tab bars so the icons
+    // paint on first render instead of flashing in a frame later.
+    ...Ionicons.font,
   });
 
   // Use individual selectors to avoid re-rendering the whole tree (and
