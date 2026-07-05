@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { View, Text, ScrollView, Pressable, StyleSheet } from 'react-native';
 import * as Haptics from 'expo-haptics';
+import * as WebBrowser from 'expo-web-browser';
 import { useRouter } from 'expo-router';
 import { ArrowLeft, Footprints, Bike, Truck, Car, MapPin, Clock, Route } from 'lucide-react-native';
 import type { LucideIcon } from 'lucide-react-native';
@@ -287,8 +288,14 @@ export default function ReviewScreen() {
 
       const res = await bookingService.createBooking(payload);
       const booking = res.data.data;
+      const checkoutUrl: string | undefined = res.data?.checkout_url;
       setActiveBooking(booking);
       clearDraft();
+      // Online payment (card/gcash/maya) → open the Xendit hosted checkout
+      // so the customer can pay. Wallet/cash return no URL and skip this.
+      if (checkoutUrl) {
+        await WebBrowser.openBrowserAsync(checkoutUrl);
+      }
       router.replace(`/(customer)/book/confirm?bookingId=${booking.id}`);
     } catch (err: any) {
       toast.error(err?.message ?? 'Failed to create booking');

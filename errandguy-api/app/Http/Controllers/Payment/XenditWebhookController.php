@@ -61,6 +61,26 @@ class XenditWebhookController extends Controller
         if (str_starts_with($externalId, 'topup-')) {
             $transactionId = substr($externalId, 6);
             app(\App\Services\WalletService::class)->completeTopUp($transactionId, $data);
+            return;
+        }
+
+        if (str_starts_with($externalId, 'booking-')) {
+            $paymentId = substr($externalId, 8);
+            DB::transaction(function () use ($paymentId, $data) {
+                $payment = Payment::where('id', $paymentId)->lockForUpdate()->first();
+                if (!$payment || $payment->status === 'completed') {
+                    return;
+                }
+                $payment->update([
+                    'status' => 'completed',
+                    'paid_at' => now(),
+                    'gateway_response' => $data,
+                ]);
+                // Mark the booking paid so the customer/runner UIs reflect it.
+                if ($payment->booking) {
+                    $payment->booking->update(['payment_status' => 'paid']);
+                }
+            });
         }
     }
 

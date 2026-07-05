@@ -16,10 +16,13 @@ use App\Jobs\MatchRunnerJob;
 use App\Models\Booking;
 use App\Models\BookingStatusLog;
 use App\Models\ErrandType;
+use App\Models\Payment;
 use App\Models\RunnerLocation;
 use App\Services\CancellationPolicy;
+use App\Services\PaymentService;
 use App\Services\PricingService;
 use App\Services\PromoService;
+use App\Services\WalletService;
 use Carbon\Carbon;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -175,6 +178,90 @@ class BookingController extends Controller
             $this->promoService->redeem($promoCodeId, $booking->id);
         }
 
+        // ── Payment ──────────────────────────────────────────────────────
+        // Capture the chosen settlement method and collect payment.
+        //  - wallet : deduct now (fail the booking if the balance is short)
+        //  - cash   : leave unpaid; the runner collects on completion
+        //  - online : create a Xendit hosted invoice and return its URL; the
+        //             booking is marked paid by the invoice.paid webhook
+        $paymentMethod = $validated['payment_method'];
+        $amount = (float) $booking->total_amount;
+        $checkoutUrl = null;
+        $booking->update(['payment_method' => $paymentMethod]);
+
+        if ($paymentMethod === 'wallet') {
+            try {
+                app(WalletService::class)->deduct(
+                    $user->id,
+                    $amount,
+                    $booking->id,
+                    "Payment for booking {$booking->booking_number}",
+                );
+            } catch (\RuntimeException $e) {
+                // Not enough balance — undo the booking so we don't leave an
+                // orphaned unpayable row, and tell the client to add funds.
+                $booking->delete();
+                return response()->json([
+                    'message' => 'Insufficient wallet balance. Please add money or choose another payment method.',
+                ], 422);
+            }
+            Payment::create([
+                'booking_id' => $booking->id,
+                'customer_id' => $user->id,
+                'amount' => $amount,
+                'currency' => 'PHP',
+                'method' => 'wallet',
+                'status' => 'completed',
+                'paid_at' => now(),
+            ]);
+            $booking->update(['payment_status' => 'paid']);
+        } elseif ($paymentMethod === 'cash') {
+            Payment::create([
+                'booking_id' => $booking->id,
+                'customer_id' => $user->id,
+                'amount' => $amount,
+                'currency' => 'PHP',
+                'method' => 'cash',
+                'status' => 'pending',
+            ]);
+            $booking->update(['payment_status' => 'unpaid']);
+        } else {
+            // Online (card / gcash / maya) via Xendit hosted invoice.
+            $payment = Payment::create([
+                'booking_id' => $booking->id,
+                'customer_id' => $user->id,
+                'amount' => $amount,
+                'currency' => 'PHP',
+                'method' => $paymentMethod,
+                'status' => 'pending',
+            ]);
+            try {
+                $invoice = app(PaymentService::class)->createInvoice(
+                    $amount,
+                    "booking-{$payment->id}",
+                    "ErrandGuy booking {$booking->booking_number}",
+                    (string) ($user->email ?? ''),
+                );
+                $payment->update([
+                    'gateway_tx_id' => $invoice['id'] ?? null,
+                    'gateway_response' => $invoice,
+                    'status' => 'processing',
+                ]);
+                $checkoutUrl = $invoice['invoice_url'] ?? null;
+                $booking->update(['payment_status' => 'pending']);
+            } catch (\Throwable $e) {
+                $payment->update(['status' => 'failed']);
+                $booking->delete();
+                \Illuminate\Support\Facades\Log::error('Booking online payment failed', [
+                    'booking_number' => $booking->booking_number,
+                    'error' => $e->getMessage(),
+                ]);
+                return response()->json([
+                    'message' => 'Could not start payment. Please try again or choose another method.',
+                ], 422);
+            }
+        }
+
         // Dispatch matching job based on pricing mode.
         // For SCHEDULED bookings we defer the broadcast/match until ~15
         // minutes before the scheduled time so a runner isn't sent to
@@ -228,6 +315,9 @@ class BookingController extends Controller
 
         return response()->json([
             'data' => new BookingResource($booking),
+            // For online payments the client must open this hosted-checkout
+            // URL to pay; null for cash/wallet (already settled/deferred).
+            'checkout_url' => $checkoutUrl,
             'message' => 'Booking created successfully.',
         ], 201);
     }

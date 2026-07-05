@@ -69,11 +69,14 @@ class CreateBookingRequest extends FormRequest
             ],
             'customer_offer' => ['required_if:pricing_mode,negotiate', 'nullable', 'numeric', 'min:0'],
             'payment_method' => ['required', Rule::in(['card', 'gcash', 'maya', 'wallet', 'cash'])],
+            // Optional: online payments use a Xendit hosted invoice where the
+            // customer picks GCash/Maya/card, so a pre-saved method isn't
+            // required. When provided it must belong to the requesting user.
             'payment_method_id' => [
-                Rule::requiredIf(fn () => !in_array($this->input('payment_method'), ['cash', 'wallet'])),
                 'nullable',
                 'string',
-                Rule::exists('payment_methods', 'id'),
+                Rule::exists('payment_methods', 'id')
+                    ->where(fn ($q) => $q->where('user_id', $this->user()?->id)),
             ],
             'promo_code' => ['nullable', 'string'],
         ];
