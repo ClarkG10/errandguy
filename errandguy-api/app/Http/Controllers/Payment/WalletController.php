@@ -4,7 +4,6 @@ namespace App\Http\Controllers\Payment;
 
 use App\Http\Controllers\Controller;
 use App\Models\WalletTransaction;
-use App\Services\PaymentService;
 use App\Services\WalletService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -30,13 +29,12 @@ class WalletController extends Controller
 
         $validated = $request->validate([
             'amount' => ['required', 'numeric', 'min:50', 'max:50000'],
+            // Optional: the Xendit hosted invoice lets the customer choose
+            // GCash / Maya / card at checkout, so a saved method isn't
+            // required. When supplied it must still belong to the caller.
             'payment_method_id' => [
-                'required',
+                'nullable',
                 'string',
-                // SECURITY: scope payment_method_id to the requesting user
-                // so an attacker can't reference someone else's saved
-                // payment method (or trigger the top-up with a method
-                // that has been deleted).
                 \Illuminate\Validation\Rule::exists('payment_methods', 'id')
                     ->where(fn ($q) => $q->where('user_id', $user->id)),
             ],
@@ -44,35 +42,37 @@ class WalletController extends Controller
             'payment_method_id.exists' => 'Selected payment method is not available on your account.',
         ]);
 
-        // Idempotency guard: if the same user submitted an identical
-        // top-up (same amount, same payment method) in the last 60s,
-        // assume it's a duplicate from a network retry / double-tap and
-        // return the existing transaction rather than charging twice.
-        // Real payment-gateway integrations should additionally rely on
-        // the gateway's own idempotency key.
+        // Idempotency guard: reuse an existing PENDING top-up of the same
+        // amount created in the last 60s (network retry / double-tap) rather
+        // than opening a second invoice.
         $duplicate = WalletTransaction::where('user_id', $user->id)
             ->where('type', 'top_up')
+            ->where('status', 'pending')
             ->where('amount', $validated['amount'])
-            ->where('reference_id', $validated['payment_method_id'])
             ->where('created_at', '>=', now()->subSeconds(60))
+            ->whereNotNull('checkout_url')
             ->latest('created_at')
             ->first();
 
         if ($duplicate) {
             return response()->json([
                 'data' => $duplicate,
+                'checkout_url' => $duplicate->checkout_url,
                 'idempotent' => true,
             ], 200);
         }
 
-        $transaction = $this->walletService->topUp(
+        $result = $this->walletService->initiateTopUp(
             $user->id,
             (float) $validated['amount'],
-            $validated['payment_method_id']
+            $user->email,
         );
 
         return response()->json([
-            'data' => $transaction,
+            'data' => $result['transaction'],
+            // Client must open this URL to actually pay; the wallet is
+            // credited only after Xendit confirms via webhook.
+            'checkout_url' => $result['checkout_url'],
         ], 201);
     }
 

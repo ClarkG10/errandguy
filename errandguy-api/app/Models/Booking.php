@@ -58,6 +58,8 @@ class Booking extends Model
         'surcharge',
         'promo_discount',
         'total_amount',
+        'payment_method',
+        'payment_status',
         'customer_offer',
         'recommended_min',
         'recommended_max',

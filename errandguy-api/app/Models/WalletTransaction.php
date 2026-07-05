@@ -20,6 +20,8 @@ class WalletTransaction extends Model
         'amount',
         'balance_after',
         'reference_id',
+        'gateway_ref',
+        'checkout_url',
         'description',
         'status',
         'processed_at',

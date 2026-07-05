@@ -39,7 +39,11 @@ export const paymentService = {
     return api.get('/wallet/balance', { cacheTtlMs: 15_000, silent: true } as any);
   },
 
-  topUpWallet(data: { amount: number; payment_method_id: string }) {
+  // payment_method_id is optional — the Xendit hosted invoice lets the
+  // customer choose GCash / Maya / card at checkout. Returns a
+  // `checkout_url` the app must open; the wallet is credited only after
+  // Xendit confirms via webhook.
+  topUpWallet(data: { amount: number; payment_method_id?: string }) {
     const p = api.post('/wallet/top-up', data);
     p.then(invalidateWallet).catch(() => {});
     return p;

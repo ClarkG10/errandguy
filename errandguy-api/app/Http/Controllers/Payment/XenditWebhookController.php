@@ -38,10 +38,30 @@ class XenditWebhookController extends Controller
             'payment.failed' => $this->handlePaymentFailed($payload['data'] ?? []),
             'payment.pending' => $this->handlePaymentPending($payload['data'] ?? []),
             'refund.succeeded' => $this->handleRefundSucceeded($payload['data'] ?? []),
+            // v2 invoices (used for wallet top-ups) fire their own events.
+            'invoice.paid' => $this->handleInvoicePaid($payload['data'] ?? $payload),
             default => null,
         };
 
         return response()->json(['status' => 'ok']);
+    }
+
+    /**
+     * Invoice paid — currently used for wallet top-ups. The invoice's
+     * external_id is "topup-{walletTransactionId}"; credit that pending
+     * transaction (idempotently) via the WalletService.
+     */
+    private function handleInvoicePaid(array $data): void
+    {
+        $externalId = $data['external_id'] ?? null;
+        if (!$externalId) {
+            return;
+        }
+
+        if (str_starts_with($externalId, 'topup-')) {
+            $transactionId = substr($externalId, 6);
+            app(\App\Services\WalletService::class)->completeTopUp($transactionId, $data);
+        }
     }
 
     private function handlePaymentSucceeded(array $data): void

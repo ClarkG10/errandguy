@@ -6,6 +6,7 @@ use App\Models\PaymentMethod;
 use App\Models\User;
 use App\Models\WalletTransaction;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\Http;
 use Tests\TestCase;
 
 class WalletTest extends TestCase
@@ -35,48 +36,39 @@ class WalletTest extends TestCase
 
     public function test_user_can_top_up_wallet(): void
     {
-        $paymentMethod = PaymentMethod::create([
-            'user_id' => $this->user->id,
-            'type' => 'gcash',
-            'label' => 'My GCash',
-            'gateway_token' => 'tok_test',
-            'is_default' => true,
+        // Top-up now creates a Xendit invoice and only credits the wallet
+        // once the invoice.paid webhook confirms — so a successful request
+        // returns a checkout URL and a PENDING transaction, and does NOT
+        // change the balance yet.
+        config(['services.xendit.secret_key' => 'test-secret']);
+        Http::fake([
+            'api.xendit.co/v2/invoices' => Http::response([
+                'id' => 'inv_test', 'invoice_url' => 'https://checkout.xendit.co/inv_test',
+            ], 200),
         ]);
 
         $response = $this->actingAs($this->user)
-            ->postJson('/api/v1/wallet/top-up', [
-                'amount' => 200,
-                'payment_method_id' => $paymentMethod->id,
-            ]);
+            ->postJson('/api/v1/wallet/top-up', ['amount' => 200]);
 
-        $response->assertStatus(201);
+        $response->assertStatus(201)
+            ->assertJsonPath('data.status', 'pending')
+            ->assertJsonPath('checkout_url', 'https://checkout.xendit.co/inv_test');
 
-        $this->user->refresh();
-        $this->assertEquals('700.00', $this->user->wallet_balance);
+        // Balance unchanged until webhook confirmation.
+        $this->assertEquals('500.00', $this->user->fresh()->wallet_balance);
 
         $this->assertDatabaseHas('wallet_transactions', [
             'user_id' => $this->user->id,
             'type' => 'top_up',
             'amount' => 200.00,
-            'balance_after' => 700.00,
+            'status' => 'pending',
         ]);
     }
 
     public function test_top_up_validates_minimum_amount(): void
     {
-        $paymentMethod = PaymentMethod::create([
-            'user_id' => $this->user->id,
-            'type' => 'gcash',
-            'label' => 'My GCash',
-            'gateway_token' => 'tok_test',
-            'is_default' => true,
-        ]);
-
         $response = $this->actingAs($this->user)
-            ->postJson('/api/v1/wallet/top-up', [
-                'amount' => 10,
-                'payment_method_id' => $paymentMethod->id,
-            ]);
+            ->postJson('/api/v1/wallet/top-up', ['amount' => 10]);
 
         $response->assertStatus(422)
             ->assertJsonValidationErrors(['amount']);

@@ -255,11 +255,11 @@ export default function CustomerProfileScreen() {
             className="flex-row items-center gap-1.5"
             hitSlop={8}
             accessibilityRole="button"
-            accessibilityLabel="Top up wallet"
+            accessibilityLabel="Add money to wallet"
           >
             <Wallet size={14} color={LightColors.primary} />
             <Text className="text-[12px] font-montserrat-bold text-primary underline">
-              Top up
+              Add money
             </Text>
           </Pressable>
         </View>

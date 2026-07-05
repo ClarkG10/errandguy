@@ -1,14 +1,15 @@
 import React, { useCallback, useState } from 'react';
 import { View, Text, Pressable, ScrollView } from 'react-native';
 import { useRouter } from 'expo-router';
-import { useWalletStore } from '../../../stores/walletStore';
+import * as WebBrowser from 'expo-web-browser';
+import { ShieldCheck } from 'lucide-react-native';
 import { paymentService } from '../../../services/payment.service';
 import { Button } from '../../../components/ui/Button';
 import { BottomActionBar } from '../../../components/ui/BottomActionBar';
 import { GradientHeader } from '../../../components/ui/GradientHeader';
 import { Input } from '../../../components/ui/Input';
-import { PaymentMethodSelector } from '../../../components/customer/PaymentMethodSelector';
 import { formatCurrency } from '../../../utils/formatCurrency';
+import { LightColors } from '../../../constants/colors';
 import { toast } from '../../../stores/toastStore';
 
 const QUICK_AMOUNTS = [100, 200, 500, 1000];
@@ -36,11 +37,9 @@ function sanitizeAmount(input: string): string {
 
 export default function TopUpScreen() {
   const router = useRouter();
-  const { setBalance, addTransaction } = useWalletStore();
 
   const [amount, setAmount] = useState(0);
   const [customAmount, setCustomAmount] = useState('');
-  const [paymentMethodId, setPaymentMethodId] = useState<string>();
   const [loading, setLoading] = useState(false);
 
   const displayAmount = customAmount ? parseFloat(customAmount) || 0 : amount;
@@ -54,33 +53,36 @@ export default function TopUpScreen() {
       toast.error(`Maximum amount is ${formatCurrency(MAX_TOPUP)}`);
       return;
     }
-    if (!paymentMethodId) {
-      toast.error('Please select a payment method');
-      return;
-    }
 
     setLoading(true);
     try {
-      const res = await paymentService.topUpWallet({
-        amount: displayAmount,
-        payment_method_id: paymentMethodId,
-      });
-      const tx = res.data.data;
-      if (tx) {
-        addTransaction(tx);
+      // The server creates a Xendit invoice and returns a hosted checkout
+      // URL. We open it so the customer can pay with GCash/Maya/card; the
+      // wallet is credited only after Xendit confirms via webhook — so we
+      // do NOT optimistically add funds here.
+      const res = await paymentService.topUpWallet({ amount: displayAmount });
+      const checkoutUrl: string | undefined = res.data?.checkout_url;
+
+      if (!checkoutUrl) {
+        toast.error('Could not start checkout. Please try again.');
+        return;
       }
-      toast.success(`${formatCurrency(displayAmount)} added to wallet`);
+
+      await WebBrowser.openBrowserAsync(checkoutUrl);
+      // Back from the payment page — the balance updates once the webhook
+      // confirms. Tell the user and return to the wallet, which refetches.
+      toast.info('Your balance will update once your payment is confirmed.');
       if (router.canGoBack()) {
         router.back();
       } else {
         router.replace('/(customer)/wallet');
       }
     } catch (err: any) {
-      toast.error(err?.response?.data?.message ?? 'Failed to add money to wallet');
+      toast.error(err?.response?.data?.message ?? 'Failed to start top-up');
     } finally {
       setLoading(false);
     }
-  }, [displayAmount, paymentMethodId, addTransaction, router]);
+  }, [displayAmount, router]);
 
   return (
     <View className="flex-1 bg-background">
@@ -137,11 +139,13 @@ export default function TopUpScreen() {
           Min {formatCurrency(MIN_TOPUP)} · Max {formatCurrency(MAX_TOPUP)}
         </Text>
 
-        {/* Payment Method */}
-        <PaymentMethodSelector
-          selectedId={paymentMethodId}
-          onSelect={setPaymentMethodId}
-        />
+        {/* Secure checkout note — method is chosen on the Xendit page. */}
+        <View className="flex-row items-start bg-primaryLight rounded-2xl p-4 mt-5">
+          <ShieldCheck size={18} color={LightColors.primary} strokeWidth={2} />
+          <Text className="flex-1 ml-2.5 text-[12px] font-montserrat text-textSecondary leading-[17px]">
+            You&apos;ll choose GCash, Maya, or card on a secure Xendit checkout page. Your wallet updates automatically once payment is confirmed.
+          </Text>
+        </View>
 
         <View className="h-24" />
       </ScrollView>
@@ -151,11 +155,7 @@ export default function TopUpScreen() {
         <Button
           title={`Add ${displayAmount > 0 ? formatCurrency(displayAmount) : 'Money'}`}
           onPress={handleTopUp}
-          disabled={
-            displayAmount < MIN_TOPUP ||
-            displayAmount > MAX_TOPUP ||
-            !paymentMethodId
-          }
+          disabled={displayAmount < MIN_TOPUP || displayAmount > MAX_TOPUP}
           loading={loading}
           fullWidth
         />
