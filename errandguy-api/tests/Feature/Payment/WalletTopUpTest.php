@@ -81,6 +81,46 @@ class WalletTopUpTest extends TestCase
         $this->assertEquals(600.00, (float) $tx->fresh()->balance_after);
     }
 
+    public function test_flat_invoice_webhook_credits_wallet(): void
+    {
+        // Real Xendit INVOICE callbacks POST the invoice object FLAT — no
+        // {event, data} wrapper, just top-level fields incl. status: "PAID".
+        Http::fake([
+            'api.xendit.co/v2/invoices' => Http::response([
+                'id' => 'inv_flat', 'invoice_url' => 'https://checkout.xendit.co/inv_flat',
+            ], 200),
+        ]);
+
+        $this->actingAs($this->user)
+            ->postJson('/api/v1/wallet/top-up', ['amount' => 500])
+            ->assertCreated();
+        $tx = WalletTransaction::where('user_id', $this->user->id)->firstOrFail();
+
+        $webhook = $this->postJson('/api/v1/webhooks/xendit', [
+            'id' => 'inv_flat',
+            'external_id' => "topup-{$tx->id}",
+            'status' => 'PAID',
+            'amount' => 500,
+        ], ['x-callback-token' => 'test-webhook-token']);
+
+        $webhook->assertOk();
+        $this->assertEquals(600.00, (float) $this->user->fresh()->wallet_balance);
+        $this->assertEquals('completed', $tx->fresh()->status);
+    }
+
+    public function test_unrelated_flat_invoice_is_acknowledged_not_rejected(): void
+    {
+        // Xendit's dashboard "Test" button sends a sample invoice whose
+        // external_id doesn't match any of our txns. We must ACK it (200),
+        // not 400 "Invalid payload".
+        $this->postJson('/api/v1/webhooks/xendit', [
+            'id' => '579c8d61f23fa4ca35e52da4',
+            'external_id' => 'invoice_123124123',
+            'status' => 'PAID',
+            'amount' => 50000,
+        ], ['x-callback-token' => 'test-webhook-token'])->assertOk();
+    }
+
     public function test_invoice_paid_webhook_is_idempotent(): void
     {
         Http::fake([

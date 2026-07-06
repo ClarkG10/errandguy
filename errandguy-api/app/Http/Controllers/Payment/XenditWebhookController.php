@@ -29,21 +29,37 @@ class XenditWebhookController extends Controller
 
         $event = $payload['event'] ?? null;
 
-        if (!$event) {
-            return response()->json(['error' => 'Invalid payload'], 400);
+        // Newer "Payments" webhooks (payment_requests, refunds, and some
+        // invoice setups) wrap everything as {event, data}.
+        if ($event) {
+            match ($event) {
+                'payment.succeeded' => $this->handlePaymentSucceeded($payload['data'] ?? []),
+                'payment.failed' => $this->handlePaymentFailed($payload['data'] ?? []),
+                'payment.pending' => $this->handlePaymentPending($payload['data'] ?? []),
+                'refund.succeeded' => $this->handleRefundSucceeded($payload['data'] ?? []),
+                // v2 invoices (used for wallet top-ups) may fire this event.
+                'invoice.paid' => $this->handleInvoicePaid($payload['data'] ?? $payload),
+                default => null,
+            };
+
+            return response()->json(['status' => 'ok']);
         }
 
-        match ($event) {
-            'payment.succeeded' => $this->handlePaymentSucceeded($payload['data'] ?? []),
-            'payment.failed' => $this->handlePaymentFailed($payload['data'] ?? []),
-            'payment.pending' => $this->handlePaymentPending($payload['data'] ?? []),
-            'refund.succeeded' => $this->handleRefundSucceeded($payload['data'] ?? []),
-            // v2 invoices (used for wallet top-ups) fire their own events.
-            'invoice.paid' => $this->handleInvoicePaid($payload['data'] ?? $payload),
-            default => null,
-        };
+        // Classic Xendit INVOICE webhook: the invoice object is POSTed FLAT at
+        // the top level — no `event`/`data` wrapper, just fields like
+        // { id, external_id, status: "PAID", amount, ... }. This is what the
+        // dashboard "Test" button and real invoice callbacks send.
+        if (isset($payload['external_id'], $payload['status'])) {
+            $status = strtoupper((string) $payload['status']);
+            if (in_array($status, ['PAID', 'SETTLED'], true)) {
+                $this->handleInvoicePaid($payload);
+            }
+            // Other statuses (EXPIRED, etc.) — acknowledge without action so
+            // Xendit stops retrying.
+            return response()->json(['status' => 'ok']);
+        }
 
-        return response()->json(['status' => 'ok']);
+        return response()->json(['error' => 'Invalid payload'], 400);
     }
 
     /**

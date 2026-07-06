@@ -2,6 +2,7 @@
 
 namespace App\Services;
 
+use App\Exceptions\PaymentGatewayException;
 use App\Models\Payment;
 use App\Models\PaymentMethod;
 use App\Models\User;
@@ -46,10 +47,16 @@ class PaymentService
             ->post("{$this->baseUrl}/payment_requests", $payload);
 
         if (!$response->successful()) {
+            $body = $response->json();
             Log::error('Xendit: Failed to create payment request', [
-                'response' => $response->json(),
+                'status' => $response->status(),
+                'response' => $body,
             ]);
-            throw new \RuntimeException('Failed to create payment request.');
+            throw new PaymentGatewayException(
+                'Failed to create payment request.',
+                is_array($body) ? ($body['message'] ?? null) : null,
+                is_array($body) ? ($body['error_code'] ?? null) : null,
+            );
         }
 
         return $response->json();
@@ -57,12 +64,26 @@ class PaymentService
 
     public function createInvoice(float $amount, string $externalId, string $description = '', string $payerEmail = '', ?string $successRedirectUrl = null): array
     {
+        // Fail fast with a clear reason if the key is missing (env not set, or
+        // config cache not refreshed after setting it on the server).
+        if (blank($this->secretKey)) {
+            Log::error('Xendit: secret key is not configured (XENDIT_SECRET_KEY empty).');
+            throw new PaymentGatewayException(
+                'Failed to create invoice.',
+                'XENDIT_SECRET_KEY is empty — set it in the server env and run `php artisan config:clear`.',
+                'NOT_CONFIGURED',
+            );
+        }
+
         $payload = [
             'external_id' => $externalId,
             'amount' => round($amount, 2),
             'currency' => 'PHP',
             'description' => $description,
-            'payment_methods' => ['GCASH', 'PAYMAYA', 'CREDIT_CARD'],
+            // Intentionally NOT pinning `payment_methods`. Xendit then offers
+            // every channel ACTIVATED on the account (GCash, Maya, cards, etc).
+            // Hardcoding a list makes the WHOLE invoice fail if any one of
+            // those channels isn't activated for the current mode.
         ];
 
         if ($payerEmail) {
@@ -77,10 +98,16 @@ class PaymentService
             ->post("{$this->baseUrl}/v2/invoices", $payload);
 
         if (!$response->successful()) {
+            $body = $response->json();
             Log::error('Xendit: Failed to create invoice', [
-                'response' => $response->json(),
+                'status' => $response->status(),
+                'response' => $body,
             ]);
-            throw new \RuntimeException('Failed to create invoice.');
+            throw new PaymentGatewayException(
+                'Failed to create invoice.',
+                is_array($body) ? ($body['message'] ?? null) : null,
+                is_array($body) ? ($body['error_code'] ?? null) : null,
+            );
         }
 
         return $response->json();

@@ -70,12 +70,16 @@ class WalletController extends Controller
             );
         } catch (\Throwable $e) {
             // The gateway rejected the request (e.g. API key lacks Invoice
-            // permission) or was unreachable. The real reason is already
-            // logged by WalletService/PaymentService; surface a clean,
-            // actionable message instead of a raw 500 "Server Error".
-            return response()->json([
-                'message' => 'We couldn’t start your payment right now. Please try again in a moment.',
-            ], 502);
+            // permission) or was unreachable. The real reason is always logged
+            // by WalletService/PaymentService. In debug mode we also put the
+            // gateway's own reason in the message so it's visible in the app —
+            // production users just get the friendly line.
+            $message = 'We couldn’t start your payment right now. Please try again in a moment.';
+            if (config('app.debug') && $e instanceof \App\Exceptions\PaymentGatewayException) {
+                $message = "Payment gateway error: {$e->reason()}";
+            }
+
+            return response()->json(['message' => $message], 502);
         }
 
         return response()->json([

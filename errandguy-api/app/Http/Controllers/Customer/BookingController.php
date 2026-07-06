@@ -272,9 +272,13 @@ class BookingController extends Controller
                     'booking_number' => $booking->booking_number,
                     'error' => $e->getMessage(),
                 ]);
-                return response()->json([
-                    'message' => 'Could not start payment. Please try again or choose another method.',
-                ], 422);
+                // Friendly line in production; the real gateway reason in debug
+                // so it's diagnosable from the app itself.
+                $message = 'Could not start payment. Please try again or choose another method.';
+                if (config('app.debug') && $e instanceof \App\Exceptions\PaymentGatewayException) {
+                    $message = "Payment gateway error: {$e->reason()}";
+                }
+                return response()->json(['message' => $message], 422);
             }
         }
 
