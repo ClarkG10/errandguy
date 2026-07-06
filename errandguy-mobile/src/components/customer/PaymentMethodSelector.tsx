@@ -8,11 +8,16 @@ import { useQuery } from '../../hooks/useQuery';
 import { CacheTTL } from '../../services/cache.service';
 import { useAuthStore } from '../../stores/authStore';
 import { LightColors } from '../../constants/colors';
+import { formatCurrency } from '../../utils/formatCurrency';
 import type { PaymentMethod, PaymentMethodType } from '../../types';
 
 interface PaymentMethodSelectorProps {
   selectedId: string | undefined;
   onSelect: (id: string, type: PaymentMethodType) => void;
+  /** Amount the booking will charge. Used to disable the wallet option when
+   *  the balance can't cover it. Omit (or 0) to skip the balance check
+   *  (e.g. negotiate flow where the price isn't fixed yet). */
+  amount?: number;
 }
 
 const METHOD_ICONS: Record<PaymentMethodType, LucideIcon> = {
@@ -48,6 +53,7 @@ const CASH_OPTION = STANDARD_OPTIONS[STANDARD_OPTIONS.length - 1];
 export function PaymentMethodSelector({
   selectedId,
   onSelect,
+  amount = 0,
 }: PaymentMethodSelectorProps) {
   const userId = useAuthStore((s) => s.user?.id ?? 'anon');
   const [showSheet, setShowSheet] = useState(false);
@@ -74,6 +80,24 @@ export function PaymentMethodSelector({
   const methods = methodsQ.data ?? [];
   const loading = methodsQ.loading && !methodsQ.data;
 
+  // Live wallet balance so we can show it and disable the wallet option when
+  // it can't cover the amount. Shares the ['wallet','balance'] cache key with
+  // the wallet screen so both stay in sync.
+  const balanceQ = useQuery<number>(
+    ['wallet', 'balance', userId],
+    async () => {
+      const r = await paymentService.getWalletBalance();
+      return Number(r.data?.data?.balance ?? 0);
+    },
+    { staleTime: 15_000, ttl: CacheTTL.SHORT },
+  );
+  const walletBalance = balanceQ.data ?? null;
+  // Insufficient only once we actually know the balance AND there's a real
+  // amount to cover. Unknown balance / no amount → treat as usable so we
+  // never wrongly block the user.
+  const walletInsufficient =
+    walletBalance != null && amount > 0 && walletBalance < amount;
+
   // Operator-enabled methods. Until loaded we optimistically show all; once
   // loaded we render only the enabled subset so a disabled method (which the
   // server would reject at booking time) never appears.
@@ -92,6 +116,9 @@ export function PaymentMethodSelector({
     ? STANDARD_OPTIONS.filter((o) => enabledTypes.has(o.type))
     : STANDARD_OPTIONS;
 
+  const isDisabledType = (type: PaymentMethodType) =>
+    type === 'wallet' && walletInsufficient;
+
   // Auto-select default once on first successful load.
   // Fallback: when the user has no saved methods (or no default flagged),
   // auto-pick Cash on Delivery. The booking server treats `cash` as the
@@ -105,28 +132,45 @@ export function PaymentMethodSelector({
       return;
     }
     const def = methodsQ.data.find((m) => m.is_default);
-    if (def) {
+    if (def && !isDisabledType(def.type)) {
       autoSelectedRef.current = true;
       onSelectRef.current(def.id, def.type);
       return;
     }
-    // No saved default — pick a sensible enabled option: prefer Cash if it's
-    // offered, otherwise the first available method.
+    // No usable saved default — pick a sensible enabled option: prefer Cash
+    // if it's offered, otherwise the first available non-disabled method.
     autoSelectedRef.current = true;
     const fallback =
-      visibleStandard.find((o) => o.type === 'cash') ?? visibleStandard[0] ?? CASH_OPTION;
+      visibleStandard.find((o) => o.type === 'cash') ??
+      visibleStandard.find((o) => !isDisabledType(o.type)) ??
+      CASH_OPTION;
     onSelectRef.current(fallback.id, fallback.type);
-  }, [methodsQ.data, selectedId]);
+  }, [methodsQ.data, selectedId, walletInsufficient]);
 
   const selectedStandard = STANDARD_OPTIONS.find((o) => o.id === selectedId);
   const selectedMethod = methods.find((m) => m.id === selectedId);
   const activeType = selectedStandard?.type ?? selectedMethod?.type;
+
+  // If the wallet is the active pick but can no longer cover the amount,
+  // move to a usable method so the user can't submit an unpayable booking.
+  useEffect(() => {
+    if (!walletInsufficient || activeType !== 'wallet') return;
+    const fallback =
+      visibleStandard.find((o) => o.type === 'cash') ??
+      visibleStandard.find((o) => !isDisabledType(o.type)) ??
+      CASH_OPTION;
+    onSelectRef.current(fallback.id, fallback.type);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [walletInsufficient, activeType]);
+
   const isCash = activeType === 'cash';
   const ActiveIcon = activeType ? METHOD_ICONS[activeType] ?? CreditCard : CreditCard;
   const activeLabel = selectedStandard?.label ?? selectedMethod?.label;
   const activeSub =
-    selectedStandard?.description ??
-    (selectedMethod?.last_four ? `••••${selectedMethod.last_four}` : undefined);
+    activeType === 'wallet' && walletBalance != null
+      ? `Balance ${formatCurrency(walletBalance)}`
+      : selectedStandard?.description ??
+        (selectedMethod?.last_four ? `••••${selectedMethod.last_four}` : undefined);
 
   const renderRow = (opt: {
     id: string;
@@ -138,11 +182,25 @@ export function PaymentMethodSelector({
     const RowIcon = METHOD_ICONS[opt.type] ?? CreditCard;
     const isSelected = selectedId === opt.id;
     const cash = opt.type === 'cash';
+    const disabled = isDisabledType(opt.type);
+    // Wallet rows show the live balance; when short, the row is disabled and
+    // says so instead of showing the generic description.
+    const sub =
+      opt.type === 'wallet' && walletBalance != null
+        ? disabled
+          ? `Insufficient balance · ${formatCurrency(walletBalance)}`
+          : `Balance ${formatCurrency(walletBalance)}`
+        : opt.sub;
+
     return (
       <Pressable
         key={opt.id}
+        disabled={disabled}
+        accessibilityState={{ disabled, selected: isSelected }}
         className={`flex-row items-center rounded-xl px-2 py-3 ${isSelected ? 'bg-primaryLight' : ''}`}
+        style={disabled ? { opacity: 0.45 } : undefined}
         onPress={() => {
+          if (disabled) return;
           onSelect(opt.id, opt.type);
           setShowSheet(false);
         }}
@@ -155,12 +213,17 @@ export function PaymentMethodSelector({
         </View>
         <View className="flex-1 ml-3">
           <Text className="text-sm font-montserrat-bold text-textPrimary">{opt.label}</Text>
-          {opt.sub ? (
-            <Text className="text-xs font-montserrat text-textSecondary mt-0.5">{opt.sub}</Text>
+          {sub ? (
+            <Text
+              className="text-xs font-montserrat mt-0.5"
+              style={{ color: disabled ? LightColors.danger : LightColors.textSecondary }}
+            >
+              {sub}
+            </Text>
           ) : null}
         </View>
-        {isSelected && <Check size={20} color={LightColors.primary} />}
-        {opt.isDefault && !isSelected && (
+        {isSelected && !disabled && <Check size={20} color={LightColors.primary} />}
+        {opt.isDefault && !isSelected && !disabled && (
           <Text className="text-[10px] font-montserrat text-primary bg-primaryLight px-2 py-0.5 rounded">
             Default
           </Text>

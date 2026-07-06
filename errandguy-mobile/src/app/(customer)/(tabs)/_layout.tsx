@@ -76,6 +76,10 @@ export default function CustomerTabsLayout() {
           paddingBottom: 0,
           paddingHorizontal: 2,
         },
+        // Let the icon container fill the item height so the icon-only
+        // glyph centres vertically instead of leaving a gap at the bottom
+        // (the space react-navigation reserves for a now-hidden label).
+        tabBarIconStyle: { flex: 1 },
       }}
     >
       <Tabs.Screen

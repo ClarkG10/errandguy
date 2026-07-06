@@ -121,4 +121,32 @@ class WalletTopUpTest extends TestCase
             ->postJson('/api/v1/wallet/top-up', ['amount' => 10])
             ->assertStatus(422);
     }
+
+    public function test_gateway_rejection_returns_clean_502_not_500(): void
+    {
+        // Simulate Xendit rejecting the request (e.g. the API key lacks the
+        // Invoice permission — the real-world REQUEST_FORBIDDEN_ERROR).
+        Http::fake([
+            'api.xendit.co/v2/invoices' => Http::response([
+                'error_code' => 'REQUEST_FORBIDDEN_ERROR',
+                'message' => 'The API key is forbidden to perform this request.',
+            ], 403),
+        ]);
+
+        $response = $this->actingAs($this->user)
+            ->postJson('/api/v1/wallet/top-up', ['amount' => 500]);
+
+        // A clean, actionable error — not a raw 500 "Server Error".
+        $response->assertStatus(502)
+            ->assertJsonStructure(['message']);
+
+        // Balance untouched, and the pending row is marked failed (not left
+        // lingering as a fake "pending top-up").
+        $this->assertEquals(100.00, (float) $this->user->fresh()->wallet_balance);
+        $this->assertDatabaseHas('wallet_transactions', [
+            'user_id' => $this->user->id,
+            'type' => 'top_up',
+            'status' => 'failed',
+        ]);
+    }
 }

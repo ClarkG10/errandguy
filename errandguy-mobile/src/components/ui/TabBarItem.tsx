@@ -57,7 +57,7 @@ export function TabBarItem({
 
   return (
     <View style={[s.wrap, { width: slot, transform: [{ translateX: offsetX }] }]}>
-      <View style={s.iconBox}>
+      <View style={s.iconBox} pointerEvents="none">
         <Ionicons name={iconName} size={iconSize} color={color} />
         {!!badgeCount && badgeCount > 0 && (
           <View
@@ -82,6 +82,11 @@ export function TabBarItem({
 
 const s = StyleSheet.create({
   wrap: {
+    // Fill the icon slot's full height so the glyph sits dead-centre.
+    // Without this the icon hugs the top and leaves a gap at the bottom
+    // (react-navigation still reserves label space even with the label
+    // hidden). Paired with `tabBarIconStyle: { flex: 1 }` in the layouts.
+    flex: 1,
     alignItems: 'center',
     justifyContent: 'center',
   },

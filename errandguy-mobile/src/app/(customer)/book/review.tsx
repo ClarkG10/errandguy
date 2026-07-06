@@ -540,6 +540,11 @@ export default function ReviewScreen() {
         {/* Payment Method */}
         <PaymentMethodSelector
           selectedId={draftBooking.payment_method_id}
+          // Fixed-price bookings charge `totalAmount` up front, so the wallet
+          // must cover it; negotiate bookings settle later at the agreed
+          // offer, so gate on that instead. This lets the selector grey out
+          // the wallet when the balance is short.
+          amount={pricingMode === 'fixed' ? totalAmount : offerPrice}
           onSelect={(id, type) => {
             updateDraft({ payment_method_id: id });
             setPaymentMethodType(type);

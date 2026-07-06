@@ -61,6 +61,9 @@ export default function RunnerTabsLayout() {
           paddingTop: 0,
           paddingBottom: 0,
         },
+        // Fill the icon container so the icon-only glyph centres vertically
+        // instead of leaving a gap at the bottom (reserved label space).
+        tabBarIconStyle: { flex: 1 },
       }}
     >
       <Tabs.Screen

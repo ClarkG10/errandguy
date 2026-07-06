@@ -62,11 +62,21 @@ class WalletController extends Controller
             ], 200);
         }
 
-        $result = $this->walletService->initiateTopUp(
-            $user->id,
-            (float) $validated['amount'],
-            $user->email,
-        );
+        try {
+            $result = $this->walletService->initiateTopUp(
+                $user->id,
+                (float) $validated['amount'],
+                $user->email,
+            );
+        } catch (\Throwable $e) {
+            // The gateway rejected the request (e.g. API key lacks Invoice
+            // permission) or was unreachable. The real reason is already
+            // logged by WalletService/PaymentService; surface a clean,
+            // actionable message instead of a raw 500 "Server Error".
+            return response()->json([
+                'message' => 'We couldn’t start your payment right now. Please try again in a moment.',
+            ], 502);
+        }
 
         return response()->json([
             'data' => $result['transaction'],
