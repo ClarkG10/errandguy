@@ -17,16 +17,20 @@ class PaymentMethod extends Model
     protected $fillable = [
         'user_id',
         'type',
+        'status',
         'label',
         'gateway_token',
+        'gateway_ref',
         'is_default',
         'last_four',
         'card_brand',
+        'channel_code',
         'expires_at',
     ];
 
     protected $hidden = [
         'gateway_token',
+        'gateway_ref',
     ];
 
     protected function casts(): array

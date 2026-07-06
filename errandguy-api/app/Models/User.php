@@ -31,6 +31,7 @@ class User extends Authenticatable
         'default_lng',
         'fcm_token',
         'wallet_balance',
+        'xendit_customer_id',
         'avg_rating',
         'total_ratings',
         'last_active_at',

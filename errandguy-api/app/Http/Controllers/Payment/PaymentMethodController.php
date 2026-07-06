@@ -2,10 +2,12 @@
 
 namespace App\Http\Controllers\Payment;
 
+use App\Exceptions\PaymentGatewayException;
 use App\Http\Controllers\Controller;
 use App\Models\PaymentMethod;
 use App\Services\CacheService;
 use App\Services\PaymentMethodCatalog;
+use App\Services\PaymentService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 
@@ -30,15 +32,74 @@ class PaymentMethodController extends Controller
 
     public function index(Request $request): JsonResponse
     {
+        // Hide expired/failed links — they can't be used and only confuse.
         $methods = PaymentMethod::where('user_id', $request->user()->id)
+            ->whereIn('status', ['active', 'pending'])
             ->orderByDesc('is_default')
             ->orderBy('created_at')
             ->get()
-            ->makeHidden(['gateway_token']);
+            ->makeHidden(['gateway_token', 'gateway_ref']);
 
         return response()->json([
             'data' => $methods,
         ]);
+    }
+
+    /**
+     * Start linking a reusable e-wallet (GCash / Maya / GrabPay). Creates a
+     * PENDING method row + a Xendit payment method, and returns an
+     * `action_url` the app opens (in-app sheet) for the customer to authorize.
+     * The `payment_method.activated` webhook flips it to ACTIVE.
+     */
+    public function link(Request $request): JsonResponse
+    {
+        $validated = $request->validate([
+            'channel' => ['required', 'string', 'in:gcash,maya,grabpay'],
+        ]);
+
+        $user = $request->user();
+        $channel = $validated['channel'];
+        $channelMap = ['gcash' => 'GCASH', 'maya' => 'PAYMAYA', 'grabpay' => 'GRABPAY'];
+        $labelMap = ['gcash' => 'GCash', 'maya' => 'Maya', 'grabpay' => 'GrabPay'];
+
+        try {
+            $pm = app(PaymentService::class)->createLinkedEwallet(
+                $user,
+                $channelMap[$channel],
+                // Reuse the payment-return bridge so the in-app sheet auto-closes
+                // once the customer finishes authorizing in the e-wallet.
+                url('/payment/complete'),
+                url('/payment/complete'),
+            );
+        } catch (\Throwable $e) {
+            $message = 'Could not start linking. Please try again.';
+            if (config('app.debug') && $e instanceof PaymentGatewayException) {
+                $message = "Payment gateway error: {$e->reason()}";
+            }
+
+            return response()->json(['message' => $message], 502);
+        }
+
+        $status = strtolower($pm['status'] ?? 'pending') === 'active' ? 'active' : 'pending';
+        $isFirstActive = ! PaymentMethod::where('user_id', $user->id)
+            ->where('status', 'active')
+            ->exists();
+
+        $method = PaymentMethod::create([
+            'user_id' => $user->id,
+            'type' => $channel,
+            'status' => $status,
+            'label' => $labelMap[$channel],
+            'gateway_ref' => $pm['id'] ?? null,
+            'channel_code' => $channelMap[$channel],
+            'is_default' => $isFirstActive && $status === 'active',
+        ]);
+
+        return response()->json([
+            'data' => $method->makeHidden(['gateway_token', 'gateway_ref']),
+            // The app opens this to authorize the link; null if already active.
+            'action_url' => PaymentService::extractActionUrl($pm),
+        ], 201);
     }
 
     public function store(Request $request): JsonResponse

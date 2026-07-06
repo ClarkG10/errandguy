@@ -13,10 +13,12 @@ use App\Jobs\AutoCancelBookingJob;
 use App\Jobs\BroadcastToRunnersJob;
 use App\Jobs\ExpireNegotiateBookingJob;
 use App\Jobs\MatchRunnerJob;
+use App\Exceptions\PaymentGatewayException;
 use App\Models\Booking;
 use App\Models\BookingStatusLog;
 use App\Models\ErrandType;
 use App\Models\Payment;
+use App\Models\PaymentMethod;
 use App\Models\RunnerLocation;
 use App\Services\CancellationPolicy;
 use App\Services\PaymentService;
@@ -205,7 +207,69 @@ class BookingController extends Controller
         $checkoutUrl = null;
         $booking->update(['payment_method' => $paymentMethod]);
 
-        if ($paymentMethod === 'wallet') {
+        // A previously-linked reusable method (e.g. Maya/GrabPay) chosen for a
+        // one-tap charge — usually needs no redirect.
+        $savedMethod = ! empty($validated['payment_method_id'])
+            ? PaymentMethod::where('id', $validated['payment_method_id'])
+                ->where('user_id', $user->id)
+                ->where('status', 'active')
+                ->whereNotNull('gateway_ref')
+                ->first()
+            : null;
+
+        if ($savedMethod) {
+            $payment = Payment::create([
+                'booking_id' => $booking->id,
+                'customer_id' => $user->id,
+                'amount' => $amount,
+                'currency' => 'PHP',
+                'method' => $paymentMethod,
+                'status' => 'pending',
+            ]);
+            try {
+                $charge = app(PaymentService::class)->chargeSavedMethod(
+                    $savedMethod->gateway_ref,
+                    $amount,
+                    "booking-{$payment->id}",
+                    "ErrandGuy booking {$booking->booking_number}",
+                );
+                $chargeStatus = strtoupper($charge['status'] ?? '');
+
+                if ($chargeStatus === 'SUCCEEDED') {
+                    $payment->update([
+                        'gateway_tx_id' => $charge['id'] ?? null,
+                        'gateway_response' => $charge,
+                        'status' => 'completed',
+                        'paid_at' => now(),
+                    ]);
+                    $booking->update(['payment_status' => 'paid']);
+                } elseif (in_array($chargeStatus, ['FAILED', 'EXPIRED', 'VOIDED'], true)) {
+                    throw new \RuntimeException('Charge was declined.');
+                } else {
+                    // PENDING / REQUIRES_ACTION — first charge may need a quick
+                    // auth this time; the payment.succeeded webhook confirms it.
+                    $payment->update([
+                        'gateway_tx_id' => $charge['id'] ?? null,
+                        'gateway_response' => $charge,
+                        'status' => 'processing',
+                    ]);
+                    $booking->update(['payment_status' => 'pending']);
+                    $checkoutUrl = PaymentService::extractActionUrl($charge);
+                }
+            } catch (\Throwable $e) {
+                $payment->update(['status' => 'failed']);
+                $booking->delete();
+                \Illuminate\Support\Facades\Log::error('Booking saved-method charge failed', [
+                    'booking_number' => $booking->booking_number,
+                    'error' => $e->getMessage(),
+                ]);
+                $message = 'Could not charge your saved payment method. Please try another.';
+                if (config('app.debug') && $e instanceof PaymentGatewayException) {
+                    $message = "Payment gateway error: {$e->reason()}";
+                }
+                return response()->json(['message' => $message], 422);
+            }
+        } elseif ($paymentMethod === 'wallet') {
             try {
                 app(WalletService::class)->deduct(
                     $user->id,

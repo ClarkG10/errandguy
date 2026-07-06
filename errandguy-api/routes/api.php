@@ -165,6 +165,9 @@ Route::prefix('v1')->group(function () {
             Route::get('/available-methods', [PaymentMethodController::class, 'available']);
             Route::get('/methods', [PaymentMethodController::class, 'index']);
             Route::post('/methods', [PaymentMethodController::class, 'store']);
+            // Link a reusable e-wallet (GCash/Maya/GrabPay) → returns an
+            // authorization URL the app opens in an in-app sheet.
+            Route::post('/methods/link', [PaymentMethodController::class, 'link'])->middleware('throttle:10,1');
             Route::delete('/methods/{id}', [PaymentMethodController::class, 'destroy']);
             Route::put('/methods/{id}/default', [PaymentMethodController::class, 'setDefault']);
             Route::get('/history', [PaymentHistoryController::class, 'index']);

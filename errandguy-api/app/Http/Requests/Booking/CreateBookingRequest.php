@@ -3,6 +3,8 @@
 namespace App\Http\Requests\Booking;
 
 use App\Models\ErrandType;
+use App\Models\PaymentMethod;
+use App\Services\PaymentMethodCatalog;
 use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Validation\Rule;
 
@@ -11,6 +13,23 @@ class CreateBookingRequest extends FormRequest
     public function authorize(): bool
     {
         return true;
+    }
+
+    /**
+     * Accepted payment_method values: the operator-enabled one-time catalog
+     * PLUS the type of any reusable method the customer has already linked
+     * (a linked GrabPay isn't in the one-time catalog, but must be payable).
+     */
+    private function allowedPaymentMethods(): array
+    {
+        $saved = $this->user()
+            ? PaymentMethod::where('user_id', $this->user()->id)
+                ->where('status', 'active')
+                ->pluck('type')
+                ->all()
+            : [];
+
+        return array_values(array_unique([...PaymentMethodCatalog::enabledTypes(), ...$saved]));
     }
 
     public function rules(): array
@@ -68,8 +87,9 @@ class CreateBookingRequest extends FormRequest
                 Rule::in(['walk', 'bicycle', 'motorcycle', 'car']),
             ],
             'customer_offer' => ['required_if:pricing_mode,negotiate', 'nullable', 'numeric', 'min:0'],
-            // Only methods the operator currently offers are accepted.
-            'payment_method' => ['required', Rule::in(\App\Services\PaymentMethodCatalog::enabledTypes())],
+            // Operator-enabled one-time methods, plus any type the customer has
+            // already linked (see allowedPaymentMethods()).
+            'payment_method' => ['required', Rule::in($this->allowedPaymentMethods())],
             // Optional: online payments use a Xendit hosted invoice where the
             // customer picks GCash/Maya/card, so a pre-saved method isn't
             // required. When provided it must belong to the requesting user.

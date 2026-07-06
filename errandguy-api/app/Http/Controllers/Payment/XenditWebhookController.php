@@ -39,6 +39,10 @@ class XenditWebhookController extends Controller
                 'refund.succeeded' => $this->handleRefundSucceeded($payload['data'] ?? []),
                 // v2 invoices (used for wallet top-ups) may fire this event.
                 'invoice.paid' => $this->handleInvoicePaid($payload['data'] ?? $payload),
+                // Linked e-wallet lifecycle (Stage 2 saved methods).
+                'payment_method.activated' => $this->handlePaymentMethodStatus($payload['data'] ?? [], 'active'),
+                'payment_method.expired' => $this->handlePaymentMethodStatus($payload['data'] ?? [], 'expired'),
+                'payment_method.failed' => $this->handlePaymentMethodStatus($payload['data'] ?? [], 'failed'),
                 default => null,
             };
 
@@ -100,6 +104,20 @@ class XenditWebhookController extends Controller
         }
     }
 
+    /**
+     * Linked e-wallet lifecycle. Xendit sends the payment-method object; its
+     * `id` is what we stored as gateway_ref when the customer started linking.
+     */
+    private function handlePaymentMethodStatus(array $data, string $status): void
+    {
+        $id = $data['id'] ?? null;
+        if (! $id) {
+            return;
+        }
+
+        \App\Models\PaymentMethod::where('gateway_ref', $id)->update(['status' => $status]);
+    }
+
     private function handlePaymentSucceeded(array $data): void
     {
         $paymentRequestId = $data['payment_request_id'] ?? null;
@@ -121,6 +139,12 @@ class XenditWebhookController extends Controller
                 'paid_at' => now(),
                 'gateway_response' => $data,
             ]);
+
+            // Saved-method / payment-request charges are tied to a booking —
+            // mark it paid so the customer/runner UIs reflect it.
+            if ($payment->booking) {
+                $payment->booking->update(['payment_status' => 'paid']);
+            }
         });
     }
 

@@ -113,6 +113,154 @@ class PaymentService
         return $response->json();
     }
 
+    // ── Linked / saved payment methods (Stage 2) ─────────────────────────────
+
+    /**
+     * Get (or lazily create) the Xendit customer for a user. Reusable payment
+     * methods (linked e-wallets, saved cards) are tied to a customer.
+     */
+    public function getOrCreateXenditCustomer(User $user): string
+    {
+        if (! blank($user->xendit_customer_id)) {
+            return $user->xendit_customer_id;
+        }
+
+        if (blank($this->secretKey)) {
+            throw new PaymentGatewayException(
+                'Payment gateway is not configured.',
+                'XENDIT_SECRET_KEY is empty — set it in the server env and run `php artisan config:clear`.',
+                'NOT_CONFIGURED',
+            );
+        }
+
+        $response = Http::withBasicAuth($this->secretKey, '')
+            ->post("{$this->baseUrl}/customers", [
+                'reference_id' => "user-{$user->id}",
+                'type' => 'INDIVIDUAL',
+                'individual_detail' => [
+                    'given_names' => $user->name ?: ($user->first_name ?? 'ErrandGuy Customer'),
+                ],
+                'email' => $user->email ?: null,
+            ]);
+
+        if (! $response->successful()) {
+            $body = $response->json();
+            Log::error('Xendit: Failed to create customer', [
+                'status' => $response->status(),
+                'response' => $body,
+            ]);
+            throw new PaymentGatewayException(
+                'Failed to set up your payment profile.',
+                is_array($body) ? ($body['message'] ?? null) : null,
+                is_array($body) ? ($body['error_code'] ?? null) : null,
+            );
+        }
+
+        $customerId = (string) $response->json('id');
+        $user->update(['xendit_customer_id' => $customerId]);
+
+        return $customerId;
+    }
+
+    /**
+     * Start linking a reusable e-wallet (GCash/Maya/GrabPay). Returns the
+     * Xendit payment-method object; its `actions[].url` is where the customer
+     * authorizes the link. The method becomes ACTIVE via the
+     * `payment_method.activated` webhook.
+     */
+    public function createLinkedEwallet(User $user, string $channelCode, string $successUrl, string $failureUrl): array
+    {
+        if (blank($this->secretKey)) {
+            throw new PaymentGatewayException(
+                'Payment gateway is not configured.',
+                'XENDIT_SECRET_KEY is empty — set it in the server env and run `php artisan config:clear`.',
+                'NOT_CONFIGURED',
+            );
+        }
+
+        $customerId = $this->getOrCreateXenditCustomer($user);
+
+        $payload = [
+            'type' => 'EWALLET',
+            'reusability' => 'MULTIPLE_USE',
+            'customer_id' => $customerId,
+            'ewallet' => [
+                'channel_code' => $channelCode,
+                'channel_properties' => [
+                    'success_return_url' => $successUrl,
+                    'failure_return_url' => $failureUrl,
+                ],
+            ],
+        ];
+
+        $response = Http::withBasicAuth($this->secretKey, '')
+            ->post("{$this->baseUrl}/v2/payment_methods", $payload);
+
+        if (! $response->successful()) {
+            $body = $response->json();
+            Log::error('Xendit: Failed to link e-wallet', [
+                'status' => $response->status(),
+                'channel' => $channelCode,
+                'response' => $body,
+            ]);
+            throw new PaymentGatewayException(
+                'Failed to link this payment method.',
+                is_array($body) ? ($body['message'] ?? null) : null,
+                is_array($body) ? ($body['error_code'] ?? null) : null,
+            );
+        }
+
+        return $response->json();
+    }
+
+    /**
+     * Charge a previously-linked payment method by its Xendit id — no redirect
+     * for MULTIPLE_USE tokens. Returns the payment_request object; a first-time
+     * charge may come back REQUIRES_ACTION with an auth URL in `actions`.
+     */
+    public function chargeSavedMethod(string $xenditPaymentMethodId, float $amount, string $referenceId, string $description = ''): array
+    {
+        $response = Http::withBasicAuth($this->secretKey, '')
+            ->post("{$this->baseUrl}/payment_requests", [
+                'reference_id' => $referenceId,
+                'currency' => 'PHP',
+                'amount' => round($amount, 2),
+                'payment_method_id' => $xenditPaymentMethodId,
+                'description' => $description,
+            ]);
+
+        if (! $response->successful()) {
+            $body = $response->json();
+            Log::error('Xendit: Failed to charge saved method', [
+                'status' => $response->status(),
+                'response' => $body,
+            ]);
+            throw new PaymentGatewayException(
+                'Failed to charge your saved payment method.',
+                is_array($body) ? ($body['message'] ?? null) : null,
+                is_array($body) ? ($body['error_code'] ?? null) : null,
+            );
+        }
+
+        return $response->json();
+    }
+
+    /**
+     * Pull the customer-facing authorization URL out of a Xendit payment-method
+     * or payment-request `actions` array (the link/authorize step).
+     */
+    public static function extractActionUrl(array $data): ?string
+    {
+        foreach ($data['actions'] ?? [] as $action) {
+            $url = $action['url'] ?? ($action['value'] ?? null);
+            if ($url) {
+                return $url;
+            }
+        }
+
+        return null;
+    }
+
     public function refundPayment(string $paymentId, ?float $amount = null, string $reason = 'REQUESTED_BY_CUSTOMER'): array
     {
         $payment = Payment::findOrFail($paymentId);
