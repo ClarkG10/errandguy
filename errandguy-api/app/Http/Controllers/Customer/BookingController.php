@@ -257,6 +257,8 @@ class BookingController extends Controller
                     "booking-{$payment->id}",
                     "ErrandGuy booking {$booking->booking_number}",
                     (string) ($user->email ?? ''),
+                    // Bridge page → app deep link so the in-app sheet auto-closes.
+                    url('/payment/complete'),
                 );
                 $payment->update([
                     'gateway_tx_id' => $invoice['id'] ?? null,

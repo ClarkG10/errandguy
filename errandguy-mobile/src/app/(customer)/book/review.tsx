@@ -20,7 +20,7 @@ import { PaymentMethodSelector } from '../../../components/customer/PaymentMetho
 import { OfferSlider } from '../../../components/customer/OfferSlider';
 import { BookingStepIndicator } from '../../../components/customer/BookingStepIndicator';
 import { formatCurrency } from '../../../utils/formatCurrency';
-import { openCheckoutUrl } from '../../../utils/browser';
+import { openCheckoutUrl, PAYMENT_RETURN_URL } from '../../../utils/browser';
 import { getErrandTypeRule, type VehicleKey } from '../../../constants/errandTypeRules';
 import { LightColors } from '../../../constants/colors';
 import type { PricingMode } from '../../../types';
@@ -295,7 +295,7 @@ export default function ReviewScreen() {
       // Online payment (card/gcash/maya) → open the Xendit hosted checkout
       // so the customer can pay. Wallet/cash return no URL and skip this.
       if (checkoutUrl) {
-        await openCheckoutUrl(checkoutUrl);
+        await openCheckoutUrl(checkoutUrl, PAYMENT_RETURN_URL);
       }
       router.replace(`/(customer)/book/confirm?bookingId=${booking.id}`);
     } catch (err: any) {

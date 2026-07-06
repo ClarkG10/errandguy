@@ -67,6 +67,9 @@ class WalletController extends Controller
                 $user->id,
                 (float) $validated['amount'],
                 $user->email,
+                // After paying, Xendit redirects here; the bridge page forwards
+                // to the app deep link so the in-app checkout sheet auto-closes.
+                url('/payment/complete'),
             );
         } catch (\Throwable $e) {
             // The gateway rejected the request (e.g. API key lacks Invoice

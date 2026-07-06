@@ -8,7 +8,7 @@ import { BottomActionBar } from '../../../components/ui/BottomActionBar';
 import { GradientHeader } from '../../../components/ui/GradientHeader';
 import { Input } from '../../../components/ui/Input';
 import { formatCurrency } from '../../../utils/formatCurrency';
-import { openCheckoutUrl } from '../../../utils/browser';
+import { openCheckoutUrl, PAYMENT_RETURN_URL } from '../../../utils/browser';
 import { LightColors } from '../../../constants/colors';
 import { toast } from '../../../stores/toastStore';
 
@@ -68,7 +68,7 @@ export default function TopUpScreen() {
         return;
       }
 
-      await openCheckoutUrl(checkoutUrl);
+      await openCheckoutUrl(checkoutUrl, PAYMENT_RETURN_URL);
       // Back from the payment page — the balance updates once the webhook
       // confirms. Tell the user and return to the wallet, which refetches.
       toast.info('Your balance will update once your payment is confirmed.');

@@ -155,6 +155,15 @@ class WalletTopUpTest extends TestCase
         ], ['x-callback-token' => 'wrong-token'])->assertStatus(400);
     }
 
+    public function test_payment_return_bridge_forwards_to_app_deep_link(): void
+    {
+        // Xendit redirects here after payment; the page must forward to the
+        // app deep link so the in-app checkout sheet auto-closes.
+        $this->get('/payment/complete')
+            ->assertOk()
+            ->assertSee('errandguy://payment-complete');
+    }
+
     public function test_top_up_below_minimum_is_rejected(): void
     {
         $this->actingAs($this->user)
