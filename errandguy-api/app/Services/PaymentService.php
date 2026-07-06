@@ -20,6 +20,19 @@ class PaymentService
         $this->secretKey = config('services.xendit.secret_key');
     }
 
+    /**
+     * Authenticated Xendit HTTP client with explicit timeouts. Without these,
+     * Guzzle waits indefinitely — a slow/hanging Xendit call would tie up the
+     * PHP worker until nginx/Cloudflare gives up with a 502. With them, the
+     * call fails fast and surfaces as a clean caught error instead.
+     */
+    private function http(): \Illuminate\Http\Client\PendingRequest
+    {
+        return Http::withBasicAuth($this->secretKey, '')
+            ->connectTimeout(10)
+            ->timeout(25);
+    }
+
     public function createPaymentRequest(float $amount, string $referenceId, string $method, string $description = '', ?string $successRedirectUrl = null, ?string $failureRedirectUrl = null): array
     {
         $payload = [
@@ -43,7 +56,7 @@ class PaymentService
             ];
         }
 
-        $response = Http::withBasicAuth($this->secretKey, '')
+        $response = $this->http()
             ->post("{$this->baseUrl}/payment_requests", $payload);
 
         if (!$response->successful()) {
@@ -94,7 +107,7 @@ class PaymentService
             $payload['success_redirect_url'] = $successRedirectUrl;
         }
 
-        $response = Http::withBasicAuth($this->secretKey, '')
+        $response = $this->http()
             ->post("{$this->baseUrl}/v2/invoices", $payload);
 
         if (!$response->successful()) {
@@ -133,7 +146,7 @@ class PaymentService
             );
         }
 
-        $response = Http::withBasicAuth($this->secretKey, '')
+        $response = $this->http()
             ->post("{$this->baseUrl}/customers", [
                 'reference_id' => "user-{$user->id}",
                 'type' => 'INDIVIDUAL',
@@ -193,7 +206,7 @@ class PaymentService
             ],
         ];
 
-        $response = Http::withBasicAuth($this->secretKey, '')
+        $response = $this->http()
             ->post("{$this->baseUrl}/v2/payment_methods", $payload);
 
         if (! $response->successful()) {
@@ -220,7 +233,7 @@ class PaymentService
      */
     public function chargeSavedMethod(string $xenditPaymentMethodId, float $amount, string $referenceId, string $description = ''): array
     {
-        $response = Http::withBasicAuth($this->secretKey, '')
+        $response = $this->http()
             ->post("{$this->baseUrl}/payment_requests", [
                 'reference_id' => $referenceId,
                 'currency' => 'PHP',
@@ -267,7 +280,7 @@ class PaymentService
 
         $refundAmount = $amount ?? (float) $payment->amount;
 
-        $response = Http::withBasicAuth($this->secretKey, '')
+        $response = $this->http()
             ->post("{$this->baseUrl}/refunds", [
                 'payment_request_id' => $payment->gateway_tx_id,
                 'amount' => round($refundAmount, 2),
@@ -294,7 +307,7 @@ class PaymentService
 
     public function getPaymentRequest(string $paymentRequestId): array
     {
-        $response = Http::withBasicAuth($this->secretKey, '')
+        $response = $this->http()
             ->get("{$this->baseUrl}/payment_requests/{$paymentRequestId}");
 
         if (!$response->successful()) {
