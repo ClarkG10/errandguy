@@ -1,4 +1,7 @@
-export type PaymentMethodType = 'card' | 'gcash' | 'maya' | 'wallet' | 'cash';
+export type PaymentMethodType = 'card' | 'gcash' | 'maya' | 'grabpay' | 'wallet' | 'cash';
+
+/** Lifecycle of a linked/saved method (Xendit tokenization). */
+export type PaymentMethodStatus = 'active' | 'pending' | 'expired' | 'failed';
 
 export type PaymentStatus =
   | 'pending'
@@ -35,11 +38,13 @@ export interface PaymentMethod {
   id: string;
   user_id: string;
   type: PaymentMethodType;
+  /** 'active' = linked & chargeable; 'pending' = awaiting authorization. */
+  status?: PaymentMethodStatus;
   label: string;
-  gateway_token: string | null;
   is_default: boolean;
   last_four: string | null;
   card_brand: string | null;
+  channel_code?: string | null;
   expires_at: string | null;
   created_at: string;
 }

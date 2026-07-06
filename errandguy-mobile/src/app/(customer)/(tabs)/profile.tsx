@@ -138,7 +138,7 @@ export default function CustomerProfileScreen() {
     {
       label: 'Payment Methods',
       icon: CreditCard,
-      route: '/(customer)/wallet',
+      route: '/(customer)/payment-methods',
     },
   ];
 

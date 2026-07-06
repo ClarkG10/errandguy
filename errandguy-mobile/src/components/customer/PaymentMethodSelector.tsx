@@ -24,6 +24,7 @@ const METHOD_ICONS: Record<PaymentMethodType, LucideIcon> = {
   card: CreditCard,
   gcash: Smartphone,
   maya: Smartphone,
+  grabpay: Smartphone,
   wallet: Wallet,
   cash: Banknote,
 };
@@ -77,7 +78,11 @@ export function PaymentMethodSelector({
     { staleTime: 60_000, ttl: CacheTTL.MEDIUM },
   );
 
-  const methods = methodsQ.data ?? [];
+  // Only ACTIVE saved methods are chargeable — a pending (not-yet-authorized)
+  // linked account can't be used to pay yet, so it's not offered here.
+  const methods = (methodsQ.data ?? []).filter(
+    (m) => !m.status || m.status === 'active',
+  );
   const loading = methodsQ.loading && !methodsQ.data;
 
   // Live wallet balance so we can show it and disable the wallet option when
@@ -131,7 +136,7 @@ export function PaymentMethodSelector({
       autoSelectedRef.current = true;
       return;
     }
-    const def = methodsQ.data.find((m) => m.is_default);
+    const def = methods.find((m) => m.is_default);
     if (def && !isDisabledType(def.type)) {
       autoSelectedRef.current = true;
       onSelectRef.current(def.id, def.type);

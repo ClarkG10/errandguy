@@ -28,6 +28,15 @@ export const paymentService = {
     return p;
   },
 
+  // Start linking a reusable e-wallet (GCash/Maya/GrabPay). Returns an
+  // `action_url` the app opens for the customer to authorize; the method
+  // becomes usable once Xendit fires payment_method.activated.
+  linkEwallet(channel: 'gcash' | 'maya' | 'grabpay') {
+    const p = api.post('/payments/methods/link', { channel });
+    p.then(invalidatePaymentMethods).catch(() => {});
+    return p;
+  },
+
   removePaymentMethod(id: string) {
     const p = api.delete(`/payments/methods/${id}`);
     p.then(invalidatePaymentMethods).catch(() => {});
