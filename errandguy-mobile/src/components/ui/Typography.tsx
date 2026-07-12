@@ -36,11 +36,11 @@ interface EyebrowProps {
   className?: string;
 }
 
-export function Eyebrow({ children, color = LightColors.textTertiary, className = '' }: EyebrowProps) {
+export function Eyebrow({ children, color = LightColors.textSecondary, className = '' }: EyebrowProps) {
   return (
     <Text
       className={`text-[10px] font-montserrat-bold uppercase ${className}`}
-      style={{ color, letterSpacing: 1.2 }}
+      style={{ color, letterSpacing: 1.4 }}
     >
       {children}
     </Text>

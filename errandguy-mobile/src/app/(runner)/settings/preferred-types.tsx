@@ -1,14 +1,19 @@
-import React, { useState, useEffect, useCallback } from 'react';
-import { View, Text, ScrollView, Pressable, RefreshControl } from 'react-native';
-import { useRouter } from 'expo-router';
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
+import { View, Text, ScrollView, Pressable } from 'react-native';
+import { useRouter, useNavigation } from 'expo-router';
+import * as Haptics from 'expo-haptics';
 import { Check } from 'lucide-react-native';
 import { GradientHeader } from '../../../components/ui/GradientHeader';
 import { Card } from '../../../components/ui/Card';
 import { LightColors } from '../../../constants/colors';
+import { useResponsive } from '../../../constants/responsive';
 import { Button } from '../../../components/ui/Button';
 import { BottomActionBar } from '../../../components/ui/BottomActionBar';
+import { BrandRefreshControl } from '../../../components/ui/BrandRefreshControl';
+import { ConfirmModal } from '../../../components/ui/ConfirmModal';
 import { useRunnerStore } from '../../../stores/runnerStore';
 import { runnerService } from '../../../services/runner.service';
+import { runOptimistic } from '../../../utils/optimistic';
 import { toast } from '../../../stores/toastStore';
 
 interface ErrandTypeOption {
@@ -20,11 +25,13 @@ interface ErrandTypeOption {
 
 export default function PreferredTypesScreen() {
   const router = useRouter();
+  const navigation = useNavigation();
+  const { contentMaxWidth } = useResponsive();
   const { runnerProfile, setRunnerProfile } = useRunnerStore();
 
   const [types, setTypes] = useState<ErrandTypeOption[]>([]);
-  const [saving, setSaving] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
+  const [showDiscard, setShowDiscard] = useState(false);
 
   // Common errand types (would normally come from API)
   const defaultTypes = [
@@ -47,6 +54,7 @@ export default function PreferredTypesScreen() {
   }, [runnerProfile]);
 
   const toggleType = (slug: string) => {
+    Haptics.selectionAsync().catch(() => {});
     setTypes((prev) =>
       prev.map((t) => (t.slug === slug ? { ...t, selected: !t.selected } : t)),
     );
@@ -58,18 +66,25 @@ export default function PreferredTypesScreen() {
       toast.warning('Please select at least one errand type.');
       return;
     }
-
-    setSaving(true);
-    try {
-      await runnerService.updateRunnerProfile({ preferred_types: selected });
-      toast.success('Preferred errand types updated');
-      const res = await runnerService.getRunnerProfile();
-      setRunnerProfile(res.data.data);
-    } catch (err: any) {
-      toast.error(err?.response?.data?.message ?? 'Failed to update');
-    } finally {
-      setSaving(false);
-    }
+    // Optimistic: the selection already renders instantly (local `types`);
+    // reflect it in the runner profile immediately and confirm in the
+    // background. Rolls back to the previous profile on failure. The old
+    // post-save getRunnerProfile refetch was redundant — the service
+    // invalidates ['runner','profile'] on success and the tab refetches on
+    // focus.
+    const prev = runnerProfile;
+    await runOptimistic({
+      apply: () => {
+        if (runnerProfile) setRunnerProfile({ ...runnerProfile, preferred_types: selected });
+      },
+      rollback: () => setRunnerProfile(prev),
+      commit: () => runnerService.updateRunnerProfile({ preferred_types: selected }),
+      errorMessage: "Couldn't update your errand types.",
+      onSuccess: () => {
+        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
+        toast.success('Preferred errand types updated');
+      },
+    });
   };
 
   const onRefresh = useCallback(async () => {
@@ -83,11 +98,61 @@ export default function PreferredTypesScreen() {
 
   const selectedCount = types.filter((t) => t.selected).length;
 
+  // Dirty = current selection differs from the persisted profile set, so
+  // Save can be disabled on a no-op edit and backing out mid-edit prompts
+  // a discard confirm instead of silently dropping the change.
+  const initialSet = useMemo(
+    () => new Set(runnerProfile?.preferred_types ?? []),
+    [runnerProfile],
+  );
+  const dirty = useMemo(() => {
+    const selected = types.filter((t) => t.selected);
+    return (
+      selected.length !== initialSet.size ||
+      selected.some((t) => !initialSet.has(t.slug))
+    );
+  }, [types, initialSet]);
+
+  // Once the user confirms leaving, the beforeRemove guard must not
+  // re-intercept our own router.back().
+  const leavingRef = useRef(false);
+
+  const leave = useCallback(() => {
+    leavingRef.current = true;
+    if (router.canGoBack()) router.back();
+    else router.replace('/(runner)/(tabs)/profile');
+  }, [router]);
+
+  const handleBackPress = useCallback(() => {
+    if (dirty) setShowDiscard(true);
+    else leave();
+  }, [dirty, leave]);
+
+  // Header back runs through handleBackPress, but Android hardware back
+  // and the iOS swipe-back gesture pop the screen directly — intercept
+  // those too so no path silently drops unsaved errand-type edits.
+  useEffect(() => {
+    const unsub = navigation.addListener('beforeRemove', (e) => {
+      if (!dirty || leavingRef.current) return;
+      e.preventDefault();
+      setShowDiscard(true);
+    });
+    return unsub;
+  }, [navigation, dirty]);
+
   return (
     <View className="flex-1 bg-background">
-      <GradientHeader title="Preferred Errand Types" showBack fallbackHref="/(runner)/(tabs)/profile">
+      <GradientHeader
+        title="Preferred Errand Types"
+        showBack
+        fallbackHref="/(runner)/(tabs)/profile"
+        onBackPress={handleBackPress}
+      >
         <View className="px-5 pb-2">
-          <Text className="text-xs font-montserrat text-white/80">
+          <Text
+            className="text-xs font-montserrat text-textSecondary"
+            accessibilityLiveRegion="polite"
+          >
             {selectedCount} selected • min 1 required
           </Text>
         </View>
@@ -96,21 +161,32 @@ export default function PreferredTypesScreen() {
       <ScrollView
         className="flex-1 px-5"
         showsVerticalScrollIndicator={false}
-        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
-        contentContainerStyle={{ paddingBottom: 120 }}
+        refreshControl={<BrandRefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
+        contentContainerStyle={{
+          paddingBottom: 120,
+          maxWidth: contentMaxWidth,
+          width: '100%',
+          alignSelf: 'center',
+        }}
       >
         <Text className="text-sm font-montserrat text-textSecondary mb-3">
           Select the errand types you want to receive requests for.
         </Text>
         {types.map((type) => (
-          <Pressable key={type.slug} onPress={() => toggleType(type.slug)}>
-            <Card className={`mb-2 p-4 flex-row items-center justify-between border ${type.selected ? 'border-primary' : 'border-transparent'}`}>
+          <Pressable
+            key={type.slug}
+            onPress={() => toggleType(type.slug)}
+            accessibilityRole="checkbox"
+            accessibilityLabel={type.name}
+            accessibilityState={{ checked: type.selected }}
+          >
+            <Card className={`mb-2 p-4 flex-row items-center justify-between border ${type.selected ? 'border-primary bg-primaryLight' : 'border-transparent'}`}>
               <Text className="text-[14px] font-montserrat-semi text-textPrimary">
                 {type.name}
               </Text>
               <View
                 className={`w-6 h-6 rounded-full items-center justify-center ${
-                  type.selected ? 'bg-primary' : 'border-2 border-divider'
+                  type.selected ? 'bg-primary' : 'border-2 border-dividerStrong'
                 }`}
               >
                 {type.selected && <Check size={14} color={LightColors.textInverse} />}
@@ -120,10 +196,25 @@ export default function PreferredTypesScreen() {
         ))}
       </ScrollView>
 
-      {/* Save Button */}
+      {/* Save Button — disabled until the selection actually changes so an
+          untouched form doesn't fire a redundant profile write. */}
       <BottomActionBar>
-        <Button title="Save Preferences" onPress={handleSave} loading={saving} fullWidth />
+        <Button title="Save Preferences" onPress={handleSave} disabled={!dirty} fullWidth />
       </BottomActionBar>
+
+      <ConfirmModal
+        visible={showDiscard}
+        title="Discard changes?"
+        message="Your edits to preferred errand types haven't been saved."
+        confirmLabel="Discard"
+        cancelLabel="Keep editing"
+        destructive
+        onConfirm={() => {
+          setShowDiscard(false);
+          leave();
+        }}
+        onCancel={() => setShowDiscard(false)}
+      />
     </View>
   );
 }

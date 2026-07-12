@@ -5,15 +5,16 @@ import {
   FlatList,
   TextInput,
   Pressable,
-  RefreshControl,
-  ActivityIndicator,
 } from 'react-native';
-import { Search, MapPin, Navigation, CheckCircle, XCircle, MessageCircle, ClipboardList } from 'lucide-react-native';
+import { Search, X, MessageCircle, ClipboardList, SearchX, RefreshCw } from 'lucide-react-native';
 import { useRouter } from 'expo-router';
+import * as Haptics from 'expo-haptics';
 import { Card } from '../../../components/ui/Card';
-import { Badge } from '../../../components/ui/Badge';
+import { BrandRefreshControl } from '../../../components/ui/BrandRefreshControl';
 import { GradientHeader } from '../../../components/ui/GradientHeader';
+import { SyncIndicator } from '../../../components/ui/SyncIndicator';
 import { RunnerEmptyState } from '../../../components/ui/RunnerEmptyState';
+import { ErrorState } from '../../../components/ui/ErrorState';
 import { runnerService } from '../../../services/runner.service';
 import { useQuery } from '../../../hooks/useQuery';
 import { CacheTTL } from '../../../services/cache.service';
@@ -23,8 +24,8 @@ import { formatCurrency } from '../../../utils/formatCurrency';
 import { useDebounce } from '../../../hooks/useDebounce';
 import { HistorySkeleton } from '../../../components/ui/Skeleton';
 import type { Booking } from '../../../types';
-import { toast } from '../../../stores/toastStore';
 import { LightColors } from '../../../constants/colors';
+import { TAB_CONTENT_BOTTOM_INSET } from '../../../constants/tabLayout';
 
 export default function HistoryScreen() {
   const router = useRouter();
@@ -51,12 +52,14 @@ export default function HistoryScreen() {
   const [hasMore, setHasMore] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [loadingMore, setLoadingMore] = useState(false);
+  const [loadMoreFailed, setLoadMoreFailed] = useState(false);
 
   // Reset pagination when filter changes.
   useEffect(() => {
     setExtraPages([]);
     setPage(1);
     setHasMore(true);
+    setLoadMoreFailed(false);
   }, [statusFilter]);
 
   // Sync hasMore based on page-1 size.
@@ -75,13 +78,14 @@ export default function HistoryScreen() {
     setExtraPages([]);
     setPage(1);
     setHasMore(true);
+    setLoadMoreFailed(false);
     await page1Q.refresh();
     setRefreshing(false);
   }, [page1Q]);
 
-  const onEndReached = useCallback(async () => {
-    if (!hasMore || loadingMore) return;
+  const fetchNextPage = useCallback(async () => {
     setLoadingMore(true);
+    setLoadMoreFailed(false);
     const nextPage = page + 1;
     try {
       const params: Record<string, any> = { page: nextPage, per_page: 15 };
@@ -92,11 +96,20 @@ export default function HistoryScreen() {
       setPage(nextPage);
       setHasMore(data.length >= 15);
     } catch {
-      toast.error('Failed to load more history');
+      // Surface an inline retry in the footer instead of a transient
+      // toast — the list silently stopping mid-scroll is confusing.
+      setLoadMoreFailed(true);
     } finally {
       setLoadingMore(false);
     }
-  }, [hasMore, loadingMore, page, statusFilter]);
+  }, [page, statusFilter]);
+
+  const onEndReached = useCallback(() => {
+    // After a failure, wait for an explicit retry tap — otherwise the
+    // scroll position keeps re-triggering the failing request.
+    if (!hasMore || loadingMore || loadMoreFailed) return;
+    fetchNextPage();
+  }, [hasMore, loadingMore, loadMoreFailed, fetchNextPage]);
 
   const filteredErrands = useMemo(() => {
     if (!debouncedSearch.trim()) return errands;
@@ -110,16 +123,29 @@ export default function HistoryScreen() {
     );
   }, [errands, debouncedSearch]);
 
+  const searchActive = debouncedSearch.trim().length > 0;
+  // Distinguish "page 1 fetch failed" from a genuinely empty history —
+  // showing 'No completed errands' over a network error is misleading.
+  const page1Failed = !!page1Q.error && !page1Q.data;
+
   const renderItem = useCallback(
     ({ item }: { item: Booking }) => {
       const isCompleted = item.status === 'completed';
+      const dateStr = new Date(item.completed_at ?? item.created_at).toLocaleDateString([], {
+        month: 'short',
+        day: 'numeric',
+      });
       return (
         <Card
           className="mx-5 mb-3"
-          onPress={() => router.push(`/(runner)/errand/${item.id}` as any)}
-          accessibilityLabel={`${item.errand_type?.name ?? 'Errand'}, ${formatCurrency(item.runner_payout ?? item.total_amount)}`}
+          onPress={() => {
+            Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
+            router.push(`/(runner)/errand/${item.id}` as any);
+          }}
+          accessibilityLabel={`${item.errand_type?.name ?? 'Errand'}, ${isCompleted ? 'Completed' : 'Cancelled'}, ${dateStr}, ${formatCurrency(item.runner_payout ?? item.total_amount)}`}
+          accessibilityHint="Opens errand details"
         >
-          {/* Top row — type + status badge left, date + fare right */}
+          {/* Top row — type + status chip left, date + fare right */}
           <View className="flex-row items-start mb-3">
             <View className="flex-1 pr-3">
               <Text
@@ -128,23 +154,30 @@ export default function HistoryScreen() {
               >
                 {item.errand_type?.name ?? 'Errand'}
               </Text>
-              <View className="flex-row items-center mt-1">
-                <Badge
-                  label={isCompleted ? 'Completed' : 'Cancelled'}
-                  variant={isCompleted ? 'success' : 'danger'}
-                />
+              {/* Status chip — *Dark text on a soft wash so Completed and
+                  Cancelled read as equal-weight AA chips (Badge's base
+                  tones fall under AA below 17px). */}
+              <View
+                className={`self-start rounded-full px-2 py-0.5 mt-1 ${
+                  isCompleted ? 'bg-successSoft' : 'bg-dangerSoft'
+                }`}
+              >
+                <Text
+                  className={`text-[11px] font-montserrat-bold ${
+                    isCompleted ? 'text-successDark' : 'text-dangerDark'
+                  }`}
+                >
+                  {isCompleted ? 'Completed' : 'Cancelled'}
+                </Text>
               </View>
             </View>
             <View className="items-end">
-              <Text className="text-[11px] font-montserrat text-textMuted">
-                {new Date(item.completed_at ?? item.created_at).toLocaleDateString([], {
-                  month: 'short',
-                  day: 'numeric',
-                })}
+              <Text className="text-[12px] font-montserrat text-textTertiary">
+                {dateStr}
               </Text>
               <Text
                 className={`text-[15px] font-inter-semi tabular-nums mt-0.5 ${
-                  isCompleted ? 'text-textPrimary' : 'text-textMuted'
+                  isCompleted ? 'text-textPrimary' : 'text-textTertiary'
                 }`}
               >
                 {formatCurrency(item.runner_payout ?? item.total_amount)}
@@ -197,7 +230,17 @@ export default function HistoryScreen() {
   if (initialLoading) {
     return (
       <View className="flex-1 bg-background">
-        <GradientHeader title="Errands" />
+        {/* Keep the same header chrome (incl. the Messages button) mounted
+            during the first fetch so it doesn't pop in when data lands. */}
+        <GradientHeader
+          title="Errands"
+          trailing={{
+            icon: MessageCircle,
+            onPress: () => router.push('/(runner)/chat' as any),
+            badge: chatUnread,
+            accessibilityLabel: 'Messages',
+          }}
+        />
         <HistorySkeleton />
       </View>
     );
@@ -215,17 +258,45 @@ export default function HistoryScreen() {
         }}
       />
 
+      <SyncIndicator
+        syncing={page1Q.isStale}
+        updatedAt={page1Q.updatedAt}
+        error={!!page1Q.error}
+        onRetry={page1Q.refresh}
+      />
+
       {/* Search — thin underline input, no card */}
       <View className="px-5 mb-2">
-        <View className="flex-row items-center border-b border-divider pb-2">
+        <View
+          className="flex-row items-center border-b border-divider"
+          style={{ minHeight: 44 }}
+        >
           <Search size={16} color={LightColors.textMuted} strokeWidth={1.6} />
           <TextInput
             className="flex-1 ml-2 text-[14px] font-montserrat text-textPrimary"
             placeholder="Search errands"
             placeholderTextColor={LightColors.textMuted}
+            accessibilityLabel="Search errands by booking number, address, or type"
             value={search}
             onChangeText={setSearch}
+            returnKeyType="search"
+            autoCorrect={false}
+            autoCapitalize="none"
           />
+          {search.length > 0 ? (
+            <Pressable
+              onPress={() => {
+                Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
+                setSearch('');
+              }}
+              accessibilityRole="button"
+              accessibilityLabel="Clear search"
+              hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
+              className="ml-2 p-1"
+            >
+              <X size={16} color={LightColors.textMuted} strokeWidth={2} />
+            </Pressable>
+          ) : null}
         </View>
       </View>
 
@@ -236,10 +307,16 @@ export default function HistoryScreen() {
           return (
             <Pressable
               key={s}
-              onPress={() => setStatusFilter(s)}
+              onPress={() => {
+                Haptics.selectionAsync().catch(() => {});
+                setStatusFilter(s);
+              }}
               className="pr-5 pb-2.5 -mb-px"
               style={active ? { borderBottomWidth: 2, borderBottomColor: LightColors.primary } : undefined}
-              hitSlop={6}
+              accessibilityRole="tab"
+              accessibilityState={{ selected: active }}
+              // Row content is ~26pt tall — extend to a >=44pt target.
+              hitSlop={{ top: 12, bottom: 8, left: 6, right: 6 }}
             >
               <Text
                 className={`text-[12px] ${
@@ -260,25 +337,82 @@ export default function HistoryScreen() {
         data={filteredErrands}
         renderItem={renderItem}
         keyExtractor={(item) => item.id}
-        contentContainerStyle={{ paddingTop: 8, paddingBottom: 24 }}
-        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
+        // flexGrow:1 lets the flex:1 empty/error states fill the viewport
+        // and centre; harmless once real rows exceed the screen height.
+        // paddingBottom reserves the attached tab bar's height + inset so the
+        // last card (and the load-more footer) never hide behind it.
+        contentContainerStyle={{ flexGrow: 1, paddingTop: 8, paddingBottom: TAB_CONTENT_BOTTOM_INSET }}
+        refreshControl={<BrandRefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
+        keyboardShouldPersistTaps="handled"
         onEndReached={onEndReached}
         onEndReachedThreshold={0.3}
         maxToRenderPerBatch={10}
         windowSize={5}
         removeClippedSubviews={true}
         ListEmptyComponent={
-          <RunnerEmptyState
-            icon={ClipboardList}
-            eyebrow="No history yet"
-            title="No completed errands"
-            description="Once you finish a job it'll show up here with its payout."
-          />
+          page1Failed ? (
+            <ErrorState
+              title="Couldn't load your errands"
+              onRetry={() => page1Q.refresh()}
+            />
+          ) : searchActive ? (
+            <RunnerEmptyState
+              icon={SearchX}
+              eyebrow="No results"
+              title={`No matches for “${debouncedSearch.trim()}”`}
+              description="Try a booking number, address, or errand type."
+              actionLabel="Clear search"
+              onAction={() => setSearch('')}
+            />
+          ) : (
+            <RunnerEmptyState
+              icon={ClipboardList}
+              eyebrow="No history yet"
+              title={
+                statusFilter === 'completed'
+                  ? 'No completed errands yet'
+                  : statusFilter === 'cancelled'
+                    ? 'No cancelled errands'
+                    : 'No errands yet'
+              }
+              description={
+                statusFilter === 'cancelled'
+                  ? 'Jobs you cancel or that fall through will appear here.'
+                  : "Once you finish a job it'll show up here with its payout."
+              }
+            />
+          )
         }
         ListFooterComponent={
           loadingMore ? (
             <View className="py-4 items-center justify-center">
-              <ActivityIndicator color={LightColors.primary} />
+              <Text className="text-[11px] font-montserrat text-textTertiary">
+                Loading…
+              </Text>
+            </View>
+          ) : loadMoreFailed ? (
+            <Pressable
+              onPress={() => {
+                Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
+                fetchNextPage();
+              }}
+              accessibilityRole="button"
+              accessibilityLabel="Retry loading more errands"
+              className="mx-5 my-2 py-3 rounded-2xl border border-divider bg-surface flex-row items-center justify-center"
+              style={{ minHeight: 44 }}
+            >
+              <RefreshCw size={14} color={LightColors.primary} strokeWidth={2} />
+              <Text className="text-[12px] font-montserrat-bold text-primary ml-2">
+                Couldn&apos;t load more · Tap to retry
+              </Text>
+            </Pressable>
+          ) : !hasMore && filteredErrands.length > 0 ? (
+            // End-of-list affordance (mirrors the notifications inbox) so a
+            // fully-loaded history reads as finished, not mid-load.
+            <View className="py-4 items-center">
+              <Text className="text-[11px] font-montserrat text-textTertiary">
+                That&apos;s all your errands
+              </Text>
             </View>
           ) : null
         }

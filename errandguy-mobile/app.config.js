@@ -16,6 +16,17 @@ module.exports = ({ config }) => {
       'expo-camera',
       'expo-image-picker',
       [
+        // Registers the native contacts module + injects the iOS
+        // NSContactsUsageDescription and Android READ_CONTACTS permission.
+        // Without this the "Import from contacts" picker never opens (and on
+        // iOS, calling the API with no usage string crashes the app).
+        'expo-contacts',
+        {
+          contactsPermission:
+            'ErrandGuy uses your contacts so you can quickly import a trusted contact for SOS.',
+        },
+      ],
+      [
         'expo-media-library',
         {
           photosPermission: 'ErrandGuy needs photo library access to upload item photos.',

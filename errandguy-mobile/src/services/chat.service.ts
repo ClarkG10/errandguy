@@ -1,6 +1,50 @@
+import { Image } from 'react-native';
+import { ImageManipulator, SaveFormat } from 'expo-image-manipulator';
 import api from './api';
 import { invalidateQuery } from '../hooks/useQuery';
 import type { Conversation } from '../types';
+
+/** Longest edge we upload for chat photos. Anything bigger is wasted
+ *  bandwidth — bubbles render at ~220pt and the lightbox rarely needs
+ *  more than the screen's long edge. */
+const MAX_IMAGE_EDGE = 1600;
+const JPEG_QUALITY = 0.7;
+
+/**
+ * Downscale + recompress a local photo before upload. A modern phone
+ * camera shot is 4000px / 3-6 MB; resizing to 1600px @ 0.7 JPEG cuts
+ * that to ~200-400 KB with no visible loss at chat sizes — a pure win
+ * for send latency on both the customer and runner threads.
+ *
+ * Best-effort: any failure (unreadable file, missing native module)
+ * falls back to the original URI so a send never breaks on compression.
+ */
+async function compressChatImage(
+  uri: string,
+): Promise<{ uri: string; compressed: boolean }> {
+  try {
+    const { width, height } = await new Promise<{ width: number; height: number }>(
+      (resolve, reject) =>
+        Image.getSize(uri, (w, h) => resolve({ width: w, height: h }), reject),
+    );
+    const context = ImageManipulator.manipulate(uri);
+    if (Math.max(width, height) > MAX_IMAGE_EDGE) {
+      // Only pass the long edge — the other dimension is derived so the
+      // aspect ratio is preserved (and we never upscale small images).
+      context.resize(
+        width >= height ? { width: MAX_IMAGE_EDGE } : { height: MAX_IMAGE_EDGE },
+      );
+    }
+    const rendered = await context.renderAsync();
+    const result = await rendered.saveAsync({
+      compress: JPEG_QUALITY,
+      format: SaveFormat.JPEG,
+    });
+    return { uri: result.uri, compressed: true };
+  } catch {
+    return { uri, compressed: false };
+  }
+}
 
 const invalidateChat = (bookingId?: string) => {
   invalidateQuery(['chat', 'unread']);
@@ -39,24 +83,37 @@ export const chatService = {
    * Use this instead of `sendMessage({ image_url: 'file://...' })` — the
    * server will reject local URIs and the message would never persist.
    */
-  sendMessageWithImage(
+  async sendMessageWithImage(
     bookingId: string,
-    params: { content?: string; imageUri: string },
+    params: { content?: string; imageUri: string; onProgress?: (frac: number) => void },
   ) {
+    // Resize/recompress before upload (see compressChatImage). The
+    // multipart contract below is unchanged — same field names, same
+    // endpoint — only the file payload shrinks.
+    const { uri: uploadUri, compressed } = await compressChatImage(params.imageUri);
     const form = new FormData();
     if (params.content?.trim()) {
       form.append('content', params.content.trim());
     }
-    // Best-effort mime sniff from extension; server validates anyway.
-    const ext = params.imageUri.split('.').pop()?.toLowerCase() || 'jpg';
+    // Compressed output is always JPEG; otherwise best-effort mime sniff
+    // from the extension (server validates anyway).
+    const ext = compressed
+      ? 'jpg'
+      : uploadUri.split('.').pop()?.toLowerCase() || 'jpg';
     const type = ext === 'png' ? 'image/png' : ext === 'webp' ? 'image/webp' : 'image/jpeg';
     form.append('image', {
-      uri: params.imageUri,
+      uri: uploadUri,
       type,
       name: `chat.${ext === 'jpeg' ? 'jpg' : ext}`,
     } as any);
+    const onProgress = params.onProgress;
     const p = api.post(`/chat/${bookingId}/messages`, form, {
       headers: { 'Content-Type': 'multipart/form-data' },
+      onUploadProgress: onProgress
+        ? (e: any) => {
+            if (e.total) onProgress(e.loaded / e.total);
+          }
+        : undefined,
     });
     p.then(() => invalidateChat(bookingId)).catch(() => {});
     return p;

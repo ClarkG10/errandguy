@@ -1,9 +1,10 @@
 import React from 'react';
 import { View, Text, Pressable, ScrollView } from 'react-native';
-import { Footprints, Bike, Truck, Car, Check } from 'lucide-react-native';
+import * as Haptics from 'expo-haptics';
+import { Footprints, Bike, Motorbike, Car, Check } from 'lucide-react-native';
 import type { LucideIcon } from 'lucide-react-native';
 import { formatCurrency } from '../../utils/formatCurrency';
-import { LightColors } from '../../constants/colors';
+import { Elevation, LightColors } from '../../constants/colors';
 
 interface VehicleOption {
   key: string;
@@ -23,7 +24,7 @@ interface VehicleTypeSelectorProps {
 const VEHICLE_ICONS: Record<string, LucideIcon> = {
   walk: Footprints,
   bicycle: Bike,
-  motorcycle: Truck,
+  motorcycle: Motorbike,
   car: Car,
 };
 
@@ -53,15 +54,17 @@ export function VehicleTypeSelector({
   })();
 
   return (
-    <View className="mb-5">
-      <View className="flex-row items-baseline justify-between mb-2.5">
+    // mb-1 + the 16px shadow gutter inside the scroller = the section's
+    // 20px bottom rhythm (see contentContainerStyle below).
+    <View className="mb-1">
+      <View className="flex-row items-baseline justify-between mb-1.5">
         <Text className="text-[10px] font-montserrat-bold uppercase text-textSecondary"
           style={{ letterSpacing: 1.4 }}
         >
           Choose vehicle
         </Text>
         {cheapestKey && (
-          <Text className="text-[10px] font-montserrat text-textTertiary">
+          <Text className="text-[10px] font-montserrat text-textSecondary">
             Tap to compare
           </Text>
         )}
@@ -69,7 +72,19 @@ export function VehicleTypeSelector({
       <ScrollView
         horizontal
         showsHorizontalScrollIndicator={false}
-        contentContainerStyle={{ paddingRight: 4, gap: 10 }}
+        // Bleed to the screen edges (the review screen's px-5 gutter) so
+        // scrolled cards slide under the gutter instead of clipping 20px
+        // early; the vertical padding gives the card shadows room inside
+        // the scroller's clip bounds.
+        style={{ marginHorizontal: -20 }}
+        contentContainerStyle={{
+          paddingHorizontal: 20,
+          paddingTop: 4,
+          paddingBottom: 16,
+          gap: 10,
+        }}
+        accessibilityRole="radiogroup"
+        accessibilityLabel="Choose vehicle"
       >
         {options.map((opt) => {
           const Icon = opt.icon;
@@ -79,26 +94,31 @@ export function VehicleTypeSelector({
           return (
             <Pressable
               key={opt.key}
-              onPress={() => onSelect(opt.key)}
-              accessibilityRole="button"
-              accessibilityState={{ selected: isSelected }}
+              onPress={() => {
+                Haptics.selectionAsync().catch(() => {});
+                onSelect(opt.key);
+              }}
+              accessibilityRole="radio"
+              accessibilityState={{ checked: isSelected, selected: isSelected }}
               accessibilityLabel={`${opt.label}${
-                opt.estimatedTotal > 0 ? ` ${formatCurrency(opt.estimatedTotal)}` : ''
-              }`}
+                opt.estimatedTotal > 0 ? `, ${formatCurrency(opt.estimatedTotal)}` : ''
+              }${opt.eta ? `, about ${opt.eta}` : ''}`}
               // Ride-hailing selection pattern — chosen card fills solid
               // brand blue with white content; the rest stay quiet white.
-              style={{
-                width: 132,
-                borderRadius: 20,
-                paddingVertical: 14,
-                paddingHorizontal: 12,
-                backgroundColor: isSelected ? LightColors.primary : LightColors.surface,
-                shadowColor: isSelected ? LightColors.primaryDark : LightColors.textPrimary,
-                shadowOffset: { width: 0, height: isSelected ? 8 : 2 },
-                shadowOpacity: isSelected ? 0.22 : 0.04,
-                shadowRadius: isSelected ? 18 : 12,
-                elevation: isSelected ? 5 : 1,
-              }}
+              style={({ pressed }) => [
+                {
+                  width: 132,
+                  borderRadius: 20,
+                  paddingVertical: 14,
+                  paddingHorizontal: 12,
+                  backgroundColor: isSelected ? LightColors.primary : LightColors.surface,
+                },
+                isSelected
+                  ? { ...Elevation.primary, shadowOpacity: 0.22 }
+                  : Elevation.sm,
+                pressed ? { opacity: 0.92, transform: [{ scale: 0.985 }] } : null,
+              ]}
+              android_ripple={{ color: `${LightColors.primary}14`, borderless: false }}
             >
               {/* Top row: icon + selection check */}
               <View className="flex-row items-start justify-between">
@@ -128,9 +148,11 @@ export function VehicleTypeSelector({
                     className="px-1.5 py-0.5 rounded-md"
                     style={{ backgroundColor: LightColors.successSoft }}
                   >
+                    {/* successDark, not success — 10px text on the soft
+                        wash needs the *Dark rung (base green is ~3:1). */}
                     <Text
-                      className="text-[9px] font-montserrat-bold"
-                      style={{ color: LightColors.success, letterSpacing: 0.4 }}
+                      className="text-[10px] font-montserrat-bold"
+                      style={{ color: LightColors.successDark, letterSpacing: 0.4 }}
                     >
                       BEST
                     </Text>
@@ -147,9 +169,11 @@ export function VehicleTypeSelector({
                 {opt.label}
               </Text>
               {tagline && (
+                // white/90, not /75 — 10px text over brand blue drops to
+                // ~2:1 at 75% alpha; 90% sits right at the AA floor.
                 <Text
                   className={`text-[10px] font-montserrat mt-0.5 ${
-                    isSelected ? 'text-white/75' : 'text-textSecondary'
+                    isSelected ? 'text-white/90' : 'text-textSecondary'
                   }`}
                 >
                   {tagline}
@@ -175,7 +199,7 @@ export function VehicleTypeSelector({
                 {opt.eta && (
                   <Text
                     className={`text-[10px] font-montserrat mt-0.5 ${
-                      isSelected ? 'text-white/75' : 'text-textSecondary'
+                      isSelected ? 'text-white/90' : 'text-textSecondary'
                     }`}
                   >
                     ~{opt.eta}

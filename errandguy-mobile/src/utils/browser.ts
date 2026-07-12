@@ -34,6 +34,21 @@ try {
 export const hasInAppBrowser = WebBrowser != null;
 
 /**
+ * Outcome of opening a checkout URL — lets callers branch cancel-vs-success so
+ * they never promise "balance will update" after the user backed out.
+ *
+ *  - `success`   — the in-app sheet redirected to `returnUrl`; the customer
+ *                  completed (or the bridge page fired). Only knowable on the
+ *                  `openAuthSessionAsync` path.
+ *  - `cancelled` — the customer dismissed the sheet without redirecting.
+ *  - `opened`    — a browser opened but the outcome is unknowable (no
+ *                  `returnUrl`, or the system-browser fallback ran). Treat as
+ *                  pending — settlement still arrives via the webhook.
+ *  - `failed`    — nothing could open the URL.
+ */
+export type CheckoutOutcome = 'success' | 'cancelled' | 'opened' | 'failed';
+
+/**
  * Open a Xendit hosted checkout URL.
  *
  * Preference order:
@@ -46,11 +61,13 @@ export const hasInAppBrowser = WebBrowser != null;
  *     core), so payment still works even when the native module is missing;
  *     it just isn't the in-app sheet.
  *
- * Payment settles via the Xendit webhook regardless of which path ran.
- *
- * @returns true if a browser/sheet opened, false if the URL couldn't open.
+ * Payment settles via the Xendit webhook regardless of which path ran; the
+ * outcome only steers the message the caller shows.
  */
-export async function openCheckoutUrl(url: string, returnUrl?: string): Promise<boolean> {
+export async function openCheckoutUrl(
+  url: string,
+  returnUrl?: string,
+): Promise<CheckoutOutcome> {
   if (WebBrowser) {
     try {
       if (returnUrl) {
@@ -58,11 +75,11 @@ export async function openCheckoutUrl(url: string, returnUrl?: string): Promise<
           showInRecents: false,
         });
         // 'success' = redirected to returnUrl; 'cancel'/'dismiss' = user
-        // closed. In every case control is back in the app — what we want.
-        return result?.type !== 'locked';
+        // closed the sheet. In every case control is back in the app.
+        return result?.type === 'success' ? 'success' : 'cancelled';
       }
       await WebBrowser.openBrowserAsync(url);
-      return true;
+      return 'opened';
     } catch {
       // Sheet failed at runtime — fall back to the system browser below.
     }
@@ -70,8 +87,8 @@ export async function openCheckoutUrl(url: string, returnUrl?: string): Promise<
 
   try {
     await Linking.openURL(url);
-    return true;
+    return 'opened';
   } catch {
-    return false;
+    return 'failed';
   }
 }

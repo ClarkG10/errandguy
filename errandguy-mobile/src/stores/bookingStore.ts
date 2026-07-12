@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import type { Booking, BookingStatus } from '../types';
+import type { ChecklistItem } from '../types/booking';
 
 /**
  * Persisted draft schema. We deliberately keep `activeBooking` and
@@ -40,6 +41,12 @@ export interface DraftBooking {
   estimated_item_value?: number;
   /** Pre-authorized maximum the runner may spend on items (food/grocery/purchase/bills). */
   shopping_budget?: number;
+  /**
+   * Client-side shopping checklist for errand types that require a
+   * shopping budget. Serialized into `description` at submit (there is no
+   * structured items column on the API). See `utils/shoppingChecklist`.
+   */
+  shoppingItems?: ChecklistItem[];
   pricing_mode?: 'fixed' | 'negotiate';
   schedule_type?: 'now' | 'scheduled';
   scheduled_at?: string;
@@ -47,6 +54,10 @@ export interface DraftBooking {
   customer_offer?: number;
   payment_method_id?: string;
   promo_code?: string;
+  /** Validated saving for `promo_code` in pesos — persisted alongside it so
+   *  the review screen can restore the discount line after a remount
+   *  instead of showing an applied chip with an undiscounted total. */
+  promo_discount?: number;
   instructions?: string;
   offered_price?: number;
   items?: Array<{ name: string; quantity: number; estimated_price?: number }>;

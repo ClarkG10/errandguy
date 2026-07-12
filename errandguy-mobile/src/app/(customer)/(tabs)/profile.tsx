@@ -1,18 +1,18 @@
-import React, { useCallback, useState } from 'react';
+import React, { useCallback, useMemo, useState } from 'react';
 import {
   View,
   Text,
   ScrollView,
   Pressable,
-  RefreshControl,
   Modal,
   TextInput,
   KeyboardAvoidingView,
   Platform,
 } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter, useFocusEffect } from 'expo-router';
 import {
+  BadgeCheck,
   ChevronRight,
   Wallet,
   UserRound,
@@ -21,12 +21,15 @@ import {
   CreditCard,
   HelpCircle,
   Flag,
+  Gift,
+  Ticket,
 } from 'lucide-react-native';
 import type { LucideIcon } from 'lucide-react-native';
 import * as Haptics from 'expo-haptics';
 import { Avatar } from '../../../components/ui/Avatar';
 import { Button } from '../../../components/ui/Button';
 import { Card } from '../../../components/ui/Card';
+import { BrandRefreshControl } from '../../../components/ui/BrandRefreshControl';
 import { GradientHeader } from '../../../components/ui/GradientHeader';
 import { LogoutSplash } from '../../../components/ui/LogoutSplash';
 import { InlineLogoutLink } from '../../../components/auth/InlineLogoutLink';
@@ -37,6 +40,7 @@ import { useAuth } from '../../../hooks/useAuth';
 import { userService } from '../../../services/user.service';
 import { formatCurrency } from '../../../utils/formatCurrency';
 import { LightColors } from '../../../constants/colors';
+import { TAB_CONTENT_BOTTOM_INSET } from '../../../constants/tabLayout';
 import { toast } from '../../../stores/toastStore';
 
 interface MenuItem {
@@ -47,8 +51,13 @@ interface MenuItem {
   onPress?: () => void;
 }
 
+// App idiom: Light impact on raw-Pressable taps (shared Button self-fires).
+const lightTap = () =>
+  Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
+
 export default function CustomerProfileScreen() {
   const router = useRouter();
+  const insets = useSafeAreaInsets();
   const user = useAuthStore((s) => s.user);
   const setUser = useAuthStore((s) => s.setUser);
   const { logout } = useAuth();
@@ -96,16 +105,42 @@ export default function CustomerProfileScreen() {
     Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
     try {
       await userService.deleteAccount();
+      // Close/reset only on success — after a transient failure the sheet
+      // stays open with the typed text intact so the user just retries.
+      setShowDeleteModal(false);
+      setDeleteConfirmText('');
       await logout();
       router.replace('/(auth)/welcome' as any);
     } catch {
       toast.error('Failed to delete account. Please try again.');
     } finally {
       setDeleting(false);
-      setShowDeleteModal(false);
-      setDeleteConfirmText('');
     }
   }, [deleteConfirmText, logout, router]);
+
+  // Profile completion — computed client-side from the user record.
+  // Five checks: photo, email added, email verified, phone added,
+  // phone verified. The hint line only surfaces items the edit modal
+  // (where the meter routes) can actually fix — photo and email. The
+  // verify/phone checks stay in the % math, but hinting them here would
+  // dead-end: the modal has no phone field and no in-app verify flow is
+  // reachable for an authenticated session.
+  const completion = useMemo(() => {
+    const checks = [
+      !!user?.full_name,
+      !!user?.avatar_url,
+      !!user?.email,
+      !!user?.phone,
+    ];
+    const hints: string[] = [];
+    if (!user?.avatar_url) hints.push('Add a profile photo');
+    if (!user?.full_name) hints.push('Add your name');
+    const done = checks.filter(Boolean).length;
+    return {
+      percent: Math.round((done / checks.length) * 100),
+      hints,
+    };
+  }, [user]);
 
   const accountMenu: MenuItem[] = [
     {
@@ -123,17 +158,11 @@ export default function CustomerProfileScreen() {
 
   const paymentMenu: MenuItem[] = [
     {
+      // No balance trailing — the wallet strip above owns the number;
+      // repeating it here showed the same figure twice per viewport.
       label: 'Wallet',
       icon: Wallet,
       route: '/(customer)/wallet',
-      trailing: (
-        <View className="flex-row items-center">
-          <Text className="text-[13px] font-inter-semi text-primary mr-2">
-            {formatCurrency(user?.wallet_balance ?? 0)}
-          </Text>
-          <ChevronRight size={16} color={LightColors.textMuted} />
-        </View>
-      ),
     },
     {
       label: 'Payment Methods',
@@ -142,9 +171,15 @@ export default function CustomerProfileScreen() {
     },
   ];
 
+  const earnMenu: MenuItem[] = [
+    { label: 'Invite friends', icon: Gift, route: '/(customer)/referral' },
+    { label: 'Promos & offers', icon: Ticket, route: '/(customer)/promos' },
+  ];
+
   const supportMenu: MenuItem[] = [
     { label: 'Help & Support', icon: HelpCircle, route: '/(customer)/help' },
-    { label: 'Report an Issue', icon: Flag, route: '/(customer)/help' },
+    // Distinct destination from Help & Support: the in-app ticket flow.
+    { label: 'Report an Issue', icon: Flag, route: '/(customer)/support' },
   ];
 
   const renderMenuItem = (item: MenuItem, isLast: boolean) => {
@@ -181,6 +216,8 @@ export default function CustomerProfileScreen() {
   const renderSection = (label: string, items: MenuItem[]) => (
     <View className="px-5 mb-5">
       <Eyebrow className="mb-2">{label}</Eyebrow>
+      {/* overflow-hidden clips the rows' pressed wash/ripple to the
+          card's rounded corners. */}
       <Card padding="none" className="px-4 py-1">
         {items.map((item, idx) =>
           renderMenuItem(item, idx === items.length - 1),
@@ -196,9 +233,9 @@ export default function CustomerProfileScreen() {
         className="flex-1"
         showsVerticalScrollIndicator={false}
         refreshControl={
-          <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
+          <BrandRefreshControl refreshing={refreshing} onRefresh={onRefresh} />
         }
-        contentContainerStyle={{ paddingBottom: 32 }}
+        contentContainerStyle={{ paddingBottom: TAB_CONTENT_BOTTOM_INSET }}
       >
         {/* Profile identity row — ASYMMETRIC. Avatar left, name+email
             stacked right. No centered hero block, no "Edit Profile"
@@ -206,7 +243,11 @@ export default function CustomerProfileScreen() {
             Account section below has Edit Profile as its first item). */}
         <Pressable
           className="flex-row items-center px-5 pt-4 pb-5"
-          onPress={() => setShowEditModal(true)}
+          style={({ pressed }) => ({ opacity: pressed ? 0.6 : 1 })}
+          onPress={() => {
+            lightTap();
+            setShowEditModal(true);
+          }}
           accessibilityRole="button"
           accessibilityLabel="Edit profile"
         >
@@ -219,12 +260,23 @@ export default function CustomerProfileScreen() {
               {user?.full_name ?? 'Customer'}
             </Text>
             {user?.email ? (
-              <Text
-                className="text-[12px] font-montserrat text-textSecondary mt-0.5"
-                numberOfLines={1}
-              >
-                {user.email}
-              </Text>
+              <View className="flex-row items-center mt-0.5">
+                <Text
+                  className="text-[12px] font-montserrat text-textSecondary"
+                  style={{ flexShrink: 1 }}
+                  numberOfLines={1}
+                >
+                  {user.email}
+                </Text>
+                {user.email_verified ? (
+                  <BadgeCheck
+                    size={14}
+                    color={LightColors.successDark}
+                    style={{ marginLeft: 4 }}
+                    accessibilityLabel="Email verified"
+                  />
+                ) : null}
+              </View>
             ) : null}
             {user?.phone ? (
               <Text className="text-[12px] font-inter text-textSecondary mt-0.5">
@@ -235,13 +287,65 @@ export default function CustomerProfileScreen() {
           <ChevronRight size={18} color={LightColors.textMuted} />
         </Pressable>
 
+        {/* Profile completion — slim progress row, only while below
+            100%. Tapping it opens the edit modal; the hint line only
+            names items the modal can fix. */}
+        {completion.percent < 100 && (
+          <Pressable
+            onPress={() => {
+              lightTap();
+              setShowEditModal(true);
+            }}
+            className="mx-5 mb-5 -mt-1"
+            style={({ pressed }) => ({ opacity: pressed ? 0.6 : 1 })}
+            accessibilityRole="button"
+            accessibilityLabel={`Profile ${completion.percent} percent complete.${
+              completion.hints.length > 0
+                ? ` ${completion.hints.slice(0, 2).join(', ')}.`
+                : ''
+            } Opens edit profile`}
+          >
+            <View className="flex-row items-center justify-between mb-1.5">
+              <Text className="text-[11px] font-montserrat-bold text-textSecondary">
+                Profile {completion.percent}% complete
+              </Text>
+              <ChevronRight size={14} color={LightColors.textMuted} />
+            </View>
+            <View
+              className="bg-surfaceMuted"
+              style={{ height: 4, borderRadius: 2, overflow: 'hidden' }}
+            >
+              <View
+                className="bg-primary"
+                style={{
+                  width: `${completion.percent}%`,
+                  height: 4,
+                  borderRadius: 2,
+                }}
+              />
+            </View>
+            {completion.hints.length > 0 && (
+              <Text
+                className="text-[12px] font-montserrat text-textTertiary mt-1.5"
+                numberOfLines={1}
+              >
+                {completion.hints.slice(0, 2).join(' · ')}
+              </Text>
+            )}
+          </Pressable>
+        )}
+
         {/* Wallet — NOT a colored hero card. Hairline-bounded row with
             an asymmetric layout: large numeric balance left, top-up
             CTA right. The numeric is in Inter for crispness. */}
         <View className="mx-5 mb-6 py-4 border-y border-divider flex-row items-end">
           <Pressable
             className="flex-1"
-            onPress={() => router.push('/(customer)/wallet' as any)}
+            style={({ pressed }) => ({ opacity: pressed ? 0.6 : 1 })}
+            onPress={() => {
+              lightTap();
+              router.push('/(customer)/wallet' as any);
+            }}
             accessibilityRole="button"
             accessibilityLabel="Open wallet"
           >
@@ -251,14 +355,20 @@ export default function CustomerProfileScreen() {
             </Text>
           </Pressable>
           <Pressable
-            onPress={() => router.push('/(customer)/wallet/top-up' as any)}
-            className="flex-row items-center gap-1.5"
-            hitSlop={8}
+            onPress={() => {
+              lightTap();
+              router.push('/(customer)/wallet/top-up' as any);
+            }}
+            // Quiet primaryLight pill (~40pt tall) + 4pt slop clears the
+            // 44pt target minimum and matches the menu rows' chip language.
+            className="flex-row items-center gap-1.5 px-3 py-2.5 rounded-full bg-primaryLight"
+            style={({ pressed }) => ({ opacity: pressed ? 0.6 : 1 })}
+            hitSlop={4}
             accessibilityRole="button"
             accessibilityLabel="Add money to wallet"
           >
             <Wallet size={14} color={LightColors.primary} />
-            <Text className="text-[12px] font-montserrat-bold text-primary underline">
+            <Text className="text-[13px] font-montserrat-bold text-primary">
               Add money
             </Text>
           </Pressable>
@@ -266,6 +376,7 @@ export default function CustomerProfileScreen() {
 
         {renderSection('ACCOUNT', accountMenu)}
         {renderSection('PAYMENT', paymentMenu)}
+        {renderSection('EARN & SAVE', earnMenu)}
         {renderSection('SUPPORT', supportMenu)}
 
         {/* Logout / Delete — inline tap-to-confirm. The previous
@@ -276,12 +387,20 @@ export default function CustomerProfileScreen() {
         <View className="items-center pt-2 pb-4 gap-3">
           <InlineLogoutLink onConfirm={confirmLogout} />
           <Pressable
-            onPress={() => setShowDeleteModal(true)}
-            hitSlop={8}
+            onPress={() => {
+              lightTap();
+              setShowDeleteModal(true);
+            }}
+            // ≥44pt effective target. Top slop stays under the 12px gap
+            // to the logout link above so the two never overlap.
+            hitSlop={{ top: 10, bottom: 20, left: 24, right: 24 }}
+            style={({ pressed }) => ({ opacity: pressed ? 0.6 : 1 })}
             accessibilityRole="button"
             accessibilityLabel="Delete account"
           >
-            <Text className="text-[11px] font-montserrat text-textMuted underline">
+            {/* textTertiary at 12px — textMuted measured 2.41:1, sub-AA
+                for the entry to the most destructive flow in the app. */}
+            <Text className="text-[12px] font-montserrat text-textTertiary underline">
               Delete account
             </Text>
           </Pressable>
@@ -289,7 +408,16 @@ export default function CustomerProfileScreen() {
       </ScrollView>
 
       {/* Delete Account Modal */}
-      <Modal visible={showDeleteModal} transparent animationType="slide">
+      <Modal
+        visible={showDeleteModal}
+        transparent
+        animationType="slide"
+        statusBarTranslucent
+        onRequestClose={() => {
+          setShowDeleteModal(false);
+          setDeleteConfirmText('');
+        }}
+      >
         <KeyboardAvoidingView
           style={{ flex: 1 }}
           behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
@@ -300,9 +428,13 @@ export default function CustomerProfileScreen() {
               setShowDeleteModal(false);
               setDeleteConfirmText('');
             }}
+            accessibilityRole="button"
+            accessibilityLabel="Dismiss delete account dialog"
+            accessibilityHint="Closes the dialog without deleting your account"
           >
             <Pressable
-              className="bg-surface px-7 pt-6 pb-12"
+              className="bg-surface rounded-t-3xl px-5 pt-6"
+              style={{ paddingBottom: insets.bottom + 16 }}
               onPress={() => {}}
             >
               <View className="w-10 h-1 rounded-full bg-divider self-center mb-5" />
@@ -321,7 +453,7 @@ export default function CustomerProfileScreen() {
                   value={deleteConfirmText}
                   onChangeText={setDeleteConfirmText}
                   placeholder="DELETE"
-                  placeholderTextColor={LightColors.dividerStrong}
+                  placeholderTextColor={LightColors.textMuted}
                   autoCapitalize="characters"
                   style={{
                     fontFamily: 'Quicksand_400Regular',
@@ -335,20 +467,20 @@ export default function CustomerProfileScreen() {
                 variant="danger"
                 fullWidth
                 loading={deleting}
+                loadingTitle="Deleting…"
                 disabled={deleteConfirmText !== 'DELETE'}
                 onPress={handleDeleteAccount}
               />
-              <Pressable
-                className="mt-3 py-3 items-center"
+              <Button
+                title="Cancel"
+                variant="ghost"
+                fullWidth
                 onPress={() => {
+                  lightTap();
                   setShowDeleteModal(false);
                   setDeleteConfirmText('');
                 }}
-              >
-                <Text className="text-sm font-montserrat-bold text-textTertiary">
-                  Cancel
-                </Text>
-              </Pressable>
+              />
             </Pressable>
           </Pressable>
         </KeyboardAvoidingView>

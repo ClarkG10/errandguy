@@ -6,13 +6,30 @@ interface ImageResult {
   base64?: string;
 }
 
-export function useImagePicker() {
+/** Which source was denied, so callers can tailor the recovery copy
+ *  ("Camera access is off" vs "Photo access is off"). */
+export type ImagePickerSource = 'camera' | 'library';
+
+interface UseImagePickerOptions {
+  /** Fired when the OS permission for a source is not granted. Lets a
+   *  caller surface a recovery path (e.g. a Settings toast) instead of
+   *  the silent null return the picker otherwise gives. Optional so the
+   *  existing { pickImage, takePhoto } => uri|null contract is untouched
+   *  for callers that don't opt in. */
+  onPermissionDenied?: (source: ImagePickerSource) => void;
+}
+
+export function useImagePicker(options?: UseImagePickerOptions) {
   const [image, setImage] = useState<ImageResult | null>(null);
+  const onPermissionDenied = options?.onPermissionDenied;
 
   const pickImage = useCallback(async () => {
     const { status } =
       await ImagePicker.requestMediaLibraryPermissionsAsync();
-    if (status !== 'granted') return null;
+    if (status !== 'granted') {
+      onPermissionDenied?.('library');
+      return null;
+    }
 
     const result = await ImagePicker.launchImageLibraryAsync({
       mediaTypes: ['images'],
@@ -30,11 +47,14 @@ export function useImagePicker() {
       return picked;
     }
     return null;
-  }, []);
+  }, [onPermissionDenied]);
 
   const takePhoto = useCallback(async () => {
     const { status } = await ImagePicker.requestCameraPermissionsAsync();
-    if (status !== 'granted') return null;
+    if (status !== 'granted') {
+      onPermissionDenied?.('camera');
+      return null;
+    }
 
     const result = await ImagePicker.launchCameraAsync({
       allowsEditing: true,
@@ -51,7 +71,7 @@ export function useImagePicker() {
       return taken;
     }
     return null;
-  }, []);
+  }, [onPermissionDenied]);
 
   return { image, pickImage, takePhoto };
 }

@@ -1,5 +1,6 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { View, Text, Modal, Pressable, ScrollView, KeyboardAvoidingView, Platform } from 'react-native';
+import * as Haptics from 'expo-haptics';
 import { X } from 'lucide-react-native';
 import { useAuthStore } from '../../stores/authStore';
 import { userService } from '../../services/user.service';
@@ -7,7 +8,9 @@ import { Avatar } from '../ui/Avatar';
 import { ImagePickerModal } from '../ui/ImagePickerModal';
 import { Input } from '../ui/Input';
 import { Button } from '../ui/Button';
+import { UploadProgress } from '../ui/UploadProgress';
 import { toast } from '../../stores/toastStore';
+import { runOptimistic } from '../../utils/optimistic';
 import { LightColors } from '../../constants/colors';
 
 interface EditProfileModalProps {
@@ -20,32 +23,71 @@ export function EditProfileModal({ visible, onClose }: EditProfileModalProps) {
 
   const [fullName, setFullName] = useState(user?.full_name ?? '');
   const [email, setEmail] = useState(user?.email ?? '');
-  const [saving, setSaving] = useState(false);
+  const [nameError, setNameError] = useState<string | undefined>();
+  const [emailError, setEmailError] = useState<string | undefined>();
   const [avatarPickerVisible, setAvatarPickerVisible] = useState(false);
   const [uploadingAvatar, setUploadingAvatar] = useState(false);
+  const [avatarPct, setAvatarPct] = useState<number | null>(null);
+
+  // The modal stays mounted with a `visible` prop, so resync from the
+  // user record on every open — closing means "discard", and edits made
+  // elsewhere (e.g. the profile tab's focus-refresh) get picked up.
+  // Deliberately keyed on `visible` alone: a mid-edit user update (the
+  // avatar upload) must not wipe in-progress typing.
+  useEffect(() => {
+    if (visible) {
+      setFullName(user?.full_name ?? '');
+      setEmail(user?.email ?? '');
+      setNameError(undefined);
+      setEmailError(undefined);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [visible]);
+
+  // Save is a no-op when nothing changed — keep it disabled so a clean
+  // close never routes through a pointless network call.
+  const isDirty =
+    fullName.trim() !== (user?.full_name ?? '') ||
+    email.trim() !== (user?.email ?? '');
 
   const handleSave = async () => {
-    setSaving(true);
-    try {
-      await userService.updateProfile({
-        full_name: fullName.trim(),
-        email: email.trim() || undefined,
-      });
-      updateProfile({
-        full_name: fullName.trim(),
-        email: email.trim() || null,
-      });
-      onClose();
-    } catch (err: any) {
-      toast.error(err?.response?.data?.message ?? 'Failed to update profile');
-    } finally {
-      setSaving(false);
+    let valid = true;
+    if (!fullName.trim()) {
+      setNameError('Please enter your name');
+      valid = false;
     }
+    if (email.trim() && !/^\S+@\S+\.\S+$/.test(email.trim())) {
+      setEmailError('Enter a valid email address');
+      valid = false;
+    }
+    if (!valid) return;
+    const nextName = fullName.trim();
+    const nextEmail = email.trim();
+    // Snapshot for rollback (this modal is layered over the profile tab and
+    // does NOT re-fire the tab's focus-refresh on close, so there's no
+    // server-read race to clobber the optimistic value).
+    const prev = user;
+    await runOptimistic({
+      apply: () => {
+        updateProfile({ full_name: nextName, email: nextEmail || null });
+        onClose(); // instant — the profile reflects the change immediately
+      },
+      rollback: () => {
+        if (prev) updateProfile({ full_name: prev.full_name, email: prev.email ?? null });
+      },
+      commit: () =>
+        userService.updateProfile({
+          full_name: nextName,
+          email: nextEmail || undefined,
+        }),
+      errorMessage: "Couldn't update your profile.",
+    });
   };
 
   const handleAvatarUpload = async (uri: string) => {
     setAvatarPickerVisible(false);
     setUploadingAvatar(true);
+    setAvatarPct(0);
 
     const formData = new FormData();
     formData.append('avatar', {
@@ -55,7 +97,7 @@ export function EditProfileModal({ visible, onClose }: EditProfileModalProps) {
     } as any);
 
     try {
-      const res = await userService.uploadAvatar(formData);
+      const res = await userService.uploadAvatar(formData, (p) => setAvatarPct(p));
       const avatarUrl = res.data.data?.avatar_url;
       if (avatarUrl) {
         updateProfile({ avatar_url: avatarUrl });
@@ -64,6 +106,7 @@ export function EditProfileModal({ visible, onClose }: EditProfileModalProps) {
       toast.error('Failed to upload avatar');
     } finally {
       setUploadingAvatar(false);
+      setAvatarPct(null);
     }
   };
 
@@ -80,56 +123,105 @@ export function EditProfileModal({ visible, onClose }: EditProfileModalProps) {
         behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
       >
         {/* Dim layer above the sheet so the parent screen reads as the
-            "back" surface but the sheet itself is a flat panel — no
-            native pageSheet curvature, no manual rounded-top. */}
+            "back" surface. rounded-t-3xl matches the app's sheet corner
+            language (same as the delete sheet on the profile tab). */}
         <View className="flex-1 bg-black/40 justify-end">
-          <View className="bg-background" style={{ height: '92%' }}>
-            <View className="flex-row items-center justify-between px-7 py-5 border-b border-divider">
+          <View
+            className="bg-background rounded-t-3xl overflow-hidden"
+            style={{ height: '92%' }}
+          >
+            <View className="flex-row items-center justify-between px-5 py-5 border-b border-divider">
               <Text className="text-lg font-montserrat-semi text-textPrimary">
                 Edit Profile
               </Text>
-              <Pressable onPress={onClose} hitSlop={10}>
+              <Pressable
+                onPress={() => {
+                  Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
+                  onClose();
+                }}
+                hitSlop={10}
+                style={({ pressed }) => ({ opacity: pressed ? 0.6 : 1 })}
+                accessibilityRole="button"
+                accessibilityLabel="Close edit profile"
+              >
                 <X size={24} color={LightColors.textSecondary} />
               </Pressable>
             </View>
 
             <ScrollView
-              className="flex-1 px-7 pt-8"
+              className="flex-1 px-5 pt-8"
               keyboardShouldPersistTaps="handled"
               contentContainerStyle={{ paddingBottom: 48 }}
             >
               <View className="items-center mb-6">
-                <Pressable onPress={() => setAvatarPickerVisible(true)}>
+                <Pressable
+                  onPress={() => {
+                    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
+                    setAvatarPickerVisible(true);
+                  }}
+                  // Disabled mid-upload so the picker can't be double-launched.
+                  disabled={uploadingAvatar}
+                  style={({ pressed }) => ({ opacity: pressed ? 0.6 : 1 })}
+                  accessibilityRole="button"
+                  accessibilityLabel="Change profile photo"
+                  accessibilityState={{
+                    busy: uploadingAvatar,
+                    disabled: uploadingAvatar,
+                  }}
+                >
                   <Avatar
                     uri={user?.avatar_url}
                     name={user?.full_name}
                     size="xl"
                   />
-                  <Text className="text-xs font-montserrat text-primary mt-2 text-center">
-                    {uploadingAvatar ? 'Uploading…' : 'Change Photo'}
-                  </Text>
+                  {uploadingAvatar ? (
+                    // The avatar picker closes on confirm and the upload runs
+                    // in the background — so show real % HERE, where the edit
+                    // sheet stays on screen, not in the (dismissed) picker.
+                    <View style={{ width: 160, marginTop: 10 }}>
+                      <UploadProgress progress={avatarPct} label="Uploading photo" />
+                    </View>
+                  ) : (
+                    <Text className="text-xs font-montserrat text-primary mt-2 text-center">
+                      Change Photo
+                    </Text>
+                  )}
                 </Pressable>
               </View>
 
               <Input
                 label="Full Name"
                 value={fullName}
-                onChangeText={setFullName}
+                onChangeText={(v) => {
+                  setFullName(v);
+                  setNameError(undefined);
+                }}
                 placeholder="Enter your name"
+                error={nameError}
+                autoComplete="name"
+                textContentType="name"
               />
               <Input
                 label="Email"
                 value={email}
-                onChangeText={setEmail}
+                onChangeText={(v) => {
+                  setEmail(v);
+                  setEmailError(undefined);
+                }}
                 placeholder="Enter your email"
+                error={emailError}
                 keyboardType="email-address"
+                autoCapitalize="none"
+                autoCorrect={false}
+                autoComplete="email"
+                textContentType="emailAddress"
               />
 
               <View className="mt-4">
                 <Button
                   title="Save Changes"
                   onPress={handleSave}
-                  loading={saving}
+                  disabled={!isDirty}
                   fullWidth
                 />
               </View>

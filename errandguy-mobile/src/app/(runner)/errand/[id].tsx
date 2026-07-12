@@ -1,6 +1,6 @@
 import React, { useState, useCallback, useRef, useEffect, useMemo } from 'react';
 import { View, Text, ScrollView, TextInput, RefreshControl, Pressable, Linking, KeyboardAvoidingView, Platform, useWindowDimensions, Animated, PanResponder } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import {
   MessageCircle,
@@ -8,19 +8,21 @@ import {
   MapPin,
   Navigation,
   CheckCircle,
+  CheckCircle2,
+  Circle,
   ShoppingBag,
   ShieldAlert,
   ChevronDown,
   ChevronUp,
   AlertTriangle,
 } from 'lucide-react-native';
+import * as Haptics from 'expo-haptics';
 import { JourneyBeads } from '../../../components/ui/JourneyBeads';
 import { StatusTimeline } from '../../../components/ui/StatusTimeline';
 import { CurrentStepHero } from '../../../components/ui/CurrentStepHero';
 import { Avatar } from '../../../components/ui/Avatar';
 import { Button } from '../../../components/ui/Button';
 import { BackButton } from '../../../components/ui/BackButton';
-import { BottomActionBar } from '../../../components/ui/BottomActionBar';
 import { ConfirmModal } from '../../../components/ui/ConfirmModal';
 import { StatusActionButton, getNextStatus } from '../../../components/runner/StatusActionButton';
 import { ErrandDetailsCard } from '../../../components/runner/ErrandDetailsCard';
@@ -29,12 +31,16 @@ import { ReceiptCaptureModal } from '../../../components/runner/ReceiptCaptureMo
 import { CompletionModal } from '../../../components/runner/CompletionModal';
 import { RateCustomerModal } from '../../../components/runner/RateCustomerModal';
 import { RunnerActiveMap } from '../../../components/runner/RunnerActiveMap';
+import { Skeleton, SkeletonCircle } from '../../../components/ui/Skeleton';
+import { ErrorState } from '../../../components/ui/ErrorState';
+import { SuccessCheck } from '../../../components/ui/SuccessCheck';
 import { useRunnerStore } from '../../../stores/runnerStore';
 import { useAuthStore } from '../../../stores/authStore';
 import { useChatStore } from '../../../stores/chatStore';
 import { useLocationStore } from '../../../stores/locationStore';
-import { useForegroundInterval } from '../../../hooks/useForegroundInterval';
-import { useBackGuard, confirmLeaveErrand } from '../../../hooks/useBackGuard';
+import { useSmartPolling } from '../../../hooks/useSmartPolling';
+import { useBackGuard } from '../../../hooks/useBackGuard';
+import { useReducedMotion } from '../../../hooks/useReducedMotion';
 import { useQuery } from '../../../hooks/useQuery';
 import { useEta } from '../../../hooks/useEta';
 import { CacheTTL } from '../../../services/cache.service';
@@ -42,6 +48,7 @@ import { runnerService } from '../../../services/runner.service';
 import type { Booking } from '../../../types';
 import { STATUS_LABELS } from '../../../constants/statusLabels';
 import { Elevation, LightColors } from '../../../constants/colors';
+import { Radius } from '../../../constants/radius';
 import { getErrandTypeRule } from '../../../constants/errandTypeRules';
 import { formatCurrency } from '../../../utils/formatCurrency';
 import type { BookingStatus } from '../../../types';
@@ -80,7 +87,7 @@ export default function ActiveErrandScreen() {
   );
 
   // Refresh unread chat counts every 30s, paused when backgrounded.
-  useForegroundInterval(refreshUnread, 30000);
+  useSmartPolling(refreshUnread, { interval: 30_000, backoffOnError: false });
 
   // Make sure GPS streaming is running while there's an active errand,
   // even if the runner toggled offline elsewhere. Stops nothing on
@@ -111,10 +118,25 @@ export default function ActiveErrandScreen() {
   const [pinInput, setPinInput] = useState('');
   const [pinVerified, setPinVerified] = useState(false);
   const [deliveryPhotoUrl, setDeliveryPhotoUrl] = useState<string | null>(null);
+  // Remount key for the SlideToConfirm CTA. The slider latches once it
+  // completes (by design — the component can't re-arm itself), so when a
+  // downstream modal is dismissed WITHOUT finishing the transition, or
+  // when the status advances to the NEXT slide-gated stage, we bump this
+  // key to hand the runner a fresh, un-slid control.
+  const [slideResetKey, setSlideResetKey] = useState(0);
+  // Brief SuccessCheck overlay after the completion submit.
+  const [showSuccessMoment, setShowSuccessMoment] = useState(false);
+  const [sheetRefreshing, setSheetRefreshing] = useState(false);
   // Trip details (payout, errand description, status timeline) collapse
   // by default. The runner's brain only needs the current step + the
   // ONE big action button; everything else is reference material.
   const [detailsOpen, setDetailsOpen] = useState(false);
+  // Branded leave confirmation for the in-app back chevron (parity with
+  // the SOS / payout / logout ConfirmModals). The Android hardware-back
+  // guard keeps its own double-press toast — see useBackGuard.
+  const [showLeaveConfirm, setShowLeaveConfirm] = useState(false);
+  const leaveActionRef = useRef<(() => void) | null>(null);
+  const reduceMotion = useReducedMotion();
 
   // Single source of truth: the API. The runner-facing endpoint
   // (RunnerErrandController@show) is scoped by `runnerBookings()` on
@@ -192,30 +214,28 @@ export default function ActiveErrandScreen() {
     !!id &&
     !!_bookingForPollGuard &&
     !['completed', 'cancelled', 'no_runner'].includes(_bookingForPollGuard.status);
-  useForegroundInterval(
-    () => {
+  // Smart poll: reconcile status while the errand is non-terminal. Realtime
+  // (useBookingStatus) is primary; this is the fallback. useSmartPolling adds
+  // offline-pause + immediate reconnect/foreground tick + backoff (errors
+  // propagate — no swallow-catch — so a failing reconcile backs off).
+  useSmartPolling(
+    async () => {
       if (!id) return;
-      runnerService
-        .getErrand(id)
-        .then((r) => {
-          const fresh = (r?.data?.data ?? null) as Booking | null;
-          if (!fresh) return;
-          // Mirror into the store when this is the runner's active job
-          // so the home screen + other consumers see the new status.
-          const store = useRunnerStore.getState();
-          if (store.currentErrand?.id === fresh.id && fresh.status !== store.currentErrand.status) {
-            if (fresh.status === 'completed' || fresh.status === 'cancelled') {
-              store.updateErrandStatus(fresh.status);
-            } else {
-              useRunnerStore.setState({ currentErrand: fresh });
-            }
-          }
-        })
-        .catch(() => {});
+      const r = await runnerService.getErrand(id);
+      const fresh = (r?.data?.data ?? null) as Booking | null;
+      if (!fresh) return;
+      // Mirror into the store when this is the runner's active job so the
+      // home screen + other consumers see the new status.
+      const store = useRunnerStore.getState();
+      if (store.currentErrand?.id === fresh.id && fresh.status !== store.currentErrand.status) {
+        if (fresh.status === 'completed' || fresh.status === 'cancelled') {
+          store.updateErrandStatus(fresh.status);
+        } else {
+          useRunnerStore.setState({ currentErrand: fresh });
+        }
+      }
     },
-    15_000,
-    _pollEnabled,
-    false,
+    { interval: 15_000, enabled: _pollEnabled, runOnMount: false },
   );
 
   // ── Hooks below MUST stay above the early-return so that the hook
@@ -473,6 +493,12 @@ export default function ActiveErrandScreen() {
     runnerService
       .advanceErrandStatus(booking.id, status, opts)
       .then(() => {
+        // Server-confirmed transition — success tick. The `completed`
+        // flip is skipped because the SuccessCheck overlay fires its own
+        // success haptic (avoid a double buzz).
+        if (status !== 'completed') {
+          Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
+        }
         // Only open the rate modal AFTER the server confirms the status
         // flip to `completed`. Opening it on the optimistic update used
         // to fire POST /runner/errand/{id}/review while the booking row
@@ -486,6 +512,9 @@ export default function ActiveErrandScreen() {
       })
       .catch((err: any) => {
         // Revert optimistic state and surface the error.
+        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error).catch(() => {});
+        if (status === 'completed') setShowSuccessMoment(false);
+        setSlideResetKey((k) => k + 1);
         fetchedQ.mutate(prev);
         updateErrandStatus(prev.status as BookingStatus);
         toast.error(err?.response?.data?.message ?? 'Failed to update status');
@@ -513,6 +542,10 @@ export default function ActiveErrandScreen() {
 
   const handleCompletionConfirm = async (signatureUri: string) => {
     setShowCompletion(false);
+    // Celebrate the finish — SuccessCheck fires its own success haptic
+    // and auto-dismisses via onDone. Reverted by advanceStatus's catch
+    // if the server rejects the transition.
+    setShowSuccessMoment(true);
     // Only forward signature when it looks like a real file URI; the
     // CompletionModal currently emits 'signature_placeholder' which
     // would 422 on the backend's `image` rule. Pre-existing limitation
@@ -530,8 +563,10 @@ export default function ActiveErrandScreen() {
       // tracks attempts, and flips ride_pin_verified on success.
       await runnerService.verifyRidePin(booking.id, pinInput);
       setPinVerified(true);
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
       toast.success('PIN verified — ride may begin');
     } catch (err: any) {
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error).catch(() => {});
       toast.error(err?.response?.data?.message ?? 'Incorrect PIN. Please try again.');
       setPinInput('');
     } finally {
@@ -571,18 +606,64 @@ export default function ActiveErrandScreen() {
   // map. Snap targets keep gestures predictable; intermediate heights
   // are interpolated continuously while the finger is down.
   const WIN_H = useWindowDimensions().height;
-  const SNAP_COLLAPSED = 220;                       // header + sticky CTA
+  // Bottom safe-area inset — the sheet is lifted above the home indicator
+  // by a bottom-inset spacer, so the map's floating controls (ETA pill +
+  // recenter) must clear sheetHeight + inset, not sheetHeight alone.
+  // Otherwise the recenter button hides behind the sheet on notch /
+  // home-indicator devices.
+  const insets = useSafeAreaInsets();
   const SNAP_MID = Math.round(WIN_H * 0.55);        // expanded for details
   const SNAP_EXPANDED = Math.round(WIN_H * 0.88);   // near full-screen
-  const SNAPS = useMemo(() => [SNAP_COLLAPSED, SNAP_MID, SNAP_EXPANDED], [SNAP_COLLAPSED, SNAP_MID, SNAP_EXPANDED]);
+
+  // The collapsed snap is DERIVED from the measured fixed chrome (drag
+  // handle + header block + sticky CTA block), not a hardcoded 220. A
+  // fixed 220 clipped the CTA below the screen edge whenever the chrome
+  // exceeded it — worst at the completion step, where the checklist
+  // grows the CTA block. Measuring guarantees the collapsed height
+  // always contains the full CTA (+ a small scroll peek) at every
+  // device size, so THE action button is never off-screen on mount.
+  const FALLBACK_COLLAPSED = 300;                   // safe until measured
+  const SHEET_PEEK = 14;                            // sliver of scroll hint
+  const [handleH, setHandleH] = useState(0);
+  const [headerH, setHeaderH] = useState(0);
+  const [ctaH, setCtaH] = useState(0);
+  const fixedChromeH = handleH + headerH + ctaH;
+  const SNAP_COLLAPSED = useMemo(() => {
+    if (!fixedChromeH) return Math.min(FALLBACK_COLLAPSED, SNAP_EXPANDED);
+    return Math.min(fixedChromeH + SHEET_PEEK, SNAP_EXPANDED);
+  }, [fixedChromeH, SNAP_EXPANDED]);
+  // Snap targets, sorted and clamped so none ever sits BELOW the
+  // collapsed floor (which would re-clip the CTA once the completion
+  // checklist pushes collapsed past SNAP_MID).
+  const SNAPS = useMemo(() => {
+    const arr = Array.from(new Set([SNAP_COLLAPSED, SNAP_MID, SNAP_EXPANDED]))
+      .filter((v) => v >= SNAP_COLLAPSED && v <= SNAP_EXPANDED)
+      .sort((a, b) => a - b);
+    return arr.length ? arr : [SNAP_COLLAPSED];
+  }, [SNAP_COLLAPSED, SNAP_MID, SNAP_EXPANDED]);
 
   // Default to the COLLAPSED snap so the map dominates the screen on
   // mount — the runner's primary need is "where am I going" not "what
   // are the trip details". The sticky CTA at the bottom of the sheet
   // keeps the next action one tap away regardless of snap height.
-  const sheetHeight = useRef(new Animated.Value(SNAP_COLLAPSED)).current;
-  const sheetHeightStartRef = useRef<number>(SNAP_COLLAPSED);
-  const currentSheetHeightRef = useRef<number>(SNAP_COLLAPSED);
+  const sheetHeight = useRef(new Animated.Value(FALLBACK_COLLAPSED)).current;
+  const sheetHeightStartRef = useRef<number>(FALLBACK_COLLAPSED);
+  const currentSheetHeightRef = useRef<number>(FALLBACK_COLLAPSED);
+  // Refs so the once-created PanResponder reads the LATEST measured
+  // snap bounds instead of the values captured at creation.
+  const snapsRef = useRef(SNAPS);
+  const snapCollapsedRef = useRef(SNAP_COLLAPSED);
+  const snapExpandedRef = useRef(SNAP_EXPANDED);
+  // Once the runner drags the sheet themselves, stop auto-pinning it to
+  // the collapsed height so we never fight their intent.
+  const userMovedRef = useRef(false);
+  const reduceMotionRef = useRef(reduceMotion);
+  reduceMotionRef.current = reduceMotion;
+  useEffect(() => {
+    snapsRef.current = SNAPS;
+    snapCollapsedRef.current = SNAP_COLLAPSED;
+    snapExpandedRef.current = SNAP_EXPANDED;
+  }, [SNAPS, SNAP_COLLAPSED, SNAP_EXPANDED]);
 
   // Track the current sheet height in a ref so the pan responder can
   // resume drags from wherever the sheet currently sits. No state
@@ -595,7 +676,34 @@ export default function ActiveErrandScreen() {
     return () => sheetHeight.removeListener(id);
   }, [sheetHeight]);
 
+  // Offset for the map's floating controls (ETA pill + recenter). They
+  // ride just above the sheet's top edge by tracking sheetHeight, but
+  // that travel is capped at the mid snap (or the resting collapsed
+  // height, whichever is taller). Without the cap, dragging the sheet to
+  // full expansion lifts the controls into the floating top-bar card on
+  // the shortest devices (SE 667). Past the cap they hold position and
+  // slide behind the rising sheet — where the map is hidden anyway, so
+  // there is nothing to recenter or ETA against.
+  const mapControlsOffset = useMemo(() => {
+    const cap = Math.max(SNAP_MID, SNAP_COLLAPSED);
+    return Animated.add(
+      sheetHeight.interpolate({
+        inputRange: [0, cap, cap + 1],
+        outputRange: [0, cap, cap],
+        extrapolate: 'clamp',
+      }),
+      new Animated.Value(insets.bottom + 12),
+    );
+  }, [sheetHeight, SNAP_MID, SNAP_COLLAPSED, insets.bottom]);
+
   const snapTo = useCallback((target: number) => {
+    // Reduce Motion: snap instantly instead of springing (matches the
+    // shared ExpandableSheet's reduced-motion behaviour).
+    if (reduceMotionRef.current) {
+      sheetHeight.setValue(target);
+      currentSheetHeightRef.current = target;
+      return;
+    }
     Animated.spring(sheetHeight, {
       toValue: target,
       useNativeDriver: false,
@@ -612,19 +720,21 @@ export default function ActiveErrandScreen() {
       // and inner ScrollView still work normally.
       onMoveShouldSetPanResponder: (_e, g) => Math.abs(g.dy) > 6 && Math.abs(g.dy) > Math.abs(g.dx),
       onPanResponderGrant: () => {
+        userMovedRef.current = true;
         sheetHeightStartRef.current = currentSheetHeightRef.current;
       },
       onPanResponderMove: (_e, g) => {
         // Drag UP increases height (dy negative); DOWN decreases.
-        const next = Math.max(SNAP_COLLAPSED, Math.min(SNAP_EXPANDED, sheetHeightStartRef.current - g.dy));
+        const next = Math.max(snapCollapsedRef.current, Math.min(snapExpandedRef.current, sheetHeightStartRef.current - g.dy));
         sheetHeight.setValue(next);
       },
       onPanResponderRelease: (_e, g) => {
         const projected = sheetHeightStartRef.current - g.dy - g.vy * 80;
-        // Snap to the nearest snap point.
-        let nearest = SNAPS[0];
+        // Snap to the nearest (measured) snap point.
+        const snaps = snapsRef.current;
+        let nearest = snaps[0];
         let bestDelta = Infinity;
-        for (const s of SNAPS) {
+        for (const s of snaps) {
           const d = Math.abs(s - projected);
           if (d < bestDelta) { bestDelta = d; nearest = s; }
         }
@@ -633,6 +743,46 @@ export default function ActiveErrandScreen() {
     }),
   ).current;
 
+  // Keep the sheet's default height honest: pin it to the measured
+  // collapsed height (so the CTA + its completion checklist are always
+  // fully visible) until the runner drags it themselves. And when a
+  // step gates the CTA behind sub-UI that lives in the scroll area
+  // (transportation PIN entry), reveal it once by snapping to mid so
+  // the field isn't hidden behind a dead-looking disabled button.
+  const autoSnapStatusRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!booking) return;
+    const status = booking.status;
+    const needsPinReveal =
+      isTransportation &&
+      status === 'arrived_at_pickup' &&
+      !pinVerified &&
+      !booking.ride_pin_verified;
+    if (needsPinReveal) {
+      if (autoSnapStatusRef.current !== status) {
+        autoSnapStatusRef.current = status;
+        userMovedRef.current = true; // don't let the collapsed pin fight the reveal
+        snapTo(Math.max(SNAP_MID, snapCollapsedRef.current));
+      }
+      return;
+    }
+    if (!userMovedRef.current && Math.abs(currentSheetHeightRef.current - SNAP_COLLAPSED) > 2) {
+      snapTo(SNAP_COLLAPSED);
+    }
+  }, [booking?.status, isTransportation, pinVerified, booking?.ride_pin_verified, SNAP_COLLAPSED, SNAP_MID, snapTo]);
+
+  // Shopping errands: the tickable list IS the runner's core reference,
+  // so open the Trip-details disclosure once on load (the ErrandDetailsCard
+  // itself also defaults expanded for shopping) — this drops the picking
+  // list from three disclosures deep to reachable with just a sheet drag.
+  const shoppingAutoOpenRef = useRef(false);
+  useEffect(() => {
+    if (isShoppingErrand && !shoppingAutoOpenRef.current) {
+      shoppingAutoOpenRef.current = true;
+      setDetailsOpen(true);
+    }
+  }, [isShoppingErrand]);
+
   // ── Early-return guard MUST stay below every hook above so the hook
   // call order is identical between the loading and resolved renders.
   // Putting this gate higher caused the “Rendered more hooks than during
@@ -640,21 +790,96 @@ export default function ActiveErrandScreen() {
   // resolved booking object.
   if (!booking) {
     if (fetchedQ.loading) {
+      // Skeleton mirrors the real layout: map background + top bar +
+      // bottom sheet (beads, hero, action row, customer pill, CTA), so
+      // the resolved screen doesn't jump when the booking arrives.
       return (
-        <SafeAreaView className="flex-1 bg-background items-center justify-center" edges={['top']}>
-          <Text className="text-sm font-montserrat text-textSecondary">Loading errand…</Text>
+        <SafeAreaView className="flex-1 bg-surfaceMuted" edges={['top']}>
+          <View className="px-4 pt-2">
+            <Skeleton width="100%" height={56} borderRadius={16} />
+          </View>
+          <View className="flex-1" />
+          <View className="bg-surface rounded-t-3xl px-5 pt-4 pb-6">
+            <View className="items-center mb-4">
+              <Skeleton width={40} height={4} borderRadius={2} />
+            </View>
+            <Skeleton width="55%" height={12} style={{ marginBottom: 12 }} />
+            <Skeleton width="80%" height={20} style={{ marginBottom: 8 }} />
+            <Skeleton width="65%" height={12} style={{ marginBottom: 16 }} />
+            <View className="flex-row mb-4" style={{ gap: 8 }}>
+              <Skeleton width="60%" height={44} borderRadius={12} />
+              <Skeleton width="35%" height={44} borderRadius={12} />
+            </View>
+            <View className="flex-row items-center mb-4">
+              <SkeletonCircle size={44} />
+              <View className="flex-1 ml-3">
+                <Skeleton width="50%" height={14} style={{ marginBottom: 6 }} />
+                <Skeleton width="35%" height={10} />
+              </View>
+              <SkeletonCircle size={40} style={{ marginRight: 8 }} />
+              <SkeletonCircle size={40} />
+            </View>
+            <Skeleton width="100%" height={56} borderRadius={14} />
+          </View>
         </SafeAreaView>
       );
     }
     return (
-      <SafeAreaView className="flex-1 bg-background items-center justify-center px-8" edges={['top']}>
-        <Text className="text-base font-montserrat-bold text-textPrimary mb-1">Errand unavailable</Text>
-        <Text className="text-xs font-montserrat text-textSecondary text-center mb-4">
-          This errand is no longer accessible. It may have been reassigned or removed.
-        </Text>
-        <Button title="Go Back" variant="outline" onPress={() => router.canGoBack() ? router.back() : router.replace('/(runner)/(tabs)')} />
+      <SafeAreaView className="flex-1 bg-background justify-center px-4" edges={['top']}>
+        <ErrorState
+          title="Errand unavailable"
+          description="This errand is no longer accessible. It may have been reassigned or removed."
+          onRetry={() => fetchedQ.refresh()}
+          style={{ flex: 0 }}
+        />
+        <View className="items-center pb-10">
+          <Button title="Go Back" variant="outline" onPress={() => router.canGoBack() ? router.back() : router.replace('/(runner)/(tabs)')} />
+        </View>
       </SafeAreaView>
     );
+  }
+
+  // Next transition for the sticky CTA — drives the slide-vs-tap helper
+  // caption and the pre-completion checklist. Plain derived values (no
+  // hooks), so they're safe below the early-return guard.
+  const nextStatusForCta = getNextStatus(booking.status, errandSlug);
+  const ctaIsSlide =
+    nextStatusForCta === 'delivered' || nextStatusForCta === 'completed';
+
+  // Pre-completion checklist: read-only recap of what proof has been
+  // captured so the runner sees what's missing BEFORE sliding to
+  // complete. Derived entirely from existing booking fields.
+  const completionChecklist: { key: string; label: string; done: boolean; note?: string }[] = [];
+  if (!isReadOnly && nextStatusForCta === 'completed') {
+    if (!isTransportation && !isSingleLocation) {
+      completionChecklist.push({
+        key: 'delivery_photo',
+        label: 'Delivery photo',
+        done: !!(booking.delivery_photo_url || deliveryPhotoUrl),
+      });
+    }
+    if (isShoppingErrand) {
+      completionChecklist.push({
+        key: 'receipt',
+        label: 'Purchase receipt',
+        done: !!booking.receipt_photo_url,
+      });
+    }
+    if (isTransportation) {
+      completionChecklist.push({
+        key: 'pin',
+        label: 'Ride PIN verified',
+        done: pinVerified || !!booking.ride_pin_verified,
+      });
+    }
+    if (!isTransportation && !isSingleLocation) {
+      completionChecklist.push({
+        key: 'signature',
+        label: 'Customer signature',
+        done: !!booking.signature_url,
+        note: booking.signature_url ? undefined : 'captured at completion',
+      });
+    }
   }
 
   return (
@@ -671,7 +896,7 @@ export default function ActiveErrandScreen() {
             inPickupPhase={inPickupPhase}
             singleLocation={isSingleLocation}
             etaMinutes={runnerEta.minutes}
-            bottomOffset={Animated.add(sheetHeight, new Animated.Value(12))}
+            bottomOffset={mapControlsOffset}
           />
         </View>
 
@@ -695,8 +920,12 @@ export default function ActiveErrandScreen() {
                   onPress={() => {
                     const goBack = () =>
                       router.canGoBack() ? router.back() : router.replace('/(runner)/(tabs)');
-                    if (isErrandActive) confirmLeaveErrand(goBack);
-                    else goBack();
+                    if (isErrandActive) {
+                      leaveActionRef.current = goBack;
+                      setShowLeaveConfirm(true);
+                    } else {
+                      goBack();
+                    }
                   }}
                 />
               </View>
@@ -708,14 +937,40 @@ export default function ActiveErrandScreen() {
                   {isTransportation ? 'Passenger ride' : 'Active errand'}
                 </Text>
                 <Text
-                  className="text-[10px] font-inter text-textTertiary mt-0.5"
+                  className="text-[11px] font-inter text-textTertiary mt-0.5"
                   style={{ letterSpacing: 0.4 }}
                 >
                   {booking.booking_number}
                 </Text>
               </View>
               <View className="flex-row items-center pr-3">
-                <View className="w-px h-7 bg-divider mr-2" />
+                {/* Always-visible emergency SOS — reachable in one tap
+                    regardless of sheet/disclosure state. Keeps the exact
+                    two-step arm (warning haptic) → ConfirmModal broadcast;
+                    only the reachability changed. */}
+                {!isReadOnly && isErrandActive && (
+                  <Pressable
+                    onPress={() => {
+                      if (sosActive) return;
+                      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning).catch(() => {});
+                      setShowSOSConfirm(true);
+                    }}
+                    disabled={sosActive || sosLoading}
+                    accessibilityRole="button"
+                    accessibilityLabel={sosActive ? 'SOS already triggered' : 'Trigger emergency SOS'}
+                    hitSlop={6}
+                    className={`w-10 h-10 rounded-full items-center justify-center ${
+                      sosActive ? 'bg-danger' : 'bg-danger/10'
+                    }`}
+                  >
+                    <ShieldAlert
+                      size={20}
+                      color={sosActive ? LightColors.textInverse : LightColors.dangerDark}
+                      strokeWidth={2}
+                    />
+                  </Pressable>
+                )}
+                <View className="w-px h-7 bg-divider mx-2" />
                 <Pressable
                   onPress={() => router.push(`/(runner)/chat/${booking.id}` as any)}
                   className="w-10 h-10 items-center justify-center"
@@ -749,25 +1004,43 @@ export default function ActiveErrandScreen() {
           style={{ position: 'absolute', left: 0, right: 0, bottom: 0 }}
         >
           <Animated.View
-            className="bg-surface rounded-t-3xl"
+            className="bg-surface"
             style={{
               height: sheetHeight,
-              // Sheet lift — upward offset is intentional so the shadow
-              // reads above the sheet edge; softened to the airy scale.
-              shadowColor: LightColors.ink,
-              shadowOpacity: 0.08,
-              shadowRadius: 16,
-              shadowOffset: { width: 0, height: -2 },
-              elevation: 12,
+              borderTopLeftRadius: Radius.sheet,
+              borderTopRightRadius: Radius.sheet,
+              // Sheet lift on the shared Elevation.lg scale, but with an
+              // UPWARD offset so the shadow reads above the sheet's top
+              // edge (a bottom sheet can't cast its shadow downward).
+              ...Elevation.lg,
+              shadowOffset: { width: 0, height: -3 },
             }}
           >
             {/* Drag handle \u2014 expand the touch target above + below the
                 pill so the runner doesn't have to hit a 4px line. */}
             <View
               {...panResponder.panHandlers}
+              onLayout={(e) => setHandleH(e.nativeEvent.layout.height)}
               className="items-center pt-2 pb-3"
               accessibilityRole="adjustable"
-              accessibilityLabel="Drag to resize details panel"
+              accessibilityLabel="Details panel"
+              accessibilityHint="Adjust to expand or collapse trip details"
+              accessibilityActions={[
+                { name: 'increment', label: 'Expand details' },
+                { name: 'decrement', label: 'Collapse details' },
+              ]}
+              onAccessibilityAction={(e) => {
+                userMovedRef.current = true;
+                const snaps = snapsRef.current;
+                const cur = currentSheetHeightRef.current;
+                if (e.nativeEvent.actionName === 'increment') {
+                  const next = snaps.find((s) => s > cur + 2);
+                  snapTo(next ?? snaps[snaps.length - 1]);
+                } else if (e.nativeEvent.actionName === 'decrement') {
+                  const below = snaps.filter((s) => s < cur - 2);
+                  snapTo(below.length ? below[below.length - 1] : snaps[0]);
+                }
+              }}
             >
               <View className="w-10 h-1 rounded-full bg-dividerStrong" />
             </View>
@@ -781,7 +1054,10 @@ export default function ActiveErrandScreen() {
                      with the address as subtitle and an inline
                      "Open Maps" affordance (tap address to launch the
                      OS maps app for traffic/alternate-route checks). */}
-            <View className="px-5 pb-2">
+            <View
+              className="px-5 pb-2"
+              onLayout={(e) => setHeaderH(e.nativeEvent.layout.height)}
+            >
               <JourneyBeads status={booking.status} showLabel={false} />
               <View className="mt-2">
                 <CurrentStepHero
@@ -801,17 +1077,13 @@ export default function ActiveErrandScreen() {
                 {!isReadOnly && isErrandActive && (
                   <View className="flex-row gap-2 mt-3">
                     <Pressable
-                      onPress={() => router.push(`/(runner)/navigate/${booking.id}` as any)}
+                      onPress={() => {
+                        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
+                        router.push(`/(runner)/navigate/${booking.id}` as any);
+                      }}
                       accessibilityRole="button"
                       accessibilityLabel="Open turn-by-turn navigation"
                       className="flex-1 h-11 rounded-xl bg-primary flex-row items-center justify-center"
-                      style={{
-                        shadowColor: LightColors.primary,
-                        shadowOpacity: 0.12,
-                        shadowRadius: 8,
-                        shadowOffset: { width: 0, height: 2 },
-                        elevation: 2,
-                      }}
                     >
                       <Navigation size={16} color={LightColors.textInverse} strokeWidth={2.2} />
                       <Text className="text-white text-[13px] font-montserrat-bold ml-2">
@@ -820,6 +1092,7 @@ export default function ActiveErrandScreen() {
                     </Pressable>
                     <Pressable
                       onPress={() => {
+                        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
                         const lat = inPickupPhase ? booking.pickup_lat : booking.dropoff_lat;
                         const lng = inPickupPhase ? booking.pickup_lng : booking.dropoff_lng;
                         if (lat == null || lng == null) {
@@ -833,7 +1106,7 @@ export default function ActiveErrandScreen() {
                       }}
                       accessibilityRole="button"
                       accessibilityLabel="Open in system maps"
-                      className="h-11 px-4 rounded-xl border border-divider bg-surface flex-row items-center justify-center"
+                      className="h-11 px-4 rounded-xl border border-dividerStrong bg-surfaceMuted flex-row items-center justify-center"
                     >
                       <MapPin size={15} color={LightColors.textPrimary} strokeWidth={1.8} />
                       <Text className="text-textPrimary text-[13px] font-montserrat-semi ml-1.5">
@@ -856,6 +1129,19 @@ export default function ActiveErrandScreen() {
               showsVerticalScrollIndicator={false}
               contentContainerStyle={{ paddingHorizontal: 20, paddingBottom: 16 }}
               keyboardShouldPersistTaps="handled"
+              refreshControl={
+                <RefreshControl
+                  refreshing={sheetRefreshing}
+                  onRefresh={async () => {
+                    setSheetRefreshing(true);
+                    try {
+                      await fetchedQ.refresh();
+                    } finally {
+                      setSheetRefreshing(false);
+                    }
+                  }}
+                />
+              }
             >
               {/* ── Customer pill ─────────────────────────────── */}
               <View className="flex-row items-center bg-surface border border-divider rounded-2xl p-3 mb-3">
@@ -926,6 +1212,13 @@ export default function ActiveErrandScreen() {
                       maxLength={4}
                       placeholder="• • • •"
                       placeholderTextColor={LightColors.textMuted}
+                      accessibilityLabel="Trip PIN"
+                      onFocus={() => {
+                        // Give the field maximum clearance above the
+                        // keyboard so it's never hidden while typing.
+                        userMovedRef.current = true;
+                        snapTo(SNAP_EXPANDED);
+                      }}
                     />
                     <Button
                       title="Verify"
@@ -939,7 +1232,7 @@ export default function ActiveErrandScreen() {
               {pinVerified && isTransportation && (
                 <View className="mb-3 flex-row items-center gap-2 bg-successSoft px-3 py-2.5 rounded-xl">
                   <CheckCircle size={16} color={LightColors.success} />
-                  <Text className="text-[12px] font-montserrat-bold text-success">
+                  <Text className="text-[12px] font-montserrat-bold text-successDark">
                     PIN verified — ready to start
                   </Text>
                 </View>
@@ -951,16 +1244,24 @@ export default function ActiveErrandScreen() {
                   <Text className="text-[10px] font-montserrat-bold uppercase text-textTertiary" style={{ letterSpacing: 1 }}>
                     Your payout
                   </Text>
-                  <Text className="text-[18px] font-inter-semi tabular-nums text-textPrimary mt-0.5">
-                    {formatCurrency(booking.runner_payout ?? booking.total_amount)}
-                  </Text>
+                  {booking.runner_payout != null ? (
+                    <Text className="text-[18px] font-inter-semi tabular-nums text-textPrimary mt-0.5">
+                      {formatCurrency(booking.runner_payout)}
+                    </Text>
+                  ) : (
+                    // Never present total_amount (customer charge incl. item
+                    // cost / platform fee) as the runner's take-home.
+                    <Text className="text-[15px] font-montserrat-semi text-textTertiary mt-0.5">
+                      Payout pending
+                    </Text>
+                  )}
                 </View>
                 {isShoppingErrand && booking.shopping_budget != null && (
                   <View className="items-end">
-                    <Text className="text-[10px] font-montserrat-bold uppercase text-warning" style={{ letterSpacing: 1 }}>
+                    <Text className="text-[10px] font-montserrat-bold uppercase text-warningDark" style={{ letterSpacing: 1 }}>
                       Budget
                     </Text>
-                    <Text className="text-[14px] font-inter-semi tabular-nums text-warning mt-0.5">
+                    <Text className="text-[14px] font-inter-semi tabular-nums text-warningDark mt-0.5">
                       {formatCurrency(booking.shopping_budget)}
                     </Text>
                   </View>
@@ -998,10 +1299,12 @@ export default function ActiveErrandScreen() {
 
                   <View className="mb-3">
                     <ErrandDetailsCard
+                      bookingId={booking.id}
                       description={booking.description}
                       specialInstructions={booking.special_instructions}
                       itemPhotos={booking.item_photos}
                       estimatedItemValue={booking.estimated_item_value}
+                      shoppingItems={booking.shopping_items}
                     />
                   </View>
 
@@ -1022,26 +1325,10 @@ export default function ActiveErrandScreen() {
                     />
                   </View>
 
-                  {!isReadOnly && (
-                    <Pressable
-                      onPress={() => !sosActive && setShowSOSConfirm(true)}
-                      disabled={sosActive || sosLoading}
-                      accessibilityRole="button"
-                      accessibilityLabel={sosActive ? 'SOS already triggered' : 'Trigger emergency SOS'}
-                      className={`flex-row items-center justify-center gap-2 rounded-xl py-2.5 border mt-1 mb-3 ${
-                        sosActive ? 'bg-danger border-danger' : 'bg-surface border-danger/40'
-                      }`}
-                    >
-                      <ShieldAlert size={15} color={sosActive ? LightColors.textInverse : LightColors.danger} />
-                      <Text
-                        className={`text-[12px] font-montserrat-bold ${
-                          sosActive ? 'text-white' : 'text-danger'
-                        }`}
-                      >
-                        {sosActive ? 'SOS active — help notified' : 'Emergency SOS'}
-                      </Text>
-                    </Pressable>
-                  )}
+                  {/* Emergency SOS lives in the floating top bar now so
+                      it's reachable in one tap during a real emergency —
+                      it is no longer nested inside this collapsed
+                      disclosure. */}
 
                   <Pressable
                     onPress={() => {
@@ -1052,8 +1339,8 @@ export default function ActiveErrandScreen() {
                     }}
                     accessibilityRole="link"
                     accessibilityLabel="Report an issue with this errand"
-                    hitSlop={6}
-                    className="flex-row items-center self-start gap-1.5 mb-1"
+                    hitSlop={8}
+                    className="flex-row items-center self-start gap-1.5 py-2"
                   >
                     <AlertTriangle size={12} color={LightColors.textMuted} />
                     <Text className="text-[11px] font-montserrat-semi text-textTertiary underline">
@@ -1070,11 +1357,64 @@ export default function ActiveErrandScreen() {
                 Supabase Realtime, and is mirrored on the customer
                 tracking screen within ~5s. */}
             {!isReadOnly ? (
-              <View className="px-5 pt-3 pb-3 border-t border-divider bg-surface">
+              <View
+                className="px-5 pt-3 pb-3 border-t border-divider bg-surface"
+                onLayout={(e) => setCtaH(e.nativeEvent.layout.height)}
+              >
+                {/* Pre-completion checklist — read-only recap of captured
+                    proof so the runner sees what's missing before the
+                    final slide. */}
+                {completionChecklist.length > 0 && (
+                  <View className="bg-surfaceMuted rounded-xl px-3 py-2.5 mb-2.5">
+                    <Text
+                      className="text-[10px] font-montserrat-bold text-textTertiary uppercase mb-1"
+                      style={{ letterSpacing: 1 }}
+                    >
+                      Before you complete
+                    </Text>
+                    {completionChecklist.map((item) => (
+                      <View
+                        key={item.key}
+                        className="flex-row items-center py-0.5"
+                        accessible
+                        accessibilityLabel={`${item.label}: ${item.done ? 'captured' : 'not captured'}`}
+                      >
+                        {item.done ? (
+                          <CheckCircle2 size={16} color={LightColors.success} strokeWidth={2.2} />
+                        ) : (
+                          <Circle size={16} color={LightColors.textMuted} strokeWidth={2} />
+                        )}
+                        <Text
+                          numberOfLines={1}
+                          className={`text-[12px] ml-2 flex-shrink ${
+                            item.done
+                              ? 'font-montserrat-semi text-textPrimary'
+                              : 'font-montserrat text-textSecondary'
+                          }`}
+                        >
+                          {item.label}
+                        </Text>
+                        {!item.done && item.note && (
+                          <Text
+                            numberOfLines={1}
+                            className="text-[11px] font-montserrat text-textMuted ml-1.5 flex-shrink"
+                          >
+                            · {item.note}
+                          </Text>
+                        )}
+                      </View>
+                    ))}
+                  </View>
+                )}
                 <Text className="text-[10px] font-montserrat-bold text-textTertiary uppercase tracking-wider mb-1.5 text-center">
-                  Tap to advance — customer is notified instantly
+                  {ctaIsSlide
+                    ? 'Slide to confirm — customer is notified instantly'
+                    : 'Tap to advance — customer is notified instantly'}
                 </Text>
                 <StatusActionButton
+                  // Remount when the status changes OR a downstream modal
+                  // is dismissed so a latched SlideToConfirm re-arms.
+                  key={`${booking.status}:${slideResetKey}`}
                   status={booking.status}
                   errandSlug={errandSlug}
                   isTransportation={isTransportation}
@@ -1084,7 +1424,10 @@ export default function ActiveErrandScreen() {
                 />
               </View>
             ) : (
-              <View className="px-5 pt-3 pb-3 border-t border-divider bg-surface items-center">
+              <View
+                className="px-5 pt-3 pb-3 border-t border-divider bg-surface items-center"
+                onLayout={(e) => setCtaH(e.nativeEvent.layout.height)}
+              >
                 <Text className="text-[11px] font-montserrat text-textTertiary uppercase tracking-wider mb-0.5">
                   Read-only view
                 </Text>
@@ -1104,7 +1447,11 @@ export default function ActiveErrandScreen() {
         <PhotoProofModal
           type={showPhotoProof}
           onConfirm={handlePhotoConfirm}
-          onClose={() => setShowPhotoProof(null)}
+          onClose={() => {
+            setShowPhotoProof(null);
+            // Re-arm the slide CTA — the transition was abandoned.
+            setSlideResetKey((k) => k + 1);
+          }}
         />
       )}
 
@@ -1132,7 +1479,11 @@ export default function ActiveErrandScreen() {
           setSubmittingReceipt(true);
           runnerService
             .submitPickedUpWithReceipt(booking.id, { actualCost, receiptUri })
+            .then(() => {
+              Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
+            })
             .catch((err: any) => {
+              Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error).catch(() => {});
               fetchedQ.mutate(prev);
               updateErrandStatus(prev.status as BookingStatus);
               toast.error(
@@ -1165,8 +1516,28 @@ export default function ActiveErrandScreen() {
               : undefined
           }
           onComplete={handleCompletionConfirm}
-          onClose={() => setShowCompletion(false)}
+          onClose={() => {
+            setShowCompletion(false);
+            // Re-arm the slide CTA — the completion was abandoned.
+            setSlideResetKey((k) => k + 1);
+          }}
         />
+      )}
+
+      {/* Success moment — brief celebratory check after the completion
+          submit. SuccessCheck fires its own success haptic; onDone
+          dismisses the overlay (~1s, instantly under Reduce Motion). */}
+      {showSuccessMoment && (
+        <View
+          className="absolute inset-0 items-center justify-center"
+          style={{ backgroundColor: `${LightColors.ink}59`, zIndex: 60 }}
+          pointerEvents="auto"
+        >
+          <SuccessCheck
+            celebrate
+            onDone={() => setShowSuccessMoment(false)}
+          />
+        </View>
       )}
 
       {/* Rate Customer Modal */}
@@ -1184,11 +1555,31 @@ export default function ActiveErrandScreen() {
         title="Trigger emergency SOS?"
         message="Your trusted contacts will get a live trip link via SMS, and ErrandGuy safety will be alerted immediately. Only use this for real emergencies."
         confirmLabel="Send SOS"
+        confirmLoadingLabel="Sending…"
         cancelLabel="Not now"
         destructive
         loading={sosLoading}
         onConfirm={handleConfirmSOS}
         onCancel={() => setShowSOSConfirm(false)}
+      />
+
+      {/* Branded leave confirm for the in-app back chevron — matches the
+          SOS / payout / logout ConfirmModals instead of a raw OS Alert.
+          (The Android hardware-back double-press toast is unchanged.) */}
+      <ConfirmModal
+        visible={showLeaveConfirm}
+        title="Leave active errand?"
+        message="You can come back any time, but make sure you don't lose track of the customer."
+        confirmLabel="Leave"
+        cancelLabel="Stay"
+        destructive
+        onConfirm={() => {
+          setShowLeaveConfirm(false);
+          const go = leaveActionRef.current;
+          leaveActionRef.current = null;
+          go?.();
+        }}
+        onCancel={() => setShowLeaveConfirm(false)}
       />
     </SafeAreaView>
   );

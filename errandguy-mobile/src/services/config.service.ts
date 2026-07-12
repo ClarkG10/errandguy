@@ -1,5 +1,17 @@
 import api from './api';
 
+/** Shape of each item in GET /promos → `data` (PromoResource). */
+export interface Promo {
+  id: string;
+  code: string;
+  description: string | null;
+  discount_type: string;
+  discount_value: number;
+  max_discount: number | null;
+  min_order: number | null;
+  valid_until: string | null;
+}
+
 export const configService = {
   getErrandTypes() {
     // Errand types change rarely \u2014 keep them in the in-memory cache for
@@ -14,6 +26,13 @@ export const configService = {
 
   validatePromo(code: string) {
     return api.get(`/promos/validate/${encodeURIComponent(code)}`);
+  },
+
+  // Browse currently-valid, publicly-listable promo codes the caller can
+  // still redeem. Silent so the SWR background revalidate doesn't flash
+  // the network bar.
+  getPromos() {
+    return api.get('/promos', { cacheTtlMs: 60_000, silent: true } as any);
   },
 
   submitReport(data: {

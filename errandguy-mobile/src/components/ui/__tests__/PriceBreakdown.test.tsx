@@ -47,6 +47,28 @@ describe('PriceBreakdown', () => {
     expect(getByText('₱80.00')).toBeTruthy();
   });
 
+  it('groups thousands to match formatCurrency everywhere else', () => {
+    const { getAllByText } = render(
+      <PriceBreakdown
+        items={[{ label: 'Base Fee', amount: 1234.5 }]}
+        total={1234.5}
+      />,
+    );
+    // Item row and total both show the grouped en-PH format.
+    expect(getAllByText('₱1,234.50')).toHaveLength(2);
+  });
+
+  it('groups thousands for custom currency symbols too', () => {
+    const { getAllByText } = render(
+      <PriceBreakdown
+        items={[{ label: 'Fee', amount: 5000 }]}
+        total={5000}
+        currency="$"
+      />,
+    );
+    expect(getAllByText('$5,000.00')).toHaveLength(2);
+  });
+
   it('renders with empty items list', () => {
     const { getByText } = render(<PriceBreakdown items={[]} total={0} />);
     expect(getByText('Total')).toBeTruthy();

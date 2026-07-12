@@ -1,11 +1,14 @@
-import React, { useCallback, useMemo } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { View, Text, FlatList, RefreshControl } from 'react-native';
 import { useRouter } from 'expo-router';
 import { MessageCircle, Image as ImageIcon, Info } from 'lucide-react-native';
 import { Avatar } from '../ui/Avatar';
 import { Card } from '../ui/Card';
 import { EmptyState } from '../ui/EmptyState';
+import { ErrorState } from '../ui/ErrorState';
+import { ChatInboxSkeleton } from '../ui/Skeleton';
 import { GradientHeader } from '../ui/GradientHeader';
+import { SyncIndicator } from '../ui/SyncIndicator';
 import { useQuery } from '../../hooks/useQuery';
 import { CacheTTL } from '../../services/cache.service';
 import { chatService } from '../../services/chat.service';
@@ -55,6 +58,10 @@ const STATUS_LABEL: Record<string, string> = {
 export function ConversationList({ chatHrefPrefix, fallbackHref }: Props) {
   const router = useRouter();
   const userId = useAuthStore((s) => s.user?.id ?? 'anon');
+  // Role-aware copy: a runner's counterparty is the customer, and vice
+  // versa. Derived from the navigation prefix so the shared component
+  // never says "your chat with the runner" to a runner.
+  const isRunner = chatHrefPrefix.startsWith('/(runner)');
 
   const conversationsQ = useQuery<Conversation[]>(
     ['chat', 'conversations', userId],
@@ -69,6 +76,21 @@ export function ConversationList({ chatHrefPrefix, fallbackHref }: Props) {
   );
 
   const conversations = conversationsQ.data ?? [];
+
+  // Slow-load watchdog — if the first load is still pending after 12s with
+  // no cached data, stop showing skeletons forever and offer a retry. The
+  // request itself can hang up to the 30s axios timeout; this gives the user
+  // an escape hatch (and a clear signal) well before then. Resets whenever
+  // loading finishes or data arrives.
+  const [slowLoad, setSlowLoad] = useState(false);
+  useEffect(() => {
+    if (!conversationsQ.loading || conversationsQ.data) {
+      setSlowLoad(false);
+      return;
+    }
+    const t = setTimeout(() => setSlowLoad(true), 12000);
+    return () => clearTimeout(t);
+  }, [conversationsQ.loading, conversationsQ.data]);
 
   // Bucket: unread first, then everything else by recency (already
   // server-sorted). The unread cluster gives a clear "needs attention"
@@ -216,6 +238,13 @@ export function ConversationList({ chatHrefPrefix, fallbackHref }: Props) {
         fallbackHref={fallbackHref}
       />
 
+      <SyncIndicator
+        syncing={conversationsQ.isStale}
+        updatedAt={conversationsQ.updatedAt}
+        error={!!conversationsQ.error}
+        onRetry={onRefresh ?? conversationsQ.refresh}
+      />
+
       <FlatList
         data={sorted}
         keyExtractor={(c) => c.booking_id}
@@ -227,13 +256,37 @@ export function ConversationList({ chatHrefPrefix, fallbackHref }: Props) {
           />
         }
         ListEmptyComponent={
-          !conversationsQ.loading ? (
+          conversationsQ.loading && slowLoad ? (
+            // Load has been pending too long — surface a retry instead of an
+            // endless skeleton (the "messages won't load" symptom).
+            <ErrorState
+              title="Messages are taking a while"
+              description="Check your connection and try again."
+              onRetry={() => {
+                setSlowLoad(false);
+                conversationsQ.refresh();
+              }}
+            />
+          ) : conversationsQ.loading ? (
+            // First load (no cached data yet) — skeleton rows shaped
+            // like conversation cards so the inbox doesn't flash empty.
+            <ChatInboxSkeleton />
+          ) : conversationsQ.error ? (
+            <ErrorState
+              title="Couldn't load messages"
+              onRetry={() => conversationsQ.refresh()}
+            />
+          ) : (
             <EmptyState
               icon={MessageCircle}
               title="No conversations yet"
-              description="When you start an errand, your chat with the runner will appear here."
+              description={
+                isRunner
+                  ? 'When you accept an errand, your chat with the customer will appear here.'
+                  : 'When you start an errand, your chat with the runner will appear here.'
+              }
             />
-          ) : null
+          )
         }
         contentContainerStyle={
           sorted.length === 0 ? { flexGrow: 1 } : { paddingBottom: 24 }

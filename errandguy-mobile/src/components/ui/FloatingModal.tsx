@@ -26,24 +26,43 @@ export function FloatingModal({
       onRequestClose={onClose}
     >
       <Pressable
-        className="flex-1 justify-center items-center px-5"
-        style={{ backgroundColor: `${LightColors.ink}73` }}
+        style={{
+          flex: 1,
+          justifyContent: 'center',
+          alignItems: 'center',
+          paddingHorizontal: 24,
+          backgroundColor: `${LightColors.ink}73`,
+        }}
         onPress={onClose}
       >
-        <Pressable onPress={(e) => e.stopPropagation()}>
+        <Pressable
+          onPress={(e) => e.stopPropagation()}
+          style={{ width: '100%', maxWidth: 420 }}
+        >
           <MotiView
             from={{ opacity: 0, scale: 0.96 }}
             animate={{ opacity: 1, scale: 1 }}
             transition={{ type: 'timing', duration: 200 }}
-            className="bg-surface p-7 w-full min-w-[300px] rounded-2xl overflow-hidden"
+            style={{
+              backgroundColor: LightColors.surface,
+              borderRadius: 20,
+              padding: 26,
+              width: '100%',
+            }}
           >
             {title && (
-              <View className="flex-row items-center justify-between mb-4">
-                <Text className="text-lg font-montserrat-bold text-textPrimary">
+              <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 20 }}>
+                <Text style={{ fontSize: 17, fontFamily: 'Quicksand_700Bold', color: LightColors.textPrimary, flex: 1, marginRight: 12 }}>
                   {title}
                 </Text>
-                <Pressable onPress={onClose} className="p-1">
-                  <X size={20} color={LightColors.textSecondary} />
+                <Pressable
+                  onPress={onClose}
+                  hitSlop={8}
+                  style={{ width: 36, height: 36, borderRadius: 18, backgroundColor: LightColors.surfaceMuted, alignItems: 'center', justifyContent: 'center' }}
+                  accessibilityRole="button"
+                  accessibilityLabel="Close"
+                >
+                  <X size={18} color={LightColors.textTertiary} />
                 </Pressable>
               </View>
             )}

@@ -3,24 +3,27 @@ import {
   View,
   Text,
   SectionList,
-  RefreshControl,
   Pressable,
-  ActivityIndicator,
+  TextInput,
 } from 'react-native';
-import { ClipboardList, MessageCircle } from 'lucide-react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { ClipboardList, MessageCircle, Search, SearchX, X } from 'lucide-react-native';
 import { useRouter } from 'expo-router';
+import * as Haptics from 'expo-haptics';
 import { bookingService } from '../../../services/booking.service';
 import { useQuery } from '../../../hooks/useQuery';
 import { CacheTTL } from '../../../services/cache.service';
 import { useAuthStore } from '../../../stores/authStore';
 import { useChatStore } from '../../../stores/chatStore';
 import { EmptyState } from '../../../components/ui/EmptyState';
+import { ErrorState } from '../../../components/ui/ErrorState';
 import { GradientHeader } from '../../../components/ui/GradientHeader';
+import { SyncIndicator } from '../../../components/ui/SyncIndicator';
 import { RecentErrandItem } from '../../../components/customer/RecentErrandItem';
 import { BookingDetailSheet } from '../../../components/customer/BookingDetailSheet';
-import { ActivitySkeleton } from '../../../components/ui/Skeleton';
-import type { Booking, BookingStatus } from '../../../types';
+import { ActivityListSkeleton } from '../../../components/ui/Skeleton';
+import { BrandRefreshControl } from '../../../components/ui/BrandRefreshControl';
+import { Eyebrow } from '../../../components/ui/Typography';
+import type { Booking } from '../../../types';
 import { LightColors } from '../../../constants/colors';
 import { toast } from '../../../stores/toastStore';
 import { TAB_CONTENT_BOTTOM_INSET } from '../../../constants/tabLayout';
@@ -34,44 +37,19 @@ const FILTERS: { key: FilterKey; label: string }[] = [
   { key: 'cancelled', label: 'Cancelled' },
 ];
 
-// Filter buckets are applied client-side against the actual booking
-// status enum. The server doesn't ship aggregate filter keywords like
-// 'active' / 'cancelled' — passing them as `?status=active` returned
-// an empty list, which is why the previous Active/Cancelled tabs
-// always looked broken. Fetch the full list and filter locally.
-const ACTIVE_STATUSES = new Set<string>([
-  'pending',
-  'matched',
-  'accepted',
-  'en_route_pickup',
-  'arrived_pickup',
-  'picked_up',
-  'en_route_dropoff',
-  'arrived_dropoff',
-  'in_progress',
-  'negotiating',
-]);
-const COMPLETED_STATUSES = new Set<string>(['completed', 'delivered']);
-const CANCELLED_STATUSES = new Set<string>([
-  'cancelled',
-  'rejected',
-  'expired',
-  'no_runner',
-  'failed',
-]);
+const PER_PAGE = 20;
 
-function matchesFilter(status: string, filter: FilterKey): boolean {
-  switch (filter) {
-    case 'active':
-      return ACTIVE_STATUSES.has(status);
-    case 'completed':
-      return COMPLETED_STATUSES.has(status);
-    case 'cancelled':
-      return CANCELLED_STATUSES.has(status);
-    default:
-      return true;
-  }
-}
+// Terminal status buckets — everything else (pending → arrived_at_dropoff)
+// is "active". Used to filter the single fetched list CLIENT-SIDE so tab
+// switches are instant with no extra API call.
+const COMPLETED_STATUSES = new Set(['completed', 'delivered']);
+const CANCELLED_STATUSES = new Set(['cancelled', 'no_runner']);
+const statusBucket = (status: string): Exclude<FilterKey, 'all'> =>
+  COMPLETED_STATUSES.has(status)
+    ? 'completed'
+    : CANCELLED_STATUSES.has(status)
+      ? 'cancelled'
+      : 'active';
 
 export default function ActivityScreen() {
   const router = useRouter();
@@ -79,27 +57,22 @@ export default function ActivityScreen() {
   const chatUnread = useChatStore((s) => s.unreadCount);
   const [filter, setFilter] = useState<FilterKey>('all');
   const [selectedBooking, setSelectedBooking] = useState<Booking | null>(null);
+  // Lightweight client-side search over the loaded bookings — matches
+  // errand type name or booking number. No server roundtrip.
+  const [search, setSearch] = useState('');
 
-  // Page 1 cached per filter; subsequent pages live in local state.
-  // staleTime is generous (2 min) because mutations (create/cancel/review)
-  // call invalidateQuery(['bookings']) which forces an immediate refresh.
-  // Without that signal, the list rarely needs to revalidate on focus.
-  // Single shared cache key — the same fetched list serves every tab,
-  // and switching filters becomes an instant client-side filter (no
-  // network roundtrip, no skeleton flash). This key matches the one
-  // seeded by `preloadAfterAuth` so the screen paints with real data
-  // on first navigation post-login.
-  // Server-side filtering: each tab fetches its own paginated slice by
-  // passing the aggregate status bucket (active/completed/cancelled). The
-  // API understands these keywords now, so we no longer download the whole
-  // history and filter locally (which was slow and wrong under pagination).
+  // CLIENT-SIDE filtering: fetch ONE unfiltered list and filter it in
+  // memory per tab. Switching tabs is then instant (a pure memo recompute,
+  // no network) instead of firing a fresh status-scoped request each time.
+  // The key stays 'all' so it still hits the slice `preloadAfterAuth` seeds.
+  // staleTime is generous (2 min); mutations (create/cancel/review) call
+  // invalidateQuery(['bookings']) which forces an immediate refresh.
   const page1Q = useQuery<Booking[]>(
-    ['bookings', 'activity', filter, userId],
+    ['bookings', 'activity', 'all', userId],
     async () => {
       const res = await bookingService.getBookings({
         page: 1,
-        per_page: 15,
-        status: filter === 'all' ? undefined : filter,
+        per_page: PER_PAGE,
       });
       return (res.data.data ?? []) as Booking[];
     },
@@ -112,29 +85,44 @@ export default function ActivityScreen() {
   const [refreshing, setRefreshing] = useState(false);
   const [loadingMore, setLoadingMore] = useState(false);
 
-  // Reset pagination when filter changes.
+  // Pagination is over the single unfiltered list now, so it does NOT reset
+  // when the tab changes (switching tabs just re-filters what's loaded).
   useEffect(() => {
-    setExtraPages([]);
-    setPage(1);
-    setHasMore(true);
-  }, [filter]);
-
-  useEffect(() => {
-    if (page1Q.data) setHasMore((page1Q.data.length ?? 0) >= 15);
+    if (page1Q.data) setHasMore((page1Q.data.length ?? 0) >= PER_PAGE);
   }, [page1Q.data]);
 
-  // Server already returns only the rows for the active tab, so no local
-  // status filtering is needed — just concatenate the paged results.
-  const bookings = useMemo(
+  // The full loaded list (page 1 + any paged-in extras), unfiltered.
+  const allBookings = useMemo(
     () => [...(page1Q.data ?? []), ...extraPages],
     [page1Q.data, extraPages],
   );
   const loading = page1Q.loading && !page1Q.data;
 
+  // Client-side status filter — instant tab switching, memoised per
+  // (list, tab) so re-selecting a tab is free.
+  const statusFiltered = useMemo(() => {
+    if (filter === 'all') return allBookings;
+    return allBookings.filter((b) => statusBucket(b.status) === filter);
+  }, [allBookings, filter]);
+
+  // Apply the client-side search on top of the status-filtered rows.
+  const trimmedSearch = search.trim().toLowerCase();
+  const visibleBookings = useMemo(() => {
+    if (!trimmedSearch) return statusFiltered;
+    return statusFiltered.filter((b) => {
+      const typeName = b.errand_type?.name?.toLowerCase() ?? '';
+      const number = b.booking_number?.toLowerCase() ?? '';
+      return (
+        typeName.includes(trimmedSearch) || number.includes(trimmedSearch)
+      );
+    });
+  }, [statusFiltered, trimmedSearch]);
+
   // Bucket bookings by date so the list reads as a journal rather than
   // a flat infinite scroll. Active filter buckets by status instead
   // (Today/Yesterday is meaningless when everything is in-progress).
   const sections = useMemo<{ title: string; data: Booking[] }[]>(() => {
+    const bookings = visibleBookings;
     if (!bookings.length) return [];
     if (filter === 'active') {
       const onTheWay: Booking[] = [];
@@ -175,7 +163,7 @@ export default function ActivityScreen() {
     return (['Today', 'Yesterday', 'This Week', 'Earlier'] as const)
       .filter((title) => buckets[title].length > 0)
       .map((title) => ({ title, data: buckets[title] }));
-  }, [bookings, filter]);
+  }, [visibleBookings, filter]);
 
   const onRefresh = useCallback(async () => {
     setRefreshing(true);
@@ -191,29 +179,21 @@ export default function ActivityScreen() {
     setLoadingMore(true);
     const nextPage = page + 1;
     try {
+      // Always page the unfiltered list; the tabs filter it client-side.
       const res = await bookingService.getBookings({
         page: nextPage,
-        per_page: 15,
-        status: filter === 'all' ? undefined : filter,
+        per_page: PER_PAGE,
       });
       const data: Booking[] = res.data.data ?? [];
       setExtraPages((prev) => [...prev, ...data]);
       setPage(nextPage);
-      setHasMore(data.length >= 15);
+      setHasMore(data.length >= PER_PAGE);
     } catch {
       toast.error('Failed to load more.');
     } finally {
       setLoadingMore(false);
     }
-  }, [hasMore, loadingMore, page, filter]);
-
-  if (loading && bookings.length === 0) {
-    return (
-      <SafeAreaView className="flex-1 bg-background" edges={['top']}>
-        <ActivitySkeleton />
-      </SafeAreaView>
-    );
-  }
+  }, [hasMore, loadingMore, page]);
 
   return (
     <View className="flex-1 bg-background">
@@ -228,17 +208,69 @@ export default function ActivityScreen() {
         }}
       />
 
+      <View className="mx-5 mt-1 items-end">
+        <SyncIndicator
+          syncing={page1Q.isStale}
+          updatedAt={page1Q.updatedAt}
+          error={!!page1Q.error}
+          onRetry={page1Q.refresh}
+          align="flex-end"
+        />
+      </View>
+
+      {/* Search — underline field filtering the loaded bookings by
+          errand type name or booking number, entirely client-side. */}
+      <View
+        className="flex-row items-center mx-5 mt-1"
+        style={{
+          borderBottomWidth: 1,
+          borderBottomColor: LightColors.divider,
+        }}
+      >
+        <Search size={16} color={LightColors.textMuted} strokeWidth={2} />
+        <TextInput
+          value={search}
+          onChangeText={setSearch}
+          placeholder="Search by errand type or booking no."
+          placeholderTextColor={LightColors.textMuted}
+          autoCapitalize="none"
+          autoCorrect={false}
+          returnKeyType="search"
+          accessibilityLabel="Search your errands"
+          className="flex-1 ml-2"
+          style={{
+            fontFamily: 'Quicksand_500Medium',
+            fontSize: 15,
+            color: LightColors.textPrimary,
+            paddingVertical: 13, // ≈44pt row — touch-target floor
+          }}
+        />
+        {search.length > 0 && (
+          <Pressable
+            onPress={() => setSearch('')}
+            hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
+            accessibilityRole="button"
+            accessibilityLabel="Clear search"
+          >
+            <X size={15} color={LightColors.textMuted} strokeWidth={2.2} />
+          </Pressable>
+        )}
+      </View>
+
       {/* Segmented filter pills — selected pill is a solid brand-blue
           capsule with white text; unselected pills sit on the muted
           surface tint so the row reads as one segmented control. */}
-      <View className="flex-row px-5 mt-1 mb-3" style={{ gap: 8 }}>
+      <View className="flex-row px-5 mt-3 mb-3" style={{ gap: 8 }}>
         {FILTERS.map((f) => {
           const active = filter === f.key;
           return (
             <Pressable
               key={f.key}
-              onPress={() => setFilter(f.key)}
-              hitSlop={6}
+              onPress={() => {
+                Haptics.selectionAsync().catch(() => {});
+                setFilter(f.key);
+              }}
+              hitSlop={{ top: 8, bottom: 8, left: 4, right: 4 }}
               className={`px-4 py-2 rounded-full ${
                 active ? 'bg-primary' : 'bg-surfaceMuted'
               }`}
@@ -259,7 +291,15 @@ export default function ActivityScreen() {
         })}
       </View>
 
-      {/* Booking List */}
+      {/* Booking List — while an uncached filter loads, only this list
+          region swaps to a skeleton; the header, search field and pill
+          row stay mounted so the control the user just tapped never
+          vanishes. */}
+      {loading && allBookings.length === 0 ? (
+        <View className="flex-1 px-5 pt-3">
+          <ActivityListSkeleton />
+        </View>
+      ) : (
       <SectionList
         sections={sections}
         keyExtractor={(item) => item.id}
@@ -273,17 +313,17 @@ export default function ActivityScreen() {
         )}
         renderSectionHeader={({ section: { title, data } }) => (
           <View className="flex-row items-center justify-between px-5 pt-3 pb-2 bg-background">
-            <Text className="text-[11px] font-montserrat-bold text-textTertiary uppercase tracking-wider">
-              {title}
-            </Text>
+            <Eyebrow>{title}</Eyebrow>
             <Text className="text-[10px] font-montserrat text-textTertiary">
               {data.length}
             </Text>
           </View>
         )}
         stickySectionHeadersEnabled
+        keyboardShouldPersistTaps="handled"
+        keyboardDismissMode="on-drag"
         refreshControl={
-          <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
+          <BrandRefreshControl refreshing={refreshing} onRefresh={onRefresh} />
         }
         onEndReached={onEndReached}
         onEndReachedThreshold={0.3}
@@ -293,9 +333,11 @@ export default function ActivityScreen() {
         ListFooterComponent={
           loadingMore ? (
             <View className="py-4 items-center">
-              <ActivityIndicator size="small" color={LightColors.primary} />
+              <Text className="text-[11px] font-montserrat text-textTertiary">
+                Loading…
+              </Text>
             </View>
-          ) : !hasMore && bookings.length > 0 ? (
+          ) : !hasMore && visibleBookings.length > 0 ? (
             <View className="py-4 items-center">
               <Text className="text-[11px] font-montserrat text-textTertiary">
                 That's everything
@@ -304,16 +346,63 @@ export default function ActivityScreen() {
           ) : null
         }
         ListEmptyComponent={
-          !loading ? (
-            <EmptyState
-              icon={ClipboardList}
-              title="No errands yet"
-              description="Book your first errand to get started"
+          page1Q.error && !page1Q.data ? (
+            // The first page failed with nothing cached — surface the
+            // failure instead of the misleading "No errands yet".
+            <ErrorState
+              title="Couldn't load your errands"
+              onRetry={() => {
+                page1Q.refresh();
+              }}
             />
+          ) : trimmedSearch && statusFiltered.length > 0 ? (
+            // Bookings exist, the search just matched none of them —
+            // distinct from the genuine no-bookings empty state.
+            <EmptyState
+              icon={SearchX}
+              title="No matches"
+              description={`Nothing matches “${search.trim()}” in this view`}
+              actionLabel="Clear search"
+              onAction={() => setSearch('')}
+            />
+          ) : !loading ? (
+            // Genuine empty — copy follows the active filter. A "Book an
+            // Errand" CTA under Cancelled would read as a non-sequitur,
+            // so that tab describes what lands here instead.
+            filter === 'cancelled' ? (
+              <EmptyState
+                icon={ClipboardList}
+                title="No cancelled errands"
+                description="Errands you cancel will show up here"
+              />
+            ) : filter === 'completed' ? (
+              <EmptyState
+                icon={ClipboardList}
+                title="No completed errands yet"
+                description="Errands you finish will show up here"
+                actionLabel="Book an Errand"
+                onAction={() => router.push('/(customer)/book/type' as any)}
+              />
+            ) : (
+              <EmptyState
+                icon={ClipboardList}
+                title="No errands yet"
+                description="Book your first errand to get started"
+                actionLabel="Book an Errand"
+                onAction={() => router.push('/(customer)/book/type' as any)}
+              />
+            )
           ) : null
         }
-        contentContainerStyle={{ paddingBottom: TAB_CONTENT_BOTTOM_INSET }}
+        contentContainerStyle={{
+          paddingBottom: TAB_CONTENT_BOTTOM_INSET,
+          // Let empty/error states center vertically (flex-1 inside a
+          // scroll container collapses without flexGrow) — same pattern
+          // as trusted-contacts and support.
+          flexGrow: sections.length === 0 ? 1 : undefined,
+        }}
       />
+      )}
 
       {/* Booking Detail Sheet */}
       <BookingDetailSheet

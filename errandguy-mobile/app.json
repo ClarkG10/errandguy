@@ -6,11 +6,11 @@
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/icon-square.png",
-    "userInterfaceStyle": "automatic",
+    "userInterfaceStyle": "light",
     "splash": {
       "image": "./assets/logo-new.png",
       "resizeMode": "contain",
-      "backgroundColor": "#FFFFFF"
+      "backgroundColor": "#F7F8FA"
     },
     "ios": {
       "supportsTablet": false,
@@ -22,6 +22,8 @@
         "NSPhotoLibraryUsageDescription": "ErrandGuy needs photo library access to upload item photos.",
         "NSPhotoLibraryAddUsageDescription": "ErrandGuy saves chat images to your photo library when you tap Save.",
         "NSMicrophoneUsageDescription": "ErrandGuy needs microphone access for in-app calls.",
+        "NSFaceIDUsageDescription": "ErrandGuy uses Face ID to quickly and securely unlock your saved session.",
+        "NSContactsUsageDescription": "ErrandGuy uses your contacts so you can quickly import a trusted contact for SOS.",
         "ITSAppUsesNonExemptEncryption": false
       }
     },
@@ -43,7 +45,8 @@
         "android.permission.WRITE_EXTERNAL_STORAGE",
         "android.permission.RECORD_AUDIO",
         "android.permission.RECEIVE_BOOT_COMPLETED",
-        "android.permission.VIBRATE"
+        "android.permission.VIBRATE",
+        "android.permission.READ_CONTACTS"
       ]
     },
     "plugins": [
@@ -54,9 +57,21 @@
         }
       ],
       "expo-secure-store",
+      [
+        "expo-local-authentication",
+        {
+          "faceIDPermission": "ErrandGuy uses Face ID to quickly and securely unlock your saved session."
+        }
+      ],
       "expo-location",
       "expo-camera",
       "expo-image-picker",
+      [
+        "expo-contacts",
+        {
+          "contactsPermission": "ErrandGuy uses your contacts so you can quickly import a trusted contact for SOS."
+        }
+      ],
       [
         "expo-media-library",
         {

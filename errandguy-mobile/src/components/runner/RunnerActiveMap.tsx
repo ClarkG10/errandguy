@@ -4,7 +4,7 @@ import { HereMapView, HereMarker, HerePolyline, type HereMapViewRef } from '../m
 import { Locate, Navigation } from 'lucide-react-native';
 import { useLocationStore } from '../../stores/locationStore';
 import { routeService } from '../../services/route.service';
-import { LightColors } from '../../constants/colors';
+import { LightColors, Elevation } from '../../constants/colors';
 
 interface RunnerActiveMapProps {
   pickupLat?: number | null;
@@ -121,8 +121,8 @@ export function RunnerActiveMap({
       <View
         className={
           variant === 'fill'
-            ? 'flex-1 bg-gray-100 items-center justify-center'
-            : 'mx-5 h-48 bg-gray-100 rounded-2xl items-center justify-center mb-4'
+            ? 'flex-1 bg-surfaceMuted items-center justify-center'
+            : 'mx-5 h-48 bg-surfaceMuted rounded-2xl items-center justify-center mb-4'
         }
       >
         <Navigation size={28} color={LightColors.textMuted} />
@@ -154,12 +154,15 @@ export function RunnerActiveMap({
       >
         {hasPickup && (
           <HereMarker coordinate={{ latitude: pLat!, longitude: pLng! }} anchor={{ x: 0.5, y: 0.5 }} id="pickup-marker">
+            {/* A = pickup, B = drop-off. The letter (not just the blue vs
+                red fill) is what keeps the two pins distinguishable in
+                glare and for colour-blind runners. */}
             <View
               className={`w-7 h-7 rounded-full items-center justify-center border-2 border-white ${
                 inPickupPhase ? 'bg-primary' : 'bg-primary/60'
               }`}
             >
-              <View className="w-2 h-2 rounded-full bg-white" />
+              <Text className="text-white text-[12px] font-inter-semi leading-[14px]">A</Text>
             </View>
           </HereMarker>
         )}
@@ -171,7 +174,7 @@ export function RunnerActiveMap({
                 !inPickupPhase ? 'bg-danger' : 'bg-danger/60'
               }`}
             >
-              <View className="w-2 h-2 rounded-full bg-white" />
+              <Text className="text-white text-[12px] font-inter-semi leading-[14px]">B</Text>
             </View>
           </HereMarker>
         )}
@@ -204,11 +207,7 @@ export function RunnerActiveMap({
             paddingHorizontal: 12,
             paddingVertical: 6,
             borderRadius: 999,
-            shadowColor: LightColors.ink,
-            shadowOffset: { width: 0, height: 2 },
-            shadowOpacity: 0.12,
-            shadowRadius: 10,
-            elevation: 6,
+            ...Elevation.md,
             zIndex: 20,
           }}
         >
@@ -238,11 +237,7 @@ export function RunnerActiveMap({
             backgroundColor: LightColors.surface,
             alignItems: 'center',
             justifyContent: 'center',
-            shadowColor: LightColors.ink,
-            shadowOffset: { width: 0, height: 2 },
-            shadowOpacity: 0.12,
-            shadowRadius: 10,
-            elevation: 6,
+            ...Elevation.md,
           }}
         >
           <Locate size={20} color={LightColors.primaryDark} />

@@ -1,8 +1,11 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { View, Text, Pressable, FlatList, ActivityIndicator } from 'react-native';
+import { View, Text, Pressable, FlatList } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import * as Haptics from 'expo-haptics';
 import { MapPin, Star, X, Plus } from 'lucide-react-native';
 import { useRouter } from 'expo-router';
 import { BottomSheet } from '../ui/BottomSheet';
+import { Spinner } from '../ui/Spinner';
 import { userService } from '../../services/user.service';
 import { useQuery } from '../../hooks/useQuery';
 import { CacheTTL } from '../../services/cache.service';
@@ -22,6 +25,7 @@ export function SavedAddressSheet({
   onSelect,
 }: SavedAddressSheetProps) {
   const router = useRouter();
+  const insets = useSafeAreaInsets();
   const userId = useAuthStore((s) => s.user?.id ?? 'anon');
 
   // Cache-first fetch — repeat opens of the sheet paint immediately from
@@ -60,8 +64,11 @@ export function SavedAddressSheet({
   };
 
   return (
-    <BottomSheet isVisible={isVisible} onClose={onClose} snapPoints={[0.55]}>
-      <View className="px-5 pb-6">
+    // scrollable={false}: the sheet's default ScrollView would nest the
+    // FlatList below (a VirtualizedList inside a plain ScrollView — no
+    // virtualization, and the list couldn't scroll independently).
+    <BottomSheet isVisible={isVisible} onClose={onClose} snapPoints={[0.55]} scrollable={false}>
+      <View className="flex-1 px-1">
         <View className="flex-row items-center justify-between mb-4">
           <Text className="text-lg font-montserrat-semi text-textPrimary">
             Saved addresses
@@ -70,7 +77,8 @@ export function SavedAddressSheet({
             onPress={onClose}
             accessibilityRole="button"
             accessibilityLabel="Close saved addresses"
-            hitSlop={8}
+            // 24pt icon + 12pt slop per edge = 48pt effective target.
+            hitSlop={12}
           >
             <X size={24} color={LightColors.textSecondary} />
           </Pressable>
@@ -78,7 +86,7 @@ export function SavedAddressSheet({
 
         {loading ? (
           <View className="items-center py-8">
-            <ActivityIndicator color={LightColors.primary} />
+            <Spinner size="small" color={LightColors.primary} />
           </View>
         ) : addresses.length === 0 ? (
           <View className="items-center py-8">
@@ -92,9 +100,16 @@ export function SavedAddressSheet({
               Save your home, office, or any place you visit often for one-tap booking.
             </Text>
             <Pressable
-              onPress={handleAddNew}
+              onPress={() => {
+                Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
+                handleAddNew();
+              }}
               accessibilityRole="button"
-              className="mt-4 flex-row items-center gap-2 bg-primary rounded-xl px-4 py-2.5"
+              // py-3 keeps the CTA at the 44pt floor (py-2.5 sat at ~40pt).
+              className="mt-4 flex-row items-center gap-2 bg-primary rounded-xl px-4 py-3"
+              style={({ pressed }) =>
+                pressed ? { backgroundColor: LightColors.primary700 } : undefined
+              }
             >
               <Plus size={16} color={LightColors.textInverse} />
               <Text className="text-sm font-montserrat-semi text-white">
@@ -106,11 +121,19 @@ export function SavedAddressSheet({
           <FlatList
             data={orderedAddresses}
             keyExtractor={(item) => item.id}
+            showsVerticalScrollIndicator={false}
+            // Clears the home indicator — the sheet itself has no bottom inset.
+            contentContainerStyle={{ paddingBottom: insets.bottom + 8 }}
             renderItem={({ item }) => (
               <Pressable
                 android_ripple={{ color: LightColors.divider, borderless: false }}
                 className="flex-row items-center border-b border-divider py-3"
+                // android_ripple covers Android; this is the iOS pressed state.
+                style={({ pressed }) =>
+                  pressed ? { backgroundColor: LightColors.surfaceMuted } : undefined
+                }
                 onPress={() => {
+                  Haptics.selectionAsync().catch(() => {});
                   onSelect(item);
                   onClose();
                 }}
@@ -130,12 +153,17 @@ export function SavedAddressSheet({
                 </View>
                 <View className="flex-1">
                   <View className="flex-row items-center">
-                    <Text className="text-sm font-montserrat-semi text-textPrimary">
+                    {/* shrink + 1 line so a long label can't push the
+                        Default badge out of the row. */}
+                    <Text
+                      className="text-sm font-montserrat-semi text-textPrimary flex-shrink"
+                      numberOfLines={1}
+                    >
                       {item.label}
                     </Text>
                     {item.is_default && (
                       <View className="ml-2 bg-primary50 rounded-full px-2 py-0.5">
-                        <Text className="text-[9px] font-montserrat-bold text-primary uppercase tracking-wider">
+                        <Text className="text-[10px] font-montserrat-bold text-primary uppercase tracking-wider">
                           Default
                         </Text>
                       </View>
@@ -152,10 +180,16 @@ export function SavedAddressSheet({
             )}
             ListFooterComponent={
               <Pressable
-                onPress={handleAddNew}
+                onPress={() => {
+                  Haptics.selectionAsync().catch(() => {});
+                  handleAddNew();
+                }}
                 accessibilityRole="button"
                 accessibilityLabel="Manage saved addresses"
                 className="flex-row items-center justify-center gap-2 mt-3 py-3 rounded-xl bg-primary50"
+                style={({ pressed }) =>
+                  pressed ? { backgroundColor: LightColors.primary100 } : undefined
+                }
               >
                 <Plus size={16} color={LightColors.primary} />
                 <Text className="text-sm font-montserrat-semi text-primary">

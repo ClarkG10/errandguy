@@ -2,16 +2,21 @@ import React from 'react';
 import { Platform, Text, TextInput, StyleSheet } from 'react-native';
 
 /**
- * iOS uses Apple's San Francisco (SF Pro) as its system typeface. Loading
- * Quicksand / Inter from Google Fonts on iOS adds startup cost and bytes for
- * no visual benefit \u2014 SF Pro is a superior, free-to-use system font that
- * users already expect. On iOS we therefore remap our font-family aliases to
- * `System` and translate the weight encoded in the family name into a real
- * `fontWeight`. Android keeps the loaded fonts so brand consistency is
- * preserved on platforms without an equivalent system typeface.
+ * Both platforms render UI text in their native system typeface \u2014 SF Pro on
+ * iOS, Roboto on Android \u2014 by remapping our font-family aliases to `System`
+ * and translating the weight encoded in the family name into a real
+ * `fontWeight`.
  *
- * Call `applySystemFontOnIOS()` once at app start (in the root layout) before
- * the first render.
+ * Why Android too (July 2026): Quicksand is a rounder, heavier display face
+ * with a larger x-height and wider glyphs than Roboto/SF Pro, so the identical
+ * point size rendered visibly *larger and bolder* on Android than iOS \u2014
+ * buttons and labels read chunky and inconsistent across platforms. Using the
+ * system font on both gives true cross-platform sizing parity (this is the
+ * root cause behind "Android buttons are several times bigger"). It also drops
+ * the startup cost of shipping Quicksand/Inter where a system font suffices.
+ *
+ * Call `applySystemFont()` once at app start (in the root layout) before the
+ * first render.
  */
 
 const FAMILY_TO_WEIGHT: Record<string, string> = {
@@ -46,8 +51,10 @@ const remapStyle = (style: any): any => {
 
 let applied = false;
 
-export function applySystemFontOnIOS() {
-  if (applied || Platform.OS !== 'ios') return;
+export function applySystemFont() {
+  // Web keeps the loaded webfonts (CSS handles fallbacks); native (iOS +
+  // Android) remaps to the system typeface for cross-platform parity.
+  if (applied || Platform.OS === 'web') return;
   applied = true;
 
   const patch = (Component: any) => {
@@ -65,3 +72,6 @@ export function applySystemFontOnIOS() {
   patch(Text);
   patch(TextInput);
 }
+
+/** @deprecated Renamed to `applySystemFont` — now applies on Android too. */
+export const applySystemFontOnIOS = applySystemFont;

@@ -4,10 +4,12 @@ import { render, fireEvent } from '@testing-library/react-native';
 import { RatingStars } from '../RatingStars';
 
 describe('RatingStars', () => {
-  // In RN 0.83 new arch, Pressable renders as a host View with accessible=true and onClick
+  // In RN 0.83 new arch, Pressable renders as a host View with accessible=true and onClick.
+  // Filter on onClick too: the interactive wrapper row is itself accessible
+  // (adjustable semantics) but has no press handler, so it must not count as a star.
   const getStarElements = (renderResult: ReturnType<typeof render>) => {
     const allViews = renderResult.UNSAFE_getAllByType(View);
-    return allViews.filter((v) => v.props.accessible === true);
+    return allViews.filter((v) => v.props.accessible === true && v.props.onClick);
   };
 
   it('renders 5 stars', () => {

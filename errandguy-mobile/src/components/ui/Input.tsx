@@ -1,4 +1,4 @@
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useImperativeHandle, forwardRef } from 'react';
 import {
   View,
   TextInput,
@@ -8,6 +8,7 @@ import {
   Platform,
   type TextInputProps,
 } from 'react-native';
+import * as Haptics from 'expo-haptics';
 import { Eye, EyeOff } from 'lucide-react-native';
 import type { LucideIcon } from 'lucide-react-native';
 import { useResponsive } from '../../constants/responsive';
@@ -16,8 +17,29 @@ import { LightColors } from '../../constants/colors';
 interface InputProps extends Omit<TextInputProps, 'onChange'> {
   label?: string;
   error?: string;
+  /** Persistent caption under the field for guidance that must survive
+   *  typing (placeholders vanish on the first keystroke). Hidden while
+   *  an error is showing — the two share the same slot. */
+  helperText?: string;
   leftIcon?: LucideIcon;
   rightIcon?: LucideIcon;
+  /** Tint for the non-password right icon (defaults to textMuted). Lets
+   *  screens show a success-tinted confirmation glyph (e.g. a pinned
+   *  address) without a bespoke input variant. */
+  rightIconColor?: string;
+  /** Makes the non-password right icon tappable (e.g. clear, open map).
+   *  When absent the icon stays purely decorative — no behavior change. */
+  onRightIconPress?: () => void;
+  /** Screen-reader label for the tappable right icon. */
+  rightIconAccessibilityLabel?: string;
+}
+
+/** Imperative surface exposed via ref — lets screens chain focus from a
+ *  keyboard "next" key (returnKeyType/onSubmitEditing) without reaching
+ *  into the private TextInput. */
+export interface InputHandle {
+  focus: () => void;
+  blur: () => void;
 }
 
 /**
@@ -32,26 +54,40 @@ interface InputProps extends Omit<TextInputProps, 'onChange'> {
  * The label is static (not floating) — a previous floating-label
  * version forced a layout pass per keystroke and felt glitchy.
  */
-export function Input({
-  label,
-  value,
-  onChangeText,
-  placeholder,
-  error,
-  leftIcon: LeftIcon,
-  rightIcon: RightIcon,
-  secureTextEntry,
-  keyboardType,
-  maxLength,
-  multiline,
-  numberOfLines,
-  ...rest
-}: InputProps) {
+export const Input = forwardRef<InputHandle, InputProps>(function Input(
+  {
+    label,
+    value,
+    onChangeText,
+    placeholder,
+    error,
+    helperText,
+    leftIcon: LeftIcon,
+    rightIcon: RightIcon,
+    rightIconColor,
+    onRightIconPress,
+    rightIconAccessibilityLabel,
+    secureTextEntry,
+    keyboardType,
+    maxLength,
+    multiline,
+    numberOfLines,
+    onFocus,
+    onBlur,
+    ...rest
+  }: InputProps,
+  ref,
+) {
   const [focused, setFocused] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
   const isPassword = secureTextEntry !== undefined;
   const inputRef = useRef<TextInput>(null);
   const { mScale } = useResponsive();
+
+  useImperativeHandle(ref, () => ({
+    focus: () => inputRef.current?.focus(),
+    blur: () => inputRef.current?.blur(),
+  }));
 
   // Filled → focused transition: muted fill at rest, white + blue
   // border when active. Border width is constant so focus never
@@ -99,21 +135,39 @@ export function Input({
           value={value}
           onChangeText={onChangeText}
           placeholder={placeholder}
-          placeholderTextColor={LightColors.dividerStrong}
+          // textMuted (not dividerStrong): the old #CBD5E1 hint measured
+          // ~1.6:1 on the muted fill — invisible in sunlight. #94A3B8 keeps
+          // hint-weight while roughly doubling contrast (WCAG placeholder
+          // guidance).
+          placeholderTextColor={LightColors.textMuted}
           secureTextEntry={isPassword && !showPassword}
           keyboardType={keyboardType}
           maxLength={maxLength}
           multiline={multiline}
           numberOfLines={numberOfLines}
           textAlignVertical={multiline ? 'top' : 'center'}
-          onFocus={() => setFocused(true)}
-          onBlur={() => setFocused(false)}
+          // Merge caller callbacks so form libraries (react-hook-form's
+          // onTouched mode) still see blur events without clobbering the
+          // internal focus styling.
+          onFocus={(e) => {
+            setFocused(true);
+            onFocus?.(e);
+          }}
+          onBlur={(e) => {
+            setFocused(false);
+            onBlur?.(e);
+          }}
           {...rest}
         />
         {isPassword && (
           <Pressable
-            hitSlop={10}
-            onPress={() => setShowPassword(!showPassword)}
+            // Icon is ~18pt — 14pt of slop on every edge lifts the
+            // effective target to ≥44pt.
+            hitSlop={14}
+            onPress={() => {
+              Haptics.selectionAsync().catch(() => {});
+              setShowPassword(!showPassword);
+            }}
             accessibilityRole="button"
             accessibilityLabel={showPassword ? 'Hide password' : 'Show password'}
             style={{ marginLeft: 8 }}
@@ -126,10 +180,31 @@ export function Input({
           </Pressable>
         )}
         {RightIcon && !isPassword && (
-          <RightIcon size={iconSize} color={LightColors.textMuted} style={{ marginLeft: 8 }} />
+          onRightIconPress ? (
+            <Pressable
+              // Same slop math as the password eye — lifts the ~18pt
+              // icon to a ≥44pt effective target.
+              hitSlop={14}
+              onPress={onRightIconPress}
+              accessibilityRole="button"
+              accessibilityLabel={rightIconAccessibilityLabel}
+              style={{ marginLeft: 8 }}
+            >
+              <RightIcon
+                size={iconSize}
+                color={rightIconColor ?? LightColors.textMuted}
+              />
+            </Pressable>
+          ) : (
+            <RightIcon
+              size={iconSize}
+              color={rightIconColor ?? LightColors.textMuted}
+              style={{ marginLeft: 8 }}
+            />
+          )
         )}
       </Pressable>
-      {error && (
+      {error ? (
         <Text
           style={fs.error}
           accessibilityLiveRegion="polite"
@@ -137,10 +212,12 @@ export function Input({
         >
           {error}
         </Text>
-      )}
+      ) : helperText ? (
+        <Text style={fs.helper}>{helperText}</Text>
+      ) : null}
     </View>
   );
-}
+});
 
 const fs = StyleSheet.create({
   wrapper: { marginBottom: 16 },
@@ -155,8 +232,8 @@ const fs = StyleSheet.create({
     // Constant 1.5px border (transparent at rest) so the focus border
     // appears without any layout shift.
     borderWidth: 1.5,
-    // 16px — matches Button; soft squircle on the generous scale.
-    borderRadius: 16,
+    // 12px control corner ("Modern soft") — subtler than the old 16.
+    borderRadius: 12,
     flexDirection: 'row',
     alignItems: 'center',
   },
@@ -183,10 +260,20 @@ const fs = StyleSheet.create({
     minHeight: 80,
     textAlignVertical: 'top',
   },
+  helper: {
+    fontSize: 12,
+    fontFamily: 'Quicksand_400Regular',
+    color: LightColors.textTertiary,
+    marginTop: 4,
+    marginLeft: 4,
+  },
   error: {
     fontSize: 12,
     fontFamily: 'Quicksand_400Regular',
-    color: LightColors.danger,
+    // dangerDark, not danger: #EF4444 measures ~3.8:1 on white — under the
+    // 4.5:1 AA floor for 12px text. Convention: danger for fills/borders,
+    // dangerDark for any danger TEXT below 17px.
+    color: LightColors.dangerDark,
     marginTop: 4,
     marginLeft: 4,
   },

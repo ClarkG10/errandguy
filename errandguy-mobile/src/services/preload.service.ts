@@ -28,6 +28,8 @@ const buildKey = (key: (string | number)[]) =>
 
 const CORE_IMAGE_ASSETS = [
   require('../../assets/logo-new.png'),
+  require('../../assets/mascot-home.png'),
+  require('../../assets/wordmark-lockup.png'),
   require('../../assets/ONBOARDING-1.png'),
   require('../../assets/ONBOARDING-2.png'),
   require('../../assets/ONBOARDING-3.png'),
@@ -69,6 +71,25 @@ const seed = async <T>(
     // that actually needs the data will fetch it normally.
   }
 };
+
+/**
+ * Warm a single useQuery cache entry ON DEMAND — e.g. when a row is tapped,
+ * just before navigating to the screen that reads it. Writes the exact
+ * key/shape `useQuery` expects, so the destination paints from cache on its
+ * first frame (then revalidates in the background, deduped by the api layer).
+ * Best-effort + silent; the destination fetches normally if this misses.
+ *
+ *   onPress={() => {
+ *     prefetchQuery(['runner','errand','byId', id],
+ *       async () => (await runnerService.getErrand(id)).data?.data ?? null,
+ *       CacheTTL.SHORT);
+ *     router.push(`/(runner)/errand/${id}`);
+ *   }}
+ *
+ * The fetcher MUST return the same value shape the screen's useQuery fetcher
+ * returns (i.e. the unwrapped `.data.data`), not the raw axios response.
+ */
+export const prefetchQuery = seed;
 
 export function preloadCoreImages() {
   if (!coreImagePreloadPromise) {
@@ -153,7 +174,22 @@ export async function preloadCustomerEssentials(userId: string) {
       ['wallet', 'balance', userId],
       async () => {
         const r = await paymentService.getWalletBalance();
-        return r.data?.data ?? r.data ?? null;
+        // Must match the wallet screen's useQuery fetcher, which returns the
+        // NUMBER (`data.balance`) — not the whole balance object. Seeding the
+        // object here poisoned the shared cache key, so the hero briefly
+        // rendered "₱[object Object]" on cold start until the live fetch ran.
+        return r.data?.data?.balance ?? r.data?.balance ?? 0;
+      },
+      CacheTTL.MEDIUM,
+    ),
+    seed(
+      // Default (unfiltered) transactions list — matches the wallet screen's
+      // ['wallet','transactions',userId, txFilter ?? 'all'] key so it paints
+      // its history instantly instead of just the balance.
+      ['wallet', 'transactions', userId, 'all'],
+      async () => {
+        const r = await paymentService.getWalletTransactions();
+        return (r.data?.data ?? r.data ?? []) as any[];
       },
       CacheTTL.MEDIUM,
     ),

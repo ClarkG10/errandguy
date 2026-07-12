@@ -70,16 +70,22 @@ module.exports = {
 
         // Status — soft-bg variants paired with full-strength fg.
         danger: '#EF4444',
-        'danger-dark': '#DC2626',
-        dangerDark: '#DC2626',
+        'danger-dark': '#B91C1C',
+        dangerDark: '#B91C1C',
         'danger-soft': '#FEE2E2',
         dangerSoft: '#FEE2E2',
         success: '#16A34A',
+        // Dark text rung for small status text on the soft/light washes
+        // (mirrors danger-dark; base tones fail 4.5:1 there).
+        'success-dark': '#15803D',
+        successDark: '#15803D',
         'success-soft': '#DCFCE7',
         successSoft: '#DCFCE7',
         'success-light': '#F0FDF4',
         successLight: '#F0FDF4',
         warning: '#F59E0B',
+        'warning-dark': '#B45309',
+        warningDark: '#B45309',
         'warning-soft': '#FEF3C7',
         warningSoft: '#FEF3C7',
         'warning-light': '#FFFBEB',
@@ -116,14 +122,16 @@ module.exports = {
         'inter-semi': ['Inter_600SemiBold'],
       },
       borderRadius: {
-        // Generous 2026 scale — one notch up across the board so
-        // cards (lg/xl) and sheets (3xl) read soft and airy.
-        sm: '12px',
-        md: '14px',
-        lg: '16px',
-        xl: '20px',
-        '2xl': '24px',
-        '3xl': '32px',
+        // "Modern soft" scale (July 2026) — subtler corners app-wide.
+        // Mirrors src/constants/radius.ts. `full` stays round for
+        // avatars / icon circles / count badges only; pill-shaped
+        // controls (chips, CTAs) opt into a finite radius instead.
+        sm: '8px',
+        md: '10px',
+        lg: '12px',
+        xl: '14px',
+        '2xl': '16px',
+        '3xl': '20px',
         full: '9999px',
       },
       fontSize: {

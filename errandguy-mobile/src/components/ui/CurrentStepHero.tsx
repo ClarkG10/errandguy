@@ -84,7 +84,13 @@ export function CurrentStepHero({
           {title}
         </Text>
         {subtitle ? (
-          <Text className="text-xs font-montserrat text-textSecondary mt-1">
+          // Glance-while-moving destination line — kept at 14px so it's
+          // readable one-handed outdoors, never the smallest text here.
+          <Text
+            className="text-[14px] font-montserrat text-textSecondary mt-1"
+            style={{ lineHeight: 19 }}
+            numberOfLines={2}
+          >
             {subtitle}
           </Text>
         ) : null}
@@ -113,7 +119,7 @@ export function CurrentStepHero({
                 {etaMinutes}
               </Text>
               <Text
-                className="text-[9px] font-montserrat-semi mt-0.5"
+                className="text-[10px] font-montserrat-semi mt-0.5"
                 style={{ color, opacity: 0.75 }}
               >
                 MIN

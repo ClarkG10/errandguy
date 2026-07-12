@@ -5,10 +5,11 @@ import {
   Pressable,
   Modal,
   Image,
-  ActivityIndicator,
   useWindowDimensions,
+  Linking,
 } from 'react-native';
 import { MotiView } from 'moti';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import * as Haptics from 'expo-haptics';
 import * as ImagePicker from 'expo-image-picker';
 import {
@@ -19,7 +20,21 @@ import {
   Check,
   Upload,
 } from 'lucide-react-native';
+import { toast } from '../../stores/toastStore';
+import { Spinner } from './Spinner';
 import { LightColors } from '../../constants/colors';
+
+// Permission denial must never be a silent no-op — once the OS
+// permanently denies, the only recovery is the system Settings page,
+// so the toast carries a direct route there.
+function toastPermissionDenied(message: string) {
+  toast.error(message, {
+    actionLabel: 'Settings',
+    onAction: () => {
+      Linking.openSettings().catch(() => {});
+    },
+  });
+}
 
 // Preview size is computed inside the component now (was a module-level
 // const) so rotating an iPad or resizing iOS split view re-flows the
@@ -32,7 +47,11 @@ interface ImagePickerModalProps {
   onConfirm: (uri: string) => void;
   title?: string;
   subtitle?: string;
-  /** Show a loading spinner overlay after confirm (e.g. while uploading) */
+  /** Show a loading spinner overlay after confirm (e.g. while uploading).
+   *  NOTE: most callers close the picker on confirm and upload in the
+   *  background, so this overlay rarely renders — show determinate upload
+   *  progress at the on-screen destination (see EditProfileModal avatar /
+   *  DocumentUploadCard), not here. */
   uploading?: boolean;
 }
 
@@ -49,6 +68,7 @@ export function ImagePickerModal({
   const [stage, setStage] = useState<Stage>('pick');
   const [previewUri, setPreviewUri] = useState<string | null>(null);
   const { width: SCREEN_WIDTH } = useWindowDimensions();
+  const insets = useSafeAreaInsets();
   // Cap at 320 so the preview tile never bloats on a tablet or
   // landscape-oriented phone; floor at 220 so it stays usable on
   // narrow phones in a split-view shell.
@@ -65,9 +85,12 @@ export function ImagePickerModal({
   }, [onClose, reset]);
 
   const handleCamera = useCallback(async () => {
-    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
     const { status } = await ImagePicker.requestCameraPermissionsAsync();
-    if (status !== 'granted') return;
+    if (status !== 'granted') {
+      toastPermissionDenied('Camera access is needed to take photos');
+      return;
+    }
 
     const result = await ImagePicker.launchCameraAsync({
       allowsEditing: true,
@@ -81,10 +104,13 @@ export function ImagePickerModal({
   }, []);
 
   const handleGallery = useCallback(async () => {
-    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
     const { status } =
       await ImagePicker.requestMediaLibraryPermissionsAsync();
-    if (status !== 'granted') return;
+    if (status !== 'granted') {
+      toastPermissionDenied('Photo library access is needed to choose a photo');
+      return;
+    }
 
     const result = await ImagePicker.launchImageLibraryAsync({
       mediaTypes: ['images'],
@@ -100,13 +126,13 @@ export function ImagePickerModal({
 
   const handleConfirm = useCallback(() => {
     if (!previewUri) return;
-    Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+    Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
     onConfirm(previewUri);
     reset();
   }, [previewUri, onConfirm, reset]);
 
   const handleRetake = useCallback(() => {
-    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
     setPreviewUri(null);
     setStage('pick');
   }, []);
@@ -130,7 +156,11 @@ export function ImagePickerModal({
             animate={{ translateY: 0, opacity: 1 }}
             exit={{ translateY: 400, opacity: 0 }}
             transition={{ type: 'timing', duration: 240 }}
-            className="bg-surface pb-12 rounded-t-3xl overflow-hidden"
+            className="bg-surface rounded-t-3xl overflow-hidden"
+            // Sheet floor tracks the home-indicator inset instead of a flat
+            // 48pt — comfortable clearance on gesture-nav devices, no dead
+            // band on 0-inset (button-nav / notch-less) hardware.
+            style={{ paddingBottom: Math.max(insets.bottom + 8, 28) }}
           >
             {/* Handle bar */}
             <View className="items-center pt-3 pb-1">
@@ -151,7 +181,11 @@ export function ImagePickerModal({
               </View>
               <Pressable
                 onPress={handleClose}
+                // 36pt visual circle + 8pt hitSlop = 52pt effective target.
+                hitSlop={8}
                 className="w-9 h-9 rounded-full bg-surfaceMuted items-center justify-center"
+                accessibilityRole="button"
+                accessibilityLabel="Close"
               >
                 <X size={18} color={LightColors.textTertiary} />
               </Pressable>
@@ -163,6 +197,8 @@ export function ImagePickerModal({
                 {/* Camera option */}
                 <Pressable
                   onPress={handleCamera}
+                  accessibilityRole="button"
+                  accessibilityLabel="Take a photo with your camera"
                   className="flex-row items-center gap-4 py-4 px-5 mb-3 rounded-2xl bg-primary/5 active:bg-primary/10"
                 >
                   <MotiView
@@ -186,13 +222,15 @@ export function ImagePickerModal({
                 {/* Gallery option */}
                 <Pressable
                   onPress={handleGallery}
+                  accessibilityRole="button"
+                  accessibilityLabel="Choose a photo from your gallery"
                   className="flex-row items-center gap-4 py-4 px-5 rounded-2xl bg-primary/5 active:bg-primary/10"
                 >
                   <MotiView
                     from={{ scale: 0.8, opacity: 0 }}
                     animate={{ scale: 1, opacity: 1 }}
                     transition={{ type: 'spring', delay: 200 }}
-                    className="w-14 h-14 rounded-2xl bg-blue-400 items-center justify-center"
+                    className="w-14 h-14 rounded-2xl bg-primary400 items-center justify-center"
                   >
                     <ImageIcon size={26} color={LightColors.textInverse} />
                   </MotiView>
@@ -233,7 +271,7 @@ export function ImagePickerModal({
                   )}
                   {uploading && (
                     <View className="absolute inset-0 bg-black/40 items-center justify-center">
-                      <ActivityIndicator size="large" color={LightColors.textInverse} />
+                      <Spinner kind="brand" size="large" color={LightColors.textInverse} />
                       <Text className="text-white font-montserrat-semi text-sm mt-3">
                         Uploading…
                       </Text>
@@ -246,6 +284,9 @@ export function ImagePickerModal({
                   <Pressable
                     onPress={handleRetake}
                     disabled={uploading}
+                    accessibilityRole="button"
+                    accessibilityLabel="Retake photo"
+                    accessibilityState={{ disabled: uploading }}
                     className="flex-1 flex-row items-center justify-center gap-2 py-4 rounded-2xl bg-surfaceMuted active:bg-divider"
                   >
                     <RotateCcw size={18} color={LightColors.textTertiary} />
@@ -256,10 +297,13 @@ export function ImagePickerModal({
                   <Pressable
                     onPress={handleConfirm}
                     disabled={uploading}
-                    className="flex-1 flex-row items-center justify-center gap-2 py-4 rounded-2xl bg-primary active:bg-blue-700"
+                    accessibilityRole="button"
+                    accessibilityLabel={uploading ? 'Uploading photo' : 'Use this photo'}
+                    accessibilityState={{ disabled: uploading }}
+                    className="flex-1 flex-row items-center justify-center gap-2 py-4 rounded-2xl bg-primary active:bg-primaryDark"
                   >
                     {uploading ? (
-                      <ActivityIndicator size="small" color={LightColors.textInverse} />
+                      <Spinner kind="brand" size="small" color={LightColors.textInverse} />
                     ) : (
                       <Check size={18} color={LightColors.textInverse} />
                     )}

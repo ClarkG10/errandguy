@@ -1,30 +1,45 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { View, Text, ScrollView, Pressable, StyleSheet } from 'react-native';
+import {
+  View,
+  Text,
+  ScrollView,
+  Pressable,
+  KeyboardAvoidingView,
+  Platform,
+} from 'react-native';
 import * as Haptics from 'expo-haptics';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
-import { ArrowLeft, Footprints, Bike, Truck, Car, MapPin, Clock, Route } from 'lucide-react-native';
-import type { LucideIcon } from 'lucide-react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { Clock, Route } from 'lucide-react-native';
+import dayjs from 'dayjs';
 import { GradientHeader } from '../../../components/ui/GradientHeader';
 import { useBookingStore } from '../../../stores/bookingStore';
 import { bookingService } from '../../../services/booking.service';
 import { Button } from '../../../components/ui/Button';
 import { BottomActionBar } from '../../../components/ui/BottomActionBar';
 import { PriceBreakdown } from '../../../components/ui/PriceBreakdown';
+import { ErrorState } from '../../../components/ui/ErrorState';
 import {
   VehicleTypeSelector,
+  VEHICLE_ICONS,
   type VehicleOption,
 } from '../../../components/customer/VehicleTypeSelector';
 import { PromoCodeInput } from '../../../components/customer/PromoCodeInput';
-import { PaymentMethodSelector } from '../../../components/customer/PaymentMethodSelector';
+import {
+  PaymentMethodSelector,
+  resolvePaymentMethodType,
+} from '../../../components/customer/PaymentMethodSelector';
 import { OfferSlider } from '../../../components/customer/OfferSlider';
 import { BookingStepIndicator } from '../../../components/customer/BookingStepIndicator';
 import { formatCurrency } from '../../../utils/formatCurrency';
+import { serializeChecklist } from '../../../utils/shoppingChecklist';
 import { openCheckoutUrl, PAYMENT_RETURN_URL } from '../../../utils/browser';
 import { getErrandTypeRule, type VehicleKey } from '../../../constants/errandTypeRules';
+import { useResponsive } from '../../../constants/responsive';
 import { LightColors } from '../../../constants/colors';
-import type { PricingMode } from '../../../types';
+import type { PaymentMethodType, PricingMode } from '../../../types';
 import { toast } from '../../../stores/toastStore';
+
 
 interface EstimateResult {
   walk?: { total_amount: number; distance_fee: number; base_fee: number; service_fee: number; surcharge: number };
@@ -37,15 +52,10 @@ interface EstimateResult {
   recommended_max?: number;
 }
 
-const VEHICLE_ICONS: Record<string, LucideIcon> = {
-  walk: Footprints,
-  bicycle: Bike,
-  motorcycle: Truck,
-  car: Car,
-};
-
 export default function ReviewScreen() {
   const router = useRouter();
+  const { contentMaxWidth } = useResponsive();
+  const insets = useSafeAreaInsets();
   const { draftBooking, updateDraft, setStep, clearDraft, setActiveBooking } =
     useBookingStore();
 
@@ -77,13 +87,35 @@ export default function ReviewScreen() {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [rule]);
-  const [paymentMethodType, setPaymentMethodType] = useState<string | undefined>();
-  const [promoDiscount, setPromoDiscount] = useState(0);
+  // Saved (tokenised) methods can't be resolved from the id alone — their
+  // type arrives via the selector's onSelect once the methods list loads.
+  const [savedMethodType, setSavedMethodType] = useState<
+    PaymentMethodType | undefined
+  >();
+  // Sentinel ids ('__gcash__' etc.) resolve statically from the persisted
+  // draft id, so the submitted `payment_method` always matches the visible
+  // selection — including a rehydrated draft where no onSelect has fired
+  // yet. Callback-captured state alone silently booked those as cash.
+  const paymentMethodType =
+    resolvePaymentMethodType(draftBooking.payment_method_id) ?? savedMethodType;
+  // Persisted alongside promo_code so a remount can't show an applied chip
+  // over an undiscounted total (while still submitting the code).
+  const promoDiscount = draftBooking.promo_discount ?? 0;
   const [offerPrice, setOfferPrice] = useState(
     draftBooking.customer_offer ?? 100,
   );
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isEstimateLoading, setIsEstimateLoading] = useState(false);
+  // True when the estimate request failed — drives the inline retry UI.
+  // Without it a failed fetch left the screen on "Calculating fare…"
+  // with a permanently disabled CTA.
+  const [estimateError, setEstimateError] = useState(false);
+  // Bumping this re-runs the estimate effect (retry).
+  const [estimateAttempt, setEstimateAttempt] = useState(0);
+
+  const rerunEstimate = useCallback(() => {
+    setEstimateAttempt((n) => n + 1);
+  }, []);
 
   // Fetch estimate on mount — guarded against a stale-response race when
   // the user navigates back/forward quickly (the previous version could
@@ -98,6 +130,7 @@ export default function ReviewScreen() {
     }
     let cancelled = false;
     setIsEstimateLoading(true);
+    setEstimateError(false);
     bookingService
       .getEstimate({
         errand_type_id: draftBooking.errand_type_id,
@@ -116,7 +149,15 @@ export default function ReviewScreen() {
           setOfferPrice(data.min_negotiate_fee);
         }
       })
-      .catch(() => {})
+      .catch(() => {
+        if (cancelled) return;
+        // Surface the failure inline (ErrorState below) instead of
+        // stranding the user on an eternal "Calculating fare…".
+        setEstimateError(true);
+        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error).catch(
+          () => {},
+        );
+      })
       .finally(() => {
         if (!cancelled) setIsEstimateLoading(false);
       });
@@ -132,6 +173,7 @@ export default function ReviewScreen() {
     draftBooking.pickup_lng,
     draftBooking.dropoff_lat,
     draftBooking.dropoff_lng,
+    estimateAttempt,
   ]);
 
   // Distance-based ETA per vehicle so the selector cards can preview
@@ -208,8 +250,10 @@ export default function ReviewScreen() {
       ]
     : [];
 
+  // Clamped at zero — a fixed-amount promo larger than the fare must never
+  // render "Confirm ₱-20.00".
   const totalAmount = currentVehicleEstimate
-    ? (currentVehicleEstimate.total_amount ?? 0) - promoDiscount
+    ? Math.max(0, (currentVehicleEstimate.total_amount ?? 0) - promoDiscount)
     : 0;
 
   // Approximate travel time based on vehicle type and distance
@@ -224,6 +268,35 @@ export default function ReviewScreen() {
     return `${minutes} min`;
   };
 
+  // Readbacks for the confirmation summary — a "Review & confirm" screen
+  // has to show what is being confirmed (type, timing, list size), not
+  // just where and for how much.
+  const errandTypeLabel = useMemo(() => {
+    const slug = draftBooking.errand_type_slug;
+    if (!slug) return 'Errand';
+    const words = slug.replace(/_/g, ' ');
+    return words.charAt(0).toUpperCase() + words.slice(1);
+  }, [draftBooking.errand_type_slug]);
+
+  const scheduleLabel =
+    draftBooking.schedule_type === 'scheduled' && draftBooking.scheduled_at
+      ? `Scheduled · ${dayjs(draftBooking.scheduled_at).format('ddd, MMM D · h:mm A')}`
+      : 'Now';
+
+  const shoppingItemCount = rule.requiresShoppingBudget
+    ? (draftBooking.shoppingItems ?? []).filter((it) => it.name.trim()).length
+    : 0;
+
+  // navigate() returns to the step already on the stack instead of pushing
+  // a duplicate; the persisted draft makes the round-trip lossless.
+  const editStep = useCallback(
+    (path: '/(customer)/book/details' | '/(customer)/book/schedule') => {
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
+      router.navigate(path);
+    },
+    [router],
+  );
+
   const handleSubmit = useCallback(async () => {
     if (!draftBooking.errand_type_id || !draftBooking.pickup_address) {
       toast.warning('Please go back and complete all booking steps.');
@@ -231,7 +304,17 @@ export default function ReviewScreen() {
     }
     // Per-errand-type validation. Without these the server would 422 the
     // request after the user already tapped Confirm — slow + ugly.
-    if (
+    // Shopping types validate their checklist; all others validate the
+    // free-text description.
+    const shoppingItems = rule.requiresShoppingBudget
+      ? (draftBooking.shoppingItems ?? []).filter((it) => it.name.trim())
+      : [];
+    if (rule.requiresShoppingBudget) {
+      if (shoppingItems.length === 0) {
+        toast.warning('Please add at least one item to your shopping list.');
+        return;
+      }
+    } else if (
       rule.descriptionRequired &&
       (!draftBooking.description || draftBooking.description.trim().length === 0)
     ) {
@@ -267,7 +350,26 @@ export default function ReviewScreen() {
         dropoff_lng: draftBooking.dropoff_lng,
         dropoff_contact_name: draftBooking.dropoff_contact_name,
         dropoff_contact_phone: draftBooking.dropoff_contact_phone,
-        description: draftBooking.description,
+        // Shopping checklists have no structured column on the API, so the
+        // list is serialized into the free-text `description` — the
+        // canonical, human-readable form the runner & admin see. The
+        // shopping builder has NO free-text note field, so we do NOT fold
+        // `draftBooking.description` in as a note: on a shopping errand any
+        // value there is only stale text left over from a previously-chosen
+        // non-shopping type, which the customer can neither see nor edit.
+        description:
+          shoppingItems.length > 0
+            ? serializeChecklist(shoppingItems)
+            : draftBooking.description,
+        // Structured checklist alongside the human-readable `description`
+        // serialization above. The server stores this as the canonical
+        // shopping_items column, which the runner's synced checklist reads
+        // from — making the ticked-off list authoritative rather than
+        // re-parsed from free text.
+        shopping_items:
+          shoppingItems.length > 0
+            ? shoppingItems.map((i) => ({ name: i.name.trim(), qty: i.qty }))
+            : undefined,
         special_instructions: draftBooking.special_instructions,
         estimated_item_value: draftBooking.estimated_item_value,
         shopping_budget: draftBooking.shopping_budget,
@@ -290,6 +392,10 @@ export default function ReviewScreen() {
       const res = await bookingService.createBooking(payload);
       const booking = res.data.data;
       const checkoutUrl: string | undefined = res.data?.checkout_url;
+      // Outcome haptic — the booking was accepted by the server.
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(
+        () => {},
+      );
       setActiveBooking(booking);
       clearDraft();
       // Online payment (card/gcash/maya) → open the Xendit hosted checkout
@@ -297,6 +403,8 @@ export default function ReviewScreen() {
       if (checkoutUrl) {
         await openCheckoutUrl(checkoutUrl, PAYMENT_RETURN_URL);
       }
+      // Hand straight off to the confirm screen (the searching radar) — the
+      // overlay stays up until this screen unmounts, so there's no flash.
       router.replace(`/(customer)/book/confirm?bookingId=${booking.id}`);
     } catch (err: any) {
       toast.error(err?.message ?? 'Failed to create booking');
@@ -328,23 +436,57 @@ export default function ReviewScreen() {
         </View>
       </GradientHeader>
 
-      {/* Step indicator */}
+      {/* Step indicator — clamped to the same content column as the
+          scroll body so tablet edges align (mirrors type.tsx). */}
       <View className="px-5 mt-3 pb-3">
-        <BookingStepIndicator currentStep={3} />
+        <View style={{ maxWidth: contentMaxWidth, width: '100%', alignSelf: 'center' }}>
+          <BookingStepIndicator currentStep={3} />
+        </View>
       </View>
 
-      <ScrollView className="flex-1 px-5" showsVerticalScrollIndicator={false}>
+      {/* Keyboard handling mirrors details.tsx — without persistTaps the
+          promo Apply tap is swallowed by keyboard dismissal (two taps to
+          apply), and bottom-half inputs hide under the iOS keyboard. */}
+      <KeyboardAvoidingView
+        style={{ flex: 1 }}
+        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+      >
+      <ScrollView
+        className="flex-1 px-5"
+        contentContainerStyle={{
+          maxWidth: contentMaxWidth,
+          width: '100%',
+          alignSelf: 'center',
+          // Clearance for the sticky BottomActionBar: its real height is
+          // 16 top pad + button + max(inset, 12) bottom pad, so a fixed
+          // spacer under-clears on home-indicator / 3-button-nav devices.
+          paddingBottom: Math.max(insets.bottom, 12) + 96,
+        }}
+        showsVerticalScrollIndicator={false}
+        keyboardShouldPersistTaps="handled"
+        keyboardDismissMode={Platform.OS === 'ios' ? 'interactive' : 'on-drag'}
+        automaticallyAdjustKeyboardInsets={Platform.OS === 'ios'}
+      >
         {/* Route Summary — typographic, ride-hailing-style two-line
-            stack with a connecting hairline. No icon-tile chips. */}
+            stack with a connecting hairline. No icon-tile chips. Rows are
+            tappable edit affordances back to the details step — fixing a
+            wrong address here beats abandoning the funnel. */}
         <View className="mb-5 py-3 border-y border-divider">
-          <View className="flex-row items-center mb-2.5">
+          <Pressable
+            className="flex-row items-center mb-2.5"
+            accessibilityRole="button"
+            accessibilityLabel={`Pickup: ${draftBooking.pickup_address ?? 'not set'}. Edit`}
+            hitSlop={8}
+            style={({ pressed }) => (pressed ? { opacity: 0.7 } : null)}
+            onPress={() => editStep('/(customer)/book/details')}
+          >
             <View
               style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: LightColors.primary }}
             />
             <View className="flex-1 ml-3">
               <Text
                 className="text-[10px] font-montserrat-bold uppercase text-textSecondary"
-                style={{ letterSpacing: 1.2 }}
+                style={{ letterSpacing: 1.4 }}
               >
                 Pickup
               </Text>
@@ -352,7 +494,10 @@ export default function ReviewScreen() {
                 {draftBooking.pickup_address ?? 'Pickup location'}
               </Text>
             </View>
-          </View>
+            <Text className="text-[13px] font-montserrat-semi text-primary ml-3">
+              Edit
+            </Text>
+          </Pressable>
           <View
             style={{
               marginLeft: 3,
@@ -361,14 +506,23 @@ export default function ReviewScreen() {
               backgroundColor: LightColors.divider,
             }}
           />
-          <View className="flex-row items-center mt-2.5">
+          <Pressable
+            className="flex-row items-center mt-2.5"
+            accessibilityRole="button"
+            accessibilityLabel={`Drop-off: ${draftBooking.dropoff_address ?? 'not set'}. Edit`}
+            hitSlop={8}
+            style={({ pressed }) => (pressed ? { opacity: 0.7 } : null)}
+            onPress={() => editStep('/(customer)/book/details')}
+          >
+            {/* Danger circle — the funnel's learned drop-off cue from the
+                details map (pin, marker, route bead all danger red). */}
             <View
-              style={{ width: 8, height: 8, borderRadius: 2, backgroundColor: LightColors.ink }}
+              style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: LightColors.danger }}
             />
             <View className="flex-1 ml-3">
               <Text
                 className="text-[10px] font-montserrat-bold uppercase text-textSecondary"
-                style={{ letterSpacing: 1.2 }}
+                style={{ letterSpacing: 1.4 }}
               >
                 Drop-off
               </Text>
@@ -376,21 +530,66 @@ export default function ReviewScreen() {
                 {draftBooking.dropoff_address ?? 'Drop-off location'}
               </Text>
             </View>
+            <Text className="text-[13px] font-montserrat-semi text-primary ml-3">
+              Edit
+            </Text>
+          </Pressable>
+        </View>
+
+        {/* What's being booked — type, timing, list size. */}
+        <View className="mb-5 rounded-2xl border border-divider bg-surface px-4">
+          <View className="flex-row items-center justify-between py-3">
+            <Text className="text-[12px] font-montserrat text-textSecondary">
+              Errand
+            </Text>
+            <Text className="text-[13px] font-montserrat-semi text-textPrimary ml-3 flex-shrink" numberOfLines={1}>
+              {errandTypeLabel}
+            </Text>
           </View>
+          <Pressable
+            className="flex-row items-center justify-between py-3 border-t border-divider"
+            accessibilityRole="button"
+            accessibilityLabel={`Schedule: ${scheduleLabel}. Edit`}
+            hitSlop={8}
+            style={({ pressed }) => (pressed ? { opacity: 0.7 } : null)}
+            onPress={() => editStep('/(customer)/book/schedule')}
+          >
+            <Text className="text-[12px] font-montserrat text-textSecondary">
+              Schedule
+            </Text>
+            <View className="flex-row items-center ml-3 flex-shrink">
+              <Text className="text-[13px] font-montserrat-semi text-textPrimary flex-shrink" numberOfLines={1}>
+                {scheduleLabel}
+              </Text>
+              <Text className="text-[13px] font-montserrat-semi text-primary ml-3">
+                Edit
+              </Text>
+            </View>
+          </Pressable>
+          {rule.requiresShoppingBudget && (
+            <View className="flex-row items-center justify-between py-3 border-t border-divider">
+              <Text className="text-[12px] font-montserrat text-textSecondary">
+                Shopping list
+              </Text>
+              <Text className="text-[13px] font-montserrat-semi text-textPrimary ml-3">
+                {shoppingItemCount} {shoppingItemCount === 1 ? 'item' : 'items'}
+              </Text>
+            </View>
+          )}
         </View>
 
         {/* Distance & Time — inline typographic stat row, no chips. */}
         {estimate?.distance_km != null && (
           <View className="flex-row items-center mb-5" style={{ gap: 16 }}>
             <View className="flex-row items-center">
-              <Route size={13} color={LightColors.textTertiary} strokeWidth={1.8} />
+              <Route size={13} color={LightColors.textTertiary} strokeWidth={2} />
               <Text className="text-[12px] font-inter tabular-nums text-textSecondary ml-1.5">
                 {estimate.distance_km.toFixed(1)} km
               </Text>
             </View>
             {getEstimatedTime() && (
               <View className="flex-row items-center">
-                <Clock size={13} color={LightColors.textTertiary} strokeWidth={1.8} />
+                <Clock size={13} color={LightColors.textTertiary} strokeWidth={2} />
                 <Text className="text-[12px] font-inter tabular-nums text-textSecondary ml-1.5">
                   ~{getEstimatedTime()}
                 </Text>
@@ -428,8 +627,15 @@ export default function ReviewScreen() {
                   }
                 }}
                 className="pr-5 pb-2.5 -mb-px"
-                style={active ? { borderBottomWidth: 2, borderBottomColor: LightColors.primary } : undefined}
-                hitSlop={6}
+                style={({ pressed }) => [
+                  active
+                    ? { borderBottomWidth: 2, borderBottomColor: LightColors.primary }
+                    : null,
+                  pressed ? { opacity: 0.7 } : null,
+                ]}
+                // The tab itself is only ~28pt tall (13px label + 10px
+                // underline gap) — the vertical slop lifts it past 44pt.
+                hitSlop={{ top: 12, bottom: 12, left: 8, right: 8 }}
               >
                 <Text
                   className={`text-[13px] ${
@@ -469,15 +675,28 @@ export default function ReviewScreen() {
                   total={totalAmount}
                 />
               </View>
+            ) : estimateError ? (
+              /* Estimate failed — inline recovery in place of the
+                 skeleton so the user is never stuck on a dead
+                 "Calculating fare…" with no way forward. */
+              <View className="mb-4">
+                <ErrorState
+                  compact
+                  title="Couldn't calculate your fare"
+                  description="Check your connection and try again."
+                  onRetry={rerunEstimate}
+                />
+              </View>
             ) : (
-              /* Estimate skeleton — sized to roughly match the real
-                 PriceBreakdown so the CTA doesn't shift when the data
-                 arrives. Pulses softly via opacity. */
+              /* Estimate skeleton — mirrors the real PriceBreakdown's
+                 metrics (4 fee rows @ ~33pt, total row @ ~40pt) so the
+                 sections below don't reflow when the data arrives. */
               <View className="mb-4" accessibilityLabel="Calculating fare">
-                {Array.from({ length: 3 }).map((_, i) => (
+                {Array.from({ length: 4 }).map((_, i) => (
                   <View
                     key={`pb-skel-${i}`}
-                    className="flex-row justify-between py-2"
+                    className="flex-row items-center justify-between"
+                    style={{ height: 33 }}
                   >
                     <View
                       className="h-3 rounded-full bg-divider"
@@ -489,7 +708,10 @@ export default function ReviewScreen() {
                     />
                   </View>
                 ))}
-                <View className="border-t border-divider mt-1 pt-3 flex-row justify-between">
+                <View
+                  className="border-t border-divider mt-1 pt-3 flex-row items-center justify-between"
+                  style={{ height: 40 }}
+                >
                   <View
                     className="h-4 rounded-full bg-divider"
                     style={{ width: 50, opacity: 0.7 }}
@@ -524,16 +746,39 @@ export default function ReviewScreen() {
           />
         )}
 
+        {/* Shopping budget — a real pre-authorized outlay on top of the
+            service fee, kept out of the fee Total (it's reconciled with a
+            receipt) but explicit at the moment of commitment. Typographic
+            row (not a card) so its amount sits in the same money column
+            as the PriceBreakdown lines above it. */}
+        {rule.requiresShoppingBudget && (draftBooking.shopping_budget ?? 0) > 0 && (
+          <View className="mb-4 flex-row items-start justify-between">
+            <View className="flex-1 pr-3">
+              <Text className="text-sm font-montserrat text-textSecondary">
+                Shopping budget
+              </Text>
+              <Text className="text-[11px] font-montserrat text-textSecondary mt-0.5">
+                Advanced for items, on top of the fee — reconciled with the receipt
+              </Text>
+            </View>
+            <Text
+              className="text-sm font-inter text-textPrimary"
+              style={{ fontVariant: ['tabular-nums'] }}
+            >
+              {formatCurrency(draftBooking.shopping_budget!)}
+            </Text>
+          </View>
+        )}
+
         {/* Promo Code */}
         <PromoCodeInput
           appliedCode={draftBooking.promo_code}
+          appliedDiscount={promoDiscount}
           onApply={(code, discount) => {
-            updateDraft({ promo_code: code });
-            setPromoDiscount(discount);
+            updateDraft({ promo_code: code, promo_discount: discount });
           }}
           onRemove={() => {
-            updateDraft({ promo_code: undefined });
-            setPromoDiscount(0);
+            updateDraft({ promo_code: undefined, promo_discount: undefined });
           }}
         />
 
@@ -547,39 +792,42 @@ export default function ReviewScreen() {
           amount={pricingMode === 'fixed' ? totalAmount : offerPrice}
           onSelect={(id, type) => {
             updateDraft({ payment_method_id: id });
-            setPaymentMethodType(type);
+            setSavedMethodType(type);
           }}
         />
 
-        <View className="h-28" />
       </ScrollView>
+      </KeyboardAvoidingView>
 
-      {/* Bottom CTA */}
+      {/* Bottom CTA — clamped to the content column on tablets. */}
       <BottomActionBar>
-        <Button
-          title={
-            pricingMode === 'fixed'
-              ? isEstimateLoading || !currentVehicleEstimate
-                ? 'Calculating fare…'
-                : `Confirm ${formatCurrency(totalAmount)}`
-              : `Send Offer ${formatCurrency(offerPrice)}`
-          }
-          onPress={handleSubmit}
-          loading={isSubmitting}
-          // Don't let the user submit a fixed-price booking before the
-          // estimate has resolved — without it we'd be sending a
-          // payload with an indeterminate price expectation, and the
-          // server would 422 on `vehicle_type_rate` validation
-          // mismatch.
-          disabled={
-            pricingMode === 'fixed' &&
-            (isEstimateLoading || !currentVehicleEstimate)
-          }
-          fullWidth
-        />
+        <View style={{ maxWidth: contentMaxWidth, width: '100%', alignSelf: 'center' }}>
+          <Button
+            title={
+              pricingMode === 'fixed'
+                ? currentVehicleEstimate && !isEstimateLoading
+                  ? `Confirm ${formatCurrency(totalAmount)}`
+                  : estimateError
+                    ? 'Fare unavailable'
+                    : 'Calculating fare…'
+                : `Send Offer ${formatCurrency(offerPrice)}`
+            }
+            onPress={handleSubmit}
+            loading={isSubmitting}
+            loadingTitle={pricingMode === 'fixed' ? 'Creating booking…' : 'Sending offer…'}
+            // Don't let the user submit a fixed-price booking before the
+            // estimate has resolved — without it we'd be sending a
+            // payload with an indeterminate price expectation, and the
+            // server would 422 on `vehicle_type_rate` validation
+            // mismatch.
+            disabled={
+              pricingMode === 'fixed' &&
+              (isEstimateLoading || !currentVehicleEstimate)
+            }
+            fullWidth
+          />
+        </View>
       </BottomActionBar>
     </View>
   );
 }
-
-const reviewStyles = StyleSheet.create({});

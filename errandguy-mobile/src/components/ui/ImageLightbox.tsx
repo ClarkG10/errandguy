@@ -4,14 +4,15 @@ import {
   View,
   Pressable,
   Text,
-  ActivityIndicator,
   useWindowDimensions,
   StatusBar,
 } from 'react-native';
 import { Image } from 'expo-image';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Download, X } from 'lucide-react-native';
 import { toast } from '../../stores/toastStore';
 import { LightColors } from '../../constants/colors';
+import { Spinner } from './Spinner';
 
 /**
  * Both `expo-media-library` and `expo-file-system` are native modules.
@@ -103,6 +104,11 @@ export function ImageLightbox({ uri, visible, onClose }: ImageLightboxProps) {
   };
 
   const { width, height } = useWindowDimensions();
+  // statusBarTranslucent full-screen modal: chrome must clear the
+  // Dynamic Island / notch (top inset up to 59pt) and the home
+  // indicator — a fixed offset either grazes the island on Pro Max or
+  // floats pointlessly low in landscape (inset 0).
+  const insets = useSafeAreaInsets();
 
   return (
     <Modal
@@ -130,8 +136,11 @@ export function ImageLightbox({ uri, visible, onClose }: ImageLightboxProps) {
         <Pressable
           onPress={onClose}
           hitSlop={12}
-          className="absolute top-14 right-5 w-10 h-10 rounded-full items-center justify-center"
-          style={{ backgroundColor: 'rgba(0,0,0,0.55)' }}
+          className="absolute right-5 w-10 h-10 rounded-full items-center justify-center"
+          style={{
+            top: Math.max(insets.top, 16) + 4,
+            backgroundColor: 'rgba(0,0,0,0.55)',
+          }}
           accessibilityRole="button"
           accessibilityLabel="Close image"
         >
@@ -143,8 +152,9 @@ export function ImageLightbox({ uri, visible, onClose }: ImageLightboxProps) {
           onPress={handleDownload}
           disabled={downloading || !uri}
           hitSlop={8}
-          className="absolute bottom-12 self-center flex-row items-center px-5 py-3 rounded-full"
+          className="absolute self-center flex-row items-center px-5 py-3 rounded-full"
           style={{
+            bottom: Math.max(insets.bottom, 16) + 16,
             backgroundColor: `${LightColors.surface}F2`,
             shadowColor: LightColors.ink,
             shadowOpacity: 0.3,
@@ -157,7 +167,7 @@ export function ImageLightbox({ uri, visible, onClose }: ImageLightboxProps) {
           accessibilityLabel="Save image to photos"
         >
           {downloading ? (
-            <ActivityIndicator size="small" color={LightColors.textPrimary} />
+            <Spinner size="small" color={LightColors.textPrimary} />
           ) : (
             <Download size={18} color={LightColors.textPrimary} />
           )}

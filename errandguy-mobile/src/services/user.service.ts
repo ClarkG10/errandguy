@@ -3,9 +3,22 @@ import type { AxiosRequestConfig } from 'axios';
 import { invalidateQuery } from '../hooks/useQuery';
 import type { SavedAddress, TrustedContact } from '../types';
 
+/** Shape of GET /user/referral → `data` (ReferralController::show). */
+export interface ReferralInfo {
+  referral_code: string;
+  share_link: string;
+  counts: {
+    pending: number;
+    qualified: number;
+    rewarded: number;
+  };
+  total_earned: number;
+}
+
 const invalidateProfile = () => invalidateQuery(['user', 'profile']);
 const invalidateAddresses = () => invalidateQuery(['user', 'addresses']);
 const invalidateContacts = () => invalidateQuery(['user', 'contacts']);
+const invalidateReferral = () => invalidateQuery(['user', 'referral']);
 
 export const userService = {
   getProfile(config?: AxiosRequestConfig) {
@@ -29,9 +42,17 @@ export const userService = {
     return p;
   },
 
-  uploadAvatar(file: FormData) {
+  uploadAvatar(file: FormData, onProgress?: (frac: number) => void) {
     const p = api.post('/user/avatar', file, {
       headers: { 'Content-Type': 'multipart/form-data' },
+      // 0–1 upload fraction for <UploadProgress>. Only emit when the total
+      // is known; onUploadProgress rides straight through the api wrapper
+      // (non-GETs are passed to axios untouched).
+      onUploadProgress: onProgress
+        ? (e: any) => {
+            if (e.total) onProgress(e.loaded / e.total);
+          }
+        : undefined,
     });
     p.then(invalidateProfile).catch(() => {});
     return p;
@@ -89,6 +110,22 @@ export const userService = {
   deleteTrustedContact(id: string) {
     const p = api.delete(`/user/trusted-contacts/${id}`);
     p.then(invalidateContacts).catch(() => {});
+    return p;
+  },
+
+  // ── Referral program ──────────────────────────────────────────────
+  // GET /user/referral returns the caller's own code, a shareable link,
+  // per-status counts of people they've referred, and total bonus earned.
+  getReferral() {
+    return api.get('/user/referral', { cacheTtlMs: 30_000, silent: true } as any);
+  },
+
+  // POST /user/referral/apply — redeem someone else's code. Resolves 201
+  // on success; rejects with a 422 { message } on invalid / self / already
+  // referred (the caller surfaces `error.message`).
+  applyReferral(code: string) {
+    const p = api.post('/user/referral/apply', { code });
+    p.then(invalidateReferral).catch(() => {});
     return p;
   },
 };

@@ -2,27 +2,39 @@ import { Tabs } from 'expo-router';
 import { Platform } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRunnerStore } from '../../../stores/runnerStore';
+import { useReducedMotion } from '../../../hooks/useReducedMotion';
 import { TabBarItem } from '../../../components/ui/TabBarItem';
 import {
   TAB_BAR_HEIGHT as BAR_HEIGHT,
-  TAB_BAR_FLOAT_GAP,
-  TAB_BAR_SIDE_MARGIN,
 } from '../../../constants/tabLayout';
 import { LightColors } from '../../../constants/colors';
 
 const ACTIVE = LightColors.primary;
-const INACTIVE = LightColors.textMuted;
+// textTertiary clears the 3:1 non-text glyph floor that textMuted failed
+// (shared with the customer bar via TabBarItem). Labels are hidden, so this
+// only feeds react-navigation's inactive tint, but keep it in sync.
+const INACTIVE = LightColors.textTertiary;
 
 export default function RunnerTabsLayout() {
   const isOnline = useRunnerStore((s) => s.isOnline);
   const insets = useSafeAreaInsets();
-  const bottomInset = insets.bottom;
+  const reduceMotion = useReducedMotion();
+
+  // React Navigation renders a supplied numeric tabBarStyle.height
+  // verbatim — it does NOT add the bottom inset — so a flat height would
+  // sit the bar flush and collide the icon row with the home indicator /
+  // gesture bar on inset devices. Grow the bar and reserve the inset as
+  // bottom padding; the item grows with it so the glyph stays centred in
+  // the visible strip above the inset.
+  const barHeight = BAR_HEIGHT + insets.bottom;
 
   return (
     <Tabs
       screenOptions={{
         headerShown: false,
-        animation: 'shift',
+        // 'shift' animates the whole screen on every tab switch; snap
+        // instantly when the runner has asked for reduced motion.
+        animation: reduceMotion ? 'none' : 'shift',
         // See customer tab layout for rationale — freezes off-screen
         // tabs (so the History list stops re-rendering while the
         // runner is on Home receiving GPS pings) and lazy-mounts
@@ -33,31 +45,30 @@ export default function RunnerTabsLayout() {
         tabBarInactiveTintColor: INACTIVE,
         tabBarShowLabel: false,
         tabBarHideOnKeyboard: true,
-        // Floating pill nav — see customer tab layout for rationale.
         tabBarStyle: {
-          position: 'absolute',
-          left: TAB_BAR_SIDE_MARGIN,
-          right: TAB_BAR_SIDE_MARGIN,
-          bottom: Math.max(bottomInset, TAB_BAR_FLOAT_GAP) + TAB_BAR_FLOAT_GAP / 2,
           backgroundColor: LightColors.surface,
-          borderTopWidth: 0,
-          borderRadius: 999,
-          height: BAR_HEIGHT,
-          paddingTop: 6,
-          paddingBottom: 6,
-          paddingHorizontal: 14,
+          borderTopWidth: 1,
+          borderTopColor: LightColors.divider,
+          height: barHeight,
+          paddingTop: 4,
+          paddingBottom: Math.max(insets.bottom, 4),
+          paddingHorizontal: 8,
           ...Platform.select({
             ios: {
-              shadowColor: LightColors.textPrimary,
-              shadowOffset: { width: 0, height: 10 },
-              shadowOpacity: 0.1,
-              shadowRadius: 24,
+              shadowColor: '#0F172A',
+              shadowOffset: { width: 0, height: -2 },
+              shadowOpacity: 0.04,
+              shadowRadius: 8,
             },
-            android: { elevation: 12 },
+            android: { elevation: 4 },
           }),
         },
         tabBarItemStyle: {
-          height: BAR_HEIGHT,
+          // Match the customer bar: size the touch slot to the visible strip
+          // (bar minus a little) + inset so the glyph centres in the strip
+          // above the home indicator instead of floating mid-bar, which read
+          // as an over-tall bar.
+          height: BAR_HEIGHT - 12 + insets.bottom,
           paddingTop: 0,
           paddingBottom: 0,
         },
@@ -70,6 +81,12 @@ export default function RunnerTabsLayout() {
         name="index"
         options={{
           title: 'Home',
+          // Online/offline is the runner's most earnings-critical state
+          // but the visual dot lives in a pointerEvents-none view
+          // VoiceOver skips — surface it on the tab itself.
+          tabBarAccessibilityLabel: isOnline
+            ? 'Home, you are online'
+            : 'Home, you are offline',
           tabBarIcon: ({ focused }) => (
             <TabBarItem name="home" focused={focused} showOnlineDot={isOnline} />
           ),

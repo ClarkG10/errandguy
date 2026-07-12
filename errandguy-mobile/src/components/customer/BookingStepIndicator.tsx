@@ -1,5 +1,6 @@
 import React from 'react';
-import { View, Text, Platform } from 'react-native';
+import { View, Text } from 'react-native';
+import { Check } from 'lucide-react-native';
 import { LightColors } from '../../constants/colors';
 
 const STEP_LABELS = ['Type', 'Details', 'Schedule', 'Review'] as const;
@@ -60,7 +61,10 @@ export function BookingStepIndicator({
                   isCompleted || isActive ? 'bg-primary' : 'bg-surface'
                 }`}
                 style={[
-                  isUpcoming ? { borderWidth: 1.5, borderColor: LightColors.divider } : null,
+                  // dividerStrong, not divider — the faint hairline is
+                  // ~1.06:1 against the #F7F8FA canvas, so upcoming
+                  // circles read as floating numbers instead of steps.
+                  isUpcoming ? { borderWidth: 1.5, borderColor: LightColors.dividerStrong } : null,
                   isActive
                     ? {
                         shadowColor: LightColors.primary,
@@ -73,19 +77,14 @@ export function BookingStepIndicator({
                 ]}
               >
                 {isCompleted ? (
-                  <Text
-                    style={{
-                      color: LightColors.textInverse,
-                      fontSize: 14,
-                      lineHeight: 16,
-                      fontWeight: '700',
-                      // Use SF Symbols-style checkmark glyph that renders
-                      // identically on iOS + Android without an icon dep.
-                      fontFamily: Platform.OS === 'ios' ? 'System' : undefined,
-                    }}
-                  >
-                    ✓
-                  </Text>
+                  // Lucide check (not a text glyph) — OEM fonts render '✓'
+                  // with inconsistent weight/metrics on Android, and this
+                  // is the app's one icon family.
+                  <Check
+                    size={14}
+                    color={LightColors.textInverse}
+                    strokeWidth={3}
+                  />
                 ) : (
                   <Text
                     className={`text-[11px] font-montserrat-bold ${
@@ -114,8 +113,10 @@ export function BookingStepIndicator({
                 style={{
                   flex: 1,
                   height: 2,
-                  backgroundColor: isCompleted ? LightColors.primary : LightColors.divider,
-                  marginTop: 12,
+                  backgroundColor: isCompleted ? LightColors.primary : LightColors.dividerStrong,
+                  // Circle is 28px tall — 13 + half the 2px line centres
+                  // the connector on the circle midline (y = 14).
+                  marginTop: 13,
                   borderRadius: 1,
                 }}
               />

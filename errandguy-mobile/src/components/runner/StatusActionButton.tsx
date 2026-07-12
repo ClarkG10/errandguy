@@ -1,5 +1,6 @@
 import React from 'react';
 import { Button } from '../ui/Button';
+import { SlideToConfirm } from '../ui/SlideToConfirm';
 import type { BookingStatus } from '../../types';
 import {
   getErrandTypeRule,
@@ -60,12 +61,40 @@ export function StatusActionButton({
     status === 'arrived_at_pickup' &&
     !pinVerified;
 
+  // Consequential, hard-to-undo transitions (handing over / completing)
+  // get a slide-to-confirm instead of a tap — a drag is deliberately
+  // harder to fire by accident while the phone is in a pocket or the
+  // runner is fumbling one-handed. Earlier transitions stay taps.
+  const nextStatus = getNextStatus(status, errandSlug);
+  const isConsequential = nextStatus === 'delivered' || nextStatus === 'completed';
+
+  if (isConsequential) {
+    // Reuse the per-type label wording, e.g. "Slide to hand over item",
+    // "Slide to complete ride". Labels are sentence-case verbs, so
+    // lowercasing the first character keeps them reading naturally.
+    const slideLabel = `Slide to ${label.charAt(0).toLowerCase()}${label.slice(1)}`;
+    return (
+      <SlideToConfirm
+        label={slideLabel}
+        onComplete={onPress}
+        loading={loading}
+        disabled={disabled}
+      />
+    );
+  }
+
   return (
     <Button
       title={label}
       onPress={onPress}
       loading={loading}
+      loadingTitle="Updating…"
       disabled={disabled}
+      accessibilityHint={
+        disabled
+          ? 'Disabled until the passenger’s 4-digit ride PIN is verified above'
+          : undefined
+      }
       fullWidth
     />
   );

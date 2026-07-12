@@ -1,9 +1,10 @@
 import React, { useState } from 'react';
-import { View, Text, Modal, Pressable, ActivityIndicator, useWindowDimensions, StatusBar } from 'react-native';
+import { View, Text, Modal, Pressable, useWindowDimensions, StatusBar } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Image } from 'expo-image';
 import { X } from 'lucide-react-native';
 import { LightColors } from '../../constants/colors';
+import { Spinner } from '../ui/Spinner';
 
 interface DocumentViewerProps {
   visible: boolean;
@@ -88,7 +89,7 @@ export function DocumentViewer({ visible, uri, title, onClose }: DocumentViewerP
               />
               {loading && (
                 <View style={{ position: 'absolute' }}>
-                  <ActivityIndicator color={LightColors.textInverse} size="large" />
+                  <Spinner color={LightColors.textInverse} size="large" />
                 </View>
               )}
             </>

@@ -34,6 +34,10 @@ interface GradientHeaderProps {
   title: string;
   showBack?: boolean;
   fallbackHref?: string;
+  /** Intercepts the back button entirely (e.g. to show a discard-draft
+   *  confirm). When provided, the default router.back()/fallback
+   *  navigation does NOT run — the caller owns leaving the screen. */
+  onBackPress?: () => void;
   trailing?: TrailingAction | React.ReactNode;
   /** Extra content rendered under the title row, still on the band. */
   children?: React.ReactNode;
@@ -62,6 +66,7 @@ export function GradientHeader({
   title,
   showBack = false,
   fallbackHref,
+  onBackPress,
   trailing,
   children,
   rounded = false,
@@ -88,6 +93,10 @@ export function GradientHeader({
   const contentColor = soft ? LightColors.ink : LightColors.textInverse;
 
   const handleBack = () => {
+    if (onBackPress) {
+      onBackPress();
+      return;
+    }
     if (router.canGoBack()) router.back();
     else if (fallbackHref) router.replace(fallbackHref as any);
   };
@@ -197,7 +206,9 @@ export function GradientHeader({
   if (soft) {
     return (
       <>
-        {Platform.OS === 'ios' && <StatusBar barStyle="dark-content" />}
+        {/* Ungated — barStyle works on Android too, and without it the
+            previous screen's icon style leaks onto this band. */}
+        <StatusBar barStyle="dark-content" />
         <View
           style={[
             { backgroundColor: LightColors.background },
@@ -213,7 +224,7 @@ export function GradientHeader({
 
   return (
     <>
-      {Platform.OS === 'ios' && <StatusBar barStyle="light-content" />}
+      <StatusBar barStyle="light-content" />
       <LinearGradient
         colors={HEADER_COLORS as readonly [string, string, string]}
         start={{ x: 0, y: 0 }}

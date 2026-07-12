@@ -2,13 +2,18 @@ import React, { useEffect } from 'react';
 import {
   View,
   Pressable,
-  Dimensions,
   StyleSheet,
   ScrollView,
   KeyboardAvoidingView,
+  Modal,
   Platform,
+  useWindowDimensions,
 } from 'react-native';
-import { Gesture, GestureDetector } from 'react-native-gesture-handler';
+import {
+  Gesture,
+  GestureDetector,
+  GestureHandlerRootView,
+} from 'react-native-gesture-handler';
 import Animated, {
   useSharedValue,
   useAnimatedStyle,
@@ -18,8 +23,8 @@ import Animated, {
 } from 'react-native-reanimated';
 import { useKeyboard } from '../../hooks/useKeyboard';
 import { LightColors } from '../../constants/colors';
+import { Radius } from '../../constants/radius';
 
-const { height: SCREEN_HEIGHT } = Dimensions.get('window');
 // Smooth, non-bouncy slide-up. Critically damped so the sheet glides
 // into place without any overshoot/oscillation.
 const TIMING_IN = { duration: 260, easing: Easing.out(Easing.cubic) } as const;
@@ -76,6 +81,9 @@ export function BottomSheet({
   scrollable = true,
   avoidKeyboard = true,
 }: BottomSheetProps) {
+  // Live height (not a module-scope snapshot) so snap math and the
+  // off-screen resting position survive rotation / split-view resizes.
+  const { height: SCREEN_HEIGHT } = useWindowDimensions();
   const translateY = useSharedValue(SCREEN_HEIGHT);
   const context = useSharedValue(0);
   const { isVisible: kbVisible, height: kbHeight } = useKeyboard();
@@ -127,66 +135,88 @@ export function BottomSheet({
     transform: [{ translateY: translateY.value }],
   }));
 
-  if (!isVisible) return null;
-
+  // Render inside a real RN Modal so the sheet always overlays the WHOLE
+  // screen. Previously this was a bare `absoluteFill` View, so a sheet
+  // mounted inside a ScrollView (e.g. the review-step payment selector)
+  // was positioned relative to that scroll content and rendered off-screen
+  // / behind other UI — the tap registered but nothing usable appeared.
+  // A Modal also puts the sheet above any sibling ExpandableSheet, fixing
+  // the pickup-step "two stacked sheets" overlap.
+  //
+  // gesture-handler renders Modal content in a separate native hierarchy,
+  // so it needs its own GestureHandlerRootView for drag-to-dismiss to work.
   return (
-    <View style={StyleSheet.absoluteFill}>
-      <Pressable
-        className="flex-1 bg-black/40"
-        onPress={onClose}
-      />
-      <GestureDetector gesture={gesture}>
-        <Animated.View
-          className="absolute left-0 right-0 bg-surface"
-          style={[
-            { height: sheetHeight },
-            // Edge-to-edge sheet (no floating side margins) — modern
-            // apps anchor sheets to the screen edges. Big soft top
-            // corners + a diffuse top shadow give depth.
-            {
-              borderTopLeftRadius: 28,
-              borderTopRightRadius: 28,
-              shadowColor: LightColors.textPrimary,
-              shadowOffset: { width: 0, height: -10 },
-              shadowOpacity: 0.08,
-              shadowRadius: 24,
-              elevation: 12,
-            },
-            animatedStyle,
-          ]}
-        >
-          <View className="items-center pt-2.5 pb-1.5">
-            <View className="w-9 h-1 rounded-full bg-divider" />
-          </View>
-          {/*
-            Inner KeyboardAvoidingView is a safety net on iOS for the
-            rare frame where the keyboard animation beats our
-            translateY. Behaviour is `padding` so the inner ScrollView
-            shrinks instead of being pushed off the bottom of the
-            sheet. Android relies on `windowSoftInputMode=adjustResize`
-            (set by Expo by default) plus our translateY follow.
-          */}
-          <KeyboardAvoidingView
-            style={{ flex: 1 }}
-            behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-            keyboardVerticalOffset={0}
+    <Modal
+      visible={isVisible}
+      transparent
+      animationType="none"
+      statusBarTranslucent
+      onRequestClose={onClose}
+    >
+      <GestureHandlerRootView style={StyleSheet.absoluteFill}>
+        <Pressable
+          className="flex-1 bg-black/40"
+          onPress={onClose}
+          accessibilityRole="button"
+          accessibilityLabel="Close"
+        />
+        <GestureDetector gesture={gesture}>
+          <Animated.View
+            className="absolute left-0 right-0 bg-surface"
+            // Trap screen-reader focus inside the sheet and let the
+            // standard escape gesture (iOS two-finger Z) dismiss it.
+            accessibilityViewIsModal
+            onAccessibilityEscape={onClose}
+            style={[
+              { height: sheetHeight },
+              // Edge-to-edge sheet (no floating side margins) — modern
+              // apps anchor sheets to the screen edges. Subtler top
+              // corners + a diffuse top shadow give depth.
+              {
+                borderTopLeftRadius: Radius.sheet,
+                borderTopRightRadius: Radius.sheet,
+                shadowColor: LightColors.textPrimary,
+                shadowOffset: { width: 0, height: -10 },
+                shadowOpacity: 0.08,
+                shadowRadius: 24,
+                elevation: 12,
+              },
+              animatedStyle,
+            ]}
           >
-            {scrollable ? (
-              <ScrollView
-                className="flex-1 px-4 pb-6"
-                showsVerticalScrollIndicator={false}
-                bounces={false}
-                keyboardShouldPersistTaps="handled"
-                contentContainerStyle={{ paddingBottom: 24 }}
-              >
-                {children}
-              </ScrollView>
-            ) : (
-              <View className="flex-1 px-4 pb-6">{children}</View>
-            )}
-          </KeyboardAvoidingView>
-        </Animated.View>
-      </GestureDetector>
-    </View>
+            <View className="items-center pt-2.5 pb-1.5">
+              <View className="w-9 h-1 rounded-full bg-divider" />
+            </View>
+            {/*
+              Inner KeyboardAvoidingView is a safety net on iOS for the
+              rare frame where the keyboard animation beats our
+              translateY. Behaviour is `padding` so the inner ScrollView
+              shrinks instead of being pushed off the bottom of the
+              sheet. Android relies on `windowSoftInputMode=adjustResize`
+              (set by Expo by default) plus our translateY follow.
+            */}
+            <KeyboardAvoidingView
+              style={{ flex: 1 }}
+              behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+              keyboardVerticalOffset={0}
+            >
+              {scrollable ? (
+                <ScrollView
+                  className="flex-1 px-4 pb-6"
+                  showsVerticalScrollIndicator={false}
+                  bounces={false}
+                  keyboardShouldPersistTaps="handled"
+                  contentContainerStyle={{ paddingBottom: 24 }}
+                >
+                  {children}
+                </ScrollView>
+              ) : (
+                <View className="flex-1 px-4 pb-6">{children}</View>
+              )}
+            </KeyboardAvoidingView>
+          </Animated.View>
+        </GestureDetector>
+      </GestureHandlerRootView>
+    </Modal>
   );
 }

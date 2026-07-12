@@ -1,8 +1,12 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { View, Text, Pressable, ActivityIndicator } from 'react-native';
-import { CreditCard, Wallet, Smartphone, X, Check, Banknote } from 'lucide-react-native';
-import type { LucideIcon } from 'lucide-react-native';
+import { View, Text, Pressable } from 'react-native';
+import * as Haptics from 'expo-haptics';
+import { useRouter } from 'expo-router';
+import { X, Check } from 'lucide-react-native';
 import { BottomSheet } from '../ui/BottomSheet';
+import { PaymentBrandMark } from './PaymentBrandMark';
+import { Spinner } from '../ui/Spinner';
+import { toast } from '../../stores/toastStore';
 import { paymentService } from '../../services/payment.service';
 import { useQuery } from '../../hooks/useQuery';
 import { CacheTTL } from '../../services/cache.service';
@@ -19,15 +23,6 @@ interface PaymentMethodSelectorProps {
    *  (e.g. negotiate flow where the price isn't fixed yet). */
   amount?: number;
 }
-
-const METHOD_ICONS: Record<PaymentMethodType, LucideIcon> = {
-  card: CreditCard,
-  gcash: Smartphone,
-  maya: Smartphone,
-  grabpay: Smartphone,
-  wallet: Wallet,
-  cash: Banknote,
-};
 
 // Universal settlement choices. None of these require a pre-saved/tokenised
 // method: wallet deducts the in-app balance, cash is collected on delivery,
@@ -51,12 +46,28 @@ const STANDARD_OPTIONS: StandardOption[] = [
 
 const CASH_OPTION = STANDARD_OPTIONS[STANDARD_OPTIONS.length - 1];
 
+/**
+ * Resolve a sentinel selection id ('__gcash__' etc.) to its settlement
+ * type. Screens that persist only the id (the booking draft) derive the
+ * submitted `payment_method` through this instead of callback-captured
+ * state, so the payload can never disagree with the visible selection —
+ * e.g. on a rehydrated draft before any onSelect has fired. Saved-method
+ * ids resolve to undefined (their type arrives via onSelect once the
+ * methods list loads).
+ */
+export function resolvePaymentMethodType(
+  id: string | undefined,
+): PaymentMethodType | undefined {
+  return STANDARD_OPTIONS.find((o) => o.id === id)?.type;
+}
+
 export function PaymentMethodSelector({
   selectedId,
   onSelect,
   amount = 0,
 }: PaymentMethodSelectorProps) {
   const userId = useAuthStore((s) => s.user?.id ?? 'anon');
+  const router = useRouter();
   const [showSheet, setShowSheet] = useState(false);
   const onSelectRef = useRef(onSelect);
   onSelectRef.current = onSelect;
@@ -133,8 +144,19 @@ export function PaymentMethodSelector({
     if (autoSelectedRef.current) return;
     if (!methodsQ.data) return;
     if (selectedId) {
-      autoSelectedRef.current = true;
-      return;
+      // Rehydrated draft: only the id persisted, so re-emit the resolved
+      // type — otherwise the parent's `payment_method` payload would fall
+      // back to cash while the UI shows this selection. An id that no
+      // longer resolves (saved method deleted since the draft was written)
+      // falls through to the default/fallback pick below.
+      const rehydrated =
+        STANDARD_OPTIONS.find((o) => o.id === selectedId) ??
+        methods.find((m) => m.id === selectedId);
+      if (rehydrated) {
+        autoSelectedRef.current = true;
+        onSelectRef.current(selectedId, rehydrated.type);
+        return;
+      }
     }
     const def = methods.find((m) => m.is_default);
     if (def && !isDisabledType(def.type)) {
@@ -158,6 +180,9 @@ export function PaymentMethodSelector({
 
   // If the wallet is the active pick but can no longer cover the amount,
   // move to a usable method so the user can't submit an unpayable booking.
+  // Announced via toast — silently changing what the user will pay with
+  // is how someone ends up owing cash to a runner they expected to pay
+  // from balance.
   useEffect(() => {
     if (!walletInsufficient || activeType !== 'wallet') return;
     const fallback =
@@ -165,11 +190,12 @@ export function PaymentMethodSelector({
       visibleStandard.find((o) => !isDisabledType(o.type)) ??
       CASH_OPTION;
     onSelectRef.current(fallback.id, fallback.type);
+    toast.info(
+      `Wallet balance can’t cover this booking — switched to ${fallback.label}`,
+    );
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [walletInsufficient, activeType]);
 
-  const isCash = activeType === 'cash';
-  const ActiveIcon = activeType ? METHOD_ICONS[activeType] ?? CreditCard : CreditCard;
   const activeLabel = selectedStandard?.label ?? selectedMethod?.label;
   const activeSub =
     activeType === 'wallet' && walletBalance != null
@@ -184,9 +210,7 @@ export function PaymentMethodSelector({
     sub?: string;
     isDefault?: boolean;
   }) => {
-    const RowIcon = METHOD_ICONS[opt.type] ?? CreditCard;
     const isSelected = selectedId === opt.id;
-    const cash = opt.type === 'cash';
     const disabled = isDisabledType(opt.type);
     // Wallet rows show the live balance; when short, the row is disabled and
     // says so instead of showing the generic description.
@@ -201,32 +225,78 @@ export function PaymentMethodSelector({
       <Pressable
         key={opt.id}
         disabled={disabled}
+        accessibilityRole="button"
+        accessibilityLabel={`${opt.label}${sub ? `. ${sub}` : ''}`}
         accessibilityState={{ disabled, selected: isSelected }}
         className={`flex-row items-center rounded-xl px-2 py-3 ${isSelected ? 'bg-primaryLight' : ''}`}
-        style={disabled ? { opacity: 0.45 } : undefined}
+        // Sheet-list rows take the flat surfaceMuted press wash, not the
+        // card scale treatment.
+        style={({ pressed }) =>
+          pressed && !disabled
+            ? { backgroundColor: LightColors.surfaceMuted }
+            : null
+        }
+        android_ripple={
+          disabled
+            ? undefined
+            : { color: `${LightColors.primary}14`, borderless: false }
+        }
         onPress={() => {
           if (disabled) return;
+          Haptics.selectionAsync().catch(() => {});
           onSelect(opt.id, opt.type);
           setShowSheet(false);
         }}
       >
-        <View
-          className="w-10 h-10 rounded-full items-center justify-center"
-          style={{ backgroundColor: cash ? LightColors.successLight : LightColors.primaryLight }}
-        >
-          <RowIcon size={19} color={cash ? LightColors.success : LightColors.primary} />
-        </View>
-        <View className="flex-1 ml-3">
-          <Text className="text-sm font-montserrat-bold text-textPrimary">{opt.label}</Text>
-          {sub ? (
+        {/* Dim only the icon + label when disabled — the sub line carries
+            the REASON ("Insufficient balance") and the inline recovery
+            action (Top up) must stay tappable, so both keep full opacity.
+            dangerDark, not danger: 12px status text needs the *Dark rung
+            (base red is ~3.8:1 on white, and dimming it would halve that). */}
+        <View className="flex-1 flex-row items-center">
+          <PaymentBrandMark
+            type={opt.type}
+            size={40}
+            style={{ opacity: disabled ? 0.45 : 1 }}
+          />
+          <View className="flex-1 ml-3">
             <Text
-              className="text-xs font-montserrat mt-0.5"
-              style={{ color: disabled ? LightColors.danger : LightColors.textSecondary }}
+              className="text-sm font-montserrat-bold text-textPrimary"
+              style={disabled ? { opacity: 0.45 } : undefined}
             >
-              {sub}
+              {opt.label}
             </Text>
-          ) : null}
+            {sub ? (
+              <Text
+                className="text-xs font-montserrat mt-0.5"
+                style={{ color: disabled ? LightColors.dangerDark : LightColors.textSecondary }}
+              >
+                {sub}
+              </Text>
+            ) : null}
+          </View>
         </View>
+        {disabled && opt.type === 'wallet' && (
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Top up wallet"
+            hitSlop={12}
+            className="py-2 pl-3 pr-1"
+            style={({ pressed }) => (pressed ? { opacity: 0.7 } : null)}
+            onPress={() => {
+              Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(
+                () => {},
+              );
+              setShowSheet(false);
+              // The booking draft persists, so this detour is lossless.
+              router.push('/(customer)/wallet/top-up');
+            }}
+          >
+            <Text className="text-[13px] font-montserrat-bold text-primary">
+              Top up
+            </Text>
+          </Pressable>
+        )}
         {isSelected && !disabled && <Check size={20} color={LightColors.primary} />}
         {opt.isDefault && !isSelected && !disabled && (
           <Text className="text-[10px] font-montserrat text-primary bg-primaryLight px-2 py-0.5 rounded">
@@ -239,23 +309,41 @@ export function PaymentMethodSelector({
 
   return (
     <View className="mb-4">
-      <Text className="text-sm font-montserrat-bold text-textPrimary mb-2">
-        Payment Method
+      <Text
+        className="text-[10px] font-montserrat-bold uppercase text-textSecondary mb-2"
+        style={{ letterSpacing: 1.4 }}
+      >
+        Payment method
       </Text>
       <Pressable
+        accessibilityRole="button"
+        accessibilityLabel={`Payment method: ${activeLabel ?? 'none selected'}. Change`}
         className="flex-row items-center border border-divider rounded-xl px-4 py-3.5 bg-surface"
-        onPress={() => setShowSheet(true)}
+        style={({ pressed }) =>
+          pressed ? { backgroundColor: LightColors.surfaceMuted } : null
+        }
+        android_ripple={{ color: `${LightColors.primary}14`, borderless: false }}
+        onPress={() => {
+          Haptics.selectionAsync().catch(() => {});
+          setShowSheet(true);
+        }}
       >
         {loading ? (
-          <ActivityIndicator size="small" color={LightColors.primary} />
+          // Spinner sits in the same 40pt slot as the method icon so the
+          // trigger doesn't change height when the methods load.
+          <View className="w-10 h-10 items-center justify-center">
+            <Spinner size="small" color={LightColors.primary} />
+          </View>
         ) : (
           <>
-            <View
-              className="w-10 h-10 rounded-full items-center justify-center"
-              style={{ backgroundColor: isCash ? LightColors.successLight : LightColors.primaryLight }}
-            >
-              <ActiveIcon size={20} color={isCash ? LightColors.success : LightColors.primary} />
-            </View>
+            {activeType ? (
+              <PaymentBrandMark type={activeType} size={40} />
+            ) : (
+              <View
+                className="w-10 h-10 rounded-full items-center justify-center"
+                style={{ backgroundColor: LightColors.primaryLight }}
+              />
+            )}
             <View className="flex-1 ml-3">
               <Text className="text-[14px] font-montserrat-bold text-textPrimary">
                 {activeLabel ?? 'Select payment method'}
@@ -276,12 +364,20 @@ export function PaymentMethodSelector({
         onClose={() => setShowSheet(false)}
         snapPoints={[0.6]}
       >
-        <View className="px-5 pb-6">
+        {/* BottomSheet already pads 16px horizontally + 24px bottom — px-1
+            tops the gutter up to the app's 20px, instead of stacking a
+            second full gutter on top (36px squeezed the rows on 360dp). */}
+        <View className="px-1 pb-2">
           <View className="flex-row items-center justify-between mb-2">
             <Text className="text-lg font-montserrat-bold text-textPrimary">
-              Payment Method
+              Payment method
             </Text>
-            <Pressable onPress={() => setShowSheet(false)}>
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel="Close payment method sheet"
+              hitSlop={10}
+              onPress={() => setShowSheet(false)}
+            >
               <X size={24} color={LightColors.textSecondary} />
             </Pressable>
           </View>
@@ -296,6 +392,10 @@ export function PaymentMethodSelector({
               isDefault: item.is_default,
             }),
           )}
+
+          {/* Hairline between the saved-methods group and the universal
+              options so the two lists don't read as one. */}
+          {methods.length > 0 && <View className="h-px bg-divider my-2" />}
 
           {/* Operator-enabled options. Online ones (GCash/Maya/Card) route
               through a secure Xendit checkout page at booking/top-up time. */}

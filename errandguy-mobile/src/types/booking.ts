@@ -14,6 +14,19 @@ export type BookingStatus =
 
 export type PricingMode = 'fixed' | 'negotiate';
 
+/**
+ * A single line on a customer's shopping list (grocery / food / purchase /
+ * bills). This is a purely client-side construct: there is no structured
+ * items column on the bookings API, so the list is serialized into the
+ * free-text `description` at submit (see `src/utils/shoppingChecklist.ts`)
+ * and parsed back on the runner side.
+ */
+export interface ChecklistItem {
+  id: string;
+  name: string;
+  qty: number;
+}
+
 export type ScheduleType = 'now' | 'scheduled';
 
 export interface ErrandType {
@@ -58,6 +71,15 @@ export interface Booking {
   estimated_item_value: number | null;
   /** Pre-authorized maximum the runner may spend on items. */
   shopping_budget: number | null;
+  /** Structured shopping checklist (server source-of-truth for runner ticks).
+   *  Defaults to [] from BookingResource; null/absent for non-shopping errands. */
+  shopping_items?: {
+    id: string;
+    name: string;
+    qty: number;
+    checked?: boolean;
+    checked_at?: string | null;
+  }[] | null;
   /** Actual cost reported by runner from receipt. */
   actual_item_cost: number | null;
   receipt_photo_url: string | null;

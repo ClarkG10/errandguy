@@ -8,7 +8,7 @@ import { LightColors } from '../../constants/colors';
  *  rendered when inactive; the solid (base) glyph when active. */
 export type TabIconName =
   | 'home'
-  | 'receipt'
+  | 'list'
   | 'notifications'
   | 'person'
   | 'wallet'
@@ -20,14 +20,14 @@ interface TabBarItemProps {
   focused: boolean;
   badgeCount?: number;
   showOnlineDot?: boolean;
-  /** Horizontal nudge in pt. Used by the customer tabs to slide
-   *  outermost items toward the screen edges so the centre stays
-   *  visually empty for the floating QuickBookFAB. */
-  offsetX?: number;
 }
 
 const ACTIVE = LightColors.primary;
-const INACTIVE = LightColors.textMuted;
+// textTertiary (#64748B ~5.2:1 on white) clears the 3:1 non-text glyph
+// floor that textMuted (#94A3B8 ~2.57:1) failed — inactive icons must
+// stay legible in outdoor sunlight while still reading subordinate to
+// the brand-blue active glyph.
+const INACTIVE = LightColors.textTertiary;
 
 /**
  * A single tab-bar entry — icon only.
@@ -43,7 +43,6 @@ export function TabBarItem({
   focused,
   badgeCount,
   showOnlineDot,
-  offsetX = 0,
 }: TabBarItemProps) {
   const { mScale } = useResponsive();
   const color = focused ? ACTIVE : INACTIVE;
@@ -51,12 +50,19 @@ export function TabBarItem({
     typeof Ionicons
   >['name'];
 
-  const slot = mScale(56);
-  const iconSize = mScale(26);
+  const slot = mScale(48);
+  const iconSize = mScale(22);
   const badgeSize = mScale(16);
+  // The online dot carries the runner's single most earnings-critical
+  // state, so it scales with the glyph (unlike a fixed disc that shrinks
+  // to a sub-perceptible speck on a tablet) and stays big enough to catch
+  // a moving sunlight glance.
+  const dotSize = mScale(11);
+  // Font + line height scale together so digits never clip on tablets.
+  const badgeFontSize = Math.max(9, badgeSize * 0.56);
 
   return (
-    <View style={[s.wrap, { width: slot, transform: [{ translateX: offsetX }] }]}>
+    <View style={[s.wrap, { width: slot }]}>
       <View style={s.iconBox} pointerEvents="none">
         <Ionicons name={iconName} size={iconSize} color={color} />
         {!!badgeCount && badgeCount > 0 && (
@@ -67,14 +73,27 @@ export function TabBarItem({
             ]}
           >
             <Text
-              style={[s.badgeText, { fontSize: Math.max(9, badgeSize * 0.56) }]}
+              style={[
+                s.badgeText,
+                {
+                  fontSize: badgeFontSize,
+                  lineHeight: Math.round(badgeFontSize * 1.2),
+                },
+              ]}
               allowFontScaling={false}
             >
               {badgeCount > 9 ? '9+' : String(badgeCount)}
             </Text>
           </View>
         )}
-        {showOnlineDot && <View style={s.onlineDot} />}
+        {showOnlineDot && (
+          <View
+            style={[
+              s.onlineDot,
+              { width: dotSize, height: dotSize, borderRadius: dotSize / 2 },
+            ]}
+          />
+        )}
       </View>
     </View>
   );
@@ -109,15 +128,15 @@ const s = StyleSheet.create({
   badgeText: {
     color: LightColors.textInverse,
     fontFamily: 'Quicksand_700Bold',
-    lineHeight: 11,
   },
   onlineDot: {
+    // Size (width/height/borderRadius) is applied inline so it can mScale
+    // with the glyph; the surface-colored ring keeps it legible against
+    // the dark home icon. Screen-reader semantics live on the layout's
+    // tabBarAccessibilityLabel (this view is pointerEvents-none).
     position: 'absolute',
     top: -2,
     right: -2,
-    width: 9,
-    height: 9,
-    borderRadius: 4.5,
     backgroundColor: LightColors.success,
     borderWidth: 1.5,
     borderColor: LightColors.surface,

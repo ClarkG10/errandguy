@@ -9,12 +9,12 @@ import {
   StyleSheet,
   useWindowDimensions,
   Keyboard,
-  KeyboardAvoidingView,
   Platform,
 } from 'react-native';
 import { useRouter } from 'expo-router';
+import * as Haptics from 'expo-haptics';
 import {
-  ArrowLeft,
+  ChevronLeft,
   Search,
   X,
   Navigation,
@@ -22,10 +22,10 @@ import {
   ChevronDown,
   ChevronUp,
   UserPlus,
+  MessageSquarePlus,
   Crosshair,
-  Map as MapIcon,
 } from 'lucide-react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { HereMapView, HereMarker, HerePolyline, type HereMapViewRef, type Region } from '../../../components/map';
 import * as Location from 'expo-location';
 import { ensureLocationPermission, getCurrentCoords } from '../../../utils/locationPermission';
@@ -33,15 +33,19 @@ import { useBookingStore } from '../../../stores/bookingStore';
 import { useImagePicker } from '../../../hooks/useImagePicker';
 import { useDebounce } from '../../../hooks/useDebounce';
 import { Button } from '../../../components/ui/Button';
-import { Input } from '../../../components/ui/Input';
+import { Spinner } from '../../../components/ui/Spinner';
+import { Input, type InputHandle } from '../../../components/ui/Input';
+import { useReducedMotion } from '../../../hooks/useReducedMotion';
 import { PhotoGrid } from '../../../components/customer/PhotoGrid';
 import { ImagePickerModal } from '../../../components/ui/ImagePickerModal';
 import { SavedAddressSheet } from '../../../components/customer/SavedAddressSheet';
+import { ShoppingChecklist } from '../../../components/customer/ShoppingChecklist';
 import { ExpandableSheet } from '../../../components/ui/ExpandableSheet';
 import { BookingStepIndicator } from '../../../components/customer/BookingStepIndicator';
 
 import { getErrandTypeRule } from '../../../constants/errandTypeRules';
 import { LightColors, Elevation } from '../../../constants/colors';
+import { useResponsive } from '../../../constants/responsive';
 import type { SavedAddress } from '../../../types';
 import { toast } from '../../../stores/toastStore';
 import { geocodingService } from '../../../services/geocoding.service';
@@ -53,15 +57,24 @@ const DEFAULT_CENTER: [number, number] = [121.0, 14.6];
 /* ─── Animated Pulse Marker (frozen pins) ─── */
 
 function PulseMarker({ color }: { color: string }) {
+  const reduceMotion = useReducedMotion();
   const pulse = useRef(new Animated.Value(0)).current;
   useEffect(() => {
-    Animated.loop(
+    // Reduce Motion: keep the halo as a static ring so the pin retains
+    // its visual weight without the perpetual pulse.
+    if (reduceMotion) {
+      pulse.setValue(0);
+      return;
+    }
+    const anim = Animated.loop(
       Animated.sequence([
         Animated.timing(pulse, { toValue: 1, duration: 1500, useNativeDriver: true }),
         Animated.timing(pulse, { toValue: 0, duration: 0, useNativeDriver: true }),
       ]),
-    ).start();
-  }, []);
+    );
+    anim.start();
+    return () => anim.stop();
+  }, [reduceMotion, pulse]);
   return (
     <View style={{ alignItems: 'center', justifyContent: 'center', width: 56, height: 56 }}>
       <Animated.View
@@ -71,8 +84,12 @@ function PulseMarker({ color }: { color: string }) {
           height: 48,
           borderRadius: 24,
           backgroundColor: color,
-          opacity: pulse.interpolate({ inputRange: [0, 1], outputRange: [0.35, 0] }),
-          transform: [{ scale: pulse.interpolate({ inputRange: [0, 1], outputRange: [0.6, 1.4] }) }],
+          opacity: reduceMotion
+            ? 0.18
+            : pulse.interpolate({ inputRange: [0, 1], outputRange: [0.35, 0] }),
+          transform: reduceMotion
+            ? undefined
+            : [{ scale: pulse.interpolate({ inputRange: [0, 1], outputRange: [0.6, 1.4] }) }],
         }}
       />
       <View
@@ -171,6 +188,25 @@ export default function TaskDetailsScreen() {
   // Listen to window dimensions so the map pane re-flows on rotation
   // and iPad split-view resizes (was a static module-level read).
   const { height: SCREEN_HEIGHT } = useWindowDimensions();
+  const insets = useSafeAreaInsets();
+  const { mScale, contentMaxWidth } = useResponsive();
+
+  // Sheet snaps in real device terms rather than blind fractions:
+  //  • peek must fit the location card PLUS the sticky footer — a fixed
+  //    0.35 clipped the quick-action chips behind the footer on 640dp
+  //    Androids and the SE;
+  //  • full must stop just below the floating back row, or the sheet
+  //    covers the only back affordance (59pt Dynamic Island insets made
+  //    a fixed 0.93 swallow it entirely).
+  const footerHeight = 58 + Math.max(insets.bottom, 12);
+  const sheetSnapPoints = useMemo(
+    () => ({
+      peek: Math.min(0.5, (184 + footerHeight) / SCREEN_HEIGHT),
+      half: 0.6,
+      full: Math.min(0.93, 1 - (insets.top + 56) / SCREEN_HEIGHT),
+    }),
+    [SCREEN_HEIGHT, footerHeight, insets.top],
+  );
 
   // Per-errand-type UX rules (which fields to show, labels, etc.)
   const rule = useMemo(
@@ -186,11 +222,7 @@ export default function TaskDetailsScreen() {
         : ('pickup' as const);
 
   const [phase, setPhase] = useState<'pickup' | 'dropoff' | 'details'>(initialPhase);
-  // Cost control: the HERE map is opt-in. Until the user explicitly taps
-  // "Select on map" the MapView is NOT mounted at all — zero tile /
-  // raster requests. Address entry defaults to search + saved places +
-  // current location, which only hit the (cached) geocoding endpoints.
-  const [mapOpen, setMapOpen] = useState(false);
+  const mapOpen = true;
   const [currentAddress, setCurrentAddress] = useState('');
   const [isMoving, setIsMoving] = useState(false);
   const [currentCoord, setCurrentCoord] = useState<[number, number] | null>(null);
@@ -206,6 +238,13 @@ export default function TaskDetailsScreen() {
     Array<{ place_name: string; center: [number, number] }>
   >([]);
   const [showSearch, setShowSearch] = useState(false);
+  // Tracks whether the most recent search request has completed — lets
+  // us tell "still searching" apart from "searched, found nothing".
+  const [searchDone, setSearchDone] = useState(false);
+  // True when the search request itself failed (network down, etc.).
+  const [searchFailed, setSearchFailed] = useState(false);
+  // Bumped by the tappable failure row to re-fire the same query.
+  const [searchNonce, setSearchNonce] = useState(0);
   const debouncedSearch = useDebounce(searchQuery, 400);
 
   // Hydrate recent destinations once — instant render on next focus.
@@ -221,13 +260,65 @@ export default function TaskDetailsScreen() {
 
   // Details form
   const [photos, setPhotos] = useState<string[]>(draftBooking.item_photos ?? []);
+  // Mirror for the undo toast — its onAction can fire seconds later, after
+  // the removal-time closure has gone stale.
+  const photosRef = useRef(photos);
+  useEffect(() => {
+    photosRef.current = photos;
+  }, [photos]);
   const [showPickupContact, setShowPickupContact] = useState(
     !!(draftBooking.pickup_contact_name || draftBooking.pickup_contact_phone),
   );
   const [showDropoffContact, setShowDropoffContact] = useState(
     !!(draftBooking.dropoff_contact_name || draftBooking.dropoff_contact_phone),
   );
+  // When the errand type already renders an optional notes-style
+  // description field, a second always-on notes box is redundant —
+  // collapse Special Instructions behind an "+ Add" toggle instead.
+  const collapseSpecialInstructions =
+    !rule.requiresShoppingBudget && rule.showDescription && !rule.descriptionRequired;
+  const [showSpecialInstructions, setShowSpecialInstructions] = useState(
+    !!draftBooking.special_instructions,
+  );
   const [errors, setErrors] = useState<Record<string, string>>({});
+
+  // Currency fields keep the raw typed text locally and parse one-way
+  // into the draft — a parseFloat round-trip would eat the decimal
+  // point mid-entry ("150." → "150") and corrupt the amount.
+  const [budgetText, setBudgetText] = useState(() =>
+    draftBooking.shopping_budget != null ? String(draftBooking.shopping_budget) : '',
+  );
+  const [itemValueText, setItemValueText] = useState(() =>
+    draftBooking.estimated_item_value != null ? String(draftBooking.estimated_item_value) : '',
+  );
+
+  // Digits and at most one decimal point.
+  const sanitizeAmount = (v: string) => {
+    const clean = v.replace(/[^0-9.]/g, '');
+    const parts = clean.split('.');
+    return parts.length > 1 ? `${parts[0]}.${parts.slice(1).join('')}` : clean;
+  };
+
+  // Currency values render in Inter + tabular-nums (the numeric family).
+  // Passing `style` replaces Input's internal TextInput style entirely,
+  // so the layout-critical pieces are restated here.
+  const amountInputStyle = {
+    flex: 1,
+    fontFamily: 'Inter_500Medium',
+    fontSize: mScale(15),
+    color: LightColors.textPrimary,
+    paddingVertical: 0,
+    fontVariant: ['tabular-nums' as const],
+  };
+
+  // Scroll-to-error wayfinding: section offsets captured via onLayout,
+  // plus imperative focus for the focusable fields.
+  const scrollRef = useRef<ScrollView>(null);
+  const sectionY = useRef<Record<string, number>>({});
+  const descriptionRef = useRef<InputHandle>(null);
+  const budgetRef = useRef<InputHandle>(null);
+  const pickupPhoneRef = useRef<InputHandle>(null);
+  const dropoffPhoneRef = useRef<InputHandle>(null);
 
   // Clear hidden-field values when switching to an errand type that
   // doesn't use them, so we don't submit stale data.
@@ -239,9 +330,14 @@ export default function TaskDetailsScreen() {
     }
     if (!rule.showItemValue && draftBooking.estimated_item_value != null) {
       patch.estimated_item_value = undefined;
+      setItemValueText('');
     }
     if (!rule.requiresShoppingBudget && draftBooking.shopping_budget != null) {
       patch.shopping_budget = undefined;
+      setBudgetText('');
+    }
+    if (!rule.requiresShoppingBudget && (draftBooking.shoppingItems?.length ?? 0) > 0) {
+      patch.shoppingItems = undefined;
     }
     if (rule.singleLocation && draftBooking.dropoff_address) {
       patch.dropoff_address = undefined;
@@ -272,6 +368,9 @@ export default function TaskDetailsScreen() {
 
   // Route
   const [routeCoords, setRouteCoords] = useState<[number, number][]>([]);
+  // Route preview failed to load — purely informational (the booking can
+  // proceed without a polyline), surfaced as a dismissible chip.
+  const [routePreviewFailed, setRoutePreviewFailed] = useState(false);
 
   // Refs
   const mapRef = useRef<HereMapViewRef>(null);
@@ -299,6 +398,8 @@ export default function TaskDetailsScreen() {
   useEffect(() => {
     if (debouncedSearch.length < 2) {
       setSearchResults([]);
+      setSearchDone(false);
+      setSearchFailed(false);
       return;
     }
     const proxSource: [number, number] | null =
@@ -311,11 +412,20 @@ export default function TaskDetailsScreen() {
       ? { lng: proxSource[0], lat: proxSource[1] }
       : undefined;
     let cancelled = false;
+    setSearchDone(false);
+    setSearchFailed(false);
     geocodingService
       .search(debouncedSearch, 8, undefined, proximity)
       .then((features) => {
         if (cancelled) return;
         setSearchResults(features);
+        setSearchDone(true);
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setSearchResults([]);
+        setSearchDone(true);
+        setSearchFailed(true);
       });
     return () => {
       cancelled = true;
@@ -325,7 +435,7 @@ export default function TaskDetailsScreen() {
     // want to spam Mapbox on every pin nudge, so we still only fire when
     // the *query* changes.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [debouncedSearch]);
+  }, [debouncedSearch, searchNonce]);
 
   const handleSearchSelect = useCallback(
     (item: { place_name: string; center: [number, number] }) => {
@@ -396,7 +506,10 @@ export default function TaskDetailsScreen() {
     if (phase === 'pickup') {
       updateDraft({ pickup_address: currentAddress, pickup_lat: lat, pickup_lng: lng });
       // Single-location errands have no separate dropoff — skip to details.
-      if (rule.singleLocation) {
+      // Likewise when the dropoff is already confirmed (user came back via
+      // "Change" on the pickup): jump straight back to the form instead of
+      // making them re-confirm the untouched dropoff.
+      if (rule.singleLocation || draftBooking.dropoff_lat != null) {
         setPhase('details');
       } else {
         setPhase('dropoff');
@@ -407,23 +520,14 @@ export default function TaskDetailsScreen() {
       updateDraft({ dropoff_address: currentAddress, dropoff_lat: lat, dropoff_lng: lng });
       setPhase('details');
     }
-    // Location picked — unmount the map again so we stop consuming tiles.
-    setMapOpen(false);
-  }, [phase, currentCoord, currentAddress, updateDraft, rule.singleLocation]);
+  }, [phase, currentCoord, currentAddress, updateDraft, rule.singleLocation, draftBooking.dropoff_lat]);
 
   /* ── Back ── */
   const handleBack = useCallback(() => {
     if (phase === 'pickup') {
-      // Leaving the booking-details flow entirely — reset all locations
-      // so a stale pickup pin doesn't follow the user back here later.
-      updateDraft({
-        pickup_address: undefined,
-        pickup_lat: undefined,
-        pickup_lng: undefined,
-        dropoff_address: undefined,
-        dropoff_lat: undefined,
-        dropoff_lng: undefined,
-      });
+      // Leaving the booking-details flow — keep the confirmed locations in
+      // the draft. The persisted draft + initialPhase fast-forward restore
+      // them on re-entry, and the 24h draft expiry covers staleness.
       router.canGoBack() ? router.back() : router.replace('/(customer)/(tabs)');
     } else if (phase === 'dropoff') {
       // Going back to pick-the-pickup. Keep the existing pickup so the
@@ -479,14 +583,13 @@ export default function TaskDetailsScreen() {
   const handleChangeLocation = useCallback(
     (target: 'pickup' | 'dropoff') => {
       if (target === 'pickup') {
-        // Go back to pickup mode, clear pickup draft
+        // Go back to pickup mode, clear ONLY the pickup draft — the
+        // confirmed dropoff stays untouched, so confirming the new pickup
+        // jumps straight back to the details form.
         updateDraft({
           pickup_address: undefined,
           pickup_lat: undefined,
           pickup_lng: undefined,
-          dropoff_address: undefined,
-          dropoff_lat: undefined,
-          dropoff_lng: undefined,
         });
         setRouteCoords([]);
         setCurrentAddress('');
@@ -565,7 +668,6 @@ export default function TaskDetailsScreen() {
      consumer, so skipping the fetch while the map is closed saves a
      routing call per booking. */
   useEffect(() => {
-    if (!mapOpen) return;
     if (phase !== 'details') return;
     if (!draftBooking.pickup_lat || !draftBooking.dropoff_lat) return;
     let cancelled = false;
@@ -575,8 +677,18 @@ export default function TaskDetailsScreen() {
         { lng: Number(draftBooking.dropoff_lng), lat: Number(draftBooking.dropoff_lat) },
       )
       .then((res) => {
-        if (cancelled || !res) return;
+        if (cancelled) return;
+        if (!res) {
+          // Preview couldn't be built — tell the user quietly instead of
+          // silently showing a route-less map. Booking proceeds regardless.
+          setRoutePreviewFailed(true);
+          return;
+        }
+        setRoutePreviewFailed(false);
         setRouteCoords(res.coordinates);
+      })
+      .catch(() => {
+        if (!cancelled) setRoutePreviewFailed(true);
       });
     return () => {
       cancelled = true;
@@ -602,11 +714,23 @@ export default function TaskDetailsScreen() {
     const t = setTimeout(() => {
       mapRef.current?.fitToCoordinates(
         [{ latitude: sw[1], longitude: sw[0] }, { latitude: ne[1], longitude: ne[0] }],
-        { edgePadding: { top: 60, bottom: 40, left: 60, right: 60 }, animated: true },
+        {
+          // The map view is full-screen but the sheet rests at `half`
+          // during the details phase — pad the bottom by the covered
+          // band and the top by the floating back row, or the route
+          // gets framed dead-center and mostly hidden under the sheet.
+          edgePadding: {
+            top: insets.top + 72,
+            bottom: SCREEN_HEIGHT * 0.6 + 24,
+            left: 60,
+            right: 60,
+          },
+          animated: true,
+        },
       );
     }, 300);
     return () => clearTimeout(t);
-  }, [phase, draftBooking.pickup_lat, draftBooking.pickup_lng, draftBooking.dropoff_lat, draftBooking.dropoff_lng]);
+  }, [phase, insets.top, SCREEN_HEIGHT, draftBooking.pickup_lat, draftBooking.pickup_lng, draftBooking.dropoff_lat, draftBooking.dropoff_lng]);
 
   /* ── Auto-center on user location at mount (pickup phase only,
      and only when there's no saved pickup yet). The previous version
@@ -631,9 +755,22 @@ export default function TaskDetailsScreen() {
 
   const handleRemovePhoto = useCallback(
     (index: number) => {
+      const removed = photos[index];
+      if (removed == null) return;
       const updated = photos.filter((_, i) => i !== index);
       setPhotos(updated);
       updateDraft({ item_photos: updated });
+      // Undo beats a confirm dialog for a cheap, reversible action —
+      // re-staging a camera shot is the expensive path.
+      toast.info('Photo removed', {
+        actionLabel: 'Undo',
+        onAction: () => {
+          const next = [...photosRef.current];
+          next.splice(Math.min(index, next.length), 0, removed);
+          setPhotos(next);
+          updateDraft({ item_photos: next });
+        },
+      });
     },
     [photos, updateDraft],
   );
@@ -645,17 +782,38 @@ export default function TaskDetailsScreen() {
     if (!rule.singleLocation && !draftBooking.dropoff_address) {
       newErrors.dropoff = 'Dropoff location is required';
     }
-    if (rule.descriptionRequired && !draftBooking.description?.trim()) {
-      newErrors.description = `${rule.descriptionLabel} is required`;
-    }
     if (rule.requiresShoppingBudget) {
+      // Shopping types use the checklist in place of the free-text
+      // description, so validate the list instead.
+      if (!draftBooking.shoppingItems?.some((it) => it.name.trim())) {
+        newErrors.shoppingItems = 'Add at least one item to your list';
+      }
       const budget = draftBooking.shopping_budget;
       if (budget == null || budget <= 0) {
         newErrors.shopping_budget = 'Shopping budget is required';
       }
+    } else if (rule.descriptionRequired && !draftBooking.description?.trim()) {
+      newErrors.description = `${rule.descriptionLabel} is required`;
     }
     setErrors(newErrors);
-    if (Object.keys(newErrors).length > 0) return;
+    if (Object.keys(newErrors).length > 0) {
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error).catch(() => {});
+      // Bring the first offending section into view — on a form this long
+      // it's usually scrolled off-screen when Continue is tapped.
+      // (pickup/dropoff errors render in the always-visible footer.)
+      const firstKey = (['shoppingItems', 'description', 'shopping_budget'] as const).find(
+        (k) => newErrors[k],
+      );
+      if (firstKey) {
+        const y = sectionY.current[firstKey];
+        if (y != null) {
+          scrollRef.current?.scrollTo({ y: Math.max(0, y - 12), animated: true });
+        }
+        if (firstKey === 'description') descriptionRef.current?.focus();
+        if (firstKey === 'shopping_budget') budgetRef.current?.focus();
+      }
+      return;
+    }
     setStep(2);
     router.push('/(customer)/book/schedule');
   }, [draftBooking, rule, setStep, router]);
@@ -676,14 +834,21 @@ export default function TaskDetailsScreen() {
     let cancelled = false;
     (async () => {
       try {
-        // Silent check only — auto-fill must never pop a dialog on screen
-        // load. If not already granted we simply skip; the "My location"
-        // button (which calls ensureLocationPermission) handles prompting.
-        const { status } = await Location.getForegroundPermissionsAsync();
-        if (status !== 'granted' || cancelled) return;
-        const loc = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
-        if (cancelled) return;
-        const coord: [number, number] = [loc.coords.longitude, loc.coords.latitude];
+        // Auto-detect the pickup at START for convenience, but without ever
+        // popping a dialog on screen load: getCurrentCoords with
+        // requirePermission:false returns a fix ONLY if location is already
+        // granted (typically from the onboarding primer), and it races a
+        // last-known seed against an 8s timeout so it never hangs on weak
+        // GPS / a simulator — the old raw getCurrentPositionAsync had no
+        // timeout, which is why current location often appeared "stuck".
+        // If permission isn't granted we keep the default center; the
+        // "Current" button prompts on demand.
+        const pos = await getCurrentCoords({
+          requirePermission: true,
+          accuracy: Location.Accuracy.Balanced,
+        });
+        if (cancelled || !pos) return;
+        const coord: [number, number] = [pos.lng, pos.lat];
         setUserLocation(coord);
         setCurrentCoord(coord);
         skipNextGeocode.current = true;
@@ -700,11 +865,7 @@ export default function TaskDetailsScreen() {
   /* ── Render ── */
   return (
     <View style={{ flex: 1, backgroundColor: LightColors.background }}>
-      {/* ═══ MAP ═══
-          Opt-in: the map is NOT auto-shown. By default the user picks a
-          location via search / current / saved (all of which set the
-          address directly). Tapping "Select on map" mounts the map for
-          pin-drag fine-tuning — so no HERE tiles load unless requested. */}
+      {/* ═══ MAP (always mounted) ═══ */}
       <View style={{ flex: 1 }}>
         {mapOpen && (
         <HereMapView
@@ -727,7 +888,9 @@ export default function TaskDetailsScreen() {
           {phase !== 'pickup' && draftBooking.pickup_lng != null && draftBooking.pickup_lat != null && (
             <HereMarker
               coordinate={{ latitude: draftBooking.pickup_lat, longitude: draftBooking.pickup_lng }}
-              anchor={{ x: 0.5, y: 1 }}
+              // Centered halo dot, not a bottom-tipped pin — anchor at the
+              // middle or the dot floats ~28pt north of the real spot.
+              anchor={{ x: 0.5, y: 0.5 }}
               id="pickup-marker"
             >
               <PulseMarker color={LightColors.primary} />
@@ -738,7 +901,7 @@ export default function TaskDetailsScreen() {
           {phase === 'details' && draftBooking.dropoff_lng != null && draftBooking.dropoff_lat != null && (
             <HereMarker
               coordinate={{ latitude: draftBooking.dropoff_lat, longitude: draftBooking.dropoff_lng }}
-              anchor={{ x: 0.5, y: 1 }}
+              anchor={{ x: 0.5, y: 0.5 }}
               id="dropoff-marker"
             >
               <PulseMarker color={LightColors.danger} />
@@ -764,17 +927,21 @@ export default function TaskDetailsScreen() {
           </View>
         )}
 
-        {/* Close-map button — collapse back to address entry (keeps selection). */}
-        {mapOpen && (
-          <Pressable
-            onPress={() => setMapOpen(false)}
-            accessibilityRole="button"
-            accessibilityLabel="Close map"
-            hitSlop={8}
-            style={st.closeMapBtn}
-          >
-            <X size={18} color={LightColors.textPrimary} strokeWidth={2.4} />
-          </Pressable>
+        {/* Route-preview failure chip — dismissible, non-blocking. */}
+        {mapOpen && phase === 'details' && routePreviewFailed && (
+          <View style={[st.routeErrorWrap, { top: insets.top + 64 }]} pointerEvents="box-none">
+            <View style={st.routeErrorChip}>
+              <Text style={st.routeErrorText}>Couldn't preview route</Text>
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel="Dismiss route preview notice"
+                hitSlop={12}
+                onPress={() => setRoutePreviewFailed(false)}
+              >
+                <X size={14} color={LightColors.textInverse} />
+              </Pressable>
+            </View>
+          </View>
         )}
 
         {/* ── Floating header ── */}
@@ -785,21 +952,36 @@ export default function TaskDetailsScreen() {
               accessibilityRole="button"
               accessibilityLabel="Go back"
               hitSlop={8}
-              style={st.backBtn}
+              style={({ pressed }) => [st.backBtn, pressed && { opacity: 0.7 }]}
             >
-              <ArrowLeft size={20} color={LightColors.textPrimary} />
+              <ChevronLeft size={20} color={LightColors.textPrimary} strokeWidth={2.2} />
             </Pressable>
-            <Text style={st.phaseTitle}>
-              {phase === 'pickup' ? 'Set pickup' : phase === 'dropoff' ? 'Set dropoff' : 'Add details'}
-            </Text>
+            {/* Surface pill — bare text over satellite/dark tiles was
+                unreadable; the pill matches the back button's chrome. */}
+            <View style={st.phaseTitlePill}>
+              <Text style={st.phaseTitle}>
+                {phase === 'pickup' ? 'Set pickup' : phase === 'dropoff' ? 'Set dropoff' : 'Add details'}
+              </Text>
+            </View>
           </View>
 
           {/* Step indicator pinned under the back row — sits in a soft
               translucent card so it stays legible whether the map below
-              is in dark park, light city, or satellite mode. */}
-          <View style={st.stepIndicatorBackdrop}>
-            <BookingStepIndicator currentStep={phase === 'pickup' ? 0 : 1} />
-          </View>
+              is in dark park, light city, or satellite mode. During the
+              details phase it lives INSIDE the sheet instead — the
+              full-height sheet would cover this floating copy. */}
+          {phase !== 'details' && (
+            // +32 = the card's own 16px side margins, so its outer edges
+            // land exactly on the clamped content column on tablets.
+            <View style={{ width: '100%', maxWidth: contentMaxWidth + 32, alignSelf: 'center' }}>
+              <View style={st.stepIndicatorBackdrop}>
+                {/* Pickup/dropoff/details are all sub-phases of step 2 — the
+                    indicator must never regress below where the user came from. */}
+                <Text style={st.stepEyebrow}>New errand · Step 2</Text>
+                <BookingStepIndicator currentStep={1} />
+              </View>
+            </View>
+          )}
 
           {/* Floating search bar */}
           {phase !== 'details' && (
@@ -824,6 +1006,9 @@ export default function TaskDetailsScreen() {
                 />
                 {searchQuery.length > 0 && (
                   <Pressable
+                    accessibilityRole="button"
+                    accessibilityLabel="Clear search"
+                    hitSlop={14}
                     onPress={() => {
                       setSearchQuery('');
                       setSearchResults([]);
@@ -835,27 +1020,87 @@ export default function TaskDetailsScreen() {
                 )}
               </View>
 
-              {/* Search results dropdown */}
-              {showSearch && searchResults.length > 0 && (
+              {/* In-flight row — replaces stale results so a slow network
+                  reads as "working", not "broken". */}
+              {showSearch && !searchDone && searchQuery.trim().length >= 2 && (
                 <View style={st.searchResults}>
-                  {searchResults.map((item, idx) => (
-                    <Pressable
-                      key={idx}
-                      style={st.searchResultItem}
-                      onPress={() => handleSearchSelect(item)}
-                    >
-                      <View style={[st.searchResultDot, { backgroundColor: pinColor + '18' }]}>
-                        <View
-                          style={{ width: 6, height: 6, borderRadius: 3, backgroundColor: pinColor }}
-                        />
-                      </View>
-                      <Text style={st.searchResultText} numberOfLines={2}>
-                        {item.place_name}
-                      </Text>
-                    </Pressable>
-                  ))}
+                  <View style={[st.searchResultItem, st.searchResultItemLast]}>
+                    <Spinner size="small" color={LightColors.primary} />
+                    <Text style={[st.searchEmptyText, { marginLeft: 10 }]}>Searching…</Text>
+                  </View>
                 </View>
               )}
+
+              {/* Search results dropdown — height-capped and scrollable:
+                  8 rows would otherwise run under the keyboard on an SE
+                  with no way to reach the bottom half. */}
+              {showSearch && searchDone && searchResults.length > 0 && (
+                <View style={st.searchResults}>
+                  <ScrollView
+                    style={{ maxHeight: SCREEN_HEIGHT * 0.28 }}
+                    keyboardShouldPersistTaps="handled"
+                    nestedScrollEnabled
+                  >
+                    {searchResults.map((item, idx) => (
+                      <Pressable
+                        key={idx}
+                        accessibilityRole="button"
+                        accessibilityLabel={item.place_name}
+                        style={({ pressed }) => [
+                          st.searchResultItem,
+                          idx === searchResults.length - 1 && st.searchResultItemLast,
+                          pressed && { backgroundColor: LightColors.surfaceMuted },
+                        ]}
+                        onPress={() => handleSearchSelect(item)}
+                      >
+                        <View style={[st.searchResultDot, { backgroundColor: pinColor + '18' }]}>
+                          <View
+                            style={{ width: 6, height: 6, borderRadius: 3, backgroundColor: pinColor }}
+                          />
+                        </View>
+                        <Text style={st.searchResultText} numberOfLines={2}>
+                          {item.place_name}
+                        </Text>
+                      </Pressable>
+                    ))}
+                  </ScrollView>
+                </View>
+              )}
+
+              {/* Completed search, zero hits — previously the dropdown
+                  just disappeared silently, reading as a broken search. */}
+              {showSearch &&
+                searchDone &&
+                searchResults.length === 0 &&
+                searchQuery.trim().length >= 2 && (
+                  <View style={st.searchResults}>
+                    {searchFailed ? (
+                      <Pressable
+                        style={({ pressed }) => [
+                          st.searchResultItem,
+                          st.searchResultItemLast,
+                          pressed && { backgroundColor: LightColors.surfaceMuted },
+                        ]}
+                        accessibilityRole="button"
+                        accessibilityLabel="Search unavailable. Retry search"
+                        onPress={() => {
+                          setSearchDone(false);
+                          setSearchNonce((n) => n + 1);
+                        }}
+                      >
+                        <Text style={st.searchEmptyText}>
+                          Search unavailable — tap to retry
+                        </Text>
+                      </Pressable>
+                    ) : (
+                      <View style={[st.searchResultItem, st.searchResultItemLast]}>
+                        <Text style={st.searchEmptyText}>
+                          {`No places found for “${searchQuery.trim()}”`}
+                        </Text>
+                      </View>
+                    )}
+                  </View>
+                )}
 
               {/* Empty-state recents — only when the user has focused
                   the search but hasn't typed yet. Helps repeat bookings
@@ -865,54 +1110,59 @@ export default function TaskDetailsScreen() {
                 recentPlaces.length > 0 && (
                   <View style={st.searchResults}>
                     <Text style={st.recentHeading}>Recent</Text>
-                    {recentPlaces.map((item, idx) => (
-                      <Pressable
-                        key={`recent-${idx}`}
-                        style={st.searchResultItem}
-                        onPress={() => handleSearchSelect(item)}
-                      >
-                        <View style={[st.searchResultDot, { backgroundColor: `${LightColors.textMuted}33` }]}>
-                          <View
-                            style={{
-                              width: 6,
-                              height: 6,
-                              borderRadius: 3,
-                              backgroundColor: LightColors.textTertiary,
-                            }}
-                          />
-                        </View>
-                        <Text style={st.searchResultText} numberOfLines={2}>
-                          {item.place_name}
-                        </Text>
-                      </Pressable>
-                    ))}
+                    <ScrollView
+                      style={{ maxHeight: SCREEN_HEIGHT * 0.28 }}
+                      keyboardShouldPersistTaps="handled"
+                      nestedScrollEnabled
+                    >
+                      {recentPlaces.map((item, idx) => (
+                        <Pressable
+                          key={`recent-${idx}`}
+                          accessibilityRole="button"
+                          accessibilityLabel={item.place_name}
+                          style={({ pressed }) => [
+                            st.searchResultItem,
+                            idx === recentPlaces.length - 1 && st.searchResultItemLast,
+                            pressed && { backgroundColor: LightColors.surfaceMuted },
+                          ]}
+                          onPress={() => handleSearchSelect(item)}
+                        >
+                          <View style={[st.searchResultDot, { backgroundColor: `${LightColors.textMuted}33` }]}>
+                            <View
+                              style={{
+                                width: 6,
+                                height: 6,
+                                borderRadius: 3,
+                                backgroundColor: LightColors.textTertiary,
+                              }}
+                            />
+                          </View>
+                          <Text style={st.searchResultText} numberOfLines={2}>
+                            {item.place_name}
+                          </Text>
+                        </Pressable>
+                      ))}
+                    </ScrollView>
                   </View>
                 )}
             </View>
           )}
         </SafeAreaView>
 
-        {/* No-map hint — fills the space when the map is closed so the
-            screen reads as a clean address-entry view, not an empty map
-            placeholder waiting for a tap. */}
-        {!mapOpen && phase !== 'details' && (
-          <View pointerEvents="none" style={st.noMapHint}>
-            <View style={st.noMapHintIcon}>
-              <MapIcon size={30} color={LightColors.primaryMuted} strokeWidth={1.6} />
-            </View>
-            <Text style={st.noMapHintTitle}>
-              Find your {phase === 'pickup' ? rule.pickupLabel.toLowerCase() : rule.dropoffLabel.toLowerCase()}
-            </Text>
-            <Text style={st.noMapHintText}>
-              Search above, use your current location, or pick a saved place — tap “Map” to drop a pin.
-            </Text>
-          </View>
-        )}
-
-        {/* My location button — only over the map (redundant with the
-            sheet's "Current" action when the map is closed). */}
-        {mapOpen && phase !== 'details' && (
-          <Pressable style={st.myLocationBtn} onPress={handleMyLocation}>
+        {/* My location button — floats over the map during pickup/dropoff phases. */}
+        {phase !== 'details' && (
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Center map on my location"
+            // The map pane spans the whole screen behind the sheet — a
+            // fixed bottom:16 buried this under the sheet + footer.
+            style={({ pressed }) => [
+              st.myLocationBtn,
+              { bottom: SCREEN_HEIGHT * sheetSnapPoints.peek + 12 },
+              pressed && { opacity: 0.7 },
+            ]}
+            onPress={handleMyLocation}
+          >
             <Crosshair size={20} color={LightColors.primary} />
           </Pressable>
         )}
@@ -920,29 +1170,41 @@ export default function TaskDetailsScreen() {
 
       {/* ═══ BOTTOM PANEL (expandable sheet) ═══ */}
       <ExpandableSheet
-        initial={phase === 'details' ? 'half' : 'peek'}
-        snapPoints={{ peek: 0.35, half: 0.60, full: 0.93 }}
+        initial={phase !== 'details' ? 'peek' : 'half'}
+        snapPoints={sheetSnapPoints}
         footer={
-          phase !== 'details' ? (
-            <Button
-              title={phase === 'pickup' ? `Confirm ${rule.pickupLabel}` : `Confirm ${rule.dropoffLabel}`}
-              onPress={handleConfirmLocation}
-              disabled={!currentAddress || isMoving}
-              fullWidth
-            />
-          ) : (
-            <View>
-              {(errors.pickup || errors.dropoff) && (
-                <Text style={st.errorText}>{errors.pickup || errors.dropoff}</Text>
-              )}
-              <Button title="Continue" onPress={handleContinue} fullWidth />
-            </View>
-          )
+          // Clamp on tablets so the CTA doesn't stretch edge-to-edge on iPad.
+          <View style={{ width: '100%', maxWidth: contentMaxWidth, alignSelf: 'center' }}>
+            {phase !== 'details' ? (
+              <Button
+                title={phase === 'pickup' ? `Confirm ${rule.pickupLabel}` : `Confirm ${rule.dropoffLabel}`}
+                onPress={handleConfirmLocation}
+                disabled={!currentAddress || isMoving}
+                fullWidth
+              />
+            ) : (
+              <View>
+                {(errors.pickup || errors.dropoff) && (
+                  <Text style={st.errorText}>{errors.pickup || errors.dropoff}</Text>
+                )}
+                <Button title="Continue" onPress={handleContinue} fullWidth />
+              </View>
+            )}
+          </View>
         }
       >
       {phase !== 'details' ? (
         /* ── Pickup / Dropoff card ── */
-        <View style={{ paddingHorizontal: 20, paddingTop: 12, paddingBottom: 32 }}>
+        <View
+          style={{
+            paddingHorizontal: 20,
+            paddingTop: 12,
+            paddingBottom: 32,
+            width: '100%',
+            maxWidth: contentMaxWidth,
+            alignSelf: 'center',
+          }}
+        >
           <Text style={st.cardTitle}>
             {phase === 'pickup' ? `Set ${rule.pickupLabel.toLowerCase()}` : `Set ${rule.dropoffLabel.toLowerCase()}`}
           </Text>
@@ -955,44 +1217,87 @@ export default function TaskDetailsScreen() {
               {isMoving
                 ? 'Moving...'
                 : currentAddress ||
-                  (mapOpen ? 'Move the map to select' : 'Search, use current, or select on map')}
+                  'Move the map to select'}
             </Text>
           </View>
 
           {/* Quick actions */}
           <View style={st.quickActions}>
-            <Pressable style={st.quickBtn} onPress={handleMyLocation} accessibilityRole="button" accessibilityLabel="Use current location">
+            <Pressable
+              // Layout via className — NativeWind was dropping flexDirection/
+              // background from the old `style={() => [st.quickBtn]}` function
+              // (no className present), which stacked the icon above the label
+              // and hid the pill fill. className applies reliably.
+              className="flex-1 flex-row items-center justify-center bg-primaryLight rounded-xl px-2.5 py-2.5"
+              style={({ pressed }) => (pressed ? st.quickBtnPressed : null)}
+              hitSlop={8}
+              onPress={() => {
+                Haptics.selectionAsync().catch(() => {});
+                handleMyLocation();
+              }}
+              accessibilityRole="button"
+              accessibilityLabel="Use current location"
+            >
               <Navigation size={14} color={LightColors.primary} />
-              <Text style={st.quickBtnText}>Current</Text>
+              <Text style={st.quickBtnText} numberOfLines={1}>Current</Text>
             </Pressable>
             {/* Saved addresses are useful for pickup too — a runner picking up
                 from your home or office is the most common pattern. Previously
                 this was hidden during pickup, forcing users to type or pan. */}
-            <Pressable style={st.quickBtn} onPress={() => setShowSavedSheet(true)} accessibilityRole="button" accessibilityLabel="Choose from saved addresses">
+            <Pressable
+              // Layout via className — NativeWind was dropping flexDirection/
+              // background from the old `style={() => [st.quickBtn]}` function
+              // (no className present), which stacked the icon above the label
+              // and hid the pill fill. className applies reliably.
+              className="flex-1 flex-row items-center justify-center bg-primaryLight rounded-xl px-2.5 py-2.5"
+              style={({ pressed }) => (pressed ? st.quickBtnPressed : null)}
+              hitSlop={8}
+              onPress={() => {
+                Haptics.selectionAsync().catch(() => {});
+                setShowSavedSheet(true);
+              }}
+              accessibilityRole="button"
+              accessibilityLabel="Choose from saved addresses"
+            >
               <Bookmark size={14} color={LightColors.primary} />
-              <Text style={st.quickBtnText}>Saved</Text>
+              <Text style={st.quickBtnText} numberOfLines={1}>Saved</Text>
             </Pressable>
-            {/* Opt-in map — mounts the map only when the user wants pin-drag. */}
-            {!mapOpen && (
-              <Pressable style={st.quickBtn} onPress={() => setMapOpen(true)} accessibilityRole="button" accessibilityLabel="Select location on map">
-                <MapIcon size={14} color={LightColors.primary} />
-                <Text style={st.quickBtnText}>Map</Text>
-              </Pressable>
-            )}
           </View>
 
           {/* Confirm CTA lives in the sheet `footer` so it stays visible. */}
         </View>
       ) : (
-        /* ── Details sheet ── */
-        <KeyboardAvoidingView
-          style={{ flex: 1, paddingHorizontal: 20, paddingTop: 12 }}
-          behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-          keyboardVerticalOffset={Platform.OS === 'ios' ? 140 : 0}
+        /* ── Details sheet ──
+            No KeyboardAvoidingView here on purpose: the ScrollView's
+            `automaticallyAdjustKeyboardInsets` handles iOS, and Android
+            resizes the window (`softwareKeyboardLayoutMode: resize`).
+            A KAV inside this translated sheet measured its frame in the
+            wrong coordinate space and double-compensated on both. */
+        <View
+          style={{
+            flex: 1,
+            paddingHorizontal: 20,
+            paddingTop: 12,
+            width: '100%',
+            maxWidth: contentMaxWidth,
+            alignSelf: 'center',
+          }}
         >
+          {/* In-sheet step indicator — the floating copy over the map is
+              hidden this phase because the full-height sheet covers it. */}
+          <View style={st.sheetStepHeader}>
+            <Text style={st.stepEyebrow}>New errand · Step 2</Text>
+            <BookingStepIndicator currentStep={1} />
+          </View>
+
           {/* Route summary strip — tappable to change */}
           <View style={st.routeSummary}>
-            <Pressable style={st.routePoint} onPress={() => handleChangeLocation('pickup')}>
+            <Pressable
+              style={st.routePoint}
+              onPress={() => handleChangeLocation('pickup')}
+              accessibilityRole="button"
+              accessibilityLabel={`Change ${rule.pickupLabel}: ${draftBooking.pickup_address ?? ''}`}
+            >
               <View style={[st.routeDot, { backgroundColor: LightColors.primary }]} />
               <Text style={st.routeAddr} numberOfLines={1}>
                 {draftBooking.pickup_address}
@@ -1008,7 +1313,12 @@ export default function TaskDetailsScreen() {
                     <View key={i} style={st.routeConnectorDash} />
                   ))}
                 </View>
-                <Pressable style={st.routePoint} onPress={() => handleChangeLocation('dropoff')}>
+                <Pressable
+                  style={st.routePoint}
+                  onPress={() => handleChangeLocation('dropoff')}
+                  accessibilityRole="button"
+                  accessibilityLabel={`Change ${rule.dropoffLabel}: ${draftBooking.dropoff_address ?? ''}`}
+                >
                   <View style={[st.routeDot, { backgroundColor: LightColors.danger }]} />
                   <Text style={st.routeAddr} numberOfLines={1}>
                     {draftBooking.dropoff_address}
@@ -1020,13 +1330,23 @@ export default function TaskDetailsScreen() {
           </View>
 
           <ScrollView
+            ref={scrollRef}
             showsVerticalScrollIndicator={false}
             style={{ flex: 1 }}
-            contentContainerStyle={{ paddingBottom: 100 }}
+            // The sheet reserves the footer's height below this ScrollView;
+            // this is extra scroll runway on top of that. Bumped 32 → 72 so
+            // the last rows — the "Add pickup/drop-off contact" toggles that
+            // sit at the very bottom of the form — always scroll fully clear
+            // of the sticky Continue footer instead of hiding beneath it.
+            contentContainerStyle={{ paddingBottom: 72 }}
             keyboardShouldPersistTaps="handled"
-            // iOS-only: lets the ScrollView add its own inset when the
-            // keyboard appears so a focused TextInput auto-scrolls into
-            // view even if the surrounding KAV offset undershoots.
+            // Scrolling toward the sticky Continue also dismisses the
+            // keyboard — the only other dismissal path is tapping a blank
+            // spot, which barely exists on this form.
+            keyboardDismissMode={Platform.OS === 'ios' ? 'interactive' : 'on-drag'}
+            // iOS: the ScrollView insets itself under the keyboard and
+            // auto-scrolls the focused TextInput into view. Android is
+            // covered by the window resize.
             automaticallyAdjustKeyboardInsets={Platform.OS === 'ios'}
           >
             {rule.helperNote && (
@@ -1034,32 +1354,114 @@ export default function TaskDetailsScreen() {
                 <Text style={st.helperNoteText}>{rule.helperNote}</Text>
               </View>
             )}
-            {rule.showDescription && (
-              <Input
-                label={`${rule.descriptionLabel}${rule.descriptionRequired ? ' *' : ''}`}
-                value={draftBooking.description ?? ''}
-                onChangeText={(v) => {
-                  updateDraft({ description: v });
-                  if (errors.description && v.trim()) {
-                    setErrors((e) => ({ ...e, description: '' }));
-                  }
+            {/* Shopping types (grocery / food / purchase / bills) build a
+                structured checklist instead of a free-text description —
+                it's serialized into `description` at submit. */}
+            {rule.requiresShoppingBudget ? (
+              <View
+                onLayout={(e) => {
+                  sectionY.current.shoppingItems = e.nativeEvent.layout.y;
                 }}
-                placeholder={rule.descriptionPlaceholder}
-                multiline
-                numberOfLines={3}
-                maxLength={500}
-                error={errors.description}
-              />
+              >
+                <ShoppingChecklist
+                  title={rule.descriptionLabel}
+                  value={draftBooking.shoppingItems ?? []}
+                  onChange={(items) => {
+                    updateDraft({ shoppingItems: items });
+                    if (errors.shoppingItems && items.some((it) => it.name.trim())) {
+                      setErrors((e) => ({ ...e, shoppingItems: '' }));
+                    }
+                  }}
+                  onRemoveItem={(item, index) => {
+                    // Blank rows aren't worth an undo — only typed names.
+                    if (!item.name.trim()) return;
+                    toast.info('Item removed', {
+                      actionLabel: 'Undo',
+                      onAction: () => {
+                        const items =
+                          useBookingStore.getState().draftBooking.shoppingItems ?? [];
+                        const next = [...items];
+                        next.splice(Math.min(index, next.length), 0, item);
+                        updateDraft({ shoppingItems: next });
+                        setErrors((e) =>
+                          e.shoppingItems ? { ...e, shoppingItems: '' } : e,
+                        );
+                      },
+                    });
+                  }}
+                  error={errors.shoppingItems}
+                />
+              </View>
+            ) : (
+              rule.showDescription && (
+                <View
+                  onLayout={(e) => {
+                    sectionY.current.description = e.nativeEvent.layout.y;
+                  }}
+                >
+                  <Input
+                    ref={descriptionRef}
+                    label={`${rule.descriptionLabel}${rule.descriptionRequired ? ' *' : ''}`}
+                    value={draftBooking.description ?? ''}
+                    onChangeText={(v) => {
+                      updateDraft({ description: v });
+                      if (errors.description && v.trim()) {
+                        setErrors((e) => ({ ...e, description: '' }));
+                      }
+                    }}
+                    placeholder={rule.descriptionPlaceholder}
+                    multiline
+                    numberOfLines={3}
+                    maxLength={500}
+                    error={errors.description}
+                  />
+                </View>
+              )
             )}
-            <Input
-              label="Special Instructions (optional)"
-              value={draftBooking.special_instructions ?? ''}
-              onChangeText={(v) => updateDraft({ special_instructions: v })}
-              placeholder="Any special notes..."
-              multiline
-              numberOfLines={2}
-              maxLength={300}
-            />
+            {collapseSpecialInstructions && !showSpecialInstructions ? (
+              <Pressable
+                style={st.contactToggle}
+                hitSlop={8}
+                onPress={() => {
+                  Haptics.selectionAsync().catch(() => {});
+                  setShowSpecialInstructions(true);
+                }}
+                accessibilityRole="button"
+                accessibilityState={{ expanded: false }}
+              >
+                <MessageSquarePlus size={14} color={LightColors.primary} />
+                <Text style={st.contactToggleText}>Add special instructions</Text>
+                <ChevronDown size={14} color={LightColors.primary} />
+              </Pressable>
+            ) : (
+              <>
+                {collapseSpecialInstructions && (
+                  <Pressable
+                    style={st.contactToggle}
+                    hitSlop={8}
+                    onPress={() => {
+                      Haptics.selectionAsync().catch(() => {});
+                      setShowSpecialInstructions(false);
+                    }}
+                    accessibilityRole="button"
+                    accessibilityState={{ expanded: true }}
+                  >
+                    <MessageSquarePlus size={14} color={LightColors.primary} />
+                    <Text style={st.contactToggleText}>Hide special instructions</Text>
+                    <ChevronUp size={14} color={LightColors.primary} />
+                  </Pressable>
+                )}
+                <Input
+                  label="Special Instructions (optional)"
+                  value={draftBooking.special_instructions ?? ''}
+                  onChangeText={(v) => updateDraft({ special_instructions: v })}
+                  placeholder="Any special notes..."
+                  multiline
+                  numberOfLines={2}
+                  maxLength={300}
+                />
+              </>
+            )}
 
             {rule.showPhotos && (
               <PhotoGrid
@@ -1073,39 +1475,45 @@ export default function TaskDetailsScreen() {
             {rule.showItemValue && (
               <Input
                 label="Estimated Item Value (optional)"
-                value={
-                  draftBooking.estimated_item_value != null
-                    ? String(draftBooking.estimated_item_value)
-                    : ''
-                }
+                value={itemValueText}
                 onChangeText={(v) => {
-                  const num = parseFloat(v);
+                  const clean = sanitizeAmount(v);
+                  setItemValueText(clean);
+                  const num = parseFloat(clean);
                   updateDraft({ estimated_item_value: isNaN(num) ? undefined : num });
                 }}
                 placeholder="₱0.00"
-                keyboardType="numeric"
+                keyboardType="decimal-pad"
+                style={amountInputStyle}
               />
             )}
 
             {rule.requiresShoppingBudget && (
-              <Input
-                label="Shopping Budget *"
-                value={
-                  draftBooking.shopping_budget != null
-                    ? String(draftBooking.shopping_budget)
-                    : ''
-                }
-                onChangeText={(v) => {
-                  const num = parseFloat(v);
-                  updateDraft({ shopping_budget: isNaN(num) ? undefined : num });
-                  if (errors.shopping_budget && !isNaN(num) && num > 0) {
-                    setErrors((e) => ({ ...e, shopping_budget: '' }));
-                  }
+              <View
+                onLayout={(e) => {
+                  sectionY.current.shopping_budget = e.nativeEvent.layout.y;
                 }}
-                placeholder="₱ Maximum amount the runner may spend"
-                keyboardType="numeric"
-                error={errors.shopping_budget}
-              />
+              >
+                <Input
+                  ref={budgetRef}
+                  label="Shopping Budget *"
+                  value={budgetText}
+                  onChangeText={(v) => {
+                    const clean = sanitizeAmount(v);
+                    setBudgetText(clean);
+                    const num = parseFloat(clean);
+                    updateDraft({ shopping_budget: isNaN(num) ? undefined : num });
+                    if (errors.shopping_budget && !isNaN(num) && num > 0) {
+                      setErrors((e) => ({ ...e, shopping_budget: '' }));
+                    }
+                  }}
+                  placeholder="₱0.00"
+                  keyboardType="decimal-pad"
+                  helperText="Maximum amount the runner may spend"
+                  error={errors.shopping_budget}
+                  style={amountInputStyle}
+                />
+              </View>
             )}
 
             {/* Pickup contact */}
@@ -1113,7 +1521,13 @@ export default function TaskDetailsScreen() {
               <>
                 <Pressable
                   style={st.contactToggle}
-                  onPress={() => setShowPickupContact(!showPickupContact)}
+                  hitSlop={8}
+                  onPress={() => {
+                    Haptics.selectionAsync().catch(() => {});
+                    setShowPickupContact(!showPickupContact);
+                  }}
+                  accessibilityRole="button"
+                  accessibilityState={{ expanded: showPickupContact }}
                 >
                   <UserPlus size={14} color={LightColors.primary} />
                   <Text style={st.contactToggleText}>
@@ -1132,14 +1546,23 @@ export default function TaskDetailsScreen() {
                       value={draftBooking.pickup_contact_name ?? ''}
                       onChangeText={(v) => updateDraft({ pickup_contact_name: v })}
                       placeholder={`Person at ${rule.pickupLabel.toLowerCase()}`}
+                      autoComplete="name"
+                      textContentType="name"
+                      returnKeyType="next"
+                      blurOnSubmit={false}
+                      onSubmitEditing={() => pickupPhoneRef.current?.focus()}
                     />
                     <Input
+                      ref={pickupPhoneRef}
                       label="Contact Phone"
                       value={draftBooking.pickup_contact_phone ?? ''}
                       onChangeText={(v) => updateDraft({ pickup_contact_phone: v.replace(/[^0-9+]/g, '').slice(0, 13) })}
                       placeholder="e.g. 09171234567"
                       keyboardType="phone-pad"
                       maxLength={13}
+                      autoComplete="tel"
+                      textContentType="telephoneNumber"
+                      returnKeyType="done"
                     />
                   </>
                 )}
@@ -1151,7 +1574,13 @@ export default function TaskDetailsScreen() {
               <>
                 <Pressable
                   style={st.contactToggle}
-                  onPress={() => setShowDropoffContact(!showDropoffContact)}
+                  hitSlop={8}
+                  onPress={() => {
+                    Haptics.selectionAsync().catch(() => {});
+                    setShowDropoffContact(!showDropoffContact);
+                  }}
+                  accessibilityRole="button"
+                  accessibilityState={{ expanded: showDropoffContact }}
                 >
                   <UserPlus size={14} color={LightColors.primary} />
                   <Text style={st.contactToggleText}>
@@ -1170,14 +1599,23 @@ export default function TaskDetailsScreen() {
                       value={draftBooking.dropoff_contact_name ?? ''}
                       onChangeText={(v) => updateDraft({ dropoff_contact_name: v })}
                       placeholder={`Person at ${rule.dropoffLabel.toLowerCase()}`}
+                      autoComplete="name"
+                      textContentType="name"
+                      returnKeyType="next"
+                      blurOnSubmit={false}
+                      onSubmitEditing={() => dropoffPhoneRef.current?.focus()}
                     />
                     <Input
+                      ref={dropoffPhoneRef}
                       label="Contact Phone"
                       value={draftBooking.dropoff_contact_phone ?? ''}
                       onChangeText={(v) => updateDraft({ dropoff_contact_phone: v.replace(/[^0-9+]/g, '').slice(0, 13) })}
                       placeholder="e.g. 09171234567"
                       keyboardType="phone-pad"
                       maxLength={13}
+                      autoComplete="tel"
+                      textContentType="telephoneNumber"
+                      returnKeyType="done"
                     />
                   </>
                 )}
@@ -1187,7 +1625,7 @@ export default function TaskDetailsScreen() {
 
           {/* Continue CTA lives in the sheet `footer` so it stays visible
               regardless of keyboard / scroll position. */}
-        </KeyboardAvoidingView>
+        </View>
       )}
       </ExpandableSheet>
 
@@ -1243,10 +1681,19 @@ const st = StyleSheet.create({
     shadowRadius: 8,
     elevation: 3,
   },
+  stepEyebrow: {
+    fontSize: 10,
+    fontFamily: 'Quicksand_700Bold',
+    letterSpacing: 1.4,
+    textTransform: 'uppercase',
+    color: LightColors.textSecondary,
+    marginBottom: 6,
+    marginLeft: 2,
+  },
   backBtn: {
-    width: 42,
-    height: 42,
-    borderRadius: 21,
+    width: 40,
+    height: 40,
+    borderRadius: 20,
     backgroundColor: LightColors.surface,
     alignItems: 'center',
     justifyContent: 'center',
@@ -1256,22 +1703,25 @@ const st = StyleSheet.create({
     shadowRadius: 6,
     elevation: 4,
   },
-  headerPills: {
-    flexDirection: 'row',
+  phaseTitlePill: {
     marginLeft: 12,
-    gap: 6,
-    // Retained for compatibility with any external snapshots; visually unused.
+    backgroundColor: 'rgba(255,255,255,0.96)',
+    borderRadius: 20,
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    shadowColor: LightColors.textPrimary,
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.08,
+    shadowRadius: 8,
+    elevation: 3,
   },
-  pill: { width: 0, height: 0 },
-  pillActive: {},
-  pillInactive: {},
-  pillText: {},
-  pillTextActive: {},
   phaseTitle: {
     fontSize: 16,
     fontFamily: 'Quicksand_500Medium',
     color: LightColors.textPrimary,
-    marginLeft: 12,
+  },
+  sheetStepHeader: {
+    marginBottom: 8,
   },
   searchWrap: {
     paddingHorizontal: 16,
@@ -1316,6 +1766,11 @@ const st = StyleSheet.create({
     borderBottomWidth: 1,
     borderBottomColor: LightColors.divider,
   },
+  // Last row of a dropdown — a divider right above the rounded bottom
+  // edge reads as a rendering glitch.
+  searchResultItemLast: {
+    borderBottomWidth: 0,
+  },
   searchResultDot: {
     width: 28,
     height: 28,
@@ -1330,6 +1785,33 @@ const st = StyleSheet.create({
     fontFamily: 'Quicksand_400Regular',
     color: LightColors.textPrimary,
   },
+  searchEmptyText: {
+    flex: 1,
+    fontSize: 13,
+    fontFamily: 'Quicksand_400Regular',
+    color: LightColors.textTertiary,
+  },
+  // `top` supplied inline — it depends on the safe-area inset.
+  routeErrorWrap: {
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    alignItems: 'center',
+  },
+  routeErrorChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    backgroundColor: 'rgba(28,28,30,0.82)',
+    borderRadius: 18,
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+  },
+  routeErrorText: {
+    fontSize: 12,
+    fontFamily: 'Quicksand_500Medium',
+    color: LightColors.textInverse,
+  },
   recentHeading: {
     fontSize: 11,
     fontFamily: 'Quicksand_700Bold',
@@ -1340,10 +1822,10 @@ const st = StyleSheet.create({
     paddingTop: 10,
     paddingBottom: 4,
   },
+  // `bottom` supplied inline — it tracks the sheet's peek height.
   myLocationBtn: {
     position: 'absolute',
     right: 16,
-    bottom: 16,
     width: 48,
     height: 48,
     borderRadius: 24,
@@ -1356,9 +1838,9 @@ const st = StyleSheet.create({
     shadowRadius: 8,
     elevation: 4,
   },
+  // `top` supplied inline — it depends on the safe-area inset.
   noMapHint: {
     position: 'absolute',
-    top: 190,
     left: 32,
     right: 32,
     alignItems: 'center',
@@ -1386,10 +1868,36 @@ const st = StyleSheet.create({
     textAlign: 'center',
     lineHeight: 19,
   },
+  // `top` supplied inline — it depends on the safe-area inset.
+  viewMapWrap: {
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    alignItems: 'center',
+  },
+  viewMapChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    backgroundColor: LightColors.surface,
+    borderRadius: 20,
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    shadowColor: LightColors.ink,
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.12,
+    shadowRadius: 8,
+    elevation: 4,
+  },
+  viewMapChipText: {
+    fontSize: 13,
+    fontFamily: 'Quicksand_500Medium',
+    color: LightColors.primary,
+  },
+  // `top` supplied inline — aligned with the back-button row.
   closeMapBtn: {
     position: 'absolute',
     right: 16,
-    top: 120,
     width: 40,
     height: 40,
     borderRadius: 20,
@@ -1401,27 +1909,6 @@ const st = StyleSheet.create({
     shadowOpacity: 0.12,
     shadowRadius: 8,
     elevation: 4,
-  },
-  bottomCard: {
-    backgroundColor: LightColors.surface,
-    borderTopLeftRadius: 28,
-    borderTopRightRadius: 28,
-    paddingHorizontal: 20,
-    paddingTop: 12,
-    paddingBottom: 32,
-    shadowColor: LightColors.ink,
-    shadowOffset: { width: 0, height: -4 },
-    shadowOpacity: 0.08,
-    shadowRadius: 12,
-    elevation: 8,
-  },
-  dragHandle: {
-    width: 36,
-    height: 4,
-    borderRadius: 2,
-    backgroundColor: LightColors.divider,
-    alignSelf: 'center',
-    marginBottom: 16,
   },
   cardTitle: {
     fontSize: 17,
@@ -1455,44 +1942,41 @@ const st = StyleSheet.create({
   },
   quickActions: {
     flexDirection: 'row',
-    gap: 12,
+    gap: 10,
     marginBottom: 18,
   },
   quickBtn: {
+    // Equal-width pills that share the row and shrink together, so the
+    // icon + label always stays on one centered line. (Previously the pills
+    // sized to their content in a non-wrapping row with no shrink, so on
+    // narrow widths the label dropped under the icon and looked misaligned.)
+    flex: 1,
     flexDirection: 'row',
     alignItems: 'center',
+    justifyContent: 'center',
     backgroundColor: LightColors.primaryLight,
-    paddingHorizontal: 14,
-    paddingVertical: 8,
-    borderRadius: 20,
+    paddingHorizontal: 10,
+    paddingVertical: 9,
+    borderRadius: 12,
+  },
+  quickBtnPressed: {
+    backgroundColor: LightColors.primary100,
   },
   quickBtnText: {
-    fontSize: 12,
+    fontSize: 13,
     fontFamily: 'Quicksand_500Medium',
     color: LightColors.primary,
     marginLeft: 6,
   },
-  detailsSheet: {
-    flex: 1,
-    backgroundColor: LightColors.surface,
-    borderTopLeftRadius: 28,
-    borderTopRightRadius: 28,
-    paddingHorizontal: 20,
-    paddingTop: 12,
-    marginTop: -16,
-    shadowColor: LightColors.ink,
-    shadowOffset: { width: 0, height: -4 },
-    shadowOpacity: 0.08,
-    shadowRadius: 12,
-    elevation: 8,
-  },
   routeSummary: {
-    paddingVertical: 14,
+    paddingVertical: 4,
     marginBottom: 4,
   },
   routePoint: {
     flexDirection: 'row',
     alignItems: 'center',
+    // Lifts the 13px row to a ≥44pt touch target.
+    paddingVertical: 12,
   },
   routeDot: {
     width: 10,
@@ -1507,7 +1991,8 @@ const st = StyleSheet.create({
     color: LightColors.textPrimary,
   },
   changeLink: {
-    fontSize: 11,
+    // 12 is the app's smallest text rung — 11 sat under the floor.
+    fontSize: 12,
     fontFamily: 'Quicksand_500Medium',
     color: LightColors.primary,
     marginLeft: 8,
@@ -1516,7 +2001,9 @@ const st = StyleSheet.create({
     width: 2,
     height: 24,
     marginLeft: 4,
-    marginVertical: 4,
+    // The rows above/below now carry their own 12pt padding — negative
+    // margin keeps the bead-to-bead rhythm close to the original.
+    marginVertical: -6,
     justifyContent: 'space-between',
   },
   routeConnectorDash: {
@@ -1528,7 +2015,10 @@ const st = StyleSheet.create({
   contactToggle: {
     flexDirection: 'row',
     alignItems: 'center',
-    marginBottom: 12,
+    // 12pt padding + 8pt hitSlop lifts the 17pt row past 44pt without
+    // visually breaking the form rhythm.
+    paddingVertical: 12,
+    marginBottom: 4,
   },
   helperNote: {
     backgroundColor: LightColors.primaryLight,
@@ -1549,16 +2039,11 @@ const st = StyleSheet.create({
     marginLeft: 6,
     marginRight: 2,
   },
-  continueCta: {
-    paddingVertical: 12,
-    paddingBottom: 28,
-    borderTopWidth: 1,
-    borderTopColor: LightColors.divider,
-  },
   errorText: {
     fontSize: 12,
     fontFamily: 'Quicksand_400Regular',
-    color: LightColors.danger,
+    // dangerDark: base danger is ~3.8:1 on white — below AA for 12px text.
+    color: LightColors.dangerDark,
     marginBottom: 8,
   },
 });

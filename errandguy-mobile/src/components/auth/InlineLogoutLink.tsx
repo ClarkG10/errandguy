@@ -117,17 +117,32 @@ export function InlineLogoutLink({
         >
           {armed ? confirmLabel : label}
         </Text>
-        {armed && (
-          <View style={s.barTrack}>
-            <Animated.View style={[s.barFill, barStyle]} />
-          </View>
-        )}
+        {/* Track + Cancel keep their footprint when disarmed (hidden,
+            not unmounted) so arming never shifts the layout around the
+            link — a mid-tap reflow here risks a mis-hit on whatever
+            sits below. */}
+        <View
+          style={[s.barTrack, !armed && s.hidden]}
+          pointerEvents={armed ? 'auto' : 'none'}
+          accessibilityElementsHidden={!armed}
+          importantForAccessibility={armed ? 'auto' : 'no-hide-descendants'}
+        >
+          <Animated.View style={[s.barFill, barStyle]} />
+        </View>
       </Pressable>
-      {armed && (
-        <Pressable onPress={disarm} hitSlop={8} style={s.cancelBtn}>
-          <Text style={s.cancelText}>Cancel</Text>
-        </Pressable>
-      )}
+      <Pressable
+        onPress={disarm}
+        hitSlop={8}
+        style={[s.cancelBtn, !armed && s.hidden]}
+        pointerEvents={armed ? 'auto' : 'none'}
+        accessibilityRole="button"
+        accessibilityLabel="Cancel logout"
+        accessibilityElementsHidden={!armed}
+        importantForAccessibility={armed ? 'auto' : 'no-hide-descendants'}
+        disabled={!armed}
+      >
+        <Text style={s.cancelText}>Cancel</Text>
+      </Pressable>
     </View>
   );
 }
@@ -139,11 +154,18 @@ const s = StyleSheet.create({
     alignItems: 'center',
     minWidth: 180,
   },
+  // Hidden-but-reserved state for the countdown track + Cancel — see
+  // the render note about avoiding layout shift on arm.
+  hidden: { opacity: 0 },
   label: {
     fontSize: 14,
-    fontFamily: 'Montserrat_700Bold',
+    // Quicksand, not Montserrat — the Montserrat families are never
+    // loaded by the app's useFonts call (they'd silently fall back).
+    fontFamily: 'Quicksand_700Bold',
     color: LightColors.textTertiary,
     textDecorationLine: 'underline',
+    textAlign: 'center',
+    alignSelf: 'center',
   },
   labelArmed: {
     color: LightColors.dangerDark,
@@ -164,7 +186,7 @@ const s = StyleSheet.create({
   cancelBtn: { paddingVertical: 4, paddingHorizontal: 8 },
   cancelText: {
     fontSize: 12,
-    fontFamily: 'Montserrat_400Regular',
+    fontFamily: 'Quicksand_400Regular',
     color: LightColors.textMuted,
   },
 });

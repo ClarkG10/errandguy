@@ -26,22 +26,32 @@ const VARIANT_CONFIG: Record<
   ToastVariant,
   { bg: string; icon: typeof CheckCircle; iconColor: string; textColor: string }
 > = {
-  success: { bg: LightColors.success, icon: CheckCircle, iconColor: INVERSE, textColor: INVERSE },
-  error: { bg: LightColors.danger, icon: AlertCircle, iconColor: INVERSE, textColor: INVERSE },
+  // *Dark fills, not base tones: white 13px toast text on the base
+  // status colors measures 2.2–3.9:1 (worst: warning #F59E0B). The Dark
+  // rungs keep the same hue language and clear 4.5:1 with white.
+  success: { bg: LightColors.successDark, icon: CheckCircle, iconColor: INVERSE, textColor: INVERSE },
+  error: { bg: LightColors.dangerDark, icon: AlertCircle, iconColor: INVERSE, textColor: INVERSE },
   info: { bg: LightColors.primary, icon: Package, iconColor: INVERSE, textColor: INVERSE },
-  warning: { bg: LightColors.warning, icon: AlertTriangle, iconColor: INVERSE, textColor: INVERSE },
+  warning: { bg: LightColors.warningDark, icon: AlertTriangle, iconColor: INVERSE, textColor: INVERSE },
 };
 
 const SHOW_DURATION = 4000;
+// Toasts carrying an action linger a beat longer so the user has time
+// to read the label AND reach the button.
+const SHOW_DURATION_ACTION = 5000;
 
 function ToastCard({
   id,
   message,
   variant,
+  actionLabel,
+  onAction,
 }: {
   id: string;
   message: string;
   variant: ToastVariant;
+  actionLabel?: string;
+  onAction?: () => void;
 }) {
   const { dismiss } = useToastStore();
   const translateY = useSharedValue(-80);
@@ -66,7 +76,10 @@ function ToastCard({
     opacity.value = withTiming(1, { duration: 300 });
 
     // Auto-dismiss timer
-    timerRef.current = setTimeout(animateOut, SHOW_DURATION);
+    timerRef.current = setTimeout(
+      animateOut,
+      actionLabel && onAction ? SHOW_DURATION_ACTION : SHOW_DURATION,
+    );
 
     return () => {
       if (timerRef.current) clearTimeout(timerRef.current);
@@ -77,6 +90,12 @@ function ToastCard({
     if (timerRef.current) clearTimeout(timerRef.current);
     animateOut();
   }, [animateOut]);
+
+  const handleAction = useCallback(() => {
+    if (timerRef.current) clearTimeout(timerRef.current);
+    onAction?.();
+    animateOut();
+  }, [onAction, animateOut]);
 
   const style = useAnimatedStyle(() => ({
     transform: [{ translateY: translateY.value }],
@@ -89,7 +108,24 @@ function ToastCard({
       <Text style={[styles.message, { color: config.textColor }]} numberOfLines={3}>
         {message}
       </Text>
-      <Pressable onPress={handleManualDismiss} hitSlop={12}>
+      {actionLabel && onAction ? (
+        <Pressable
+          onPress={handleAction}
+          accessibilityRole="button"
+          accessibilityLabel={actionLabel}
+          style={styles.actionBtn}
+        >
+          <Text style={[styles.actionLabel, { color: config.textColor }]}>
+            {actionLabel}
+          </Text>
+        </Pressable>
+      ) : null}
+      <Pressable
+        onPress={handleManualDismiss}
+        hitSlop={12}
+        accessibilityRole="button"
+        accessibilityLabel="Dismiss"
+      >
         <X size={16} color={config.iconColor} />
       </Pressable>
     </Animated.View>
@@ -145,5 +181,19 @@ const styles = StyleSheet.create({
     fontSize: 13,
     fontFamily: 'Quicksand_500Medium',
     lineHeight: 18,
+  },
+  // Right-aligned inline action ("Undo", "View"). minHeight 44 with a
+  // negative vertical margin keeps a full-size touch target without
+  // fattening the pill visually.
+  actionBtn: {
+    minHeight: 44,
+    justifyContent: 'center',
+    paddingHorizontal: 8,
+    marginVertical: -12,
+  },
+  actionLabel: {
+    fontSize: 13,
+    fontFamily: 'Quicksand_700Bold',
+    textDecorationLine: 'underline',
   },
 });

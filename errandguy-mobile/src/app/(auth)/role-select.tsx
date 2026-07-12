@@ -1,13 +1,17 @@
 import React, { useState } from 'react';
-import { View, Text, Pressable, StyleSheet } from 'react-native';
+import { View, Text, Pressable, ScrollView, StyleSheet } from 'react-native';
+import * as Haptics from 'expo-haptics';
 import { useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { MotiView } from 'moti';
 import { Package, Bike, Check } from 'lucide-react-native';
 import { Button } from '../../components/ui/Button';
 import { useAuth } from '../../hooks/useAuth';
+import { useReducedMotion } from '../../hooks/useReducedMotion';
 import { userService } from '../../services/user.service';
 import { toast } from '../../stores/toastStore';
 import { LightColors } from '../../constants/colors';
+import { useResponsive } from '../../constants/responsive';
 import type { UserRole } from '../../types';
 
 type RoleOption = {
@@ -38,6 +42,8 @@ const roles: RoleOption[] = [
 export default function RoleSelectScreen() {
   const router = useRouter();
   const { updateProfile } = useAuth();
+  const { contentMaxWidth } = useResponsive();
+  const reduceMotion = useReducedMotion();
   const [selectedRole, setSelectedRole] = useState<UserRole | null>(null);
   const [loading, setLoading] = useState(false);
 
@@ -48,6 +54,7 @@ export default function RoleSelectScreen() {
     try {
       await userService.updateProfile({ role: selectedRole });
       updateProfile({ role: selectedRole });
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
 
       if (selectedRole === 'runner') {
         router.replace('/(runner)/onboarding');
@@ -55,6 +62,7 @@ export default function RoleSelectScreen() {
         router.replace('/(customer)/(tabs)');
       }
     } catch (error: any) {
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error).catch(() => {});
       const message =
         error?.message || 'Something went wrong. Please try again.';
       toast.error(message);
@@ -65,24 +73,40 @@ export default function RoleSelectScreen() {
 
   return (
     <SafeAreaView className="flex-1 bg-background px-6">
-      <View style={{ flex: 1, justifyContent: 'center' }}>
+      <ScrollView
+        showsVerticalScrollIndicator={false}
+        keyboardShouldPersistTaps="handled"
+        contentContainerStyle={{
+          flexGrow: 1,
+          justifyContent: 'center',
+          paddingBottom: 16,
+          width: '100%',
+          maxWidth: contentMaxWidth,
+          alignSelf: 'center',
+        }}
+      >
         <Text
-          className="text-[10px] font-montserrat-bold uppercase text-primary mb-3 text-center"
-          style={{ letterSpacing: 1.6 }}
+          className="text-[11px] font-montserrat-bold uppercase text-primary mb-3 text-center"
+          style={{ letterSpacing: 1.8 }}
         >
           One last step
         </Text>
         <Text
-          className="text-[30px] font-montserrat-bold text-textPrimary text-center tracking-tight"
-          style={{ lineHeight: 34 }}
+          className="text-[28px] font-montserrat-bold text-ink text-center"
+          style={{ letterSpacing: -0.4, lineHeight: 32 }}
+          accessibilityRole="header"
         >
           How will you use{'\n'}ErrandGuy?
         </Text>
-        <Text className="text-[15px] font-montserrat text-textTertiary text-center mt-2 mb-10">
+        <Text className="text-[15px] font-montserrat text-textSecondary text-center mt-2 mb-10">
           Choose your role. You can switch anytime.
         </Text>
 
-        <View style={{ gap: 14 }}>
+        <View
+          style={{ gap: 14 }}
+          accessibilityRole="radiogroup"
+          accessibilityLabel="Choose your role"
+        >
           {roles.map((item) => {
             const Icon = item.icon;
             const isSelected = selectedRole === item.role;
@@ -90,14 +114,37 @@ export default function RoleSelectScreen() {
             return (
               <Pressable
                 key={item.role}
-                style={[s.card, isSelected && s.cardSelected]}
-                onPress={() => setSelectedRole(item.role)}
+                style={({ pressed }) => [
+                  s.card,
+                  isSelected && s.cardSelected,
+                  // Scale-only when selected so the primaryLight tint isn't lost.
+                  pressed && !isSelected && s.cardPressedBg,
+                  pressed && s.cardPressed,
+                ]}
+                onPress={() => {
+                  Haptics.selectionAsync().catch(() => {});
+                  setSelectedRole(item.role);
+                }}
+                accessibilityRole="radio"
+                accessibilityLabel={`${item.title}. ${item.subtitle}`}
+                accessibilityState={{ selected: isSelected, checked: isSelected }}
               >
                 {/* Selected indicator */}
                 <View style={[s.radio, isSelected && s.radioSelected]}>
-                  {isSelected && (
-                    <Check size={14} color={LightColors.textInverse} strokeWidth={3} />
-                  )}
+                  {isSelected &&
+                    (reduceMotion ? (
+                      <Check size={14} color={LightColors.textInverse} strokeWidth={3} />
+                    ) : (
+                      // Mounts only on selection (selectedRole starts null),
+                      // so this never plays on first render of the screen.
+                      <MotiView
+                        from={{ scale: 0.4, opacity: 0 }}
+                        animate={{ scale: 1, opacity: 1 }}
+                        transition={{ type: 'spring', damping: 14, stiffness: 260 }}
+                      >
+                        <Check size={14} color={LightColors.textInverse} strokeWidth={3} />
+                      </MotiView>
+                    ))}
                 </View>
 
                 <View style={s.cardHeader}>
@@ -112,7 +159,9 @@ export default function RoleSelectScreen() {
                     <Text className="text-[18px] font-montserrat-semi text-textPrimary">
                       {item.title}
                     </Text>
-                    <Text className="text-[13px] font-montserrat text-textTertiary mt-0.5">
+                    {/* textSecondary (not tertiary): keeps AA contrast on the
+                        selected card's primaryLight background at 13px. */}
+                    <Text className="text-[13px] font-montserrat text-textSecondary mt-0.5">
                       {item.subtitle}
                     </Text>
                   </View>
@@ -121,7 +170,11 @@ export default function RoleSelectScreen() {
                 <View style={s.features}>
                   {item.features.map((f) => (
                     <View key={f} style={s.featureRow}>
-                      <View style={[s.featureDot, isSelected && s.featureDotSelected]} />
+                      <Check
+                        size={13}
+                        color={LightColors.primary}
+                        strokeWidth={2.5}
+                      />
                       <Text className="text-[13px] font-montserrat text-textSecondary">
                         {f}
                       </Text>
@@ -132,14 +185,22 @@ export default function RoleSelectScreen() {
             );
           })}
         </View>
-      </View>
+      </ScrollView>
 
-      <View style={{ paddingBottom: 24 }}>
+      <View
+        style={{
+          paddingBottom: 24,
+          width: '100%',
+          maxWidth: contentMaxWidth,
+          alignSelf: 'center',
+        }}
+      >
         <Button
           title="Continue"
           fullWidth
           size="lg"
           loading={loading}
+          loadingTitle="Setting up…"
           disabled={!selectedRole}
           onPress={handleContinue}
         />
@@ -161,6 +222,13 @@ const s = StyleSheet.create({
     borderColor: LightColors.primary,
     backgroundColor: LightColors.primaryLight,
   },
+  // Scale-only transform keeps layout bounds stable while pressed.
+  cardPressed: {
+    transform: [{ scale: 0.985 }],
+  },
+  cardPressedBg: {
+    backgroundColor: LightColors.surfaceMuted,
+  },
   radio: {
     position: 'absolute',
     top: 16,
@@ -169,7 +237,9 @@ const s = StyleSheet.create({
     height: 24,
     borderRadius: 12,
     borderWidth: 2,
-    borderColor: LightColors.dividerStrong,
+    // textMuted, not dividerStrong: the unselected ring must read as an
+    // affordance (dividerStrong is 1.48:1 on white — nearly invisible).
+    borderColor: LightColors.textMuted,
     alignItems: 'center',
     justifyContent: 'center',
   },
@@ -202,14 +272,5 @@ const s = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 10,
-  },
-  featureDot: {
-    width: 6,
-    height: 6,
-    borderRadius: 3,
-    backgroundColor: LightColors.dividerStrong,
-  },
-  featureDotSelected: {
-    backgroundColor: LightColors.primary,
   },
 });

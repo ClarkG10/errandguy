@@ -10,10 +10,10 @@ import {
 import { LinearGradient } from 'expo-linear-gradient';
 import * as Haptics from 'expo-haptics';
 import type { LucideIcon } from 'lucide-react-native';
-import { ErrandLoader } from './ErrandLoader';
 import { useReducedMotion } from '../../hooks/useReducedMotion';
 import { useResponsive } from '../../constants/responsive';
 import { LightColors } from '../../constants/colors';
+import { Radius } from '../../constants/radius';
 
 /**
  * Modern blue-first CTA button.
@@ -40,6 +40,10 @@ interface ButtonProps {
   variant?: ButtonVariant;
   size?: ButtonSize;
   loading?: boolean;
+  /** Contextual label shown *in place of* `title` while `loading` (e.g.
+   *  "Logging in…", "Creating booking…"). There is no spinner — the words
+   *  carry the state. Falls back to the normal `title` when omitted. */
+  loadingTitle?: string;
   /** Leading icon. */
   icon?: LucideIcon;
   /** Trailing icon. Opt-in only — pass an icon (e.g. ArrowRight) when
@@ -82,32 +86,33 @@ const variantTextColors: Record<ButtonVariant, string> = {
   ghost: PRIMARY_BG,
 };
 
-// Android renders the same fontSize visibly larger than iOS due to
-// font-metric differences. Trim ~1pt so CTAs read at the same visual
-// weight on both platforms.
-const ANDROID_TEXT_SCALE = Platform.OS === 'android' ? -1 : 0;
-const ANDROID_PAD_SCALE = Platform.OS === 'android' ? -2 : 0;
+// Android used to render Quicksand visibly larger/heavier than iOS's SF Pro.
+// That is now solved at the root: applySystemFont() remaps both platforms to
+// the system typeface (Roboto / SF Pro), which share near-identical metrics —
+// so no per-platform size fudge is needed and buttons match 1:1.
+const ANDROID_TEXT_SCALE = 0;
+const ANDROID_PAD_SCALE = 0;
 
-// Generous 2026 ladder — 38/48/54. Taller CTAs with soft corners
-// read confident and are comfortably above Apple's 44pt minimum on
-// md/lg; sm stays compact for inline/secondary actions.
+// "Modern soft" ladder — 36/46/52 (trimmed from the old 38/48/54). md/lg stay
+// at/above Apple's 44pt touch minimum; sm is compact for inline/secondary
+// actions. Paired with a 14px corner (not a full pill) for a subtler CTA.
 const BASE_SIZES: Record<ButtonSize, { padV: number; padH: number; minH: number; text: number; icon: number }> = {
-  sm: { padV: 8,  padH: 14, minH: 38, text: 13, icon: 15 },
-  md: { padV: 12, padH: 18, minH: 48, text: 15, icon: 17 },
-  lg: { padV: 14, padH: 20, minH: 54, text: 16, icon: 18 },
+  sm: { padV: 7,  padH: 14, minH: 36, text: 13, icon: 15 },
+  md: { padV: 11, padH: 18, minH: 46, text: 15, icon: 17 },
+  lg: { padV: 13, padH: 20, minH: 52, text: 16, icon: 18 },
 };
 
-const PLATFORM_FONT = Platform.select({
-  ios: 'Inter_600SemiBold',
-  android: 'Quicksand_700Bold',
-  default: 'Quicksand_700Bold',
-});
+// One family on every platform — the system-font remap turns this into
+// SF Pro (iOS) / Roboto (Android) at weight 600, so the CTA reads identically
+// cross-platform. (On web the loaded Inter face is used directly.)
+const PLATFORM_FONT = 'Inter_600SemiBold';
 
 export function Button({
   title,
   variant = 'primary',
   size = 'md',
   loading = false,
+  loadingTitle,
   disabled,
   icon: Icon,
   trailingIcon,
@@ -182,49 +187,46 @@ export function Button({
         }) as ViewStyle)
       : null;
 
-  // Inner content (icons + label + spinner) — extracted so it can be
-  // rendered identically inside a flat <Pressable> or wrapped inside a
+  // Inner content (icons + label) — extracted so it can be rendered
+  // identically inside a flat <Pressable> or wrapped inside a
   // <LinearGradient>.
+  //
+  // No spinner. Per product direction (July 2026) the button never shows
+  // an animated loader — the *words* carry the state. While `loading`, we
+  // swap the label to the contextual `loadingTitle` (e.g. "Cancelling…")
+  // when one is supplied, otherwise keep the normal title. The button is
+  // still disabled + `busy` for assistive tech, so it can't be double-fired.
   const renderContent = () => (
     <>
-      {loading ? (
-        <ErrandLoader
-          size={size === 'sm' ? 4 : size === 'md' ? 5 : 6}
+      {!loading && Icon && (
+        <Icon
+          size={iconSize}
           color={contentColor}
+          strokeWidth={2}
+          style={{ marginRight: 8 }}
         />
-      ) : (
-        <>
-          {Icon && (
-            <Icon
-              size={iconSize}
-              color={contentColor}
-              strokeWidth={2}
-              style={{ marginRight: 8 }}
-            />
-          )}
-          <Text
-            style={[
-              bs.text,
-              {
-                fontSize: textSize,
-                color: contentColor,
-                fontFamily: PLATFORM_FONT,
-              },
-            ]}
-            numberOfLines={1}
-            ellipsizeMode="tail"
-          >
-            {title}
-          </Text>
-          {Trailing && (
-            <Trailing
-              size={iconSize}
-              color={contentColor}
-              strokeWidth={2.2}
-              style={{ marginLeft: 'auto', paddingLeft: 8 }}
-            />
-          )}
-        </>
+      )}
+      <Text
+        style={[
+          bs.text,
+          {
+            fontSize: textSize,
+            color: contentColor,
+            fontFamily: PLATFORM_FONT,
+          },
+        ]}
+        numberOfLines={1}
+        ellipsizeMode="tail"
+      >
+        {loading ? (loadingTitle ?? title) : title}
+      </Text>
+      {!loading && Trailing && (
+        <Trailing
+          size={iconSize}
+          color={contentColor}
+          strokeWidth={2.2}
+          style={{ marginLeft: 'auto', paddingLeft: 8 }}
+        />
       )}
     </>
   );
@@ -304,8 +306,9 @@ const bs = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    // Full pill — matches the reference ride-hailing CTA language.
-    borderRadius: 999,
+    // Subtle 14px corner ("Modern soft") — softer/cleaner than the old
+    // full pill, still friendly.
+    borderRadius: Radius.button,
     overflow: 'hidden',
     position: 'relative',
   },

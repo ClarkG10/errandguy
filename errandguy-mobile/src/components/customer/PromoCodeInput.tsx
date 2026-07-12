@@ -1,17 +1,26 @@
 import React, { useState, useCallback } from 'react';
-import { View, Text, Pressable, ActivityIndicator, TextInput } from 'react-native';
+import { View, Text, Pressable, TextInput } from 'react-native';
+import * as Haptics from 'expo-haptics';
 import { X, Check, Tag } from 'lucide-react-native';
+import { Eyebrow } from '../ui/Typography';
+import { Spinner } from '../ui/Spinner';
 import { configService } from '../../services/config.service';
 import { LightColors } from '../../constants/colors';
+import { formatCurrency } from '../../utils/formatCurrency';
 
 interface PromoCodeInputProps {
   appliedCode: string | undefined;
+  /** Validated saving in pesos for `appliedCode`. Shown in the applied chip
+   *  so the discount stays visible even where no breakdown line exists
+   *  (negotiate mode, rehydrated drafts). */
+  appliedDiscount?: number;
   onApply: (code: string, discount: number) => void;
   onRemove: () => void;
 }
 
 export function PromoCodeInput({
   appliedCode,
+  appliedDiscount = 0,
   onApply,
   onRemove,
 }: PromoCodeInputProps) {
@@ -27,9 +36,18 @@ export function PromoCodeInput({
     try {
       const res = await configService.validatePromo(code.trim());
       const data = res.data.data;
+      // Outcome haptic — promo validated and applied.
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(
+        () => {},
+      );
       onApply(code.trim(), data?.discount_amount ?? 0);
       setCode('');
     } catch (err: any) {
+      // Outcome haptic — invalid/rejected code, paired with the inline
+      // error text below (no shake animation by design).
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error).catch(
+        () => {},
+      );
       setError(
         err?.response?.data?.message ?? 'Invalid promo code',
       );
@@ -40,15 +58,37 @@ export function PromoCodeInput({
 
   if (appliedCode) {
     return (
-      <View className="flex-row items-center bg-success/10 rounded-2xl px-4 py-3 mb-4">
-        <Tag size={16} color={LightColors.success} />
-        <Text className="text-sm font-montserrat-bold text-success ml-2 flex-1">
-          {appliedCode}
-        </Text>
-        <Check size={16} color={LightColors.success} />
-        <Pressable onPress={onRemove} className="ml-2" hitSlop={8}>
-          <X size={16} color={LightColors.textMuted} />
-        </Pressable>
+      <View className="mb-4">
+        <Eyebrow className="mb-2">Promo code</Eyebrow>
+        {/* h-14 matches the input row below so applying/removing a code
+            never shifts the payment section under it. successSoft +
+            successDark text (not success/10 + success): the base green
+            measured ~2.8:1 on the tinted wash — under AA for 13px. */}
+        <View className="flex-row items-center bg-successSoft rounded-2xl px-4 h-14">
+          <Tag size={16} color={LightColors.success} />
+          <Text
+            className="text-sm font-montserrat-bold text-successDark ml-2 flex-1"
+            numberOfLines={1}
+          >
+            {appliedCode}
+            {appliedDiscount > 0 ? (
+              <Text className="font-montserrat-semi">
+                {' '}— you save {formatCurrency(appliedDiscount)}
+              </Text>
+            ) : null}
+          </Text>
+          <Check size={16} color={LightColors.success} />
+          <Pressable
+            onPress={onRemove}
+            className="ml-2"
+            hitSlop={14}
+            accessibilityRole="button"
+            accessibilityLabel="Remove promo code"
+            style={({ pressed }) => (pressed ? { opacity: 0.6 } : null)}
+          >
+            <X size={16} color={LightColors.textSecondary} />
+          </Pressable>
+        </View>
       </View>
     );
   }
@@ -63,6 +103,7 @@ export function PromoCodeInput({
 
   return (
     <View className="mb-4">
+      <Eyebrow className="mb-2">Promo code</Eyebrow>
       <View
         className={`flex-row items-center bg-surface rounded-2xl border h-14 pl-4 pr-1 ${
           error
@@ -84,6 +125,7 @@ export function PromoCodeInput({
           onSubmitEditing={handleApply}
           placeholder="Enter promo code"
           placeholderTextColor={LightColors.textMuted}
+          accessibilityLabel="Promo code"
           autoCapitalize="characters"
           autoCorrect={false}
           returnKeyType="done"
@@ -98,9 +140,10 @@ export function PromoCodeInput({
           disabled={disabled}
           accessibilityRole="button"
           accessibilityLabel="Apply promo code"
+          style={({ pressed }) => (pressed && !disabled ? { opacity: 0.85 } : null)}
         >
           {loading ? (
-            <ActivityIndicator size="small" color={LightColors.textInverse} />
+            <Spinner size="small" color={LightColors.textInverse} />
           ) : (
             <Text
               className={`text-sm font-montserrat-bold ${
@@ -113,7 +156,12 @@ export function PromoCodeInput({
         </Pressable>
       </View>
       {!!error && (
-        <Text className="text-xs font-montserrat text-danger mt-1.5 ml-1">
+        // dangerDark per the small-status-text rung — base danger is
+        // ~3.8:1 on this canvas, under the 4.5:1 floor for 12px text.
+        <Text
+          className="text-xs font-montserrat text-dangerDark mt-1.5 ml-1"
+          accessibilityLiveRegion="polite"
+        >
           {error}
         </Text>
       )}

@@ -1,25 +1,44 @@
 import React, { useCallback, useState } from 'react';
-import { View, Text, Pressable, ScrollView, ActivityIndicator } from 'react-native';
+import {
+  View,
+  Text,
+  Pressable,
+  ScrollView,
+} from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import * as Haptics from 'expo-haptics';
 import {
   Smartphone,
   CreditCard,
   Plus,
   Trash2,
-  Check,
   ShieldCheck,
   Star,
 } from 'lucide-react-native';
 import type { LucideIcon } from 'lucide-react-native';
+import { Spinner } from '../../components/ui/Spinner';
 import { GradientHeader } from '../../components/ui/GradientHeader';
 import { ConfirmModal } from '../../components/ui/ConfirmModal';
+import { ErrorState } from '../../components/ui/ErrorState';
+import { EmptyState } from '../../components/ui/EmptyState';
+import { Eyebrow } from '../../components/ui/Typography';
+import { Skeleton, SkeletonCircle } from '../../components/ui/Skeleton';
+import { BrandRefreshControl } from '../../components/ui/BrandRefreshControl';
 import { paymentService } from '../../services/payment.service';
+import { runOptimistic } from '../../utils/optimistic';
 import { useQuery } from '../../hooks/useQuery';
 import { CacheTTL } from '../../services/cache.service';
 import { useAuthStore } from '../../stores/authStore';
-import { openCheckoutUrl, PAYMENT_RETURN_URL } from '../../utils/browser';
-import { LightColors } from '../../constants/colors';
+import {
+  openCheckoutUrl,
+  PAYMENT_RETURN_URL,
+  type CheckoutOutcome,
+} from '../../utils/browser';
+import { LightColors, Elevation } from '../../constants/colors';
+import { useResponsive } from '../../constants/responsive';
 import { toast } from '../../stores/toastStore';
 import type { PaymentMethod, PaymentMethodType } from '../../types';
+import type { PaymentMethodStatus } from '../../types/payment';
 
 const METHOD_ICONS: Partial<Record<PaymentMethodType, LucideIcon>> = {
   gcash: Smartphone,
@@ -36,10 +55,67 @@ const LINK_OPTIONS: { channel: LinkChannel; label: string }[] = [
   { channel: 'grabpay', label: 'GrabPay' },
 ];
 
+const LINK_CHANNELS: LinkChannel[] = ['gcash', 'maya', 'grabpay'];
+const isLinkChannel = (t: PaymentMethodType): t is LinkChannel =>
+  (LINK_CHANNELS as string[]).includes(t);
+
+// Undefined status = active/chargeable (see PaymentMethod.status).
+const resolveStatus = (s?: PaymentMethodStatus): PaymentMethodStatus =>
+  s ?? 'active';
+
+interface StatusMeta {
+  text: string;
+  color: string;
+  /** true for methods that can't be charged (expired/failed) — de-emphasised. */
+  dead: boolean;
+}
+
+function statusMeta(status: PaymentMethodStatus): StatusMeta {
+  switch (status) {
+    case 'pending':
+      return { text: 'Pending authorization…', color: LightColors.warningDark, dead: false };
+    case 'expired':
+      return { text: 'Needs re-linking', color: LightColors.dangerDark, dead: true };
+    case 'failed':
+      return { text: 'Link failed', color: LightColors.dangerDark, dead: true };
+    default:
+      return { text: 'Linked', color: LightColors.successDark, dead: false };
+  }
+}
+
+function MethodsSkeleton() {
+  return (
+    <View>
+      {[0, 1, 2].map((i) => (
+        <View
+          key={i}
+          className="flex-row items-center rounded-2xl bg-surface pl-4 pr-2 py-3.5 mb-2.5"
+          style={Elevation.sm}
+        >
+          <SkeletonCircle size={40} />
+          <View className="flex-1 ml-3">
+            <Skeleton width="45%" height={14} style={{ marginBottom: 6 }} />
+            <Skeleton width="60%" height={11} />
+          </View>
+          {/* 44-tall slot mirrors the real row's action box so heights
+              match and rows don't nudge up 4px when content lands. */}
+          <View className="w-11 h-11 items-center justify-center">
+            <SkeletonCircle size={20} />
+          </View>
+        </View>
+      ))}
+    </View>
+  );
+}
+
 export default function PaymentMethodsScreen() {
   const userId = useAuthStore((s) => s.user?.id ?? 'anon');
+  const insets = useSafeAreaInsets();
+  const { contentMaxWidth } = useResponsive();
   const [linking, setLinking] = useState<LinkChannel | null>(null);
+  const [settingDefault, setSettingDefault] = useState<string | null>(null);
   const [removing, setRemoving] = useState<PaymentMethod | null>(null);
+  const [refreshing, setRefreshing] = useState(false);
 
   const methodsQ = useQuery<PaymentMethod[]>(
     ['payment-methods', userId],
@@ -52,6 +128,25 @@ export default function PaymentMethodsScreen() {
 
   const methods = methodsQ.data ?? [];
   const loading = methodsQ.loading && !methodsQ.data;
+  const loadFailed = !!methodsQ.error && methods.length === 0;
+
+  // A channel already linked/pending can't be linked again (would mint a
+  // duplicate payment identity). Expired/failed methods stay linkable so
+  // the user can recover them.
+  const linkableOptions = LINK_OPTIONS.filter(
+    (opt) =>
+      !methods.some((m) => {
+        if (m.type !== opt.channel) return false;
+        const s = resolveStatus(m.status);
+        return s === 'active' || s === 'pending';
+      }),
+  );
+
+  const onRefresh = useCallback(async () => {
+    setRefreshing(true);
+    await methodsQ.refresh();
+    setRefreshing(false);
+  }, [methodsQ]);
 
   const handleLink = useCallback(
     async (channel: LinkChannel) => {
@@ -60,13 +155,21 @@ export default function PaymentMethodsScreen() {
       try {
         const res = await paymentService.linkEwallet(channel);
         const actionUrl: string | undefined = res.data?.action_url;
+        let outcome: CheckoutOutcome = 'success';
         if (actionUrl) {
           // Authorize the link in the in-app sheet; it auto-closes on return.
-          await openCheckoutUrl(actionUrl, PAYMENT_RETURN_URL);
+          outcome = await openCheckoutUrl(actionUrl, PAYMENT_RETURN_URL);
         }
-        // Whether authorized or already active, refetch to reflect status.
+        // Refetch to reflect the true status regardless of outcome.
         await methodsQ.refresh();
-        toast.info('Finishing up — your linked account will show as active once confirmed.');
+        if (outcome === 'cancelled') {
+          toast.info('Linking cancelled — no account was linked.');
+        } else if (outcome === 'failed') {
+          toast.error("Linking didn't complete. Please try again.");
+        } else {
+          Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
+          toast.info('Finishing up — your linked account will show as active once confirmed.');
+        }
       } catch (err: any) {
         toast.error(err?.response?.data?.message ?? 'Could not start linking. Please try again.');
       } finally {
@@ -78,117 +181,229 @@ export default function PaymentMethodsScreen() {
 
   const handleSetDefault = useCallback(
     async (m: PaymentMethod) => {
-      if (m.is_default || m.status !== 'active') return;
-      try {
-        await paymentService.setDefaultMethod(m.id);
-        await methodsQ.refresh();
-      } catch {
-        toast.error('Could not set default. Please try again.');
-      }
+      if (m.is_default || resolveStatus(m.status) !== 'active' || settingDefault) return;
+      setSettingDefault(m.id);
+      // Optimistic: move the default flag to this row instantly. The service
+      // invalidates ['payment-methods'] on success, which reconciles with
+      // server truth (incl. any auto-promotion of another method).
+      const prev = methodsQ.data;
+      await runOptimistic({
+        apply: () =>
+          methodsQ.mutate((list) =>
+            (list ?? []).map((x) => ({ ...x, is_default: x.id === m.id })),
+          ),
+        rollback: () => methodsQ.mutate(() => prev ?? []),
+        commit: () => paymentService.setDefaultMethod(m.id),
+        errorMessage: 'Could not set default. Please try again.',
+        onSuccess: () => {
+          Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
+          toast.success('Default updated.');
+        },
+      });
+      setSettingDefault(null);
     },
-    [methodsQ],
+    [methodsQ, settingDefault],
   );
 
   const handleRemove = useCallback(async () => {
     const m = removing;
     setRemoving(null);
     if (!m) return;
-    try {
-      await paymentService.removePaymentMethod(m.id);
-      await methodsQ.refresh();
-      toast.success('Payment method removed.');
-    } catch {
-      toast.error('Could not remove. Please try again.');
-    }
+    // Optimistic: drop the row immediately, restore it if the delete fails.
+    const prev = methodsQ.data;
+    await runOptimistic({
+      apply: () => methodsQ.mutate((list) => (list ?? []).filter((x) => x.id !== m.id)),
+      rollback: () => methodsQ.mutate(() => prev ?? []),
+      commit: () => paymentService.removePaymentMethod(m.id),
+      errorMessage: 'Could not remove. Please try again.',
+      onSuccess: () => toast.success('Payment method removed.'),
+    });
   }, [removing, methodsQ]);
 
   return (
     <View className="flex-1 bg-background">
-      <GradientHeader title="Payment Methods" showBack fallbackHref="/(customer)/(tabs)" />
+      <GradientHeader
+        title="Payment Methods"
+        showBack
+        fallbackHref="/(customer)/(tabs)/profile"
+      />
 
-      <ScrollView className="flex-1 px-5" showsVerticalScrollIndicator={false}>
+      <ScrollView
+        className="flex-1"
+        showsVerticalScrollIndicator={false}
+        contentContainerStyle={{
+          width: '100%',
+          maxWidth: contentMaxWidth,
+          alignSelf: 'center',
+          paddingHorizontal: 20,
+          paddingBottom: insets.bottom + 24,
+        }}
+        refreshControl={
+          <BrandRefreshControl refreshing={refreshing} onRefresh={onRefresh} />
+        }
+      >
         <View className="h-4" />
 
         {/* Saved / linked methods */}
-        <Text
-          className="text-[11px] font-montserrat-bold uppercase text-textSecondary mb-2"
-          style={{ letterSpacing: 1.2 }}
-        >
-          Your linked accounts
-        </Text>
+        <Eyebrow className="mb-2">Your linked accounts</Eyebrow>
 
         {loading ? (
-          <View className="py-10 items-center">
-            <ActivityIndicator color={LightColors.primary} />
-          </View>
+          <MethodsSkeleton />
+        ) : loadFailed ? (
+          <ErrorState
+            title="Couldn't load your payment methods"
+            onRetry={() => {
+              void methodsQ.refresh();
+            }}
+          />
         ) : methods.length === 0 ? (
-          <View className="rounded-2xl bg-surface border border-divider px-4 py-6 items-center mb-2">
-            <View
-              className="w-12 h-12 rounded-full items-center justify-center mb-3"
-              style={{ backgroundColor: LightColors.primaryLight }}
-            >
-              <CreditCard size={22} color={LightColors.primary} />
-            </View>
-            <Text className="text-sm font-montserrat-bold text-textPrimary mb-1">
-              No linked accounts yet
-            </Text>
-            <Text className="text-xs font-montserrat text-textSecondary text-center">
-              Link an e-wallet below to pay in one tap next time.
-            </Text>
-          </View>
+          <EmptyState
+            icon={CreditCard}
+            title="No linked accounts yet"
+            description="Link an e-wallet below to pay in one tap next time."
+          />
         ) : (
           methods.map((m) => {
             const Icon = METHOD_ICONS[m.type] ?? CreditCard;
-            const pending = m.status === 'pending';
+            const status = resolveStatus(m.status);
+            const meta = statusMeta(status);
+            const canSetDefault = status === 'active' && !m.is_default;
+            const needsAction =
+              (status === 'pending' || status === 'expired' || status === 'failed') &&
+              isLinkChannel(m.type);
+            const actionLabel = status === 'pending' ? 'Continue' : 'Re-link';
+            const actionBusy = isLinkChannel(m.type) && linking === m.type;
+            const actionDisabled = linking != null && !actionBusy;
+            const settingThis = settingDefault === m.id;
+            const maskedId =
+              m.card_brand && m.last_four
+                ? `${m.card_brand} •••• ${m.last_four}`
+                : m.last_four
+                  ? `•••• ${m.last_four}`
+                  : null;
+
             return (
               <View
                 key={m.id}
-                className="flex-row items-center rounded-2xl bg-surface border border-divider px-4 py-3.5 mb-2.5"
+                className="flex-row items-center rounded-2xl bg-surface pl-4 pr-2 py-3.5 mb-2.5"
+                style={Elevation.sm}
               >
                 <View
                   className="w-10 h-10 rounded-full items-center justify-center"
-                  style={{ backgroundColor: LightColors.primaryLight }}
+                  style={{
+                    backgroundColor: meta.dead
+                      ? LightColors.surfaceMuted
+                      : LightColors.primaryLight,
+                  }}
                 >
-                  <Icon size={19} color={LightColors.primary} />
+                  <Icon
+                    size={19}
+                    color={meta.dead ? LightColors.textTertiary : LightColors.primary}
+                  />
                 </View>
                 <View className="flex-1 ml-3">
                   <View className="flex-row items-center">
-                    <Text className="text-[14px] font-montserrat-bold text-textPrimary">
+                    <Text
+                      numberOfLines={1}
+                      className="shrink text-[14px] font-montserrat-bold"
+                      style={{
+                        color: meta.dead
+                          ? LightColors.textSecondary
+                          : LightColors.textPrimary,
+                      }}
+                    >
                       {m.label}
                     </Text>
-                    {m.is_default && !pending && (
+                    {m.is_default && status === 'active' && (
                       <View
                         className="ml-2 px-2 py-0.5 rounded-full"
                         style={{ backgroundColor: LightColors.primaryLight }}
                       >
-                        <Text className="text-[9px] font-montserrat-bold text-primary uppercase">
+                        <Text
+                          className="text-[10px] font-montserrat-bold text-primary uppercase"
+                          style={{ letterSpacing: 0.6 }}
+                        >
                           Default
                         </Text>
                       </View>
                     )}
                   </View>
-                  <Text
-                    className="text-[11px] font-montserrat mt-0.5"
-                    style={{ color: pending ? LightColors.warning : LightColors.success }}
-                  >
-                    {pending ? 'Pending authorization…' : 'Linked'}
-                  </Text>
+                  <View className="flex-row items-center mt-0.5">
+                    {maskedId && (
+                      <Text
+                        numberOfLines={1}
+                        className="shrink text-[11px] font-montserrat text-textTertiary"
+                      >
+                        {maskedId}
+                        <Text className="text-textTertiary">{'  ·  '}</Text>
+                      </Text>
+                    )}
+                    <Text
+                      numberOfLines={1}
+                      className="text-[11px] font-montserrat"
+                      style={{ color: meta.color }}
+                    >
+                      {meta.text}
+                    </Text>
+                  </View>
                 </View>
 
-                {!pending && !m.is_default && (
+                {/* Recovery action for pending / expired / failed methods. */}
+                {needsAction && (
                   <Pressable
-                    hitSlop={8}
-                    onPress={() => handleSetDefault(m)}
-                    className="mr-3"
-                    accessibilityLabel="Set as default"
+                    disabled={actionDisabled}
+                    onPress={() => handleLink(m.type as LinkChannel)}
+                    className="h-11 px-2.5 items-center justify-center"
+                    style={({ pressed }) => [
+                      pressed && { opacity: 0.6 },
+                      actionDisabled && { opacity: 0.4 },
+                    ]}
+                    accessibilityRole="button"
+                    accessibilityLabel={`${actionLabel} linking ${m.label}`}
                   >
-                    <Star size={18} color={LightColors.textMuted} />
+                    {actionBusy ? (
+                      <Spinner size="small" color={LightColors.primary} />
+                    ) : (
+                      <Text className="text-[13px] font-montserrat-bold text-primary">
+                        {actionLabel}
+                      </Text>
+                    )}
                   </Pressable>
                 )}
+
+                {/* Set-default — explicit 44×44 box, spaced from Remove. */}
+                {canSetDefault && (
+                  <Pressable
+                    disabled={settingDefault != null}
+                    onPress={() => handleSetDefault(m)}
+                    className="w-11 h-11 items-center justify-center"
+                    style={({ pressed }) => [
+                      pressed && { opacity: 0.6 },
+                      settingDefault != null && !settingThis && { opacity: 0.4 },
+                    ]}
+                    accessibilityRole="button"
+                    accessibilityLabel={`Set ${m.label} as default`}
+                  >
+                    {settingThis ? (
+                      <Spinner size="small" color={LightColors.primary} />
+                    ) : (
+                      <Star size={18} color={LightColors.textTertiary} />
+                    )}
+                  </Pressable>
+                )}
+
+                {/* Remove — visually last, its own 44×44 box (no overlap). */}
                 <Pressable
-                  hitSlop={8}
-                  onPress={() => setRemoving(m)}
-                  accessibilityLabel="Remove"
+                  onPress={() => {
+                    Haptics.notificationAsync(
+                      Haptics.NotificationFeedbackType.Warning,
+                    ).catch(() => {});
+                    setRemoving(m);
+                  }}
+                  className="w-11 h-11 items-center justify-center"
+                  style={({ pressed }) => pressed && { opacity: 0.6 }}
+                  accessibilityRole="button"
+                  accessibilityLabel={`Remove ${m.label}`}
                 >
                   <Trash2 size={18} color={LightColors.danger} />
                 </Pressable>
@@ -198,40 +413,46 @@ export default function PaymentMethodsScreen() {
         )}
 
         {/* Link a new e-wallet */}
-        <Text
-          className="text-[11px] font-montserrat-bold uppercase text-textSecondary mt-5 mb-2"
-          style={{ letterSpacing: 1.2 }}
-        >
-          Link an e-wallet
-        </Text>
-        {LINK_OPTIONS.map((opt) => {
-          const busy = linking === opt.channel;
-          const disabled = linking != null;
-          return (
-            <Pressable
-              key={opt.channel}
-              disabled={disabled}
-              onPress={() => handleLink(opt.channel)}
-              className="flex-row items-center rounded-2xl bg-surface border border-divider px-4 py-3.5 mb-2.5"
-              style={disabled && !busy ? { opacity: 0.5 } : undefined}
-            >
-              <View
-                className="w-10 h-10 rounded-full items-center justify-center"
-                style={{ backgroundColor: LightColors.primaryLight }}
-              >
-                <Smartphone size={19} color={LightColors.primary} />
-              </View>
-              <Text className="flex-1 ml-3 text-[14px] font-montserrat-bold text-textPrimary">
-                {opt.label}
-              </Text>
-              {busy ? (
-                <ActivityIndicator size="small" color={LightColors.primary} />
-              ) : (
-                <Plus size={20} color={LightColors.primary} />
-              )}
-            </Pressable>
-          );
-        })}
+        {linkableOptions.length > 0 && (
+          <>
+            <Eyebrow className="mt-5 mb-2">Link an e-wallet</Eyebrow>
+            {linkableOptions.map((opt) => {
+              const busy = linking === opt.channel;
+              const disabled = linking != null;
+              return (
+                <Pressable
+                  key={opt.channel}
+                  disabled={disabled}
+                  onPress={() => handleLink(opt.channel)}
+                  accessibilityRole="button"
+                  accessibilityLabel={`Link ${opt.label}`}
+                  accessibilityState={{ disabled, busy }}
+                  className="flex-row items-center rounded-2xl bg-surface px-4 py-3.5 mb-2.5"
+                  style={({ pressed }) => [
+                    Elevation.sm,
+                    pressed && !disabled && { opacity: 0.85 },
+                    disabled && !busy && { opacity: 0.5 },
+                  ]}
+                >
+                  <View
+                    className="w-10 h-10 rounded-full items-center justify-center"
+                    style={{ backgroundColor: LightColors.primaryLight }}
+                  >
+                    <Smartphone size={19} color={LightColors.primary} />
+                  </View>
+                  <Text className="flex-1 ml-3 text-[14px] font-montserrat-bold text-textPrimary">
+                    {opt.label}
+                  </Text>
+                  {busy ? (
+                    <Spinner size="small" color={LightColors.primary} />
+                  ) : (
+                    <Plus size={20} color={LightColors.primary} />
+                  )}
+                </Pressable>
+              );
+            })}
+          </>
+        )}
 
         {/* Cards — usable at checkout today; saving for reuse is coming next. */}
         <View
@@ -246,9 +467,9 @@ export default function PaymentMethodsScreen() {
           </Text>
         </View>
 
-        <View className="flex-row items-center justify-center mt-5 mb-10">
-          <ShieldCheck size={13} color={LightColors.textMuted} />
-          <Text className="ml-1.5 text-[11px] font-montserrat text-textMuted">
+        <View className="flex-row items-center justify-center mt-5">
+          <ShieldCheck size={14} color={LightColors.textTertiary} />
+          <Text className="ml-1.5 text-[12px] font-montserrat text-textTertiary">
             Linking is secured by Xendit. We never see your credentials.
           </Text>
         </View>

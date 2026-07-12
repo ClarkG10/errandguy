@@ -1,5 +1,6 @@
-import React, { useEffect, useRef } from 'react';
-import { View, TextInput, Text, Platform } from 'react-native';
+import React, { useEffect, useRef, useState } from 'react';
+import { View, TextInput, Text, Platform, AccessibilityInfo } from 'react-native';
+import * as Haptics from 'expo-haptics';
 import Animated, {
   useSharedValue,
   useAnimatedStyle,
@@ -7,6 +8,7 @@ import Animated, {
   withTiming,
   Easing,
 } from 'react-native-reanimated';
+import { useReducedMotion } from '../../hooks/useReducedMotion';
 import { useResponsive } from '../../constants/responsive';
 import { LightColors } from '../../constants/colors';
 
@@ -15,10 +17,15 @@ interface OTPInputProps {
   value: string;
   onChange: (value: string) => void;
   error?: string;
+  /** Green confirmation state — set briefly by the parent after a
+   * successful verify so the cells acknowledge success before the
+   * route swap (mirrors the error color ladder). */
+  success?: boolean;
 }
 
-export function OTPInput({ length = 6, value, onChange, error }: OTPInputProps) {
+export function OTPInput({ length = 6, value, onChange, error, success }: OTPInputProps) {
   const inputs = useRef<(TextInput | null)[]>([]);
+  const [focusedIndex, setFocusedIndex] = useState<number | null>(null);
   const digits = value.split('').concat(Array(length - value.length).fill(''));
   const { mScale, width: screenW, contentMaxWidth } = useResponsive();
 
@@ -38,12 +45,31 @@ export function OTPInput({ length = 6, value, onChange, error }: OTPInputProps) 
   const cellHeight = Math.round(cellWidth * 1.25); // keep 4:5 ratio
   const cellFont = Math.max(16, Math.round(cellWidth * 0.46));
 
+  // On narrow phones the cells can shrink below the 44pt minimum touch
+  // target — pad the difference back with hitSlop (no layout impact).
+  const vSlop = Math.max(0, Math.ceil((44 - cellHeight) / 2));
+  const hSlop = Math.max(0, Math.ceil((44 - cellWidth) / 2));
+
   // Shake the cell row whenever an error message appears. We key off the
   // string itself so re-submitting the same wrong code still shakes (the
   // parent should bump the error reference / message in that case).
+  // Under OS Reduce Motion the shake is skipped — the error haptic and
+  // red cells still communicate the failure.
+  const reduceMotion = useReducedMotion();
   const shake = useSharedValue(0);
   useEffect(() => {
     if (!error) return;
+    Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error).catch(() => {});
+    // accessibilityLiveRegion is Android-only — announce explicitly on iOS
+    // so VoiceOver users hear why their code was rejected.
+    if (Platform.OS === 'ios') {
+      AccessibilityInfo.announceForAccessibility(error);
+    }
+    // After a failed verify the parent clears the code, but focus is left
+    // on the last cell while new digits render into the first — refocus
+    // cell 1 so the caret and the visible input point agree on the retry.
+    requestAnimationFrame(() => inputs.current[0]?.focus());
+    if (reduceMotion) return;
     shake.value = withSequence(
       withTiming(-8, { duration: 50, easing: Easing.linear }),
       withTiming(8, { duration: 50, easing: Easing.linear }),
@@ -51,7 +77,7 @@ export function OTPInput({ length = 6, value, onChange, error }: OTPInputProps) 
       withTiming(6, { duration: 50, easing: Easing.linear }),
       withTiming(0, { duration: 50, easing: Easing.linear }),
     );
-  }, [error, shake]);
+  }, [error, shake, reduceMotion]);
   const shakeStyle = useAnimatedStyle(() => ({
     transform: [{ translateX: shake.value }],
   }));
@@ -68,6 +94,11 @@ export function OTPInput({ length = 6, value, onChange, error }: OTPInputProps) 
     // Sanitize to digits only — pasted strings sometimes carry stray
     // formatting (`123-456`, spaces, NBSP from SMS senders).
     const sanitized = text.replace(/\D/g, '');
+
+    // Subtle tick per digit entered (single fire for a full paste too).
+    if (sanitized) {
+      Haptics.selectionAsync().catch(() => {});
+    }
 
     // SMS autofill / clipboard paste: iOS delivers the full code into the
     // first cell's onChangeText in a single call. Distribute across cells.
@@ -111,19 +142,27 @@ export function OTPInput({ length = 6, value, onChange, error }: OTPInputProps) 
         {Array.from({ length }).map((_, index) => {
           // Filled-style OTP cell matching Input: muted fill at rest
           // (no visible border), white + ink border once a digit lands
-          // so the eye reads progress at a glance. Inter tabular
-          // numerics match every other numeric in the app.
+          // so the eye reads progress at a glance, and a primary ring on
+          // the focused cell so the user can see where input lands. Inter
+          // tabular numerics match every other numeric in the app.
           const filled = !!digits[index];
+          const focused = focusedIndex === index;
           const borderColor = error
             ? LightColors.danger
-            : filled
-              ? LightColors.textPrimary
-              : 'transparent';
+            : success
+              ? LightColors.success
+              : focused
+                ? LightColors.primary
+                : filled
+                  ? LightColors.textPrimary
+                  : 'transparent';
           const bg = error
             ? LightColors.dangerSoft
-            : filled
-              ? LightColors.surface
-              : LightColors.surfaceMuted;
+            : success
+              ? LightColors.successLight
+              : focused || filled
+                ? LightColors.surface
+                : LightColors.surfaceMuted;
           return (
           <TextInput
             key={index}
@@ -135,7 +174,7 @@ export function OTPInput({ length = 6, value, onChange, error }: OTPInputProps) 
               width: cellWidth,
               height: cellHeight,
               marginHorizontal: cellMargin,
-              borderWidth: filled ? 2 : 1.5,
+              borderWidth: filled || focused ? 2 : 1.5,
               borderRadius: 16,
               borderColor,
               backgroundColor: bg,
@@ -148,6 +187,9 @@ export function OTPInput({ length = 6, value, onChange, error }: OTPInputProps) 
             value={digits[index]}
             onChangeText={(text) => handleChange(text, index)}
             onKeyPress={(e) => handleKeyPress(e, index)}
+            onFocus={() => setFocusedIndex(index)}
+            onBlur={() => setFocusedIndex((i) => (i === index ? null : i))}
+            hitSlop={{ top: vSlop, bottom: vSlop, left: hSlop, right: hSlop }}
             keyboardType="number-pad"
             // SMS autofill: only the FIRST cell advertises the
             // one-time-code semantic to iOS / Android Autofill. iOS
@@ -172,14 +214,16 @@ export function OTPInput({ length = 6, value, onChange, error }: OTPInputProps) 
           );
         })}
       </Animated.View>
-      {error && (
-        <Text
-          accessibilityLiveRegion="polite"
-          className="text-xs text-danger mt-2 text-center font-montserrat"
-        >
-          {error}
-        </Text>
-      )}
+      {/* Always rendered (minHeight reserves the line) so the CTA below
+          never jumps when an error appears or clears. dangerDark: base
+          danger fails 4.5:1 at this size on white. */}
+      <Text
+        accessibilityLiveRegion="polite"
+        className="text-xs text-dangerDark mt-2 text-center font-montserrat"
+        style={{ minHeight: 18 }}
+      >
+        {error ?? ''}
+      </Text>
     </View>
   );
 }

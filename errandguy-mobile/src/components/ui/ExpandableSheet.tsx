@@ -1,18 +1,19 @@
-import React, { useEffect } from 'react';
-import { View, Pressable, Dimensions, StyleSheet } from 'react-native';
+import React, { useEffect, useRef, useState } from 'react';
+import { View, Pressable, StyleSheet, useWindowDimensions } from 'react-native';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import Animated, {
   useSharedValue,
   useAnimatedStyle,
   withSpring,
+  withTiming,
   runOnJS,
   interpolate,
   Extrapolation,
 } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { LightColors } from '../../constants/colors';
+import { Radius } from '../../constants/radius';
 
-const { height: SCREEN_HEIGHT } = Dimensions.get('window');
 const SPRING = { damping: 22, stiffness: 220, mass: 0.9 } as const;
 
 export type SheetSnap = 'peek' | 'half' | 'full';
@@ -33,6 +34,13 @@ interface ExpandableSheetProps {
    * SOS) never get clipped when the user collapses the sheet to peek.
    */
   footer?: React.ReactNode;
+  /**
+   * When the OS "Reduce Motion" setting is on, programmatic snaps (initial
+   * position, tap-cycle, screen-reader increment/decrement) use a short
+   * timing curve instead of the spring. The pan gesture keeps the spring —
+   * gesture-tracked motion is exempt per the HIG.
+   */
+  reduceMotion?: boolean;
 }
 
 /**
@@ -48,8 +56,24 @@ export function ExpandableSheet({
   renderHandle,
   children,
   footer,
+  reduceMotion = false,
 }: ExpandableSheetProps) {
   const insets = useSafeAreaInsets();
+  // Measured footer height. The old fixed `88 + insets.bottom` reserve was
+  // tuned for a single-button footer — stacked footers (SOS + banner +
+  // Cancel on tracking) run past 150pt and clipped the last content rows.
+  // Until the first onLayout lands we fall back to the old constant so
+  // existing single-button consumers render identically on frame one.
+  const [footerH, setFooterH] = useState<number | null>(null);
+  // Measured handle height, so the tap-target slop below grows the target to
+  // the 44pt floor and no further — a fixed down-slop would swallow taps on
+  // the body under tall renderHandle content. Pre-layout default = the bare
+  // 16pt strip (handleWrap padding 8+4 around the 4pt bar).
+  const [handleH, setHandleH] = useState(16);
+  // Hook, not module-scope Dimensions.get: snap points must track
+  // rotation and iPad split-view resizes, which re-fire the initialY
+  // re-snap effect below.
+  const { height: SCREEN_HEIGHT } = useWindowDimensions();
   const peekY = SCREEN_HEIGHT * (1 - snapPoints.peek);
   const halfY = SCREEN_HEIGHT * (1 - snapPoints.half);
   const fullY = SCREEN_HEIGHT * (1 - snapPoints.full);
@@ -58,15 +82,35 @@ export function ExpandableSheet({
   const translateY = useSharedValue(initialY);
   const startY = useSharedValue(0);
 
+  // Ref, not a dep: toggling Reduce Motion mid-session must not re-fire the
+  // initial-position effect (that would stomp the user's chosen snap).
+  const reduceMotionRef = useRef(reduceMotion);
+  reduceMotionRef.current = reduceMotion;
+
   // Re-snap when snap points change (e.g. orientation).
   useEffect(() => {
-    translateY.value = withSpring(initialY, SPRING);
+    translateY.value = reduceMotionRef.current
+      ? withTiming(initialY, { duration: 200 })
+      : withSpring(initialY, SPRING);
   }, [initialY, translateY]);
 
   const snapTo = (snap: SheetSnap) => {
     const target = snap === 'peek' ? peekY : snap === 'full' ? fullY : halfY;
-    translateY.value = withSpring(target, SPRING);
+    translateY.value = reduceMotion
+      ? withTiming(target, { duration: 200 })
+      : withSpring(target, SPRING);
     onSnapChange?.(snap);
+  };
+
+  // Where the sheet currently sits, by nearest snap point — mirrors the
+  // no-velocity branch of the pan gesture below.
+  const nearestSnap = (): SheetSnap => {
+    const current = translateY.value;
+    const dPeek = Math.abs(current - peekY);
+    const dHalf = Math.abs(current - halfY);
+    const dFull = Math.abs(current - fullY);
+    const min = Math.min(dPeek, dHalf, dFull);
+    return min === dPeek ? 'peek' : min === dFull ? 'full' : 'half';
   };
 
   const gesture = Gesture.Pan()
@@ -135,8 +179,8 @@ export function ExpandableSheet({
             top: 0,
             height: SCREEN_HEIGHT,
             backgroundColor: LightColors.surface,
-            borderTopLeftRadius: 28,
-            borderTopRightRadius: 28,
+            borderTopLeftRadius: Radius.sheet,
+            borderTopRightRadius: Radius.sheet,
             shadowColor: LightColors.textPrimary,
             shadowOffset: { width: 0, height: -10 },
             shadowOpacity: 0.08,
@@ -158,6 +202,29 @@ export function ExpandableSheet({
               else if (Math.abs(cur - halfY) < 4) snapTo('full');
               else snapTo('half');
             }}
+            // The bare handle strip is only ~16pt tall — grow the tap
+            // target to the 44pt floor, but no further: excess down-slop
+            // steals taps from non-touchable body content. Slop must extend
+            // DOWN (into the sheet body, where later-mounted touchables
+            // still win the hit test); slop above the sheet edge is outside
+            // the parent and never receives touches.
+            onLayout={(e) => setHandleH(e.nativeEvent.layout.height)}
+            hitSlop={{ top: 8, bottom: Math.max(0, 44 - handleH - 8) }}
+            // The pan gesture is invisible to screen readers — this button
+            // plus increment/decrement is the only SR-operable resize path.
+            accessibilityRole="button"
+            accessibilityLabel="Resize panel"
+            accessibilityHint="Cycles between collapsed, half, and full height"
+            accessibilityActions={[{ name: 'increment' }, { name: 'decrement' }]}
+            onAccessibilityAction={(e) => {
+              const order: SheetSnap[] = ['peek', 'half', 'full'];
+              const idx = order.indexOf(nearestSnap());
+              if (e.nativeEvent.actionName === 'increment' && idx < order.length - 1) {
+                snapTo(order[idx + 1]);
+              } else if (e.nativeEvent.actionName === 'decrement' && idx > 0) {
+                snapTo(order[idx - 1]);
+              }
+            }}
           >
             <View style={styles.handleWrap}>
               <View style={styles.handleBar} />
@@ -165,12 +232,13 @@ export function ExpandableSheet({
             </View>
           </Pressable>
         </GestureDetector>
-        <View style={{ flex: 1, paddingBottom: footer ? 88 + insets.bottom : 0 }}>{children}</View>
+        <View style={{ flex: 1, paddingBottom: footer ? (footerH ?? 88 + insets.bottom) : 0 }}>{children}</View>
       </Animated.View>
       {/* Sticky CTA — sits above the sheet, always visible. */}
       {footer ? (
         <View
           pointerEvents="box-none"
+          onLayout={(e) => setFooterH(e.nativeEvent.layout.height)}
           style={{
             position: 'absolute',
             left: 0,

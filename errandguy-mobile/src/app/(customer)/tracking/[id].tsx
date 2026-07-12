@@ -8,6 +8,9 @@ import {
   StyleSheet,
   Linking,
   Animated,
+  Easing,
+  Share,
+  useWindowDimensions,
 } from 'react-native';
 import { Image as ExpoImage } from 'expo-image';
 import * as Haptics from 'expo-haptics';
@@ -19,14 +22,26 @@ import {
   Share2,
   Shield,
   Bike,
+  Check,
   ChevronDown,
   ChevronUp,
-  Clock,
+  Crosshair,
   MapPin,
+  SearchX,
   X,
 } from 'lucide-react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
+import Reanimated, {
+  useSharedValue,
+  useAnimatedStyle,
+  withRepeat,
+  withTiming,
+  Easing as REasing,
+  Keyframe,
+  FadeIn,
+  FadeOut,
+} from 'react-native-reanimated';
 import { HereMapView, HereMarker, HerePolyline, type HereMapViewRef } from '../../../components/map';
 import { useBookingStore } from '../../../stores/bookingStore';
 import { useChatStore } from '../../../stores/chatStore';
@@ -35,14 +50,17 @@ import { bookingService } from '../../../services/booking.service';
 import { useRunnerTracking } from '../../../hooks/useRunnerTracking';
 import { useBookingStatus } from '../../../hooks/useBookingStatus';
 import { useForegroundInterval } from '../../../hooks/useForegroundInterval';
+import { useSmartPolling } from '../../../hooks/useSmartPolling';
 import { useBackGuard } from '../../../hooks/useBackGuard';
 import { useEta } from '../../../hooks/useEta';
+import { useReducedMotion } from '../../../hooks/useReducedMotion';
 import { TrackingSkeleton } from '../../../components/ui/Skeleton';
 import { Avatar } from '../../../components/ui/Avatar';
 import { RatingStars } from '../../../components/ui/RatingStars';
 import { StatusTimeline } from '../../../components/ui/StatusTimeline';
 import { JourneyBeads } from '../../../components/ui/JourneyBeads';
 import { Button } from '../../../components/ui/Button';
+import { ErrorState } from '../../../components/ui/ErrorState';
 import { ConfirmModal } from '../../../components/ui/ConfirmModal';
 import { ExpandableSheet } from '../../../components/ui/ExpandableSheet';
 import { formatTime } from '../../../utils/formatDate';
@@ -61,15 +79,112 @@ const CAN_CANCEL_STATUSES: BookingStatus[] = [
   'pending', 'matched', 'accepted', 'heading_to_pickup',
 ];
 
+// Auto-map window. Exported so ops can tune when tiles auto-mount without a
+// redesign — HERE raster tiles are billed per request, so this list IS the
+// screen's cost bound.
+export const MAP_PHASES: BookingStatus[] = ['heading_to_pickup', 'picked_up', 'in_transit'];
+// Once the map auto-mounted, hold it through the arrived_* pauses so the
+// arrive→pickup boundary never unmounts/remounts the tiles (see mapLatchRef).
+const HOLD_PHASES: BookingStatus[] = ['arrived_at_pickup', 'arrived_at_dropoff'];
+// VISUAL grouping only — the receipt canvas/sheet layout. Do NOT reuse for
+// the Android back guard: isLiveBooking below keeps its own expression where
+// 'delivered' still counts as live.
+const TERMINAL_UI: BookingStatus[] = ['delivered', 'completed', 'cancelled', 'no_runner'];
+
+// Constant across statuses — a changing snapPoints identity re-fires the
+// sheet's initial-position effect and stomps the user's chosen snap. Only
+// `initial` may flip (once, into a terminal status).
+const SNAP_POINTS = { peek: 0.24, half: 0.52, full: 0.92 } as const;
+
+// Radar visuals sit on the brand-blue gradient — same doctrine as
+// book/confirm: white only, a primary stroke would vanish into the backdrop.
+const RING_COLOR = '#FFFFFF';
+
+/* ─── Radar pulse (gradient canvas) ───
+   Same recipe as book/confirm's searching radar so pre-dispatch reads as one
+   continuous moment across screens. Two rings, not three — this screen also
+   runs the beads + live-dot loops and the budget is ≤2 loops per mode. */
+function PulseRing({ delay, size }: { delay: number; size: number }) {
+  const scale = useSharedValue(0.3);
+  const opacity = useSharedValue(0.6);
+
+  useEffect(() => {
+    const timeout = setTimeout(() => {
+      scale.value = withRepeat(
+        withTiming(1, { duration: 2000, easing: REasing.out(REasing.ease) }),
+        -1,
+        false,
+      );
+      opacity.value = withRepeat(
+        withTiming(0, { duration: 2000, easing: REasing.out(REasing.ease) }),
+        -1,
+        false,
+      );
+    }, delay);
+    return () => clearTimeout(timeout);
+  }, [delay, scale, opacity]);
+
+  const style = useAnimatedStyle(() => ({
+    transform: [{ scale: scale.value }],
+    opacity: opacity.value,
+  }));
+
+  return (
+    <Reanimated.View
+      style={[
+        {
+          position: 'absolute',
+          width: size,
+          height: size,
+          borderRadius: size / 2,
+          borderWidth: 2,
+          borderColor: RING_COLOR,
+          backgroundColor: `${RING_COLOR}1A`,
+        },
+        style,
+      ]}
+    />
+  );
+}
+
+// ETA numeral roll — old value exits upward, new value rises in from below.
+// Exit faster than enter so the digits never read as doubled; tabular-nums
+// on the Text keeps the width fixed so nothing else shifts.
+const DigitExit = new Keyframe({
+  from: { opacity: 1, transform: [{ translateY: 0 }] },
+  to: { opacity: 0, transform: [{ translateY: -8 }] },
+}).duration(160);
+const DigitEnter = new Keyframe({
+  from: { opacity: 0, transform: [{ translateY: 8 }] },
+  to: { opacity: 1, transform: [{ translateY: 0 }] },
+}).duration(220);
+
+// Chrome entrance — fade + small drop, staggered back→pill, once per mount.
+const chromeEnter = (delay: number) =>
+  new Keyframe({
+    from: { opacity: 0, transform: [{ translateY: -8 }] },
+    to: { opacity: 1, transform: [{ translateY: 0 }] },
+  })
+    .duration(220)
+    .delay(delay);
+
 export default function TrackingScreen() {
   const router = useRouter();
   const { id } = useLocalSearchParams<{ id: string }>();
+  const insets = useSafeAreaInsets();
+  const { width: winWidth, height: winHeight } = useWindowDimensions();
+  const reduceMotion = useReducedMotion();
   // IMPORTANT: select with a getter so the reference stays stable across
   // unrelated state changes. `useBookingStore()` (no selector) returns the
   // entire store snapshot on every render, which made `setActiveBooking`
   // a fresh reference every time and re-fired the fetch effect — causing
   // 3-4 redundant /bookings/{id} + /track requests per visit.
   const setActiveBooking = useBookingStore((s) => s.setActiveBooking);
+  // Draft mutators for the no_runner "Book again" path — mirrors
+  // book/confirm's exhausted-rebook (re-seed the draft, land on review).
+  const updateDraft = useBookingStore((s) => s.updateDraft);
+  const clearDraft = useBookingStore((s) => s.clearDraft);
+  const setBookingStep = useBookingStore((s) => s.setStep);
   // Read the booking already in the store (set by home's activeBookingQ)
   // so we can render instantly while the fresh /bookings/{id} fetch
   // revalidates in the background. Avoids the skeleton flash when the
@@ -87,6 +202,10 @@ export default function TrackingScreen() {
     cachedBooking?.status_logs ?? [],
   );
   const [loading, setLoading] = useState(!cachedBooking);
+  // Distinguishes a genuine 404 (no such booking) from a transient
+  // fetch/network failure. Without this, a dropped request fell through
+  // to the misleading "Booking not found" dead-end with no retry.
+  const [loadError, setLoadError] = useState(false);
   const [sosActive, setSosActive] = useState(false);
   const [routeCoords, setRouteCoords] = useState<[number, number][]>([]);
   // null = idle, 'loading' = first fetch in flight, 'error' = last fetch
@@ -110,11 +229,114 @@ export default function TrackingScreen() {
   } | null>(null);
   const [previewLoading, setPreviewLoading] = useState(false);
   const [showSOSModal, setShowSOSModal] = useState(false);
-  // Live map is opt-in to keep HERE tile spend down: the status, runner card
-  // and timeline in the sheet below already tell the customer what's happening.
-  // The map only mounts (and only then requests tiles) when they tap to open it.
-  const [showMap, setShowMap] = useState(false);
+  // HERE tiles are billable, so the map mounts on a phase gate instead of a
+  // blanket opt-in: auto-mount during the en-route phases (MAP_PHASES),
+  // ref-latched hold through the arrived_* pauses, never on terminal
+  // statuses. `mapOverride` is the user's escape hatch in BOTH directions —
+  // 'on' pre-dispatch (old "View live map"), 'off' during auto phases
+  // ("Hide map"). null follows the gate. Per-visit state, like old showMap.
+  const [mapOverride, setMapOverride] = useState<'on' | 'off' | null>(null);
+  // Hysteresis latch: set while in an auto phase, held through arrived_* so
+  // the arrive→pickup boundary never unmounts/remounts tiles. A cold start
+  // directly INTO arrived_* leaves it false → opt-in pill, no auto-mount.
+  const mapLatchRef = useRef(false);
+  useEffect(() => {
+    if (!booking) return;
+    if (MAP_PHASES.includes(booking.status)) mapLatchRef.current = true;
+    if (TERMINAL_UI.includes(booking.status)) mapLatchRef.current = false;
+    // Keyed on status only — other booking-field updates can't move the latch.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [booking?.status]);
+
+  // Derived map gate. Plain consts (no memo): they must re-evaluate on every
+  // render that follows a status change, and each input is cheap.
+  const bookingStatus = booking?.status ?? null;
+  const isTerminalUi = bookingStatus != null && TERMINAL_UI.includes(bookingStatus);
+  const mapAuto =
+    bookingStatus != null &&
+    (MAP_PHASES.includes(bookingStatus) ||
+      (HOLD_PHASES.includes(bookingStatus) && mapLatchRef.current));
+  // Terminal wins over everything (even override 'on'): no tiles for a
+  // finished trip. Then the user's override, then the auto gate.
+  const mapMounted =
+    bookingStatus != null &&
+    !isTerminalUi &&
+    (mapOverride === 'off' ? false : mapOverride === 'on' ? true : mapAuto);
+
   const mapRef = useRef<HereMapViewRef>(null);
+
+  // Gradient→map veil: the brand gradient stays mounted ABOVE the map while
+  // MapLibre loads its style + first tiles, then fades out on onMapReady or
+  // a 1.5s timeout, whichever fires first. Never dropped early — before
+  // onDidFinishLoadingMap MapLibre shows a grey checkerboard.
+  // Initialised to `mapMounted` so a cold deep-link straight into map mode
+  // is covered on the very first frame, not one effect-tick later.
+  const [veilVisible, setVeilVisible] = useState<boolean>(mapMounted);
+  const veilOpacity = useRef(new Animated.Value(1)).current;
+  const veilTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const veilDismissedRef = useRef(false);
+  const dismissVeil = useCallback(() => {
+    if (veilDismissedRef.current) return;
+    veilDismissedRef.current = true;
+    if (veilTimerRef.current) {
+      clearTimeout(veilTimerRef.current);
+      veilTimerRef.current = null;
+    }
+    if (reduceMotion) {
+      setVeilVisible(false);
+      veilOpacity.setValue(1);
+      return;
+    }
+    Animated.timing(veilOpacity, {
+      toValue: 0,
+      duration: 300,
+      easing: Easing.out(Easing.ease),
+      useNativeDriver: true,
+    }).start(({ finished }) => {
+      if (finished) {
+        setVeilVisible(false);
+        // Re-prime for the next mount (map hidden then re-shown): the veil's
+        // synchronous first frame below must render at full opacity.
+        veilOpacity.setValue(1);
+      }
+    });
+  }, [reduceMotion, veilOpacity]);
+  const prevMapMountedRef = useRef(false);
+  useEffect(() => {
+    const prev = prevMapMountedRef.current;
+    prevMapMountedRef.current = mapMounted;
+    if (mapMounted && !prev) {
+      veilDismissedRef.current = false;
+      veilOpacity.setValue(1);
+      setVeilVisible(true);
+      veilTimerRef.current = setTimeout(dismissVeil, 1500);
+    } else if (!mapMounted && prev) {
+      if (veilTimerRef.current) {
+        clearTimeout(veilTimerRef.current);
+        veilTimerRef.current = null;
+      }
+      veilDismissedRef.current = false;
+      setVeilVisible(false);
+    }
+  }, [mapMounted, dismissVeil, veilOpacity]);
+  useEffect(
+    () => () => {
+      if (veilTimerRef.current) clearTimeout(veilTimerRef.current);
+    },
+    [],
+  );
+
+  // The receipt IS the point of a terminal trip — pop the details section
+  // (reconciliation, proofs) open once on entering a terminal status. Ref
+  // guard, not state-derived, so the user can still re-collapse it.
+  const detailsAutoOpenedRef = useRef(false);
+  useEffect(() => {
+    if (isTerminalUi && !detailsAutoOpenedRef.current) {
+      detailsAutoOpenedRef.current = true;
+      setDetailsOpen(true);
+    }
+  }, [isTerminalUi]);
+
   // Tracks the last booking status we have already loaded statusLogs for.
   // Used to skip redundant /track refetches when realtime UPDATEs come in
   // for unrelated fields. Declared before the fetch effect that seeds it.
@@ -126,12 +348,13 @@ export default function TrackingScreen() {
   );
 
   // Looping pulse driver shared between the on-map runner marker and
-  // the bottom-right "live" pill. Only animates while the runner has
-  // a positive speed reading so the pulse reads as actual movement.
+  // the "live" pill. Only animates while the runner has a positive speed
+  // reading so the pulse reads as actual movement. Under Reduce Motion the
+  // loop never starts — consumers render a static 0.25-opacity halo instead.
   const runnerPulse = useRef(new Animated.Value(0)).current;
   useEffect(() => {
     const moving = runnerLocation?.speed != null && runnerLocation.speed > 0;
-    if (!moving) {
+    if (!moving || reduceMotion) {
       runnerPulse.stopAnimation();
       runnerPulse.setValue(0);
       return;
@@ -145,7 +368,7 @@ export default function TrackingScreen() {
     );
     loop.start();
     return () => loop.stop();
-  }, [runnerLocation?.speed, runnerPulse]);
+  }, [runnerLocation?.speed, runnerPulse, reduceMotion]);
 
   // Live booking status updates via Supabase Realtime
   const { isConnected: statusConnected } = useBookingStatus(id ?? null);
@@ -193,10 +416,9 @@ export default function TrackingScreen() {
   // would double the network round-trips on every mount. /track is only
   // useful for the latest runner_location, which we get via realtime
   // (useRunnerTracking) in steady state.
-  useEffect(() => {
+  const fetchBooking = useCallback(() => {
     if (!id) return;
-    // Only show the skeleton if we don't already have a cached snapshot.
-    if (!cachedBooking) setLoading(true);
+    setLoadError(false);
     bookingService
       .getBooking(id)
       .then((bookingRes) => {
@@ -209,8 +431,22 @@ export default function TrackingScreen() {
         // trigger a redundant /track refetch.
         lastSyncedStatusRef.current = b?.status ?? null;
       })
-      .catch(() => {})
+      // Flag the failure instead of swallowing it so the UI can offer a
+      // retry rather than falling through to "Booking not found".
+      .catch(() => setLoadError(true))
       .finally(() => setLoading(false));
+  }, [id, setActiveBooking]);
+
+  const retryLoad = useCallback(() => {
+    setLoading(true);
+    fetchBooking();
+  }, [fetchBooking]);
+
+  useEffect(() => {
+    if (!id) return;
+    // Only show the skeleton if we don't already have a cached snapshot.
+    if (!cachedBooking) setLoading(true);
+    fetchBooking();
     // cachedBooking intentionally omitted — we only want to fire the fetch
     // when the route id changes, not when the store updates afterwards.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -218,8 +454,10 @@ export default function TrackingScreen() {
 
   // Poll chat unread counts every 30s while on the tracking screen so the
   // chat badge stays fresh without a websocket. Refresh once on mount too.
-  // Pauses automatically when the app is backgrounded.
-  useForegroundInterval(refreshUnread, 30000);
+  // useSmartPolling pauses it while backgrounded/offline and ticks on
+  // reconnect. (backoffOnError:false — refreshUnread swallows its own errors,
+  // so there's nothing to back off from.)
+  useSmartPolling(refreshUnread, { interval: 30_000, backoffOnError: false });
 
   // Polling fallback for the runner's live position. Supabase Realtime
   // is the primary path (useRunnerTracking) but in production we have
@@ -431,6 +669,15 @@ export default function TrackingScreen() {
       // to be staring at the timeline pill. Push notifications cover
       // backgrounded users; this covers the foreground case.
       if (prev != null) {
+        // Success haptic on the meaningful forward transitions so the
+        // customer feels the progress even without looking at the screen.
+        if (
+          ['matched', 'accepted', 'arrived_at_pickup', 'arrived_at_dropoff'].includes(
+            activeBooking.status,
+          )
+        ) {
+          Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
+        }
         const runnerName = activeBooking.runner?.full_name ?? 'Your runner';
         switch (activeBooking.status) {
           case 'matched':
@@ -540,13 +787,31 @@ export default function TrackingScreen() {
     ];
     mapRef.current.fitToCoordinates(coords, {
       edgePadding: { top: 60, bottom: 60, left: 60, right: 60 },
-      animated: true,
+      animated: !reduceMotion,
     });
-  }, [cameraBounds]);
+  }, [cameraBounds, reduceMotion]);
+
+  // Recenter FAB — re-runs the exact fit above so "recenter" always lands on
+  // the same framing the auto-fit chooses, never a subtly different crop.
+  const handleRecenter = useCallback(() => {
+    if (!cameraBounds || !mapRef.current) return;
+    mapRef.current.fitToCoordinates(
+      [
+        { latitude: cameraBounds.ne[1], longitude: cameraBounds.ne[0] },
+        { latitude: cameraBounds.sw[1], longitude: cameraBounds.sw[0] },
+      ],
+      {
+        edgePadding: { top: 60, bottom: 60, left: 60, right: 60 },
+        animated: !reduceMotion,
+      },
+    );
+  }, [cameraBounds, reduceMotion]);
 
 
   const handleCancel = useCallback(() => {
     if (!id || isCancelling) return;
+    // Warning cue as the destructive confirm surfaces.
+    Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning).catch(() => {});
     setShowCancelModal(true);
     setPreviewLoading(true);
     bookingService
@@ -576,6 +841,8 @@ export default function TrackingScreen() {
 
   const handleSOS = useCallback(() => {
     if (!id) return;
+    // Warning cue as the emergency confirm surfaces.
+    Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning).catch(() => {});
     setShowSOSModal(true);
   }, [id]);
 
@@ -604,15 +871,113 @@ export default function TrackingScreen() {
     }
   }, [booking]);
 
+  const [sharingTrip, setSharingTrip] = useState(false);
+
   const handleShareTrip = useCallback(async () => {
-    if (!id) return;
+    if (!id || sharingTrip) return;
+    setSharingTrip(true);
     try {
-      await bookingService.shareTrip(id);
-      toast.success('Trip sharing link has been generated');
+      // The server mints (or refreshes) the read-only trip token and
+      // returns the public link — we hand THAT to the native share sheet
+      // rather than a bare "link generated" toast.
+      const res = await bookingService.shareTrip(id);
+      const url = res.data?.data?.link;
+      if (!url) {
+        toast.error('Failed to share trip');
+        return;
+      }
+      Haptics.selectionAsync().catch(() => {});
+      await Share.share({
+        message: `Track my ErrandGuy trip: ${url}`,
+        url,
+      });
+      // Success is the OS share sheet appearing — no toast needed (a toast
+      // would fire even when the user dismisses the sheet). Reflect the
+      // now-active share state locally so the "Stop sharing" affordance shows.
+      setBooking((prev) =>
+        prev && prev.id === id ? { ...prev, trip_share_active: true } : prev,
+      );
     } catch {
       toast.error('Failed to share trip');
+    } finally {
+      setSharingTrip(false);
+    }
+  }, [id, sharingTrip]);
+
+  const handleStopSharing = useCallback(async () => {
+    if (!id) return;
+    Haptics.selectionAsync().catch(() => {});
+    setBooking((prev) =>
+      prev && prev.id === id ? { ...prev, trip_share_active: false } : prev,
+    );
+    try {
+      await bookingService.revokeTrip(id);
+      Haptics.notificationAsync(
+        Haptics.NotificationFeedbackType.Success,
+      ).catch(() => {});
+    } catch {
+      // Roll back the optimistic flip and let the user retry.
+      setBooking((prev) =>
+        prev && prev.id === id ? { ...prev, trip_share_active: true } : prev,
+      );
+      toast.error('Could not stop sharing');
     }
   }, [id]);
+
+  // no_runner recovery — mirrors book/confirm's exhausted-rebook exactly:
+  // re-seed the draft from this booking's fields and drop the user on the
+  // review step, where the details that matter for matching (vehicle,
+  // pricing mode, offer) are editable.
+  const handleRebook = useCallback(() => {
+    const b = booking;
+    if (!b) {
+      router.replace('/(customer)/book/type');
+      return;
+    }
+    // Server clocks may have moved past a scheduled slot while we searched —
+    // a stale scheduled_at would just 422 at resubmit.
+    const scheduledAt = b.scheduled_at ? Date.parse(b.scheduled_at) : NaN;
+    const scheduleStillValid =
+      b.schedule_type === 'scheduled' &&
+      Number.isFinite(scheduledAt) &&
+      scheduledAt > Date.now();
+    clearDraft();
+    updateDraft({
+      errand_type_id: b.errand_type_id,
+      errand_type_slug: b.errand_type?.slug,
+      pickup_address: b.pickup_address,
+      // Laravel casts decimal columns to strings — coerce so downstream
+      // consumers (estimate payload, map cameras) see real numbers.
+      pickup_lat: Number(b.pickup_lat),
+      pickup_lng: Number(b.pickup_lng),
+      pickup_contact_name: b.pickup_contact_name ?? undefined,
+      pickup_contact_phone: b.pickup_contact_phone ?? undefined,
+      dropoff_address: b.dropoff_address ?? undefined,
+      dropoff_lat: b.dropoff_lat != null ? Number(b.dropoff_lat) : undefined,
+      dropoff_lng: b.dropoff_lng != null ? Number(b.dropoff_lng) : undefined,
+      dropoff_contact_name: b.dropoff_contact_name ?? undefined,
+      dropoff_contact_phone: b.dropoff_contact_phone ?? undefined,
+      description: b.description ?? undefined,
+      special_instructions: b.special_instructions ?? undefined,
+      estimated_item_value: b.estimated_item_value ?? undefined,
+      shopping_budget: b.shopping_budget ?? undefined,
+      shoppingItems: b.shopping_items?.length
+        ? b.shopping_items.map((it) => ({
+            id: it.id,
+            name: it.name,
+            qty: it.qty ?? 1,
+          }))
+        : undefined,
+      pricing_mode: b.pricing_mode,
+      vehicle_type_rate: b.vehicle_type_rate ?? undefined,
+      customer_offer: b.customer_offer != null ? Number(b.customer_offer) : undefined,
+      schedule_type: scheduleStillValid ? 'scheduled' : 'now',
+      scheduled_at: scheduleStillValid ? b.scheduled_at ?? undefined : undefined,
+    });
+    setBookingStep(3);
+    setActiveBooking(null);
+    router.replace('/(customer)/book/review');
+  }, [booking, clearDraft, updateDraft, setBookingStep, setActiveBooking, router]);
 
   // Active = anything other than terminal states. Used to gate the Android
   // back-button guard so completed/cancelled bookings let the user leave freely.
@@ -630,6 +995,19 @@ export default function TrackingScreen() {
   }
 
   if (!booking) {
+    // A fetch/network failure gets a retry affordance; only a genuine
+    // absence of the booking falls through to the "not found" dead-end.
+    if (loadError) {
+      return (
+        <SafeAreaView className="flex-1 bg-background" edges={['top']}>
+          <ErrorState
+            title="Couldn't load this errand"
+            description="Check your connection and try again."
+            onRetry={retryLoad}
+          />
+        </SafeAreaView>
+      );
+    }
     return (
       <SafeAreaView className="flex-1 bg-background items-center justify-center px-8">
         <Text className="text-lg font-montserrat-semi text-textPrimary">
@@ -729,525 +1107,276 @@ export default function TrackingScreen() {
     ? [Number(booking.pickup_lng), Number(booking.pickup_lat)]
     : [121.0, 14.6]; // Manila default
 
-  return (
-    <View style={{ flex: 1, backgroundColor: LightColors.background }}>
-      {/* Live Map — opt-in. Default backdrop is a static brand gradient with
-          a "View live map" CTA; the HereMapView (and its tile requests) only
-          mount once the customer taps it. */}
-      <View style={StyleSheet.absoluteFill}>
-        {!showMap && (
-          <>
-            <LinearGradient
-              colors={[
-                LightColors.gradientStart,
-                LightColors.gradientMid,
-                LightColors.gradientEnd,
-              ]}
-              start={{ x: 0, y: 0 }}
-              end={{ x: 1, y: 1 }}
-              style={StyleSheet.absoluteFill}
-            />
-            <View className="flex-1 items-center justify-center" style={{ paddingBottom: 240 }}>
-              <Pressable
-                onPress={() => setShowMap(true)}
-                accessibilityRole="button"
-                accessibilityLabel="View live map"
-                className="flex-row items-center bg-surface rounded-full px-5 py-3"
-                style={Elevation.md}
-              >
-                <MapPin size={18} color={LightColors.primary} strokeWidth={2.2} />
-                <Text className="ml-2 text-[13px] font-montserrat-bold text-textPrimary">
-                  View live map
-                </Text>
-              </Pressable>
-            </View>
-          </>
-        )}
-        {showMap && (
-        <HereMapView
-          ref={mapRef}
-          style={{ flex: 1 }}
-          showsMyLocationButton={false}
-          showsCompass={false}
-          initialRegion={{
-            latitude: mapCenter[1],
-            longitude: mapCenter[0],
-            latitudeDelta: 0.05,
-            longitudeDelta: 0.05,
-          }}
+  // ── Presentation-only derivations ────────────────────────────────────
+  // Accent rungs keyed off heroCopy.accent. Base tones for washes; *Dark
+  // rungs for text below ~17px (base tones sit under the 4.5:1 AA floor on
+  // white and on their own soft washes).
+  const accentText = {
+    brand: LightColors.primary,
+    success: LightColors.successDark,
+    danger: LightColors.dangerDark,
+    warning: LightColors.warningDark,
+  }[heroCopy.accent];
+  const accentBase = {
+    brand: LightColors.primary,
+    success: LightColors.success,
+    danger: LightColors.danger,
+    warning: LightColors.warning,
+  }[heroCopy.accent];
+  const accentDark = {
+    brand: LightColors.primaryDark,
+    success: LightColors.successDark,
+    danger: LightColors.dangerDark,
+    warning: LightColors.warningDark,
+  }[heroCopy.accent];
+
+  // Same condition as the old hero's showEta — the numeral leads the handle
+  // only while a live runner ETA is meaningful.
+  const showEtaNumeral = !heroEtaLabel && !!runnerLocation && eta.minutes != null;
+  // Clamped to ≥1: pending/matched aren't in errandRule.statusFlow (it
+  // starts at 'accepted'), and "STEP 0 OF 6" would read as a bug.
+  const stepNumber = Math.min(Math.max(currentStatusIndex + 1, 1), steps.length);
+  const eyebrowText = showEtaNumeral
+    ? isPickupPhase
+      ? 'TO PICKUP'
+      : 'TO DROP-OFF'
+    : `STEP ${stepNumber} OF ${steps.length}`;
+
+  // Status-pill dot: muted until a runner exists / realtime connects, brand
+  // when connected but idle, success while moving. Terminal receipts drop it.
+  const pillDotColor = !booking.runner_id
+    ? LightColors.textMuted
+    : !isConnected
+      ? LightColors.textMuted
+      : (runnerLocation?.speed ?? 0) > 0
+        ? LightColors.success
+        : LightColors.primary;
+
+  // Chrome/canvas geometry — computed, not eyeballed. The radar must clear
+  // both the chrome row and the half-snap sheet line on an SE (375×667):
+  // chromeBottom ≈ 84, sheetTop ≈ 320 → ring ≤ 188 bottoms out at 296 < 320.
+  const chromeBottom = insets.top + 8 + 44 + 12;
+  const sheetTopAtHalf = winHeight * (1 - SNAP_POINTS.half);
+  const pulseSize = Math.max(96, Math.min(200, sheetTopAtHalf - chromeBottom - 48));
+  const pulseCenterY = (chromeBottom + sheetTopAtHalf) / 2;
+  // Everything floating on the canvas sits just above the peek line — the
+  // old bottom:12 pills were occluded by the sheet at every snap.
+  const stripBottom = winHeight * SNAP_POINTS.peek + 12;
+
+  // Shared pressed-state for the chrome pills/chips/FABs — scale + opacity,
+  // opacity only under Reduce Motion.
+  const pressFx = (pressed: boolean) =>
+    pressed
+      ? reduceMotion
+        ? { opacity: 0.7 }
+        : { opacity: 0.85, transform: [{ scale: 0.97 }] }
+      : null;
+
+  const arrivedPinHero =
+    booking.status === 'arrived_at_pickup' || booking.status === 'arrived_at_dropoff';
+
+  // Receipt tone — glyph + wash per terminal outcome. Shape (Check / X /
+  // SearchX) distinguishes the outcomes, not color alone.
+  const receiptTone =
+    booking.status === 'cancelled'
+      ? { bg: LightColors.dangerSoft, fg: LightColors.dangerDark, Icon: X }
+      : booking.status === 'no_runner'
+        ? { bg: LightColors.warningSoft, fg: LightColors.warningDark, Icon: SearchX }
+        : { bg: LightColors.successSoft, fg: LightColors.successDark, Icon: Check };
+
+  // ── Sheet body pieces ─────────────────────────────────────────────────
+  // Built once, composed in live or receipt order below, so the handlers
+  // (call / chat / share / receipt links) stay single-sourced.
+
+  // Ride PIN — warningSoft card, warningDark text (base warning fails AA on
+  // the soft wash). Promoted to a larger first-card variant at the arrived_*
+  // handoff moments, where the PIN is the whole interaction.
+  const pinCard =
+    isTransportation && booking.ride_pin && !isTerminalUi ? (
+      <View
+        className={`bg-warningSoft items-center mb-3 ${arrivedPinHero ? 'rounded-2xl p-5' : 'rounded-xl p-4'}`}
+        style={{ borderWidth: 1, borderColor: `${LightColors.warning}66` }}
+      >
+        <Text
+          className="text-[12px] font-montserrat text-warningDark mb-1"
+          maxFontSizeMultiplier={1.3}
         >
-                    {/* Pickup marker */}
-          {booking.pickup_lng && booking.pickup_lat && (
-            <HereMarker
-              coordinate={{ latitude: Number(booking.pickup_lat), longitude: Number(booking.pickup_lng) }}
-              anchor={{ x: 0.5, y: 0.5 }}
-              id="pickup-marker"
-            >
-              <View className="items-center">
-                <View className="w-8 h-8 rounded-full bg-primary items-center justify-center border-2 border-white shadow-md">
-                  <Text className="text-white text-[10px] font-montserrat-bold">P</Text>
-                </View>
-              </View>
-            </HereMarker>
-          )}
+          Show this PIN to your runner
+        </Text>
+        <Text
+          className="font-inter-semi text-warningDark"
+          style={{
+            fontSize: arrivedPinHero ? 34 : 30,
+            letterSpacing: 8,
+            fontVariant: ['tabular-nums'],
+          }}
+          maxFontSizeMultiplier={1.2}
+        >
+          {booking.ride_pin}
+        </Text>
+      </View>
+    ) : null;
 
-          {/* Dropoff marker */}
-          {booking.dropoff_lng && booking.dropoff_lat && (
-            <HereMarker
-              coordinate={{ latitude: Number(booking.dropoff_lat), longitude: Number(booking.dropoff_lng) }}
-              anchor={{ x: 0.5, y: 0.5 }}
-              id="dropoff-marker"
-            >
-              <View className="items-center">
-                <View className="w-8 h-8 rounded-full bg-danger items-center justify-center border-2 border-white shadow-md">
-                  <Text className="text-white text-[10px] font-montserrat-bold">D</Text>
-                </View>
-              </View>
-            </HereMarker>
-          )}
-
-          {/* Runner marker (moving) */}
-          {runnerLocation && (
-            <HereMarker
-              coordinate={{ latitude: Number(runnerLocation.lat), longitude: Number(runnerLocation.lng) }}
-              anchor={{ x: 0.5, y: 0.5 }}
-              id="runner-marker"
-            >
-              <View style={styles.runnerMarkerWrap}>
-                <View style={styles.runnerMarkerOuter}>
-                  {runnerLocation.speed != null && runnerLocation.speed > 0 && (
-                    <Animated.View
-                      pointerEvents="none"
-                      style={[
-                        styles.runnerPulse,
-                        {
-                          opacity: runnerPulse.interpolate({ inputRange: [0, 1], outputRange: [0.55, 0] }),
-                          transform: [
-                            {
-                              scale: runnerPulse.interpolate({
-                                inputRange: [0, 1],
-                                outputRange: [0.6, 2.4],
-                              }),
-                            },
-                          ],
-                        },
-                      ]}
-                    />
-                  )}
-                  <View style={styles.runnerMarkerInner}>
-                    <Bike size={16} color={LightColors.textInverse} strokeWidth={2.4} />
-                  </View>
-                </View>
-                {runnerLocation.speed != null && runnerLocation.speed > 0 && (
-                  <View style={styles.runnerSpeedBadge}>
-                    <Text style={styles.runnerSpeedText}>
-                      {(runnerLocation.speed * 3.6).toFixed(0)} km/h
-                    </Text>
-                  </View>
-                )}
-              </View>
-            </HereMarker>
-          )}
-
-          {/* Route line */}
-          {routeMapCoords.length > 0 && (
-            <>
-              <HerePolyline id="route-outline" coordinates={routeMapCoords} strokeColor={LightColors.primary900} strokeWidth={8} lineJoin="round" />
-              <HerePolyline id="route-fill" coordinates={routeMapCoords} strokeColor={LightColors.primary500} strokeWidth={5} lineJoin="round" />
-            </>
-          )}
-        </HereMapView>
-        )}
-        {showMap && (
-          <Pressable
-            onPress={() => setShowMap(false)}
-            accessibilityRole="button"
-            accessibilityLabel="Hide map"
-            hitSlop={8}
-            className="absolute bottom-3 left-3 flex-row items-center bg-surface rounded-full px-3 py-1.5"
-            style={Elevation.md}
+  // ── Runner card ─────────────────────────────────
+  // Clean top row (large avatar + name/rating, verified) over a hairline
+  // divider, then a labelled action row of icon-chip buttons.
+  const runnerCard = booking.runner_id ? (
+    <View className="bg-surface rounded-3xl p-4 mb-3" style={Elevation.sm}>
+      <View className="flex-row items-center">
+        <Avatar
+          size="lg"
+          uri={booking.runner?.avatar_url ?? undefined}
+          name={booking.runner?.full_name}
+          isVerified
+        />
+        <View className="flex-1 ml-3.5">
+          <Text
+            className="text-[16px] font-montserrat-bold text-textPrimary"
+            numberOfLines={1}
           >
-            <X size={14} color={LightColors.textPrimary} strokeWidth={2.4} />
-            <Text className="ml-1 text-[10px] font-montserrat-bold text-textPrimary">Hide map</Text>
-          </Pressable>
-        )}
-
-        {/* Realtime indicator — shows three states:
-              1. Connecting (no realtime channel yet)
-              2. Live + idle (runner connected, not moving)
-              3. Live + moving (runner connected, GPS speed > 0)
-            The third state surfaces the live km/h reading so the
-            customer sees their runner is actively in motion, not
-            just sitting at a red light. */}
-        {booking.runner_id && (
-          <View
-            className="absolute bottom-3 right-3 flex-row items-center bg-surface rounded-full pl-2 pr-3 py-1.5"
-            style={{
-              shadowColor: LightColors.ink,
-              shadowOpacity: 0.12,
-              shadowRadius: 6,
-              shadowOffset: { width: 0, height: 2 },
-              elevation: 3,
-            }}
-          >
-            <View className="items-center justify-center mr-1.5" style={{ width: 10, height: 10 }}>
-              <View className={`w-2 h-2 rounded-full ${
-                isConnected
-                  ? runnerLocation?.speed != null && runnerLocation.speed > 0
-                    ? 'bg-success'
-                    : 'bg-primary'
-                  : 'bg-textMuted'
-              }`} />
-              {isConnected && runnerLocation?.speed != null && runnerLocation.speed > 0 && (
-                <Animated.View
-                  pointerEvents="none"
-                  style={{
-                    position: 'absolute',
-                    width: 10,
-                    height: 10,
-                    borderRadius: 5,
-                    backgroundColor: LightColors.success,
-                    opacity: runnerPulse.interpolate({ inputRange: [0, 1], outputRange: [0.5, 0] }),
-                    transform: [{ scale: runnerPulse.interpolate({ inputRange: [0, 1], outputRange: [1, 2.6] }) }],
-                  }}
-                />
-              )}
-            </View>
-            <Text className="text-[10px] font-montserrat-bold text-textPrimary">
-              {!isConnected
-                ? 'Connecting…'
-                : runnerLocation?.speed != null && runnerLocation.speed > 0
-                ? `${Math.round(runnerLocation.speed * 3.6)} km/h · moving`
-                : 'Live'}
+            {booking.runner?.full_name ?? 'Your runner'}
+          </Text>
+          <View className="flex-row items-center mt-1">
+            <RatingStars
+              value={Number(booking.runner?.avg_rating ?? 0)}
+              size={13}
+              readonly
+            />
+            <Text className="text-[11px] font-inter-medium text-textTertiary ml-1.5">
+              {Number(booking.runner?.avg_rating ?? 0).toFixed(1)}
+              {booking.runner?.total_ratings ? ` · ${booking.runner.total_ratings} trips` : ''}
             </Text>
           </View>
-        )}
-
-        {/* Route load failure — surfaces the error that used to be silently
-            swallowed and gives the user a one-tap retry that bypasses
-            the cache. */}
-        {routeFetchState === 'error' && (
-          <View className="absolute bottom-3 left-3 right-16 flex-row items-center bg-white/95 rounded-full px-3 py-1.5 shadow-sm">
-            <View className="w-2 h-2 rounded-full mr-1.5 bg-warning" />
+        </View>
+        {/* Phase chip is live-only — "In transit" on a finished receipt lies. */}
+        {!isTerminalUi && (
+          <View className="rounded-full px-3 py-1.5" style={{ backgroundColor: LightColors.primaryLight }}>
             <Text
-              className="flex-1 text-[10px] font-montserrat text-textSecondary"
-              numberOfLines={1}
+              className="text-[11px] font-montserrat-bold uppercase"
+              style={{ color: LightColors.primary700, letterSpacing: 0.8 }}
+              maxFontSizeMultiplier={1.3}
             >
-              Couldn&apos;t load route
+              {isPickupPhase ? 'On the way' : 'In transit'}
             </Text>
-            <Pressable
-              onPress={retryRoute}
-              accessibilityRole="button"
-              accessibilityLabel="Retry loading route"
-              hitSlop={6}
-              className="ml-2"
-            >
-              <Text className="text-[10px] font-montserrat-semibold text-primary">
-                Retry
-              </Text>
-            </Pressable>
           </View>
         )}
       </View>
 
-      {/* Floating header — bold colored banner so the tracking screen
-          reads as a dedicated "trip in progress" surface, not just a
-          map with chrome on top. Uses the brand blue gradient feel
-          (solid #2563EB) with a clear hierarchy: back chevron, status
-          + booking#, then a right-aligned ETA pill on a translucent
-          surface so the minutes pop. */}
-      <SafeAreaView edges={['top']} pointerEvents="box-none">
-        <View className="px-3 pt-2" pointerEvents="box-none">
-          <View
-            className="flex-row items-stretch rounded-2xl overflow-hidden"
-            style={[styles.floatingShadow, { backgroundColor: LightColors.primary }]}
-          >
-            <Pressable
-              onPress={() => router.canGoBack() ? router.back() : router.replace('/(customer)/(tabs)')}
-              accessibilityRole="button"
-              accessibilityLabel="Go back"
-              hitSlop={8}
-              className="w-12 items-center justify-center"
-            >
-              <ArrowLeft size={22} color={LightColors.textInverse} strokeWidth={2.2} />
-            </Pressable>
-            <View className="flex-1 py-3 pr-3 justify-center">
-              <Text
-                className="text-[10px] font-montserrat-bold uppercase text-white/75"
-                style={{ letterSpacing: 1.2 }}
-              >
-                {booking.booking_number}
-              </Text>
-              <Text
-                className="text-[15px] font-montserrat-bold text-white mt-0.5"
-                numberOfLines={1}
-              >
-                {STATUS_LABELS[booking.status]}
-              </Text>
-            </View>
-            {runnerLocation && eta.minutes != null && (
-              <View
-                className="flex-row items-center px-4 my-2 mr-2 rounded-xl"
-                style={{ backgroundColor: 'rgba(255,255,255,0.18)' }}
-              >
-                <View className="items-end">
-                  <Text className="text-[20px] font-montserrat-bold text-white tabular-nums leading-[22px]">
-                    {eta.minutes}
-                    <Text className="text-[11px] font-montserrat-semi text-white/80"> min</Text>
-                  </Text>
-                  <Text
-                    className="text-[9px] font-montserrat-bold text-white/80 uppercase mt-0.5"
-                    style={{ letterSpacing: 0.8 }}
-                  >
-                    {isPickupPhase ? 'to pickup' : 'to drop-off'}
-                  </Text>
-                </View>
-              </View>
-            )}
-          </View>
-        </View>
-      </SafeAreaView>
+      <View className="h-px bg-divider my-3.5" />
 
-      {/* Draggable bottom sheet — peek/half/full so the customer can collapse it
-          for an unobstructed map view, or expand for full details.
-
-          Handle: instead of repeating the status text (already in the
-          floating header), we paint a horizontal "journey beads" strip
-          so even at peek size the customer sees the trip's overall
-          progress at a glance, with a discreet live-tracking dot. */}
-      <ExpandableSheet
-        initial="half"
-        renderHandle={() => (
-          <View className="px-5 pt-1 pb-1">
-            <JourneyBeads
-              status={booking.status}
-              accent={booking.status === 'cancelled' ? 'danger' : 'brand'}
-            />
-            {booking.runner_id && (
-              <View className="flex-row items-center justify-end -mt-1 mb-1">
-                <View className={`w-1.5 h-1.5 rounded-full mr-1 ${isConnected ? 'bg-success' : 'bg-textMuted'}`} />
-                <Text className="text-[9px] font-montserrat text-textTertiary uppercase" style={{ letterSpacing: 1 }}>
-                  {isConnected ? 'Live' : 'Reconnecting'}
-                </Text>
-              </View>
-            )}
-          </View>
-        )}
-        footer={
-          (isTransportation && !sosActive) || sosActive || canCancel ? (
-            <View style={{ gap: 8 }}>
-              {isTransportation && !sosActive && (
-                <Button
-                  title="Emergency SOS"
-                  variant="danger"
-                  icon={Shield}
-                  onPress={handleSOS}
-                  fullWidth
-                />
-              )}
-              {sosActive && (
-                <View className="bg-danger/10 border border-danger rounded-xl p-3 items-center">
-                  <Text className="text-sm font-montserrat-bold text-danger">
-                    SOS Active — Help is on the way
-                  </Text>
-                </View>
-              )}
-              {canCancel && (
-                <Button
-                  title={isCancelling ? 'Cancelling...' : 'Cancel Errand'}
-                  variant="outline"
-                  onPress={handleCancel}
-                  disabled={isCancelling}
-                  fullWidth
-                />
-              )}
-            </View>
-          ) : null
-        }
-      >
-        <ScrollView
-          className="flex-1 px-5 pt-2"
-          showsVerticalScrollIndicator={false}
-          contentContainerStyle={{ paddingBottom: 40 }}
+      {/* Action row — evenly spaced icon-chip buttons with labels. */}
+      <View className="flex-row">
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="Call runner"
+          onPress={handleCall}
+          className="flex-1 items-center"
+          hitSlop={6}
+          style={({ pressed }) => pressFx(pressed)}
         >
-        {/* Hero — modern "what's happening right now" headline that leads
-            with a big ETA (like "Arriving in 10 min" on ride-hailing
-            references). ETA number is oversized on the left; the status
-            verb sits under an accent eyebrow. */}
-        {(() => {
-          const heroAccent =
-            heroCopy.accent === 'success'
-              ? LightColors.success
-              : heroCopy.accent === 'danger'
-                ? LightColors.danger
-                : LightColors.primary;
-          const showEta = !heroEtaLabel && runnerLocation && eta.minutes != null;
-          return (
-            <View className="mb-4">
-              <View className="flex-row items-center mb-2">
-                <Clock size={13} color={heroAccent} strokeWidth={2.4} />
-                <Text
-                  className="text-[10px] font-montserrat-bold uppercase ml-1.5"
-                  style={{ color: heroAccent, letterSpacing: 1.4 }}
-                >
-                  {`Step ${Math.min(currentStatusIndex + 1, steps.length)} of ${steps.length}`}
-                </Text>
-              </View>
-              <View className="flex-row items-end justify-between">
-                <Text
-                  className="flex-1 text-[24px] font-montserrat-bold text-textPrimary pr-3"
-                  style={{ lineHeight: 28 }}
-                >
-                  {showEta ? `Arriving in ${eta.minutes} min` : heroCopy.title}
-                </Text>
-                {heroEtaLabel && (
-                  <View
-                    className="rounded-full px-3.5 py-1.5"
-                    style={{ backgroundColor: `${heroAccent}1A` }}
-                  >
-                    <Text className="text-[12px] font-montserrat-bold" style={{ color: heroAccent }}>
-                      {heroEtaLabel}
-                    </Text>
-                  </View>
-                )}
-              </View>
-              <Text className="text-[13px] font-montserrat text-textSecondary mt-1.5">
-                {showEta ? heroCopy.title : heroCopy.subtitle}
-              </Text>
-            </View>
-          );
-        })()}
-
-        {/* Transportation PIN */}
-        {isTransportation && booking.ride_pin && (
-          <View className="bg-warning/10 border border-warning rounded-xl p-4 mb-3 items-center">
-            <Text className="text-xs font-montserrat text-warning mb-1">
-              Show this PIN to your runner
-            </Text>
-            <Text className="text-3xl font-montserrat-bold text-warning tracking-widest">
-              {booking.ride_pin}
-            </Text>
+          <View className="w-11 h-11 rounded-full items-center justify-center mb-1.5" style={{ backgroundColor: LightColors.primaryLight }}>
+            <Phone size={18} color={LightColors.primary} strokeWidth={2} />
           </View>
-        )}
-
-        {/* ── Runner card ─────────────────────────────────
-            Modern, spacious identity card: a clean top row (large avatar +
-            name/rating, verified) over a hairline divider, then a labelled
-            action row of icon-chip buttons. Reads like the reference
-            "your driver is coming" cards — airy, one clear section. */}
-        {booking.runner_id && (
-          <View className="bg-surface rounded-3xl p-4 mb-3" style={Elevation.sm}>
-            <View className="flex-row items-center">
-              <Avatar
-                size="lg"
-                uri={booking.runner?.avatar_url ?? undefined}
-                name={booking.runner?.full_name}
-                isVerified
-              />
-              <View className="flex-1 ml-3.5">
-                <Text
-                  className="text-[16px] font-montserrat-bold text-textPrimary"
-                  numberOfLines={1}
-                >
-                  {booking.runner?.full_name ?? 'Your runner'}
-                </Text>
-                <View className="flex-row items-center mt-1">
-                  <RatingStars
-                    value={Number(booking.runner?.avg_rating ?? 0)}
-                    size={13}
-                    readonly
-                  />
-                  <Text className="text-[11px] font-inter-medium text-textTertiary ml-1.5">
-                    {Number(booking.runner?.avg_rating ?? 0).toFixed(1)}
-                    {booking.runner?.total_ratings ? ` · ${booking.runner.total_ratings} trips` : ''}
-                  </Text>
-                </View>
-              </View>
-              <View className="rounded-full px-3 py-1.5" style={{ backgroundColor: LightColors.primaryLight }}>
-                <Text className="text-[10px] font-montserrat-bold uppercase" style={{ color: LightColors.primary, letterSpacing: 0.8 }}>
-                  {isPickupPhase ? 'On the way' : 'In transit'}
+          <Text className="text-[11px] font-montserrat-semi text-textSecondary">Call</Text>
+        </Pressable>
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel={
+            unreadForBooking > 0
+              ? `Open chat, ${unreadForBooking} unread message${unreadForBooking === 1 ? '' : 's'}`
+              : 'Open chat with runner'
+          }
+          onPress={() => router.push(`/(customer)/chat/${booking.id}`)}
+          className="flex-1 items-center"
+          hitSlop={6}
+          style={({ pressed }) => pressFx(pressed)}
+        >
+          <View className="w-11 h-11 rounded-full items-center justify-center mb-1.5" style={{ backgroundColor: LightColors.primaryLight }}>
+            <MessageCircle size={18} color={LightColors.primary} strokeWidth={2} />
+            {unreadForBooking > 0 && (
+              <View className="absolute -top-0.5 -right-0.5 min-w-[16px] h-4 px-1 bg-danger rounded-full items-center justify-center border-[1.5px] border-white">
+                <Text className="text-[9px] text-white font-montserrat-bold leading-[11px]">
+                  {unreadForBooking > 9 ? '9+' : String(unreadForBooking)}
                 </Text>
               </View>
-            </View>
-
-            <View className="h-px bg-divider my-3.5" />
-
-            {/* Action row — evenly spaced icon-chip buttons with labels. */}
-            <View className="flex-row">
-              <Pressable
-                accessibilityRole="button"
-                accessibilityLabel="Call runner"
-                onPress={handleCall}
-                className="flex-1 items-center"
-                hitSlop={6}
-              >
-                <View className="w-11 h-11 rounded-full items-center justify-center mb-1.5" style={{ backgroundColor: LightColors.primaryLight }}>
-                  <Phone size={18} color={LightColors.primary} strokeWidth={2} />
-                </View>
-                <Text className="text-[11px] font-montserrat-semi text-textSecondary">Call</Text>
-              </Pressable>
-              <Pressable
-                accessibilityRole="button"
-                accessibilityLabel={
-                  unreadForBooking > 0
-                    ? `Open chat, ${unreadForBooking} unread message${unreadForBooking === 1 ? '' : 's'}`
-                    : 'Open chat with runner'
-                }
-                onPress={() => router.push(`/(customer)/chat/${booking.id}`)}
-                className="flex-1 items-center"
-                hitSlop={6}
-              >
-                <View className="w-11 h-11 rounded-full items-center justify-center mb-1.5" style={{ backgroundColor: LightColors.primaryLight }}>
-                  <MessageCircle size={18} color={LightColors.primary} strokeWidth={2} />
-                  {unreadForBooking > 0 && (
-                    <View className="absolute -top-0.5 -right-0.5 min-w-[16px] h-4 px-1 bg-danger rounded-full items-center justify-center border-[1.5px] border-white">
-                      <Text className="text-[9px] text-white font-montserrat-bold leading-[11px]">
-                        {unreadForBooking > 9 ? '9+' : String(unreadForBooking)}
-                      </Text>
-                    </View>
-                  )}
-                </View>
-                <Text className="text-[11px] font-montserrat-semi text-textSecondary">Message</Text>
-              </Pressable>
-              <Pressable
-                accessibilityRole="button"
-                accessibilityLabel="Share trip with a contact"
-                onPress={handleShareTrip}
-                className="flex-1 items-center"
-                hitSlop={6}
-              >
-                <View className="w-11 h-11 rounded-full items-center justify-center mb-1.5" style={{ backgroundColor: LightColors.primaryLight }}>
-                  <Share2 size={18} color={LightColors.primary} strokeWidth={2} />
-                </View>
-                <Text className="text-[11px] font-montserrat-semi text-textSecondary">Share</Text>
-              </Pressable>
-            </View>
+            )}
           </View>
-        )}
-
-        {/* Always-visible trip route — the timeline is the heart of the
-            tracking screen, so it's surfaced by default (not hidden behind
-            a toggle like before). */}
-        <View className="mb-2">
-          <Text className="text-[11px] font-montserrat-bold uppercase text-textSecondary mb-3" style={{ letterSpacing: 1.4 }}>
-            Trip route
+          <Text className="text-[11px] font-montserrat-semi text-textSecondary">Message</Text>
+        </Pressable>
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel={
+            booking.trip_share_active
+              ? 'Share trip link again'
+              : 'Share trip with a contact'
+          }
+          accessibilityState={{ disabled: sharingTrip }}
+          disabled={sharingTrip}
+          onPress={handleShareTrip}
+          className="flex-1 items-center"
+          hitSlop={6}
+          style={({ pressed }) => pressFx(pressed)}
+        >
+          <View className="w-11 h-11 rounded-full items-center justify-center mb-1.5" style={{ backgroundColor: LightColors.primaryLight }}>
+            <Share2 size={18} color={LightColors.primary} strokeWidth={2} />
+          </View>
+          <Text className="text-[11px] font-montserrat-semi text-textSecondary">
+            {booking.trip_share_active ? 'Shared' : 'Share'}
           </Text>
-          <StatusTimeline steps={timelineSteps} />
-        </View>
+        </Pressable>
+      </View>
 
-        {/* Extra details (shopping summary + proof photos) — collapsed,
-            and only rendered when there's actually something to reveal. */}
-        {((isShopping && booking.shopping_budget != null) ||
-          booking.pickup_photo_url ||
-          booking.delivery_photo_url ||
-          booking.signature_url) ? (
-        <>
+      {/* Stop-sharing affordance — only while a read-only trip link
+          is live. Revokes the token so the public /trip/{token} page
+          goes dark. */}
+      {booking.trip_share_active && (
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="Stop sharing this trip"
+          onPress={handleStopSharing}
+          hitSlop={{ top: 8, bottom: 8 }}
+          className="mt-3 self-center"
+          style={({ pressed }) => pressFx(pressed)}
+        >
+          <Text className="text-[12px] font-montserrat-semi text-dangerDark">
+            Stop sharing
+          </Text>
+        </Pressable>
+      )}
+    </View>
+  ) : null;
+
+  // Trip route — the timeline stays surfaced by default, not behind a toggle.
+  const tripRouteSection = (
+    <View className="mt-3 mb-2">
+      <Text
+        className="text-[11px] font-montserrat-bold uppercase text-textSecondary mb-3"
+        style={{ letterSpacing: 1.4 }}
+        maxFontSizeMultiplier={1.3}
+      >
+        Trip route
+      </Text>
+      <StatusTimeline steps={timelineSteps} />
+    </View>
+  );
+
+  // Extra details (shopping summary + proof photos) — collapsed on live
+  // statuses, auto-expanded once on terminal (the receipt IS the point),
+  // and only rendered when there's actually something to reveal.
+  const detailsSection =
+    (isShopping && booking.shopping_budget != null) ||
+    booking.pickup_photo_url ||
+    booking.delivery_photo_url ||
+    booking.signature_url ? (
+      <>
         <Pressable
           onPress={() => setDetailsOpen((v) => !v)}
           accessibilityRole="button"
           accessibilityLabel={detailsOpen ? 'Hide trip details' : 'Show trip details'}
-          hitSlop={6}
+          // Row is ~18pt tall — slop lifts the target past the 44pt floor.
+          hitSlop={{ top: 14, bottom: 14, left: 6, right: 6 }}
           className="flex-row items-center justify-between mt-3 mb-2"
+          style={({ pressed }) => pressFx(pressed)}
         >
           <Text className="text-[11px] font-montserrat-bold uppercase text-textSecondary" style={{ letterSpacing: 1.4 }}>
             {detailsOpen ? 'Hide trip details' : 'Trip details'}
@@ -1262,196 +1391,940 @@ export default function TrackingScreen() {
 
         {detailsOpen && (
           <>
-        {/* Shopping reconciliation card — visible whenever a shopping budget
-            was pre-authorized so the customer can see what was approved
-            and, after pickup, exactly what the runner spent. */}
-        {isShopping && booking.shopping_budget != null && (
-          <View className="bg-primary/5 border border-primary/30 rounded-xl p-4 mb-4">
-            <Text className="text-xs font-montserrat-bold text-primary uppercase mb-2">
-              Shopping summary
-            </Text>
-            <View className="flex-row items-center justify-between mb-1.5">
-              <Text className="text-sm font-montserrat text-textSecondary">
-                Pre-authorized budget
-              </Text>
-              <Text className="text-sm font-montserrat-bold text-textPrimary">
-                {formatCurrency(booking.shopping_budget)}
-              </Text>
-            </View>
-            {booking.actual_item_cost != null ? (
-              <>
+            {/* Shopping reconciliation card — visible whenever a shopping budget
+                was pre-authorized so the customer can see what was approved
+                and, after pickup, exactly what the runner spent. */}
+            {isShopping && booking.shopping_budget != null && (
+              <View className="bg-primary/5 border border-primary/30 rounded-xl p-4 mb-4">
+                <Text className="text-xs font-montserrat-bold text-primary uppercase mb-2">
+                  Shopping summary
+                </Text>
                 <View className="flex-row items-center justify-between mb-1.5">
                   <Text className="text-sm font-montserrat text-textSecondary">
-                    Actual receipt amount
+                    Pre-authorized budget
                   </Text>
                   <Text className="text-sm font-montserrat-bold text-textPrimary">
-                    {formatCurrency(booking.actual_item_cost)}
+                    {formatCurrency(booking.shopping_budget)}
                   </Text>
                 </View>
-                <View className="h-px bg-divider my-2" />
-                <View className="flex-row items-center justify-between">
-                  <Text className="text-sm font-montserrat-semi text-textPrimary">
-                    {booking.actual_item_cost <= booking.shopping_budget
-                      ? 'Refund to wallet'
-                      : 'Additional due'}
-                  </Text>
-                  <Text
-                    className={`text-base font-montserrat-bold ${
-                      booking.actual_item_cost <= booking.shopping_budget
-                        ? 'text-success'
-                        : 'text-warning'
-                    }`}
-                  >
-                    {formatCurrency(
-                      Math.abs(booking.shopping_budget - booking.actual_item_cost),
+                {booking.actual_item_cost != null ? (
+                  <>
+                    <View className="flex-row items-center justify-between mb-1.5">
+                      <Text className="text-sm font-montserrat text-textSecondary">
+                        Actual receipt amount
+                      </Text>
+                      <Text className="text-sm font-montserrat-bold text-textPrimary">
+                        {formatCurrency(booking.actual_item_cost)}
+                      </Text>
+                    </View>
+                    <View className="h-px bg-divider my-2" />
+                    <View className="flex-row items-center justify-between">
+                      <Text className="text-sm font-montserrat-semi text-textPrimary">
+                        {booking.actual_item_cost <= booking.shopping_budget
+                          ? 'Refund to wallet'
+                          : 'Additional due'}
+                      </Text>
+                      <Text
+                        className={`text-base font-montserrat-bold ${
+                          booking.actual_item_cost <= booking.shopping_budget
+                            ? 'text-successDark'
+                            : 'text-warningDark'
+                        }`}
+                      >
+                        {formatCurrency(
+                          Math.abs(booking.shopping_budget - booking.actual_item_cost),
+                        )}
+                      </Text>
+                    </View>
+                    {booking.receipt_photo_url && (
+                      <Pressable
+                        onPress={() =>
+                          booking.receipt_photo_url &&
+                          Linking.openURL(booking.receipt_photo_url).catch(() =>
+                            toast.error('Could not open receipt'),
+                          )
+                        }
+                        className="mt-3 flex-row items-center"
+                        style={({ pressed }) => pressFx(pressed)}
+                      >
+                        <Image
+                          source={{ uri: booking.receipt_photo_url }}
+                          className="w-12 h-12 rounded-lg mr-2 bg-divider"
+                        />
+                        <Text className="text-xs font-montserrat-semi text-primary">
+                          View receipt
+                        </Text>
+                      </Pressable>
                     )}
+                  </>
+                ) : (
+                  <Text className="text-xs font-montserrat text-textTertiary mt-1">
+                    The runner will upload a receipt at pickup so you can see the
+                    exact amount spent.
                   </Text>
-                </View>
-                {booking.receipt_photo_url && (
-                  <Pressable
-                    onPress={() =>
-                      booking.receipt_photo_url &&
-                      Linking.openURL(booking.receipt_photo_url).catch(() =>
-                        toast.error('Could not open receipt'),
-                      )
-                    }
-                    className="mt-3 flex-row items-center"
-                  >
-                    <Image
-                      source={{ uri: booking.receipt_photo_url }}
-                      className="w-12 h-12 rounded-lg mr-2 bg-divider"
-                    />
-                    <Text className="text-xs font-montserrat-semi text-primary">
-                      View receipt
-                    </Text>
-                  </Pressable>
                 )}
-              </>
-            ) : (
-              <Text className="text-xs font-montserrat text-textTertiary mt-1">
-                The runner will upload a receipt at pickup so you can see the
-                exact amount spent.
-              </Text>
+              </View>
             )}
-          </View>
-        )}
 
-        {/* Proof photos uploaded by the runner. We only render the card
-            when at least one photo exists so it doesn't add visual noise
-            for in-progress bookings. Tapping a thumbnail opens the
-            full-resolution image in the OS browser. */}
-        {(booking.pickup_photo_url || booking.delivery_photo_url || booking.signature_url) && (
-          <View className="mt-4 bg-white rounded-xl p-4">
-            <Text className="text-sm font-montserrat-bold text-textPrimary mb-3">
-              Proof photos
-            </Text>
-            <View className="flex-row gap-3">
-              {booking.pickup_photo_url && (() => {
-                const uri = resolveImageUrl(booking.pickup_photo_url);
-                if (!uri) return null;
-                return (
-                  <Pressable
-                    className="flex-1"
-                    onPress={() =>
-                      Linking.openURL(uri).catch(() =>
-                        toast.error('Could not open photo'),
-                      )
-                    }
-                    accessibilityRole="imagebutton"
-                    accessibilityLabel="Open pickup proof photo"
-                  >
-                    <ExpoImage
-                      source={{ uri }}
-                      style={{ width: '100%', height: 120, borderRadius: 16, backgroundColor: LightColors.divider }}
-                      contentFit="cover"
-                      transition={150}
-                      cachePolicy="memory-disk"
-                    />
-                    <Text className="text-[11px] font-montserrat-semi text-textSecondary mt-1.5">
-                      Pickup
-                    </Text>
-                  </Pressable>
-                );
-              })()}
-              {booking.delivery_photo_url && (() => {
-                const uri = resolveImageUrl(booking.delivery_photo_url);
-                if (!uri) return null;
-                return (
-                  <Pressable
-                    className="flex-1"
-                    onPress={() =>
-                      Linking.openURL(uri).catch(() =>
-                        toast.error('Could not open photo'),
-                      )
-                    }
-                    accessibilityRole="imagebutton"
-                    accessibilityLabel="Open delivery proof photo"
-                  >
-                    <ExpoImage
-                      source={{ uri }}
-                      style={{ width: '100%', height: 120, borderRadius: 16, backgroundColor: LightColors.divider }}
-                      contentFit="cover"
-                      transition={150}
-                      cachePolicy="memory-disk"
-                    />
-                    <Text className="text-[11px] font-montserrat-semi text-textSecondary mt-1.5">
-                      Delivery
-                    </Text>
-                  </Pressable>
-                );
-              })()}
-              {booking.signature_url && (() => {
-                // Signature is stored as a PNG in the same delivery-proofs
-                // bucket as the pickup/delivery photos. We render it on a
-                // white background (contentFit "contain") so the dark ink
-                // strokes stay legible — "cover" would crop most signatures.
-                const uri = resolveImageUrl(booking.signature_url);
-                if (!uri) return null;
-                return (
-                  <Pressable
-                    className="flex-1"
-                    onPress={() =>
-                      Linking.openURL(uri).catch(() =>
-                        toast.error('Could not open signature'),
-                      )
-                    }
-                    accessibilityRole="imagebutton"
-                    accessibilityLabel="Open customer signature"
-                  >
-                    <ExpoImage
-                      source={{ uri }}
-                      style={{ width: '100%', height: 120, borderRadius: 16, backgroundColor: LightColors.surface, borderWidth: 1, borderColor: LightColors.divider }}
-                      contentFit="contain"
-                      transition={150}
-                      cachePolicy="memory-disk"
-                    />
-                    <Text className="text-[11px] font-montserrat-semi text-textSecondary mt-1.5">
-                      Signature
-                    </Text>
-                  </Pressable>
-                );
-              })()}
-            </View>
-          </View>
-        )}
+            {/* Proof photos uploaded by the runner. We only render the card
+                when at least one photo exists so it doesn't add visual noise
+                for in-progress bookings. Tapping a thumbnail opens the
+                full-resolution image in the OS browser. */}
+            {(booking.pickup_photo_url || booking.delivery_photo_url || booking.signature_url) && (
+              <View
+                className="mt-4 bg-white rounded-xl p-4"
+                // Hairline so the card reads as a card on the white sheet —
+                // without it this section is an invisible white-on-white block,
+                // out of step with the runner (Elevation.sm) and shopping
+                // (bordered) cards above it.
+                style={{ borderWidth: 1, borderColor: LightColors.divider }}
+              >
+                <Text className="text-sm font-montserrat-bold text-textPrimary mb-3">
+                  Proof photos
+                </Text>
+                <View className="flex-row gap-3">
+                  {booking.pickup_photo_url && (() => {
+                    const uri = resolveImageUrl(booking.pickup_photo_url);
+                    if (!uri) return null;
+                    return (
+                      <Pressable
+                        className="flex-1"
+                        onPress={() =>
+                          Linking.openURL(uri).catch(() =>
+                            toast.error('Could not open photo'),
+                          )
+                        }
+                        accessibilityRole="imagebutton"
+                        accessibilityLabel="Open pickup proof photo"
+                      >
+                        <ExpoImage
+                          source={{ uri }}
+                          style={{ width: '100%', height: 120, borderRadius: 16, backgroundColor: LightColors.divider }}
+                          contentFit="cover"
+                          transition={150}
+                          cachePolicy="memory-disk"
+                        />
+                        <Text className="text-[11px] font-montserrat-semi text-textSecondary mt-1.5">
+                          Pickup
+                        </Text>
+                      </Pressable>
+                    );
+                  })()}
+                  {booking.delivery_photo_url && (() => {
+                    const uri = resolveImageUrl(booking.delivery_photo_url);
+                    if (!uri) return null;
+                    return (
+                      <Pressable
+                        className="flex-1"
+                        onPress={() =>
+                          Linking.openURL(uri).catch(() =>
+                            toast.error('Could not open photo'),
+                          )
+                        }
+                        accessibilityRole="imagebutton"
+                        accessibilityLabel="Open delivery proof photo"
+                      >
+                        <ExpoImage
+                          source={{ uri }}
+                          style={{ width: '100%', height: 120, borderRadius: 16, backgroundColor: LightColors.divider }}
+                          contentFit="cover"
+                          transition={150}
+                          cachePolicy="memory-disk"
+                        />
+                        <Text className="text-[11px] font-montserrat-semi text-textSecondary mt-1.5">
+                          Delivery
+                        </Text>
+                      </Pressable>
+                    );
+                  })()}
+                  {booking.signature_url && (() => {
+                    // Signature is stored as a PNG in the same delivery-proofs
+                    // bucket as the pickup/delivery photos. We render it on a
+                    // white background (contentFit "contain") so the dark ink
+                    // strokes stay legible — "cover" would crop most signatures.
+                    const uri = resolveImageUrl(booking.signature_url);
+                    if (!uri) return null;
+                    return (
+                      <Pressable
+                        className="flex-1"
+                        onPress={() =>
+                          Linking.openURL(uri).catch(() =>
+                            toast.error('Could not open signature'),
+                          )
+                        }
+                        accessibilityRole="imagebutton"
+                        accessibilityLabel="Open customer signature"
+                      >
+                        <ExpoImage
+                          source={{ uri }}
+                          style={{ width: '100%', height: 120, borderRadius: 16, backgroundColor: LightColors.surface, borderWidth: 1, borderColor: LightColors.divider }}
+                          contentFit="contain"
+                          transition={150}
+                          cachePolicy="memory-disk"
+                        />
+                        <Text className="text-[11px] font-montserrat-semi text-textSecondary mt-1.5">
+                          Signature
+                        </Text>
+                      </Pressable>
+                    );
+                  })()}
+                </View>
+              </View>
+            )}
           </>
         )}
-        </>
-        ) : null}
+      </>
+    ) : null;
 
-        {/* Note: SOS / Cancel actions live in the sheet `footer` so they
-            remain visible regardless of snap. We keep only the contextual
-            shopping-paid notice here, since it's informational. */}
-        <View className="pb-6 pt-4 gap-2">
-          {isShopping && booking.picked_up_at && CAN_CANCEL_STATUSES.includes(booking.status) === false && booking.status !== 'completed' && booking.status !== 'cancelled' && (
-            <View className="bg-warning/10 border border-warning/40 rounded-xl p-3">
-              <Text className="text-xs font-montserrat-semi text-warning text-center">
-                Your runner already paid for the items. Cancel is no longer available.
-              </Text>
-            </View>
-          )}
+  // Shopping-paid notice — same condition as ever; warningDark text (the
+  // base warning tone fails AA on the soft wash).
+  const shoppingPaidNotice =
+    isShopping &&
+    booking.picked_up_at &&
+    CAN_CANCEL_STATUSES.includes(booking.status) === false &&
+    booking.status !== 'completed' &&
+    booking.status !== 'cancelled' ? (
+      <View className="bg-warning/10 border border-warning/40 rounded-xl p-3 mt-4 mb-2">
+        <Text className="text-xs font-montserrat-semi text-warningDark text-center">
+          Your runner already paid for the items. Cancel is no longer available.
+        </Text>
+      </View>
+    ) : null;
+
+  return (
+    <View style={{ flex: 1, backgroundColor: LightColors.background }}>
+      {/* ── Canvas — brand gradient + radar (pre-dispatch), live map
+          (en-route, phase-gated), or a calm receipt wash (terminal).
+          Chosen purely from booking.status + mapMounted so deep-link cold
+          starts land in the right mode with no flash of a wrong one. */}
+      <View style={StyleSheet.absoluteFill}>
+        {isTerminalUi ? (
+          <View style={[StyleSheet.absoluteFill, { backgroundColor: LightColors.background }]}>
+            {/* The blue dies with the trip — delivered/completed get a calm
+                brand wash at the top; cancelled/no_runner stay plain. */}
+            {(booking.status === 'delivered' || booking.status === 'completed') && (
+              <LinearGradient
+                colors={[LightColors.primary50, LightColors.background]}
+                style={{ height: 160 }}
+              />
+            )}
+          </View>
+        ) : (
+          <>
+            {mapMounted && (
+              <HereMapView
+                ref={mapRef}
+                style={{ flex: 1 }}
+                showsMyLocationButton={false}
+                showsCompass={false}
+                maxZoomLevel={17}
+                onMapReady={dismissVeil}
+                initialRegion={{
+                  latitude: mapCenter[1],
+                  longitude: mapCenter[0],
+                  latitudeDelta: 0.05,
+                  longitudeDelta: 0.05,
+                }}
+              >
+                {/* Pickup marker — brand dot. Equal w/h + center anchor so
+                    HereMarker's anchor math holds; the dropoff differs by
+                    SHAPE (rounded-square), not color alone. */}
+                {booking.pickup_lng && booking.pickup_lat && (
+                  <HereMarker
+                    coordinate={{ latitude: Number(booking.pickup_lat), longitude: Number(booking.pickup_lng) }}
+                    anchor={{ x: 0.5, y: 0.5 }}
+                    id="pickup-marker"
+                  >
+                    <View style={styles.pickupPin} />
+                  </HereMarker>
+                )}
+
+                {/* Dropoff marker — ink rounded-square. */}
+                {booking.dropoff_lng && booking.dropoff_lat && (
+                  <HereMarker
+                    coordinate={{ latitude: Number(booking.dropoff_lat), longitude: Number(booking.dropoff_lng) }}
+                    anchor={{ x: 0.5, y: 0.5 }}
+                    id="dropoff-marker"
+                  >
+                    <View style={styles.dropoffPin} />
+                  </HereMarker>
+                )}
+
+                {/* Runner marker (moving) */}
+                {runnerLocation && (
+                  <HereMarker
+                    coordinate={{ latitude: Number(runnerLocation.lat), longitude: Number(runnerLocation.lng) }}
+                    anchor={{ x: 0.5, y: 0.5 }}
+                    id="runner-marker"
+                  >
+                    <View style={styles.runnerMarkerWrap}>
+                      <View style={styles.runnerMarkerOuter}>
+                        {runnerLocation.speed != null && runnerLocation.speed > 0 && (
+                          reduceMotion ? (
+                            <View
+                              pointerEvents="none"
+                              style={[styles.runnerPulse, { opacity: 0.25 }]}
+                            />
+                          ) : (
+                            <Animated.View
+                              pointerEvents="none"
+                              style={[
+                                styles.runnerPulse,
+                                {
+                                  opacity: runnerPulse.interpolate({ inputRange: [0, 1], outputRange: [0.55, 0] }),
+                                  transform: [
+                                    {
+                                      scale: runnerPulse.interpolate({
+                                        inputRange: [0, 1],
+                                        outputRange: [0.6, 2.4],
+                                      }),
+                                    },
+                                  ],
+                                },
+                              ]}
+                            />
+                          )
+                        )}
+                        <View style={styles.runnerMarkerInner}>
+                          <Bike size={16} color={LightColors.textInverse} strokeWidth={2.4} />
+                        </View>
+                      </View>
+                      {runnerLocation.speed != null && runnerLocation.speed > 0 && (
+                        <View style={styles.runnerSpeedBadge}>
+                          <Text style={styles.runnerSpeedText}>
+                            {(runnerLocation.speed * 3.6).toFixed(0)} km/h
+                          </Text>
+                        </View>
+                      )}
+                    </View>
+                  </HereMarker>
+                )}
+
+                {/* Route line */}
+                {routeMapCoords.length > 0 && (
+                  <>
+                    <HerePolyline id="route-outline" coordinates={routeMapCoords} strokeColor={LightColors.primary900} strokeWidth={8} lineJoin="round" />
+                    <HerePolyline id="route-fill" coordinates={routeMapCoords} strokeColor={LightColors.primary500} strokeWidth={5} lineJoin="round" />
+                  </>
+                )}
+              </HereMapView>
+            )}
+
+            {/* Gradient veil — stays above the map until the first tiles are
+                in (onMapReady / 1.5s timeout), so MapLibre's grey
+                checkerboard is never visible. The `!prevMapMountedRef` arm
+                covers the map's very first frame, where the mount effect
+                hasn't flipped veilVisible yet (effects run post-paint). */}
+            {mapMounted && (veilVisible || !prevMapMountedRef.current) && (
+              <Animated.View
+                pointerEvents="none"
+                style={[StyleSheet.absoluteFill, { opacity: veilOpacity }]}
+              >
+                <LinearGradient
+                  colors={[
+                    LightColors.gradientStart,
+                    LightColors.gradientMid,
+                    LightColors.gradientEnd,
+                  ]}
+                  start={{ x: 0, y: 0 }}
+                  end={{ x: 1, y: 1 }}
+                  style={StyleSheet.absoluteFill}
+                />
+              </Animated.View>
+            )}
+
+            {!mapMounted && (
+              <>
+                <LinearGradient
+                  colors={[
+                    LightColors.gradientStart,
+                    LightColors.gradientMid,
+                    LightColors.gradientEnd,
+                  ]}
+                  start={{ x: 0, y: 0 }}
+                  end={{ x: 1, y: 1 }}
+                  style={StyleSheet.absoluteFill}
+                />
+                {/* Radar — spatial continuity from book/confirm's search
+                    radar, centered in the free band between the chrome and
+                    the half-snap sheet line so the rings never clip. */}
+                <View
+                  pointerEvents="none"
+                  style={{
+                    position: 'absolute',
+                    left: 0,
+                    right: 0,
+                    top: pulseCenterY - pulseSize / 2,
+                    height: pulseSize,
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                  }}
+                >
+                  {reduceMotion ? (
+                    <View
+                      style={[
+                        styles.staticRing,
+                        { width: pulseSize, height: pulseSize, borderRadius: pulseSize / 2 },
+                      ]}
+                    />
+                  ) : (
+                    <>
+                      <PulseRing delay={0} size={pulseSize} />
+                      <PulseRing delay={700} size={pulseSize} />
+                    </>
+                  )}
+                  <View style={styles.radarCenter}>
+                    <Bike size={28} color={RING_COLOR} strokeWidth={2.2} />
+                  </View>
+                </View>
+                {/* Map opt-in — label kept verbatim for a11y parity. */}
+                <View
+                  pointerEvents="box-none"
+                  style={{
+                    position: 'absolute',
+                    left: 0,
+                    right: 0,
+                    bottom: stripBottom,
+                    alignItems: 'center',
+                  }}
+                >
+                  <Pressable
+                    onPress={() => setMapOverride('on')}
+                    accessibilityRole="button"
+                    accessibilityLabel="View live map"
+                    style={({ pressed }) => [
+                      styles.chromeSurface,
+                      {
+                        minHeight: 44,
+                        borderRadius: 999,
+                        paddingHorizontal: 20,
+                        flexDirection: 'row',
+                        alignItems: 'center',
+                      },
+                      pressFx(pressed),
+                    ]}
+                  >
+                    <MapPin size={16} color={LightColors.primary} strokeWidth={2.2} />
+                    <Text
+                      className="ml-2 text-[13px] font-montserrat-bold text-textPrimary"
+                      maxFontSizeMultiplier={1.3}
+                    >
+                      View live map
+                    </Text>
+                  </Pressable>
+                </View>
+              </>
+            )}
+
+            {mapMounted && (
+              <>
+                {/* Bottom strip — sits above the peek line so it's never
+                    occluded by the sheet. Hide-map left, live pill right,
+                    route-retry chip fills the middle when needed. */}
+                <View
+                  pointerEvents="box-none"
+                  style={{
+                    position: 'absolute',
+                    left: 16,
+                    right: 16,
+                    bottom: stripBottom,
+                    flexDirection: 'row',
+                    alignItems: 'center',
+                    gap: 8,
+                  }}
+                >
+                  <Pressable
+                    onPress={() => setMapOverride('off')}
+                    accessibilityRole="button"
+                    accessibilityLabel="Hide map"
+                    hitSlop={8}
+                    style={({ pressed }) => [
+                      styles.chromeSurface,
+                      {
+                        minHeight: 36,
+                        borderRadius: 999,
+                        paddingHorizontal: 12,
+                        flexDirection: 'row',
+                        alignItems: 'center',
+                      },
+                      pressFx(pressed),
+                    ]}
+                  >
+                    <X size={14} color={LightColors.textPrimary} strokeWidth={2.4} />
+                    <Text
+                      className="ml-1 text-[12px] font-montserrat-bold text-textPrimary"
+                      maxFontSizeMultiplier={1.3}
+                    >
+                      Hide map
+                    </Text>
+                  </Pressable>
+                  {/* Route load failure — surfaces the error that used to be
+                      silently swallowed; one-tap retry bypasses the cache. */}
+                  {routeFetchState === 'error' ? (
+                    <View
+                      className="flex-1 flex-row items-center bg-surface border border-divider rounded-full px-3 py-2"
+                      style={Elevation.md}
+                    >
+                      <View className="w-2 h-2 rounded-full mr-1.5 bg-warning" />
+                      <Text
+                        className="flex-1 text-[12px] font-montserrat text-textSecondary"
+                        numberOfLines={1}
+                      >
+                        Couldn&apos;t load route
+                      </Text>
+                      <Pressable
+                        onPress={retryRoute}
+                        accessibilityRole="button"
+                        accessibilityLabel="Retry loading route"
+                        hitSlop={{ top: 16, bottom: 16, left: 16, right: 16 }}
+                        className="ml-2"
+                        style={({ pressed }) => pressFx(pressed)}
+                      >
+                        <Text className="text-[12px] font-montserrat-bold text-primary">
+                          Retry
+                        </Text>
+                      </Pressable>
+                    </View>
+                  ) : (
+                    <View className="flex-1" pointerEvents="none" />
+                  )}
+                  {/* Realtime indicator — three states: Connecting (no
+                      channel yet), Live + idle, Live + moving (with the
+                      km/h reading so motion is visible at a glance). */}
+                  {booking.runner_id && (
+                    <View
+                      className="flex-row items-center bg-surface border border-divider rounded-full pl-2 pr-3 py-1.5"
+                      accessible
+                      accessibilityLabel={
+                        !isConnected
+                          ? 'Connecting to live tracking'
+                          : runnerLocation?.speed != null && runnerLocation.speed > 0
+                            ? `Runner live, moving at ${Math.round(runnerLocation.speed * 3.6)} kilometres per hour`
+                            : 'Runner live'
+                      }
+                      style={Elevation.md}
+                    >
+                      <View className="items-center justify-center mr-1.5" style={{ width: 10, height: 10 }}>
+                        <View className={`w-2 h-2 rounded-full ${
+                          isConnected
+                            ? runnerLocation?.speed != null && runnerLocation.speed > 0
+                              ? 'bg-success'
+                              : 'bg-primary'
+                            : 'bg-textMuted'
+                        }`} />
+                        {isConnected && runnerLocation?.speed != null && runnerLocation.speed > 0 && (
+                          reduceMotion ? (
+                            <View
+                              pointerEvents="none"
+                              style={{
+                                position: 'absolute',
+                                width: 10,
+                                height: 10,
+                                borderRadius: 5,
+                                backgroundColor: LightColors.success,
+                                opacity: 0.25,
+                              }}
+                            />
+                          ) : (
+                            <Animated.View
+                              pointerEvents="none"
+                              style={{
+                                position: 'absolute',
+                                width: 10,
+                                height: 10,
+                                borderRadius: 5,
+                                backgroundColor: LightColors.success,
+                                opacity: runnerPulse.interpolate({ inputRange: [0, 1], outputRange: [0.5, 0] }),
+                                transform: [{ scale: runnerPulse.interpolate({ inputRange: [0, 1], outputRange: [1, 2.6] }) }],
+                              }}
+                            />
+                          )
+                        )}
+                      </View>
+                      <Text className="text-[11px] font-montserrat-bold text-textPrimary">
+                        {!isConnected
+                          ? 'Connecting…'
+                          : runnerLocation?.speed != null && runnerLocation.speed > 0
+                          ? `${Math.round(runnerLocation.speed * 3.6)} km/h · moving`
+                          : 'Live'}
+                      </Text>
+                    </View>
+                  )}
+                </View>
+                {/* Recenter — re-runs the same fit the auto-fit effect uses. */}
+                <Pressable
+                  onPress={handleRecenter}
+                  accessibilityRole="button"
+                  accessibilityLabel="Recenter map"
+                  style={({ pressed }) => [
+                    styles.chromeSurface,
+                    {
+                      position: 'absolute',
+                      right: 16,
+                      bottom: stripBottom + 52,
+                      width: 44,
+                      height: 44,
+                      borderRadius: 22,
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                    },
+                    pressFx(pressed),
+                  ]}
+                >
+                  <Crosshair size={20} color={LightColors.textPrimary} strokeWidth={2} />
+                </Pressable>
+              </>
+            )}
+          </>
+        )}
+      </View>
+
+      {/* ── Floating chrome — back circle + centered status pill on
+          near-opaque white surfaces (no expo-blur; opacity + hairline +
+          Elevation.md stand in for a real frost). box-none everywhere so
+          the map stays pannable between the pills. */}
+      <SafeAreaView
+        edges={['top']}
+        pointerEvents="box-none"
+        // Must float ABOVE the sheet (zIndex 999) and its footer (zIndex 1000):
+        // at the full snap the sheet top rides up to ~height*0.08 and would
+        // otherwise swallow the back button + status pill — and full is the
+        // default snap for terminal receipts, where the back button is the
+        // only way off the screen. elevation clears the Android z-order too
+        // (sheet 24 / footer 28 use elevation, not zIndex, on Android).
+        style={{ position: 'absolute', top: 0, left: 0, right: 0, zIndex: 1001, elevation: 32 }}
+      >
+        <View className="px-4 pt-2 flex-row items-center" pointerEvents="box-none">
+          <Reanimated.View entering={reduceMotion ? FadeIn.duration(120) : chromeEnter(0)}>
+            <Pressable
+              onPress={() => router.canGoBack() ? router.back() : router.replace('/(customer)/(tabs)')}
+              accessibilityRole="button"
+              accessibilityLabel="Go back"
+              hitSlop={8}
+              style={({ pressed }) => [
+                styles.chromeSurface,
+                { width: 44, height: 44, borderRadius: 22, alignItems: 'center', justifyContent: 'center' },
+                pressFx(pressed),
+              ]}
+            >
+              <ArrowLeft size={22} color={LightColors.textPrimary} strokeWidth={2.2} />
+            </Pressable>
+          </Reanimated.View>
+          {/* 44pt back circle + 44pt spacer keep the pill optically centered. */}
+          <View className="flex-1 items-center px-2" pointerEvents="box-none">
+            <Reanimated.View
+              entering={reduceMotion ? FadeIn.duration(120) : chromeEnter(40)}
+              accessible
+              accessibilityLiveRegion="polite"
+              accessibilityLabel={`${STATUS_LABELS[booking.status]}${
+                booking.runner_id && !isTerminalUi
+                  ? isConnected
+                    ? ', live tracking connected'
+                    : ', reconnecting to live tracking'
+                  : ''
+              }`}
+              style={[
+                styles.chromeSurface,
+                {
+                  maxWidth: winWidth - 144,
+                  minHeight: 36,
+                  borderRadius: 18,
+                  paddingHorizontal: 16,
+                  paddingVertical: 8,
+                  flexDirection: 'row',
+                  alignItems: 'center',
+                },
+              ]}
+            >
+              {!isTerminalUi && (
+                <View
+                  style={{
+                    width: 8,
+                    height: 8,
+                    borderRadius: 4,
+                    marginRight: 8,
+                    backgroundColor: pillDotColor,
+                  }}
+                />
+              )}
+              <Reanimated.View
+                key={booking.status}
+                entering={reduceMotion ? undefined : FadeIn.duration(150)}
+                exiting={reduceMotion ? undefined : FadeOut.duration(150)}
+                style={{ flexDirection: 'row', alignItems: 'center', flexShrink: 1 }}
+              >
+                <Text
+                  className="text-[13px] font-montserrat-bold text-textPrimary"
+                  numberOfLines={1}
+                  maxFontSizeMultiplier={1.3}
+                >
+                  {STATUS_LABELS[booking.status]}
+                </Text>
+                {/* Degraded realtime is surfaced as TEXT, never color-only. */}
+                {booking.runner_id && !isConnected && !isTerminalUi ? (
+                  <Text
+                    className="text-[11px] font-montserrat-semi text-textTertiary"
+                    maxFontSizeMultiplier={1.3}
+                  >
+                    {' '}· Connecting…
+                  </Text>
+                ) : null}
+              </Reanimated.View>
+            </Reanimated.View>
+          </View>
+          <View style={{ width: 44 }} />
         </View>
-      </ScrollView>
+      </SafeAreaView>
+
+      {/* ── Sheet — ETA-led handle over the scrollable body. snapPoints are
+          CONSTANT; only `initial` flips (once, into a terminal status) so
+          the sheet never re-snaps under the user mid-trip. */}
+      <ExpandableSheet
+        snapPoints={SNAP_POINTS}
+        initial={isTerminalUi ? 'full' : 'half'}
+        reduceMotion={reduceMotion}
+        renderHandle={() => (
+          <View
+            className="px-5 pt-1 pb-1"
+            accessible
+            accessibilityLabel={`Step ${Math.min(currentStatusIndex + 1, steps.length)} of ${steps.length}${
+              /* Spoken ETA gated identically to the visual numeral — on
+                 arrived and terminal statuses the pill shows Here/Done/Ended,
+                 so a stale minute count must never be announced over it. */
+              showEtaNumeral
+                ? `, arriving in about ${eta.minutes} minute${eta.minutes === 1 ? '' : 's'}`
+                : heroEtaLabel
+                  ? `, ${heroEtaLabel === 'Here' ? 'runner is here' : heroEtaLabel.toLowerCase()}`
+                  : ''
+            }`}
+          >
+            <View className="flex-row items-center">
+              <View className="flex-1 pr-3">
+                <Text
+                  className="text-[11px] font-montserrat-bold uppercase"
+                  style={{ color: accentText, letterSpacing: 1.2 }}
+                  numberOfLines={1}
+                  maxFontSizeMultiplier={1.3}
+                >
+                  {eyebrowText}
+                </Text>
+                {showEtaNumeral ? (
+                  <View className="flex-row" style={{ alignItems: 'baseline', minHeight: 40 }}>
+                    <Reanimated.Text
+                      key={reduceMotion ? 'eta-static' : `eta-${eta.minutes}`}
+                      entering={reduceMotion ? undefined : DigitEnter}
+                      exiting={reduceMotion ? undefined : DigitExit}
+                      style={styles.etaNumeral}
+                      maxFontSizeMultiplier={1.2}
+                    >
+                      {eta.minutes}
+                    </Reanimated.Text>
+                    <Text
+                      className="text-[17px] font-montserrat-semi text-textSecondary"
+                      maxFontSizeMultiplier={1.2}
+                    >
+                      {' '}min
+                    </Text>
+                  </View>
+                ) : (
+                  <Text
+                    className="text-[22px] font-montserrat-bold text-textPrimary"
+                    style={{ lineHeight: 26 }}
+                    numberOfLines={2}
+                    maxFontSizeMultiplier={1.2}
+                  >
+                    {heroCopy.title}
+                  </Text>
+                )}
+              </View>
+              {(heroEtaLabel || booking.runner_id) ? (
+                <View className="flex-row items-center" style={{ gap: 8 }}>
+                  {heroEtaLabel && (
+                    <View
+                      className="rounded-full px-3.5 py-1.5"
+                      style={{ backgroundColor: `${accentBase}1A` }}
+                    >
+                      <Text
+                        className="text-[12px] font-montserrat-bold"
+                        style={{ color: accentDark }}
+                        maxFontSizeMultiplier={1.3}
+                      >
+                        {heroEtaLabel}
+                      </Text>
+                    </View>
+                  )}
+                  {booking.runner_id ? (
+                    <View className="items-center" style={{ maxWidth: 72 }}>
+                      <Avatar
+                        size="md"
+                        uri={booking.runner?.avatar_url ?? undefined}
+                        name={booking.runner?.full_name}
+                        isVerified
+                      />
+                      <Text
+                        className="text-[12px] font-montserrat-semi text-textSecondary mt-0.5"
+                        numberOfLines={1}
+                        maxFontSizeMultiplier={1.3}
+                      >
+                        {booking.runner?.full_name?.split(' ')[0] ?? 'Runner'}
+                      </Text>
+                    </View>
+                  ) : null}
+                </View>
+              ) : null}
+            </View>
+            {/* pt-2 (not pt-3): buys back the ~4pt that keeps the whole handle
+                block inside the 0.24 peek band on a 360x640 Android at font
+                scale 1.3 with a two-line headline (e.g. "Arrived at drop-off"),
+                so the live micro-row below never clips under the peek fold. */}
+            <View className="pt-2">
+              <JourneyBeads
+                status={booking.status}
+                accent={booking.status === 'cancelled' ? 'danger' : 'brand'}
+                showLabel={false}
+              />
+            </View>
+            {booking.runner_id && !isTerminalUi ? (
+              <View className="flex-row items-center justify-end -mt-1 mb-1">
+                <View className={`w-1.5 h-1.5 rounded-full mr-1 ${isConnected ? 'bg-success' : 'bg-textMuted'}`} />
+                <Text
+                  className="text-[11px] font-montserrat text-textTertiary uppercase"
+                  style={{ letterSpacing: 1 }}
+                  maxFontSizeMultiplier={1.3}
+                >
+                  {isConnected ? 'Live' : 'Reconnecting'}
+                </Text>
+              </View>
+            ) : null}
+          </View>
+        )}
+        footer={
+          // SOS stays through 'delivered' (post-dropoff safety window) and
+          // only drops on completed/cancelled/no_runner — isLiveBooking is
+          // exactly that set. Terminal receipts with nothing to show render
+          // no footer at all (zero dead chrome).
+          (isTransportation && !sosActive && isLiveBooking) || sosActive || canCancel ? (
+            <View style={{ gap: 8 }}>
+              {isTransportation && !sosActive && isLiveBooking && (
+                <Button
+                  title="Emergency SOS"
+                  variant="danger"
+                  icon={Shield}
+                  onPress={handleSOS}
+                  fullWidth
+                />
+              )}
+              {sosActive && (
+                <View className="bg-dangerSoft border border-danger rounded-xl p-3 items-center">
+                  <Text className="text-sm font-montserrat-bold text-dangerDark">
+                    SOS Active — Help is on the way
+                  </Text>
+                </View>
+              )}
+              {canCancel && (
+                <Button
+                  title="Cancel Errand"
+                  loading={isCancelling}
+                  loadingTitle="Cancelling…"
+                  variant="outline"
+                  onPress={handleCancel}
+                  disabled={isCancelling}
+                  fullWidth
+                />
+              )}
+            </View>
+          ) : null
+        }
+      >
+        <ScrollView
+          className="flex-1 px-5 pt-2"
+          showsVerticalScrollIndicator={false}
+          // +insets.bottom so the terminal receipt (no footer → the sheet's
+          // content wrapper reserves 0) clears the home indicator; live
+          // statuses already reserve the measured footer height on top of this.
+          contentContainerStyle={{ paddingBottom: 40 + insets.bottom }}
+        >
+          {/* Booking number leads the body — support triages from customer
+              screenshots of the sheet, so it must be readable at the half
+              snap without scrolling. */}
+          <Text
+            className={`text-[12px] font-inter text-textTertiary mb-2${isTerminalUi ? ' text-center' : ''}`}
+            style={{ letterSpacing: 0.5 }}
+            maxFontSizeMultiplier={1.3}
+          >
+            {booking.booking_number}
+          </Text>
+
+          {isTerminalUi ? (
+            /* Receipt layout — delivered and completed render identically so
+               the one frame before the completed→rate replace is coherent. */
+            <>
+              <View className="items-center mt-2 mb-6">
+                <View
+                  style={{
+                    width: 56,
+                    height: 56,
+                    borderRadius: 28,
+                    backgroundColor: receiptTone.bg,
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                  }}
+                >
+                  <receiptTone.Icon size={28} color={receiptTone.fg} strokeWidth={2.2} />
+                </View>
+                <Text
+                  className="text-[26px] font-montserrat-bold text-textPrimary text-center mt-3"
+                  maxFontSizeMultiplier={1.2}
+                >
+                  {heroCopy.title}
+                </Text>
+                {heroCopy.subtitle ? (
+                  <Text className="text-[13px] font-montserrat text-textSecondary text-center mt-1">
+                    {heroCopy.subtitle}
+                  </Text>
+                ) : null}
+                {booking.status === 'no_runner' && (
+                  <View className="mt-4 w-full">
+                    <Button title="Book again" onPress={handleRebook} fullWidth />
+                  </View>
+                )}
+              </View>
+              {tripRouteSection}
+              {detailsSection}
+              {runnerCard ? <View className="mt-3">{runnerCard}</View> : null}
+              {/* Condition excludes completed/cancelled itself, so this only
+                  surfaces on a delivered shopping receipt — same as the old
+                  unconditional-in-body render. */}
+              {shoppingPaidNotice}
+            </>
+          ) : (
+            <>
+              {/* At the arrived_* handoff the PIN leads the body. */}
+              {arrivedPinHero ? pinCard : null}
+              {(showEtaNumeral || heroCopy.subtitle) ? (
+                <View className="mb-4">
+                  {/* When the numeral owns the handle, the status verb moves
+                      down here as a lead-in — no copy is ever lost. */}
+                  {showEtaNumeral ? (
+                    <Text className="text-[13px] font-montserrat-semi text-textSecondary">
+                      {heroCopy.title}
+                    </Text>
+                  ) : null}
+                  {heroCopy.subtitle ? (
+                    <Text className={`text-[13px] font-montserrat text-textSecondary${showEtaNumeral ? ' mt-0.5' : ''}`}>
+                      {heroCopy.subtitle}
+                    </Text>
+                  ) : null}
+                </View>
+              ) : null}
+              {!arrivedPinHero ? pinCard : null}
+              {runnerCard}
+              {tripRouteSection}
+              {detailsSection}
+              {shoppingPaidNotice}
+            </>
+          )}
+        </ScrollView>
       </ExpandableSheet>
 
       {/* Cancel confirmation */}
@@ -1498,12 +2371,58 @@ export default function TrackingScreen() {
 }
 
 const styles = StyleSheet.create({
-  floatingShadow: {
-    shadowColor: LightColors.ink,
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.12,
-    shadowRadius: 8,
-    elevation: 4,
+  // "Frosted" chrome recipe — near-opaque white. expo-blur isn't installed,
+  // so opacity + hairline border + Elevation.md stand in for a real blur.
+  chromeSurface: {
+    backgroundColor: 'rgba(255,255,255,0.96)',
+    borderWidth: 1,
+    borderColor: LightColors.divider,
+    ...Elevation.md,
+  },
+  // Reduce Motion stand-in for the radar rings — same geometry as a ring at
+  // full scale so the center puck alignment matches (book/confirm parity).
+  staticRing: {
+    position: 'absolute',
+    borderWidth: 2,
+    borderColor: RING_COLOR,
+    backgroundColor: `${RING_COLOR}1A`,
+    opacity: 0.6,
+  },
+  radarCenter: {
+    width: 72,
+    height: 72,
+    borderRadius: 36,
+    backgroundColor: 'rgba(255,255,255,0.12)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  // Display rung — the ETA is the handle's hero number. Inter for numerals.
+  etaNumeral: {
+    fontSize: 34,
+    fontFamily: 'Inter_600SemiBold',
+    color: LightColors.textPrimary,
+    fontVariant: ['tabular-nums'],
+    lineHeight: 40,
+  },
+  // Equal w/h + center anchor — HereMarker's anchor math depends on it.
+  pickupPin: {
+    width: 24,
+    height: 24,
+    borderRadius: 12,
+    backgroundColor: LightColors.primary,
+    borderWidth: 3,
+    borderColor: '#FFFFFF',
+    ...Elevation.md,
+  },
+  // Rounded-square: shape distinguishes dropoff from pickup, not color alone.
+  dropoffPin: {
+    width: 24,
+    height: 24,
+    borderRadius: 8,
+    backgroundColor: LightColors.ink,
+    borderWidth: 3,
+    borderColor: '#FFFFFF',
+    ...Elevation.md,
   },
   runnerMarkerWrap: {
     alignItems: 'center',
@@ -1547,7 +2466,8 @@ const styles = StyleSheet.create({
   },
   runnerSpeedText: {
     color: LightColors.textInverse,
-    fontSize: 9,
+    // 11px floor — nothing on this screen renders below 11 (a11y/AA pass).
+    fontSize: 11,
     fontFamily: 'Quicksand_600SemiBold',
     letterSpacing: 0.2,
   },

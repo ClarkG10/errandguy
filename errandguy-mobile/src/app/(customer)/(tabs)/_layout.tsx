@@ -1,25 +1,45 @@
 import { Tabs } from 'expo-router';
-import { Platform, View } from 'react-native';
+import { View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useNotificationStore } from '../../../stores/notificationStore';
 import { TabBarItem } from '../../../components/ui/TabBarItem';
 import { QuickBookFAB } from '../../../components/ui/QuickBookFAB';
 import {
   TAB_BAR_HEIGHT as BAR_HEIGHT,
-  TAB_BAR_FLOAT_GAP,
-  TAB_BAR_SIDE_MARGIN,
+  TAB_BAR_CENTER_GAP,
 } from '../../../constants/tabLayout';
 import { LightColors } from '../../../constants/colors';
 
 const ACTIVE = LightColors.primary;
-const INACTIVE = LightColors.textMuted;
+// textTertiary clears the 3:1 non-text glyph floor that textMuted failed
+// (shared with the runner bar via TabBarItem). Labels are hidden, so this
+// only feeds react-navigation's inactive tint, but keep it in sync.
+const INACTIVE = LightColors.textTertiary;
+
+// Screen-level tabBarItemStyle replaces (not merges with) the
+// navigator-level one, so the middle tabs spread this base and add
+// their half of the centre gap on top.
+const ITEM_STYLE = {
+  height: BAR_HEIGHT - 12,
+  paddingTop: 0,
+  paddingBottom: 0,
+  paddingHorizontal: 2,
+} as const;
 
 export default function CustomerTabsLayout() {
   const unreadCount = useNotificationStore((s) => s.unreadCount);
   const insets = useSafeAreaInsets();
 
-  // Edge-to-edge bottom inset — the OS knows what its own nav needs.
-  const bottomInset = insets.bottom;
+  // React Navigation renders a supplied numeric tabBarStyle.height
+  // verbatim — it does NOT add the bottom inset — so a flat height would
+  // sit the bar flush and collide the icon row with the home indicator /
+  // gesture bar on inset devices. Grow the bar and reserve the inset as
+  // bottom padding; the item grows with it so the glyph stays centred in
+  // the visible strip above the inset.
+  const itemStyle = {
+    ...ITEM_STYLE,
+    height: ITEM_STYLE.height + insets.bottom,
+  };
 
   return (
     <View style={{ flex: 1 }}>
@@ -42,40 +62,16 @@ export default function CustomerTabsLayout() {
         tabBarInactiveTintColor: INACTIVE,
         tabBarShowLabel: false,
         tabBarHideOnKeyboard: true,
-        // Floating pill nav — the bar detaches from the screen bottom
-        // and hovers as a rounded capsule (2026 pattern). Content
-        // scrolls behind it; the safe-area inset lifts it clear of
-        // the Android nav bar / iOS home indicator, with a minimum
-        // float gap on inset-less devices.
         tabBarStyle: {
-          position: 'absolute',
-          left: TAB_BAR_SIDE_MARGIN,
-          right: TAB_BAR_SIDE_MARGIN,
-          bottom: Math.max(bottomInset, TAB_BAR_FLOAT_GAP) + TAB_BAR_FLOAT_GAP / 2,
           backgroundColor: LightColors.surface,
-          borderTopWidth: 0,
-          borderRadius: 999,
-          height: BAR_HEIGHT,
-          paddingTop: 6,
-          paddingBottom: 6,
-          paddingHorizontal: 14,
-          // Soft diffuse lift so the pill reads as a floating surface.
-          ...Platform.select({
-            ios: {
-              shadowColor: LightColors.textPrimary,
-              shadowOffset: { width: 0, height: 10 },
-              shadowOpacity: 0.1,
-              shadowRadius: 24,
-            },
-            android: { elevation: 12 },
-          }),
+          borderTopWidth: 1,
+          borderTopColor: LightColors.divider,
+          height: BAR_HEIGHT + insets.bottom,
+          paddingTop: 4,
+          paddingBottom: Math.max(insets.bottom, 4),
+          paddingHorizontal: 8,
         },
-        tabBarItemStyle: {
-          height: BAR_HEIGHT - 12,
-          paddingTop: 0,
-          paddingBottom: 0,
-          paddingHorizontal: 2,
-        },
+        tabBarItemStyle: itemStyle,
         // Let the icon container fill the item height so the icon-only
         // glyph centres vertically instead of leaving a gap at the bottom
         // (the space react-navigation reserves for a now-hidden label).
@@ -87,7 +83,7 @@ export default function CustomerTabsLayout() {
         options={{
           title: 'Home',
           tabBarIcon: ({ focused }) => (
-            <TabBarItem name="home" focused={focused} offsetX={-6} />
+            <TabBarItem name="home" focused={focused} />
           ),
         }}
       />
@@ -95,8 +91,15 @@ export default function CustomerTabsLayout() {
         name="activity"
         options={{
           title: 'Activity',
+          // Half the centre gap on each middle item leaves real layout
+          // space for the QuickBookFAB — glyph and touch slot move
+          // together (a translateX nudge would move only the glyph).
+          tabBarItemStyle: {
+            ...itemStyle,
+            marginRight: TAB_BAR_CENTER_GAP / 2,
+          },
           tabBarIcon: ({ focused }) => (
-            <TabBarItem name="receipt" focused={focused} offsetX={-22} />
+            <TabBarItem name="list" focused={focused} />
           ),
         }}
       />
@@ -104,11 +107,20 @@ export default function CustomerTabsLayout() {
         name="notifications"
         options={{
           title: 'Alerts',
+          // Surface the badge count to screen readers — the visual
+          // badge lives in a pointerEvents-none view VoiceOver skips.
+          tabBarAccessibilityLabel:
+            unreadCount > 0
+              ? `Alerts, ${unreadCount > 9 ? 'more than 9' : unreadCount} unread`
+              : 'Alerts',
+          tabBarItemStyle: {
+            ...itemStyle,
+            marginLeft: TAB_BAR_CENTER_GAP / 2,
+          },
           tabBarIcon: ({ focused }) => (
             <TabBarItem
               name="notifications"
               focused={focused}
-              offsetX={22}
               badgeCount={unreadCount}
             />
           ),
@@ -119,7 +131,7 @@ export default function CustomerTabsLayout() {
         options={{
           title: 'Profile',
           tabBarIcon: ({ focused }) => (
-            <TabBarItem name="person" focused={focused} offsetX={6} />
+            <TabBarItem name="person" focused={focused} />
           ),
         }}
       />

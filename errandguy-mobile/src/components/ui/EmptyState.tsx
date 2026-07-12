@@ -1,5 +1,5 @@
 import React from 'react';
-import { View, Text, StyleSheet } from 'react-native';
+import { View, Text, StyleSheet, Pressable } from 'react-native';
 import { Button } from './Button';
 import type { LucideIcon } from 'lucide-react-native';
 import { LightColors } from '../../constants/colors';
@@ -12,8 +12,13 @@ interface EmptyStateProps {
   illustration?: React.ReactNode;
   title: string;
   description?: string;
+  /** Optional primary CTA rendered under the description. */
   actionLabel?: string;
   onAction?: () => void;
+  /** Optional secondary text link rendered under the primary CTA
+   *  (e.g. "Learn more", "Skip for now"). */
+  secondaryActionLabel?: string;
+  onSecondaryAction?: () => void;
 }
 
 /**
@@ -35,6 +40,8 @@ export function EmptyState({
   description,
   actionLabel,
   onAction,
+  secondaryActionLabel,
+  onSecondaryAction,
 }: EmptyStateProps) {
   return (
     <View className="flex-1 items-center justify-center px-8 py-12">
@@ -67,6 +74,17 @@ export function EmptyState({
           />
         </View>
       )}
+      {secondaryActionLabel && onSecondaryAction && (
+        <Pressable
+          onPress={onSecondaryAction}
+          accessibilityRole="button"
+          accessibilityLabel={secondaryActionLabel}
+          hitSlop={8}
+          style={styles.secondaryLink}
+        >
+          <Text style={styles.secondaryLinkText}>{secondaryActionLabel}</Text>
+        </Pressable>
+      )}
     </View>
   );
 }
@@ -87,5 +105,16 @@ const styles = StyleSheet.create({
     backgroundColor: LightColors.primary50,
     alignItems: 'center',
     justifyContent: 'center',
+  },
+  secondaryLink: {
+    marginTop: 14,
+    paddingVertical: 4,
+    paddingHorizontal: 8,
+  },
+  secondaryLinkText: {
+    fontSize: 14,
+    fontFamily: 'Quicksand_700Bold',
+    color: LightColors.primary,
+    letterSpacing: 0.1,
   },
 });

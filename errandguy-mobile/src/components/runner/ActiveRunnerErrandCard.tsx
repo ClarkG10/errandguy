@@ -8,8 +8,10 @@ import {
   StyleSheet,
 } from 'react-native';
 import { ArrowRight, MapPin, Navigation, Package } from 'lucide-react-native';
+import * as Haptics from 'expo-haptics';
 import { Avatar } from '../ui/Avatar';
 import { formatCurrency } from '../../utils/formatCurrency';
+import { useReducedMotion } from '../../hooks/useReducedMotion';
 import { LightColors, Elevation } from '../../constants/colors';
 import type { Booking, BookingStatus } from '../../types';
 
@@ -86,9 +88,17 @@ export function ActiveRunnerErrandCard({
   const ActiveIcon = showingDropoff ? Package : Navigation;
 
   // Subtle breathing on the action chip — signals "next thing to do" without
-  // being a noisy, attention-stealing pulse.
+  // being a noisy, attention-stealing pulse. Frozen entirely when the OS
+  // "Reduce Motion" preference is on: an indefinite loop is exactly the
+  // kind of animation that setting exists to quiet.
+  const reduceMotion = useReducedMotion();
   const breathe = useRef(new Animated.Value(0)).current;
   useEffect(() => {
+    if (reduceMotion) {
+      breathe.stopAnimation();
+      breathe.setValue(0);
+      return;
+    }
     const loop = Animated.loop(
       Animated.sequence([
         Animated.timing(breathe, {
@@ -107,12 +117,17 @@ export function ActiveRunnerErrandCard({
     );
     loop.start();
     return () => loop.stop();
-  }, [breathe]);
+  }, [breathe, reduceMotion]);
   const chipScale = breathe.interpolate({ inputRange: [0, 1], outputRange: [1, 1.03] });
+
+  const handlePress = () => {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
+    onPress();
+  };
 
   return (
     <Pressable
-      onPress={onPress}
+      onPress={handlePress}
       accessibilityRole="button"
       accessibilityLabel={`Active errand for ${customerName}: ${copy.title}`}
       accessibilityHint="Open the errand to update status or navigate"

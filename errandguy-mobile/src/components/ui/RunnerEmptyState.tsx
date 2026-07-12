@@ -1,5 +1,5 @@
 import React from 'react';
-import { View, Text, StyleSheet } from 'react-native';
+import { View, Text, StyleSheet, Pressable } from 'react-native';
 import type { LucideIcon } from 'lucide-react-native';
 import { Button } from './Button';
 import { LightColors } from '../../constants/colors';
@@ -13,6 +13,9 @@ interface RunnerEmptyStateProps {
   eyebrow?: string;
   actionLabel?: string;
   onAction?: () => void;
+  /** Optional secondary text link rendered under the primary CTA. */
+  secondaryActionLabel?: string;
+  onSecondaryAction?: () => void;
 }
 
 /**
@@ -40,6 +43,8 @@ export function RunnerEmptyState({
   eyebrow = 'Standing by',
   actionLabel,
   onAction,
+  secondaryActionLabel,
+  onSecondaryAction,
 }: RunnerEmptyStateProps) {
   return (
     <View style={s.wrap}>
@@ -57,6 +62,17 @@ export function RunnerEmptyState({
         <View style={{ marginTop: 18 }}>
           <Button title={actionLabel} onPress={onAction} variant="secondary" size="md" />
         </View>
+      ) : null}
+      {secondaryActionLabel && onSecondaryAction ? (
+        <Pressable
+          onPress={onSecondaryAction}
+          accessibilityRole="button"
+          accessibilityLabel={secondaryActionLabel}
+          hitSlop={8}
+          style={s.secondaryLink}
+        >
+          <Text style={s.secondaryLinkText}>{secondaryActionLabel}</Text>
+        </Pressable>
       ) : null}
     </View>
   );
@@ -104,5 +120,16 @@ const s = StyleSheet.create({
     textAlign: 'center',
     lineHeight: 18,
     maxWidth: 280,
+  },
+  secondaryLink: {
+    marginTop: 12,
+    paddingVertical: 4,
+    paddingHorizontal: 8,
+  },
+  secondaryLinkText: {
+    fontSize: 13,
+    fontFamily: 'Quicksand_700Bold',
+    color: LightColors.primary,
+    letterSpacing: 0.1,
   },
 });

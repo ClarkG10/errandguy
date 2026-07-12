@@ -31,4 +31,28 @@ export const notificationService = {
     p.then(invalidateNotifications).catch(() => {});
     return p;
   },
+
+  deleteNotification(id: string) {
+    const p = api.delete(`/notifications/${id}`);
+    p.then(invalidateNotifications).catch(() => {});
+    return p;
+  },
+
+  clearAll() {
+    const p = api.delete('/notifications');
+    p.then(invalidateNotifications).catch(() => {});
+    return p;
+  },
+
+  archiveNotification(id: string) {
+    const p = api.put(`/notifications/${id}/archive`);
+    p.then(invalidateNotifications).catch(() => {});
+    return p;
+  },
+
+  unarchiveNotification(id: string) {
+    const p = api.put(`/notifications/${id}/unarchive`);
+    p.then(invalidateNotifications).catch(() => {});
+    return p;
+  },
 };

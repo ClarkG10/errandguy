@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { AppState } from 'react-native';
 import { CacheService, CacheTTL } from '../services/cache.service';
 import { apiCache } from '../services/api';
+import { useNetworkStore } from '../stores/networkStore';
 
 /**
  * Stale-while-revalidate query hook.
@@ -30,6 +32,13 @@ export interface UseQueryOptions {
   ttl?: number;
   /** When false, the hook does nothing. Useful for conditional queries. */
   enabled?: boolean;
+  /** Revalidate stale data when connectivity is regained (offline→online).
+   *  Default true — this is the "fresh on reconnect" half of SWR. */
+  refetchOnReconnect?: boolean;
+  /** Revalidate stale data when the app returns to the foreground.
+   *  Default true — screens left open on a backgrounded app refresh on
+   *  return without a manual pull. */
+  refetchOnAppFocus?: boolean;
 }
 
 export interface UseQueryResult<T> {
@@ -37,6 +46,11 @@ export interface UseQueryResult<T> {
   loading: boolean;
   error: Error | null;
   isStale: boolean;
+  /** Timestamp (ms) of the value currently held — from the cache-load or the
+   *  last successful fetch, whichever is newer. Null until the first value
+   *  arrives. Lets <SyncIndicator> render "Updated Xm ago" with zero
+   *  per-screen bookkeeping. */
+  updatedAt: number | null;
   refresh: () => Promise<void>;
   mutate: (updater: T | ((prev: T | null) => T)) => Promise<void>;
 }
@@ -85,15 +99,26 @@ export function useQuery<T>(
   fetcher: () => Promise<T>,
   options: UseQueryOptions = {},
 ): UseQueryResult<T> {
-  const { staleTime = 30_000, ttl = CacheTTL.LONG, enabled = true } = options;
+  const {
+    staleTime = 30_000,
+    ttl = CacheTTL.LONG,
+    enabled = true,
+    refetchOnReconnect = true,
+    refetchOnAppFocus = true,
+  } = options;
 
   const cacheKey = buildKey(key);
   const [data, setData] = useState<T | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<Error | null>(null);
   const [isStale, setIsStale] = useState(false);
+  const [updatedAt, setUpdatedAt] = useState<number | null>(null);
   const fetcherRef = useRef(fetcher);
   fetcherRef.current = fetcher;
+  // Timestamp of the last value we hold (cache load or successful fetch) so
+  // background revalidation triggers can honour `staleTime` and skip a
+  // refetch when the data is still fresh.
+  const lastFetchedRef = useRef(0);
   // Track the in-flight revalidation so concurrent triggers share it.
   const inflightRef = useRef<Promise<void> | null>(null);
   // Guards every async setState. Flips to false on unmount so a slow
@@ -115,14 +140,17 @@ export function useQuery<T>(
     const promise = (async () => {
       try {
         const fresh = await fetcherRef.current();
+        const now = Date.now();
+        lastFetchedRef.current = now;
         if (mountedRef.current) {
           setData(fresh);
           setIsStale(false);
           setError(null);
+          setUpdatedAt(now);
         }
         await CacheService.set<CachedEntry<T>>(
           cacheKey,
-          { value: fresh, fetchedAt: Date.now() },
+          { value: fresh, fetchedAt: now },
           ttl,
         );
       } catch (err) {
@@ -148,6 +176,8 @@ export function useQuery<T>(
       if (cached && cached.value !== undefined) {
         setData(cached.value);
         setLoading(false);
+        lastFetchedRef.current = cached.fetchedAt ?? Date.now();
+        setUpdatedAt(lastFetchedRef.current);
         const age = Date.now() - (cached.fetchedAt ?? 0);
         if (age > staleTime) {
           setIsStale(true);
@@ -173,6 +203,37 @@ export function useQuery<T>(
     });
   }, [cacheKey, enabled, revalidate]);
 
+  // Background revalidation trigger — refetch only when the held value is
+  // older than staleTime, so focus/reconnect events on fresh data are free.
+  // The api-layer in-flight dedupe collapses simultaneous triggers into one
+  // request, so multiple mounted queries reconnecting at once don't storm.
+  const revalidateIfStale = useCallback(() => {
+    if (!mountedRef.current) return;
+    if (Date.now() - lastFetchedRef.current > staleTime) {
+      setIsStale(true);
+      revalidate();
+    }
+  }, [staleTime, revalidate]);
+
+  // Revalidate on reconnect (offline→online transition).
+  const isOffline = useNetworkStore((s) => s.isOffline);
+  const prevOfflineRef = useRef(isOffline);
+  useEffect(() => {
+    const wasOffline = prevOfflineRef.current;
+    prevOfflineRef.current = isOffline;
+    if (!enabled || !refetchOnReconnect) return;
+    if (wasOffline && !isOffline) revalidateIfStale();
+  }, [isOffline, enabled, refetchOnReconnect, revalidateIfStale]);
+
+  // Revalidate when the app returns to the foreground.
+  useEffect(() => {
+    if (!enabled || !refetchOnAppFocus) return;
+    const sub = AppState.addEventListener('change', (state) => {
+      if (state === 'active') revalidateIfStale();
+    });
+    return () => sub.remove();
+  }, [enabled, refetchOnAppFocus, revalidateIfStale]);
+
   const refresh = useCallback(async () => {
     await revalidate();
   }, [revalidate]);
@@ -192,7 +253,7 @@ export function useQuery<T>(
     [cacheKey, data, ttl],
   );
 
-  return { data, loading, error, isStale, refresh, mutate };
+  return { data, loading, error, isStale, updatedAt, refresh, mutate };
 }
 
 /**

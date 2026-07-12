@@ -1,11 +1,20 @@
 import { useEffect, useCallback, useState, useRef } from 'react';
-import { AppState, type AppStateStatus } from 'react-native';
+import type { RealtimeChannel } from '@supabase/supabase-js';
 import { useChatStore } from '../stores/chatStore';
 import { chatService } from '../services/chat.service';
+import { useSmartPolling } from './useSmartPolling';
 import { CacheService, CacheTTL } from '../services/cache.service';
 import { supabase } from '../services/supabase';
 import { useAuthStore } from '../stores/authStore';
 import type { Message } from '../types';
+
+/** Min gap between outgoing typing broadcasts. Keystrokes arrive every
+ *  ~100ms; one broadcast every 2s is plenty since the receiver holds the
+ *  indicator for TYPING_HOLD_MS after each event. */
+const TYPING_THROTTLE_MS = 2_000;
+/** How long the "typing…" indicator stays lit after the last event.
+ *  Longer than the sender throttle so continuous typing never flickers. */
+const TYPING_HOLD_MS = 3_500;
 
 /** Per-booking cache key for the most recent page of messages. */
 const cacheKey = (bookingId: string) => `chat:messages:${bookingId}`;
@@ -31,7 +40,7 @@ export function useChat(bookingId: string) {
     (s) => s.messages[bookingId] ?? EMPTY_MESSAGES,
   );
   const unreadCount = useChatStore((s) => s.unreadCount);
-  const isTyping = useChatStore((s) => s.isTyping);
+  const isTyping = useChatStore((s) => s.typingByBooking[bookingId] ?? false);
   const addMessage = useChatStore((s) => s.addMessage);
   const replaceMessage = useChatStore((s) => s.replaceMessage);
   const removeMessage = useChatStore((s) => s.removeMessage);
@@ -219,9 +228,19 @@ export function useChat(bookingId: string) {
   );
 
   const markAsRead = useCallback(async () => {
-    await chatService.markAsRead(bookingId);
+    // Apply-first: clear the unread badge + stamp read_at locally instantly,
+    // then fire the (idempotent) receipt in the background. It's auto-retried
+    // on every chat open / foreground / scroll-to-live-edge, so a dropped
+    // request self-heals — no rollback needed.
     markRead(bookingId);
+    chatService.markAsRead(bookingId).catch(() => {});
   }, [bookingId, markRead]);
+
+  // Live channel ref so sendTyping() can broadcast on whatever channel
+  // is currently subscribed without re-creating callbacks per effect run.
+  const channelRef = useRef<RealtimeChannel | null>(null);
+  const typingClearRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const lastTypingSentRef = useRef(0);
 
   useEffect(() => {
     // Drop any stale channel registered under this name before opening
@@ -249,82 +268,83 @@ export function useChat(bookingId: string) {
           addMessage(bookingId, payload.new as Message);
         },
       )
+      // Typing indicator — pure broadcast, no backend involvement. The
+      // sender fans out `{ userId }`; anyone else on the channel lights
+      // the indicator and auto-clears it TYPING_HOLD_MS after the last
+      // event (each event resets the timer, so continuous typing holds).
+      .on('broadcast', { event: 'typing' }, ({ payload }) => {
+        const fromUserId = (payload as { userId?: string } | null)?.userId;
+        const myId = useAuthStore.getState().user?.id;
+        if (!fromUserId || fromUserId === myId) return;
+        setIsTyping(bookingId, true);
+        if (typingClearRef.current) clearTimeout(typingClearRef.current);
+        typingClearRef.current = setTimeout(() => {
+          setIsTyping(bookingId, false);
+          typingClearRef.current = null;
+        }, TYPING_HOLD_MS);
+      })
       .subscribe();
+    channelRef.current = channel;
 
     return () => {
+      channelRef.current = null;
+      if (typingClearRef.current) {
+        clearTimeout(typingClearRef.current);
+        typingClearRef.current = null;
+      }
+      // Never leave a stale "typing…" lit when the thread closes.
+      setIsTyping(bookingId, false);
       supabase.removeChannel(channel);
     };
+  }, [bookingId, addMessage, setIsTyping]);
+
+  /**
+   * Broadcast a throttled "I'm typing" event to the other participant.
+   * Call from the composer's onChangeText — internally rate-limited to
+   * one broadcast per TYPING_THROTTLE_MS so keystrokes stay cheap.
+   * Fire-and-forget; delivery failures are silently ignored.
+   */
+  const sendTyping = useCallback(() => {
+    const now = Date.now();
+    if (now - lastTypingSentRef.current < TYPING_THROTTLE_MS) return;
+    lastTypingSentRef.current = now;
+    const userId = useAuthStore.getState().user?.id;
+    if (!userId) return;
+    channelRef.current
+      ?.send({ type: 'broadcast', event: 'typing', payload: { userId } })
+      .catch?.(() => {});
+  }, []);
+
+  // Realtime fallback. The Supabase postgres_changes channel above is the
+  // primary push path, but it depends on the realtime publication delivering
+  // rows under RLS — if the mobile client doesn't carry a Supabase JWT (we
+  // authenticate via Laravel Sanctum), the SELECT policy on `messages` blocks
+  // the subscription and pushes silently never arrive. Polling closes that
+  // gap. At 8s (not 2s) it's a light fallback; useSmartPolling additionally
+  // pauses it while backgrounded/offline, ticks immediately on foreground +
+  // reconnect, and backs off (up to 32s) if getMessages starts failing.
+  const pollMessages = useCallback(async () => {
+    // Bypass the GET micro-cache — the whole point of this tick is to
+    // discover messages we don't yet have; the 10s response cache would
+    // otherwise short-circuit the poll. Errors propagate so backoff engages.
+    const response = await chatService.getMessages(bookingId, { limit: 50, noCache: true } as any);
+    const fresh: Message[] = response.data?.data ?? [];
+    if (fresh.length === 0) return;
+    const existing = useChatStore.getState().messages[bookingId] ?? [];
+    const ids = new Set(existing.map((m) => m.id));
+    for (const m of fresh) {
+      if (!ids.has(m.id)) addMessage(bookingId, m);
+    }
   }, [bookingId, addMessage]);
 
-  // Realtime fallback. The Supabase postgres_changes channel above is
-  // the primary push path, but it depends on the realtime publication
-  // delivering rows under RLS — if the mobile client doesn't carry a
-  // Supabase JWT (we authenticate via Laravel Sanctum), the SELECT
-  // policy on `messages` blocks the subscription and pushes silently
-  // never arrive. Polling closes that gap. While the screen is in the
-  // foreground we tail the conversation every 2s; when the app is
-  // backgrounded we stop entirely and refetch once on resume so we
-  // don't burn battery or rate-limit while the user is elsewhere.
-  useEffect(() => {
-    if (!bookingId) return;
-    let cancelled = false;
-    let intervalId: ReturnType<typeof setInterval> | null = null;
-
-    const tick = async () => {
-      try {
-        // Bypass the GET micro-cache — the whole point of this tick is
-        // to discover messages we don't yet have. Without `noCache` the
-        // 10s response cache on `getMessages` would short-circuit every
-        // poll for up to 10 seconds, so receivers could wait that long
-        // to see a freshly-sent message (and its image).
-        const response = await chatService.getMessages(bookingId, { limit: 50, noCache: true } as any);
-        if (cancelled) return;
-        const fresh: Message[] = response.data?.data ?? [];
-        if (fresh.length === 0) return;
-        const existing = useChatStore.getState().messages[bookingId] ?? [];
-        const ids = new Set(existing.map((m) => m.id));
-        for (const m of fresh) {
-          if (!ids.has(m.id)) addMessage(bookingId, m);
-        }
-      } catch {
-        /* ignore — next tick will retry */
-      }
-    };
-
-    const start = () => {
-      if (intervalId) return;
-      // Tick immediately so resume-from-background doesn't wait for
-      // the next interval edge to surface anything new.
-      tick();
-      // 8 s, not 2 s. The Supabase realtime channel above is the
-      // primary push path — polling is purely a fallback for the
-      // case where the channel never delivers. At 2 s every open
-      // chat sustained 30 GETs/min/user, all of which were silent
-      // (server logs were swamped). 8 s gives a worst-case 8 s
-      // visibility lag in the rare RLS-blocked case while collapsing
-      // background traffic by 4×.
-      intervalId = setInterval(tick, 8_000);
-    };
-    const stop = () => {
-      if (intervalId) {
-        clearInterval(intervalId);
-        intervalId = null;
-      }
-    };
-
-    if (AppState.currentState === 'active') start();
-
-    const sub = AppState.addEventListener('change', (state: AppStateStatus) => {
-      if (state === 'active') start();
-      else stop();
-    });
-
-    return () => {
-      cancelled = true;
-      stop();
-      sub.remove();
-    };
-  }, [bookingId, addMessage]);
+  useSmartPolling(pollMessages, {
+    interval: 8_000,
+    enabled: !!bookingId,
+    runOnMount: true,
+    pauseWhenOffline: true,
+    backoffOnError: true,
+    maxInterval: 32_000,
+  });
 
   // Persist the live store to disk whenever the message list changes.
   // Throttled by trailing-edge effect debounce: we only write when the
@@ -360,5 +380,6 @@ export function useChat(bookingId: string) {
     retryMessage,
     markAsRead,
     setIsTyping,
+    sendTyping,
   };
 }

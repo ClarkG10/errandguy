@@ -17,15 +17,17 @@ import { Ionicons } from '@expo/vector-icons';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { configureReanimatedLogger, ReanimatedLogLevel } from 'react-native-reanimated';
-import { Platform, Text, TextInput, LogBox } from 'react-native';
+import { Platform, Text, TextInput, LogBox, StatusBar } from 'react-native';
 import { useAuthStore } from '../stores/authStore';
 import { useBookingStore } from '../stores/bookingStore';
+import { useNetworkStore } from '../stores/networkStore';
 import { userService } from '../services/user.service';
 import { preloadAfterAuth, preloadCoreImages } from '../services/preload.service';
 import { useNotifications } from '../hooks/useNotifications';
 import { ToastProvider } from '../components/ui/ToastProvider';
 import { ApiActivityBar } from '../components/ui/ApiActivityBar';
-import { applySystemFontOnIOS } from '../utils/systemFont';
+import { OfflineBanner } from '../components/ui/OfflineBanner';
+import { applySystemFont } from '../utils/systemFont';
 import { installErrorLogging } from '../utils/errorLogging';
 import '../../global.css';
 
@@ -50,9 +52,12 @@ LogBox.ignoreLogs([
 
 // Google Maps API key is configured via EXPO_PUBLIC_GOOGLE_MAPS_KEY in app.json/eas.json
 
-// On iOS, render all text with San Francisco (SF Pro) by remapping the
-// Quicksand/Inter family names to `System` + an explicit fontWeight.
-applySystemFontOnIOS();
+// Render all UI text with the platform system typeface — SF Pro on iOS,
+// Roboto on Android — by remapping the Quicksand/Inter family names to
+// `System` + an explicit fontWeight. This gives cross-platform sizing parity
+// (Quicksand rendered noticeably larger/heavier than SF Pro, which is why
+// Android buttons looked oversized). See utils/systemFont.ts.
+applySystemFont();
 
 // Lock font scaling globally so the app renders at the same physical
 // size on iOS and Android regardless of the OS-level "Display size" /
@@ -132,6 +137,7 @@ export default function RootLayout() {
   // photos, etc.) so a crash, kill, or OS-eviction during the booking
   // funnel doesn't lose the user's typing.
   const loadDraftFromStorage = useBookingStore((s) => s.loadDraftFromStorage);
+  const isOffline = useNetworkStore((s) => s.isOffline);
   const segments = useSegments();
   const router = useRouter();
 
@@ -171,7 +177,18 @@ export default function RootLayout() {
         preloadAfterAuth(fresh?.role ?? null, fresh?.id);
       } catch (err: any) {
         if (cancelled || err?.name === 'CanceledError' || err?.code === 'ERR_CANCELED') return;
-        await logout();
+        // Only treat a definitive auth rejection as an invalid session.
+        // A transport-level failure (offline cold start, flaky network)
+        // or a server hiccup must NOT log the user out; keep the cached
+        // session and let the next successful request refresh the profile.
+        // NOTE: the api.ts interceptor normalizes every rejection to a
+        // flat { status, message, errors } object (status:0 for network
+        // errors) — there is no axios-style `.response` here, so we read
+        // `err.status` directly.
+        const status = err?.status;
+        if (status === 401 || status === 403) {
+          await logout();
+        }
       }
     };
 
@@ -227,8 +244,14 @@ export default function RootLayout() {
   return (
     <SafeAreaProvider>
       <GestureHandlerRootView style={{ flex: 1 }}>
+        {/* Only assert a global bar style while the dark offline banner covers
+            the status-bar area — light-content glyphs stay legible on the ink
+            band. Mounted conditionally so per-screen StatusBars (GradientHeader)
+            own the bar the rest of the time; unmounting restores their style. */}
+        {isOffline && <StatusBar barStyle="light-content" />}
         <Slot />
         <ApiActivityBar />
+        <OfflineBanner />
         <ToastProvider />
       </GestureHandlerRootView>
     </SafeAreaProvider>

@@ -1,7 +1,8 @@
-import React from 'react';
+import React, { useCallback } from 'react';
 import { View, Text, Modal, Pressable, ScrollView } from 'react-native';
 import { MotiView } from 'moti';
-import { ErrandLoader } from './ErrandLoader';
+import * as Haptics from 'expo-haptics';
+import { Button } from './Button';
 import { useResponsive } from '../../constants/responsive';
 import { LightColors } from '../../constants/colors';
 
@@ -10,6 +11,7 @@ interface ConfirmModalProps {
   title: string;
   message: string;
   confirmLabel?: string;
+  confirmLoadingLabel?: string;
   cancelLabel?: string;
   destructive?: boolean;
   loading?: boolean;
@@ -22,29 +24,45 @@ export function ConfirmModal({
   title,
   message,
   confirmLabel = 'Confirm',
+  confirmLoadingLabel,
   cancelLabel = 'Cancel',
   destructive = false,
   loading = false,
   onConfirm,
   onCancel,
 }: ConfirmModalProps) {
-  // NativeWind's `max-w-sm` doesn't apply on native, so we cap the
-  // dialog width imperatively. 420pt is the comfortable upper bound
-  // for a confirm dialog \u2014 wider feels like a sheet, not a prompt.
   const { width } = useResponsive();
-  const dialogMaxWidth = Math.min(width - 48, 420);
+  const dialogMaxWidth = Math.min(width - 48, 380);
+
+  const handleConfirm = useCallback(() => {
+    if (destructive) {
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning).catch(() => {});
+    }
+    onConfirm();
+  }, [destructive, onConfirm]);
+
+  const handleCancel = useCallback(() => {
+    Haptics.selectionAsync().catch(() => {});
+    onCancel();
+  }, [onCancel]);
+
   return (
     <Modal
       visible={visible}
       transparent
       animationType="fade"
       statusBarTranslucent
-      onRequestClose={loading ? undefined : onCancel}
+      onRequestClose={loading ? undefined : handleCancel}
     >
       <Pressable
-        className="flex-1 justify-center items-center px-6"
-        style={{ backgroundColor: `${LightColors.ink}73` }}
-        onPress={loading ? undefined : onCancel}
+        style={{
+          flex: 1,
+          justifyContent: 'center',
+          alignItems: 'center',
+          paddingHorizontal: 24,
+          backgroundColor: `${LightColors.ink}73`,
+        }}
+        onPress={loading ? undefined : handleCancel}
       >
         <Pressable
           onPress={(e) => e.stopPropagation()}
@@ -54,54 +72,67 @@ export function ConfirmModal({
             from={{ opacity: 0, scale: 0.92, translateY: 12 }}
             animate={{ opacity: 1, scale: 1, translateY: 0 }}
             transition={{ type: 'spring', damping: 22, stiffness: 240, mass: 0.7 }}
-            className="bg-surface overflow-hidden rounded-2xl"
-            style={{ maxHeight: '80%' }}
+            style={{
+              backgroundColor: LightColors.surface,
+              borderRadius: 20,
+              paddingHorizontal: 24,
+              paddingTop: 26,
+              paddingBottom: 22,
+            }}
           >
-            {/* Long copy is allowed to scroll inside the dialog — a
-                long Terms-of-service or cancellation reason will no
-                longer push the action row off-screen. */}
+            <Text
+              style={{
+                fontSize: 17,
+                fontFamily: 'Quicksand_700Bold',
+                color: LightColors.textPrimary,
+                textAlign: 'center',
+                marginBottom: 10,
+              }}
+            >
+              {title}
+            </Text>
+
+            {/* Scrollable message — long copy never pushes buttons off-screen */}
             <ScrollView
               showsVerticalScrollIndicator={false}
               bounces={false}
-              contentContainerStyle={{ paddingHorizontal: 28, paddingTop: 28, paddingBottom: 22 }}
+              style={{ maxHeight: 180 }}
+              contentContainerStyle={{ paddingBottom: 24 }}
             >
-              <Text className="text-[16px] font-montserrat-bold text-textPrimary text-center">
-                {title}
-              </Text>
-              <Text className="text-[13px] font-montserrat text-textSecondary text-center mt-3" style={{ lineHeight: 20 }}>
+              <Text
+                style={{
+                  fontSize: 14,
+                  fontFamily: 'Quicksand_400Regular',
+                  color: LightColors.textSecondary,
+                  textAlign: 'center',
+                  lineHeight: 21,
+                }}
+              >
                 {message}
               </Text>
             </ScrollView>
-            <View className="flex-row border-t border-divider">
-              <Pressable
-                className="flex-1 py-4 items-center border-r border-divider active:bg-surfaceMuted"
-                onPress={onCancel}
+
+            {/* Stacked action buttons — modern pattern replacing the old
+                horizontal-split row. Primary action is always visible and
+                tappable at the natural thumb position; cancel sits below
+                as a quieter ghost tap. */}
+            <View style={{ gap: 10 }}>
+              <Button
+                title={confirmLabel}
+                loadingTitle={confirmLoadingLabel}
+                variant={destructive ? 'danger' : 'primary'}
+                fullWidth
+                loading={loading}
                 disabled={loading}
-              >
-                <Text className="text-[13px] font-montserrat-semi text-textSecondary">
-                  {cancelLabel}
-                </Text>
-              </Pressable>
-              <Pressable
-                className="flex-1 py-4 items-center active:bg-surfaceMuted"
-                onPress={onConfirm}
+                onPress={handleConfirm}
+              />
+              <Button
+                title={cancelLabel}
+                variant="ghost"
+                fullWidth
                 disabled={loading}
-              >
-                {loading ? (
-                  <ErrandLoader
-                    size={5}
-                    color={destructive ? LightColors.danger : LightColors.primary}
-                  />
-                ) : (
-                  <Text
-                    className={`text-[13px] font-montserrat-bold ${
-                      destructive ? 'text-danger' : 'text-primary'
-                    }`}
-                  >
-                    {confirmLabel}
-                  </Text>
-                )}
-              </Pressable>
+                onPress={handleCancel}
+              />
             </View>
           </MotiView>
         </Pressable>

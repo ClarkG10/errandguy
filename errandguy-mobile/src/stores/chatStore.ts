@@ -8,7 +8,10 @@ interface ChatState {
   /** Per-booking unread count (server source of truth, refreshed
    *  periodically and after navigating away from a chat). */
   unreadByBooking: Record<string, number>;
-  isTyping: boolean;
+  /** Per-booking "other participant is typing" flag. Keyed by bookingId
+   *  so a typing event on one conversation can never light the indicator
+   *  on another thread that happens to be mounted at the same time. */
+  typingByBooking: Record<string, boolean>;
 
   addMessage: (bookingId: string, message: Message) => void;
   /** Swap a placeholder message (matched by id) for the server
@@ -22,7 +25,7 @@ interface ChatState {
   markRead: (bookingId: string) => void;
   clearChat: (bookingId: string) => void;
   setUnreadCount: (count: number) => void;
-  setIsTyping: (typing: boolean) => void;
+  setIsTyping: (bookingId: string, typing: boolean) => void;
   refreshUnread: () => Promise<void>;
 }
 
@@ -30,7 +33,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
   messages: {},
   unreadCount: 0,
   unreadByBooking: {},
-  isTyping: false,
+  typingByBooking: {},
 
   addMessage: (bookingId, message) =>
     set((state) => {
@@ -115,7 +118,13 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
   setUnreadCount: (count) => set({ unreadCount: count }),
 
-  setIsTyping: (typing) => set({ isTyping: typing }),
+  setIsTyping: (bookingId, typing) =>
+    set((state) => {
+      if ((state.typingByBooking[bookingId] ?? false) === typing) return state;
+      return {
+        typingByBooking: { ...state.typingByBooking, [bookingId]: typing },
+      };
+    }),
 
   refreshUnread: async () => {
     try {

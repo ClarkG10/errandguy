@@ -43,6 +43,11 @@ export const bookingService = {
     payment_method_id?: string;
     promo_code?: string;
     items?: Array<{ name: string; quantity: number; estimated_price?: number }>;
+    // Structured shopping checklist (name + qty). Sent alongside the
+    // human-readable `description` serialization so the runner's synced
+    // checklist is authoritative. Mirrors CreateBookingRequest's
+    // `shopping_items.*.{name,qty}` rules.
+    shopping_items?: Array<{ name: string; qty?: number }>;
   }) {
     const p = api.post('/bookings', data);
     p.then(() => invalidateBookingsCaches()).catch(() => {});
@@ -125,8 +130,12 @@ export const bookingService = {
     return api.post(`/runner/errand/${id}/verify-pin`, { pin });
   },
 
+  // Returns a public read-only trip link + its token. The link is
+  // GET {app.url}/trip/{token} — safe to hand to a trusted contact.
   shareTrip(id: string) {
-    return api.post(`/bookings/${id}/share-trip`);
+    return api.post<{ data: { link: string; token: string } }>(
+      `/bookings/${id}/share-trip`,
+    );
   },
 
   revokeTrip(id: string) {

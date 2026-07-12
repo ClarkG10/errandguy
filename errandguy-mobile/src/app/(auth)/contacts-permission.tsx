@@ -1,10 +1,10 @@
-import React, { useState, useEffect } from 'react';
-import { View, Text, StyleSheet, Pressable, Image } from 'react-native';
+import React from 'react';
+import { Platform } from 'react-native';
 import { useRouter } from 'expo-router';
-import { SafeAreaView } from 'react-native-safe-area-context';
-import { CheckCircle } from 'lucide-react-native';
-import { Button } from '../../components/ui/Button';
-import { LightColors } from '../../constants/colors';
+import {
+  PermissionPrimer,
+  type PermissionStatus,
+} from '../../components/auth/PermissionPrimer';
 
 const CONTACT_PERMISSION = require('../../../assets/contact-permission.png');
 
@@ -16,90 +16,50 @@ try {
   // Native module unavailable (e.g. Expo Go)
 }
 
+// WHY contacts access matters — concrete benefits, not an abstract paragraph.
+const WHY_CONTACTS = [
+  'Add recipients faster',
+  'Set up trusted contacts for safety',
+  'No typing long phone numbers',
+];
+
+// Returning null tells the primer the native module is missing so it
+// degrades to a plain Continue button instead of a no-op ask.
+const checkStatus = async (): Promise<PermissionStatus | null> => {
+  if (!Contacts) return null;
+  const { status, canAskAgain } = await Contacts.getPermissionsAsync();
+  return { granted: status === 'granted', canAskAgain };
+};
+
+const requestPermission = async (): Promise<PermissionStatus | null> => {
+  if (!Contacts) return null;
+  const { status, canAskAgain } = await Contacts.requestPermissionsAsync();
+  return { granted: status === 'granted', canAskAgain };
+};
+
+/**
+ * Contacts permission screen — step 2 of the two-step permission primer.
+ * All lifecycle behavior lives in the shared PermissionPrimer.
+ */
 export default function ContactsPermissionScreen() {
   const router = useRouter();
-  const [granted, setGranted] = useState(false);
-
-  useEffect(() => {
-    if (!Contacts) return;
-    (async () => {
-      const { status } = await Contacts.getPermissionsAsync();
-      if (status === 'granted') setGranted(true);
-    })();
-  }, []);
-
-  const handleAllow = async () => {
-    if (Contacts) {
-      const { status } = await Contacts.requestPermissionsAsync();
-      if (status === 'granted') {
-        setGranted(true);
-        return; // stay on screen to show success, user will tap Continue
-      }
-    }
-    // If contacts module not available, just proceed
-    if (!Contacts) router.push('/(auth)/login');
-  };
-
-  const handleSkip = () => {
-    router.push('/(auth)/login');
-  };
 
   return (
-    <SafeAreaView className="flex-1 bg-background" style={s.container}>
-      <View style={s.content}>
-        <Image source={CONTACT_PERMISSION} style={s.illustration} resizeMode="contain" />
-
-        <Text className="text-[26px] font-montserrat-semi text-textPrimary text-center" style={s.title}>
-          Access your contacts
-        </Text>
-        <Text className="text-[15px] font-montserrat text-textTertiary text-center" style={s.subtitle}>
-          Quickly add recipients and trusted contacts from your phone when booking errands.
-        </Text>
-
-        {granted && (
-          <View style={s.grantedInline}>
-            <CheckCircle size={16} color={LightColors.success} />
-            <Text className="text-[13px] font-montserrat-semi text-success ml-1.5">
-              Contacts access enabled
-            </Text>
-          </View>
-        )}
-      </View>
-
-      <View style={s.footer}>
-        <Button
-          title={granted ? 'Continue' : 'Allow Contacts'}
-          fullWidth
-          size="lg"
-          onPress={granted ? () => router.push('/(auth)/login') : handleAllow}
-        />
-        {!granted && (
-          <Pressable onPress={handleSkip} hitSlop={8} style={s.skipBtn}>
-            <Text className="text-[14px] font-montserrat text-textTertiary text-center">
-              Not now
-            </Text>
-          </Pressable>
-        )}
-      </View>
-    </SafeAreaView>
+    <PermissionPrimer
+      illustrationSource={CONTACT_PERMISSION}
+      title="Access your contacts"
+      reasons={WHY_CONTACTS}
+      stepIndex={2}
+      privacyNote="Your contacts stay on your phone — we only use the ones you pick."
+      checkStatus={checkStatus}
+      requestPermission={requestPermission}
+      grantedLabel="Contacts access enabled"
+      blockedTitle="Contacts are turned off for ErrandGuy"
+      blockedBody={`Open ${Platform.OS === 'ios' ? 'Settings' : 'App info'} → Permissions → Contacts to turn it on.`}
+      allowLabel="Allow Contacts"
+      requestErrorMessage="Couldn’t open contacts. You can add recipients manually."
+      skipHint="Continues without granting contacts access — you can add recipients manually"
+      onNext={() => router.push('/(auth)/login')}
+    />
   );
 }
-
-const s = StyleSheet.create({
-  container: { paddingHorizontal: 28 },
-  content: { flex: 1, justifyContent: 'center', alignItems: 'center' },
-  illustration: { width: 260, height: 260, marginBottom: 12 },
-  title: { marginBottom: 12, lineHeight: 32 },
-  subtitle: { lineHeight: 22, paddingHorizontal: 8 },
-  grantedInline: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginTop: 18,
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    borderRadius: 999,
-    backgroundColor: LightColors.successLight,
-  },
-  footer: { paddingBottom: 28, gap: 4 },
-  skipBtn: { paddingVertical: 12 },
-});

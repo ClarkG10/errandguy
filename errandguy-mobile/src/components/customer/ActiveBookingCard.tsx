@@ -14,7 +14,9 @@ import {
   Star,
   CheckCircle2,
 } from 'lucide-react-native';
+import * as Haptics from 'expo-haptics';
 import { Avatar } from '../ui/Avatar';
+import { useReducedMotion } from '../../hooks/useReducedMotion';
 import { LightColors, Elevation } from '../../constants/colors';
 import { STATUS_LABELS } from '../../constants/statusLabels';
 import { formatCurrency } from '../../utils/formatCurrency';
@@ -25,7 +27,7 @@ interface ActiveBookingCardProps {
   onPress: () => void;
 }
 
-type Phase = 'searching' | 'matched' | 'pickup' | 'transit' | 'done';
+type Phase = 'searching' | 'matched' | 'pickup' | 'transit' | 'done' | 'cancelled';
 
 const PHASE_BY_STATUS: Record<BookingStatus, Phase> = {
   pending: 'searching',
@@ -39,7 +41,7 @@ const PHASE_BY_STATUS: Record<BookingStatus, Phase> = {
   arrived_at_dropoff: 'transit',
   delivered: 'done',
   completed: 'done',
-  cancelled: 'done',
+  cancelled: 'cancelled',
 };
 
 const FILLED_SEGMENTS: Record<Phase, number> = {
@@ -48,6 +50,9 @@ const FILLED_SEGMENTS: Record<Phase, number> = {
   pickup: 2,
   transit: 3,
   done: 4,
+  // Cancelled must not read as a completed journey — empty track, no
+  // stage checkmarks (filled 0 suppresses them all).
+  cancelled: 0,
 };
 
 function headlineFor(
@@ -86,7 +91,6 @@ function headlineFor(
 const PRIMARY = LightColors.primary;
 const TEXT_PRIMARY = LightColors.textPrimary;
 const TEXT_SECONDARY = LightColors.textTertiary;
-const BORDER = LightColors.divider;
 const TRACK_EMPTY = LightColors.divider;
 
 export function ActiveBookingCard({ booking, onPress }: ActiveBookingCardProps) {
@@ -95,12 +99,18 @@ export function ActiveBookingCard({ booking, onPress }: ActiveBookingCardProps) 
   const runnerName = booking.runner?.full_name?.split(' ')[0] ?? null;
   const headline = headlineFor(booking.status, runnerName);
   const isSearching = phase === 'searching';
+  const isCancelled = phase === 'cancelled';
+  const reduceMotion = useReducedMotion();
 
   // Pulsing status dot — only animates while searching so the card
-  // doesn't waste cycles once a runner is matched.
+  // doesn't waste cycles once a runner is matched. Frozen to a static
+  // dot when the OS "Reduce Motion" setting is on.
   const pulse = useRef(new Animated.Value(0)).current;
   useEffect(() => {
-    if (!isSearching) return;
+    if (!isSearching || reduceMotion) {
+      pulse.setValue(0);
+      return;
+    }
     const loop = Animated.loop(
       Animated.sequence([
         Animated.timing(pulse, {
@@ -119,7 +129,7 @@ export function ActiveBookingCard({ booking, onPress }: ActiveBookingCardProps) 
     );
     loop.start();
     return () => loop.stop();
-  }, [isSearching, pulse]);
+  }, [isSearching, reduceMotion, pulse]);
 
   const dotScale = pulse.interpolate({
     inputRange: [0, 1],
@@ -132,7 +142,10 @@ export function ActiveBookingCard({ booking, onPress }: ActiveBookingCardProps) 
 
   return (
     <Pressable
-      onPress={onPress}
+      onPress={() => {
+        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
+        onPress();
+      }}
       accessibilityRole="button"
       accessibilityLabel={`Active errand: ${headline}. Tap to track.`}
       android_ripple={{ color: 'rgba(37,99,235,0.08)' }}
@@ -147,10 +160,18 @@ export function ActiveBookingCard({ booking, onPress }: ActiveBookingCardProps) 
           <Animated.View
             style={[
               styles.dot,
+              // Base danger tone for the fill, dangerDark for the 11px
+              // text — per the small-text status convention.
+              isCancelled && { backgroundColor: LightColors.danger },
               { transform: [{ scale: dotScale }], opacity: dotOpacity },
             ]}
           />
-          <Text style={styles.statusBadgeText}>
+          <Text
+            style={[
+              styles.statusBadgeText,
+              isCancelled && { color: LightColors.dangerDark },
+            ]}
+          >
             {STATUS_LABELS[booking.status] ?? 'Active'}
           </Text>
         </View>
@@ -292,10 +313,8 @@ function StageLabel({ label, done }: { label: string; done: boolean }) {
 const styles = StyleSheet.create({
   card: {
     backgroundColor: LightColors.surface,
-    borderRadius: 18,
+    borderRadius: 20,
     padding: 16,
-    borderWidth: 1,
-    borderColor: BORDER,
     ...Elevation.md,
   },
   statusRow: {
@@ -330,7 +349,10 @@ const styles = StyleSheet.create({
   },
   amountChipText: {
     fontSize: 12,
-    fontFamily: 'Quicksand_700Bold',
+    // Inter for currency (app-wide numeric convention); tabular digits
+    // keep the chip width stable as the fare updates mid-errand.
+    fontFamily: 'Inter_600SemiBold',
+    fontVariant: ['tabular-nums'],
     color: PRIMARY,
   },
   headline: {

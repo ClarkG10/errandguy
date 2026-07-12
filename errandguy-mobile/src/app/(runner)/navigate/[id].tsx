@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { View, Text, Pressable, StyleSheet, ActivityIndicator, Animated, ScrollView } from 'react-native';
+import { View, Text, Pressable, StyleSheet, Animated, ScrollView, useWindowDimensions } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import {
@@ -14,18 +14,25 @@ import {
   AlertTriangle,
   MapPin,
   Gauge,
+  Volume2,
+  VolumeX,
 } from 'lucide-react-native';
+import * as Haptics from 'expo-haptics';
 import { HereMapView, HereMarker, HerePolyline, type HereMapViewRef } from '../../../components/map';
+import { ErrorState } from '../../../components/ui/ErrorState';
+import { Spinner } from '../../../components/ui/Spinner';
 import { useRunnerStore } from '../../../stores/runnerStore';
 import { useLocationStore } from '../../../stores/locationStore';
 import { useForegroundInterval } from '../../../hooks/useForegroundInterval';
+import { useVoiceGuidance } from '../../../hooks/useVoiceGuidance';
+import { useReducedMotion } from '../../../hooks/useReducedMotion';
 import { runnerService } from '../../../services/runner.service';
 import { routeService, type NavigationRoute, type NavigationStep } from '../../../services/route.service';
 import { ExpandableSheet } from '../../../components/ui/ExpandableSheet';
 import { getErrandTypeRule } from '../../../constants/errandTypeRules';
 import { toast } from '../../../stores/toastStore';
 import type { Booking } from '../../../types';
-import { LightColors } from '../../../constants/colors';
+import { LightColors, Elevation } from '../../../constants/colors';
 
 /**
  * Statuses where the runner is travelling toward the pickup pin.
@@ -38,6 +45,13 @@ const PICKUP_PHASE_STATUSES = new Set<string>([
   'heading_to_pickup',
   'arrived_at_pickup',
 ]);
+
+/**
+ * Sheet peek height as a fraction of screen height. Shared between the
+ * ExpandableSheet snap points and the floating Speed HUD / Recenter FAB
+ * so the chips anchor to the sheet's real peek edge (never a magic number).
+ */
+const SHEET_PEEK = 0.18;
 
 /** Equirectangular distance in metres \u2014 cheap, plenty accurate <5km. */
 function distMeters(a: { lat: number; lng: number }, b: { lat: number; lng: number }): number {
@@ -106,6 +120,17 @@ export default function NavigateScreen() {
   const isTracking = useLocationStore((s) => s.isTracking);
   const startTracking = useLocationStore((s) => s.startTracking);
 
+  const { muted: voiceMuted, speak, stop: stopVoice, toggleMuted: toggleVoiceMuted } = useVoiceGuidance();
+  const reducedMotion = useReducedMotion();
+  const { height: screenHeight } = useWindowDimensions();
+
+  // Anchor the floating Speed HUD + Recenter FAB just above the sheet's
+  // peek edge. The sheet occupies the bottom `SHEET_PEEK` of the screen
+  // (drawn from the true window bottom, home-indicator inset included),
+  // so peek-height + a fixed gap keeps an identical clearance on SE,
+  // Pro Max and small Android — no per-device magic number.
+  const floatBottom = screenHeight * SHEET_PEEK + 12;
+
   const [booking, setBooking] = useState<Booking | null>(
     currentErrand?.id === id ? currentErrand : null,
   );
@@ -126,13 +151,40 @@ export default function NavigateScreen() {
   // Hydrate booking when the store is empty (deep link / cold start).
   // The endpoint is server-scoped to the runner's bookings, so a 200
   // response is itself proof of ownership.
+  //
+  // Failure handling: a fetch error, a null payload, or a 12s stall all
+  // flip `hydrateFailed` so the runner gets a retryable error screen
+  // instead of an infinite "Preparing navigation…" spinner (the old
+  // behaviour when this effect swallowed its rejection).
+  const [hydrateFailed, setHydrateFailed] = useState(false);
+  const [hydrateAttempt, setHydrateAttempt] = useState(0);
   useEffect(() => {
     if (!id || booking) return;
+    let cancelled = false;
+    const timer = setTimeout(() => {
+      if (!cancelled) setHydrateFailed(true);
+    }, 12_000);
     runnerService
       .getErrand(id)
-      .then((r) => setBooking((r?.data?.data ?? null) as Booking | null))
-      .catch(() => {});
-  }, [id, booking]);
+      .then((r) => {
+        if (cancelled) return;
+        const fresh = (r?.data?.data ?? null) as Booking | null;
+        if (fresh) {
+          setBooking(fresh);
+          setHydrateFailed(false);
+        } else {
+          setHydrateFailed(true);
+        }
+      })
+      .catch(() => {
+        if (!cancelled) setHydrateFailed(true);
+      })
+      .finally(() => clearTimeout(timer));
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
+  }, [id, booking, hydrateAttempt]);
 
   // Resolve the right destination based on phase. Single-location
   // errands (queue / bills / on-site documents) only have a pickup pin.
@@ -199,14 +251,27 @@ export default function NavigateScreen() {
   const offRouteStrikesRef = useRef(0);
   const [currentStepIdx, setCurrentStepIdx] = useState(0);
   const [distanceToNextManeuver, setDistanceToNextManeuver] = useState<number | null>(null);
+  // Tracks the navRoute object we last progressed against. A refetch/reroute
+  // (60s ETA refresh, ~110m origin snap, or off-route reroute) returns a
+  // route RE-INDEXED from the runner's current position, so the old step
+  // cursor is meaningless against it. We detect the new identity here and
+  // re-derive the cursor from 0 in the same effect cycle — otherwise the
+  // stale (higher) index points past the real maneuver, which showed the
+  // wrong turn, collapsed the ETA to 0, and flipped on "I've Arrived" early.
+  const progressionRouteRef = useRef(navRoute);
 
   useEffect(() => {
     if (!origin || !navRoute || navRoute.steps.length === 0) return;
 
-    // 1) Advance current step. Walk forward from the current index and
-    //    drop steps the runner has already passed (within ~25m of the
-    //    maneuver point AND past it along the geometry).
-    let idx = currentStepIdx;
+    // 1) Advance current step. On a fresh route (new identity) re-derive
+    //    from 0; otherwise walk forward from the current index and drop
+    //    steps the runner has already passed (within ~25m of the maneuver
+    //    point AND past it along the geometry). The forward-only walk is
+    //    stateful on purpose — once past a maneuver the cursor must not
+    //    rewind — so a route swap is the only time we reset to 0.
+    const routeChanged = navRoute !== progressionRouteRef.current;
+    progressionRouteRef.current = navRoute;
+    let idx = routeChanged ? 0 : currentStepIdx;
     while (idx < navRoute.steps.length - 1) {
       const step = navRoute.steps[idx];
       const [mLng, mLat] = step.location;
@@ -258,28 +323,41 @@ export default function NavigateScreen() {
   // request and the runner hasn't moved far between refreshes.
   useForegroundInterval(() => { void fetchNav(); }, 60_000, !!origin && !!destination, false);
 
-  // Camera follow: when followCamera is true, animate to runner position on each location update.
+  // Camera follow: when followCamera is true, move to runner position on
+  // each location update. Reduce Motion is a vestibular preference, so it
+  // gates HERE (the actual motion): snap instantly and drop the pitch
+  // tilt rather than the 500ms animated pan that can nauseate. Voice
+  // guidance is deliberately NOT gated by it (audio isn't motion).
   useEffect(() => {
     if (!followCamera || !origin) return;
     mapRef.current?.animateCamera(
-      { center: { latitude: origin.lat, longitude: origin.lng }, zoom: 17, pitch: 50 },
-      { duration: 500 },
+      {
+        center: { latitude: origin.lat, longitude: origin.lng },
+        zoom: 17,
+        pitch: reducedMotion ? 0 : 50,
+      },
+      { duration: reducedMotion ? 0 : 500 },
     );
-  }, [origin, followCamera]);
+  }, [origin, followCamera, reducedMotion]);
 
   const handleEndNavigation = useCallback(() => {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
+    stopVoice();
     router.back();
-  }, [router]);
+  }, [router, stopVoice]);
 
   const handleArrived = useCallback(async () => {
     if (!booking) return;
+    // Arriving is a milestone — success notification, not a mere tap.
+    Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
+    stopVoice();
     // We deliberately don't push a status change from here. The
     // arrival status (arrived_at_pickup / arrived_at_dropoff) is
     // owned by the StatusActionButton on the errand screen so the
     // photo-proof modals trigger correctly. Just route the runner
     // back to act on it.
     router.back();
-  }, [booking, router]);
+  }, [booking, router, stopVoice]);
 
   // ── Render ──
   const routeMapCoords = useMemo(() => {
@@ -288,6 +366,32 @@ export default function NavigateScreen() {
   }, [navRoute]);
 
   const currentStep: NavigationStep | null = navRoute?.steps[currentStepIdx] ?? null;
+
+  // ── Spoken turn-by-turn ──
+  // Announce each new maneuver exactly once as the runner progresses.
+  // We key off the maneuver TEXT (not the step index): a route refetch
+  // re-indexes the steps from the runner's current position, so the same
+  // index can point at a different maneuver (which would miss an
+  // announcement) and the same maneuver can land on a different index
+  // (which would repeat one). The instruction text is stable across
+  // refetches, so text-keying announces each real maneuver exactly once.
+  // The short debounce swallows the ~1-frame stale cursor a route swap
+  // produces before the progression effect re-settles it, so only the
+  // settled maneuver is ever spoken. Suppressed ONLY when muted (handled
+  // inside the hook). Voice is NOT gated by Reduce Motion — that setting
+  // is vestibular (it gates the camera pan above), and spoken turn-by-turn
+  // is safety-critical guidance that motion-sensitive drivers rely on most.
+  const lastSpokenInstructionRef = useRef<string | null>(null);
+  useEffect(() => {
+    const instruction = currentStep?.instruction;
+    if (!instruction) return;
+    if (instruction === lastSpokenInstructionRef.current) return;
+    const t = setTimeout(() => {
+      lastSpokenInstructionRef.current = instruction;
+      speak(instruction);
+    }, 700);
+    return () => clearTimeout(t);
+  }, [currentStep, speak]);
 
   // Remaining ETA: sum of remaining step durations, minus any progress
   // we've made into the current step.
@@ -364,9 +468,23 @@ export default function NavigateScreen() {
   const upcomingStep: NavigationStep | null = navRoute?.steps[currentStepIdx + 1] ?? null;
 
   if (!booking) {
+    if (hydrateFailed) {
+      return (
+        <SafeAreaView className="flex-1 bg-background" edges={['top']}>
+          <ErrorState
+            title="Couldn't start navigation"
+            description="We couldn't load this errand's route details. Check your connection and try again."
+            onRetry={() => {
+              setHydrateFailed(false);
+              setHydrateAttempt((n) => n + 1);
+            }}
+          />
+        </SafeAreaView>
+      );
+    }
     return (
       <View className="flex-1 bg-background items-center justify-center">
-        <ActivityIndicator size="small" color={LightColors.primary} />
+        <Spinner size="small" color={LightColors.primary} />
         <Text className="mt-3 text-xs font-montserrat text-textSecondary">Preparing navigation\u2026</Text>
       </View>
     );
@@ -382,7 +500,11 @@ export default function NavigateScreen() {
         </Text>
         <Pressable
           onPress={() => router.back()}
-          className="px-5 py-2.5 rounded-full bg-primary"
+          accessibilityRole="button"
+          accessibilityLabel="Go back"
+          className="px-6 rounded-xl bg-primary items-center justify-center"
+          style={({ pressed }) => ({ minHeight: 48, opacity: pressed ? 0.9 : 1 })}
+          android_ripple={{ color: 'rgba(255,255,255,0.18)' }}
         >
           <Text className="text-white text-sm font-montserrat-bold">Go Back</Text>
         </Pressable>
@@ -458,14 +580,8 @@ export default function NavigateScreen() {
       {/* Top maneuver banner \u2014 the navigation focal point. */}
       <SafeAreaView edges={['top']} pointerEvents="box-none">
         <View
-          className="mx-3 mt-2 rounded-2xl bg-primary px-4 py-3.5 flex-row items-center"
-          style={{
-            shadowColor: LightColors.ink,
-            shadowOpacity: 0.14,
-            shadowRadius: 16,
-            shadowOffset: { width: 0, height: 6 },
-            elevation: 8,
-          }}
+          className="mx-3 mt-2 rounded-2xl bg-primary px-4 py-4 flex-row items-center"
+          style={Elevation.lg}
         >
           <View className="w-12 h-12 rounded-full bg-white/20 items-center justify-center mr-3">
             {currentStep ? (
@@ -480,7 +596,12 @@ export default function NavigateScreen() {
             )}
           </View>
           <View className="flex-1">
-            <Text className="text-white text-[11px] font-montserrat-bold uppercase tracking-wider opacity-80">
+            {/* Distance-to-turn is the primary glance target \u2014 large,
+                full-opacity, tabular Inter so the digits don't jitter. */}
+            <Text
+              className="text-white text-[16px] font-inter-semi uppercase tracking-wide"
+              style={{ fontVariant: ['tabular-nums'] }}
+            >
               {distanceToNextManeuver != null
                 ? `In ${fmtDistance(distanceToNextManeuver)}`
                 : routeLoading
@@ -490,20 +611,44 @@ export default function NavigateScreen() {
                 : 'Preparing route'}
             </Text>
             <Text
-              className="text-white text-[15px] font-montserrat-bold mt-0.5"
+              className="text-white text-[22px] font-montserrat-bold leading-[28px] mt-0.5"
               numberOfLines={2}
             >
               {currentStep?.instruction ?? `Head to ${destLabel}`}
             </Text>
             {upcomingStep && (
+              // Full-opacity white — white/90 on the blue banner measures
+              // ~4.4:1, just under the 4.5:1 AA floor for this 12px sub-line.
               <Text
-                className="text-white/75 text-[11px] font-montserrat mt-1"
+                className="text-white text-[12px] font-montserrat mt-1"
                 numberOfLines={1}
               >
                 Then {upcomingStep.instruction}
               </Text>
             )}
           </View>
+          <Pressable
+            onPress={() => {
+              Haptics.selectionAsync().catch(() => {});
+              toggleVoiceMuted();
+            }}
+            hitSlop={10}
+            // Muted state carries a distinct SOLID amber fill (not just a
+            // glyph swap) so "voice off" is unmistakable in a sunlit glance;
+            // unmuted stays translucent on the blue banner.
+            className={`w-10 h-10 rounded-full items-center justify-center ml-2 ${
+              voiceMuted ? 'bg-warning' : 'bg-white/15'
+            }`}
+            accessibilityRole="button"
+            accessibilityLabel={voiceMuted ? 'Unmute voice guidance' : 'Mute voice guidance'}
+            accessibilityState={{ selected: !voiceMuted }}
+          >
+            {voiceMuted ? (
+              <VolumeX size={20} color={LightColors.textPrimary} />
+            ) : (
+              <Volume2 size={20} color={LightColors.textInverse} />
+            )}
+          </Pressable>
           <Pressable
             onPress={handleEndNavigation}
             hitSlop={10}
@@ -516,9 +661,9 @@ export default function NavigateScreen() {
         </View>
 
         {/* Destination subtitle \u2014 keeps the runner aware of where they're heading. */}
-        <View className="mx-3 mt-1.5 rounded-xl bg-black/55 px-3 py-1.5 self-start">
+        <View className="mx-3 mt-1.5 rounded-xl bg-black/80 px-3 py-1.5 self-start">
           <Text
-            className="text-white text-[11px] font-montserrat"
+            className="text-white text-[12px] font-montserrat"
             numberOfLines={1}
           >
             {inPickupPhase ? 'Pickup' : 'Dropoff'}: {destLabel}
@@ -533,11 +678,12 @@ export default function NavigateScreen() {
       {showGreeting && navRoute && (
         <Animated.View
           pointerEvents="box-none"
+          // Flows directly under the top SafeAreaView banner stack rather
+          // than a fixed top:200, so its gap below the subtitle stays
+          // constant across devices (Dynamic Island 59pt vs SE 20pt inset).
           style={{
-            position: 'absolute',
-            top: 200,
-            left: 12,
-            right: 12,
+            marginHorizontal: 12,
+            marginTop: 12,
             opacity: greetingOpacity,
           }}
         >
@@ -546,13 +692,7 @@ export default function NavigateScreen() {
             accessibilityRole="button"
             accessibilityLabel="Dismiss trip summary"
             className="rounded-2xl bg-white px-4 py-3.5 flex-row items-center"
-            style={{
-              shadowColor: LightColors.ink,
-              shadowOpacity: 0.12,
-              shadowRadius: 18,
-              shadowOffset: { width: 0, height: 6 },
-              elevation: 8,
-            }}
+            style={Elevation.lg}
           >
             <View className={`w-11 h-11 rounded-full items-center justify-center mr-3 ${
               inPickupPhase ? 'bg-primary/15' : 'bg-danger/15'
@@ -567,11 +707,17 @@ export default function NavigateScreen() {
                 {destLabel}
               </Text>
               <View className="flex-row items-center mt-1">
-                <Text className="text-[11px] font-montserrat-semi text-primary">
+                <Text
+                  className="text-[12px] font-inter-semi text-primary"
+                  style={{ fontVariant: ['tabular-nums'] }}
+                >
                   {remainingDistance != null ? fmtDistance(remainingDistance) : '\u2014'}
                 </Text>
                 <View className="w-1 h-1 rounded-full bg-textTertiary/60 mx-1.5" />
-                <Text className="text-[11px] font-montserrat text-textSecondary">
+                <Text
+                  className="text-[12px] font-inter text-textSecondary"
+                  style={{ fontVariant: ['tabular-nums'] }}
+                >
                   {remainingDuration != null
                     ? `${fmtDuration(remainingDuration)} \u00b7 arrives ${fmtArrival(remainingDuration)}`
                     : 'Calculating\u2026'}
@@ -585,60 +731,40 @@ export default function NavigateScreen() {
       {/* Speed HUD — small chip in the bottom-left corner that mirrors
           the satnav convention. Only appears when the runner is
           actually moving so a stationary screen doesn't show 0 km/h.
-          Lifted to bottom: 220 so it sits cleanly above the bottom
-          action bar (which is roughly 150–180px tall on iPhone with
-          the home indicator). */}
+          Anchored to the sheet's real peek edge (floatBottom) so the
+          gap above the sheet is identical on SE / Pro Max / small Android. */}
       {speedKmh != null && (
         <View
-          className="absolute left-4 bg-white rounded-2xl px-3 py-2 items-center"
-          // bottom raised so action bar never covers it
-          // eslint-disable-next-line react-native/no-inline-styles
-          style={{
-            bottom: 220,
-            zIndex: 20,
-            shadowColor: LightColors.ink,
-            shadowOpacity: 0.12,
-            shadowRadius: 8,
-            shadowOffset: { width: 0, height: 2 },
-            elevation: 12,
-          }}
+          className="absolute left-4 bg-white rounded-2xl px-3.5 py-2.5 flex-row items-center"
+          style={{ bottom: floatBottom, zIndex: 20, ...Elevation.md }}
         >
-          <View className="flex-row items-baseline">
-            <Text className="text-[20px] font-montserrat-bold text-textPrimary tabular-nums leading-[22px]">
-              {speedKmh}
-            </Text>
-            <Text className="text-[10px] font-montserrat-semi text-textTertiary ml-1">
-              km/h
-            </Text>
-          </View>
-          <View className="flex-row items-center mt-0.5">
-            <Gauge size={9} color={LightColors.textMuted} />
-            <Text className="text-[8px] font-montserrat text-textTertiary ml-0.5 uppercase" style={{ letterSpacing: 0.6 }}>
-              Speed
-            </Text>
-          </View>
+          {/* Gauge glyph + km/h unit make it unmistakably a speed readout,
+              so the illegible 8px "SPEED" sub-label is dropped and the
+              number carries the whole chip at a glanceable size. */}
+          <Gauge size={15} color={LightColors.textMuted} strokeWidth={2.2} />
+          <Text
+            className="text-[24px] font-inter-semi text-textPrimary ml-1.5 leading-[26px]"
+            style={{ fontVariant: ['tabular-nums'] }}
+          >
+            {speedKmh}
+          </Text>
+          <Text className="text-[11px] font-montserrat-semi text-textTertiary ml-1">
+            km/h
+          </Text>
         </View>
       )}
 
       {/* Recenter FAB — visible whenever course-follow is disengaged.
-          Lifted to bottom: 220 (matches speed HUD) so it always clears
-          the bottom action bar; zIndex pushes it above the bar in case
-          the absolute layering ever shifts. */}
+          Anchored to floatBottom (matches the speed HUD) so it always
+          clears the sheet peek edge; zIndex pushes it above the sheet in
+          case the absolute layering ever shifts. */}
       {!followCamera && (
         <Pressable
           onPress={() => setFollowCamera(true)}
           accessibilityRole="button"
           accessibilityLabel="Recenter map on your location"
           className="absolute right-4 w-12 h-12 rounded-full bg-white items-center justify-center"
-          style={{
-            bottom: 220,
-            zIndex: 20,
-            shadowColor: LightColors.ink,
-            shadowOpacity: 0.14,
-            shadowRadius: 10,
-            shadowOffset: { width: 0, height: 3 },
-            elevation: 12,
-          }}
+          style={{ bottom: floatBottom, zIndex: 20, ...Elevation.md }}
         >
           <Locate size={22} color={LightColors.textPrimary} strokeWidth={2.2} />
         </Pressable>
@@ -647,16 +773,23 @@ export default function NavigateScreen() {
       {/* Bottom panel — expandable ETA / step sheet */}
       <ExpandableSheet
         initial="peek"
-        snapPoints={{ peek: 0.18, half: 0.52, full: 0.90 }}
+        snapPoints={{ peek: SHEET_PEEK, half: 0.52, full: 0.90 }}
+        reduceMotion={reducedMotion}
       >
         {/* ETA summary row — always visible at peek */}
         <View className="px-5 pt-2 pb-2">
           <View className="flex-row items-end justify-between">
             <View className="flex-1">
-              <Text className="text-[28px] font-montserrat-bold text-textPrimary leading-tight">
+              <Text
+                className="text-[28px] font-inter-semi text-textPrimary leading-tight"
+                style={{ fontVariant: ['tabular-nums'] }}
+              >
                 {remainingDuration != null ? fmtDuration(remainingDuration) : '\u2014'}
               </Text>
-              <Text className="text-[11px] font-montserrat text-textSecondary mt-0.5">
+              <Text
+                className="text-[12px] font-inter text-textSecondary mt-0.5"
+                style={{ fontVariant: ['tabular-nums'] }}
+              >
                 {remainingDistance != null ? fmtDistance(remainingDistance) : ''}
                 {remainingDuration != null && remainingDistance != null ? ' \u00b7 ' : ''}
                 {remainingDuration != null ? `arrives ${fmtArrival(remainingDuration)}` : ''}
@@ -665,35 +798,80 @@ export default function NavigateScreen() {
             {arrivedSoon ? (
               <Pressable
                 onPress={handleArrived}
-                className="px-5 py-3 rounded-full bg-success ml-3"
+                accessibilityRole="button"
+                accessibilityLabel="I've arrived"
+                // successDark (#15803D) clears 4.5:1 with white at this
+                // label size; larger label + target for a stopping glance.
+                // rounded-xl (14) matches the app CTA corner, not a pill.
+                className="px-6 rounded-xl bg-successDark ml-3 items-center justify-center"
+                style={({ pressed }) => ({ minHeight: 48, opacity: pressed ? 0.9 : 1 })}
+                android_ripple={{ color: 'rgba(255,255,255,0.18)' }}
               >
-                <Text className="text-white text-sm font-montserrat-bold">I&apos;ve Arrived</Text>
+                <Text className="text-white text-[15px] font-montserrat-bold">I&apos;ve Arrived</Text>
               </Pressable>
             ) : (
               <Pressable
                 onPress={handleEndNavigation}
-                className="px-5 py-3 rounded-full bg-gray-200 ml-3"
+                accessibilityRole="button"
+                accessibilityLabel="End navigation"
+                className="px-6 rounded-xl bg-surfaceMuted border border-dividerStrong ml-3 items-center justify-center"
+                style={({ pressed }) => ({ minHeight: 48, opacity: pressed ? 0.85 : 1 })}
+                android_ripple={{ color: 'rgba(15,23,42,0.08)' }}
               >
-                <Text className="text-textPrimary text-sm font-montserrat-bold">End</Text>
+                <Text className="text-textPrimary text-[15px] font-montserrat-bold">End</Text>
               </Pressable>
             )}
           </View>
-          {routeError && (
-            <Pressable
-              onPress={fetchNav}
-              className="mt-3 mb-1 self-center px-4 py-1.5 rounded-full bg-danger/10"
-            >
-              <Text className="text-danger text-[11px] font-montserrat-bold uppercase tracking-wider">
-                Retry route
-              </Text>
-            </Pressable>
-          )}
+          {routeError &&
+            (!navRoute ? (
+              // No usable route: recovery IS the primary action. Full-width
+              // button in the always-visible peek zone so it can never fall
+              // below the fold on a safety-critical screen.
+              <Pressable
+                onPress={() => {
+                  Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
+                  void fetchNav();
+                }}
+                accessibilityRole="button"
+                accessibilityLabel="Retry route"
+                className="mt-3 rounded-xl bg-primary items-center justify-center"
+                style={({ pressed }) => ({
+                  minHeight: 48,
+                  opacity: pressed ? 0.9 : 1,
+                })}
+                android_ripple={{ color: 'rgba(255,255,255,0.18)' }}
+              >
+                <Text className="text-white text-[15px] font-montserrat-bold">Retry route</Text>
+              </Pressable>
+            ) : (
+              // Route still shown (a background refresh failed mid-trip):
+              // a quieter pill is enough since the runner isn't blocked.
+              <Pressable
+                onPress={() => {
+                  Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
+                  void fetchNav();
+                }}
+                accessibilityRole="button"
+                accessibilityLabel="Retry route"
+                // The pill itself is ~30pt tall; hitSlop lifts the
+                // effective target to >=44pt without inflating the visual.
+                hitSlop={{ top: 8, bottom: 8, left: 12, right: 12 }}
+                style={({ pressed }) => ({ opacity: pressed ? 0.7 : 1 })}
+                className="mt-3 mb-1 self-center px-4 py-2 rounded-full bg-danger/10"
+              >
+                {/* dangerDark (#B91C1C) — base danger at 12px on the soft
+                    wash measures ~3.6:1, below the 4.5:1 AA floor. */}
+                <Text className="text-dangerDark text-[12px] font-montserrat-bold uppercase tracking-wider">
+                  Retry route
+                </Text>
+              </Pressable>
+            ))}
         </View>
 
         {/* Upcoming steps list — visible when sheet is expanded to half / full */}
         {navRoute && navRoute.steps.length > currentStepIdx + 1 && (
           <>
-            <View style={{ height: 1, backgroundColor: LightColors.surfaceMuted, marginHorizontal: 20, marginBottom: 4 }} />
+            <View style={{ height: 1, backgroundColor: LightColors.divider, marginHorizontal: 20, marginBottom: 4 }} />
             <ScrollView
               showsVerticalScrollIndicator={false}
               contentContainerStyle={{ paddingHorizontal: 20, paddingBottom: 24 }}
@@ -704,10 +882,13 @@ export default function NavigateScreen() {
                     <ManeuverIcon type={step.maneuverType} modifier={step.maneuverModifier} size={18} color={LightColors.textSecondary} />
                   </View>
                   <View style={{ flex: 1 }}>
-                    <Text style={{ fontSize: 13, fontFamily: 'Quicksand_500Medium', color: LightColors.textPrimary }} numberOfLines={2}>
+                    <Text className="text-[13px] font-montserrat-semi text-textPrimary" numberOfLines={2}>
                       {step.instruction}
                     </Text>
-                    <Text style={{ fontSize: 11, fontFamily: 'Quicksand_400Regular', color: LightColors.textTertiary, marginTop: 2 }}>
+                    <Text
+                      className="text-[12px] font-inter text-textTertiary mt-0.5"
+                      style={{ fontVariant: ['tabular-nums'] }}
+                    >
                       {fmtDistance(step.distanceMeters)}
                     </Text>
                   </View>

@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useRef } from 'react';
 import { View, Text, Animated, Easing, Pressable } from 'react-native';
 import type { BookingStatus } from '../../types';
+import { useReducedMotion } from '../../hooks/useReducedMotion';
 import { LightColors } from '../../constants/colors';
 
 /**
@@ -87,6 +88,9 @@ interface JourneyBeadsProps {
 
 export function JourneyBeads({ status, accent = 'brand', onPress, showLabel = true }: JourneyBeadsProps) {
   const activeIdx = STATUS_TO_PHASE_INDEX[status] ?? 0;
+  // Reduce Motion: the breathing loop never starts; the halo renders as a
+  // static wash instead (see the opacity branch on the halo below).
+  const reduceMotion = useReducedMotion();
 
   // Pulse animation for the active bead. We deliberately drive only an
   // OPACITY interpolation on a NATIVE driver so the animation runs on
@@ -94,6 +98,7 @@ export function JourneyBeads({ status, accent = 'brand', onPress, showLabel = tr
   // screen is busy (live GPS, polling, chat). No setState anywhere.
   const pulse = useRef(new Animated.Value(0)).current;
   useEffect(() => {
+    if (reduceMotion) return;
     if (status === 'completed' || status === 'cancelled') return;
     const loop = Animated.loop(
       Animated.sequence([
@@ -113,7 +118,7 @@ export function JourneyBeads({ status, accent = 'brand', onPress, showLabel = tr
     );
     loop.start();
     return () => loop.stop();
-  }, [pulse, status]);
+  }, [pulse, status, reduceMotion]);
 
   const activeColor = accent === 'danger' ? LightColors.danger : LightColors.primary;
   const activePhase = PHASES[activeIdx];
@@ -173,7 +178,9 @@ export function JourneyBeads({ status, accent = 'brand', onPress, showLabel = tr
                             height: 22,
                             borderRadius: 11,
                             backgroundColor: activeColor,
-                            opacity: pulse.interpolate({ inputRange: [0, 1], outputRange: [0.08, 0.28] }),
+                            opacity: reduceMotion
+                              ? 0.25
+                              : pulse.interpolate({ inputRange: [0, 1], outputRange: [0.08, 0.28] }),
                           }}
                         />
                         <View
@@ -205,10 +212,15 @@ export function JourneyBeads({ status, accent = 'brand', onPress, showLabel = tr
               </View>
             </View>
           </View>
-          {/* Counter — typographic, no box. Reads as a caption. */}
+          {/* Counter — typographic, no box. Reads as a caption. 11px, not
+              10px: the tracking handle (this component's primary consumer)
+              holds an 11px floor for every label, and a stray 10px counter
+              was the last sub-11 micro-label surviving there. Capped at 1.3×
+              so it can't blow out the beads row under large Dynamic Type. */}
           <Text
-            className="ml-3 text-[10px] font-montserrat-semi text-textSecondary"
+            className="ml-3 text-[11px] font-montserrat-semi text-textSecondary"
             style={{ letterSpacing: 1.2 }}
+            maxFontSizeMultiplier={1.3}
           >
             {counter}
           </Text>
@@ -228,12 +240,13 @@ export function JourneyBeads({ status, accent = 'brand', onPress, showLabel = tr
               }}
             />
             <Text
-              className="text-[10px] font-montserrat-bold uppercase"
+              className="text-[11px] font-montserrat-bold uppercase"
               style={{
                 color: activeColor,
                 letterSpacing: 1.4,
                 transform: [{ translateX: -8 }],
               }}
+              maxFontSizeMultiplier={1.3}
             >
               {activePhase.short}
             </Text>

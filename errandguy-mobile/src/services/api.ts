@@ -1,6 +1,7 @@
 import axios, { AxiosRequestConfig, AxiosResponse } from 'axios';
 import { secureStorage } from '../utils/storage';
 import { apiActivity } from '../stores/apiActivityStore';
+import { network } from '../stores/networkStore';
 
 const api = axios.create({
   baseURL: process.env.EXPO_PUBLIC_API_URL,
@@ -30,11 +31,68 @@ const api = axios.create({
  * Per-request opt-out: pass `{ noDedupe: true }` or `{ noCache: true }` in
  * the axios config (e.g., `api.get(url, { noDedupe: true } as any)`).
  */
-type ExtraConfig = AxiosRequestConfig & { noDedupe?: boolean; noCache?: boolean; cacheTtlMs?: number; silent?: boolean };
+type ExtraConfig = AxiosRequestConfig & {
+  noDedupe?: boolean;
+  noCache?: boolean;
+  cacheTtlMs?: number;
+  silent?: boolean;
+  /** Max automatic retries for a failed idempotent GET (default 2 → 3 attempts).
+   *  Pass 0 to disable retries for a specific request. */
+  retries?: number;
+};
 
 const DEFAULT_GET_CACHE_MS = 8000;
 const inflight = new Map<string, Promise<AxiosResponse<any>>>();
 const microCache = new Map<string, { ts: number; response: AxiosResponse<any> }>();
+
+/**
+ * ── Intelligent retry (idempotent GETs only) ──────────────────────────────
+ * Transient failures — the server unreachable for a moment, or a 5xx blip —
+ * are retried with exponential backoff instead of surfacing an error the user
+ * has to manually retry. Mutations are NEVER retried here (not idempotent).
+ *
+ *   attempt 1 → immediate
+ *   attempt 2 → +2s
+ *   attempt 3 → +5s
+ *
+ * We deliberately do NOT retry: 4xx (client errors won't fix themselves),
+ * cancellations, or when we already know we're offline (fail fast — the
+ * OfflineBanner's health-ping drives recovery). Retry attempts also use a
+ * shorter timeout so a hung server can't stack three 30s waits.
+ */
+const DEFAULT_GET_RETRIES = 2;
+const RETRY_DELAYS_MS = [2000, 5000, 10000];
+const RETRY_TIMEOUT_MS = 12000;
+
+const isRetryableError = (err: any, config: ExtraConfig): boolean => {
+  if ((config.signal as any)?.aborted) return false;
+  // Don't burn backoff cycles when connectivity is already known-down.
+  if (network.isOffline()) return false;
+  const status = err?.status;
+  // status 0 = transport/network error; >=500 = transient server error.
+  // (The response interceptor normalises axios errors to `{ status, ... }`.)
+  return status === 0 || (typeof status === 'number' && status >= 500);
+};
+
+async function getWithRetry(
+  config: ExtraConfig,
+  retries: number,
+): Promise<AxiosResponse<any>> {
+  let attempt = 0;
+  for (;;) {
+    try {
+      const cfg =
+        attempt === 0
+          ? config
+          : { ...config, timeout: Math.min(config.timeout ?? 30000, RETRY_TIMEOUT_MS) };
+      return await rawRequest(cfg);
+    } catch (err) {
+      if (attempt >= retries || !isRetryableError(err, config)) throw err;
+      await new Promise((r) => setTimeout(r, RETRY_DELAYS_MS[attempt] ?? 10000));
+      attempt += 1;
+    }
+  }
+}
 
 const cacheKey = (config: AxiosRequestConfig): string => {
   const params = config.params ? JSON.stringify(config.params) : '';
@@ -94,6 +152,10 @@ api.interceptors.response.use(
     if (!(response.config as ExtraConfig).silent) {
       apiActivity.done();
     }
+    // Any successful response means we're reachable — clear the offline
+    // flag. The store no-ops when unchanged, so this is free on the
+    // happy path.
+    network.setOffline(false);
     return response;
   },
   async (error) => {
@@ -104,6 +166,14 @@ api.interceptors.response.use(
       error?.name === 'CanceledError' ||
       error?.code === 'ERR_CANCELED' ||
       error?.message === 'canceled';
+    // Offline inference: a transport-level failure (no HTTP response at
+    // all, and not an intentional cancel) flips the offline flag; any
+    // response — even a 4xx/5xx — proves the server is reachable.
+    if (error?.response) {
+      network.setOffline(false);
+    } else if (!isCanceled) {
+      network.setOffline(true);
+    }
     const isSilent = !!(error?.config as ExtraConfig | undefined)?.silent;
     if (__DEV__ && !isSilent && !isCanceled) {
       if (error.response) {
@@ -232,7 +302,7 @@ api.request = function patchedRequest<T = any, R = AxiosResponse<T>, D = any>(
     if (pending) return pending as unknown as Promise<R>;
   }
 
-  const promise = rawRequest(config)
+  const promise = getWithRetry(config, config.retries ?? DEFAULT_GET_RETRIES)
     .then((res) => {
       if (!config.noCache) microCache.set(key, { ts: Date.now(), response: res });
       return res;

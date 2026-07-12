@@ -28,9 +28,11 @@ interface SignaturePadProps {
   strokeColor?: string;
   /** Stroke thickness in px. */
   strokeWidth?: number;
-  /** Fired the first time the user starts drawing. Lets the parent
-   *  flip its "signed" state for the submit button. */
-  onBegin?: () => void;
+  /** Fired the first time a real stroke is drawn (finger-down + move),
+   *  NOT on bare touch-down. Lets the parent flip its "signed" state for
+   *  the submit button. Gating on movement means a stray graze while
+   *  handing over the phone can't arm completion with an empty pad. */
+  onStroke?: () => void;
 }
 
 /**
@@ -46,7 +48,7 @@ interface SignaturePadProps {
  */
 export const SignaturePad = forwardRef<SignaturePadHandle, SignaturePadProps>(
   function SignaturePad(
-    { height = 180, strokeColor = LightColors.textPrimary, strokeWidth = 2.5, onBegin },
+    { height = 180, strokeColor = LightColors.textPrimary, strokeWidth = 2.5, onStroke },
     ref,
   ) {
     // Each path is a separate stroke (pen down → pen up). Keeping them
@@ -72,14 +74,17 @@ export const SignaturePad = forwardRef<SignaturePadHandle, SignaturePadProps>(
         onPanResponderGrant: (evt) => {
           const { locationX, locationY } = evt.nativeEvent;
           currentPathRef.current = `M${locationX.toFixed(1)},${locationY.toFixed(1)}`;
-          if (!beganRef.current) {
-            beganRef.current = true;
-            onBegin?.();
-          }
         },
         onPanResponderMove: (evt) => {
           const { locationX, locationY } = evt.nativeEvent;
           currentPathRef.current += ` L${locationX.toFixed(1)},${locationY.toFixed(1)}`;
+          // Arm the parent's "signed" state only once a real stroke moves —
+          // a pure tap (grant + release, no move) leaves the pad empty and
+          // must never enable Confirm & Complete.
+          if (!beganRef.current) {
+            beganRef.current = true;
+            onStroke?.();
+          }
           // Live-update the in-progress stroke by replacing the last
           // tentative entry. We keep this fast by mutating only the
           // tail of the array.
@@ -156,6 +161,8 @@ export const SignaturePad = forwardRef<SignaturePadHandle, SignaturePadProps>(
     return (
       <View
         onLayout={onLayout}
+        accessibilityLabel="Signature area"
+        accessibilityHint="Draw the customer's signature with a finger"
         style={{
           height,
           backgroundColor: LightColors.surface,
@@ -166,6 +173,20 @@ export const SignaturePad = forwardRef<SignaturePadHandle, SignaturePadProps>(
         }}
         {...panResponder.panHandlers}
       >
+        {/* Faint "sign here" baseline — orients the customer where to sign.
+            Sits under the SVG (strokes draw over it) and never intercepts
+            touches. */}
+        <View
+          pointerEvents="none"
+          style={{
+            position: 'absolute',
+            left: 20,
+            right: 20,
+            bottom: 36,
+            height: 1,
+            backgroundColor: LightColors.dividerStrong,
+          }}
+        />
         <Svg
           ref={svgRef}
           width="100%"

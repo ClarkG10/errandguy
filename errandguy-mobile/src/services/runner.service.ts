@@ -30,9 +30,14 @@ export const runnerService = {
     return p;
   },
 
-  uploadDocument(data: FormData) {
+  uploadDocument(data: FormData, onProgress?: (frac: number) => void) {
     const p = api.post('/runner/documents', data, {
       headers: { 'Content-Type': 'multipart/form-data' },
+      onUploadProgress: onProgress
+        ? (e: any) => {
+            if (e.total) onProgress(e.loaded / e.total);
+          }
+        : undefined,
     });
     p.then(invalidateRunnerProfile).catch(() => {});
     return p;
@@ -84,7 +89,11 @@ export const runnerService = {
 
   acceptErrand(id: string) {
     const p = api.post(`/runner/errand/${id}/accept`);
-    p.then(invalidateRunnerErrands).catch(() => {});
+    p.then(() => {
+      invalidateRunnerErrands();
+      // Refresh the dashboard acceptance-rate stat after accept/decline.
+      invalidateRunnerProfile();
+    }).catch(() => {});
     return p;
   },
 
@@ -127,9 +136,11 @@ export const runnerService = {
       note?: string | null;
       lat?: number | null;
       lng?: number | null;
+      onProgress?: (frac: number) => void;
     },
   ) {
     const hasFile = !!(opts?.pickupPhoto || opts?.deliveryPhoto || opts?.signature);
+    const onProgress = opts?.onProgress;
     let p;
     if (hasFile) {
       const form = new FormData();
@@ -160,6 +171,11 @@ export const runnerService = {
       }
       p = api.post(`/runner/errand/${id}/status`, form, {
         headers: { 'Content-Type': 'multipart/form-data' },
+        onUploadProgress: onProgress
+          ? (e: any) => {
+              if (e.total) onProgress(e.loaded / e.total);
+            }
+          : undefined,
       });
     } else {
       p = api.post(`/runner/errand/${id}/status`, { status });
@@ -202,6 +218,7 @@ export const runnerService = {
   submitPickedUpWithReceipt(
     id: string,
     params: { actualCost: number; receiptUri: string },
+    onProgress?: (frac: number) => void,
   ) {
     const form = new FormData();
     form.append('status', 'picked_up');
@@ -211,13 +228,37 @@ export const runnerService = {
       type: 'image/jpeg',
       name: 'receipt.jpg',
     } as any);
-    return api.post(`/runner/errand/${id}/status`, form, {
+    const p = api.post(`/runner/errand/${id}/status`, form, {
       headers: { 'Content-Type': 'multipart/form-data' },
+      onUploadProgress: onProgress
+        ? (e: any) => {
+            if (e.total) onProgress(e.loaded / e.total);
+          }
+        : undefined,
     });
+    // Parity with the other status mutations — bust the errand/dashboard
+    // caches so a receipt submit reflects on the dashboard without waiting
+    // for the poll/focus revalidation.
+    p.then(invalidateRunnerErrands).catch(() => {});
+    return p;
   },
 
   getEarnings(period?: 'today' | 'week' | 'month') {
-    return api.get('/runner/earnings', { params: { period }, cacheTtlMs: 15_000, silent: true } as any);
+    // The Laravel summary endpoint's switch only matches
+    // 'today' | 'this_week' | 'this_month' | 'custom'
+    // (RunnerEarningsController::summary). The mobile's short forms
+    // ('week'/'month') fell straight through the switch, so "This week"
+    // and "This month" silently returned LIFETIME totals. Map here so
+    // every caller (earnings tab, home hero, preload) is fixed in one
+    // place while keeping the app-side period strings stable for cache
+    // keys and UI state.
+    const apiPeriod =
+      period === 'week' ? 'this_week' : period === 'month' ? 'this_month' : period;
+    return api.get('/runner/earnings', {
+      params: { period: apiPeriod },
+      cacheTtlMs: 15_000,
+      silent: true,
+    } as any);
   },
 
   getEarningsHistory(params?: { page?: number; per_page?: number; date_from?: string; date_to?: string }) {
@@ -249,6 +290,45 @@ export const runnerService = {
     return api.get('/wallet/transactions', {
       params: { ...params, type: 'payout' },
       cacheTtlMs: 10_000,
+    } as any);
+  },
+
+  /**
+   * PATCH /runner/errand/{id}/shopping-items — tick shopping-list items off.
+   *
+   * Body: { items: [{ id, checked }] }. The backend flips only the referenced
+   * items' `checked` flag (stamping `checked_at`) and pushes the fresh list to
+   * the customer's realtime channel. Returns the updated BookingResource.
+   * Invalidates the runner errand caches so the source-of-truth list refreshes.
+   */
+  updateChecklistTicks(bookingId: string, items: { id: string; checked: boolean }[]) {
+    const p = api.patch(`/runner/errand/${bookingId}/shopping-items`, { items });
+    p.then(invalidateRunnerErrands).catch(() => {});
+    return p;
+  },
+
+  /**
+   * GET /runner/heatmap?days=14 — recent-booking demand cells for the busy-
+   * areas map. Response: { data: { days, cells: [{ lat, lng, weight }] } }.
+   * Silent + cached: it's a read-only aggregate shared across all runners.
+   */
+  getHeatmap(days = 14) {
+    return api.get('/runner/heatmap', {
+      params: { days },
+      cacheTtlMs: 60_000,
+      silent: true,
+    } as any);
+  },
+
+  /**
+   * GET /runner/peak-hours?days=30 — day-of-week × hour-of-day demand grid.
+   * Response: { data: { days, grid: number[7][24] } } (grid[dow 0=Sun..6=Sat][hour]).
+   */
+  getPeakHours(days = 30) {
+    return api.get('/runner/peak-hours', {
+      params: { days },
+      cacheTtlMs: 60_000,
+      silent: true,
     } as any);
   },
 

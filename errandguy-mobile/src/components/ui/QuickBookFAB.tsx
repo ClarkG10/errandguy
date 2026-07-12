@@ -3,7 +3,6 @@ import {
   Pressable,
   View,
   StyleSheet,
-  Platform,
   Animated,
   Easing,
   type ViewStyle,
@@ -15,7 +14,7 @@ import { useRouter, usePathname } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useResponsive } from '../../constants/responsive';
 import { useReducedMotion } from '../../hooks/useReducedMotion';
-import { LightColors } from '../../constants/colors';
+import { Elevation, LightColors } from '../../constants/colors';
 
 /**
  * Floating Quick-Book button.
@@ -79,7 +78,13 @@ export function QuickBookFAB({
   const bob = useRef(new Animated.Value(0)).current;
   const press = useRef(new Animated.Value(1)).current;
   useEffect(() => {
-    if (reduceMotion || !visible) return;
+    if (!visible) return;
+    if (reduceMotion) {
+      // Visibility must never depend on the decorative bob — snap to
+      // fully shown so reduced-motion users get the FAB, just still.
+      bob.setValue(1);
+      return;
+    }
     Animated.sequence([
       Animated.delay(400),
       Animated.timing(bob, {
@@ -99,19 +104,21 @@ export function QuickBookFAB({
   // — still well above the 44pt touch-target minimum.
   const SIZE = mScale(52);
   const ICON = mScale(22);
-  // Dock into the floating pill bar's top edge so the disc feels
-  // integrated with the navigation shell. The pill bottom mirrors the
-  // tab layout formula: max(inset, gap) + gap/2.
-  const pillBottom = Math.max(insets.bottom, 12) + 6;
-  const bottom = pillBottom + tabBarHeight - SIZE / 2 - mScale(6);
-  // Centre-positioned so the FAB sits visually above the tab bar's
-  // empty mid-gap (between Activity and Alerts). Uses transform-based
-  // centring so it works for any device width and respects the
-  // press-scale animation.
+  // Straddle the tab bar's TOP edge: the FAB's centre sits on the bar's
+  // top border so half the disc floats above the bar (over the content)
+  // and half overlaps the bar's centre gap — the classic docked-FAB look
+  // the user asked for ("floating on the top line", not a whole circle
+  // buried inside the bar). Bar top edge = tabBarHeight + insets.bottom
+  // from the screen bottom; subtract half the disc to centre on it.
+  const bottom = insets.bottom + tabBarHeight - SIZE / 2;
+  // Centre-positioned so the FAB sits above the tab bar's empty mid-gap
+  // (between Activity and Alerts). Uses transform-based centring so it
+  // works for any device width and respects the press-scale animation.
   void isTablet;
 
+  // Press feedback is functional (not decorative), so it is not
+  // gated behind reduced motion — iOS has no ripple fallback.
   const handlePressIn = () => {
-    if (reduceMotion) return;
     Animated.spring(press, {
       toValue: 0.92,
       speed: 50,
@@ -120,7 +127,6 @@ export function QuickBookFAB({
     }).start();
   };
   const handlePressOut = () => {
-    if (reduceMotion) return;
     Animated.spring(press, {
       toValue: 1,
       speed: 30,
@@ -206,17 +212,9 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     overflow: 'hidden',
     // Brand-tinted shadow — soft and diffuse so the FAB floats
-    // rather than pops. Matches the Elevation.primary language.
-    ...Platform.select({
-      ios: {
-        shadowColor: LightColors.primaryDark,
-        shadowOffset: { width: 0, height: 8 },
-        shadowOpacity: 0.18,
-        shadowRadius: 18,
-      },
-      android: { elevation: 9 },
-      default: {},
-    }),
+    // rather than pops. Android keeps a stronger explicit lift.
+    ...Elevation.primary,
+    elevation: 9,
   },
   innerHighlight: {
     position: 'absolute',

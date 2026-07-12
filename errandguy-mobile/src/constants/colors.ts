@@ -64,14 +64,21 @@ export const LightColors = {
   divider: '#ECEFF3',
   dividerStrong: '#CBD5E1',
 
-  // Status.
+  // Status. Convention: the base tone for fills/borders/glyphs, the
+  // *Dark rung for status TEXT below ~17px (the base tones sit under the
+  // 4.5:1 AA floor on their soft/light washes — e.g. success on
+  // successLight is only ~3.2:1).
   danger: '#EF4444',
-  dangerDark: '#DC2626',
+  // 700-weight rung (not 600): #DC2626 measured 3.95:1 on dangerSoft,
+  // under the 4.5:1 AA floor for the error cards that pair them.
+  dangerDark: '#B91C1C',
   dangerSoft: '#FEE2E2',
   success: '#16A34A',
+  successDark: '#15803D',
   successSoft: '#DCFCE7',
   successLight: '#F0FDF4',
   warning: '#F59E0B',
+  warningDark: '#B45309',
   warningSoft: '#FEF3C7',
   warningLight: '#FFFBEB',
   info: '#0EA5E9',
@@ -121,9 +128,13 @@ export const DarkColors = {
   dangerDark: '#EF4444',
   dangerSoft: '#3B1212',
   success: '#22C55E',
+  // In dark mode the "dark" (high-contrast text) rung is LIGHTER, not
+  // darker — it must read on the dark soft washes.
+  successDark: '#4ADE80',
   successSoft: '#0B2E1A',
   successLight: '#052E16',
   warning: '#F59E0B',
+  warningDark: '#FBBF24',
   warningSoft: '#3B2A0A',
   warningLight: '#422006',
   info: '#38BDF8',

@@ -1,9 +1,10 @@
 import React from 'react';
-import { View, Text, ScrollView, Pressable, Linking } from 'react-native';
-import { useRouter } from 'expo-router';
-import { ExternalLink } from 'lucide-react-native';
+import { View, Text, ScrollView } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { GradientHeader } from '../../../components/ui/GradientHeader';
 import { Card } from '../../../components/ui/Card';
+import { SectionHeader } from '../../../components/ui/Typography';
+import { useResponsive } from '../../../constants/responsive';
 
 const SECTIONS = [
   {
@@ -21,7 +22,8 @@ const SECTIONS = [
 ];
 
 export default function TermsScreen() {
-  const router = useRouter();
+  const { contentMaxWidth } = useResponsive();
+  const insets = useSafeAreaInsets();
 
   return (
     <View className="flex-1 bg-background">
@@ -30,22 +32,27 @@ export default function TermsScreen() {
       <ScrollView
         className="flex-1 px-5"
         showsVerticalScrollIndicator={false}
-        contentContainerStyle={{ paddingBottom: 40 }}
+        contentContainerStyle={{
+          paddingBottom: insets.bottom + 40,
+          maxWidth: contentMaxWidth,
+          width: '100%',
+          alignSelf: 'center',
+        }}
       >
         {SECTIONS.map((section, idx) => (
-          <View key={idx} className="mb-5">
-            <Text className="text-sm font-montserrat-bold text-textPrimary mb-2">
-              {section.title}
-            </Text>
+          <View key={idx} className="mb-6">
+            <SectionHeader title={section.title} />
             <Card className="p-4">
-              <Text className="text-sm font-montserrat text-textSecondary leading-5">
+              {/* 14px on a 22px lead (~1.57) keeps dense legal copy
+                  comfortably readable on low-end Android. */}
+              <Text className="text-[14px] font-montserrat text-textSecondary leading-[22px]">
                 {section.content}
               </Text>
             </Card>
           </View>
         ))}
 
-        <Text className="text-xs font-montserrat text-textSecondary text-center mt-2">
+        <Text className="text-xs font-montserrat text-textSecondary text-center mt-1">
           Last updated: January 2025
         </Text>
       </ScrollView>

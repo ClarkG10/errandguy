@@ -63,7 +63,16 @@ export const paymentService = {
     return p;
   },
 
-  getWalletTransactions(params?: { page?: number; per_page?: number }) {
+  // Server-side filters (WalletController::transactions): `type` narrows to
+  // a single WalletTransactionType, `date_from` / `date_to` bound the range
+  // (parsed as start/end of day server-side).
+  getWalletTransactions(params?: {
+    page?: number;
+    per_page?: number;
+    type?: string;
+    date_from?: string;
+    date_to?: string;
+  }) {
     return api.get('/wallet/transactions', { params, cacheTtlMs: 15_000, silent: true } as any);
   },
 

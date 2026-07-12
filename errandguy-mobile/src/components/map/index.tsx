@@ -145,6 +145,17 @@ interface HereMapViewProps {
   toolbarEnabled?: boolean;
   /** Called when the user manually pans/drags the map. */
   onPanDrag?: () => void;
+  /**
+   * Camera zoom ceiling (MapLibre zoom units). Caps how deep the user can
+   * pinch in — deep-zoom raster tiles are the most expensive HERE requests.
+   */
+  maxZoomLevel?: number;
+  /**
+   * Fires once the style + first tiles have loaded (MapLibre's
+   * onDidFinishLoadingMap). Callers use it to drop loading veils — before
+   * this the map renders a grey checkerboard.
+   */
+  onMapReady?: () => void;
   children?: React.ReactNode;
 }
 
@@ -162,6 +173,8 @@ export const HereMapView = forwardRef<HereMapViewRef, HereMapViewProps>(
       pitchEnabled = true,
       showsUserLocation = false,
       onPanDrag,
+      maxZoomLevel,
+      onMapReady,
       children,
     } = props;
 
@@ -256,6 +269,7 @@ export const HereMapView = forwardRef<HereMapViewRef, HereMapViewProps>(
         onRegionIsChanging={handleRegionChanging}
         onRegionDidChange={handleRegionDidChange}
         onPress={onPress ? () => onPress() : undefined}
+        onDidFinishLoadingMap={onMapReady ? () => onMapReady() : undefined}
         attribution={false}
         logo={false}
         compass={false}
@@ -263,6 +277,7 @@ export const HereMapView = forwardRef<HereMapViewRef, HereMapViewProps>(
       >
         <Camera
           ref={cameraRef}
+          maxZoom={maxZoomLevel}
           initialViewState={{
             center: initialCoord,
             zoom: initialZoom,
@@ -466,6 +481,127 @@ export function HereCircle({
         type="line"
         source={sourceId}
         paint={{ 'line-color': strokeColor, 'line-width': strokeWidth }}
+      />
+    </GeoJSONSource>
+  );
+}
+
+// ─── HereHeatmap ─────────────────────────────────────────────────────────────
+
+interface HeatmapCell {
+  lat: number;
+  lng: number;
+  weight: number;
+}
+
+interface HereHeatmapProps {
+  /** Must be unique per map — used as the MapLibre source/layer ID prefix. */
+  id?: string;
+  /** Weighted demand cells (from GET /runner/heatmap). */
+  cells: HeatmapCell[];
+  /** Radius of influence of each point, in pixels. Bigger = smoother. */
+  radius?: number;
+  /** Global opacity of the heatmap layer. */
+  opacity?: number;
+}
+
+/**
+ * A MapLibre heatmap layer fed a GeoJSON FeatureCollection of weighted
+ * points — mirrors how HerePolyline / HereCircle build a GeoJSONSource +
+ * <Layer>, but with `type="heatmap"`. Each cell's `weight` drives the
+ * per-point contribution, normalised against the busiest cell so the ramp
+ * always spans its full range regardless of absolute booking volume.
+ */
+export function HereHeatmap({
+  id = 'heatmap',
+  cells,
+  radius = 42,
+  opacity = 0.75,
+}: HereHeatmapProps) {
+  // Flat key so the source only rebuilds when the actual points change,
+  // not on every parent re-render with a fresh array literal.
+  const cellsKey = useMemo(
+    () =>
+      cells
+        .map((c) => `${c.lng.toFixed(4)},${c.lat.toFixed(4)},${c.weight}`)
+        .join('|'),
+    [cells],
+  );
+
+  const maxWeight = useMemo(
+    () => Math.max(1, ...cells.map((c) => c.weight)),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [cellsKey],
+  );
+
+  const geoJson = useMemo(
+    () => ({
+      type: 'FeatureCollection' as const,
+      features: cells.map((c) => ({
+        type: 'Feature' as const,
+        geometry: {
+          type: 'Point' as const,
+          coordinates: [c.lng, c.lat] as [number, number],
+        },
+        properties: { weight: c.weight },
+      })),
+    }),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [cellsKey],
+  );
+
+  if (cells.length === 0) return null;
+
+  const sourceId = `${id}-src`;
+  const heatmapPaint = {
+    // Normalise each point's contribution against the busiest cell.
+    'heatmap-weight': [
+      'interpolate',
+      ['linear'],
+      ['get', 'weight'],
+      0,
+      0,
+      maxWeight,
+      1,
+    ],
+    'heatmap-intensity': 1,
+    'heatmap-radius': radius,
+    'heatmap-opacity': opacity,
+    // Monochrome BRAND-BLUE ramp — deliberately the same visual language as
+    // the demand screen's peak-hours grid (densityColor there blends the brand
+    // blue from a faint 0.18 alpha up to full strength; "deeper blue = busier").
+    // The two demand views must read as ONE system, so the heatmap uses the
+    // same single-hue progression rather than a rainbow: transparent → light
+    // brand blue on the fringe, darkening through primary into primary-900 navy
+    // at the hot core. The darker top-end (vs the grid's opaque primary) gives
+    // the busiest cluster contrast against the blue map tiles it overlays.
+    // Density is normalised 0..1 by MapLibre.
+    'heatmap-color': [
+      'interpolate',
+      ['linear'],
+      ['heatmap-density'],
+      0,
+      'rgba(37,99,235,0)', // primary  — transparent fringe
+      0.2,
+      'rgba(37,99,235,0.35)', // primary  — light brand blue
+      0.4,
+      'rgba(37,99,235,0.55)', // primary
+      0.6,
+      'rgba(37,99,235,0.75)', // primary
+      0.8,
+      'rgba(29,78,216,0.88)', // primary-700 #1D4ED8
+      1,
+      'rgba(30,58,138,0.95)', // primary-900 #1E3A8A — deepest = busiest
+    ],
+  };
+
+  return (
+    <GeoJSONSource id={sourceId} data={geoJson as any}>
+      <Layer
+        id={`${id}-layer`}
+        type="heatmap"
+        source={sourceId}
+        paint={heatmapPaint as any}
       />
     </GeoJSONSource>
   );
