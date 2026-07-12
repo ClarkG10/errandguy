@@ -12,7 +12,17 @@ class NotificationController extends Controller
 {
     public function index(Request $request): JsonResponse
     {
-        $notifications = Notification::where('user_id', $request->user()->id)
+        $query = Notification::where('user_id', $request->user()->id);
+
+        // Default view excludes archived notifications; `?archived=1`
+        // returns the archived set only.
+        if ($request->boolean('archived')) {
+            $query->archived();
+        } else {
+            $query->active();
+        }
+
+        $notifications = $query
             ->orderByDesc('created_at')
             ->paginate($request->integer('per_page', 20));
 
@@ -52,6 +62,52 @@ class NotificationController extends Controller
 
         return response()->json([
             'message' => 'All notifications marked as read.',
+        ]);
+    }
+
+    public function destroy(Request $request, string $id): JsonResponse
+    {
+        $notification = Notification::where('user_id', $request->user()->id)
+            ->findOrFail($id);
+
+        $notification->delete();
+
+        return response()->json([
+            'message' => 'Notification deleted.',
+        ]);
+    }
+
+    public function archive(Request $request, string $id): JsonResponse
+    {
+        $notification = Notification::where('user_id', $request->user()->id)
+            ->findOrFail($id);
+
+        $notification->update(['archived_at' => now()]);
+
+        return response()->json([
+            'message' => 'Notification archived.',
+        ]);
+    }
+
+    public function unarchive(Request $request, string $id): JsonResponse
+    {
+        $notification = Notification::where('user_id', $request->user()->id)
+            ->findOrFail($id);
+
+        $notification->update(['archived_at' => null]);
+
+        return response()->json([
+            'message' => 'Notification unarchived.',
+        ]);
+    }
+
+    public function clearAll(Request $request): JsonResponse
+    {
+        $count = Notification::where('user_id', $request->user()->id)->delete();
+
+        return response()->json([
+            'message' => 'Notifications cleared.',
+            'data' => ['deleted_count' => $count],
         ]);
     }
 }

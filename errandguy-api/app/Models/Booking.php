@@ -45,6 +45,7 @@ class Booking extends Model
         'item_photos',
         'estimated_item_value',
         'shopping_budget',
+        'shopping_items',
         'actual_item_cost',
         'receipt_photo_url',
         'schedule_type',
@@ -89,6 +90,7 @@ class Booking extends Model
     {
         return [
             'item_photos' => 'array',
+            'shopping_items' => 'array',
             'is_transportation' => 'boolean',
             'sos_triggered' => 'boolean',
             'trip_share_active' => 'boolean',

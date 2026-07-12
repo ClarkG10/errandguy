@@ -56,6 +56,9 @@ class BookingResource extends JsonResource
             'item_photos' => $this->item_photos,
             'estimated_item_value' => $this->estimated_item_value,
             'shopping_budget' => $this->shopping_budget,
+            // Itemized shopping checklist (array of {id,name,qty,checked,checked_at}).
+            // Null-safe: the `array` cast yields null when no list was ever set.
+            'shopping_items' => $this->shopping_items ?? [],
             'actual_item_cost' => $this->actual_item_cost,
             'receipt_photo_url' => $this->receipt_photo_url,
             'schedule_type' => $this->schedule_type,

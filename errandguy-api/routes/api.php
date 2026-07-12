@@ -36,6 +36,14 @@ use App\Http\Controllers\Admin\RunnerVerificationController;
 use App\Http\Controllers\Admin\BookingManagementController;
 use App\Http\Controllers\Admin\DisputeController;
 use App\Http\Controllers\Admin\AdminPayoutController;
+// Phase 3 additions
+use App\Http\Controllers\Customer\ReferralController;
+use App\Http\Controllers\Customer\PromoController;
+use App\Http\Controllers\Customer\ShoppingListController;
+use App\Http\Controllers\Runner\ShoppingChecklistController;
+use App\Http\Controllers\Runner\HeatmapController;
+use App\Http\Controllers\Support\SupportController;
+use App\Http\Controllers\Export\ExportController;
 use Illuminate\Support\Facades\Route;
 
 /*
@@ -91,6 +99,10 @@ Route::prefix('v1')->group(function () {
             Route::post('/trusted-contacts', [TrustedContactController::class, 'store']);
             Route::put('/trusted-contacts/{id}', [TrustedContactController::class, 'update']);
             Route::delete('/trusted-contacts/{id}', [TrustedContactController::class, 'destroy']);
+
+            // Referral program
+            Route::get('/referral', [ReferralController::class, 'show']);
+            Route::post('/referral/apply', [ReferralController::class, 'apply'])->middleware('throttle:10,1');
         });
 
         // Customer booking routes
@@ -116,6 +128,8 @@ Route::prefix('v1')->group(function () {
             Route::delete('/{id}/sos', [SOSController::class, 'deactivate'])->middleware('throttle:10,1');
             Route::post('/{id}/share-trip', [TripShareController::class, 'share']);
             Route::delete('/{id}/share-trip', [TripShareController::class, 'revoke']);
+            // Customer edits the shopping checklist while the errand is pre-pickup.
+            Route::put('/{id}/shopping-items', [ShoppingListController::class, 'update']);
         });
 
         // Runner routes
@@ -137,8 +151,15 @@ Route::prefix('v1')->group(function () {
 
             Route::get('/earnings', [RunnerEarningsController::class, 'summary']);
             Route::get('/earnings/history', [RunnerEarningsController::class, 'history']);
+            Route::get('/earnings/export', [ExportController::class, 'earningsPdf']);
             Route::get('/errands/history', [RunnerErrandHistoryController::class, 'index']);
             Route::post('/payout/request', [RunnerPayoutController::class, 'requestPayout']);
+
+            // Runner toggles shopping-checklist ticks while shopping.
+            Route::patch('/errand/{id}/shopping-items', [ShoppingChecklistController::class, 'update']);
+            // Demand heatmap + peak-hours (cached aggregates).
+            Route::get('/heatmap', [HeatmapController::class, 'heatmap']);
+            Route::get('/peak-hours', [HeatmapController::class, 'peakHours']);
 
             // Runner-side review of the customer. The controller itself is
             // role-agnostic (see ReviewController::store) — gating is done
@@ -172,6 +193,7 @@ Route::prefix('v1')->group(function () {
             Route::put('/methods/{id}/default', [PaymentMethodController::class, 'setDefault']);
             Route::get('/history', [PaymentHistoryController::class, 'index']);
             Route::get('/{id}/receipt', [PaymentHistoryController::class, 'receipt']);
+            Route::get('/{id}/receipt/pdf', [ExportController::class, 'receiptPdf']);
         });
 
         // Wallet routes
@@ -189,6 +211,10 @@ Route::prefix('v1')->group(function () {
             Route::get('/unread-count', [NotificationController::class, 'unreadCount']);
             Route::put('/{id}/read', [NotificationController::class, 'markAsRead']);
             Route::put('/read-all', [NotificationController::class, 'markAllAsRead']);
+            Route::put('/{id}/archive', [NotificationController::class, 'archive']);
+            Route::put('/{id}/unarchive', [NotificationController::class, 'unarchive']);
+            Route::delete('/', [NotificationController::class, 'clearAll']);
+            Route::delete('/{id}', [NotificationController::class, 'destroy']);
         });
 
         // Config routes (cached for performance)
@@ -228,7 +254,21 @@ Route::prefix('v1')->group(function () {
             ]);
         });
 
-        // Support report
+        // Browse currently-valid, publicly-listable promo codes.
+        Route::get('/promos', [PromoController::class, 'index']);
+
+        // Live-support tickets (threaded successor to /support/report below).
+        Route::prefix('support')->group(function () {
+            Route::get('/tickets', [SupportController::class, 'index']);
+            Route::post('/tickets', [SupportController::class, 'store'])->middleware('throttle:15,1');
+            Route::get('/tickets/{id}', [SupportController::class, 'show'])
+                ->where('id', '[0-9a-fA-F-]{36}');
+            Route::post('/tickets/{id}/messages', [SupportController::class, 'postMessage'])
+                ->where('id', '[0-9a-fA-F-]{36}')
+                ->middleware('throttle:60,1');
+        });
+
+        // Support report (legacy one-shot dispute intake — kept for back-compat)
         Route::post('/support/report', function (\Illuminate\Http\Request $request) {
             $validated = $request->validate([
                 'booking_id' => ['nullable', 'uuid', 'exists:bookings,id'],

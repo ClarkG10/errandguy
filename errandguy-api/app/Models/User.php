@@ -4,6 +4,8 @@ namespace App\Models;
 
 use Illuminate\Database\Eloquent\Concerns\HasUuids;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
+use App\Services\ReferralService;
+use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Database\Eloquent\Relations\HasOne;
 use Illuminate\Database\Eloquent\SoftDeletes;
@@ -35,6 +37,8 @@ class User extends Authenticatable
         'avg_rating',
         'total_ratings',
         'last_active_at',
+        'referral_code',
+        'referred_by',
     ];
 
     protected $hidden = [
@@ -54,6 +58,17 @@ class User extends Authenticatable
             'last_active_at' => 'datetime',
             'deleted_at' => 'datetime',
         ];
+    }
+
+    protected static function booted(): void
+    {
+        // Every user gets a unique referral code at creation time so the
+        // referral program works without a backfill step for new accounts.
+        static::creating(function (User $user) {
+            if (empty($user->referral_code)) {
+                $user->referral_code = app(ReferralService::class)->generateCode();
+            }
+        });
     }
 
     public function getAuthPassword(): string
@@ -104,6 +119,22 @@ class User extends Authenticatable
     public function reviews(): HasMany
     {
         return $this->hasMany(Review::class, 'reviewee_id');
+    }
+
+    /**
+     * Referrals where this user is the referrer (people they invited).
+     */
+    public function referralsMade(): HasMany
+    {
+        return $this->hasMany(Referral::class, 'referrer_id');
+    }
+
+    /**
+     * The user who referred this user, if any.
+     */
+    public function referredBy(): BelongsTo
+    {
+        return $this->belongsTo(User::class, 'referred_by');
     }
 
     public function scopeActive($query)

@@ -155,6 +155,18 @@ class BookingController extends Controller
             'special_instructions' => $validated['special_instructions'] ?? null,
             'estimated_item_value' => $validated['estimated_item_value'] ?? null,
             'shopping_budget' => $validated['shopping_budget'] ?? null,
+            // Persist a shopping checklist supplied at create time. Items arrive
+            // as {name, qty}; normalize to the stored shape (server-assigned id,
+            // untickable at creation) so the runner can tick them later.
+            'shopping_items' => isset($validated['shopping_items'])
+                ? array_map(fn ($it) => [
+                    'id' => (string) \Illuminate\Support\Str::uuid(),
+                    'name' => $it['name'],
+                    'qty' => $it['qty'] ?? 1,
+                    'checked' => false,
+                    'checked_at' => null,
+                ], $validated['shopping_items'])
+                : null,
             'schedule_type' => $validated['schedule_type'],
             'scheduled_at' => $validated['scheduled_at'] ?? null,
             'pricing_mode' => $validated['pricing_mode'],

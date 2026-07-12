@@ -23,6 +23,7 @@ class Notification extends Model
         'type',
         'data',
         'is_read',
+        'archived_at',
     ];
 
     protected function casts(): array
@@ -31,6 +32,7 @@ class Notification extends Model
             'data' => 'array',
             'is_read' => 'boolean',
             'created_at' => 'datetime',
+            'archived_at' => 'datetime',
         ];
     }
 
@@ -42,5 +44,15 @@ class Notification extends Model
     public function scopeUnread($query)
     {
         return $query->where('is_read', false);
+    }
+
+    public function scopeActive($query)
+    {
+        return $query->whereNull('archived_at');
+    }
+
+    public function scopeArchived($query)
+    {
+        return $query->whereNotNull('archived_at');
     }
 }

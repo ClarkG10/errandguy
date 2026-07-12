@@ -7,6 +7,7 @@ use App\Events\BookingCreated;
 use App\Events\BookingStatusChanged;
 use App\Events\RideDurationAlert;
 use App\Events\RouteDeviationAlert;
+use App\Listeners\RewardReferralOnFirstBooking;
 use App\Listeners\SendBookingCancelledNotification;
 use App\Listeners\SendBookingCreatedNotification;
 use App\Listeners\SendBookingStatusNotification;
@@ -25,6 +26,7 @@ class AppServiceProvider extends ServiceProvider
     {
         Event::listen(BookingCreated::class, SendBookingCreatedNotification::class);
         Event::listen(BookingStatusChanged::class, SendBookingStatusNotification::class);
+        Event::listen(BookingStatusChanged::class, RewardReferralOnFirstBooking::class);
         Event::listen(BookingCancelled::class, SendBookingCancelledNotification::class);
         Event::listen(RideDurationAlert::class, [SendSafetyAlertNotification::class, 'handleDurationAlert']);
         Event::listen(RouteDeviationAlert::class, [SendSafetyAlertNotification::class, 'handleRouteDeviation']);

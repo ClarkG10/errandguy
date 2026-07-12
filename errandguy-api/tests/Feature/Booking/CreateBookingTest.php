@@ -109,6 +109,38 @@ class CreateBookingTest extends TestCase
         ]);
     }
 
+    public function test_booking_scheduled_beyond_30_days_is_rejected(): void
+    {
+        Bus::fake();
+
+        // Regression: Carbon 3's diffInDays() is signed, so the old
+        // `diffInDays(now()) > 30` guard never fired for future dates and
+        // far-out bookings slipped through. A date >30 days out must 422.
+        $data = array_merge($this->validBookingData, [
+            'schedule_type' => 'scheduled',
+            'scheduled_at' => now()->addDays(40)->toIso8601String(),
+        ]);
+
+        $this->actingAs($this->customer)
+            ->postJson('/api/v1/bookings', $data)
+            ->assertStatus(422)
+            ->assertJsonValidationErrors(['scheduled_at']);
+    }
+
+    public function test_booking_scheduled_within_30_days_is_accepted(): void
+    {
+        Bus::fake();
+
+        $data = array_merge($this->validBookingData, [
+            'schedule_type' => 'scheduled',
+            'scheduled_at' => now()->addDays(10)->toIso8601String(),
+        ]);
+
+        $this->actingAs($this->customer)
+            ->postJson('/api/v1/bookings', $data)
+            ->assertStatus(201);
+    }
+
     public function test_booking_number_is_generated(): void
     {
         Bus::fake();

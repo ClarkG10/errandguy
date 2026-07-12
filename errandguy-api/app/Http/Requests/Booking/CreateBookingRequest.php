@@ -78,6 +78,13 @@ class CreateBookingRequest extends FormRequest
                 'min:1',
                 'max:50000',
             ],
+            // Optional itemized shopping checklist the customer attaches up
+            // front (food/grocery/purchase). Each element only needs a name;
+            // qty defaults to 1. checked/checked_at are runner-owned and are
+            // normalized server-side, so they are not required here.
+            'shopping_items' => ['nullable', 'array', 'max:100'],
+            'shopping_items.*.name' => ['required_with:shopping_items', 'string', 'max:200'],
+            'shopping_items.*.qty' => ['nullable', 'integer', 'min:1', 'max:999'],
             'schedule_type' => ['required', Rule::in(['now', 'scheduled'])],
             'scheduled_at' => ['required_if:schedule_type,scheduled', 'nullable', 'date', 'after:+30 minutes'],
             'pricing_mode' => ['required', Rule::in(['fixed', 'negotiate'])],
@@ -141,7 +148,11 @@ class CreateBookingRequest extends FormRequest
             if ($this->input('schedule_type') === 'scheduled' && $this->input('scheduled_at')) {
                 try {
                     $when = \Carbon\Carbon::parse($this->input('scheduled_at'));
-                    if ($when->diffInDays(now()) > 30) {
+                    // NB: Carbon 3's diffInDays() is SIGNED — for a future
+                    // date $when->diffInDays(now()) is negative, so the old
+                    // `> 30` check never fired and far-future bookings slipped
+                    // through. Compare against the cap directly instead.
+                    if ($when->gt(now()->addDays(30))) {
                         $validator->errors()->add(
                             'scheduled_at',
                             'Bookings can only be scheduled up to 30 days in advance.',
