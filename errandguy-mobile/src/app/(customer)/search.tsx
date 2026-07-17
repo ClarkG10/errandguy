@@ -40,6 +40,7 @@ import { Input, type InputHandle } from '../../components/ui/Input';
 import { Card } from '../../components/ui/Card';
 import { Avatar } from '../../components/ui/Avatar';
 import { EmptyState } from '../../components/ui/EmptyState';
+import { Illustration } from '../../components/ui/Illustration';
 import { ErrorState } from '../../components/ui/ErrorState';
 import { Skeleton, SkeletonCircle } from '../../components/ui/Skeleton';
 import { GradientHeader } from '../../components/ui/GradientHeader';
@@ -656,7 +657,7 @@ export default function SearchScreen() {
       ) : sections.length === 0 ? (
         // ── No matches anywhere ──
         <EmptyState
-          icon={SearchX}
+          illustration={<Illustration name="empty-search" size={168} />}
           title="No results"
           description={`Nothing matches “${debouncedQ}”. Try a booking number, name, or place.`}
           actionLabel="Clear search"

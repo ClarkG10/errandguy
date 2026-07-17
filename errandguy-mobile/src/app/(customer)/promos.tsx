@@ -7,6 +7,7 @@ import { Ticket, Copy, Clock } from 'lucide-react-native';
 import { GradientHeader } from '../../components/ui/GradientHeader';
 import { Card } from '../../components/ui/Card';
 import { EmptyState } from '../../components/ui/EmptyState';
+import { Illustration } from '../../components/ui/Illustration';
 import { ErrorState } from '../../components/ui/ErrorState';
 import { Skeleton } from '../../components/ui/Skeleton';
 import { BrandRefreshControl } from '../../components/ui/BrandRefreshControl';
@@ -144,7 +145,7 @@ export default function PromosScreen() {
           />
         ) : promos.length === 0 ? (
           <EmptyState
-            icon={Ticket}
+            illustration={<Illustration name="empty-promos" size={168} />}
             title="No promos right now"
             description="Check back soon — new offers are added regularly."
           />

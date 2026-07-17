@@ -29,6 +29,7 @@ import { useQuery } from '../../../hooks/useQuery';
 import { CacheTTL } from '../../../services/cache.service';
 import { Card } from '../../../components/ui/Card';
 import { EmptyState } from '../../../components/ui/EmptyState';
+import { Illustration } from '../../../components/ui/Illustration';
 import { ErrorState } from '../../../components/ui/ErrorState';
 import { GradientHeader } from '../../../components/ui/GradientHeader';
 import { SyncIndicator } from '../../../components/ui/SyncIndicator';
@@ -572,7 +573,7 @@ export default function WalletScreen() {
             />
           ) : (
             <EmptyState
-              icon={Wallet}
+              illustration={<Illustration name="empty-wallet" size={168} />}
               title="No transactions yet"
               description="Your wallet transaction history will appear here"
             />

@@ -15,6 +15,7 @@ import { CacheTTL } from '../../../services/cache.service';
 import { useAuthStore } from '../../../stores/authStore';
 import { useChatStore } from '../../../stores/chatStore';
 import { EmptyState } from '../../../components/ui/EmptyState';
+import { Illustration } from '../../../components/ui/Illustration';
 import { ErrorState } from '../../../components/ui/ErrorState';
 import { GradientHeader } from '../../../components/ui/GradientHeader';
 import { SyncIndicator } from '../../../components/ui/SyncIndicator';
@@ -359,7 +360,7 @@ export default function ActivityScreen() {
             // Bookings exist, the search just matched none of them —
             // distinct from the genuine no-bookings empty state.
             <EmptyState
-              icon={SearchX}
+              illustration={<Illustration name="empty-search" size={168} />}
               title="No matches"
               description={`Nothing matches “${search.trim()}” in this view`}
               actionLabel="Clear search"
@@ -371,13 +372,13 @@ export default function ActivityScreen() {
             // so that tab describes what lands here instead.
             filter === 'cancelled' ? (
               <EmptyState
-                icon={ClipboardList}
+                illustration={<Illustration name="empty-bookings" size={168} />}
                 title="No cancelled errands"
                 description="Errands you cancel will show up here"
               />
             ) : filter === 'completed' ? (
               <EmptyState
-                icon={ClipboardList}
+                illustration={<Illustration name="empty-bookings" size={168} />}
                 title="No completed errands yet"
                 description="Errands you finish will show up here"
                 actionLabel="Book an Errand"
@@ -385,7 +386,7 @@ export default function ActivityScreen() {
               />
             ) : (
               <EmptyState
-                icon={ClipboardList}
+                illustration={<Illustration name="empty-bookings" size={168} />}
                 title="No errands yet"
                 description="Book your first errand to get started"
                 actionLabel="Book an Errand"

@@ -38,6 +38,7 @@ import { useQuery } from '../../../hooks/useQuery';
 import { useReducedMotion } from '../../../hooks/useReducedMotion';
 import { CacheTTL } from '../../../services/cache.service';
 import { EmptyState } from '../../../components/ui/EmptyState';
+import { Illustration } from '../../../components/ui/Illustration';
 import { ErrorState } from '../../../components/ui/ErrorState';
 import { Skeleton, SkeletonCircle } from '../../../components/ui/Skeleton';
 import { formatRelativeTime } from '../../../utils/formatDate';
@@ -874,7 +875,7 @@ export default function NotificationsScreen() {
           ) : category !== 'all' && notifications.length > 0 ? (
             // The inbox has items, just none in this category.
             <EmptyState
-              icon={Bell}
+              illustration={<Illustration name="empty-notifications" size={168} />}
               title="Nothing here"
               description={`No ${CATEGORIES.find((c) => c.key === category)?.label.toLowerCase() ?? ''} notifications yet`}
               secondaryActionLabel="Show all"
@@ -882,7 +883,7 @@ export default function NotificationsScreen() {
             />
           ) : (
             <EmptyState
-              icon={Bell}
+              illustration={<Illustration name="empty-notifications" size={168} />}
               title="No notifications"
               description="You'll see updates about your errands here"
             />

@@ -3,11 +3,15 @@ import { View, Text, StyleSheet, type ViewStyle } from 'react-native';
 import { CloudOff, RefreshCw } from 'lucide-react-native';
 import type { LucideIcon } from 'lucide-react-native';
 import { Button } from './Button';
+import { Illustration } from './Illustration';
 import { LightColors } from '../../constants/colors';
 
 interface ErrorStateProps {
   /** Lucide icon. Defaults to CloudOff (most load failures are connectivity). */
   icon?: LucideIcon;
+  /** Full-layout illustration. Defaults to the error-generic artwork;
+   *  pass null to fall back to the halo + icon. Ignored in compact mode. */
+  illustration?: React.ReactNode | null;
   title?: string;
   description?: string;
   /** When provided, renders a Retry button that invokes this callback. */
@@ -36,6 +40,7 @@ interface ErrorStateProps {
  */
 export function ErrorState({
   icon: Icon = CloudOff,
+  illustration = <Illustration name="error-generic" size={168} />,
   title = "Couldn't load this",
   description = 'Check your internet connection and try again.',
   onRetry,
@@ -74,12 +79,16 @@ export function ErrorState({
 
   return (
     <View style={[s.wrap, style]} testID={testID}>
-      {/* Outer halo — same depth cue as EmptyState, danger-tinted. */}
-      <View style={s.halo}>
-        <View style={s.disc}>
-          <Icon size={30} color={LightColors.danger} strokeWidth={1.9} />
+      {illustration ? (
+        <View style={{ marginBottom: 2 }}>{illustration}</View>
+      ) : (
+        // Fallback: halo + icon when illustration is explicitly nulled.
+        <View style={s.halo}>
+          <View style={s.disc}>
+            <Icon size={30} color={LightColors.danger} strokeWidth={1.9} />
+          </View>
         </View>
-      </View>
+      )}
       <Text style={s.title}>{title}</Text>
       {description ? <Text style={s.description}>{description}</Text> : null}
       {onRetry ? (

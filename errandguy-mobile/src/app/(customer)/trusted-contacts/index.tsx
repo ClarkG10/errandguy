@@ -28,6 +28,7 @@ import { Card } from '../../../components/ui/Card';
 import { Input, type InputHandle } from '../../../components/ui/Input';
 import { Badge } from '../../../components/ui/Badge';
 import { EmptyState } from '../../../components/ui/EmptyState';
+import { Illustration } from '../../../components/ui/Illustration';
 import { ErrorState } from '../../../components/ui/ErrorState';
 import { ContactIllustration } from '../../../components/auth/OnboardingIllustrations';
 import { ContactsSkeleton } from '../../../components/ui/Skeleton';
@@ -504,7 +505,7 @@ export default function TrustedContactsScreen() {
             />
           ) : (
             <EmptyState
-              illustration={<ContactIllustration size={180} />}
+              illustration={<Illustration name="empty-contacts" size={180} />}
               title="No trusted contacts"
               description="Add people you trust to be notified during emergencies"
             />

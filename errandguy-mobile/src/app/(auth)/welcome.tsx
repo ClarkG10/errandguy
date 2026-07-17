@@ -15,11 +15,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as Haptics from 'expo-haptics';
 import { MotiView } from 'moti';
 import { OnboardingSlide } from '../../components/auth/OnboardingSlide';
-import {
-  BookErrandIllustration,
-  TrackingIllustration,
-  SafetyIllustration,
-} from '../../components/auth/OnboardingIllustrations';
+import { Illustration } from '../../components/ui/Illustration';
 import { Button } from '../../components/ui/Button';
 import { LightColors } from '../../constants/colors';
 import { useReducedMotion } from '../../hooks/useReducedMotion';
@@ -45,7 +41,7 @@ const slides = [
     title: 'Book any errand',
     description:
       'Groceries, medicine, food, documents — book it in a tap and a verified runner takes care of the rest.',
-    Illustration: BookErrandIllustration,
+    image: 'onboarding-book' as const,
   },
   {
     id: '2',
@@ -53,7 +49,7 @@ const slides = [
     title: 'Real-time tracking',
     description:
       'Watch your runner move on a live map, every step of the way. No guessing, no waiting in the dark.',
-    Illustration: TrackingIllustration,
+    image: 'onboarding-track' as const,
   },
   {
     id: '3',
@@ -61,7 +57,7 @@ const slides = [
     title: 'Safe & secure',
     description:
       'Verified runners, cashless payments, SOS alerts and trip sharing — every errand has your back.',
-    Illustration: SafetyIllustration,
+    image: 'onboarding-safety' as const,
   },
 ];
 
@@ -138,7 +134,7 @@ export default function WelcomeScreen() {
           extraData={activeIndex}
           renderItem={({ item, index }) => (
             <OnboardingSlide
-              illustration={<item.Illustration size={heroSize} />}
+              illustration={<Illustration name={item.image} size={heroSize} />}
               eyebrow={item.eyebrow}
               title={item.title}
               description={item.description}

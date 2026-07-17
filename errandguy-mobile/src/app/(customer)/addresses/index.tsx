@@ -9,6 +9,7 @@ import { Card } from '../../../components/ui/Card';
 import { Input } from '../../../components/ui/Input';
 import { ErrorState } from '../../../components/ui/ErrorState';
 import { EmptyState } from '../../../components/ui/EmptyState';
+import { Illustration } from '../../../components/ui/Illustration';
 import { ConfirmModal } from '../../../components/ui/ConfirmModal';
 import { GradientHeader } from '../../../components/ui/GradientHeader';
 import { BrandRefreshControl } from '../../../components/ui/BrandRefreshControl';
@@ -599,7 +600,7 @@ export default function AddressesScreen() {
           {/* Address List */}
           {!loading && addresses.length === 0 && !showAdd ? (
             <EmptyState
-              illustration={<LocationIllustration size={180} />}
+              illustration={<Illustration name="empty-addresses" size={180} />}
               title="No saved addresses"
               description="Save the places you go most for faster booking."
               actionLabel="Add an address"
