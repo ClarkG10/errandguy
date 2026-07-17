@@ -13,8 +13,8 @@
     "postinstall": "npx patch-package && node scripts/fix-material-symbols.js"
   },
   "dependencies": {
-    "@expo-google-fonts/inter": "^0.4.2",
-    "@expo-google-fonts/quicksand": "^0.4.1",
+    "@expo-google-fonts/google-sans": "^0.4.0",
+    "@expo-google-fonts/montserrat": "^0.4.2",
     "@expo/metro-runtime": "~55.0.9",
     "@expo/vector-icons": "^15.1.1",
     "@maplibre/maplibre-react-native": "^11.2.1",

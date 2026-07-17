@@ -1,18 +1,12 @@
 import { useEffect } from 'react';
 import { Slot, useRouter, useSegments } from 'expo-router';
 import * as SplashScreen from 'expo-splash-screen';
-import {
-  useFonts,
-  Inter_400Regular,
-  Inter_500Medium,
-  Inter_600SemiBold,
-} from '@expo-google-fonts/inter';
-import {
-  Quicksand_400Regular,
-  Quicksand_500Medium,
-  Quicksand_600SemiBold,
-  Quicksand_700Bold,
-} from '@expo-google-fonts/quicksand';
+import { useFonts } from 'expo-font';
+import { GoogleSans_400Regular } from '@expo-google-fonts/google-sans/400Regular';
+import { GoogleSans_500Medium } from '@expo-google-fonts/google-sans/500Medium';
+import { GoogleSans_600SemiBold } from '@expo-google-fonts/google-sans/600SemiBold';
+import { GoogleSans_700Bold } from '@expo-google-fonts/google-sans/700Bold';
+import { Montserrat_300Light } from '@expo-google-fonts/montserrat/300Light';
 import { Ionicons } from '@expo/vector-icons';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
@@ -52,11 +46,8 @@ LogBox.ignoreLogs([
 
 // Google Maps API key is configured via EXPO_PUBLIC_GOOGLE_MAPS_KEY in app.json/eas.json
 
-// Render all UI text with the platform system typeface — SF Pro on iOS,
-// Roboto on Android — by remapping the Quicksand/Inter family names to
-// `System` + an explicit fontWeight. This gives cross-platform sizing parity
-// (Quicksand rendered noticeably larger/heavier than SF Pro, which is why
-// Android buttons looked oversized). See utils/systemFont.ts.
+// Render all UI text in Google Sans by remapping the legacy Quicksand/Inter
+// family aliases to the loaded GoogleSans weights. See utils/systemFont.ts.
 applySystemFont();
 
 // Lock font scaling globally so the app renders at the same physical
@@ -107,13 +98,11 @@ SplashScreen.preventAutoHideAsync();
 
 export default function RootLayout() {
   const [fontsLoaded] = useFonts({
-    Inter_400Regular,
-    Inter_500Medium,
-    Inter_600SemiBold,
-    Quicksand_400Regular,
-    Quicksand_500Medium,
-    Quicksand_600SemiBold,
-    Quicksand_700Bold,
+    GoogleSans_400Regular,
+    GoogleSans_500Medium,
+    GoogleSans_600SemiBold,
+    GoogleSans_700Bold,
+    Montserrat_300Light,
     // Preload the Ionicons glyph font used by the tab bars so the icons
     // paint on first render instead of flashing in a frame later.
     ...Ionicons.font,
