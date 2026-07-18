@@ -22,6 +22,7 @@ import { Button } from '../../../components/ui/Button';
 import { Input } from '../../../components/ui/Input';
 import { ErrorState } from '../../../components/ui/ErrorState';
 import { SuccessCheck } from '../../../components/ui/SuccessCheck';
+import { Illustration } from '../../../components/ui/Illustration';
 import { Skeleton } from '../../../components/ui/Skeleton';
 import { formatDateTime } from '../../../utils/formatDate';
 import { LightColors } from '../../../constants/colors';
@@ -207,9 +208,12 @@ export default function RateScreen() {
           </Card>
         ) : booking ? (
           <Card className="mx-5 mb-6">
-            <Text className="text-base font-montserrat-bold text-textPrimary mb-3">
-              Receipt
-            </Text>
+            <View className="flex-row items-center gap-2 mb-3">
+              <Illustration name="3d-receipt" size={26} />
+              <Text className="text-base font-montserrat-bold text-textPrimary">
+                Receipt
+              </Text>
+            </View>
             <PriceBreakdown
               items={priceItems}
               total={booking.total_amount}
@@ -346,8 +350,9 @@ export default function RateScreen() {
         // accessibilityViewIsModal keeps SR focus off the visually
         // covered Submit/Skip controls while the celebration plays.
         <View style={styles.successOverlay} accessibilityViewIsModal>
+          <Illustration name="success-rated" size={168} style={{ marginBottom: 8 }} />
           <SuccessCheck
-            size={96}
+            size={72}
             celebrate
             // Small extra beat after the animation settles so the copy is
             // actually readable before the screen swaps away.

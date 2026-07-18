@@ -9,7 +9,7 @@ import {
 } from 'react-native';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import * as Haptics from 'expo-haptics';
-import { SearchX, XCircle } from 'lucide-react-native';
+import { Illustration } from '../../../components/ui/Illustration';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useBookingStore } from '../../../stores/bookingStore';
@@ -570,9 +570,11 @@ export default function ConfirmScreen() {
 
           {state === 'matched' && (
             <>
-              {/* SuccessCheck fires its own success haptic on mount. */}
-              <View style={{ alignSelf: 'center' }}>
-                <SuccessCheck celebrate size={88} />
+              {/* Branded match illustration over the animated check —
+                  SuccessCheck still fires the success haptic on mount. */}
+              <View style={{ alignSelf: 'center', alignItems: 'center' }}>
+                <Illustration name="success-matched" size={148} style={{ marginBottom: 4 }} />
+                <SuccessCheck celebrate size={72} />
               </View>
               <Text className="text-xl font-montserrat-bold text-textPrimary mt-4 text-center">
                 Runner Found!
@@ -585,9 +587,10 @@ export default function ConfirmScreen() {
 
           {state === 'no_runner' && (
             <>
-              {/* SearchX, not XCircle — "no match found" and "cancelled"
-                  must be distinguishable by glyph, not color alone. */}
-              <SearchX size={48} color={LightColors.warning} style={{ alignSelf: 'center' }} />
+              {/* Distinct "no runner" scene — "no match found" and
+                  "cancelled" stay distinguishable by illustration, not
+                  color alone. */}
+              <Illustration name="error-no-runner" size={150} style={{ alignSelf: 'center' }} />
               <Text className="text-xl font-montserrat-bold text-textPrimary mt-4 text-center">
                 No runners available
               </Text>
@@ -634,7 +637,7 @@ export default function ConfirmScreen() {
 
           {state === 'cancelled' && (
             <>
-              <XCircle size={48} color={LightColors.danger} style={{ alignSelf: 'center' }} />
+              <Illustration name="booking-cancelled" size={150} style={{ alignSelf: 'center' }} />
               <Text className="text-xl font-montserrat-bold text-textPrimary mt-4 text-center">
                 Booking Cancelled
               </Text>
