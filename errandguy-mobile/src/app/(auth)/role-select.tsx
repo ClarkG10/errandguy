@@ -6,6 +6,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { MotiView } from 'moti';
 import { Package, Bike, Check } from 'lucide-react-native';
 import { Button } from '../../components/ui/Button';
+import { Illustration } from '../../components/ui/Illustration';
 import { useAuth } from '../../hooks/useAuth';
 import { useReducedMotion } from '../../hooks/useReducedMotion';
 import { userService } from '../../services/user.service';
@@ -85,6 +86,11 @@ export default function RoleSelectScreen() {
           alignSelf: 'center',
         }}
       >
+        <Illustration
+          name="role-select"
+          size={200}
+          style={{ alignSelf: 'center', marginBottom: 4 }}
+        />
         <Text
           className="text-[11px] font-montserrat-bold uppercase text-primary mb-3 text-center"
           style={{ letterSpacing: 1.8 }}

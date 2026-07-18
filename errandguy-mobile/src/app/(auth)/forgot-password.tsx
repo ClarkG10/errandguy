@@ -15,6 +15,7 @@ import { useForm, Controller } from 'react-hook-form';
 import { ChevronLeft } from 'lucide-react-native';
 import { Input } from '../../components/ui/Input';
 import { Button } from '../../components/ui/Button';
+import { Illustration } from '../../components/ui/Illustration';
 import { SuccessCheck } from '../../components/ui/SuccessCheck';
 import { useCountdown } from '../../hooks/useCountdown';
 import { useReducedMotion } from '../../hooks/useReducedMotion';
@@ -203,6 +204,11 @@ export default function ForgotPasswordScreen() {
             keyboardShouldPersistTaps="handled"
             showsVerticalScrollIndicator={false}
           >
+            <Illustration
+              name="auth-forgot"
+              size={148}
+              style={{ alignSelf: 'center', marginBottom: 8 }}
+            />
             <Text
               accessibilityRole="header"
               className="text-[28px] font-montserrat-bold text-ink"

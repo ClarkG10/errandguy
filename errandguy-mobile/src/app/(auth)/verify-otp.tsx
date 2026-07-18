@@ -13,6 +13,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { ChevronLeft } from 'lucide-react-native';
 import { OTPInput } from '../../components/ui/OTPInput';
 import { Button } from '../../components/ui/Button';
+import { Illustration } from '../../components/ui/Illustration';
 import { useCountdown } from '../../hooks/useCountdown';
 import { authService } from '../../services/auth.service';
 import { useAuthStore } from '../../stores/authStore';
@@ -160,6 +161,11 @@ export default function VerifyOTPScreen() {
           </Pressable>
 
           <View className="px-6">
+            <Illustration
+              name="auth-otp"
+              size={148}
+              style={{ alignSelf: 'center', marginBottom: 8 }}
+            />
             <Text
               className="text-[11px] font-montserrat-bold uppercase text-primary mb-3"
               style={{ letterSpacing: 1.8 }}

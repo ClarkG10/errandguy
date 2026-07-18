@@ -3,6 +3,7 @@ import { View, Text, ScrollView, Pressable, Share } from 'react-native';
 import * as Haptics from 'expo-haptics';
 import * as Clipboard from 'expo-clipboard';
 import { Gift, Copy, Share2, Users, BadgeCheck, Coins } from 'lucide-react-native';
+import { Illustration } from '../../components/ui/Illustration';
 import type { LucideIcon } from 'lucide-react-native';
 import { GradientHeader } from '../../components/ui/GradientHeader';
 import { Card } from '../../components/ui/Card';
@@ -159,9 +160,7 @@ export default function ReferralScreen() {
           >
             {/* Hero — the code, front and centre, with copy + share. */}
             <Card tone="tinted" padding="lg" className="items-center mb-6">
-              <View className="w-14 h-14 rounded-full bg-primary items-center justify-center mb-3">
-                <Gift size={26} color={LightColors.textInverse} strokeWidth={2} />
-              </View>
+              <Illustration name="3d-gift" size={92} style={{ marginBottom: 6 }} />
               <Text className="text-[15px] font-montserrat-bold text-textPrimary text-center">
                 Give credit, get credit
               </Text>
