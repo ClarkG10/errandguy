@@ -475,6 +475,11 @@ export default function TrustedContactsScreen() {
         }
       />
 
+      {/* Safety hero */}
+      <View className="items-center pt-4 pb-1">
+        <Illustration name="3d-shield" size={72} />
+      </View>
+
       {/* Info banner */}
       <View className="flex-row items-start gap-2 mx-5 mb-4 p-3 bg-primaryLight rounded-xl">
         <Star

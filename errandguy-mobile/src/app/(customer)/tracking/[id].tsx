@@ -2262,18 +2262,29 @@ export default function TrackingScreen() {
                the one frame before the completed→rate replace is coherent. */
             <>
               <View className="items-center mt-2 mb-6">
-                <View
-                  style={{
-                    width: 56,
-                    height: 56,
-                    borderRadius: 28,
-                    backgroundColor: receiptTone.bg,
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                  }}
-                >
-                  <receiptTone.Icon size={28} color={receiptTone.fg} strokeWidth={2.2} />
-                </View>
+                {/* The two recoverable/terminal error outcomes lead with a
+                    generated illustration instead of the small tone glyph —
+                    delivered/completed keep the compact circle. */}
+                {booking.status === 'no_runner' || booking.status === 'cancelled' ? (
+                  <Illustration
+                    name={booking.status === 'cancelled' ? 'booking-cancelled' : 'error-no-runner'}
+                    size={150}
+                    style={{ marginBottom: 4 }}
+                  />
+                ) : (
+                  <View
+                    style={{
+                      width: 56,
+                      height: 56,
+                      borderRadius: 28,
+                      backgroundColor: receiptTone.bg,
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                    }}
+                  >
+                    <receiptTone.Icon size={28} color={receiptTone.fg} strokeWidth={2.2} />
+                  </View>
+                )}
                 <Text
                   className="text-[26px] font-montserrat-bold text-textPrimary text-center mt-3"
                   maxFontSizeMultiplier={1.2}

@@ -374,9 +374,18 @@ export default function EarningsScreen() {
               marginBottom: 16,
               borderRadius: 24,
               padding: 24,
+              overflow: 'hidden',
               ...Elevation.md,
             }}
           >
+            {/* Subtle 3D coins accent — decorative only, tucked into the
+                top-right corner behind the left-aligned numerals so it
+                never competes with or crowds the total-earnings figure. */}
+            <Illustration
+              name="3d-coins"
+              size={64}
+              style={{ position: 'absolute', top: 10, right: 14, opacity: 0.9 }}
+            />
             <Text
               className="text-xs font-montserrat-semi text-white/90 uppercase"
               style={{ letterSpacing: 1.2 }}

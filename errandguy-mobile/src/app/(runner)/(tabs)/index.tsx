@@ -43,6 +43,7 @@ import { ActiveRunnerErrandCard } from '../../../components/runner/ActiveRunnerE
 import { Avatar } from '../../../components/ui/Avatar';
 import { Button } from '../../../components/ui/Button';
 import { ErrorState } from '../../../components/ui/ErrorState';
+import { Illustration } from '../../../components/ui/Illustration';
 import { useRunnerStore } from '../../../stores/runnerStore';
 import { useLocationStore } from '../../../stores/locationStore';
 import { ensureLocationPermission, getCurrentCoords } from '../../../utils/locationPermission';
@@ -864,6 +865,28 @@ export default function RunnerHomeScreen() {
                 router.push(`/(runner)/errand/${activeErrand.id}` as any)
               }
             />
+          </View>
+        )}
+
+        {/* Idle state — nothing in progress. A calm illustration fills the
+            area under the toggle: OFFLINE nudges the runner to go online,
+            ONLINE-with-no-offers reassures that we're listening. Only for
+            verified runners with no active errand (verification banner and
+            active-errand card take priority otherwise). */}
+        {canGoOnline && !activeErrand && (!isOnline || negotiateOffers.length === 0) && (
+          <View className="px-5 pt-8 items-center">
+            <Illustration
+              name={isOnline ? 'runner-no-jobs' : 'runner-offline'}
+              size={180}
+            />
+            <Text className="text-[15px] font-montserrat-bold text-textPrimary mt-4">
+              {isOnline ? 'Waiting for requests' : "You're offline"}
+            </Text>
+            <Text className="text-[12px] font-montserrat text-textSecondary mt-1 text-center px-6">
+              {isOnline
+                ? 'Sit tight — we’ll ping you the moment a nearby errand comes in.'
+                : 'Tap the power button above to start receiving errands.'}
+            </Text>
           </View>
         )}
 

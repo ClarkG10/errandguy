@@ -585,6 +585,11 @@ export default function PayoutScreen() {
           className="absolute inset-0 items-center justify-center"
           style={{ backgroundColor: `${LightColors.ink}80`, zIndex: 50 }}
         >
+          <Illustration
+            name="runner-payout-success"
+            size={180}
+            style={{ marginBottom: 8 }}
+          />
           <SuccessCheck onDone={() => setShowPayoutSuccess(false)} />
         </View>
       )}

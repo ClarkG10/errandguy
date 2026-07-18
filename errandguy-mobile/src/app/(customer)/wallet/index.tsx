@@ -338,6 +338,16 @@ export default function WalletScreen() {
           ...Elevation.primary,
         }}
       >
+        {/* Decorative 3D wallet — first child so it renders BEHIND the
+            balance text/buttons (text stays readable) and the card's
+            overflow:hidden clips its right edge into the corner. Subtle
+            ambient hero object beside the balance, not a focal element. */}
+        <Illustration
+          name="3d-wallet"
+          size={72}
+          style={{ position: 'absolute', top: 34, right: 10, opacity: 0.9 }}
+        />
+
         <View className="flex-row items-center justify-between mb-1">
           <View className="flex-row items-center">
             <Wallet size={14} color="rgba(255,255,255,0.7)" strokeWidth={2} />

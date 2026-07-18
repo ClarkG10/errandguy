@@ -17,6 +17,7 @@ import { EmptyState } from '../../../components/ui/EmptyState';
 import { ErrorState } from '../../../components/ui/ErrorState';
 import { ErrandTypeIcon } from '../../../components/ui/ErrandTypeIcon';
 import { BrandRefreshControl } from '../../../components/ui/BrandRefreshControl';
+import { Illustration } from '../../../components/ui/Illustration';
 import { formatCurrency } from '../../../utils/formatCurrency';
 import { LightColors, Elevation } from '../../../constants/colors';
 import { useResponsive } from '../../../constants/responsive';
@@ -191,13 +192,15 @@ export default function TypeSelectionScreen() {
   return (
     <View className="flex-1 bg-background">
       <GradientHeader title="What do you need?" showBack onBackPress={handleBackPress}>
-        <View className="px-5 -mt-2 pb-3">
+        <View className="px-5 -mt-2 pb-3 flex-row items-center justify-between">
           <Text
             className="text-[10px] font-montserrat-bold uppercase"
             style={{ letterSpacing: 1.4, color: LightColors.textSecondary }}
           >
             New errand · Step 1
           </Text>
+          {/* Small 3D parcel hero beside the heading — decorative only. */}
+          <Illustration name="3d-parcel" size={88} />
         </View>
       </GradientHeader>
 

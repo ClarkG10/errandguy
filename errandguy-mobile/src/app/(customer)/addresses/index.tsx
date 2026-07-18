@@ -371,6 +371,18 @@ export default function AddressesScreen() {
         }}
       />
 
+      {/* Subtle brand accent — a faint 3D location pin tucked into the
+          top-right of the header band. Purely decorative: pointer-events
+          are off so it never intercepts the "+ Add" action beneath it, and
+          the low opacity keeps it a whisper rather than a hero. Coexists
+          with the empty-state illustration further down the list. */}
+      <View
+        pointerEvents="none"
+        style={{ position: 'absolute', top: insets.top + 2, right: -12, opacity: 0.14, zIndex: 5 }}
+      >
+        <Illustration name="3d-pin" size={64} />
+      </View>
+
       {loading ? (
         <AddressSkeleton />
       ) : addressesQ.error && addresses.length === 0 ? (
