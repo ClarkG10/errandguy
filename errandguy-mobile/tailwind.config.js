@@ -107,19 +107,22 @@ module.exports = {
         dividerDark: '#1E293B',
       },
       fontFamily: {
-        // UI / friendly text — Quicksand. Aliased as `montserrat*` for
-        // historical reasons; safe to keep so existing classNames don't
-        // need touching.
+        // Main UI face — Google Sans. The `montserrat*` / `inter*` class
+        // names and the Quicksand_*/Inter_* family strings are historical;
+        // those family names are aliased to the loaded Google Sans TTFs at
+        // load time (see _layout.tsx useFonts), so every class below renders
+        // in Google Sans without renaming 400+ usages.
         montserrat: ['Quicksand_400Regular'],
         'montserrat-semi': ['Quicksand_500Medium'],
         'montserrat-bold': ['Quicksand_700Bold'],
-        // Data-dense / numeric / monospaced-feeling info — Inter. Use
-        // these for prices, currency, fare breakdowns, distances, ETAs,
-        // PIN codes, booking numbers, and any tabular display where
-        // legibility at small sizes matters more than warmth.
         inter: ['Inter_400Regular'],
         'inter-medium': ['Inter_500Medium'],
         'inter-semi': ['Inter_600SemiBold'],
+        'inter-bold': ['Inter_700Bold'],
+        // Light-weight accent role — actual Montserrat Light (the one true
+        // Montserrat in the app). Use `font-light` for oversized, airy
+        // display text where a thin weight reads as premium.
+        light: ['Montserrat_300Light'],
       },
       borderRadius: {
         // "Modern soft" scale (July 2026) — subtler corners app-wide.

@@ -21,7 +21,6 @@ import { useNotifications } from '../hooks/useNotifications';
 import { ToastProvider } from '../components/ui/ToastProvider';
 import { ApiActivityBar } from '../components/ui/ApiActivityBar';
 import { OfflineBanner } from '../components/ui/OfflineBanner';
-import { applySystemFont } from '../utils/systemFont';
 import { installErrorLogging } from '../utils/errorLogging';
 import '../../global.css';
 
@@ -46,9 +45,9 @@ LogBox.ignoreLogs([
 
 // Google Maps API key is configured via EXPO_PUBLIC_GOOGLE_MAPS_KEY in app.json/eas.json
 
-// Render all UI text in Google Sans by remapping the legacy Quicksand/Inter
-// family aliases to the loaded GoogleSans weights. See utils/systemFont.ts.
-applySystemFont();
+// UI text renders in Google Sans via load-time font aliasing in RootLayout's
+// useFonts() call — the loaded Google Sans TTFs are also registered under the
+// legacy Quicksand_*/Inter_* family names the codebase still references.
 
 // Lock font scaling globally so the app renders at the same physical
 // size on iOS and Android regardless of the OS-level "Display size" /
@@ -103,6 +102,21 @@ export default function RootLayout() {
     GoogleSans_600SemiBold,
     GoogleSans_700Bold,
     Montserrat_300Light,
+    // Alias the loaded Google Sans TTFs under the legacy Quicksand_* / Inter_*
+    // family names still used across the codebase — both via NativeWind
+    // `font-*` classes (tailwind.config maps them to Quicksand_*) and inline
+    // `fontFamily: 'Quicksand_700Bold'` StyleSheet literals. Registering the
+    // real font under those names makes RN's font resolver map them straight
+    // to Google Sans, so every screen renders in the intended face without a
+    // render-time remap. Same TTF pointed at multiple family names is fine.
+    Quicksand_400Regular: GoogleSans_400Regular,
+    Quicksand_500Medium: GoogleSans_500Medium,
+    Quicksand_600SemiBold: GoogleSans_600SemiBold,
+    Quicksand_700Bold: GoogleSans_700Bold,
+    Inter_400Regular: GoogleSans_400Regular,
+    Inter_500Medium: GoogleSans_500Medium,
+    Inter_600SemiBold: GoogleSans_600SemiBold,
+    Inter_700Bold: GoogleSans_700Bold,
     // Preload the Ionicons glyph font used by the tab bars so the icons
     // paint on first render instead of flashing in a frame later.
     ...Ionicons.font,
