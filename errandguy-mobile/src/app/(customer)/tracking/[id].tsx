@@ -60,6 +60,7 @@ import { RatingStars } from '../../../components/ui/RatingStars';
 import { StatusTimeline } from '../../../components/ui/StatusTimeline';
 import { JourneyBeads } from '../../../components/ui/JourneyBeads';
 import { Button } from '../../../components/ui/Button';
+import { Illustration } from '../../../components/ui/Illustration';
 import { ErrorState } from '../../../components/ui/ErrorState';
 import { ConfirmModal } from '../../../components/ui/ConfirmModal';
 import { ExpandableSheet } from '../../../components/ui/ExpandableSheet';
@@ -1010,6 +1011,7 @@ export default function TrackingScreen() {
     }
     return (
       <SafeAreaView className="flex-1 bg-background items-center justify-center px-8">
+        <Illustration name="error-not-found" size={180} style={{ marginBottom: 12 }} />
         <Text className="text-lg font-montserrat-semi text-textPrimary">
           Booking not found
         </Text>

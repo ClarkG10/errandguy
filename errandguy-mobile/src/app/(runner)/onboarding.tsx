@@ -23,6 +23,7 @@ import {
 } from 'lucide-react-native';
 import { Card } from '../../components/ui/Card';
 import { Button } from '../../components/ui/Button';
+import { Illustration } from '../../components/ui/Illustration';
 import { ConfirmModal } from '../../components/ui/ConfirmModal';
 import { ImagePickerModal } from '../../components/ui/ImagePickerModal';
 import { Skeleton } from '../../components/ui/Skeleton';
@@ -422,11 +423,7 @@ export default function RunnerOnboardingScreen() {
       >
         {/* Header */}
         <View className="items-center px-6 pt-4 pb-6">
-          <Image
-            source={LOGO}
-            className="w-28 h-28 mb-3"
-            resizeMode="contain"
-          />
+          <Illustration name="runner-verify" size={144} style={{ marginBottom: 8 }} />
           <Text className="text-2xl font-montserrat-bold text-textPrimary text-center">
             Complete Your Runner Profile
           </Text>
