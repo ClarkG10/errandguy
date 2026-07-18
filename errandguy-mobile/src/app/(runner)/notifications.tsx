@@ -28,6 +28,7 @@ import { GradientHeader } from '../../components/ui/GradientHeader';
 import { ConfirmModal } from '../../components/ui/ConfirmModal';
 import { BrandRefreshControl } from '../../components/ui/BrandRefreshControl';
 import { RunnerEmptyState } from '../../components/ui/RunnerEmptyState';
+import { Illustration } from '../../components/ui/Illustration';
 import { ErrorState } from '../../components/ui/ErrorState';
 import { Eyebrow } from '../../components/ui/Typography';
 import { Skeleton, SkeletonCircle } from '../../components/ui/Skeleton';
@@ -743,7 +744,7 @@ export default function RunnerNotificationsScreen() {
             />
           ) : (
             <RunnerEmptyState
-              icon={Bell}
+              illustration={<Illustration name="empty-notifications" size={168} />}
               eyebrow="Inbox clear"
               title="No notifications yet"
               description="Errand offers, payouts, and updates will land here as they happen."

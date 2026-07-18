@@ -10,6 +10,7 @@ import { ConfirmModal } from '../../../components/ui/ConfirmModal';
 import { Skeleton } from '../../../components/ui/Skeleton';
 import { ErrorState } from '../../../components/ui/ErrorState';
 import { RunnerEmptyState } from '../../../components/ui/RunnerEmptyState';
+import { Illustration } from '../../../components/ui/Illustration';
 import { SuccessCheck } from '../../../components/ui/SuccessCheck';
 import { useRunnerStore } from '../../../stores/runnerStore';
 import { useAuthStore } from '../../../stores/authStore';
@@ -381,7 +382,7 @@ export default function PayoutScreen() {
           ) : recentPayouts.length === 0 ? (
             <Card className="p-0">
               <RunnerEmptyState
-                icon={Wallet}
+                illustration={<Illustration name="runner-earnings-empty" size={168} />}
                 eyebrow="Payouts"
                 title="No payouts yet"
                 description={`Request your first payout once you've earned ${formatCurrency(MIN_PAYOUT)}.`}

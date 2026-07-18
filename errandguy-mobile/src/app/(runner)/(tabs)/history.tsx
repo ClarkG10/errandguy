@@ -14,6 +14,7 @@ import { BrandRefreshControl } from '../../../components/ui/BrandRefreshControl'
 import { GradientHeader } from '../../../components/ui/GradientHeader';
 import { SyncIndicator } from '../../../components/ui/SyncIndicator';
 import { RunnerEmptyState } from '../../../components/ui/RunnerEmptyState';
+import { Illustration } from '../../../components/ui/Illustration';
 import { ErrorState } from '../../../components/ui/ErrorState';
 import { runnerService } from '../../../services/runner.service';
 import { useQuery } from '../../../hooks/useQuery';
@@ -357,7 +358,7 @@ export default function HistoryScreen() {
             />
           ) : searchActive ? (
             <RunnerEmptyState
-              icon={SearchX}
+              illustration={<Illustration name="empty-search" size={168} />}
               eyebrow="No results"
               title={`No matches for “${debouncedSearch.trim()}”`}
               description="Try a booking number, address, or errand type."
@@ -366,7 +367,7 @@ export default function HistoryScreen() {
             />
           ) : (
             <RunnerEmptyState
-              icon={ClipboardList}
+              illustration={<Illustration name="runner-no-jobs" size={168} />}
               eyebrow="No history yet"
               title={
                 statusFilter === 'completed'

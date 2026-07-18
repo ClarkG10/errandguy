@@ -6,6 +6,8 @@ import { LightColors } from '../../constants/colors';
 
 interface RunnerEmptyStateProps {
   icon?: LucideIcon;
+  /** Optional illustration shown instead of the outlined glyph. */
+  illustration?: React.ReactNode;
   title: string;
   description?: string;
   /** Tiny eyebrow above the title — mirrors the work-board feel
@@ -38,6 +40,7 @@ interface RunnerEmptyStateProps {
  */
 export function RunnerEmptyState({
   icon: Icon,
+  illustration,
   title,
   description,
   eyebrow = 'Standing by',
@@ -48,7 +51,9 @@ export function RunnerEmptyState({
 }: RunnerEmptyStateProps) {
   return (
     <View style={s.wrap}>
-      {Icon ? (
+      {illustration ? (
+        <View style={{ marginBottom: 12 }}>{illustration}</View>
+      ) : Icon ? (
         <View style={s.glyph}>
           <Icon size={26} color={LightColors.textTertiary} strokeWidth={1.6} />
         </View>

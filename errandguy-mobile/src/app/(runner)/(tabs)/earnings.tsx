@@ -8,6 +8,7 @@ import * as FileSystem from 'expo-file-system/legacy';
 import { Card } from '../../../components/ui/Card';
 import { Button } from '../../../components/ui/Button';
 import { RunnerEmptyState } from '../../../components/ui/RunnerEmptyState';
+import { Illustration } from '../../../components/ui/Illustration';
 import { ErrorState } from '../../../components/ui/ErrorState';
 import { Skeleton } from '../../../components/ui/Skeleton';
 import { BrandRefreshControl } from '../../../components/ui/BrandRefreshControl';
@@ -539,7 +540,7 @@ export default function EarningsScreen() {
             />
           ) : earningsList.length === 0 ? (
             <RunnerEmptyState
-              icon={Wallet}
+              illustration={<Illustration name="runner-earnings-empty" size={168} />}
               eyebrow="This period"
               title="No earnings yet"
               description="Completed errands for this period will show up here."
