@@ -12,10 +12,15 @@ class NotificationService
     public function sendPush(string $userId, string $title, string $body, array $data = []): void
     {
         $user = User::find($userId);
-        if (!$user || !$user->fcm_token) {
+        if (!$user) {
             return;
         }
 
+        // ALWAYS persist the in-app notification first — it also reaches the
+        // app live over the Supabase realtime `notifications` channel. This is
+        // what makes the "we'll notify you once your payment is confirmed"
+        // promise real even for users who haven't granted push permission (no
+        // token). The remote push is a best-effort extra on top.
         Notification::create([
             'user_id' => $userId,
             'title' => $title,
@@ -26,6 +31,9 @@ class NotificationService
         ]);
 
         $token = $user->fcm_token;
+        if (!$token) {
+            return;
+        }
 
         if (str_starts_with($token, 'ExponentPushToken')) {
             $this->sendExpoPush($token, $title, $body, $data);

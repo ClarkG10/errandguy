@@ -2,6 +2,7 @@
 
 namespace App\Services;
 
+use App\Enums\PaymentStatus;
 use App\Exceptions\PaymentGatewayException;
 use App\Models\Payment;
 use App\Models\PaymentMethod;
@@ -26,11 +27,21 @@ class PaymentService
      * PHP worker until nginx/Cloudflare gives up with a 502. With them, the
      * call fails fast and surfaces as a clean caught error instead.
      */
-    private function http(): \Illuminate\Http\Client\PendingRequest
+    private function http(?string $idempotencyKey = null): \Illuminate\Http\Client\PendingRequest
     {
-        return Http::withBasicAuth($this->secretKey, '')
+        $client = Http::withBasicAuth($this->secretKey, '')
             ->connectTimeout(10)
             ->timeout(25);
+
+        // Gateway-level idempotency: a retried charge/invoice/refund creation
+        // that carries the same key collapses to the SAME Xendit object rather
+        // than creating a second one. Keys are derived deterministically from a
+        // pre-created row id (see call sites) so they're stable across retries.
+        if (! blank($idempotencyKey)) {
+            $client = $client->withHeaders(['Idempotency-key' => $idempotencyKey]);
+        }
+
+        return $client;
     }
 
     public function createPaymentRequest(float $amount, string $referenceId, string $method, string $description = '', ?string $successRedirectUrl = null, ?string $failureRedirectUrl = null): array
@@ -56,7 +67,7 @@ class PaymentService
             ];
         }
 
-        $response = $this->http()
+        $response = $this->http("pr-{$referenceId}")
             ->post("{$this->baseUrl}/payment_requests", $payload);
 
         if (!$response->successful()) {
@@ -107,7 +118,7 @@ class PaymentService
             $payload['success_redirect_url'] = $successRedirectUrl;
         }
 
-        $response = $this->http()
+        $response = $this->http("inv-{$externalId}")
             ->post("{$this->baseUrl}/v2/invoices", $payload);
 
         if (!$response->successful()) {
@@ -233,7 +244,7 @@ class PaymentService
      */
     public function chargeSavedMethod(string $xenditPaymentMethodId, float $amount, string $referenceId, string $description = ''): array
     {
-        $response = $this->http()
+        $response = $this->http("pr-{$referenceId}")
             ->post("{$this->baseUrl}/payment_requests", [
                 'reference_id' => $referenceId,
                 'currency' => 'PHP',
@@ -280,7 +291,7 @@ class PaymentService
 
         $refundAmount = $amount ?? (float) $payment->amount;
 
-        $response = $this->http()
+        $response = $this->http("rf-{$payment->id}")
             ->post("{$this->baseUrl}/refunds", [
                 'payment_request_id' => $payment->gateway_tx_id,
                 'amount' => round($refundAmount, 2),
@@ -296,11 +307,16 @@ class PaymentService
             throw new \RuntimeException('Failed to process refund.');
         }
 
-        $payment->update([
-            'refund_amount' => $refundAmount,
-            'refunded_at' => now(),
-            'status' => 'refunded',
-        ]);
+        $payment->transitionTo(
+            PaymentStatus::Refunded,
+            actor: 'system',
+            reason: $reason,
+            meta: ['refund_amount' => $refundAmount],
+            extra: [
+                'refund_amount' => $refundAmount,
+                'refunded_at' => now(),
+            ],
+        );
 
         return $response->json();
     }
@@ -344,10 +360,7 @@ class PaymentService
                 $payment->id,
                 "Payment for booking {$bookingId}"
             );
-            $payment->update([
-                'status' => 'completed',
-                'paid_at' => now(),
-            ]);
+            $payment->transitionTo(PaymentStatus::Completed, extra: ['paid_at' => now()]);
             return $payment;
         }
 
@@ -359,10 +372,9 @@ class PaymentService
                 "Booking {$bookingId}"
             );
 
-            $payment->update([
+            $payment->transitionTo(PaymentStatus::Processing, extra: [
                 'gateway_tx_id' => $paymentRequest['id'],
                 'gateway_response' => $paymentRequest,
-                'status' => 'processing',
             ]);
         } catch (\Throwable $e) {
             Log::error('Payment processing failed', [
@@ -370,7 +382,7 @@ class PaymentService
                 'error' => $e->getMessage(),
             ]);
 
-            $payment->update(['status' => 'failed']);
+            $payment->transitionTo(PaymentStatus::Failed, reason: 'Gateway charge failed');
         }
 
         return $payment;

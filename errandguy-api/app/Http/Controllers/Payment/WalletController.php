@@ -93,6 +93,27 @@ class WalletController extends Controller
         ], 201);
     }
 
+    /**
+     * Authoritative status probe for a single wallet transaction (used by the
+     * app to VERIFY a top-up after checkout). Ownership scoped by user_id.
+     */
+    public function transactionStatus(Request $request, string $id): JsonResponse
+    {
+        $tx = WalletTransaction::where('user_id', $request->user()->id)->findOrFail($id);
+
+        return response()->json([
+            'data' => [
+                'transaction_id' => $tx->id,
+                'status' => $tx->status,
+                'type' => $tx->type,
+                'amount' => (float) $tx->amount,
+                'balance_after' => (float) $tx->balance_after,
+                'failure_reason' => $tx->status === 'failed' ? $tx->failure_reason : null,
+                'processed_at' => optional($tx->processed_at)->toIso8601String(),
+            ],
+        ]);
+    }
+
     public function transactions(Request $request): JsonResponse
     {
         // Eager-load the booking + errand type so the appended

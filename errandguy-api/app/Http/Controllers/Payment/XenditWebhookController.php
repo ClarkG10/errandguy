@@ -2,8 +2,11 @@
 
 namespace App\Http\Controllers\Payment;
 
+use App\Enums\PaymentStatus;
 use App\Http\Controllers\Controller;
 use App\Models\Payment;
+use App\Models\WebhookEvent;
+use App\Services\NotificationService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -28,48 +31,102 @@ class XenditWebhookController extends Controller
         }
 
         $event = $payload['event'] ?? null;
+        $data = $payload['data'] ?? [];
+        $isFlatInvoice = !$event && isset($payload['external_id'], $payload['status']);
 
-        // Newer "Payments" webhooks (payment_requests, refunds, and some
-        // invoice setups) wrap everything as {event, data}.
-        if ($event) {
-            match ($event) {
-                'payment.succeeded' => $this->handlePaymentSucceeded($payload['data'] ?? []),
-                'payment.failed' => $this->handlePaymentFailed($payload['data'] ?? []),
-                'payment.pending' => $this->handlePaymentPending($payload['data'] ?? []),
-                'refund.succeeded' => $this->handleRefundSucceeded($payload['data'] ?? []),
-                // v2 invoices (used for wallet top-ups) may fire this event.
-                'invoice.paid' => $this->handleInvoicePaid($payload['data'] ?? $payload),
-                // Linked e-wallet lifecycle (Stage 2 saved methods).
-                'payment_method.activated' => $this->handlePaymentMethodStatus($payload['data'] ?? [], 'active'),
-                'payment_method.expired' => $this->handlePaymentMethodStatus($payload['data'] ?? [], 'expired'),
-                'payment_method.failed' => $this->handlePaymentMethodStatus($payload['data'] ?? [], 'failed'),
-                default => null,
-            };
-
-            return response()->json(['status' => 'ok']);
+        if (!$event && !$isFlatInvoice) {
+            return response()->json(['error' => 'Invalid payload'], 400);
         }
 
-        // Classic Xendit INVOICE webhook: the invoice object is POSTed FLAT at
-        // the top level — no `event`/`data` wrapper, just fields like
-        // { id, external_id, status: "PAID", amount, ... }. This is what the
-        // dashboard "Test" button and real invoice callbacks send.
-        if (isset($payload['external_id'], $payload['status'])) {
+        // ── Replay guard ──────────────────────────────────────────────────
+        // Persist every event keyed by a stable id so a redelivery is a true
+        // no-op. Only a fully-'processed' event short-circuits; an event that
+        // was created but crashed mid-processing stays 'received' and is safely
+        // re-run (the business handlers are independently idempotent via row
+        // locks + terminal-state checks, so this is a fast-path, not the sole
+        // safety net).
+        $eventId = $this->deriveEventId($request, $payload, $event, $data);
+        $eventRow = null;
+        if ($eventId) {
+            $eventRow = WebhookEvent::firstOrCreate(
+                ['provider' => 'xendit', 'event_id' => $eventId],
+                ['event_type' => $event, 'payload' => $payload, 'status' => 'received'],
+            );
+            if ($eventRow->status === 'processed') {
+                return response()->json(['status' => 'ok', 'deduped' => true]);
+            }
+        }
+
+        // ── Dispatch ─────────────────────────────────────────────────────
+        if ($event) {
+            match ($event) {
+                'payment.succeeded' => $this->handlePaymentSucceeded($data),
+                'payment.failed' => $this->handlePaymentFailed($data),
+                'payment.pending' => $this->handlePaymentPending($data),
+                'refund.succeeded' => $this->handleRefundSucceeded($data),
+                // v2 invoices (used for wallet top-ups) may fire these events.
+                'invoice.paid' => $this->handleInvoicePaid($data ?: $payload),
+                'invoice.expired' => $this->handleInvoiceExpired($data ?: $payload),
+                // Linked e-wallet lifecycle (Stage 2 saved methods).
+                'payment_method.activated' => $this->handlePaymentMethodStatus($data, 'active'),
+                'payment_method.expired' => $this->handlePaymentMethodStatus($data, 'expired'),
+                'payment_method.failed' => $this->handlePaymentMethodStatus($data, 'failed'),
+                default => null,
+            };
+        } else {
+            // Classic Xendit INVOICE webhook: the invoice object is POSTed FLAT
+            // at the top level — { id, external_id, status: "PAID", ... }.
             $status = strtoupper((string) $payload['status']);
             if (in_array($status, ['PAID', 'SETTLED'], true)) {
                 $this->handleInvoicePaid($payload);
+            } elseif ($status === 'EXPIRED') {
+                $this->handleInvoiceExpired($payload);
             }
-            // Other statuses (EXPIRED, etc.) — acknowledge without action so
-            // Xendit stops retrying.
-            return response()->json(['status' => 'ok']);
+            // Other statuses acknowledged without action so Xendit stops retrying.
         }
 
-        return response()->json(['error' => 'Invalid payload'], 400);
+        if ($eventRow) {
+            $eventRow->update(['status' => 'processed', 'processed_at' => now()]);
+        }
+
+        return response()->json(['status' => 'ok']);
     }
 
     /**
-     * Invoice paid — currently used for wallet top-ups. The invoice's
-     * external_id is "topup-{walletTransactionId}"; credit that pending
-     * transaction (idempotently) via the WalletService.
+     * A stable, replay-safe identifier for the event. Prefers Xendit's own
+     * `webhook-id` header, then a top-level id (flat invoice callbacks), then a
+     * synthesized `{event}:{resource-ref}` — the event type is included so
+     * `payment.succeeded` and `payment.failed` for the same charge never
+     * collide.
+     */
+    private function deriveEventId(Request $request, array $payload, ?string $event, array $data): ?string
+    {
+        $headerId = $request->header('webhook-id');
+        if (!blank($headerId)) {
+            return 'xnd:' . $headerId;
+        }
+
+        if ($event) {
+            $ref = $data['id']
+                ?? $data['payment_request_id']
+                ?? $data['reference_id']
+                ?? $data['external_id']
+                ?? md5(json_encode($data));
+            return $event . ':' . $ref;
+        }
+
+        // Flat invoice callback.
+        $ref = $payload['id'] ?? $payload['external_id'] ?? null;
+        if ($ref) {
+            return 'inv:' . $ref . ':' . strtoupper((string) ($payload['status'] ?? ''));
+        }
+
+        return null;
+    }
+
+    /**
+     * Invoice paid — wallet top-up ("topup-{txId}") or a booking hosted-invoice
+     * charge ("booking-{paymentId}").
      */
     private function handleInvoicePaid(array $data): void
     {
@@ -86,21 +143,64 @@ class XenditWebhookController extends Controller
 
         if (str_starts_with($externalId, 'booking-')) {
             $paymentId = substr($externalId, 8);
-            DB::transaction(function () use ($paymentId, $data) {
+            $payment = DB::transaction(function () use ($paymentId, $data) {
                 $payment = Payment::where('id', $paymentId)->lockForUpdate()->first();
-                if (!$payment || $payment->status === 'completed') {
-                    return;
+                if (!$payment || !$this->canAdvance($payment, PaymentStatus::Completed)) {
+                    return null;
                 }
-                $payment->update([
-                    'status' => 'completed',
+                $payment->transitionTo(PaymentStatus::Completed, 'webhook', 'invoice.paid', extra: [
                     'paid_at' => now(),
                     'gateway_response' => $data,
                 ]);
-                // Mark the booking paid so the customer/runner UIs reflect it.
                 if ($payment->booking) {
                     $payment->booking->update(['payment_status' => 'paid']);
                 }
+                return $payment;
             });
+
+            if ($payment) {
+                $this->notifyPayment($payment, 'completed');
+            }
+        }
+    }
+
+    /**
+     * Invoice expired before it was paid — the customer never completed
+     * checkout. Previously dropped; now moves the pending charge/top-up to a
+     * truthful terminal state so the app stops "verifying" forever.
+     */
+    private function handleInvoiceExpired(array $data): void
+    {
+        $externalId = $data['external_id'] ?? null;
+        if (!$externalId) {
+            return;
+        }
+
+        if (str_starts_with($externalId, 'topup-')) {
+            $transactionId = substr($externalId, 6);
+            app(\App\Services\WalletService::class)->expireTopUp($transactionId, 'Invoice expired');
+            return;
+        }
+
+        if (str_starts_with($externalId, 'booking-')) {
+            $paymentId = substr($externalId, 8);
+            $payment = DB::transaction(function () use ($paymentId, $data) {
+                $payment = Payment::where('id', $paymentId)->lockForUpdate()->first();
+                if (!$payment || !$this->canAdvance($payment, PaymentStatus::Expired)) {
+                    return null;
+                }
+                $payment->transitionTo(PaymentStatus::Expired, 'webhook', 'invoice.expired', extra: [
+                    'gateway_response' => $data,
+                ]);
+                if ($payment->booking) {
+                    $payment->booking->update(['payment_status' => 'expired']);
+                }
+                return $payment;
+            });
+
+            if ($payment) {
+                $this->notifyPayment($payment, 'expired');
+            }
         }
     }
 
@@ -125,27 +225,29 @@ class XenditWebhookController extends Controller
             return;
         }
 
-        DB::transaction(function () use ($paymentRequestId, $data) {
+        $payment = DB::transaction(function () use ($paymentRequestId, $data) {
             $payment = Payment::where('gateway_tx_id', $paymentRequestId)
                 ->lockForUpdate()
                 ->first();
 
-            if (!$payment || $payment->status === 'completed') {
-                return;
+            if (!$payment || !$this->canAdvance($payment, PaymentStatus::Completed)) {
+                return null;
             }
 
-            $payment->update([
-                'status' => 'completed',
+            $payment->transitionTo(PaymentStatus::Completed, 'webhook', 'payment.succeeded', extra: [
                 'paid_at' => now(),
                 'gateway_response' => $data,
             ]);
 
-            // Saved-method / payment-request charges are tied to a booking —
-            // mark it paid so the customer/runner UIs reflect it.
             if ($payment->booking) {
                 $payment->booking->update(['payment_status' => 'paid']);
             }
+            return $payment;
         });
+
+        if ($payment) {
+            $this->notifyPayment($payment, 'completed');
+        }
     }
 
     private function handlePaymentFailed(array $data): void
@@ -155,20 +257,24 @@ class XenditWebhookController extends Controller
             return;
         }
 
-        DB::transaction(function () use ($paymentRequestId, $data) {
+        $payment = DB::transaction(function () use ($paymentRequestId, $data) {
             $payment = Payment::where('gateway_tx_id', $paymentRequestId)
                 ->lockForUpdate()
                 ->first();
 
-            if (!$payment || in_array($payment->status, ['completed', 'failed'])) {
-                return;
+            if (!$payment || !$this->canAdvance($payment, PaymentStatus::Failed)) {
+                return null;
             }
 
-            $payment->update([
-                'status' => 'failed',
+            $payment->transitionTo(PaymentStatus::Failed, 'webhook', 'payment.failed', extra: [
                 'gateway_response' => $data,
             ]);
+            return $payment;
         });
+
+        if ($payment) {
+            $this->notifyPayment($payment, 'failed');
+        }
     }
 
     private function handlePaymentPending(array $data): void
@@ -178,15 +284,21 @@ class XenditWebhookController extends Controller
             return;
         }
 
-        $payment = Payment::where('gateway_tx_id', $paymentRequestId)->first();
-        if (!$payment) {
-            return;
-        }
+        DB::transaction(function () use ($paymentRequestId, $data) {
+            $payment = Payment::where('gateway_tx_id', $paymentRequestId)
+                ->lockForUpdate()
+                ->first();
 
-        $payment->update([
-            'status' => 'processing',
-            'gateway_response' => $data,
-        ]);
+            // Only advance a brand-new charge into 'processing'. If it's already
+            // processing or terminal, this stale/out-of-order event is a no-op.
+            if (!$payment || $payment->status !== PaymentStatus::Pending->value) {
+                return;
+            }
+
+            $payment->transitionTo(PaymentStatus::Processing, 'webhook', 'payment.pending', extra: [
+                'gateway_response' => $data,
+            ]);
+        });
     }
 
     private function handleRefundSucceeded(array $data): void
@@ -203,16 +315,65 @@ class XenditWebhookController extends Controller
                 ->lockForUpdate()
                 ->first();
 
-            if (!$payment || $payment->status === 'refunded') {
+            if (!$payment || $payment->status === PaymentStatus::Refunded->value) {
                 return;
             }
 
-            $payment->update([
-                'status' => 'refunded',
+            // A refund is only meaningful for a completed charge. Anything else
+            // is out-of-order noise — acknowledge without a (would-be illegal)
+            // transition.
+            if ($payment->status !== PaymentStatus::Completed->value) {
+                Log::warning('Xendit refund.succeeded for a non-completed payment; ignoring', [
+                    'payment_id' => $payment->id,
+                    'status' => $payment->status,
+                ]);
+                return;
+            }
+
+            $payment->transitionTo(PaymentStatus::Refunded, 'webhook', 'refund.succeeded', extra: [
                 'refund_amount' => ($data['amount'] ?? $payment->amount),
                 'refunded_at' => now(),
                 'gateway_response' => $data,
             ]);
         });
+    }
+
+    /**
+     * True only if the payment can legally advance to $to from its current
+     * state. This is the webhook-ordering guard: an event that would move an
+     * already-settled (or wrong-state) payment is a no-op, NOT an illegal
+     * transition — Xendit delivers events out of order and redelivers freely.
+     */
+    private function canAdvance(Payment $payment, PaymentStatus $to): bool
+    {
+        $current = PaymentStatus::tryFrom((string) $payment->status);
+        return $current !== null && $current->canTransitionTo($to);
+    }
+
+    /**
+     * Fire a user-facing notification for a settled/failed payment. Runs AFTER
+     * the DB transaction has committed (it makes an outbound push call — never
+     * hold a row lock across the network). Booking context is lazy-loaded here.
+     *
+     * @param  'completed'|'failed'|'expired'  $status
+     */
+    private function notifyPayment(Payment $payment, string $status): void
+    {
+        $amount = number_format((float) $payment->amount, 2);
+        $bookingNo = $payment->booking?->booking_number;
+        $for = $bookingNo ? " for booking {$bookingNo}" : '';
+
+        [$title, $body] = match ($status) {
+            'completed' => ['Payment confirmed', "Your ₱{$amount} payment{$for} is confirmed."],
+            'expired' => ['Payment expired', "Your payment window{$for} expired. You weren't charged — you can try again."],
+            default => ['Payment failed', "We couldn't confirm your ₱{$amount} payment{$for}. You weren't charged — try again or use another method."],
+        };
+
+        app(NotificationService::class)->sendPush($payment->customer_id, $title, $body, [
+            'type' => 'payment',
+            'status' => $status,
+            'booking_id' => $payment->booking_id,
+            'payment_id' => $payment->id,
+        ]);
     }
 }

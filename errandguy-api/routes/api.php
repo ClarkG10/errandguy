@@ -27,6 +27,7 @@ use App\Http\Controllers\Customer\TripShareController;
 use App\Http\Controllers\PublicTripController;
 use App\Http\Controllers\Payment\PaymentMethodController;
 use App\Http\Controllers\Payment\PaymentHistoryController;
+use App\Http\Controllers\Payment\PaymentStatusController;
 use App\Http\Controllers\Payment\XenditWebhookController;
 use App\Http\Controllers\Payment\WalletController;
 use App\Http\Controllers\Admin\AdminAuthController;
@@ -109,14 +110,19 @@ Route::prefix('v1')->group(function () {
         Route::middleware(['role:customer'])->prefix('bookings')->group(function () {
             Route::get('/', [BookingController::class, 'index']);
             // Cap booking creation to deter spam/scripted floods. Real users
-            // never need more than a handful per minute.
-            Route::post('/', [BookingController::class, 'store'])->middleware('throttle:15,1');
+            // never need more than a handful per minute. `idempotent` makes a
+            // double-tap / network retry with the same Idempotency-Key return
+            // the original booking+checkout instead of creating a second one.
+            Route::post('/', [BookingController::class, 'store'])->middleware(['throttle:15,1', 'idempotent']);
             Route::get('/active', [BookingController::class, 'active']);
             Route::post('/estimate', [BookingController::class, 'estimate']);
             Route::get('/{id}', [BookingController::class, 'show']);
             Route::get('/{id}/cancel-preview', [BookingController::class, 'cancelPreview']);
             Route::post('/{id}/cancel', [BookingController::class, 'cancel']);
             Route::get('/{id}/track', [BookingController::class, 'track']);
+            // Payment settlement status for this booking (deep-link verify path).
+            Route::get('/{id}/payment-status', [PaymentStatusController::class, 'forBooking'])
+                ->where('id', '[0-9a-fA-F-]{36}');
             Route::post('/{id}/review', [ReviewController::class, 'store']);
             Route::post('/{id}/rebook', [BookingController::class, 'rebook']);
             // Retry-match is rate-limited tighter than the broader booking
@@ -153,7 +159,7 @@ Route::prefix('v1')->group(function () {
             Route::get('/earnings/history', [RunnerEarningsController::class, 'history']);
             Route::get('/earnings/export', [ExportController::class, 'earningsPdf']);
             Route::get('/errands/history', [RunnerErrandHistoryController::class, 'index']);
-            Route::post('/payout/request', [RunnerPayoutController::class, 'requestPayout']);
+            Route::post('/payout/request', [RunnerPayoutController::class, 'requestPayout'])->middleware('idempotent');
 
             // Runner toggles shopping-checklist ticks while shopping.
             Route::patch('/errand/{id}/shopping-items', [ShoppingChecklistController::class, 'update']);
@@ -192,6 +198,9 @@ Route::prefix('v1')->group(function () {
             Route::delete('/methods/{id}', [PaymentMethodController::class, 'destroy']);
             Route::put('/methods/{id}/default', [PaymentMethodController::class, 'setDefault']);
             Route::get('/history', [PaymentHistoryController::class, 'index']);
+            // Cheap status probe the app polls to verify a charge (never assume).
+            Route::get('/{id}/status', [PaymentStatusController::class, 'show'])
+                ->where('id', '[0-9a-fA-F-]{36}');
             Route::get('/{id}/receipt', [PaymentHistoryController::class, 'receipt']);
             Route::get('/{id}/receipt/pdf', [ExportController::class, 'receiptPdf']);
         });
@@ -200,9 +209,14 @@ Route::prefix('v1')->group(function () {
         Route::prefix('wallet')->group(function () {
             Route::get('/balance', [WalletController::class, 'balance']);
             // Financial endpoint — strict rate-limit on top-up to deter
-            // abuse / accidental double-tap charges.
-            Route::post('/top-up', [WalletController::class, 'topUp'])->middleware('throttle:5,1');
+            // abuse / accidental double-tap charges. `idempotent` makes a
+            // retried top-up with the same key return the original pending
+            // invoice instead of opening a second one.
+            Route::post('/top-up', [WalletController::class, 'topUp'])->middleware(['throttle:5,1', 'idempotent']);
             Route::get('/transactions', [WalletController::class, 'transactions']);
+            // Status probe for a single top-up (the app polls to verify).
+            Route::get('/transactions/{id}/status', [WalletController::class, 'transactionStatus'])
+                ->where('id', '[0-9a-fA-F-]{36}');
         });
 
         // Notification routes

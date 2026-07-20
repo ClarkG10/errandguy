@@ -27,6 +27,7 @@ return Application::configure(basePath: dirname(__DIR__))
             'role' => \App\Http\Middleware\RoleMiddleware::class,
             'active' => \App\Http\Middleware\EnsureUserActive::class,
             'admin' => \App\Http\Middleware\EnsureAdminUser::class,
+            'idempotent' => \App\Http\Middleware\EnsureIdempotency::class,
         ]);
 
         $middleware->throttleApi('api');

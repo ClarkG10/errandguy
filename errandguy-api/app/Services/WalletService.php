@@ -82,7 +82,9 @@ class WalletService
      */
     public function completeTopUp(string $transactionId, array $gatewayData = []): ?WalletTransaction
     {
-        return DB::transaction(function () use ($transactionId, $gatewayData) {
+        $justCompleted = false;
+
+        $transaction = DB::transaction(function () use ($transactionId, $gatewayData, &$justCompleted) {
             $transaction = WalletTransaction::where('id', $transactionId)
                 ->lockForUpdate()
                 ->first();
@@ -102,6 +104,54 @@ class WalletService
                 'processed_at' => now(),
                 'description' => 'Wallet top-up',
                 'gateway_ref' => $gatewayData['id'] ?? $transaction->gateway_ref,
+            ]);
+
+            $justCompleted = true;
+            return $transaction;
+        });
+
+        // Notify AFTER commit — never make an outbound push call inside the
+        // lock. Only on the first (real) completion, so a replayed webhook
+        // doesn't re-notify.
+        if ($justCompleted && $transaction) {
+            $amount = number_format((float) $transaction->amount, 2);
+            $balance = number_format((float) $transaction->balance_after, 2);
+            app(NotificationService::class)->sendPush(
+                $transaction->user_id,
+                'Top-up complete',
+                "₱{$amount} was added to your wallet. New balance: ₱{$balance}.",
+                [
+                    'type' => 'payment',
+                    'status' => 'completed',
+                    'wallet_transaction_id' => $transaction->id,
+                ],
+            );
+        }
+
+        return $transaction;
+    }
+
+    /**
+     * Mark a pending top-up failed because its invoice expired before payment
+     * (fired from the invoice.expired webhook). Idempotent: a top-up that's no
+     * longer pending is left untouched.
+     */
+    public function expireTopUp(string $transactionId, string $reason = 'Invoice expired'): ?WalletTransaction
+    {
+        return DB::transaction(function () use ($transactionId, $reason) {
+            $transaction = WalletTransaction::where('id', $transactionId)
+                ->lockForUpdate()
+                ->first();
+
+            if (!$transaction || $transaction->status !== 'pending' || $transaction->type !== 'top_up') {
+                return $transaction;
+            }
+
+            $transaction->update([
+                'status' => 'failed',
+                'failure_reason' => $reason,
+                'processed_at' => now(),
+                'description' => 'Wallet top-up (expired)',
             ]);
 
             return $transaction;

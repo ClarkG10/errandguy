@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers\Customer;
 
+use App\Enums\PaymentStatus;
 use App\Events\BookingCancelled;
 use App\Events\BookingCreated;
 use App\Http\Controllers\Controller;
@@ -217,6 +218,9 @@ class BookingController extends Controller
         $paymentMethod = $validated['payment_method'];
         $amount = (float) $booking->total_amount;
         $checkoutUrl = null;
+        // Surfaced in the response so the app can poll GET /payments/{id}/status
+        // to verify settlement without assuming success from the redirect.
+        $paymentId = null;
         $booking->update(['payment_method' => $paymentMethod]);
 
         // A previously-linked reusable method (e.g. Maya/GrabPay) chosen for a
@@ -238,6 +242,7 @@ class BookingController extends Controller
                 'method' => $paymentMethod,
                 'status' => 'pending',
             ]);
+            $paymentId = $payment->id;
             try {
                 $charge = app(PaymentService::class)->chargeSavedMethod(
                     $savedMethod->gateway_ref,
@@ -248,10 +253,9 @@ class BookingController extends Controller
                 $chargeStatus = strtoupper($charge['status'] ?? '');
 
                 if ($chargeStatus === 'SUCCEEDED') {
-                    $payment->update([
+                    $payment->transitionTo(PaymentStatus::Completed, extra: [
                         'gateway_tx_id' => $charge['id'] ?? null,
                         'gateway_response' => $charge,
-                        'status' => 'completed',
                         'paid_at' => now(),
                     ]);
                     $booking->update(['payment_status' => 'paid']);
@@ -260,16 +264,15 @@ class BookingController extends Controller
                 } else {
                     // PENDING / REQUIRES_ACTION — first charge may need a quick
                     // auth this time; the payment.succeeded webhook confirms it.
-                    $payment->update([
+                    $payment->transitionTo(PaymentStatus::Processing, extra: [
                         'gateway_tx_id' => $charge['id'] ?? null,
                         'gateway_response' => $charge,
-                        'status' => 'processing',
                     ]);
                     $booking->update(['payment_status' => 'pending']);
                     $checkoutUrl = PaymentService::extractActionUrl($charge);
                 }
             } catch (\Throwable $e) {
-                $payment->update(['status' => 'failed']);
+                $payment->transitionTo(PaymentStatus::Failed, reason: 'Saved-method charge failed');
                 $booking->delete();
                 \Illuminate\Support\Facades\Log::error('Booking saved-method charge failed', [
                     'booking_number' => $booking->booking_number,
@@ -297,18 +300,21 @@ class BookingController extends Controller
                     'message' => 'Insufficient wallet balance. Please add money or choose another payment method.',
                 ], 422);
             }
-            Payment::create([
+            // Wallet already debited above; create the payment as pending then
+            // record the settlement transition so it lands in the audit log.
+            $payment = Payment::create([
                 'booking_id' => $booking->id,
                 'customer_id' => $user->id,
                 'amount' => $amount,
                 'currency' => 'PHP',
                 'method' => 'wallet',
-                'status' => 'completed',
-                'paid_at' => now(),
+                'status' => 'pending',
             ]);
+            $paymentId = $payment->id;
+            $payment->transitionTo(PaymentStatus::Completed, extra: ['paid_at' => now()]);
             $booking->update(['payment_status' => 'paid']);
         } elseif ($paymentMethod === 'cash') {
-            Payment::create([
+            $payment = Payment::create([
                 'booking_id' => $booking->id,
                 'customer_id' => $user->id,
                 'amount' => $amount,
@@ -316,6 +322,7 @@ class BookingController extends Controller
                 'method' => 'cash',
                 'status' => 'pending',
             ]);
+            $paymentId = $payment->id;
             $booking->update(['payment_status' => 'unpaid']);
         } else {
             // Online (card / gcash / maya) via Xendit hosted invoice.
@@ -327,6 +334,7 @@ class BookingController extends Controller
                 'method' => $paymentMethod,
                 'status' => 'pending',
             ]);
+            $paymentId = $payment->id;
             try {
                 $invoice = app(PaymentService::class)->createInvoice(
                     $amount,
@@ -336,15 +344,14 @@ class BookingController extends Controller
                     // Bridge page → app deep link so the in-app sheet auto-closes.
                     url('/payment/complete'),
                 );
-                $payment->update([
+                $payment->transitionTo(PaymentStatus::Processing, extra: [
                     'gateway_tx_id' => $invoice['id'] ?? null,
                     'gateway_response' => $invoice,
-                    'status' => 'processing',
                 ]);
                 $checkoutUrl = $invoice['invoice_url'] ?? null;
                 $booking->update(['payment_status' => 'pending']);
             } catch (\Throwable $e) {
-                $payment->update(['status' => 'failed']);
+                $payment->transitionTo(PaymentStatus::Failed, reason: 'Gateway invoice creation failed');
                 $booking->delete();
                 \Illuminate\Support\Facades\Log::error('Booking online payment failed', [
                     'booking_number' => $booking->booking_number,
@@ -416,6 +423,9 @@ class BookingController extends Controller
             // For online payments the client must open this hosted-checkout
             // URL to pay; null for cash/wallet (already settled/deferred).
             'checkout_url' => $checkoutUrl,
+            // Lets the app poll GET /payments/{id}/status to verify settlement
+            // rather than assuming success from the checkout redirect.
+            'payment_id' => $paymentId,
             'message' => 'Booking created successfully.',
         ], 201);
     }
@@ -478,11 +488,16 @@ class BookingController extends Controller
                     ->where('status', 'completed')
                     ->latest()
                     ->first()
-                    ?->update([
-                        'status' => 'refunded',
-                        'refund_amount' => $refundable,
-                        'refunded_at' => now(),
-                    ]);
+                    ?->transitionTo(
+                        PaymentStatus::Refunded,
+                        actor: $request->user()->id,
+                        reason: 'Booking cancelled: refund to wallet minus fee',
+                        meta: ['cancellation_fee' => (float) $policy['fee'], 'refunded_to' => 'wallet'],
+                        extra: [
+                            'refund_amount' => $refundable,
+                            'refunded_at' => now(),
+                        ],
+                    );
             }
             $booking->update(['payment_status' => 'refunded']);
         }
