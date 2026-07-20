@@ -38,7 +38,6 @@ const SOURCES = {
   'update-required': require('../../../assets/illustrations/update-required.png'),
   'location-off': require('../../../assets/illustrations/location-off.png'),
   // auth
-  'auth-login': require('../../../assets/illustrations/auth-login.png'),
   'auth-otp': require('../../../assets/illustrations/auth-otp.png'),
   'auth-forgot': require('../../../assets/illustrations/auth-forgot.png'),
   'role-select': require('../../../assets/illustrations/role-select.png'),

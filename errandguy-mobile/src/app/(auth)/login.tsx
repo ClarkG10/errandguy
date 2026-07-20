@@ -18,7 +18,6 @@ import { Button } from '../../components/ui/Button';
 import { Avatar } from '../../components/ui/Avatar';
 import { SocialLoginButton } from '../../components/auth/SocialLoginButton';
 import { Wordmark } from '../../components/ui/Wordmark';
-import { Illustration } from '../../components/ui/Illustration';
 import { LogoutSplash } from '../../components/ui/LogoutSplash';
 import { useAuth } from '../../hooks/useAuth';
 import { useBiometricUnlock } from '../../hooks/useBiometricUnlock';
@@ -323,11 +322,6 @@ export default function LoginScreen() {
               <ChevronLeft size={22} color={LightColors.ink} strokeWidth={2.2} />
             </Pressable>
           )}
-
-          {/* Welcoming hero — centered above the sign-in header/Wordmark. */}
-          <View className="items-center mt-4">
-            <Illustration name="auth-login" size={140} />
-          </View>
 
           {/* Brand + heading — simple, left-aligned, generous whitespace.
               When a remembered profile exists the heading becomes a
