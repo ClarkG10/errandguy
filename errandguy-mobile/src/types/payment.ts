@@ -8,7 +8,33 @@ export type PaymentStatus =
   | 'processing'
   | 'completed'
   | 'failed'
+  | 'expired'
+  | 'cancelled'
   | 'refunded';
+
+/** Authoritative status probe returned by GET /payments/{id}/status. */
+export interface PaymentStatusProbe {
+  payment_id: string;
+  status: PaymentStatus;
+  booking_id: string | null;
+  booking_payment_status: string | null;
+  amount: number;
+  method: PaymentMethodType | string | null;
+  reference: string | null;
+  paid_at: string | null;
+  failure_reason: string | null;
+}
+
+/** Authoritative status probe returned by GET /wallet/transactions/{id}/status. */
+export interface TopUpStatusProbe {
+  transaction_id: string;
+  status: 'pending' | 'completed' | 'failed';
+  type: WalletTransactionType;
+  amount: number;
+  balance_after: number;
+  failure_reason: string | null;
+  processed_at: string | null;
+}
 
 export type WalletTransactionType =
   | 'top_up'

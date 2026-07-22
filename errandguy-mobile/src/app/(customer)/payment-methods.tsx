@@ -8,15 +8,14 @@ import {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import * as Haptics from 'expo-haptics';
 import {
-  Smartphone,
   CreditCard,
   Plus,
   Trash2,
   ShieldCheck,
   Star,
 } from 'lucide-react-native';
-import type { LucideIcon } from 'lucide-react-native';
 import { Spinner } from '../../components/ui/Spinner';
+import { PaymentBrandMark } from '../../components/customer/PaymentBrandMark';
 import { GradientHeader } from '../../components/ui/GradientHeader';
 import { ConfirmModal } from '../../components/ui/ConfirmModal';
 import { ErrorState } from '../../components/ui/ErrorState';
@@ -39,13 +38,6 @@ import { useResponsive } from '../../constants/responsive';
 import { toast } from '../../stores/toastStore';
 import type { PaymentMethod, PaymentMethodType } from '../../types';
 import type { PaymentMethodStatus } from '../../types/payment';
-
-const METHOD_ICONS: Partial<Record<PaymentMethodType, LucideIcon>> = {
-  gcash: Smartphone,
-  maya: Smartphone,
-  grabpay: Smartphone,
-  card: CreditCard,
-};
 
 type LinkChannel = 'gcash' | 'maya' | 'grabpay';
 
@@ -264,7 +256,6 @@ export default function PaymentMethodsScreen() {
           />
         ) : (
           methods.map((m) => {
-            const Icon = METHOD_ICONS[m.type] ?? CreditCard;
             const status = resolveStatus(m.status);
             const meta = statusMeta(status);
             const canSetDefault = status === 'active' && !m.is_default;
@@ -288,19 +279,12 @@ export default function PaymentMethodsScreen() {
                 className="flex-row items-center rounded-2xl bg-surface pl-4 pr-2 py-3.5 mb-2.5"
                 style={Elevation.sm}
               >
-                <View
-                  className="w-10 h-10 rounded-full items-center justify-center"
-                  style={{
-                    backgroundColor: meta.dead
-                      ? LightColors.surfaceMuted
-                      : LightColors.primaryLight,
-                  }}
-                >
-                  <Icon
-                    size={19}
-                    color={meta.dead ? LightColors.textTertiary : LightColors.primary}
-                  />
-                </View>
+                <PaymentBrandMark
+                  type={m.type}
+                  brand={m.card_brand}
+                  size={40}
+                  style={meta.dead ? { opacity: 0.45 } : undefined}
+                />
                 <View className="flex-1 ml-3">
                   <View className="flex-row items-center">
                     <Text
@@ -434,12 +418,7 @@ export default function PaymentMethodsScreen() {
                     disabled && !busy && { opacity: 0.5 },
                   ]}
                 >
-                  <View
-                    className="w-10 h-10 rounded-full items-center justify-center"
-                    style={{ backgroundColor: LightColors.primaryLight }}
-                  >
-                    <Smartphone size={19} color={LightColors.primary} />
-                  </View>
+                  <PaymentBrandMark type={opt.channel} size={40} />
                   <Text className="flex-1 ml-3 text-[14px] font-montserrat-bold text-textPrimary">
                     {opt.label}
                   </Text>

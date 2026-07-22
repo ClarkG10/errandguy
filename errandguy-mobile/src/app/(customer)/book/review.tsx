@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   View,
   Text,
@@ -34,6 +34,10 @@ import { BookingStepIndicator } from '../../../components/customer/BookingStepIn
 import { formatCurrency } from '../../../utils/formatCurrency';
 import { serializeChecklist } from '../../../utils/shoppingChecklist';
 import { openCheckoutUrl, PAYMENT_RETURN_URL } from '../../../utils/browser';
+import { PaymentProgress } from '../../../components/ui/PaymentProgress';
+import { usePaymentStore, isAttemptActive } from '../../../stores/paymentStore';
+import { usePaymentVerification } from '../../../hooks/usePaymentVerification';
+import { mapFailureReason } from '../../../utils/paymentErrors';
 import { getErrandTypeRule, type VehicleKey } from '../../../constants/errandTypeRules';
 import { useResponsive } from '../../../constants/responsive';
 import { LightColors } from '../../../constants/colors';
@@ -105,6 +109,17 @@ export default function ReviewScreen() {
     draftBooking.customer_offer ?? 100,
   );
   const [isSubmitting, setIsSubmitting] = useState(false);
+
+  // ── Money-safety: idempotent attempt + honest verification ──────────────
+  const beginAttempt = usePaymentStore((s) => s.beginAttempt);
+  const linkPayment = usePaymentStore((s) => s.linkPayment);
+  const setAttemptStatus = usePaymentStore((s) => s.setStatus);
+  const resolveAttempt = usePaymentStore((s) => s.resolve);
+  // Mounts the background poller and gives us the honest stage to render.
+  const { attempt, stage: verifyStage, isOffline } = usePaymentVerification();
+  // Synchronous re-entrancy latch — closes the double-tap window before the
+  // Button's `loading` disable lands a render later.
+  const submitLatch = useRef(false);
   const [isEstimateLoading, setIsEstimateLoading] = useState(false);
   // True when the estimate request failed — drives the inline retry UI.
   // Without it a failed fetch left the screen on "Calculating fare…"
@@ -336,6 +351,22 @@ export default function ReviewScreen() {
       toast.warning('Please set an offer amount.');
       return;
     }
+    // Don't start a new payment while a previous one is still being verified.
+    if (isAttemptActive(usePaymentStore.getState().attempt)) {
+      toast.info("We're still confirming your last payment — hang tight.");
+      return;
+    }
+    // Synchronous latch closes the double-tap window before Button `loading`.
+    if (submitLatch.current) return;
+    submitLatch.current = true;
+    const paymentAmount = pricingMode === 'negotiate' ? offerPrice ?? 0 : totalAmount;
+    // One attempt = one idempotency key, reused on retry so the backend can
+    // never create two bookings / two charges from a double-tap or retry.
+    const payAttempt = beginAttempt({
+      kind: 'booking',
+      amount: paymentAmount,
+      method: paymentMethodType ?? 'cash',
+    });
     setIsSubmitting(true);
     try {
       const payload = {
@@ -389,27 +420,45 @@ export default function ReviewScreen() {
         promo_code: draftBooking.promo_code,
       };
 
-      const res = await bookingService.createBooking(payload);
+      const res = await bookingService.createBooking(payload, {
+        idempotencyKey: payAttempt.idempotencyKey,
+      });
       const booking = res.data.data;
       const checkoutUrl: string | undefined = res.data?.checkout_url;
+      const paymentId: string | undefined = res.data?.payment_id;
       // Outcome haptic — the booking was accepted by the server.
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(
         () => {},
       );
       setActiveBooking(booking);
       clearDraft();
-      // Online payment (card/gcash/maya) → open the Xendit hosted checkout
-      // so the customer can pay. Wallet/cash return no URL and skip this.
       if (checkoutUrl) {
+        // Online / saved-method charge: VERIFY, never assume. Stash the invoice
+        // URL so a failed "Try again" re-opens the SAME invoice (no duplicate
+        // booking). The inline PaymentProgress overlay drives navigation from
+        // here based on the verified outcome.
+        if (paymentId) linkPayment(paymentId);
+        setAttemptStatus('awaiting_gateway', {
+          bookingId: booking.id,
+          checkoutUrl,
+          reference: booking.booking_number,
+        });
         await openCheckoutUrl(checkoutUrl, PAYMENT_RETURN_URL);
+        // Regardless of the sheet's reported outcome we now VERIFY with the
+        // backend — 'cancelled' doesn't prove they didn't pay.
+        setAttemptStatus('verifying');
+      } else {
+        // Wallet/cash settle server-side already — nothing to verify.
+        resolveAttempt();
+        router.replace(`/(customer)/book/confirm?bookingId=${booking.id}`);
       }
-      // Hand straight off to the confirm screen (the searching radar) — the
-      // overlay stays up until this screen unmounts, so there's no flash.
-      router.replace(`/(customer)/book/confirm?bookingId=${booking.id}`);
     } catch (err: any) {
+      // Create failed → no booking/charge exists to verify; clear the attempt.
+      resolveAttempt();
       toast.error(err?.message ?? 'Failed to create booking');
     } finally {
       setIsSubmitting(false);
+      submitLatch.current = false;
     }
   }, [
     draftBooking,
@@ -421,7 +470,31 @@ export default function ReviewScreen() {
     setActiveBooking,
     clearDraft,
     router,
+    totalAmount,
+    beginAttempt,
+    linkPayment,
+    setAttemptStatus,
+    resolveAttempt,
   ]);
+
+  // Re-open the SAME invoice on a failed-payment retry (never re-create the
+  // booking). Safe because Xendit invoices stay payable until they expire.
+  const retryBookingPayment = useCallback(async () => {
+    const url = usePaymentStore.getState().attempt?.checkoutUrl;
+    if (!url) return;
+    setAttemptStatus('awaiting_gateway');
+    await openCheckoutUrl(url, PAYMENT_RETURN_URL);
+    setAttemptStatus('verifying');
+  }, [setAttemptStatus]);
+
+  const leaveForBooking = useCallback(
+    (opts?: { keepAttempt?: boolean }) => {
+      const id = usePaymentStore.getState().attempt?.bookingId;
+      if (!opts?.keepAttempt) resolveAttempt();
+      if (id) router.replace(`/(customer)/book/confirm?bookingId=${id}`);
+    },
+    [resolveAttempt, router],
+  );
 
   return (
     <View className="flex-1 bg-background">
@@ -828,6 +901,38 @@ export default function ReviewScreen() {
           />
         </View>
       </BottomActionBar>
+
+      {/* Honest payment verification for online / saved-method charges. Hidden
+          during 'preparing' (the button's own loading covers the create call);
+          it takes over from the gateway hand-off onward. Wallet/cash resolve
+          before this ever shows. */}
+      <PaymentProgress
+        stage={
+          attempt?.kind === 'booking' && verifyStage && verifyStage !== 'preparing'
+            ? verifyStage
+            : null
+        }
+        offline={isOffline}
+        successTitle="Payment confirmed"
+        successCta="Continue"
+        receipt={
+          attempt
+            ? {
+                amount: attempt.amount,
+                method: attempt.method,
+                reference: attempt.reference,
+                paidAt: attempt.paidAt,
+              }
+            : undefined
+        }
+        onSuccessDone={() => leaveForBooking()}
+        failureMessage={
+          attempt?.failureReason ? mapFailureReason(attempt.failureReason).message : undefined
+        }
+        onRetry={attempt?.checkoutUrl ? retryBookingPayment : undefined}
+        onClose={() => leaveForBooking()}
+        onSafeExit={() => leaveForBooking({ keepAttempt: true })}
+      />
     </View>
   );
 }

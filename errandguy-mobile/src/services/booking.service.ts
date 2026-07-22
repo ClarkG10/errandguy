@@ -48,8 +48,8 @@ export const bookingService = {
     // checklist is authoritative. Mirrors CreateBookingRequest's
     // `shopping_items.*.{name,qty}` rules.
     shopping_items?: Array<{ name: string; qty?: number }>;
-  }) {
-    const p = api.post('/bookings', data);
+  }, opts?: { idempotencyKey?: string }) {
+    const p = api.post('/bookings', data, { idempotencyKey: opts?.idempotencyKey } as any);
     p.then(() => invalidateBookingsCaches()).catch(() => {});
     return p;
   },

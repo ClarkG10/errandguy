@@ -273,8 +273,8 @@ export const runnerService = {
     return api.get('/runner/errands/history', { params, cacheTtlMs: 10_000 } as any);
   },
 
-  requestPayout(amount: number) {
-    const p = api.post('/runner/payout/request', { amount });
+  requestPayout(amount: number, opts?: { idempotencyKey?: string }) {
+    const p = api.post('/runner/payout/request', { amount }, { idempotencyKey: opts?.idempotencyKey } as any);
     p.then(() => {
       invalidateEarnings();
       invalidateQuery(['wallet']);

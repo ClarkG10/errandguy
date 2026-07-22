@@ -1,4 +1,4 @@
-import React, { useState, useCallback, useEffect, useMemo } from 'react';
+import React, { useState, useCallback, useEffect, useMemo, useRef } from 'react';
 import { View, Text, ScrollView, TextInput, RefreshControl, Pressable, KeyboardAvoidingView, Platform } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -16,6 +16,7 @@ import { useRunnerStore } from '../../../stores/runnerStore';
 import { useAuthStore } from '../../../stores/authStore';
 import { userService } from '../../../services/user.service';
 import { runnerService } from '../../../services/runner.service';
+import { newIdempotencyKey } from '../../../utils/idempotency';
 import { useQuery } from '../../../hooks/useQuery';
 import { useResponsive } from '../../../constants/responsive';
 import { CacheTTL } from '../../../services/cache.service';
@@ -187,10 +188,23 @@ export default function PayoutScreen() {
     setShowRequestModal(true);
   };
 
+  // Synchronous latch closes the double-tap window before `requesting` state
+  // lands. The idempotency key persists across retries of the SAME payout so a
+  // network retry can never file two withdrawals; it's cleared only on success.
+  const confirmLatch = useRef(false);
+  const payoutKeyRef = useRef<string | null>(null);
+
   const confirmRequestPayout = async () => {
+    if (confirmLatch.current) return;
+    confirmLatch.current = true;
+    if (!payoutKeyRef.current) payoutKeyRef.current = newIdempotencyKey();
     setRequesting(true);
     try {
-      await runnerService.requestPayout(requestedAmount);
+      await runnerService.requestPayout(requestedAmount, {
+        idempotencyKey: payoutKeyRef.current,
+      });
+      // Success → this payout is filed; a fresh withdrawal needs a fresh key.
+      payoutKeyRef.current = null;
       setShowRequestModal(false);
       setAmountInput('');
       // SuccessCheck fires its own success haptic on mount.
@@ -198,9 +212,11 @@ export default function PayoutScreen() {
       toast.success('Payout request submitted');
       await onRefresh();
     } catch (err: any) {
+      // Keep the key so a retry of THIS payout dedupes server-side.
       toast.error(err?.response?.data?.message ?? 'Failed to request payout');
     } finally {
       setRequesting(false);
+      confirmLatch.current = false;
     }
   };
 

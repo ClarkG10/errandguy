@@ -39,6 +39,11 @@ type ExtraConfig = AxiosRequestConfig & {
   /** Max automatic retries for a failed idempotent GET (default 2 → 3 attempts).
    *  Pass 0 to disable retries for a specific request. */
   retries?: number;
+  /** Idempotency-Key for a money mutation. The SAME key is reused across
+   *  retries of one payment attempt so the backend collapses duplicates and
+   *  never double-charges; a genuinely new attempt mints a fresh key. Set by
+   *  paymentStore.beginAttempt() → forwarded as the `Idempotency-Key` header. */
+  idempotencyKey?: string;
 };
 
 const DEFAULT_GET_CACHE_MS = 8000;
@@ -123,6 +128,13 @@ api.interceptors.request.use(
     }
     if (token) {
       config.headers.Authorization = `Bearer ${token}`;
+    }
+    // Forward the per-attempt idempotency key for money mutations. Mutations
+    // flow straight to rawRequest (they bypass the GET wrapper), but the
+    // interceptor still runs on that path, so setting it here reaches the POST.
+    const idem = (config as ExtraConfig).idempotencyKey;
+    if (idem) {
+      config.headers['Idempotency-Key'] = idem;
     }
     // Bump the global activity counter so the top progress bar appears
     // for any in-flight network request. Cache hits skip this entirely

@@ -14,6 +14,7 @@ import { configureReanimatedLogger, ReanimatedLogLevel } from 'react-native-rean
 import { Platform, Text, TextInput, LogBox, StatusBar } from 'react-native';
 import { useAuthStore } from '../stores/authStore';
 import { useBookingStore } from '../stores/bookingStore';
+import { usePaymentStore } from '../stores/paymentStore';
 import { useNetworkStore } from '../stores/networkStore';
 import { userService } from '../services/user.service';
 import { preloadAfterAuth, preloadCoreImages } from '../services/preload.service';
@@ -140,6 +141,10 @@ export default function RootLayout() {
   // photos, etc.) so a crash, kill, or OS-eviction during the booking
   // funnel doesn't lose the user's typing.
   const loadDraftFromStorage = useBookingStore((s) => s.loadDraftFromStorage);
+  // Rehydrate any in-flight payment attempt BEFORE any screen (incl. the
+  // payment-complete deep-link landing) reads it, so a mid-payment kill/return
+  // resumes verification instead of stranding the user with no outcome.
+  const loadPaymentAttempt = usePaymentStore((s) => s.loadFromStorage);
   const isOffline = useNetworkStore((s) => s.isOffline);
   const segments = useSegments();
   const router = useRouter();
@@ -155,8 +160,9 @@ export default function RootLayout() {
   useEffect(() => {
     loadFromStorage();
     loadDraftFromStorage();
+    loadPaymentAttempt();
     preloadCoreImages();
-  }, [loadFromStorage, loadDraftFromStorage]);
+  }, [loadFromStorage, loadDraftFromStorage, loadPaymentAttempt]);
 
   // Validate token on app load
   useEffect(() => {

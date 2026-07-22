@@ -177,6 +177,7 @@ export function PaymentMethodSelector({
   const selectedStandard = STANDARD_OPTIONS.find((o) => o.id === selectedId);
   const selectedMethod = methods.find((m) => m.id === selectedId);
   const activeType = selectedStandard?.type ?? selectedMethod?.type;
+  const activeBrand = selectedMethod?.card_brand;
 
   // If the wallet is the active pick but can no longer cover the amount,
   // move to a usable method so the user can't submit an unpayable booking.
@@ -208,6 +209,7 @@ export function PaymentMethodSelector({
     type: PaymentMethodType;
     label: string;
     sub?: string;
+    brand?: string | null;
     isDefault?: boolean;
   }) => {
     const isSelected = selectedId === opt.id;
@@ -256,6 +258,7 @@ export function PaymentMethodSelector({
         <View className="flex-1 flex-row items-center">
           <PaymentBrandMark
             type={opt.type}
+            brand={opt.brand}
             size={40}
             style={{ opacity: disabled ? 0.45 : 1 }}
           />
@@ -337,7 +340,7 @@ export function PaymentMethodSelector({
         ) : (
           <>
             {activeType ? (
-              <PaymentBrandMark type={activeType} size={40} />
+              <PaymentBrandMark type={activeType} brand={activeBrand} size={40} />
             ) : (
               <View
                 className="w-10 h-10 rounded-full items-center justify-center"
@@ -382,12 +385,14 @@ export function PaymentMethodSelector({
             </Pressable>
           </View>
 
-          {/* Saved cards/e-wallets, if any (future — added via Xendit). */}
+          {/* Linked / saved methods (GCash/Maya/GrabPay via Xendit), shown
+              first so one-tap methods are the top choice. */}
           {methods.map((item) =>
             renderRow({
               id: item.id,
               type: item.type,
               label: item.label,
+              brand: item.card_brand,
               sub: item.last_four ? `••••${item.last_four}` : undefined,
               isDefault: item.is_default,
             }),

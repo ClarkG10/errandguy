@@ -1,4 +1,4 @@
-import React, { useCallback, useState } from 'react';
+import React, { useCallback, useRef, useState } from 'react';
 import {
   View,
   Text,
@@ -14,12 +14,16 @@ import { ShieldCheck, Check } from 'lucide-react-native';
 import { paymentService } from '../../../services/payment.service';
 import { Button } from '../../../components/ui/Button';
 import { BottomActionBar } from '../../../components/ui/BottomActionBar';
-import { PaymentProgress, type PaymentStage } from '../../../components/ui/PaymentProgress';
+import { PaymentProgress } from '../../../components/ui/PaymentProgress';
 import { GradientHeader } from '../../../components/ui/GradientHeader';
 import { Input } from '../../../components/ui/Input';
 import { Hairline } from '../../../components/ui/Typography';
 import { formatCurrency } from '../../../utils/formatCurrency';
 import { openCheckoutUrl, PAYMENT_RETURN_URL } from '../../../utils/browser';
+import { usePaymentStore, isAttemptActive } from '../../../stores/paymentStore';
+import { usePaymentVerification } from '../../../hooks/usePaymentVerification';
+import { mapFailureReason } from '../../../utils/paymentErrors';
+import { invalidateQuery } from '../../../hooks/useQuery';
 import { LightColors, Elevation } from '../../../constants/colors';
 import { toast } from '../../../stores/toastStore';
 
@@ -53,7 +57,13 @@ export default function TopUpScreen() {
   const [amount, setAmount] = useState(0);
   const [customAmount, setCustomAmount] = useState('');
   const [loading, setLoading] = useState(false);
-  const [payStage, setPayStage] = useState<PaymentStage | null>(null);
+
+  // ── Money-safety: idempotent attempt + honest verification ──────────────
+  const beginAttempt = usePaymentStore((s) => s.beginAttempt);
+  const setAttemptStatus = usePaymentStore((s) => s.setStatus);
+  const resolveAttempt = usePaymentStore((s) => s.resolve);
+  const { attempt, stage: verifyStage, isOffline } = usePaymentVerification();
+  const submitLatch = useRef(false);
 
   const displayAmount = customAmount ? parseFloat(customAmount) || 0 : amount;
 
@@ -75,58 +85,72 @@ export default function TopUpScreen() {
       return;
     }
 
+    // Don't start a new top-up while a previous one is still being verified.
+    if (isAttemptActive(usePaymentStore.getState().attempt)) {
+      toast.info("We're still confirming your last top-up — hang tight.");
+      return;
+    }
+    if (submitLatch.current) return;
+    submitLatch.current = true;
+
+    // One attempt = one idempotency key, reused on retry so a double-tap /
+    // network retry can never open two invoices or double-charge.
+    const payAttempt = beginAttempt({ kind: 'topup', amount: displayAmount });
     setLoading(true);
-    // Staged overlay: "Opening secure checkout…" while the invoice is created
-    // and the sheet opens (the native sheet floats above this frame).
-    setPayStage('redirecting');
     try {
-      // The server creates a Xendit invoice and returns a hosted checkout
-      // URL. We open it so the customer can pay with GCash/Maya/card; the
-      // wallet is credited only after Xendit confirms via webhook — so we
-      // do NOT optimistically add funds here.
-      const res = await paymentService.topUpWallet({ amount: displayAmount });
+      // The server creates a Xendit invoice and returns a hosted checkout URL.
+      // The wallet is credited ONLY after Xendit confirms via webhook — we
+      // never optimistically add funds, and we VERIFY the outcome after.
+      const res = await paymentService.topUpWallet(
+        { amount: displayAmount },
+        { idempotencyKey: payAttempt.idempotencyKey },
+      );
       const checkoutUrl: string | undefined = res.data?.checkout_url;
+      const topupId: string | undefined = res.data?.data?.id;
 
       if (!checkoutUrl) {
-        setPayStage(null);
+        resolveAttempt();
         toast.error('Could not start checkout. Please try again.');
         return;
       }
 
+      setAttemptStatus('awaiting_gateway', { topupId, checkoutUrl });
       const outcome = await openCheckoutUrl(checkoutUrl, PAYMENT_RETURN_URL);
       if (outcome === 'failed') {
-        setPayStage(null);
+        // Couldn't even open the checkout → nothing was charged.
+        resolveAttempt();
         toast.error('Could not open checkout. Please try again.');
         return;
       }
-      // Outcome must reflect reality — money in motion must never leave an
-      // ambiguous state.
-      if (outcome === 'cancelled') {
-        // User closed the sheet without paying — imply NO pending credit.
-        setPayStage(null);
-        toast.info('Top-up cancelled — no payment was made.');
-        navigateBack();
-        return;
-      }
-      if (outcome === 'success') {
-        // The in-app sheet redirected back to our return URL — the same
-        // signal payment-complete.tsx treats as done. Show the success frame
-        // (it navigates back once the check settles); the balance still
-        // reconciles via the Xendit webhook.
-        setPayStage('success');
-        return;
-      }
-      // 'opened' — plain sheet with no return signal; we can't claim success.
-      setPayStage(null);
-      toast.info('Your balance will update once your payment is confirmed.');
-      navigateBack();
+      // Any other outcome ('success' | 'cancelled' | 'opened') is inconclusive
+      // on its own — a dismissed sheet doesn't prove they didn't pay. VERIFY
+      // with the backend; the inline overlay shows the honest result.
+      setAttemptStatus('verifying');
     } catch (err: any) {
-      setPayStage(null);
-      toast.error(err?.response?.data?.message ?? 'Failed to start top-up');
+      resolveAttempt();
+      toast.error(err?.response?.data?.message ?? err?.message ?? 'Failed to start top-up');
     } finally {
       setLoading(false);
+      submitLatch.current = false;
     }
-  }, [displayAmount, navigateBack]);
+  }, [displayAmount, beginAttempt, setAttemptStatus, resolveAttempt]);
+
+  const retryTopUp = useCallback(async () => {
+    const url = usePaymentStore.getState().attempt?.checkoutUrl;
+    if (!url) return;
+    setAttemptStatus('awaiting_gateway');
+    await openCheckoutUrl(url, PAYMENT_RETURN_URL);
+    setAttemptStatus('verifying');
+  }, [setAttemptStatus]);
+
+  const finishTopUp = useCallback(
+    (opts?: { keepAttempt?: boolean }) => {
+      if (!opts?.keepAttempt) resolveAttempt();
+      invalidateQuery(['wallet']);
+      navigateBack();
+    },
+    [resolveAttempt, navigateBack],
+  );
 
   return (
     <View className="flex-1 bg-background">
@@ -265,10 +289,26 @@ export default function TopUpScreen() {
       </BottomActionBar>
 
       <PaymentProgress
-        stage={payStage}
-        successTitle="Payment received"
-        onSuccessDone={navigateBack}
-        onClose={() => setPayStage(null)}
+        stage={
+          attempt?.kind === 'topup' && verifyStage && verifyStage !== 'preparing'
+            ? verifyStage
+            : null
+        }
+        offline={isOffline}
+        successTitle="Top-up confirmed"
+        successCta="View wallet"
+        receipt={
+          attempt
+            ? { amount: attempt.amount, method: attempt.method, paidAt: attempt.paidAt }
+            : undefined
+        }
+        onSuccessDone={() => finishTopUp()}
+        failureMessage={
+          attempt?.failureReason ? mapFailureReason(attempt.failureReason).message : undefined
+        }
+        onRetry={attempt?.checkoutUrl ? retryTopUp : undefined}
+        onClose={() => finishTopUp()}
+        onSafeExit={() => finishTopUp({ keepAttempt: true })}
       />
       </KeyboardAvoidingView>
     </View>

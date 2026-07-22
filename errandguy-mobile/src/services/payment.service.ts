@@ -57,10 +57,43 @@ export const paymentService = {
   // customer choose GCash / Maya / card at checkout. Returns a
   // `checkout_url` the app must open; the wallet is credited only after
   // Xendit confirms via webhook.
-  topUpWallet(data: { amount: number; payment_method_id?: string }) {
-    const p = api.post('/wallet/top-up', data);
+  topUpWallet(
+    data: { amount: number; payment_method_id?: string },
+    opts?: { idempotencyKey?: string },
+  ) {
+    const p = api.post('/wallet/top-up', data, { idempotencyKey: opts?.idempotencyKey } as any);
     p.then(invalidateWallet).catch(() => {});
     return p;
+  },
+
+  // Authoritative status probe the app polls to VERIFY a charge (never assume).
+  // noCache/noDedupe are essential — the 8s micro-cache would otherwise pin a
+  // stale `pending` and the poll would never observe settlement. `silent` keeps
+  // the global activity bar from pinning during background polling.
+  getPaymentStatus(paymentId: string) {
+    return api.get(`/payments/${paymentId}/status`, {
+      noCache: true,
+      noDedupe: true,
+      silent: true,
+    } as any);
+  },
+
+  // Same, addressed by booking id (deep-link return may only know the booking).
+  getBookingPaymentStatus(bookingId: string) {
+    return api.get(`/bookings/${bookingId}/payment-status`, {
+      noCache: true,
+      noDedupe: true,
+      silent: true,
+    } as any);
+  },
+
+  // Status probe for a single wallet top-up.
+  getTopUpStatus(transactionId: string) {
+    return api.get(`/wallet/transactions/${transactionId}/status`, {
+      noCache: true,
+      noDedupe: true,
+      silent: true,
+    } as any);
   },
 
   // Server-side filters (WalletController::transactions): `type` narrows to
