@@ -26,3 +26,10 @@ Schedule::command('cache:prune-stale-tags')->hourly();
 
 // Data retention: cleanup old locations (24h) and messages (30d post-completion)
 Schedule::command('errandguy:cleanup-locations')->daily();
+
+// Safety: alert when an in-transit transportation ride runs well over its
+// estimated duration. Previously defined but NEVER scheduled, so the monitor
+// never ran. withoutOverlapping guards against a slow run stacking.
+Schedule::job(new \App\Jobs\CheckRideDurationJob())
+    ->everyFiveMinutes()
+    ->withoutOverlapping();

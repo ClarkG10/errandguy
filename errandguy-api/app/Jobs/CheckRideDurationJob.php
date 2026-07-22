@@ -31,7 +31,10 @@ class CheckRideDurationJob implements ShouldQueue
 
         foreach ($bookings as $booking) {
             $pickedUpAt = $booking->picked_up_at;
-            $elapsedMinutes = now()->diffInMinutes($pickedUpAt);
+            // Carbon 3 diffInMinutes is SIGNED: now()->diffInMinutes($past) is
+            // negative, so the threshold check below could never fire. Diff from
+            // the earlier instant forward, and take a whole-minute int.
+            $elapsedMinutes = (int) $pickedUpAt->diffInMinutes(now());
 
             // Estimate expected duration based on distance (rough: 2 min/km for motorcycle, 3 min/km for car)
             $distanceKm = (float) ($booking->distance_km ?? 5);
@@ -52,8 +55,11 @@ class CheckRideDurationJob implements ShouldQueue
 
                 Log::warning("Ride duration alert for booking {$booking->id}: {$elapsedMinutes}min elapsed, threshold {$threshold}min");
 
+                // RideDurationAlert's constructor takes a Booking instance
+                // (not an id) — passing $booking->id here threw a TypeError,
+                // so the alert never actually dispatched.
                 event(new RideDurationAlert(
-                    $booking->id,
+                    $booking,
                     $elapsedMinutes,
                     (int) $estimatedMinutes
                 ));

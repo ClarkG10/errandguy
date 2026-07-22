@@ -23,7 +23,7 @@ class SupportController extends Controller
         $tickets = SupportTicket::query()
             ->forUser($request->user()->id)
             ->orderByRaw('COALESCE(last_message_at, created_at) DESC')
-            ->paginate($request->integer('per_page', 20));
+            ->paginate($request->perPage(20));
 
         return response()->json(
             SupportTicketResource::collection($tickets)->response()->getData(true)

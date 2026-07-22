@@ -135,7 +135,7 @@ class WalletController extends Controller
             $query->where('created_at', '<=', \Carbon\Carbon::parse($request->input('date_to'))->endOfDay());
         }
 
-        $transactions = $query->paginate($request->integer('per_page', 20));
+        $transactions = $query->paginate($request->perPage(20));
 
         return response()->json($transactions);
     }

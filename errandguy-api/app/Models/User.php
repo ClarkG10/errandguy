@@ -27,6 +27,8 @@ class User extends Authenticatable
         'avatar_url',
         'role',
         'status',
+        'suspended_reason',
+        'suspended_at',
         'email_verified',
         'phone_verified',
         'default_lat',
@@ -56,6 +58,7 @@ class User extends Authenticatable
             'default_lat' => 'decimal:7',
             'default_lng' => 'decimal:7',
             'last_active_at' => 'datetime',
+            'suspended_at' => 'datetime',
             'deleted_at' => 'datetime',
         ];
     }
@@ -79,6 +82,23 @@ class User extends Authenticatable
     public function runnerProfile(): HasOne
     {
         return $this->hasOne(RunnerProfile::class);
+    }
+
+    /**
+     * KYC documents belong to the runner PROFILE (runner_documents.runner_id =
+     * runner_profiles.id), so reaching them from a user goes through the
+     * profile. Lets admin screens eager-load ->with('runnerDocuments').
+     */
+    public function runnerDocuments(): \Illuminate\Database\Eloquent\Relations\HasManyThrough
+    {
+        return $this->hasManyThrough(
+            RunnerDocument::class,
+            RunnerProfile::class,
+            'user_id',   // FK on runner_profiles -> users
+            'runner_id', // FK on runner_documents -> runner_profiles
+            'id',        // local key on users
+            'id',        // local key on runner_profiles
+        );
     }
 
     public function customerBookings(): HasMany

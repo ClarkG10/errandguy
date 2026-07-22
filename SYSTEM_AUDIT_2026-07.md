@@ -299,6 +299,29 @@ from these changes**.
   it appears. The 6 remaining failures are all pre-existing stale assertions (auth response shape,
   a `429` vs `422` rate-limit code, a more-descriptive status message), not regressions.
 
+### Phase 1 — implemented (follow-up, Laravel API)
+
+- **H4 admin suspension now works.** `suspend()` writes the enforced `status` column
+  (was writing a non-existent `is_active`, so it was a silent no-op), records
+  `suspended_reason`/`suspended_at` (new migration + fillable), and **revokes the user's live
+  tokens** so an authenticated session is cut immediately. The suspended-users admin filter now
+  queries `status` (was 500-ing on a nonexistent column).
+- **Runner KYC review now works.** `RunnerVerificationController` queried a non-existent
+  `user_id` column on `runner_documents` (keyed by the runner *profile* id) — so
+  document listing/approve/reject were broken. Now resolved via the profile, and a
+  `User::runnerDocuments()` has-many-through was added (fixes the admin user-detail 500 that
+  eager-loaded a missing relation).
+- **Ride-duration safety monitor now runs.** `CheckRideDurationJob` was never scheduled, had the
+  Carbon-3 signed-diff bug (elapsed always negative → never tripped), and constructed its event
+  with an id where a `Booking` was required (TypeError). Fixed all three and scheduled it every
+  5 minutes (`withoutOverlapping`). *(Trusted-contact SMS delivery is still a Phase-2 stub —
+  the pipeline now fires and logs/pushes; real SMS needs a provider.)*
+- **Unbounded `per_page` clamped** to `[1,100]` via a shared `$request->perPage()` macro across
+  all 8 list endpoints (DoS/large-payload mitigation).
+
+Tests added: `Admin/AdminModerationTest` (5), `Safety/RideDurationMonitorTest` (2). Suite now
+**269 passing / 275** (same 6 pre-existing stale failures).
+
 ### Deliberately NOT changed here (need product sign-off / infra)
 
 - **C1 social-login audience verification** — *product decision: HOLD.* The correct fix (reject

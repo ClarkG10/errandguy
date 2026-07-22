@@ -26,7 +26,7 @@ class UserManagementController extends Controller
         }
 
         if ($request->query('status') === 'suspended') {
-            $query->where('is_active', false);
+            $query->where('status', 'suspended');
         }
 
         $users = $query->orderByDesc('created_at')->paginate(20);
@@ -46,10 +46,21 @@ class UserManagementController extends Controller
         $request->validate(['reason' => 'required|string|max:500']);
 
         $user = User::findOrFail($id);
+
+        // Enforcement (EnsureUserActive middleware + LoginController) keys on
+        // `status`, NOT the previously-written `is_active` column — which did
+        // not exist, so mass-assignment silently discarded it and the account
+        // stayed fully active. Write the real column.
         $user->update([
-            'is_active' => false,
+            'status' => 'suspended',
             'suspended_reason' => $request->input('reason'),
+            'suspended_at' => now(),
         ]);
+
+        // Cut any already-authenticated session immediately, otherwise a
+        // suspended user with a live bearer token keeps transacting until it
+        // expires.
+        $user->tokens()->delete();
 
         return response()->json(['message' => 'User suspended']);
     }
@@ -58,8 +69,9 @@ class UserManagementController extends Controller
     {
         $user = User::findOrFail($id);
         $user->update([
-            'is_active' => true,
+            'status' => 'active',
             'suspended_reason' => null,
+            'suspended_at' => null,
         ]);
 
         return response()->json(['message' => 'User reactivated']);

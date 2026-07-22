@@ -24,7 +24,7 @@ class NotificationController extends Controller
 
         $notifications = $query
             ->orderByDesc('created_at')
-            ->paginate($request->integer('per_page', 20));
+            ->paginate($request->perPage(20));
 
         return response()->json(
             NotificationResource::collection($notifications)->response()->getData(true)

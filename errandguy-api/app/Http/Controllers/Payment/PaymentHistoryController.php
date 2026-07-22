@@ -15,7 +15,7 @@ class PaymentHistoryController extends Controller
         $payments = Payment::where('customer_id', $request->user()->id)
             ->with(['booking:id,booking_number,errand_type_id,status'])
             ->orderByDesc('created_at')
-            ->paginate($request->integer('per_page', 20));
+            ->paginate($request->perPage(20));
 
         return response()->json(
             PaymentResource::collection($payments)->response()->getData(true)

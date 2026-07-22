@@ -47,7 +47,7 @@ class RunnerErrandHistoryController extends Controller
             });
         }
 
-        $bookings = $query->paginate($request->integer('per_page', 15));
+        $bookings = $query->paginate($request->perPage(15));
 
         return response()->json(
             BookingResource::collection($bookings)->response()->getData(true)

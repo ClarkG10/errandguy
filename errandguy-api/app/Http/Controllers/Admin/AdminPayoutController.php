@@ -31,7 +31,7 @@ class AdminPayoutController extends Controller
         }
 
         return response()->json(
-            $query->paginate($request->integer('per_page', 25))
+            $query->paginate($request->perPage(25))
         );
     }
 

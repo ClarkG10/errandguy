@@ -27,9 +27,15 @@ class RunnerVerificationController extends Controller
 
     public function showDocuments(string $userId): JsonResponse
     {
-        $documents = RunnerDocument::where('user_id', $userId)
-            ->orderByDesc('created_at')
-            ->get();
+        // runner_documents are keyed by the runner PROFILE id (runner_id), not
+        // the user id — there is no user_id column, so the old query errored.
+        $profile = RunnerProfile::where('user_id', $userId)->first();
+
+        $documents = $profile
+            ? RunnerDocument::where('runner_id', $profile->id)
+                ->orderByDesc('created_at')
+                ->get()
+            : collect();
 
         return response()->json(['data' => $documents]);
     }
@@ -42,8 +48,8 @@ class RunnerVerificationController extends Controller
             'verified_at' => now(),
         ]);
 
-        // Mark all pending documents as approved
-        RunnerDocument::where('user_id', $userId)
+        // Mark all pending documents as approved (keyed by runner profile id)
+        RunnerDocument::where('runner_id', $profile->id)
             ->where('status', 'pending')
             ->update(['status' => 'approved', 'reviewed_at' => now()]);
 
@@ -67,7 +73,7 @@ class RunnerVerificationController extends Controller
             'rejection_reason' => $request->input('reason'),
         ]);
 
-        RunnerDocument::where('user_id', $userId)
+        RunnerDocument::where('runner_id', $profile->id)
             ->where('status', 'pending')
             ->update([
                 'status' => 'rejected',
