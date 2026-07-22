@@ -197,7 +197,7 @@ class RunnerErrandController extends Controller
             'title' => 'Runner Assigned!',
             'body' => "{$user->full_name} accepted your errand.",
             'type' => 'booking_update',
-            'data' => json_encode(['booking_id' => $booking->id]),
+            'data' => ['booking_id' => $booking->id],
         ]);
 
         event(new BookingStatusChanged($booking, $oldStatus, 'accepted'));
@@ -420,7 +420,7 @@ class RunnerErrandController extends Controller
                 'title' => 'Errand Update',
                 'body' => "Your errand is now: {$statusLabel}",
                 'type' => 'booking_update',
-                'data' => json_encode(['booking_id' => $booking->id]),
+                'data' => ['booking_id' => $booking->id],
             ]);
 
             // Handle completion
@@ -516,7 +516,7 @@ class RunnerErrandController extends Controller
             'title' => 'PIN Verified',
             'body' => 'Your ride PIN has been verified. Have a safe trip!',
             'type' => 'booking_update',
-            'data' => json_encode(['booking_id' => $booking->id]),
+            'data' => ['booking_id' => $booking->id],
         ]);
 
         return response()->json([

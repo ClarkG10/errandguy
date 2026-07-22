@@ -31,6 +31,11 @@ class SystemConfigSeeder extends Seeder
                 'description' => 'Minutes before unaccepted booking is auto-cancelled',
             ],
             [
+                'key' => 'matched_acceptance_timeout_seconds',
+                'value' => '90',
+                'description' => 'Seconds a matched runner has to accept before the booking is re-matched to someone else',
+            ],
+            [
                 'key' => 'sos_link_expiry_minutes',
                 'value' => '60',
                 'description' => 'Minutes before SOS live tracking link expires',

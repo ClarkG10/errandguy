@@ -70,7 +70,7 @@ class RunnerDocumentController extends Controller
             'title' => 'Document Submitted',
             'body' => "Your {$documentType} document has been submitted for review.",
             'type' => 'document_update',
-            'data' => json_encode(['document_id' => $document->id]),
+            'data' => ['document_id' => $document->id],
         ]);
 
         return response()->json([

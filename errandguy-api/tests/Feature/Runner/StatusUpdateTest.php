@@ -235,6 +235,28 @@ class StatusUpdateTest extends TestCase
         ]);
     }
 
+    public function test_notification_data_is_a_decoded_object_not_a_json_string(): void
+    {
+        // Guards the double-encode fix: the mobile app reads notification.data
+        // as an object (no JSON.parse), so a re-introduced json_encode() would
+        // silently break deep-link routing.
+        Event::fake();
+
+        $this->actingAs($this->runner)
+            ->postJson("/api/v1/runner/errand/{$this->booking->id}/status", [
+                'status' => 'heading_to_pickup',
+            ]);
+
+        $notif = \App\Models\Notification::where('user_id', $this->customer->id)
+            ->where('type', 'booking_update')
+            ->latest()
+            ->first();
+
+        $this->assertNotNull($notif);
+        $this->assertIsArray($notif->data);
+        $this->assertSame($this->booking->id, $notif->data['booking_id']);
+    }
+
     public function test_status_update_with_location(): void
     {
         Event::fake();

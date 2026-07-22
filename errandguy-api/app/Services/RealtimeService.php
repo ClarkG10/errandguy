@@ -67,7 +67,12 @@ class RealtimeService
                 'title' => $title,
                 'body' => $body,
                 'type' => $type,
-                'data' => json_encode($data),
+                // Pass the array straight through: PostgREST serializes the
+                // body once, so the jsonb `data` column stores a real object.
+                // json_encode() here double-encoded it into a JSON *string*,
+                // which broke the mobile app's deep-link routing (it reads
+                // notification.data as an object, never JSON.parse-ing it).
+                'data' => $data,
                 'is_read' => false,
             ]);
         } catch (\Throwable $e) {

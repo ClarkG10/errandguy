@@ -19,7 +19,7 @@ class MatchingService
      *         and uses this radius instead. Used by retry-match to
      *         progressively widen the search after a failed attempt.
      */
-    public function findRunner(string $bookingId, ?float $radiusOverrideKm = null): ?RunnerProfile
+    public function findRunner(string $bookingId, ?float $radiusOverrideKm = null, ?string $excludeUserId = null): ?RunnerProfile
     {
         $booking = Booking::with('errandType')->findOrFail($bookingId);
 
@@ -30,7 +30,8 @@ class MatchingService
             $booking->pickup_lat,
             $booking->pickup_lng,
             $radiusKm,
-            $booking->errand_type_id
+            $booking->errand_type_id,
+            $excludeUserId,
         );
 
         if ($runners->isEmpty()) {
@@ -75,10 +76,14 @@ class MatchingService
         float $lat,
         float $lng,
         float $radiusKm,
-        string $errandTypeId
+        string $errandTypeId,
+        ?string $excludeUserId = null
     ): Collection {
         $runners = RunnerProfile::where('is_online', true)
             ->where('verification_status', 'approved')
+            // Skip a specific runner (e.g. the one who just let a matched
+            // offer time out) so a re-match tries someone else first.
+            ->when($excludeUserId, fn ($q) => $q->where('user_id', '!=', $excludeUserId))
             ->whereNotNull('current_lat')
             ->whereNotNull('current_lng')
             // Cheap bounding-box prefilter so we don't haversine every

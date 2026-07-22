@@ -33,3 +33,10 @@ Schedule::command('errandguy:cleanup-locations')->daily();
 Schedule::job(new \App\Jobs\CheckRideDurationJob())
     ->everyFiveMinutes()
     ->withoutOverlapping();
+
+// Matching: rescue fixed-price bookings whose matched runner never accepted —
+// reset to pending and re-match (excluding the unresponsive runner) instead of
+// stranding the customer on "Runner Found". Bounded by AutoCancelBookingJob.
+Schedule::job(new \App\Jobs\ExpireStaleMatchesJob())
+    ->everyMinute()
+    ->withoutOverlapping();

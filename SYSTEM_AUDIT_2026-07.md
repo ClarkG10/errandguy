@@ -322,6 +322,37 @@ from these changes**.
 Tests added: `Admin/AdminModerationTest` (5), `Safety/RideDurationMonitorTest` (2). Suite now
 **269 passing / 275** (same 6 pre-existing stale failures).
 
+### Phase 2 — implemented (follow-up, Laravel API)
+
+- **H12 — matched bookings no longer strand.** `MatchRunnerJob` now actively **offers** the
+  errand to the matched runner (in-app `Notification` row + push) instead of relying on the
+  runner to poll. A scheduled `ExpireStaleMatchesJob` (every minute) resets any booking stuck in
+  `matched` past `matched_acceptance_timeout_seconds` (default 90) back to `pending` and
+  re-dispatches matching **excluding the unresponsive runner** (new optional `excludeUserId` on
+  `MatchingService::findRunner`). The existing created_at-based `AutoCancelBookingJob` still
+  bounds the total wait, so it can't loop forever. Tests: `StaleMatchReassignTest` (3).
+- **Notification deep-links fixed (double-encode).** `notifications.data` is `jsonb` and the
+  model casts it to `array`, but five call sites passed `json_encode(...)` (re-encoding it into a
+  JSON *string*) and `RealtimeService::insertNotification` did the same for the PostgREST/realtime
+  path. The mobile app reads `notification.data` as an object (no `JSON.parse`), so every affected
+  notification's deep-link (`data.booking_id`, etc.) silently failed. Both write paths now pass
+  the array/object directly. Verified against the mobile consumer before changing. Guard test
+  added. *(Existing rows stay as-is — notifications are ephemeral; no backfill.)*
+
+### H6 (private KYC storage) — assessed, deliberately deferred with a plan
+
+Not shipped this pass because it cannot be done safely blind: the fix requires (1) an **infra
+decision** — make the KYC/delivery-proof storage private (a Supabase bucket-privacy flip, or move
+off Laravel's local `public` disk); (2) a **contract change** — serve documents to admins via
+short-lived **signed URLs** instead of the permanent public URL currently stored in
+`runner_documents.file_url`; and (3) a **backfill** of existing files. Crucially, the **admin
+panel that consumes `file_url` is not in this repo**, so I can't verify the change won't break KYC
+review. Recommended staged plan: add `createSignedUrl()` to `SupabaseStorageService`
+(`/storage/v1/object/sign/...`) → mark the `runner-documents` / `delivery-proofs` buckets private
+→ route uploads through `SupabaseStorageService` and store the object *path* (not a public URL) →
+generate a signed URL at read-time in `RunnerDocumentResource` / the admin document endpoint →
+backfill. Happy to implement once the storage decision + admin-panel consumer are confirmed.
+
 ### Deliberately NOT changed here (need product sign-off / infra)
 
 - **C1 social-login audience verification** — *product decision: HOLD.* The correct fix (reject

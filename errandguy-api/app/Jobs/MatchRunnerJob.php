@@ -5,7 +5,9 @@ namespace App\Jobs;
 use App\Events\BookingStatusChanged;
 use App\Models\Booking;
 use App\Models\BookingStatusLog;
+use App\Models\Notification;
 use App\Services\MatchingService;
+use App\Services\NotificationService;
 use Illuminate\Bus\Queueable;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Bus\Dispatchable;
@@ -26,6 +28,7 @@ class MatchRunnerJob implements ShouldQueue
     public function __construct(
         public string $bookingId,
         public ?float $radiusOverrideKm = null,
+        public ?string $excludeUserId = null,
     ) {}
 
     public function handle(MatchingService $matchingService): void
@@ -41,7 +44,7 @@ class MatchRunnerJob implements ShouldQueue
         // Resolve the runner outside the transaction. Matching is read-only
         // and can be slow (haversine over many runners) — holding the row
         // lock during it would serialize all incoming bookings.
-        $runner = $matchingService->findRunner($this->bookingId, $this->radiusOverrideKm);
+        $runner = $matchingService->findRunner($this->bookingId, $this->radiusOverrideKm, $this->excludeUserId);
 
         try {
             $newStatus = null; // 'matched' | 'no_runner' | null (race-skipped)
@@ -84,6 +87,18 @@ class MatchRunnerJob implements ShouldQueue
                         'note' => 'Runner matched: ' . ($runner->user->full_name ?? 'Unknown'),
                     ]);
 
+                    // Actively OFFER the errand to the matched runner. Without
+                    // this the fixed-mode runner is never told they were
+                    // assigned and only discovers it by polling — the offer
+                    // then times out and the booking strands.
+                    Notification::create([
+                        'user_id' => $runner->user_id,
+                        'title' => 'New errand offer',
+                        'body' => 'You were matched to an errand. Open the app to accept it.',
+                        'type' => 'booking_update',
+                        'data' => ['booking_id' => $booking->id],
+                    ]);
+
                     Log::info("Runner {$runner->user_id} matched to booking {$this->bookingId}");
                     $newStatus = 'matched';
                     $matchedBooking = $booking->fresh();
@@ -118,6 +133,15 @@ class MatchRunnerJob implements ShouldQueue
                 // runner appears as a static dot to the customer.
                 if ($newStatus === 'matched' && $runner) {
                     Cache::forget("runner_active_booking_id:{$runner->user_id}");
+
+                    // Push the offer AFTER commit (never make an outbound push
+                    // call inside the row lock).
+                    app(NotificationService::class)->sendPush(
+                        $runner->user_id,
+                        'New errand offer',
+                        'You were matched to an errand. Open the app to accept it.',
+                        ['type' => 'booking_update', 'booking_id' => $matchedBooking->id],
+                    );
                 }
                 event(new BookingStatusChanged($matchedBooking, 'pending', $newStatus));
             }
