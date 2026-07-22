@@ -9,6 +9,7 @@ use App\Models\User;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Bus;
 use Illuminate\Support\Facades\Http;
+use Illuminate\Support\Facades\Log;
 use Tests\TestCase;
 
 class BookingPaymentTest extends TestCase
@@ -185,5 +186,37 @@ class BookingPaymentTest extends TestCase
 
         $this->assertEquals('completed', $payment->fresh()->status);
         $this->assertEquals('paid', $payment->booking->fresh()->payment_status);
+    }
+
+    public function test_webhook_logs_critical_when_settled_amount_mismatches(): void
+    {
+        Bus::fake();
+        Log::spy();
+        Http::fake([
+            'api.xendit.co/v2/invoices' => Http::response([
+                'id' => 'inv_bk3', 'invoice_url' => 'https://checkout.xendit.co/inv_bk3',
+            ], 200),
+        ]);
+        $this->actingAs($this->customer)
+            ->postJson('/api/v1/bookings', [...$this->base, 'payment_method' => 'maya'])
+            ->assertCreated();
+        $payment = Payment::firstOrFail();
+
+        // Gateway reports a DIFFERENT amount than we expected to charge.
+        $this->postJson('/api/v1/webhooks/xendit', [
+            'event' => 'invoice.paid',
+            'data' => [
+                'external_id' => "booking-{$payment->id}",
+                'id' => 'inv_bk3',
+                'amount' => (float) $payment->amount + 100,
+            ],
+        ], ['x-callback-token' => 'test-webhook-token'])->assertOk();
+
+        // Tripwire fires...
+        Log::shouldHaveReceived('critical')
+            ->withArgs(fn ($msg) => str_contains($msg, 'settlement amount mismatch'))
+            ->once();
+        // ...but the settlement flow is unchanged (log-only).
+        $this->assertEquals('completed', $payment->fresh()->status);
     }
 }

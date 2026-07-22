@@ -148,6 +148,7 @@ class XenditWebhookController extends Controller
                 if (!$payment || !$this->canAdvance($payment, PaymentStatus::Completed)) {
                     return null;
                 }
+                $this->verifySettledAmount($payment, $data);
                 $payment->transitionTo(PaymentStatus::Completed, 'webhook', 'invoice.paid', extra: [
                     'paid_at' => now(),
                     'gateway_response' => $data,
@@ -234,6 +235,7 @@ class XenditWebhookController extends Controller
                 return null;
             }
 
+            $this->verifySettledAmount($payment, $data);
             $payment->transitionTo(PaymentStatus::Completed, 'webhook', 'payment.succeeded', extra: [
                 'paid_at' => now(),
                 'gateway_response' => $data,
@@ -348,6 +350,30 @@ class XenditWebhookController extends Controller
     {
         $current = PaymentStatus::tryFrom((string) $payment->status);
         return $current !== null && $current->canTransitionTo($to);
+    }
+
+    /**
+     * Reconciliation tripwire: the amount Xendit says it settled must match what
+     * we expected to charge. A mismatch means a pricing/gateway bug or tampering
+     * upstream. We only LOG (critical) — the webhook token already authenticates
+     * the caller and invoices are fixed-amount, so we don't refuse the
+     * settlement here; the alert lets ops reconcile before money is lost.
+     */
+    private function verifySettledAmount(Payment $payment, array $data): void
+    {
+        $confirmed = $data['paid_amount'] ?? $data['amount'] ?? null;
+        if ($confirmed === null) {
+            return; // gateway didn't include a comparable amount
+        }
+
+        if (abs((float) $confirmed - (float) $payment->amount) > 0.01) {
+            Log::critical('Xendit settlement amount mismatch', [
+                'payment_id' => $payment->id,
+                'booking_id' => $payment->booking_id,
+                'expected' => (float) $payment->amount,
+                'gateway_confirmed' => (float) $confirmed,
+            ]);
+        }
     }
 
     /**

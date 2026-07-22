@@ -339,6 +339,20 @@ Tests added: `Admin/AdminModerationTest` (5), `Safety/RideDurationMonitorTest` (
   the array/object directly. Verified against the mobile consumer before changing. Guard test
   added. *(Existing rows stay as-is — notifications are ephemeral; no backfill.)*
 
+### Phase 3 — implemented (follow-up, Laravel API)
+
+- **H10 — settlement amount tripwire.** The Xendit webhook now compares the gateway-confirmed
+  amount (`paid_amount`/`amount`) to the expected `Payment.amount` on `invoice.paid` and
+  `payment.succeeded`, logging a `CRITICAL` on any mismatch. Observability-only (the token already
+  authenticates the caller and invoices are fixed-amount), so it never refuses a real settlement —
+  it just gives ops a reconciliation alarm before money is lost. Guard test added.
+- **`available` errands query bounded.** `RunnerErrandController::available` loaded *every* open
+  negotiate booking and distance-filtered in PHP. It now applies the same lat/lng bounding-box as
+  `MatchingService` in SQL and caps the result at 100 (the precise circle filter still runs) —
+  removing an unbounded query / payload risk as open-booking volume grows.
+
+Suite: **274 passing / 280** (6 pre-existing stale failures). Zero regressions.
+
 ### H6 (private KYC storage) — assessed, deliberately deferred with a plan
 
 Not shipped this pass because it cannot be done safely blind: the fix requires (1) an **infra

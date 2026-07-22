@@ -263,16 +263,35 @@ class RunnerErrandController extends Controller
         // fields are eager-loaded; the runner has not been matched yet
         // and must not be able to harvest the customer's phone / email
         // by browsing — and tapping decline on — every broadcast.
-        $bookings = Booking::with([
+        $maxRadiusKm = $profile->working_area_radius
+            ? (float) $profile->working_area_radius / 1000
+            : 10.0;
+
+        $query = Booking::with([
                 'errandType',
                 'customer:id,full_name,avatar_url,role,avg_rating,total_ratings,created_at',
             ])
             ->where('status', 'pending')
             ->where('pricing_mode', 'negotiate')
             ->where('negotiate_expires_at', '>', now())
-            ->whereNull('runner_id')
-            ->orderByDesc('created_at')
-            ->get();
+            ->whereNull('runner_id');
+
+        // Bounding-box prefilter (same 25%-margin box as MatchingService) so we
+        // don't load every open negotiate booking in the country and haversine
+        // them in PHP. The precise circle filter still runs below.
+        if ($profile->current_lat && $profile->current_lng) {
+            $lat = (float) $profile->current_lat;
+            $lng = (float) $profile->current_lng;
+            $latDelta = ($maxRadiusKm * 1.25) / 111.0;
+            $cos = max(0.000001, cos(deg2rad($lat)));
+            $lngDelta = ($maxRadiusKm * 1.25) / (111.0 * $cos);
+            $query->whereBetween('pickup_lat', [$lat - $latDelta, $lat + $latDelta])
+                  ->whereBetween('pickup_lng', [$lng - $lngDelta, $lng + $lngDelta]);
+        }
+
+        // Hard cap the result set — an unbounded ->get() here was a
+        // latency / memory risk as open-booking volume grows.
+        $bookings = $query->orderByDesc('created_at')->limit(100)->get();
 
         // Filter by runner's location and preferred types
         $preferredTypes = $profile->preferred_types ?? [];
