@@ -353,6 +353,36 @@ Tests added: `Admin/AdminModerationTest` (5), `Safety/RideDurationMonitorTest` (
 
 Suite: **274 passing / 280** (6 pre-existing stale failures). Zero regressions.
 
+### Phase 4 — implemented (follow-up, Laravel API)
+
+- **`negotiate_expires_at` single source of truth.** `MatchingService::broadcastToRunners`
+  overwrote the expiry with a hardcoded `now()->addMinutes(30)`, clobbering the config-driven
+  value (`negotiate_timeout_minutes`, default 5m) that the create path (`BookingController`)
+  already sets, anchored to the broadcast time. The overwrite contradicted the config, the
+  `ExpireNegotiateBookingJob` scheduled for the create-path instant, the offer payload + client
+  countdown, and the runner-accept guard (`negotiate_expires_at > now()`). For immediate bookings
+  the broadcast runs synchronously in-request, so the wrong 30m expiry was written *every time*.
+  Fix: broadcasting is now a pure read of eligible runners; the create path owns the expiry. The
+  unit test was rewritten to assert broadcast *preserves* a pre-set expiry rather than enshrining
+  the clobber.
+- **Dropped a provably-redundant duplicate index on `messages`.** Two migrations created the
+  identical `(booking_id, created_at)` index under different names (`idx_messages_booking_id_created`
+  from table creation; `idx_messages_booking_created` from the 2026-05-06 perf migration, whose
+  author overlooked that the table-creation migration already had it). Carrying both doubled write
+  amplification + storage on a hot, frequently-inserted table for zero read benefit. New migration
+  drops the duplicate **only after confirming the keeper still exists** (skips with a `CRITICAL`
+  log otherwise, so coverage can never be lost); Postgres uses `DROP INDEX CONCURRENTLY` (no
+  `ACCESS EXCLUSIVE` lock on `messages`), SQLite a plain drop; `down()` recreates it. Verified
+  up+down on a scratch DB.
+- **Considered and declined:** a `bookings(customer_id/runner_id, updated_at)` index for the chat
+  inbox sort. The existing single-column FK indexes already make the `customer_id OR runner_id`
+  filter fast and a single user's booking set is small, so the `updated_at DESC LIMIT 60` sort is
+  cheap and in-memory. Adding the composite would put extra write amplification on the hottest
+  table in the system (every status/payment/assignment change bumps `bookings.updated_at`) for a
+  marginal gain on a low-QPS interactive screen — a net negative.
+
+Suite: **274 passing / 280** (6 pre-existing stale failures). Zero regressions.
+
 ### H6 (private KYC storage) — assessed, deliberately deferred with a plan
 
 Not shipped this pass because it cannot be done safely blind: the fix requires (1) an **infra
