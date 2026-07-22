@@ -59,10 +59,13 @@ class MatchingService
             $booking->errand_type_id
         );
 
-        // Set negotiate expiration (30 minutes)
-        $booking->update([
-            'negotiate_expires_at' => now()->addMinutes(30),
-        ]);
+        // NOTE: negotiate_expires_at is deliberately NOT set here. The create
+        // path (BookingController) is the single source of truth — it sets the
+        // expiry from the `negotiate_timeout_minutes` config, anchored to the
+        // broadcast time, and schedules ExpireNegotiateBookingJob for the same
+        // instant. Overwriting it here (with a hardcoded 30m) contradicted the
+        // config value, the offer payload, the client countdown, and the
+        // runner-accept guard. Broadcasting is a pure read of eligible runners.
 
         Log::info("Broadcasting booking {$bookingId} to {$runners->count()} runners");
 

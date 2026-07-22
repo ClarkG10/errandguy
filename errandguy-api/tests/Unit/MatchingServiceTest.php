@@ -146,7 +146,7 @@ class MatchingServiceTest extends TestCase
         $this->assertEquals($nearRunner->id, $result->user_id);
     }
 
-    public function test_broadcast_sets_negotiate_expiration(): void
+    public function test_broadcast_returns_eligible_runners_without_touching_expiry(): void
     {
         $runner = User::factory()->create(['role' => 'runner', 'status' => 'active']);
         RunnerProfile::create([
@@ -158,11 +158,24 @@ class MatchingServiceTest extends TestCase
             'preferred_types' => [],
         ]);
 
-        $this->service->broadcastToRunners($this->booking->id);
+        // The create path is the single source of truth for the expiry. It is
+        // already set (from config) before broadcasting runs, so broadcasting
+        // must leave it untouched — clobbering it with its own value used to
+        // contradict the config, the offer payload, and the expire job.
+        $expiry = now()->addMinutes(5);
+        $this->booking->update(['negotiate_expires_at' => $expiry]);
 
+        $runners = $this->service->broadcastToRunners($this->booking->id);
+
+        $this->assertTrue($runners->contains(fn ($r) => $r->user_id === $runner->id));
         $this->booking->refresh();
         $this->assertNotNull($this->booking->negotiate_expires_at);
-        $this->assertTrue($this->booking->negotiate_expires_at->isFuture());
+        $this->assertEqualsWithDelta(
+            $expiry->timestamp,
+            $this->booking->negotiate_expires_at->timestamp,
+            1,
+            'broadcastToRunners must not overwrite the create-path expiry',
+        );
     }
 
     public function test_filters_runners_by_preferred_types(): void
