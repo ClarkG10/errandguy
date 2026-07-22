@@ -1,0 +1,736 @@
+// ErrandGuy — Prisma schema.
+//
+// Hand-authored to match the EXISTING Supabase Postgres schema created by the
+// Laravel migrations (the DB is shared and unchanged). TS field names are
+// camelCase; @map/@@map pin them to the real snake_case columns/tables.
+//
+// IMPORTANT: never run `prisma migrate` against the shared DB — it would try to
+// drop the Laravel framework tables (cache, jobs, sessions, …) that this schema
+// deliberately does not model. Use `prisma db pull` to resync, and apply the
+// additive `queued_jobs` table via prisma/sql/000_queued_jobs.sql by hand.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Identity & auth
+// ─────────────────────────────────────────────────────────────────────────────
+
+model User {
+  id               String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  phone            String?   @unique @db.VarChar(20)
+  email            String?   @unique @db.VarChar(255)
+  passwordHash     String    @map("password_hash") @db.VarChar(255)
+  fullName         String    @map("full_name") @db.VarChar(100)
+  avatarUrl        String?   @map("avatar_url") @db.Text
+  role             String    @db.VarChar(10)
+  status           String    @default("active") @db.VarChar(15)
+  emailVerified    Boolean   @default(false) @map("email_verified")
+  phoneVerified    Boolean   @default(false) @map("phone_verified")
+  defaultLat       Decimal?  @map("default_lat") @db.Decimal(10, 7)
+  defaultLng       Decimal?  @map("default_lng") @db.Decimal(10, 7)
+  fcmToken         String?   @map("fcm_token") @db.Text
+  walletBalance    Decimal   @default(0) @map("wallet_balance") @db.Decimal(12, 2)
+  xenditCustomerId String?   @map("xendit_customer_id") @db.VarChar(255)
+  avgRating        Decimal   @default(0) @map("avg_rating") @db.Decimal(3, 2)
+  totalRatings     Int       @default(0) @map("total_ratings")
+  lastActiveAt     DateTime? @map("last_active_at") @db.Timestamptz(6)
+  referralCode     String?   @unique @map("referral_code") @db.VarChar(12)
+  referredBy       String?   @map("referred_by") @db.Uuid
+  deletedAt        DateTime? @map("deleted_at") @db.Timestamptz(6)
+  createdAt        DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt        DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  runnerProfile     RunnerProfile?
+  customerBookings  Booking[]           @relation("CustomerBookings")
+  runnerBookings    Booking[]           @relation("RunnerBookings")
+  statusLogChanges  BookingStatusLog[]  @relation("StatusLogChangedBy")
+  runnerLocations   RunnerLocation[]    @relation("RunnerLocationRunner")
+  payments          Payment[]           @relation("CustomerPayments")
+  paymentMethods    PaymentMethod[]
+  walletTransactions WalletTransaction[]
+  messages          Message[]           @relation("MessageSender")
+  reviewsGiven      Review[]            @relation("ReviewReviewer")
+  reviewsReceived   Review[]            @relation("ReviewReviewee")
+  notifications     Notification[]
+  savedAddresses    SavedAddress[]
+  trustedContacts   TrustedContact[]
+  sosAsCustomer     SosAlert[]          @relation("SosCustomer")
+  sosAsRunner       SosAlert[]          @relation("SosRunner")
+  sosTriggered      SosAlert[]          @relation("SosTriggeredBy")
+  disputesReported  DisputeTicket[]     @relation("DisputeReporter")
+  referralsMade     Referral[]          @relation("ReferralReferrer")
+  referralsReceived Referral[]          @relation("ReferralReferee")
+  supportTickets    SupportTicket[]
+  supportMessages   SupportMessage[]    @relation("SupportMessageSender")
+  referrer          User?               @relation("UserReferrals", fields: [referredBy], references: [id], onDelete: SetNull)
+  referredUsers     User[]              @relation("UserReferrals")
+
+  @@index([phone], map: "idx_users_phone")
+  @@index([email], map: "idx_users_email")
+  @@index([role, status], map: "idx_users_role_status")
+  @@index([referredBy], map: "idx_users_referred_by")
+  @@map("users")
+}
+
+model AdminUser {
+  id              String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  email           String    @unique @db.VarChar(255)
+  passwordHash    String    @map("password_hash") @db.VarChar(255)
+  fullName        String    @map("full_name") @db.VarChar(100)
+  role            String    @default("admin") @db.VarChar(20)
+  twoFactorSecret String?   @map("two_factor_secret") @db.Text
+  isActive        Boolean   @default(true) @map("is_active")
+  lastLoginAt     DateTime? @map("last_login_at") @db.Timestamptz(6)
+  createdAt       DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt       DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  @@map("admin_users")
+}
+
+// Laravel Sanctum personal access tokens. `token` = sha256 hex of the plaintext
+// half of a "{id}|{plaintext}" bearer. `tokenable_type` is the morph class name
+// ("App\\Models\\User" | "App\\Models\\AdminUser") — kept verbatim for parity.
+model PersonalAccessToken {
+  id            BigInt    @id @default(autoincrement())
+  tokenableType String    @map("tokenable_type") @db.VarChar(255)
+  tokenableId   String    @map("tokenable_id") @db.Uuid
+  name          String    @db.Text
+  token         String    @unique @db.VarChar(64)
+  abilities     String?   @db.Text
+  lastUsedAt    DateTime? @map("last_used_at") @db.Timestamp(0)
+  expiresAt     DateTime? @map("expires_at") @db.Timestamp(0)
+  createdAt     DateTime? @map("created_at") @db.Timestamp(0)
+  updatedAt     DateTime? @map("updated_at") @db.Timestamp(0)
+
+  @@index([tokenableType, tokenableId], map: "personal_access_tokens_tokenable_type_tokenable_id_index")
+  @@index([expiresAt])
+  @@map("personal_access_tokens")
+}
+
+model PasswordResetToken {
+  email     String    @id @db.VarChar(255)
+  token     String    @db.VarChar(255)
+  createdAt DateTime? @map("created_at") @db.Timestamp(0)
+
+  @@map("password_reset_tokens")
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Runner
+// ─────────────────────────────────────────────────────────────────────────────
+
+model RunnerProfile {
+  id                 String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId             String    @unique @map("user_id") @db.Uuid
+  verificationStatus String    @default("pending") @map("verification_status") @db.VarChar(15)
+  vehicleType        String?   @map("vehicle_type") @db.VarChar(15)
+  vehiclePlate       String?   @map("vehicle_plate") @db.VarChar(20)
+  vehiclePhotoUrl    String?   @map("vehicle_photo_url") @db.Text
+  isOnline           Boolean   @default(false) @map("is_online")
+  currentLat         Decimal?  @map("current_lat") @db.Decimal(10, 7)
+  currentLng         Decimal?  @map("current_lng") @db.Decimal(10, 7)
+  lastLocationAt     DateTime? @map("last_location_at") @db.Timestamptz(6)
+  acceptanceRate     Decimal   @default(0) @map("acceptance_rate") @db.Decimal(5, 2)
+  completionRate     Decimal   @default(0) @map("completion_rate") @db.Decimal(5, 2)
+  totalErrands       Int       @default(0) @map("total_errands")
+  totalEarnings      Decimal   @default(0) @map("total_earnings") @db.Decimal(12, 2)
+  preferredTypes     Json      @default("[]") @map("preferred_types") @db.JsonB
+  workingAreaLat     Decimal?  @map("working_area_lat") @db.Decimal(10, 7)
+  workingAreaLng     Decimal?  @map("working_area_lng") @db.Decimal(10, 7)
+  workingAreaRadius  Int       @default(5000) @map("working_area_radius")
+  bankName           String?   @map("bank_name") @db.VarChar(100)
+  bankAccountNumber  String?   @map("bank_account_number") @db.Text
+  ewalletNumber      String?   @map("ewallet_number") @db.VarChar(20)
+  approvedAt         DateTime? @map("approved_at") @db.Timestamptz(6)
+  createdAt          DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt          DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  user      User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  documents RunnerDocument[]
+
+  @@index([userId], map: "idx_runner_profiles_user_id")
+  @@index([isOnline, verificationStatus], map: "idx_runner_profiles_online_status")
+  @@index([currentLat], map: "idx_runner_profiles_current_lat")
+  @@map("runner_profiles")
+}
+
+model RunnerDocument {
+  id              String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  runnerId        String    @map("runner_id") @db.Uuid
+  documentType    String    @map("document_type") @db.VarChar(25)
+  fileUrl         String    @map("file_url") @db.Text
+  status          String    @default("pending") @db.VarChar(15)
+  rejectionReason String?   @map("rejection_reason") @db.Text
+  reviewedBy      String?   @map("reviewed_by") @db.Uuid
+  reviewedAt      DateTime? @map("reviewed_at") @db.Timestamptz(6)
+  createdAt       DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  runner RunnerProfile @relation(fields: [runnerId], references: [id], onDelete: Cascade)
+
+  @@index([runnerId], map: "idx_runner_documents_runner_id")
+  @@index([runnerId, status])
+  @@map("runner_documents")
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Catalog
+// ─────────────────────────────────────────────────────────────────────────────
+
+model ErrandType {
+  id              String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  slug            String   @unique @db.VarChar(30)
+  name            String   @db.VarChar(50)
+  description     String   @db.Text
+  iconName        String   @map("icon_name") @db.VarChar(30)
+  baseFee         Decimal  @map("base_fee") @db.Decimal(8, 2)
+  perKmWalk       Decimal  @map("per_km_walk") @db.Decimal(6, 2)
+  perKmBicycle    Decimal  @map("per_km_bicycle") @db.Decimal(6, 2)
+  perKmMotorcycle Decimal  @map("per_km_motorcycle") @db.Decimal(6, 2)
+  perKmCar        Decimal  @map("per_km_car") @db.Decimal(6, 2)
+  surcharge       Decimal  @default(0) @db.Decimal(6, 2)
+  minNegotiateFee Decimal  @map("min_negotiate_fee") @db.Decimal(8, 2)
+  isActive        Boolean  @default(true) @map("is_active")
+  sortOrder       Int      @default(0) @map("sort_order")
+  createdAt       DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  bookings Booking[]
+
+  @@index([isActive])
+  @@map("errand_types")
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Bookings
+// ─────────────────────────────────────────────────────────────────────────────
+
+model Booking {
+  id                  String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  bookingNumber       String    @unique @map("booking_number") @db.VarChar(20)
+  customerId          String    @map("customer_id") @db.Uuid
+  runnerId            String?   @map("runner_id") @db.Uuid
+  errandTypeId        String    @map("errand_type_id") @db.Uuid
+  status              String    @default("pending") @db.VarChar(25)
+  pickupAddress       String    @map("pickup_address") @db.Text
+  pickupLat           Decimal   @map("pickup_lat") @db.Decimal(10, 7)
+  pickupLng           Decimal   @map("pickup_lng") @db.Decimal(10, 7)
+  pickupContactName   String?   @map("pickup_contact_name") @db.VarChar(100)
+  pickupContactPhone  String?   @map("pickup_contact_phone") @db.VarChar(20)
+  dropoffAddress      String?   @map("dropoff_address") @db.Text
+  dropoffLat          Decimal?  @map("dropoff_lat") @db.Decimal(10, 7)
+  dropoffLng          Decimal?  @map("dropoff_lng") @db.Decimal(10, 7)
+  dropoffContactName  String?   @map("dropoff_contact_name") @db.VarChar(100)
+  dropoffContactPhone String?   @map("dropoff_contact_phone") @db.VarChar(20)
+  description         String?   @db.Text
+  specialInstructions String?   @map("special_instructions") @db.Text
+  itemPhotos          Json      @default("[]") @map("item_photos") @db.JsonB
+  estimatedItemValue  Decimal?  @map("estimated_item_value") @db.Decimal(10, 2)
+  shoppingBudget      Decimal?  @map("shopping_budget") @db.Decimal(10, 2)
+  shoppingItems       Json?     @map("shopping_items") @db.JsonB
+  actualItemCost      Decimal?  @map("actual_item_cost") @db.Decimal(10, 2)
+  receiptPhotoUrl     String?   @map("receipt_photo_url") @db.Text
+  scheduleType        String    @default("now") @map("schedule_type") @db.VarChar(10)
+  scheduledAt         DateTime? @map("scheduled_at") @db.Timestamptz(6)
+  pricingMode         String    @default("fixed") @map("pricing_mode") @db.VarChar(10)
+  vehicleTypeRate     String?   @map("vehicle_type_rate") @db.VarChar(15)
+  distanceKm          Decimal?  @map("distance_km") @db.Decimal(8, 2)
+  baseFee             Decimal   @map("base_fee") @db.Decimal(8, 2)
+  distanceFee         Decimal   @map("distance_fee") @db.Decimal(8, 2)
+  serviceFee          Decimal   @map("service_fee") @db.Decimal(8, 2)
+  surcharge           Decimal   @default(0) @db.Decimal(8, 2)
+  promoDiscount       Decimal   @default(0) @map("promo_discount") @db.Decimal(8, 2)
+  totalAmount         Decimal   @map("total_amount") @db.Decimal(10, 2)
+  paymentMethod       String?   @map("payment_method") @db.VarChar(15)
+  paymentStatus       String    @default("unpaid") @map("payment_status") @db.VarChar(15)
+  customerOffer       Decimal?  @map("customer_offer") @db.Decimal(10, 2)
+  recommendedMin      Decimal?  @map("recommended_min") @db.Decimal(10, 2)
+  recommendedMax      Decimal?  @map("recommended_max") @db.Decimal(10, 2)
+  runnerPayout        Decimal?  @map("runner_payout") @db.Decimal(10, 2)
+  negotiateExpiresAt  DateTime? @map("negotiate_expires_at") @db.Timestamptz(6)
+  pickupPhotoUrl      String?   @map("pickup_photo_url") @db.Text
+  deliveryPhotoUrl    String?   @map("delivery_photo_url") @db.Text
+  signatureUrl        String?   @map("signature_url") @db.Text
+  matchedAt           DateTime? @map("matched_at") @db.Timestamptz(6)
+  acceptedAt          DateTime? @map("accepted_at") @db.Timestamptz(6)
+  pickedUpAt          DateTime? @map("picked_up_at") @db.Timestamptz(6)
+  completedAt         DateTime? @map("completed_at") @db.Timestamptz(6)
+  cancelledAt         DateTime? @map("cancelled_at") @db.Timestamptz(6)
+  cancellationReason  String?   @map("cancellation_reason") @db.Text
+  cancellationFee     Decimal   @default(0) @map("cancellation_fee") @db.Decimal(8, 2)
+  cancelledBy         String?   @map("cancelled_by") @db.Uuid
+  promoCodeId         String?   @map("promo_code_id") @db.Uuid
+  ridePin             String?   @map("ride_pin") @db.VarChar(4)
+  ridePinVerified     Boolean   @default(false) @map("ride_pin_verified")
+  isTransportation    Boolean   @default(false) @map("is_transportation")
+  sosTriggered        Boolean   @default(false) @map("sos_triggered")
+  tripShareToken      String?   @unique @map("trip_share_token") @db.VarChar(64)
+  tripShareActive     Boolean   @default(false) @map("trip_share_active")
+  createdAt           DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt           DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  customer       User               @relation("CustomerBookings", fields: [customerId], references: [id])
+  runner         User?              @relation("RunnerBookings", fields: [runnerId], references: [id])
+  errandType     ErrandType         @relation(fields: [errandTypeId], references: [id])
+  statusLogs     BookingStatusLog[]
+  runnerLocations RunnerLocation[]
+  payments       Payment[]
+  messages       Message[]
+  reviews        Review[]
+  sosAlerts      SosAlert[]
+  disputeTickets DisputeTicket[]
+  supportTickets SupportTicket[]
+
+  @@index([customerId], map: "idx_bookings_customer_id")
+  @@index([runnerId], map: "idx_bookings_runner_id")
+  @@index([status], map: "idx_bookings_status")
+  @@index([bookingNumber], map: "idx_bookings_booking_number")
+  @@index([createdAt], map: "idx_bookings_created_at")
+  @@index([completedAt])
+  @@index([paymentStatus], map: "idx_bookings_payment_status")
+  @@index([customerId, status, createdAt], map: "idx_bookings_customer_status_created")
+  @@index([runnerId, status, completedAt], map: "idx_bookings_runner_status_completed")
+  @@index([status, pricingMode, negotiateExpiresAt], map: "idx_bookings_status_pricing_negotiate")
+  @@map("bookings")
+}
+
+model BookingStatusLog {
+  id        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  bookingId String   @map("booking_id") @db.Uuid
+  status    String   @db.VarChar(25)
+  changedBy String?  @map("changed_by") @db.Uuid
+  note      String?  @db.Text
+  lat       Decimal? @db.Decimal(10, 7)
+  lng       Decimal? @db.Decimal(10, 7)
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  booking   Booking @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+  changedByUser User? @relation("StatusLogChangedBy", fields: [changedBy], references: [id])
+
+  @@index([bookingId], map: "idx_booking_status_logs_booking_id")
+  @@index([bookingId, createdAt], map: "idx_status_logs_booking_created")
+  @@map("booking_status_logs")
+}
+
+model RunnerLocation {
+  id        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  bookingId String?  @map("booking_id") @db.Uuid
+  runnerId  String   @map("runner_id") @db.Uuid
+  lat       Decimal  @db.Decimal(10, 7)
+  lng       Decimal  @db.Decimal(10, 7)
+  heading   Decimal? @db.Decimal(5, 2)
+  speed     Decimal? @db.Decimal(5, 2)
+  accuracy  Decimal? @db.Decimal(5, 2)
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  booking Booking? @relation(fields: [bookingId], references: [id])
+  runner  User     @relation("RunnerLocationRunner", fields: [runnerId], references: [id])
+
+  @@index([bookingId], map: "idx_runner_locations_booking_id")
+  @@index([runnerId, createdAt], map: "idx_runner_locations_runner_id_created")
+  @@index([bookingId, createdAt], map: "idx_runner_locations_booking_created")
+  @@map("runner_locations")
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Payments & wallet
+// ─────────────────────────────────────────────────────────────────────────────
+
+model Payment {
+  id              String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  bookingId       String    @map("booking_id") @db.Uuid
+  customerId      String    @map("customer_id") @db.Uuid
+  amount          Decimal   @db.Decimal(10, 2)
+  currency        String    @default("PHP") @db.VarChar(5)
+  method          String    @db.VarChar(15)
+  status          String    @default("pending") @db.VarChar(15)
+  gatewayTxId     String?   @map("gateway_tx_id") @db.VarChar(100)
+  gatewayResponse Json?     @map("gateway_response") @db.JsonB
+  paidAt          DateTime? @map("paid_at") @db.Timestamptz(6)
+  refundAmount    Decimal?  @map("refund_amount") @db.Decimal(10, 2)
+  refundedAt      DateTime? @map("refunded_at") @db.Timestamptz(6)
+  createdAt       DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt       DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  booking     Booking                   @relation(fields: [bookingId], references: [id])
+  customer    User                      @relation("CustomerPayments", fields: [customerId], references: [id])
+  transitions PaymentStatusTransition[]
+
+  @@index([bookingId], map: "idx_payments_booking_id")
+  @@index([customerId], map: "idx_payments_customer_id")
+  @@map("payments")
+}
+
+model PaymentMethod {
+  id           String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId       String    @map("user_id") @db.Uuid
+  type         String    @db.VarChar(15)
+  status       String    @default("active") @db.VarChar(15)
+  label        String    @db.VarChar(50)
+  gatewayToken String?   @map("gateway_token") @db.Text
+  gatewayRef   String?   @map("gateway_ref") @db.VarChar(255)
+  isDefault    Boolean   @default(false) @map("is_default")
+  lastFour     String?   @map("last_four") @db.VarChar(4)
+  cardBrand    String?   @map("card_brand") @db.VarChar(20)
+  channelCode  String?   @map("channel_code") @db.VarChar(20)
+  expiresAt    DateTime? @map("expires_at") @db.Date
+  createdAt    DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId], map: "idx_payment_methods_user_id")
+  @@map("payment_methods")
+}
+
+model WalletTransaction {
+  id            String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId        String    @map("user_id") @db.Uuid
+  type          String    @db.VarChar(15)
+  amount        Decimal   @db.Decimal(10, 2)
+  balanceAfter  Decimal   @map("balance_after") @db.Decimal(12, 2)
+  referenceId   String?   @map("reference_id") @db.Uuid
+  gatewayRef    String?   @map("gateway_ref") @db.VarChar(100)
+  checkoutUrl   String?   @map("checkout_url") @db.Text
+  description   String?   @db.Text
+  status        String    @default("completed") @db.VarChar(15)
+  processedAt   DateTime? @map("processed_at") @db.Timestamptz(6)
+  failureReason String?   @map("failure_reason") @db.Text
+  createdAt     DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  user User @relation(fields: [userId], references: [id])
+
+  @@index([userId, createdAt], map: "idx_wallet_transactions_user_id_created")
+  @@index([type, status], map: "idx_wallet_transactions_type_status")
+  @@index([gatewayRef], map: "idx_wallet_transactions_gateway_ref")
+  @@map("wallet_transactions")
+}
+
+model PaymentStatusTransition {
+  id         String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  paymentId  String   @map("payment_id") @db.Uuid
+  fromStatus String?  @map("from_status") @db.VarChar(15)
+  toStatus   String   @map("to_status") @db.VarChar(15)
+  actor      String?  @db.VarChar(60)
+  reason     String?  @db.VarChar(191)
+  meta       Json?    @db.JsonB
+  createdAt  DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  payment Payment @relation(fields: [paymentId], references: [id], onDelete: Cascade)
+
+  @@index([paymentId], map: "idx_pst_payment_id")
+  @@map("payment_status_transitions")
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Chat, reviews, notifications
+// ─────────────────────────────────────────────────────────────────────────────
+
+model Message {
+  id        String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  bookingId String    @map("booking_id") @db.Uuid
+  senderId  String    @map("sender_id") @db.Uuid
+  content   String?   @db.Text
+  imageUrl  String?   @map("image_url") @db.Text
+  isSystem  Boolean   @default(false) @map("is_system")
+  readAt    DateTime? @map("read_at") @db.Timestamptz(6)
+  createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  booking Booking @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+  sender  User    @relation("MessageSender", fields: [senderId], references: [id])
+
+  @@index([bookingId, createdAt], map: "idx_messages_booking_id_created")
+  @@index([bookingId, senderId, readAt], map: "idx_messages_booking_sender_read")
+  @@index([bookingId, createdAt], map: "idx_messages_booking_created")
+  @@map("messages")
+}
+
+model Review {
+  id        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  bookingId String   @map("booking_id") @db.Uuid
+  reviewerId String  @map("reviewer_id") @db.Uuid
+  revieweeId String  @map("reviewee_id") @db.Uuid
+  rating    Int      @db.SmallInt
+  comment   String?  @db.Text
+  isFlagged Boolean  @default(false) @map("is_flagged")
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  booking  Booking @relation(fields: [bookingId], references: [id])
+  reviewer User    @relation("ReviewReviewer", fields: [reviewerId], references: [id])
+  reviewee User    @relation("ReviewReviewee", fields: [revieweeId], references: [id])
+
+  @@unique([bookingId, reviewerId])
+  @@index([revieweeId], map: "idx_reviews_reviewee_id")
+  @@map("reviews")
+}
+
+model Notification {
+  id         String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId     String    @map("user_id") @db.Uuid
+  title      String    @db.VarChar(100)
+  body       String    @db.Text
+  type       String    @db.VarChar(20)
+  data       Json?     @db.JsonB
+  isRead     Boolean   @default(false) @map("is_read")
+  archivedAt DateTime? @map("archived_at") @db.Timestamptz(6)
+  createdAt  DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, createdAt], map: "idx_notifications_user_id_created")
+  @@index([userId, isRead], map: "idx_notifications_user_is_read")
+  @@index([userId, archivedAt], map: "idx_notifications_user_id_archived")
+  @@map("notifications")
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Profile extras
+// ─────────────────────────────────────────────────────────────────────────────
+
+model SavedAddress {
+  id        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId    String   @map("user_id") @db.Uuid
+  label     String   @db.VarChar(50)
+  address   String   @db.Text
+  lat       Decimal  @db.Decimal(10, 7)
+  lng       Decimal  @db.Decimal(10, 7)
+  isDefault Boolean  @default(false) @map("is_default")
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId], map: "idx_saved_addresses_user_id")
+  @@map("saved_addresses")
+}
+
+model TrustedContact {
+  id           String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId       String   @map("user_id") @db.Uuid
+  name         String   @db.VarChar(100)
+  phone        String   @db.VarChar(20)
+  relationship String   @db.VarChar(30)
+  priority     Int      @default(1) @db.SmallInt
+  isActive     Boolean  @default(true) @map("is_active")
+  createdAt    DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt    DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId], map: "idx_trusted_contacts_user_id")
+  @@map("trusted_contacts")
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Safety
+// ─────────────────────────────────────────────────────────────────────────────
+
+model SosAlert {
+  id                String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  bookingId         String    @map("booking_id") @db.Uuid
+  customerId        String    @map("customer_id") @db.Uuid
+  runnerId          String?   @map("runner_id") @db.Uuid
+  triggeredBy       String?   @map("triggered_by") @db.Uuid
+  triggeredByRole   String?   @map("triggered_by_role") @db.VarChar(15)
+  triggeredAt       DateTime  @map("triggered_at") @db.Timestamptz(6)
+  customerLat       Decimal?  @map("customer_lat") @db.Decimal(10, 7)
+  customerLng       Decimal?  @map("customer_lng") @db.Decimal(10, 7)
+  runnerLat         Decimal?  @map("runner_lat") @db.Decimal(10, 7)
+  runnerLng         Decimal?  @map("runner_lng") @db.Decimal(10, 7)
+  contactsNotified  Json      @default("[]") @map("contacts_notified") @db.JsonB
+  liveLinkToken     String?   @map("live_link_token") @db.VarChar(64)
+  liveLinkExpiresAt DateTime? @map("live_link_expires_at") @db.Timestamptz(6)
+  resolvedAt        DateTime? @map("resolved_at") @db.Timestamptz(6)
+  resolutionNote    String?   @map("resolution_note") @db.Text
+  status            String    @default("active") @db.VarChar(15)
+  createdAt         DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  booking     Booking @relation(fields: [bookingId], references: [id])
+  customer    User    @relation("SosCustomer", fields: [customerId], references: [id])
+  runner      User?   @relation("SosRunner", fields: [runnerId], references: [id])
+  triggeredByUser User? @relation("SosTriggeredBy", fields: [triggeredBy], references: [id])
+
+  @@index([bookingId], map: "idx_sos_alerts_booking_id")
+  @@index([status])
+  @@index([triggeredBy], map: "idx_sos_alerts_triggered_by")
+  @@map("sos_alerts")
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Promos & referrals
+// ─────────────────────────────────────────────────────────────────────────────
+
+model PromoCode {
+  id            String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  code          String   @unique @db.VarChar(30)
+  description   String?  @db.Text
+  discountType  String   @map("discount_type") @db.VarChar(10)
+  discountValue Decimal  @map("discount_value") @db.Decimal(8, 2)
+  maxDiscount   Decimal? @map("max_discount") @db.Decimal(8, 2)
+  minOrder      Decimal  @default(0) @map("min_order") @db.Decimal(8, 2)
+  usageLimit    Int?     @map("usage_limit")
+  perUserLimit  Int      @default(1) @map("per_user_limit")
+  usedCount     Int      @default(0) @map("used_count")
+  validFrom     DateTime @map("valid_from") @db.Timestamptz(6)
+  validUntil    DateTime @map("valid_until") @db.Timestamptz(6)
+  isActive      Boolean  @default(true) @map("is_active")
+  createdAt     DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  @@index([code, isActive])
+  @@map("promo_codes")
+}
+
+model Referral {
+  id           String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  referrerId   String    @map("referrer_id") @db.Uuid
+  refereeId    String    @map("referee_id") @db.Uuid
+  status       String    @default("pending") @db.VarChar(15)
+  rewardAmount Decimal?  @map("reward_amount") @db.Decimal(10, 2)
+  qualifiedAt  DateTime? @map("qualified_at") @db.Timestamptz(6)
+  rewardedAt   DateTime? @map("rewarded_at") @db.Timestamptz(6)
+  createdAt    DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  referrer User @relation("ReferralReferrer", fields: [referrerId], references: [id], onDelete: Cascade)
+  referee  User @relation("ReferralReferee", fields: [refereeId], references: [id], onDelete: Cascade)
+
+  @@unique([refereeId], map: "uq_referrals_referee_id")
+  @@index([referrerId], map: "idx_referrals_referrer_id")
+  @@map("referrals")
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Support & disputes
+// ─────────────────────────────────────────────────────────────────────────────
+
+model DisputeTicket {
+  id           String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  bookingId    String    @map("booking_id") @db.Uuid
+  reportedBy   String    @map("reported_by") @db.Uuid
+  category     String    @db.VarChar(30)
+  description  String    @db.Text
+  evidenceUrls Json      @default("[]") @map("evidence_urls") @db.JsonB
+  status       String    @default("open") @db.VarChar(15)
+  resolution   String?   @db.Text
+  resolvedBy   String?   @map("resolved_by") @db.Uuid
+  resolvedAt   DateTime? @map("resolved_at") @db.Timestamptz(6)
+  createdAt    DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt    DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  booking  Booking @relation(fields: [bookingId], references: [id])
+  reporter User    @relation("DisputeReporter", fields: [reportedBy], references: [id])
+
+  @@index([bookingId], map: "idx_dispute_tickets_booking_id")
+  @@index([status])
+  @@index([reportedBy])
+  @@map("dispute_tickets")
+}
+
+model SupportTicket {
+  id            String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId        String    @map("user_id") @db.Uuid
+  bookingId     String?   @map("booking_id") @db.Uuid
+  subject       String    @db.VarChar(255)
+  category      String    @db.VarChar(255)
+  status        String    @default("open") @db.VarChar(255)
+  lastMessageAt DateTime? @map("last_message_at") @db.Timestamptz(6)
+  createdAt     DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  user     User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  booking  Booking?         @relation(fields: [bookingId], references: [id], onDelete: SetNull)
+  messages SupportMessage[]
+
+  @@index([userId, status], map: "idx_support_tickets_user_status")
+  @@map("support_tickets")
+}
+
+model SupportMessage {
+  id         String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  ticketId   String    @map("ticket_id") @db.Uuid
+  senderId   String?   @map("sender_id") @db.Uuid
+  senderType String    @map("sender_type") @db.VarChar(255)
+  content    String    @db.Text
+  imageUrl   String?   @map("image_url") @db.Text
+  readAt     DateTime? @map("read_at") @db.Timestamptz(6)
+  createdAt  DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  ticket SupportTicket @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+  sender User?         @relation("SupportMessageSender", fields: [senderId], references: [id], onDelete: SetNull)
+
+  @@index([ticketId, createdAt], map: "idx_support_messages_ticket_created")
+  @@map("support_messages")
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// System config & safety infra
+// ─────────────────────────────────────────────────────────────────────────────
+
+model SystemConfig {
+  key         String   @id @db.VarChar(50)
+  value       String   @db.Text
+  description String?  @db.Text
+  updatedBy   String?  @map("updated_by") @db.Uuid
+  updatedAt   DateTime @default(now()) @map("updated_at") @db.Timestamptz(6)
+
+  @@map("system_config")
+}
+
+model IdempotencyKey {
+  id           String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId       String?   @map("user_id") @db.Uuid
+  idemKey      String    @map("idem_key") @db.VarChar(191)
+  method       String    @db.VarChar(10)
+  path         String    @db.VarChar(191)
+  requestHash  String    @map("request_hash") @db.VarChar(64)
+  status       String    @default("in_progress") @db.VarChar(12)
+  responseCode Int?      @map("response_code") @db.SmallInt
+  responseBody Json?     @map("response_body") @db.JsonB
+  lockedAt     DateTime? @map("locked_at") @db.Timestamptz(6)
+  expiresAt    DateTime? @map("expires_at") @db.Timestamptz(6)
+  createdAt    DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt    DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  @@unique([userId, idemKey], map: "uq_idem_user_key")
+  @@index([expiresAt], map: "idx_idem_expires")
+  @@map("idempotency_keys")
+}
+
+model WebhookEvent {
+  id          String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  provider    String    @default("xendit") @db.VarChar(20)
+  eventId     String    @map("event_id") @db.VarChar(191)
+  eventType   String?   @map("event_type") @db.VarChar(60)
+  payload     Json?     @db.JsonB
+  status      String    @default("received") @db.VarChar(12)
+  processedAt DateTime? @map("processed_at") @db.Timestamptz(6)
+  createdAt   DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt   DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  @@unique([provider, eventId], map: "uq_webhook_provider_event")
+  @@map("webhook_events")
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// NestJS DB-backed queue (ADDITIVE — apply prisma/sql/000_queued_jobs.sql).
+// Replaces Laravel's `jobs` table for delayed/retryable background work.
+// ─────────────────────────────────────────────────────────────────────────────
+
+model QueuedJob {
+  id          String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  name        String    @db.VarChar(100)
+  payload     Json      @db.JsonB
+  availableAt DateTime  @map("available_at") @db.Timestamptz(6)
+  reservedAt  DateTime? @map("reserved_at") @db.Timestamptz(6)
+  attempts    Int       @default(0)
+  maxAttempts Int       @default(3) @map("max_attempts")
+  status      String    @default("pending") @db.VarChar(12)
+  lastError   String?   @map("last_error") @db.Text
+  createdAt   DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt   DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  @@index([status, availableAt], map: "idx_queued_jobs_status_available")
+  @@map("queued_jobs")
+}
