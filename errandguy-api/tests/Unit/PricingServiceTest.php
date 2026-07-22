@@ -82,7 +82,11 @@ class PricingServiceTest extends TestCase
             $this->deliveryType->id, 14.5995, 120.9842, 14.5547, 121.0244, 'motorcycle'
         );
 
-        $expectedTotal = $result['base_fee'] + $result['distance_fee'] + $result['service_fee'] + $result['surcharge'];
+        // total = base + vehicle premium + distance + service fee + surcharge.
+        // (The per-vehicle base premium was added so vehicle choice changes the
+        // quote even at ~0 distance; see PricingService::VEHICLE_BASE_PREMIUM.)
+        $expectedTotal = $result['base_fee'] + $result['vehicle_premium']
+            + $result['distance_fee'] + $result['service_fee'] + $result['surcharge'];
         $this->assertEquals(round($expectedTotal, 2), $result['total_amount']);
     }
 
@@ -106,9 +110,12 @@ class PricingServiceTest extends TestCase
         $this->assertArrayHasKey('motorcycle', $result);
         $this->assertArrayHasKey('car', $result);
 
-        foreach ($result as $type => $pricing) {
-            $this->assertArrayHasKey('total_amount', $pricing);
-            $this->assertGreaterThan(0, $pricing['total_amount']);
+        // estimate() also returns top-level scalar/array metadata
+        // (distance_km, min_negotiate_fee, recommended_min/max, vehicle_types)
+        // alongside the per-vehicle breakdowns — only assert on the vehicles.
+        foreach (['walk', 'bicycle', 'motorcycle', 'car'] as $type) {
+            $this->assertArrayHasKey('total_amount', $result[$type]);
+            $this->assertGreaterThan(0, $result[$type]['total_amount']);
         }
     }
 
@@ -130,7 +137,9 @@ class PricingServiceTest extends TestCase
             $this->deliveryType->id, 14.5995, 120.9842, 14.5547, 121.0244, 'motorcycle'
         );
 
-        $subtotal = $result['base_fee'] + $result['distance_fee'];
+        // The 15% platform fee is charged on the full gross subtotal, which
+        // includes the per-vehicle base premium.
+        $subtotal = $result['base_fee'] + $result['vehicle_premium'] + $result['distance_fee'];
         $expectedServiceFee = round($subtotal * 0.15, 2);
         $this->assertEquals($expectedServiceFee, $result['service_fee']);
     }

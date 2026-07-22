@@ -139,12 +139,12 @@ class StatusUpdateTest extends TestCase
         $response->assertStatus(403);
     }
 
-    public function test_completion_creates_wallet_transaction(): void
+    /** Drive the booking through its whole status flow to 'completed'. */
+    private function completeBooking(): void
     {
         Event::fake();
         Storage::fake('public');
 
-        // Progress through all statuses to completed
         $statuses = [
             'heading_to_pickup', 'arrived_at_pickup',
             'picked_up', 'in_transit', 'arrived_at_dropoff', 'delivered', 'completed',
@@ -159,15 +159,65 @@ class StatusUpdateTest extends TestCase
             $this->actingAs($this->runner)
                 ->postJson("/api/v1/runner/errand/{$this->booking->id}/status", $data);
         }
+    }
+
+    public function test_paid_completion_credits_runner_payout(): void
+    {
+        // Platform collected the fare (wallet/online) → runner is credited payout.
+        $this->booking->update(['payment_method' => 'wallet', 'payment_status' => 'paid']);
+
+        $this->completeBooking();
 
         $this->assertDatabaseHas('wallet_transactions', [
             'user_id' => $this->runner->id,
             'type' => 'earning',
             'reference_id' => $this->booking->id,
         ]);
+        $this->assertEquals('85.00', $this->runner->fresh()->wallet_balance);
+    }
 
-        $this->runner->refresh();
-        $this->assertEquals('85.00', $this->runner->wallet_balance);
+    public function test_cash_completion_charges_commission_not_payout(): void
+    {
+        // Runner collects the ₱115 fare in person; they keep it and OWE the
+        // platform its ₱15 service fee. The platform must NOT credit ₱85 of
+        // money it never received (the old critical money leak).
+        $this->booking->update(['payment_method' => 'cash', 'payment_status' => 'unpaid']);
+
+        $this->completeBooking();
+
+        // A negative 'commission' entry, NOT a positive 'earning'.
+        $this->assertDatabaseMissing('wallet_transactions', [
+            'user_id' => $this->runner->id,
+            'type' => 'earning',
+            'reference_id' => $this->booking->id,
+        ]);
+        $this->assertDatabaseHas('wallet_transactions', [
+            'user_id' => $this->runner->id,
+            'type' => 'commission',
+            'reference_id' => $this->booking->id,
+            'amount' => '-15.00',
+        ]);
+        // Balance goes negative by the owed fee; it nets against future earnings.
+        $this->assertEquals('-15.00', $this->runner->fresh()->wallet_balance);
+    }
+
+    public function test_unsettled_online_completion_credits_nothing(): void
+    {
+        // Online charge never settled (expired/failed) → nobody collected, so
+        // neither an earning nor a commission is written and the balance is flat.
+        $this->booking->update(['payment_method' => 'gcash', 'payment_status' => 'unpaid']);
+
+        $this->completeBooking();
+
+        $this->assertDatabaseMissing('wallet_transactions', [
+            'reference_id' => $this->booking->id,
+            'type' => 'earning',
+        ]);
+        $this->assertDatabaseMissing('wallet_transactions', [
+            'reference_id' => $this->booking->id,
+            'type' => 'commission',
+        ]);
+        $this->assertEquals('0.00', $this->runner->fresh()->wallet_balance);
     }
 
     public function test_status_update_notifies_customer(): void

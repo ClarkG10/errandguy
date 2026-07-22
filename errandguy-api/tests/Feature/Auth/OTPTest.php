@@ -15,16 +15,21 @@ class OTPTest extends TestCase
 
     // ── Send OTP ──────────────────────────────────────────────
 
-    public function test_send_otp_via_phone(): void
+    public function test_send_otp_via_phone_fails_cleanly_until_sms_is_configured(): void
     {
+        // Phone OTP has no SMS provider wired yet. It must FAIL HONESTLY (502)
+        // rather than log the plaintext code and report a false "sent" — logging
+        // a one-time credential (CWE-532) let anyone with log access take over a
+        // phone account. On failure the just-stored OTP is dropped so the user
+        // isn't left with a shadowed, undeliverable code. See SYSTEM_AUDIT (H5/H7).
         $response = $this->postJson('/api/v1/auth/send-otp', [
             'phone' => '+639171234567',
         ]);
 
-        $response->assertOk()
-            ->assertJson(['message' => 'Verification code sent successfully.']);
+        $response->assertStatus(502)
+            ->assertJson(['message' => 'Could not send verification code. Please try again.']);
 
-        $this->assertTrue(Cache::has('otp:+639171234567'));
+        $this->assertFalse(Cache::has('otp:+639171234567'));
     }
 
     public function test_send_otp_via_email(): void

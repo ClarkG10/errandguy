@@ -29,6 +29,7 @@ use App\Services\WalletService;
 use Carbon\Carbon;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 
 class BookingController extends Controller
@@ -462,45 +463,62 @@ class BookingController extends Controller
             ], 422);
         }
 
-        $booking->update([
-            'status' => 'cancelled',
-            'cancelled_at' => now(),
-            'cancelled_by' => $request->user()->id,
-            'cancellation_reason' => $request->validated('reason'),
-            'cancellation_fee' => $policy['fee'],
-            // Revoke any active trip-share link so the recipient can no
-            // longer poll the public endpoint for runner GPS or addresses
-            // after the trip has been called off. The customer can re-share
-            // a fresh link if they rebook.
-            'trip_share_token' => null,
-            'trip_share_active' => false,
-        ]);
+        // Cancel + refund atomically under a row lock. Previously these were
+        // separate unguarded writes, so two concurrent cancels (double-tap /
+        // retry) could both read payment_status === 'paid' and each issue a
+        // wallet refund — a double credit. Locking the booking and re-checking
+        // inside the transaction (plus the now-idempotent WalletService::refund)
+        // makes a repeat cancel a no-op.
+        DB::transaction(function () use ($booking, $request, $policy) {
+            $locked = Booking::whereKey($booking->id)->lockForUpdate()->firstOrFail();
 
-        // Refund money already collected, minus the cancellation fee, to the
-        // customer's wallet. Applies to wallet AND online bookings that were
-        // already paid; cash bookings collected nothing so there's nothing to
-        // refund. The kept fee is the platform/runner compensation.
-        if ($booking->payment_status === 'paid') {
-            $refundable = round(max(0, (float) $booking->total_amount - (float) $policy['fee']), 2);
-            if ($refundable > 0) {
-                app(WalletService::class)->refund($booking->customer_id, $refundable, $booking->id);
-                Payment::where('booking_id', $booking->id)
-                    ->where('status', 'completed')
-                    ->latest()
-                    ->first()
-                    ?->transitionTo(
-                        PaymentStatus::Refunded,
-                        actor: $request->user()->id,
-                        reason: 'Booking cancelled: refund to wallet minus fee',
-                        meta: ['cancellation_fee' => (float) $policy['fee'], 'refunded_to' => 'wallet'],
-                        extra: [
-                            'refund_amount' => $refundable,
-                            'refunded_at' => now(),
-                        ],
-                    );
+            // Already cancelled by a racing/earlier request — nothing to do.
+            if ($locked->status === 'cancelled') {
+                return;
             }
-            $booking->update(['payment_status' => 'refunded']);
-        }
+
+            $locked->update([
+                'status' => 'cancelled',
+                'cancelled_at' => now(),
+                'cancelled_by' => $request->user()->id,
+                'cancellation_reason' => $request->validated('reason'),
+                'cancellation_fee' => $policy['fee'],
+                // Revoke any active trip-share link so the recipient can no
+                // longer poll the public endpoint for runner GPS or addresses
+                // after the trip has been called off. The customer can re-share
+                // a fresh link if they rebook.
+                'trip_share_token' => null,
+                'trip_share_active' => false,
+            ]);
+
+            // Refund money already collected, minus the cancellation fee, to the
+            // customer's wallet. Applies to wallet AND online bookings that were
+            // already paid; cash bookings collected nothing so there's nothing to
+            // refund. The kept fee is the platform/runner compensation.
+            if ($locked->payment_status === 'paid') {
+                $refundable = round(max(0, (float) $locked->total_amount - (float) $policy['fee']), 2);
+                if ($refundable > 0) {
+                    app(WalletService::class)->refund($locked->customer_id, $refundable, $locked->id);
+                    Payment::where('booking_id', $locked->id)
+                        ->where('status', 'completed')
+                        ->latest()
+                        ->first()
+                        ?->transitionTo(
+                            PaymentStatus::Refunded,
+                            actor: $request->user()->id,
+                            reason: 'Booking cancelled: refund to wallet minus fee',
+                            meta: ['cancellation_fee' => (float) $policy['fee'], 'refunded_to' => 'wallet'],
+                            extra: [
+                                'refund_amount' => $refundable,
+                                'refunded_at' => now(),
+                            ],
+                        );
+                }
+                $locked->update(['payment_status' => 'refunded']);
+            }
+        });
+
+        $booking->refresh();
 
         BookingStatusLog::create([
             'booking_id' => $booking->id,

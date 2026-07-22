@@ -220,6 +220,17 @@ class RunnerErrandController extends Controller
         $user = $request->user();
         $profile = $user->runnerProfile;
 
+        // A booking that has already been matched/assigned to a runner may only
+        // be declined by THAT runner. Otherwise any runner could POST decline on
+        // someone else's matched booking and reset it to 'pending' (a griefing /
+        // dispatch-tampering hole). Negotiate broadcasts have runner_id = null,
+        // so a nearby runner declining an offer still works.
+        if ($booking->runner_id !== null && $booking->runner_id !== $user->id) {
+            return response()->json([
+                'message' => 'You are not assigned to this errand.',
+            ], 403);
+        }
+
         // Update acceptance rate
         if ($profile) {
             $totalOffers = max(1, $profile->total_errands + 1);
@@ -379,7 +390,17 @@ class RunnerErrandController extends Controller
             $updateData['completed_at'] = now();
         }
 
-        DB::transaction(function () use ($booking, $updateData, $validated, $user, $newStatus, $oldStatus) {
+        $conflict = DB::transaction(function () use ($booking, $updateData, $validated, $user, $newStatus, $oldStatus) {
+            // Serialize concurrent status changes on this booking. Re-read the
+            // row under a lock and bail if another request already advanced it.
+            // Without this the earlier (unlocked) transition check is a
+            // check-then-act race: two overlapping "completed" calls (double-tap
+            // or a retried request) would both pass and credit the runner twice.
+            $locked = Booking::whereKey($booking->id)->lockForUpdate()->first();
+            if (! $locked || $locked->status !== $oldStatus) {
+                return true; // already moved on — treat as an idempotent no-op
+            }
+
             $booking->update($updateData);
 
             // Create status log
@@ -417,7 +438,15 @@ class RunnerErrandController extends Controller
             }
 
             event(new BookingStatusChanged($booking, $oldStatus, $newStatus));
+
+            return false;
         });
+
+        if ($conflict) {
+            return response()->json([
+                'message' => 'This errand was just updated. Pull to refresh.',
+            ], 409);
+        }
 
         $booking->load(['errandType', 'customer', 'statusLogs']);
 
@@ -531,7 +560,18 @@ class RunnerErrandController extends Controller
     }
 
     /**
-     * Handle booking completion: payout, stats update, payment marking.
+     * Handle booking completion: settlement, stats update, payment marking.
+     *
+     * Settlement is a function of what was ACTUALLY collected — never of the
+     * booking status alone (that was the critical money leak):
+     *   - paid (wallet/online): the platform holds the funds, so the runner's
+     *     payout is credited to their withdrawable wallet.
+     *   - cash: the runner collected the full fare in person, so they keep it
+     *     and OWE the platform its service fee — recorded as a negative
+     *     'commission' entry that nets against their wallet balance (and thus
+     *     against future earnings / payout). Their balance may go negative;
+     *     that debt is the point.
+     *   - unsettled online (expired/failed): nobody collected → credit nothing.
      */
     private function handleCompletion(Booking $booking, $user): void
     {
@@ -540,48 +580,61 @@ class RunnerErrandController extends Controller
             return;
         }
 
-        $payoutAmount = (float) $booking->runner_payout;
-
-        // Idempotency guard: if an earning transaction already exists for
-        // this booking we must NOT credit again. Status updates can race
-        // (double-tap, retried job, accidental re-completion via admin),
-        // and without this check the runner would be paid twice and the
-        // stats counters would double-count.
-        $alreadyPaid = WalletTransaction::where('user_id', $user->id)
+        // Idempotency guard: if this booking is already settled for this runner
+        // (an 'earning' credit OR a cash 'commission' debit) we must NOT settle
+        // again. Runs inside the booking-locked transaction from updateStatus,
+        // so it is race-safe; the uq_wallet_tx_user_reference_type index is the
+        // DB-level backstop.
+        $alreadySettled = WalletTransaction::where('user_id', $user->id)
             ->where('reference_id', $booking->id)
-            ->where('type', 'earning')
+            ->whereIn('type', ['earning', 'commission'])
             ->exists();
 
-        if ($alreadyPaid) {
-            // Still mark payment completed if it slipped through, but skip
-            // the wallet credit + stats bump.
-            $payment = $booking->payment;
-            if ($payment && $payment->status !== 'completed') {
-                $payment->update([
-                    'status' => 'completed',
-                    'paid_at' => now(),
-                ]);
-            }
+        if ($alreadySettled) {
+            $this->markPaymentCompleted($booking->payment, $user->id);
             return;
         }
 
-        // Lock the runner row to serialize concurrent earnings writes.
+        // Lock the runner row to serialize concurrent balance writes.
         $user = \App\Models\User::lockForUpdate()->find($user->id);
-        $newBalance = (float) $user->wallet_balance + $payoutAmount;
-        WalletTransaction::create([
-            'user_id' => $user->id,
-            'type' => 'earning',
-            'amount' => $payoutAmount,
-            'balance_after' => $newBalance,
-            'reference_id' => $booking->id,
-            'description' => "Earning for errand #{$booking->booking_number}",
-        ]);
+        $payoutAmount = (float) $booking->runner_payout;
+        $earnedForStats = 0.0;
+        $collected = false;
 
-        $user->update(['wallet_balance' => $newBalance]);
+        if ($booking->payment_status === 'paid') {
+            $newBalance = (float) $user->wallet_balance + $payoutAmount;
+            WalletTransaction::create([
+                'user_id' => $user->id,
+                'type' => 'earning',
+                'amount' => $payoutAmount,
+                'balance_after' => $newBalance,
+                'reference_id' => $booking->id,
+                'description' => "Earning for errand #{$booking->booking_number}",
+            ]);
+            $user->update(['wallet_balance' => $newBalance]);
+            $earnedForStats = $payoutAmount;
+            $collected = true;
+        } elseif ($booking->payment_method === 'cash') {
+            // Runner nets their payout in cash; platform is owed the service fee.
+            $commission = round((float) $booking->service_fee, 2);
+            $newBalance = (float) $user->wallet_balance - $commission;
+            WalletTransaction::create([
+                'user_id' => $user->id,
+                'type' => 'commission',
+                'amount' => -$commission,
+                'balance_after' => $newBalance,
+                'reference_id' => $booking->id,
+                'description' => "Platform commission for cash errand #{$booking->booking_number}",
+            ]);
+            $user->update(['wallet_balance' => $newBalance]);
+            $earnedForStats = $payoutAmount; // earned in cash, in person
+            $collected = true;
+        }
+        // else: unsettled online payment — nothing was collected, credit nothing.
 
         // Update runner stats
         $newTotalErrands = $profile->total_errands + 1;
-        $newTotalEarnings = (float) $profile->total_earnings + $payoutAmount;
+        $newTotalEarnings = (float) $profile->total_earnings + $earnedForStats;
 
         // Recalculate completion rate
         $completedCount = $user->runnerBookings()->completed()->count();
@@ -598,13 +651,36 @@ class RunnerErrandController extends Controller
             'completion_rate' => $completionRate,
         ]);
 
-        // Mark payment as completed
-        $payment = $booking->payment;
-        if ($payment && $payment->status !== 'completed') {
-            $payment->update([
-                'status' => 'completed',
-                'paid_at' => now(),
-            ]);
+        // Only record the payment as settled when money was actually collected
+        // (platform-side for paid, in-person cash for cash). An unsettled online
+        // charge must NOT be laundered to 'completed'.
+        if ($collected) {
+            $this->markPaymentCompleted($booking->payment, $user->id);
+        }
+    }
+
+    /**
+     * Move the booking's payment to Completed through the audited
+     * {@see \App\Models\Payment::transitionTo()} funnel — never a raw
+     * ->update(['status' => ...]), which would skip the payment_status_transitions
+     * audit row and could launder an illegal failed/expired -> completed move
+     * with a fabricated paid_at. No-ops safely when the payment is null, already
+     * completed, or cannot legally advance.
+     */
+    private function markPaymentCompleted(?\App\Models\Payment $payment, string $actorId): void
+    {
+        if (! $payment) {
+            return;
+        }
+
+        $current = \App\Enums\PaymentStatus::tryFrom((string) $payment->status);
+        if ($current && $current->canTransitionTo(\App\Enums\PaymentStatus::Completed)) {
+            $payment->transitionTo(
+                \App\Enums\PaymentStatus::Completed,
+                actor: $actorId,
+                reason: 'Errand completed',
+                extra: ['paid_at' => now()],
+            );
         }
     }
 

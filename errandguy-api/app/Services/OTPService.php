@@ -63,9 +63,14 @@ class OTPService
 
     public function sendViaSMS(string $phone, string $otp): void
     {
-        // TODO: Integrate with Semaphore or Twilio
-        // For development: log the OTP
-        logger()->info("OTP for {$phone}: {$otp}");
+        // No SMS provider is wired yet. Do NOT log the OTP — it is a one-time
+        // auth credential (CWE-532: logging it lets anyone with log access take
+        // over the account within the 5-minute window). Fail loudly instead of
+        // silently pretending the code was sent: the caller (OTPController)
+        // catches this, drops the stored OTP, and returns a clean 502 so the
+        // user isn't left waiting for a code that never arrives.
+        // TODO (Phase 1): integrate Semaphore/Twilio and send the code here.
+        throw new \RuntimeException('SMS delivery is not configured.');
     }
 
     public function sendViaEmail(string $email, string $otp): void

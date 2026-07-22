@@ -125,11 +125,15 @@ class SOSService
 
     private function notifySMSContact(TrustedContact $contact, string $userId, string $liveLink, Booking $booking): void
     {
-        Log::info('SOS SMS notification', [
-            'contact_name' => $contact->name,
-            'contact_phone' => $contact->phone,
-            'live_link' => $liveLink,
+        // SMS delivery to trusted contacts is not yet wired to a provider. Do
+        // NOT log the live-link token or the contact's phone number — the token
+        // grants unauthenticated access to the victim's live location, and the
+        // phone is PII. Emit only a non-sensitive breadcrumb so the gap is
+        // observable without leaking secrets. See SYSTEM_AUDIT_2026-07.md (C3):
+        // this must send a real SMS before SOS can claim "contacts notified".
+        Log::warning('SOS trusted-contact SMS not delivered (no SMS provider configured)', [
             'booking_id' => $booking->id,
+            'contact_id' => $contact->id,
         ]);
     }
 }

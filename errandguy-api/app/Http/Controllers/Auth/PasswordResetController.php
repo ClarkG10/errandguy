@@ -63,7 +63,10 @@ class PasswordResetController extends Controller
             ], 422);
         }
 
-        if (now()->diffInMinutes($record->created_at) > 60) {
+        // Carbon 3 makes diffInMinutes() SIGNED: now()->diffInMinutes($past)
+        // returns a NEGATIVE number, so `> 60` was never true and reset tokens
+        // never expired. Compare against an absolute one-hour deadline instead.
+        if (\Illuminate\Support\Carbon::parse($record->created_at)->addHour()->isPast()) {
             DB::table('password_reset_tokens')->where('email', $request->email)->delete();
 
             return response()->json([

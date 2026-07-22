@@ -161,7 +161,21 @@ class WalletService
     public function deduct(string $userId, float $amount, string $referenceId, string $description = 'Payment'): WalletTransaction
     {
         return DB::transaction(function () use ($userId, $amount, $referenceId, $description) {
+            // Lock the user row FIRST so concurrent charges for the same wallet
+            // serialize here; the idempotency check below is then reliable.
             $user = User::lockForUpdate()->findOrFail($userId);
+
+            // Idempotency: a retried charge for the SAME reference is a no-op —
+            // return the original debit instead of taking the money twice. The
+            // uq_wallet_tx_reference_type index is the last-line DB guarantee if
+            // this check is ever bypassed (e.g. by the other backend).
+            $existing = WalletTransaction::where('user_id', $userId)
+                ->where('reference_id', $referenceId)
+                ->where('type', 'payment')
+                ->first();
+            if ($existing) {
+                return $existing;
+            }
 
             if ((float) $user->wallet_balance < $amount) {
                 throw new \RuntimeException('Insufficient wallet balance.');
@@ -185,6 +199,17 @@ class WalletService
     {
         return DB::transaction(function () use ($userId, $amount, $referenceId) {
             $user = User::lockForUpdate()->findOrFail($userId);
+
+            // Idempotency: a retried/double-tapped refund for the SAME reference
+            // must not credit the wallet twice. This closes the cancel()
+            // double-refund race; the uq_wallet_tx_reference_type index backs it.
+            $existing = WalletTransaction::where('user_id', $userId)
+                ->where('reference_id', $referenceId)
+                ->where('type', 'refund')
+                ->first();
+            if ($existing) {
+                return $existing;
+            }
 
             $newBalance = (float) $user->wallet_balance + $amount;
             $user->update(['wallet_balance' => $newBalance]);
