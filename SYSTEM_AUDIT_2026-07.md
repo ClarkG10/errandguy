@@ -574,6 +574,27 @@ Decision taken with the user: **keep** the Nest port and pin it with parity test
   negotiate booking would still charge the fixed fare; (3) Nest has no no-runner auto-refund (H13).
   Wallet/settlement parity needs DB-backed integration specs (Nest uses raw `FOR UPDATE`).
 
+### Phase 13 — implemented (Nest parity + a Laravel prod gap it surfaced)
+
+Brought the Nest port up to Laravel's money behavior, and fixed one real production gap the parity
+work exposed.
+
+- **Nest H11** — `PricingService.applyNegotiateOffer` + applied in booking-create (before promo):
+  a negotiate booking now charges the customer's offer, not the fixed fare. **Nest wallet
+  idempotency** — `deduct`/`refund` return an existing transaction for the same
+  `(user, reference, type)` instead of double-charging/refunding (Laravel's Phase-0 guard; the DB
+  unique index is still the hard backstop). **Nest H13** — `BookingService.refundUnfulfilled`
+  (full refund, no fee, idempotent) wired into all three unmatched-paid paths (`matchRunner`→
+  `no_runner`, auto-cancel sweep, negotiate-expire sweep).
+- **Laravel (production) gap:** `ExpireNegotiateBookingJob` cancelled an expired negotiate booking
+  **without refunding**. Since Phase-9 H11 now charges the offer up front, a paid negotiate booking
+  that expired with no acceptance kept the customer's money — wired in `refundUnfulfilled`.
+
+Tests: Nest jest **10/10** (typecheck + `nest build` clean), +2 `applyNegotiateOffer` parity
+specs. Laravel **+1** (expired negotiate booking refunds the paid offer), suite **301/307** (same 6
+pre-existing stale failures). Zero regressions. Remaining Nest parity: DB-backed specs for wallet
+idempotency / `refundUnfulfilled` need a Postgres test DB (raw `FOR UPDATE` isn't unit-testable).
+
 ### H6 (private KYC storage) — assessed, deliberately deferred with a plan
 
 Not shipped this pass because it cannot be done safely blind: the fix requires (1) an **infra
