@@ -3,6 +3,7 @@
 namespace App\Http\Controllers;
 
 use App\Models\Booking;
+use App\Models\SOSAlert;
 use Illuminate\Http\JsonResponse;
 
 class PublicTripController extends Controller
@@ -16,8 +17,39 @@ class PublicTripController extends Controller
             // indefinitely. The customer can still re-share if they reopen
             // (rebook) the errand.
             ->whereNotIn('status', ['completed', 'cancelled', 'no_runner'])
+            // TTL backstop: a share link also dies after trip_share_expires_at.
+            // Lenient (NULL still resolves) on purpose — a NULL expiry means a
+            // link minted before this column existed (or by another backend
+            // that doesn't set it), and we must not 404 a live in-progress trip
+            // on that account. Laravel's share() always stamps an expiry, so
+            // going forward every Laravel-minted active link is time-bounded.
+            ->where(function ($q) {
+                $q->whereNull('trip_share_expires_at')
+                  ->orWhere('trip_share_expires_at', '>', now());
+            })
             ->with(['runner', 'runner.runnerProfile'])
-            ->firstOrFail();
+            ->first();
+
+        // SOS fallback: the SOS live-link token lives on sos_alerts, NOT on
+        // bookings.trip_share_token, so the customer/runner share query above
+        // can never match it — the emergency link used to always 404. Resolve
+        // it here instead. Safety deliberately overrides the trip-over status
+        // cutoff (an active emergency keeps the link live even after the
+        // booking closes); access is still gated by an active alert and the
+        // 60-minute live_link_expires_at TTL, and flips off the moment
+        // deactivateSOS resolves the alert.
+        if (! $booking) {
+            $alert = SOSAlert::where('live_link_token', $token)
+                ->where('status', 'active')
+                ->where('live_link_expires_at', '>', now())
+                ->first();
+            if ($alert) {
+                $booking = Booking::with(['runner', 'runner.runnerProfile'])
+                    ->find($alert->booking_id);
+            }
+        }
+
+        abort_if(! $booking, 404);
 
         $latestLocation = \App\Models\RunnerLocation::where('booking_id', $booking->id)
             ->latest('created_at')

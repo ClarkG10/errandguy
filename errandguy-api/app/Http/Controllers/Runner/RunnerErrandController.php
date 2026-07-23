@@ -655,11 +655,23 @@ class RunnerErrandController extends Controller
         $newTotalErrands = $profile->total_errands + 1;
         $newTotalEarnings = (float) $profile->total_earnings + $earnedForStats;
 
-        // Recalculate completion rate
-        $completedCount = $user->runnerBookings()->completed()->count();
-        $totalAssigned = $user->runnerBookings()
+        // Recalculate completion rate with a SINGLE conditional-aggregation
+        // query — was two separate COUNT(*) round-trips held under the booking
+        // + runner row locks, needlessly lengthening lock hold time. Because
+        // 'completed' is a strict subset of the {completed,cancelled} assigned
+        // set, SUM(CASE ...) equals the old completed()->count() and COUNT(*)
+        // equals the old total, so the computed rate is identical.
+        // NOTE: 'completed' is hardcoded here rather than reusing the
+        // Booking::completed() scope; if that scope ever grows beyond a bare
+        // status filter, keep this in sync (guarded by the completion_rate
+        // regression test in StatusUpdateTest).
+        $stats = $user->runnerBookings()
             ->whereIn('status', ['completed', 'cancelled'])
-            ->count();
+            ->toBase()
+            ->selectRaw("COUNT(*) as total_assigned, SUM(CASE WHEN status = 'completed' THEN 1 ELSE 0 END) as completed_count")
+            ->first();
+        $totalAssigned = (int) ($stats->total_assigned ?? 0);
+        $completedCount = (int) ($stats->completed_count ?? 0);
         $completionRate = $totalAssigned > 0
             ? round(($completedCount / $totalAssigned) * 100, 2)
             : 100.00;

@@ -117,4 +117,64 @@ class SOSTest extends TestCase
 
         $response->assertStatus(404);
     }
+
+    public function test_sos_live_link_resolves_active_alert_token(): void
+    {
+        // The SOS token lives on sos_alerts.live_link_token, NOT on the booking.
+        // The public /trip/{token} endpoint must resolve it (it used to 404).
+        SOSAlert::create([
+            'booking_id' => $this->booking->id,
+            'customer_id' => $this->customer->id,
+            'runner_id' => $this->runner->id,
+            'triggered_at' => now(),
+            'status' => 'active',
+            'live_link_token' => 'sos-active-token',
+            'live_link_expires_at' => now()->addMinutes(60),
+        ]);
+
+        $this->getJson('/api/v1/trip/sos-active-token')
+            ->assertOk()
+            ->assertJsonPath('data.booking_id', $this->booking->id);
+    }
+
+    public function test_sos_live_link_works_even_after_booking_completed(): void
+    {
+        // Deliberate privacy override: an unresolved emergency keeps the link
+        // live even once the booking closes.
+        SOSAlert::create([
+            'booking_id' => $this->booking->id,
+            'customer_id' => $this->customer->id,
+            'runner_id' => $this->runner->id,
+            'triggered_at' => now(),
+            'status' => 'active',
+            'live_link_token' => 'sos-after-complete',
+            'live_link_expires_at' => now()->addMinutes(60),
+        ]);
+        $this->booking->update(['status' => 'completed']);
+
+        $this->getJson('/api/v1/trip/sos-after-complete')
+            ->assertOk()
+            ->assertJsonPath('data.booking_id', $this->booking->id);
+    }
+
+    public function test_sos_live_link_404_when_resolved_or_expired(): void
+    {
+        SOSAlert::create([
+            'booking_id' => $this->booking->id, 'customer_id' => $this->customer->id,
+            'runner_id' => $this->runner->id, 'triggered_at' => now(),
+            'status' => 'resolved', 'resolved_at' => now(),
+            'live_link_token' => 'sos-resolved-token',
+            'live_link_expires_at' => now()->addMinutes(60),
+        ]);
+        $this->getJson('/api/v1/trip/sos-resolved-token')->assertStatus(404);
+
+        SOSAlert::create([
+            'booking_id' => $this->booking->id, 'customer_id' => $this->customer->id,
+            'runner_id' => $this->runner->id, 'triggered_at' => now()->subHours(2),
+            'status' => 'active',
+            'live_link_token' => 'sos-expired-token',
+            'live_link_expires_at' => now()->subMinutes(5),
+        ]);
+        $this->getJson('/api/v1/trip/sos-expired-token')->assertStatus(404);
+    }
 }

@@ -84,6 +84,7 @@ class Booking extends Model
         'sos_triggered',
         'trip_share_token',
         'trip_share_active',
+        'trip_share_expires_at',
     ];
 
     protected function casts(): array
@@ -94,6 +95,7 @@ class Booking extends Model
             'is_transportation' => 'boolean',
             'sos_triggered' => 'boolean',
             'trip_share_active' => 'boolean',
+            'trip_share_expires_at' => 'datetime',
             'ride_pin_verified' => 'boolean',
             'total_amount' => 'decimal:2',
             'base_fee' => 'decimal:2',

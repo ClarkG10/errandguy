@@ -22,6 +22,9 @@ class TripShareController extends Controller
         $booking->update([
             'trip_share_token' => $token,
             'trip_share_active' => true,
+            // Privacy backstop: the link stops resolving after this TTL even if
+            // the errand is somehow still non-terminal. See config/safety.php.
+            'trip_share_expires_at' => now()->addHours((int) config('safety.trip_share_ttl_hours', 24)),
         ]);
 
         $link = config('app.url') . "/trip/{$token}";
@@ -41,6 +44,7 @@ class TripShareController extends Controller
         $booking->update([
             'trip_share_token' => null,
             'trip_share_active' => false,
+            'trip_share_expires_at' => null,
         ]);
 
         return response()->json([

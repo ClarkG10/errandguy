@@ -235,6 +235,35 @@ class StatusUpdateTest extends TestCase
         ]);
     }
 
+    public function test_completion_rate_recomputed_correctly_across_completed_and_cancelled(): void
+    {
+        // A pre-existing cancelled booking for this runner, plus the seeded one
+        // we drive to completed → completion_rate = completed / (completed +
+        // cancelled) = 1/2 = 50.00. Locks the single-query conditional-
+        // aggregation recompute against the old two-COUNT form (and against a
+        // future divergence of the Booking::completed() scope).
+        Booking::create([
+            'booking_number' => 'EG-20260331-CANC',
+            'customer_id' => $this->customer->id, 'runner_id' => $this->runner->id,
+            'errand_type_id' => $this->errandType->id, 'status' => 'cancelled',
+            'pickup_address' => '1 A', 'pickup_lat' => 14.60, 'pickup_lng' => 120.98,
+            'dropoff_address' => '2 B', 'dropoff_lat' => 14.55, 'dropoff_lng' => 121.02,
+            'schedule_type' => 'now', 'pricing_mode' => 'fixed', 'vehicle_type_rate' => 'motorcycle',
+            'distance_km' => 5.0, 'base_fee' => 50, 'distance_fee' => 50, 'service_fee' => 15,
+            'surcharge' => 0, 'total_amount' => 115, 'runner_payout' => 85,
+            'is_transportation' => false,
+        ]);
+
+        $this->booking->update(['payment_method' => 'wallet', 'payment_status' => 'paid']);
+        $this->completeBooking();
+
+        $this->assertDatabaseHas('runner_profiles', [
+            'user_id' => $this->runner->id,
+            'completion_rate' => '50.00', // decimal:2 cast stores as string
+            'total_errands' => 1,
+        ]);
+    }
+
     public function test_notification_data_is_a_decoded_object_not_a_json_string(): void
     {
         // Guards the double-encode fix: the mobile app reads notification.data

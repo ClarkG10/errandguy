@@ -135,4 +135,50 @@ class TripShareTest extends TestCase
 
         $response->assertStatus(404);
     }
+
+    public function test_share_sets_an_expiry(): void
+    {
+        $this->actingAs($this->customer)
+            ->postJson("/api/v1/bookings/{$this->booking->id}/share-trip")
+            ->assertOk();
+
+        $this->booking->refresh();
+        $this->assertNotNull($this->booking->trip_share_expires_at);
+        $this->assertTrue($this->booking->trip_share_expires_at->isFuture());
+    }
+
+    public function test_expired_trip_link_returns_404(): void
+    {
+        $this->booking->update([
+            'trip_share_token' => 'expired-token',
+            'trip_share_active' => true,
+            'trip_share_expires_at' => now()->subMinute(),
+        ]);
+
+        $this->getJson('/api/v1/trip/expired-token')->assertStatus(404);
+    }
+
+    public function test_unexpired_trip_link_still_resolves(): void
+    {
+        $this->booking->update([
+            'trip_share_token' => 'live-token',
+            'trip_share_active' => true,
+            'trip_share_expires_at' => now()->addHours(3),
+        ]);
+
+        $this->getJson('/api/v1/trip/live-token')->assertOk();
+    }
+
+    public function test_active_token_with_null_expiry_still_resolves(): void
+    {
+        // Lenient contract: a NULL expiry (legacy link / another writer) must
+        // NOT 404 a live in-progress trip.
+        $this->booking->update([
+            'trip_share_token' => 'null-expiry-token',
+            'trip_share_active' => true,
+            'trip_share_expires_at' => null,
+        ]);
+
+        $this->getJson('/api/v1/trip/null-expiry-token')->assertOk();
+    }
 }
