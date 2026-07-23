@@ -101,15 +101,25 @@ class WalletController extends Controller
     {
         $tx = WalletTransaction::where('user_id', $request->user()->id)->findOrFail($id);
 
+        // Terminal non-success states. WalletTransaction only ever emits
+        // 'failed' today (an expired top-up is coerced to 'failed'), but the
+        // guard is widened so failure_reason stays correct if the enum grows.
+        $failureStates = ['failed', 'expired', 'cancelled', 'refunded'];
+        $processedAt = optional($tx->processed_at)->toIso8601String();
+
         return response()->json([
             'data' => [
-                'transaction_id' => $tx->id,
+                // Canonical contract shared with PaymentStatusController.
+                'kind' => 'wallet_topup',
+                'id' => $tx->id,
+                'transaction_id' => $tx->id, // alias kept for existing clients
                 'status' => $tx->status,
                 'type' => $tx->type,
                 'amount' => (float) $tx->amount,
                 'balance_after' => (float) $tx->balance_after,
-                'failure_reason' => $tx->status === 'failed' ? $tx->failure_reason : null,
-                'processed_at' => optional($tx->processed_at)->toIso8601String(),
+                'settled_at' => $processedAt,
+                'processed_at' => $processedAt, // alias kept for existing clients
+                'failure_reason' => in_array($tx->status, $failureStates, true) ? $tx->failure_reason : null,
             ],
         ]);
     }
@@ -137,6 +147,29 @@ class WalletController extends Controller
 
         $transactions = $query->paginate($request->perPage(20));
 
-        return response()->json($transactions);
+        // Emit the canonical nested-meta envelope ({data, links, meta}) that
+        // every other paginated list endpoint uses, instead of the raw flat
+        // LengthAwarePaginator (which serialized pagination at the top level
+        // and leaked absolute server URLs). Rows are still the same raw
+        // WalletTransaction models — the mobile client reads them at .data.data
+        // in both shapes, so this is backward compatible.
+        return response()->json([
+            'data' => $transactions->items(),
+            'links' => [
+                'first' => $transactions->url(1),
+                'last' => $transactions->url($transactions->lastPage()),
+                'prev' => $transactions->previousPageUrl(),
+                'next' => $transactions->nextPageUrl(),
+            ],
+            'meta' => [
+                'current_page' => $transactions->currentPage(),
+                'from' => $transactions->firstItem(),
+                'last_page' => $transactions->lastPage(),
+                'path' => $transactions->path(),
+                'per_page' => $transactions->perPage(),
+                'to' => $transactions->lastItem(),
+                'total' => $transactions->total(),
+            ],
+        ]);
     }
 }

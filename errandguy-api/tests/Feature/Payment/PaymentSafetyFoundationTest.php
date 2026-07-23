@@ -161,6 +161,83 @@ class PaymentSafetyFoundationTest extends TestCase
             ->assertStatus(404);
     }
 
+    // ── canonical status-probe contract ─────────────────────────────────────
+
+    public function test_payment_status_probe_emits_canonical_contract(): void
+    {
+        Bus::fake();
+        Http::fake([
+            'api.xendit.co/v2/invoices' => Http::response(['id' => 'inv_c', 'invoice_url' => 'https://x/inv_c'], 200),
+        ]);
+        $paymentId = $this->actingAs($this->customer)
+            ->postJson('/api/v1/bookings', [...$this->base, 'payment_method' => 'gcash'])
+            ->json('payment_id');
+
+        $this->actingAs($this->customer)
+            ->getJson("/api/v1/payments/{$paymentId}/status")
+            ->assertOk()
+            // Canonical keys + kept aliases both present.
+            ->assertJsonStructure(['data' => [
+                'kind', 'id', 'payment_id', 'status', 'amount',
+                'settled_at', 'paid_at', 'failure_reason',
+            ]])
+            ->assertJsonPath('data.kind', 'payment')
+            ->assertJsonPath('data.id', $paymentId)
+            ->assertJsonPath('data.payment_id', $paymentId);
+    }
+
+    public function test_booking_payment_status_is_pending_when_no_payment_row_yet(): void
+    {
+        // A booking that exists but has no Payment row must read as an honest
+        // 200 'pending', not a 404 that a client can't tell from "unknown".
+        $booking = Booking::create([
+            'booking_number' => 'EG-20260331-NOPAY',
+            'customer_id' => $this->customer->id,
+            'errand_type_id' => $this->deliveryType->id, 'status' => 'pending',
+            'pickup_address' => '1 A', 'pickup_lat' => 14.60, 'pickup_lng' => 120.98,
+            'dropoff_address' => '2 B', 'dropoff_lat' => 14.55, 'dropoff_lng' => 121.02,
+            'schedule_type' => 'now', 'pricing_mode' => 'fixed', 'vehicle_type_rate' => 'motorcycle',
+            'distance_km' => 5.0, 'base_fee' => 50, 'distance_fee' => 50, 'service_fee' => 15,
+            'surcharge' => 0, 'total_amount' => 115, 'runner_payout' => 85,
+            'payment_method' => 'gcash', 'payment_status' => 'pending',
+            'is_transportation' => false,
+        ]);
+
+        $this->actingAs($this->customer)
+            ->getJson("/api/v1/bookings/{$booking->id}/payment-status")
+            ->assertOk()
+            ->assertJsonPath('data.status', 'pending')
+            ->assertJsonPath('data.id', null)
+            ->assertJsonPath('data.booking_id', $booking->id);
+    }
+
+    public function test_booking_payment_status_404_for_foreign_or_unknown_booking(): void
+    {
+        $stranger = User::factory()->create(['role' => 'customer', 'status' => 'active']);
+        $booking = Booking::create([
+            'booking_number' => 'EG-20260331-FOREIGN',
+            'customer_id' => $stranger->id,
+            'errand_type_id' => $this->deliveryType->id, 'status' => 'pending',
+            'pickup_address' => '1 A', 'pickup_lat' => 14.60, 'pickup_lng' => 120.98,
+            'dropoff_address' => '2 B', 'dropoff_lat' => 14.55, 'dropoff_lng' => 121.02,
+            'schedule_type' => 'now', 'pricing_mode' => 'fixed', 'vehicle_type_rate' => 'motorcycle',
+            'distance_km' => 5.0, 'base_fee' => 50, 'distance_fee' => 50, 'service_fee' => 15,
+            'surcharge' => 0, 'total_amount' => 115, 'runner_payout' => 85,
+            'payment_method' => 'gcash', 'payment_status' => 'pending',
+            'is_transportation' => false,
+        ]);
+
+        // Foreign booking → 404 (never leaked as pending).
+        $this->actingAs($this->customer)
+            ->getJson("/api/v1/bookings/{$booking->id}/payment-status")
+            ->assertStatus(404);
+
+        // Unknown booking → 404.
+        $this->actingAs($this->customer)
+            ->getJson('/api/v1/bookings/'.\Illuminate\Support\Str::uuid()->toString().'/payment-status')
+            ->assertStatus(404);
+    }
+
     // ── invoice.expired ─────────────────────────────────────────────────────
 
     public function test_invoice_expired_moves_booking_payment_to_expired_and_notifies(): void

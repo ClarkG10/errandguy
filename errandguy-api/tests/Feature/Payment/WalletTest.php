@@ -127,6 +127,48 @@ class WalletTest extends TestCase
         }
     }
 
+    public function test_transactions_use_canonical_nested_meta_envelope(): void
+    {
+        WalletTransaction::create([
+            'user_id' => $this->user->id, 'type' => 'top_up', 'amount' => 200.00,
+            'balance_after' => 700.00, 'description' => 'Top-up',
+        ]);
+
+        $response = $this->actingAs($this->user)
+            ->getJson('/api/v1/wallet/transactions')
+            ->assertOk();
+
+        // Rows stay at .data (unchanged for clients), pagination now lives under
+        // meta (not leaked at the top level like the old flat paginator).
+        $response->assertJsonCount(1, 'data')
+            ->assertJsonStructure([
+                'data',
+                'links' => ['first', 'last', 'prev', 'next'],
+                'meta' => ['current_page', 'last_page', 'per_page', 'total'],
+            ])
+            ->assertJsonPath('meta.current_page', 1)
+            ->assertJsonMissingPath('current_page'); // no top-level flat fields
+    }
+
+    public function test_transaction_status_emits_canonical_contract(): void
+    {
+        $tx = WalletTransaction::create([
+            'user_id' => $this->user->id, 'type' => 'top_up', 'amount' => 200.00,
+            'balance_after' => 700.00, 'status' => 'completed', 'description' => 'Top-up',
+        ]);
+
+        $this->actingAs($this->user)
+            ->getJson("/api/v1/wallet/transactions/{$tx->id}/status")
+            ->assertOk()
+            ->assertJsonStructure(['data' => [
+                'kind', 'id', 'transaction_id', 'status', 'amount',
+                'settled_at', 'processed_at', 'failure_reason',
+            ]])
+            ->assertJsonPath('data.kind', 'wallet_topup')
+            ->assertJsonPath('data.id', $tx->id)
+            ->assertJsonPath('data.transaction_id', $tx->id);
+    }
+
     public function test_unauthenticated_user_cannot_access_wallet(): void
     {
         $response = $this->getJson('/api/v1/wallet/balance');
