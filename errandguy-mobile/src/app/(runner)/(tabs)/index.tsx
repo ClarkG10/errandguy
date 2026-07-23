@@ -107,7 +107,11 @@ export default function RunnerHomeScreen() {
     runnerProfile,
     setRunnerProfile,
   } = useRunnerStore();
-  const { startTracking, stopTracking } = useLocationStore();
+  // Atomic action selectors — a bare useLocationStore() re-renders this whole
+  // screen on every GPS tick (locationStore writes currentLocation ~every 6s
+  // while online). The action refs are stable, so these never re-render here.
+  const startTracking = useLocationStore((s) => s.startTracking);
+  const stopTracking = useLocationStore((s) => s.stopTracking);
   const unreadCount = useNotificationStore((s) => s.unreadCount);
 
   const [togglingOnline, setTogglingOnline] = useState(false);

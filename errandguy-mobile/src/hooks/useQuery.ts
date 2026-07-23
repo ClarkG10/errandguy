@@ -235,6 +235,12 @@ export function useQuery<T>(
   }, [enabled, refetchOnAppFocus, revalidateIfStale]);
 
   const refresh = useCallback(async () => {
+    // Pull-to-refresh is an explicit request for fresh data. The fetcher calls
+    // api.get(), which would otherwise resolve from the <=8s GET micro-cache
+    // and silently return stale data. Clearing the response cache (but NOT the
+    // in-flight dedup map) forces this query's next GET to be a real network
+    // read, independent of how the semantic key maps to the REST URL.
+    apiCache.clearResponses();
     await revalidate();
   }, [revalidate]);
 

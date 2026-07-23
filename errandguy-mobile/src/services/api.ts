@@ -47,6 +47,11 @@ type ExtraConfig = AxiosRequestConfig & {
 };
 
 const DEFAULT_GET_CACHE_MS = 8000;
+// Hard cap on cached GET responses so the micro-cache can't grow unbounded for
+// the life of a session (keys vary by URL+params, so TTL alone doesn't bound
+// size). Eviction only ever causes a correctness-preserving MISS (fresh
+// fetch), never a stale serve.
+const MAX_CACHE_ENTRIES = 100;
 const inflight = new Map<string, Promise<AxiosResponse<any>>>();
 const microCache = new Map<string, { ts: number; response: AxiosResponse<any> }>();
 
@@ -112,6 +117,22 @@ const invalidateRelated = (url?: string) => {
   const parent = url.split('?')[0].split('/').slice(0, 2).join('/'); // /bookings
   for (const k of Array.from(microCache.keys())) {
     if (k.includes(root) || k.includes(parent)) microCache.delete(k);
+  }
+};
+
+const setCache = (key: string, response: AxiosResponse<any>) => {
+  // Write-recency LRU. Re-insert to move an existing key to the Map's tail,
+  // then evict from the head once past the cap. NOTE: recency is refreshed
+  // only on a network WRITE, so a long-TTL entry served purely from cache
+  // reads can be evicted mid-TTL by write churn — that only triggers a correct
+  // fresh refetch, never a stale serve (the TTL read gate is unchanged). We do
+  // NOT restamp `ts` on read: doing so would defeat the TTL and serve stale.
+  if (microCache.has(key)) microCache.delete(key);
+  microCache.set(key, { ts: Date.now(), response });
+  while (microCache.size > MAX_CACHE_ENTRIES) {
+    const oldest = microCache.keys().next().value;
+    if (oldest === undefined) break;
+    microCache.delete(oldest);
   }
 };
 
@@ -316,7 +337,7 @@ api.request = function patchedRequest<T = any, R = AxiosResponse<T>, D = any>(
 
   const promise = getWithRetry(config, config.retries ?? DEFAULT_GET_RETRIES)
     .then((res) => {
-      if (!config.noCache) microCache.set(key, { ts: Date.now(), response: res });
+      if (!config.noCache) setCache(key, res);
       return res;
     })
     .finally(() => {
@@ -332,6 +353,15 @@ export const apiCache = {
   clear() {
     microCache.clear();
     inflight.clear();
+  },
+  // Drop only cached responses, leaving the in-flight dedup map intact. Used by
+  // pull-to-refresh so an explicit pull always reads the network, without
+  // spawning a duplicate of a request already in flight. URL-agnostic on
+  // purpose — the semantic query key[0] does not reliably map to the REST URL
+  // (e.g. 'payment-methods' vs '/payments/methods'), so a per-prefix
+  // invalidate would silently no-op on those screens.
+  clearResponses() {
+    microCache.clear();
   },
   invalidate(urlPrefix: string) {
     for (const k of Array.from(microCache.keys())) {

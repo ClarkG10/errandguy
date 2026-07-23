@@ -9,6 +9,7 @@ import { notificationService } from './notification.service';
 import { userService } from './user.service';
 import { chatService } from './chat.service';
 import { useChatStore } from '../stores/chatStore';
+import { runPool } from '../utils/asyncPool';
 import type { Conversation, Message } from '../types';
 
 // Mirrors the AsyncStorage key used by the trusted-contacts screen
@@ -144,213 +145,243 @@ const preloadConversationsWithMessages = async (userId: string) => {
  * with any duplicate fetch the screen kicks off in race.
  */
 export async function preloadCustomerEssentials(userId: string) {
-  await Promise.allSettled([
-    preloadCoreImages(),
-    seed(
-      ['errand-types'],
-      async () => {
-        const r = await configService.getErrandTypes();
-        return r.data?.data ?? [];
-      },
-      CacheTTL.STATIC,
-    ),
-    seed(
-      ['booking', 'active', userId],
-      async () => {
-        const r = await bookingService.getActiveBooking();
-        return r.data?.data ?? r.data ?? null;
-      },
-      CacheTTL.SHORT,
-    ),
-    seed(
-      ['bookings', 'recent', userId],
-      async () => {
-        const r = await bookingService.getBookings({ per_page: 5 });
-        return r.data?.data ?? r.data ?? [];
-      },
-      CacheTTL.LONG,
-    ),
-    seed(
-      ['wallet', 'balance', userId],
-      async () => {
-        const r = await paymentService.getWalletBalance();
-        // Must match the wallet screen's useQuery fetcher, which returns the
-        // NUMBER (`data.balance`) — not the whole balance object. Seeding the
-        // object here poisoned the shared cache key, so the hero briefly
-        // rendered "₱[object Object]" on cold start until the live fetch ran.
-        return r.data?.data?.balance ?? r.data?.balance ?? 0;
-      },
-      CacheTTL.MEDIUM,
-    ),
-    seed(
-      // Default (unfiltered) transactions list — matches the wallet screen's
-      // ['wallet','transactions',userId, txFilter ?? 'all'] key so it paints
-      // its history instantly instead of just the balance.
-      ['wallet', 'transactions', userId, 'all'],
-      async () => {
-        const r = await paymentService.getWalletTransactions();
-        return (r.data?.data ?? r.data ?? []) as any[];
-      },
-      CacheTTL.MEDIUM,
-    ),
-    seed(
-      ['notifications', 'unread', userId],
-      async () => {
-        const r = await notificationService.getUnreadCount();
-        return r.data?.data ?? r.data ?? { count: 0 };
-      },
-      CacheTTL.SHORT,
-    ),
-    seed(
-      ['notifications', userId],
-      async () => {
-        const r = await notificationService.getNotifications({ page: 1, per_page: 20 });
-        return (r.data?.data ?? []) as any[];
-      },
-      CacheTTL.MEDIUM,
-    ),
-    seed(
-      ['user', 'addresses', userId],
-      async () => {
-        const r = await userService.getAddresses();
-        return (r.data?.data ?? r.data ?? []) as any[];
-      },
-      CacheTTL.LONG,
-    ),
-    seed(
-      ['payment-methods', userId],
-      async () => {
-        const r = await paymentService.getPaymentMethods();
-        return (r.data?.data ?? r.data ?? []) as any[];
-      },
-      CacheTTL.MEDIUM,
-    ),
-    preloadConversationsWithMessages(userId),
-    seed(
-      ['bookings', 'activity', 'all', userId],
-      async () => {
-        const r = await bookingService.getBookings({ page: 1, per_page: 15 });
-        return (r.data?.data ?? r.data ?? []) as any[];
-      },
-      CacheTTL.LONG,
-    ),
+  // Bounded-concurrency, order-preserving warm-up. Above-the-fold Home data
+  // (errand-types, active booking, recent bookings, wallet balance) is listed
+  // first so it warms in the first pool wave; lower-priority entries follow.
+  // Entries are thunks so the pool — not JS — decides when each fires.
+  await runPool([
+    () => preloadCoreImages(),
+    () =>
+      seed(
+        ['errand-types'],
+        async () => {
+          const r = await configService.getErrandTypes();
+          return r.data?.data ?? [];
+        },
+        CacheTTL.STATIC,
+      ),
+    () =>
+      seed(
+        ['booking', 'active', userId],
+        async () => {
+          const r = await bookingService.getActiveBooking();
+          return r.data?.data ?? r.data ?? null;
+        },
+        CacheTTL.SHORT,
+      ),
+    () =>
+      seed(
+        ['bookings', 'recent', userId],
+        async () => {
+          const r = await bookingService.getBookings({ per_page: 5 });
+          return r.data?.data ?? r.data ?? [];
+        },
+        CacheTTL.LONG,
+      ),
+    () =>
+      seed(
+        ['wallet', 'balance', userId],
+        async () => {
+          const r = await paymentService.getWalletBalance();
+          // Must match the wallet screen's useQuery fetcher, which returns the
+          // NUMBER (`data.balance`) — not the whole balance object. Seeding the
+          // object here poisoned the shared cache key, so the hero briefly
+          // rendered "₱[object Object]" on cold start until the live fetch ran.
+          return r.data?.data?.balance ?? r.data?.balance ?? 0;
+        },
+        CacheTTL.MEDIUM,
+      ),
+    () =>
+      seed(
+        // Default (unfiltered) transactions list — matches the wallet screen's
+        // ['wallet','transactions',userId, txFilter ?? 'all'] key so it paints
+        // its history instantly instead of just the balance.
+        ['wallet', 'transactions', userId, 'all'],
+        async () => {
+          const r = await paymentService.getWalletTransactions();
+          return (r.data?.data ?? r.data ?? []) as any[];
+        },
+        CacheTTL.MEDIUM,
+      ),
+    () =>
+      seed(
+        ['notifications', 'unread', userId],
+        async () => {
+          const r = await notificationService.getUnreadCount();
+          return r.data?.data ?? r.data ?? { count: 0 };
+        },
+        CacheTTL.SHORT,
+      ),
+    () =>
+      seed(
+        ['notifications', userId],
+        async () => {
+          const r = await notificationService.getNotifications({ page: 1, per_page: 20 });
+          return (r.data?.data ?? []) as any[];
+        },
+        CacheTTL.MEDIUM,
+      ),
+    () =>
+      seed(
+        ['user', 'addresses', userId],
+        async () => {
+          const r = await userService.getAddresses();
+          return (r.data?.data ?? r.data ?? []) as any[];
+        },
+        CacheTTL.LONG,
+      ),
+    () =>
+      seed(
+        ['payment-methods', userId],
+        async () => {
+          const r = await paymentService.getPaymentMethods();
+          return (r.data?.data ?? r.data ?? []) as any[];
+        },
+        CacheTTL.MEDIUM,
+      ),
+    () => preloadConversationsWithMessages(userId),
+    () =>
+      seed(
+        ['bookings', 'activity', 'all', userId],
+        async () => {
+          const r = await bookingService.getBookings({ page: 1, per_page: 15 });
+          return (r.data?.data ?? r.data ?? []) as any[];
+        },
+        CacheTTL.LONG,
+      ),
     // Trusted contacts uses a legacy AsyncStorage cache (not useQuery),
     // so write directly to its key shape so the screen paints instantly.
-    (async () => {
-      try {
-        const r = await userService.getTrustedContacts();
-        const list = (r.data?.data ?? r.data ?? []) as any[];
-        const sorted = Array.isArray(list)
-          ? [...list].sort((a, b) => (a.priority ?? 0) - (b.priority ?? 0))
-          : [];
-        await AsyncStorage.setItem(TRUSTED_CONTACTS_LEGACY_KEY, JSON.stringify(sorted));
-      } catch {
-        // Best-effort; the screen falls back to its own fetch.
-      }
-    })(),
+    () =>
+      (async () => {
+        try {
+          const r = await userService.getTrustedContacts();
+          const list = (r.data?.data ?? r.data ?? []) as any[];
+          const sorted = Array.isArray(list)
+            ? [...list].sort((a, b) => (a.priority ?? 0) - (b.priority ?? 0))
+            : [];
+          await AsyncStorage.setItem(TRUSTED_CONTACTS_LEGACY_KEY, JSON.stringify(sorted));
+        } catch {
+          // Best-effort; the screen falls back to its own fetch.
+        }
+      })(),
   ]);
 }
 
 export async function preloadRunnerEssentials(userId: string) {
-  await Promise.allSettled([
-    preloadCoreImages(),
-    seed(
-      ['runner', 'profile', userId],
-      async () => {
-        const r = await runnerService.getRunnerProfile();
-        return r.data?.data ?? r.data ?? null;
-      },
-      CacheTTL.LONG,
-    ),
-    seed(
-      ['runner', 'earnings', 'today', userId],
-      async () => {
-        const r = await runnerService.getEarnings('today');
-        return r.data?.data ?? r.data ?? null;
-      },
-      CacheTTL.MEDIUM,
-    ),
-    seed(
-      ['runner', 'earnings', 'week', userId],
-      async () => {
-        const r = await runnerService.getEarnings('week');
-        return r.data?.data ?? r.data ?? null;
-      },
-      CacheTTL.MEDIUM,
-    ),
-    seed(
-      ['runner', 'earnings', 'month', userId],
-      async () => {
-        const r = await runnerService.getEarnings('month');
-        return r.data?.data ?? r.data ?? null;
-      },
-      CacheTTL.MEDIUM,
-    ),
-    seed(
-      ['runner', 'earnings', 'history', 'week', userId],
-      async () => {
-        const r = await runnerService.getEarningsHistory({ page: 1, per_page: 30 });
-        return r.data?.data ?? r.data ?? [];
-      },
-      CacheTTL.MEDIUM,
-    ),
-    seed(
-      ['runner', 'errands', 'recent', userId],
-      async () => {
-        const r = await runnerService.getErrandHistory({ page: 1, per_page: 3 });
-        return r.data?.data ?? r.data ?? [];
-      },
-      CacheTTL.LONG,
-    ),
-    seed(
-      ['runner', 'errands', 'history', 'all', userId],
-      async () => {
-        const r = await runnerService.getErrandHistory({ page: 1, per_page: 15 });
-        return r.data?.data ?? r.data ?? [];
-      },
-      CacheTTL.LONG,
-    ),
-    seed(
-      ['runner', 'errand', 'available', userId],
-      async () => {
-        const r = await runnerService.getAvailableErrands();
-        return r.data?.data ?? r.data ?? [];
-      },
-      CacheTTL.SHORT,
-    ),
-    seed(
-      ['runner', 'errand', 'current', userId],
-      async () => {
-        const r = await runnerService.getCurrentErrand();
-        return r.data?.data ?? r.data ?? null;
-      },
-      CacheTTL.SHORT,
-    ),
-    seed(
-      ['runner', 'payouts', userId],
-      async () => {
-        const r = await runnerService.getPayoutHistory({ page: 1, per_page: 5 });
-        return r.data?.data ?? r.data ?? [];
-      },
-      CacheTTL.MEDIUM,
-    ),
-    seed(
-      ['notifications', 'unread', userId],
-      async () => {
-        const r = await notificationService.getUnreadCount();
-        return r.data?.data ?? r.data ?? { count: 0 };
-      },
-      CacheTTL.SHORT,
-    ),
-    seed(
-      ['notifications', userId],
-      async () => {
-        const r = await notificationService.getNotifications({ page: 1, per_page: 20 });
-        return (r.data?.data ?? []) as any[];
-      },
-      CacheTTL.MEDIUM,
-    ),
-    preloadConversationsWithMessages(userId),
+  // Bounded-concurrency, order-preserving warm-up (see preloadCustomerEssentials).
+  // Above-the-fold runner dashboard data (profile, today's earnings, current /
+  // available errands) leads; entries are thunks so the pool controls firing.
+  await runPool([
+    () => preloadCoreImages(),
+    () =>
+      seed(
+        ['runner', 'profile', userId],
+        async () => {
+          const r = await runnerService.getRunnerProfile();
+          return r.data?.data ?? r.data ?? null;
+        },
+        CacheTTL.LONG,
+      ),
+    () =>
+      seed(
+        ['runner', 'earnings', 'today', userId],
+        async () => {
+          const r = await runnerService.getEarnings('today');
+          return r.data?.data ?? r.data ?? null;
+        },
+        CacheTTL.MEDIUM,
+      ),
+    () =>
+      seed(
+        ['runner', 'earnings', 'week', userId],
+        async () => {
+          const r = await runnerService.getEarnings('week');
+          return r.data?.data ?? r.data ?? null;
+        },
+        CacheTTL.MEDIUM,
+      ),
+    () =>
+      seed(
+        ['runner', 'earnings', 'month', userId],
+        async () => {
+          const r = await runnerService.getEarnings('month');
+          return r.data?.data ?? r.data ?? null;
+        },
+        CacheTTL.MEDIUM,
+      ),
+    () =>
+      seed(
+        ['runner', 'earnings', 'history', 'week', userId],
+        async () => {
+          const r = await runnerService.getEarningsHistory({ page: 1, per_page: 30 });
+          return r.data?.data ?? r.data ?? [];
+        },
+        CacheTTL.MEDIUM,
+      ),
+    () =>
+      seed(
+        ['runner', 'errands', 'recent', userId],
+        async () => {
+          const r = await runnerService.getErrandHistory({ page: 1, per_page: 3 });
+          return r.data?.data ?? r.data ?? [];
+        },
+        CacheTTL.LONG,
+      ),
+    () =>
+      seed(
+        ['runner', 'errands', 'history', 'all', userId],
+        async () => {
+          const r = await runnerService.getErrandHistory({ page: 1, per_page: 15 });
+          return r.data?.data ?? r.data ?? [];
+        },
+        CacheTTL.LONG,
+      ),
+    () =>
+      seed(
+        ['runner', 'errand', 'available', userId],
+        async () => {
+          const r = await runnerService.getAvailableErrands();
+          return r.data?.data ?? r.data ?? [];
+        },
+        CacheTTL.SHORT,
+      ),
+    () =>
+      seed(
+        ['runner', 'errand', 'current', userId],
+        async () => {
+          const r = await runnerService.getCurrentErrand();
+          return r.data?.data ?? r.data ?? null;
+        },
+        CacheTTL.SHORT,
+      ),
+    () =>
+      seed(
+        ['runner', 'payouts', userId],
+        async () => {
+          const r = await runnerService.getPayoutHistory({ page: 1, per_page: 5 });
+          return r.data?.data ?? r.data ?? [];
+        },
+        CacheTTL.MEDIUM,
+      ),
+    () =>
+      seed(
+        ['notifications', 'unread', userId],
+        async () => {
+          const r = await notificationService.getUnreadCount();
+          return r.data?.data ?? r.data ?? { count: 0 };
+        },
+        CacheTTL.SHORT,
+      ),
+    () =>
+      seed(
+        ['notifications', userId],
+        async () => {
+          const r = await notificationService.getNotifications({ page: 1, per_page: 20 });
+          return (r.data?.data ?? []) as any[];
+        },
+        CacheTTL.MEDIUM,
+      ),
+    () => preloadConversationsWithMessages(userId),
   ]);
 }
 
