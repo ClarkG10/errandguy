@@ -67,6 +67,13 @@ class BookingManagementController extends Controller
             'cancellation_reason' => $request->input('reason'),
         ]);
 
+        // An admin/platform-initiated cancel is not the customer's fault, so a
+        // paid booking is refunded IN FULL with no cancellation fee (unlike the
+        // customer-initiated cancel). refundUnfulfilled is the shared
+        // full-refund-no-fee primitive (idempotent; no-op for cash/unpaid).
+        app(\App\Services\BookingService::class)
+            ->refundUnfulfilled($booking->id, 'Admin cancelled the booking');
+
         return response()->json(['message' => 'Booking cancelled by admin']);
     }
 }

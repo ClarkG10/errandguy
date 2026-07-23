@@ -7,6 +7,7 @@ use App\Models\AdminUser;
 use App\Models\Booking;
 use App\Models\ErrandType;
 use App\Models\Notification;
+use App\Models\Payment;
 use App\Models\RunnerProfile;
 use App\Models\User;
 use Illuminate\Foundation\Testing\RefreshDatabase;
@@ -165,5 +166,41 @@ class DiscoverySweepTest extends TestCase
         // literal 'admin' (which 500'd on Postgres).
         $this->assertEquals($admin->id, $this->booking->fresh()->cancelled_by);
         $this->assertEquals('cancelled', $this->booking->fresh()->status);
+    }
+
+    public function test_admin_cancel_fully_refunds_a_paid_booking(): void
+    {
+        $this->customer->update(['wallet_balance' => 0]);
+        $paid = Booking::create([
+            'booking_number' => 'EG-20260331-APAY', 'customer_id' => $this->customer->id,
+            'errand_type_id' => $this->errandType->id, 'status' => 'accepted',
+            'pickup_address' => '1 A', 'pickup_lat' => 14.60, 'pickup_lng' => 120.98,
+            'dropoff_address' => '2 B', 'dropoff_lat' => 14.55, 'dropoff_lng' => 121.02,
+            'schedule_type' => 'now', 'pricing_mode' => 'fixed', 'vehicle_type_rate' => 'motorcycle',
+            'distance_km' => 5.0, 'base_fee' => 50, 'distance_fee' => 50, 'service_fee' => 15,
+            'surcharge' => 0, 'total_amount' => 115, 'runner_payout' => 85,
+            'payment_method' => 'wallet', 'payment_status' => 'paid', 'is_transportation' => false,
+        ]);
+        Payment::create([
+            'booking_id' => $paid->id, 'customer_id' => $this->customer->id,
+            'amount' => 115, 'method' => 'wallet', 'status' => 'completed', 'paid_at' => now(),
+        ]);
+
+        $admin = AdminUser::create([
+            'email' => 'ops2@errandguy.test', 'password_hash' => Hash::make('Password1!'),
+            'full_name' => 'Ops', 'role' => 'admin', 'is_active' => true,
+        ]);
+        Sanctum::actingAs($admin);
+
+        $this->postJson("/api/v1/admin/bookings/{$paid->id}/cancel", ['reason' => 'fraud'])
+            ->assertOk();
+
+        // Full refund, no fee (admin-initiated → not the customer's fault).
+        $this->assertEquals('refunded', $paid->fresh()->payment_status);
+        $this->assertEquals(115.0, (float) $this->customer->fresh()->wallet_balance);
+        $this->assertDatabaseHas('wallet_transactions', [
+            'user_id' => $this->customer->id, 'type' => 'refund', 'reference_id' => $paid->id,
+        ]);
+        $this->assertDatabaseHas('payments', ['booking_id' => $paid->id, 'status' => 'refunded']);
     }
 }

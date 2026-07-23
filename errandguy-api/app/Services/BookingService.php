@@ -108,11 +108,11 @@ class BookingService
     }
 
     /**
-     * Refund a booking that ended WITHOUT service being delivered — no runner
-     * was ever matched (MatchRunnerJob → no_runner, or AutoCancelBookingJob
-     * timing out with nobody found). Unlike a customer cancellation there is no
-     * fault, so NO cancellation fee is withheld — the full collected amount is
-     * returned.
+     * Full-refund-no-fee primitive: return the entire collected amount when a
+     * booking ends through no fault of the customer — no runner was ever
+     * matched (MatchRunnerJob → no_runner / AutoCancelBookingJob / negotiate
+     * expiry) OR an admin/platform cancelled it. Unlike a customer-initiated
+     * cancellation, NO cancellation fee is withheld.
      *
      * Idempotent + race-safe: locks the booking and only acts while
      * payment_status is 'paid', so a repeat call (both no-runner paths can fire
