@@ -595,6 +595,42 @@ specs. Laravel **+1** (expired negotiate booking refunds the paid offer), suite 
 pre-existing stale failures). Zero regressions. Remaining Nest parity: DB-backed specs for wallet
 idempotency / `refundUnfulfilled` need a Postgres test DB (raw `FOR UPDATE` isn't unit-testable).
 
+### Phase 14 — implemented (discovery sweep: security / correctness / UX)
+
+A fresh 4-lens discovery sweep (Laravel security/correctness/perf + mobile correctness), each finding
+adversarially verified. Shipped the confirmed-safe-unblocked ones; declined/deferred the rest.
+
+**Laravel (commit 22e39f5):**
+- **ride-PIN disclosure** — `BookingResource` handed the assigned *runner* the transportation
+  `ride_pin`, defeating verify-pin; now customer + admin only.
+- **admin-cancel 500** — `BookingManagementController` wrote the literal `'admin'` into the uuid
+  `cancelled_by` (Postgres 22P02 on every admin cancel; SQLite tests masked it); now the admin's id.
+- **decline re-match** — `decline()` re-dispatched `MatchRunnerJob` with no exclude → instantly
+  re-offered to the decliner; now excludes them.
+- **duplicate offer notification** — `MatchRunnerJob` created an inline `Notification` *and* the
+  post-commit `sendPush` created an identical one; dropped the inline one.
+- **item-photo leak** — the negotiate broadcast (`available()`) leaked customer-uploaded item photos
+  to any nearby runner; gated behind `$canSeeContacts` (as the resource comment already promised).
+- **/support/report authz** — `booking_id` used a bare `exists` rule (any booking); now
+  ownership-scoped.
+- **perf** — added the missing `payments (customer_id, created_at)` composite index.
+
+**Mobile (commit 52241a0):**
+- **swallowed error messages** — the axios interceptor rejects a flat `{status,message,errors}` with
+  no `.response`, so 14 catch sites reading `err?.response?.data?.message` always showed a generic
+  string (worst on the runner PIN + payout screens). Fixed all to prefer `err?.message`.
+- **safe-exit left the payment lock active** — tapping "Got it" on a pending payment kept the single
+  global attempt non-terminal, blocking all new bookings/top-ups for the session and re-surfacing a
+  stale modal; `onSafeExit` now resolves the attempt in all three consumers.
+
+**Declined / deferred (verified):** a PricingService errand_type "N+1" (PK-cached ~10-row lookup —
+refactor would only add Laravel/Nest drift for no measurable gain); admin-cancel **refund** (needs a
+product decision: full refund vs fee for an admin-initiated cancel); a viewer-aware `review` relation
+(needs a contract decision).
+
+Tests: Laravel **+5** (suite 306/312, same 6 pre-existing stale); mobile `tsc` clean + jest 143/144.
+Zero regressions.
+
 ### H6 (private KYC storage) — assessed, deliberately deferred with a plan
 
 Not shipped this pass because it cannot be done safely blind: the fix requires (1) an **infra
