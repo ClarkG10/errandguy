@@ -48,22 +48,20 @@ class BroadcastToRunnersJob implements ShouldQueue
             'negotiate_expires_at' => optional($booking->negotiate_expires_at)->toIso8601String(),
         ];
 
-        $delivered = 0;
-        foreach ($runners as $runner) {
-            // Each insert hits Supabase via REST → fans out to that runner's
-            // realtime subscription on the `notifications` table. This is
-            // what flips a polling-only flow into an instant push.
-            try {
-                $realtime->broadcastIncomingRequest($runner->user_id, $payload);
-                $delivered++;
-            } catch (\Throwable $e) {
-                Log::warning('BroadcastToRunnersJob: failed to notify runner', [
-                    'runner_id' => $runner->user_id,
-                    'booking_id' => $this->bookingId,
-                    'error' => $e->getMessage(),
-                ]);
-            }
-        }
+        // One bulk PostgREST insert for ALL nearby runners instead of a
+        // sequential HTTP round-trip per runner — the old loop made create
+        // latency scale with the number of eligible runners (and could stack
+        // N Supabase timeouts). Each row fans out to that runner's realtime
+        // subscription on the `notifications` table exactly as before.
+        $notifications = $runners->map(fn ($runner) => [
+            'user_id' => $runner->user_id,
+            'title' => 'New Errand Request',
+            'body' => 'A new errand is available near you.',
+            'type' => 'booking_update',
+            'data' => $payload,
+        ])->all();
+
+        $delivered = $realtime->insertNotifications($notifications);
 
         Log::info("BroadcastToRunnersJob: notified {$delivered}/{$runners->count()} runners for booking {$this->bookingId}");
 

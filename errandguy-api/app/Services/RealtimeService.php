@@ -83,6 +83,58 @@ class RealtimeService
         }
     }
 
+    /**
+     * Bulk-insert many notifications in a SINGLE PostgREST call.
+     *
+     * Broadcasting a negotiate offer to N nearby runners previously issued N
+     * sequential HTTP round-trips (one insertNotification() per runner) inside
+     * the booking-create request — latency scaled linearly with the number of
+     * eligible runners, and a slow Supabase could stack N timeouts onto create.
+     * PostgREST inserts an array body in one round-trip, so this stays O(1)
+     * HTTP calls regardless of runner count while keeping the same sync model
+     * (no queue-worker dependency).
+     *
+     * The `data` object is passed straight through (PostgREST serializes the
+     * whole body once) so each row's jsonb `data` stays a real object — the
+     * same reason insertNotification() must not json_encode() it.
+     *
+     * @param  array<int,array{user_id:string,title:string,body:string,type:string,data?:array<string,mixed>}>  $notifications
+     * @return int  number of rows sent (0 if nothing to do or the call failed)
+     */
+    public function insertNotifications(array $notifications): int
+    {
+        if (empty($notifications)) {
+            return 0;
+        }
+
+        $rows = array_map(fn ($n) => [
+            'user_id' => $n['user_id'],
+            'title' => $n['title'],
+            'body' => $n['body'],
+            'type' => $n['type'],
+            'data' => $n['data'] ?? [],
+            'is_read' => false,
+        ], array_values($notifications));
+
+        try {
+            Http::withHeaders([
+                'apikey' => $this->serviceKey,
+                'Authorization' => "Bearer {$this->serviceKey}",
+                'Content-Type' => 'application/json',
+                'Prefer' => 'return=minimal',
+            ])->post("{$this->supabaseUrl}/rest/v1/notifications", $rows);
+
+            return count($rows);
+        } catch (\Throwable $e) {
+            Log::error('RealtimeService: Failed to bulk-insert notifications', [
+                'count' => count($rows),
+                'error' => $e->getMessage(),
+            ]);
+
+            return 0;
+        }
+    }
+
     public function broadcastRunnerLocation(string $bookingId, string $runnerId, array $coords): void
     {
         try {
