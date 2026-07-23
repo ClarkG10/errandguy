@@ -523,6 +523,20 @@ Tests: **+3** (`applyNegotiateOffer` total/flat-fee/payout, payout-never-negativ
 booking charged the offer end-to-end). API suite **293 / 299** (same 6 pre-existing stale failures).
 Zero regressions.
 
+### Phase 10 — implemented (H16, backend): bulk offer broadcast
+
+- Broadcasting a negotiate booking looped over eligible runners with one sequential Supabase REST
+  insert **per runner** (`BroadcastToRunnersJob` → `RealtimeService::broadcastIncomingRequest`).
+  For immediate bookings this runs synchronously in the create request, so create latency scaled
+  linearly with the runner count and a slow Supabase could stack N timeouts. Added
+  `RealtimeService::insertNotifications()` — a single PostgREST **bulk** insert (array body) that is
+  O(1) HTTP round-trips regardless of N, keeping the existing sync model (no queue-worker
+  dependency). Each row's jsonb `data` is still a real object, so realtime fan-out + mobile
+  deep-links are unaffected.
+
+Tests: **+2** (N notifications → one request with an N-row array body; empty list is a no-op). API
+suite **295 / 301** (same 6 pre-existing stale failures). Zero regressions.
+
 ### H6 (private KYC storage) — assessed, deliberately deferred with a plan
 
 Not shipped this pass because it cannot be done safely blind: the fix requires (1) an **infra
