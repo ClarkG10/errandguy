@@ -505,6 +505,24 @@ auto-refund on no_runner) before touching the money flow.
 Tests: **+3** backend (paid → full refund, cash → no refund, idempotent). API suite **290 / 296**
 (same 6 pre-existing stale failures); mobile `tsc` clean, jest **143 / 144**. Zero regressions.
 
+### Phase 9 — implemented (H11, backend): negotiate mode charges the offer
+
+Product decisions taken with the user first: the offer IS the total the customer pays, and the
+platform keeps its **flat** computed service fee (offer only changes the runner's share).
+
+- Negotiate pricing was a no-op — `customer_offer` was validated, stored, and broadcast, but
+  `total_amount`/`runner_payout` were set to the FIXED distance/vehicle fare, so the customer was
+  charged the fixed price (not their offer) and the mobile slider value never matched what the
+  backend billed. Added `PricingService::applyNegotiateOffer()` (`total_amount = offer`,
+  `runner_payout = max(0, offer − service_fee)`) applied in `BookingController::store` for negotiate
+  bookings, before the promo block so a promo discounts the offer. Payment (wallet deduct / Xendit
+  invoice) now bills the offer; an unmatched negotiate booking is returned by the Phase-8 no-runner
+  auto-refund.
+
+Tests: **+3** (`applyNegotiateOffer` total/flat-fee/payout, payout-never-negative clamp, negotiate
+booking charged the offer end-to-end). API suite **293 / 299** (same 6 pre-existing stale failures).
+Zero regressions.
+
 ### H6 (private KYC storage) — assessed, deliberately deferred with a plan
 
 Not shipped this pass because it cannot be done safely blind: the fix requires (1) an **infra
