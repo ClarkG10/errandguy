@@ -2,9 +2,12 @@
 
 namespace App\Services;
 
+use App\Enums\PaymentStatus;
 use App\Models\Booking;
 use App\Models\BookingStatusLog;
 use App\Models\ErrandType;
+use App\Models\Payment;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 
 class BookingService
@@ -102,6 +105,55 @@ class BookingService
             'is_transportation' => $isTransportation,
             'ride_pin' => $isTransportation ? $this->generateRidePin() : null,
         ]);
+    }
+
+    /**
+     * Refund a booking that ended WITHOUT service being delivered — no runner
+     * was ever matched (MatchRunnerJob → no_runner, or AutoCancelBookingJob
+     * timing out with nobody found). Unlike a customer cancellation there is no
+     * fault, so NO cancellation fee is withheld — the full collected amount is
+     * returned.
+     *
+     * Idempotent + race-safe: locks the booking and only acts while
+     * payment_status is 'paid', so a repeat call (both no-runner paths can fire
+     * for the same booking) is a no-op. Relies on the idempotent
+     * WalletService::refund + the Payment state machine. Refunds to the wallet,
+     * matching the cancellation refund path (gateway reversal is not wired).
+     * Cash / unpaid / already-refunded bookings collected nothing to return.
+     */
+    public function refundUnfulfilled(string $bookingId, string $reason): void
+    {
+        DB::transaction(function () use ($bookingId, $reason) {
+            $locked = Booking::whereKey($bookingId)->lockForUpdate()->first();
+
+            // Nothing was collected (cash/unpaid), or a racing call already
+            // refunded it — either way there is nothing to return.
+            if (! $locked || $locked->payment_status !== 'paid') {
+                return;
+            }
+
+            $refundable = round((float) $locked->total_amount, 2);
+            if ($refundable > 0) {
+                app(WalletService::class)->refund($locked->customer_id, $refundable, $locked->id);
+
+                Payment::where('booking_id', $locked->id)
+                    ->where('status', 'completed')
+                    ->latest()
+                    ->first()
+                    ?->transitionTo(
+                        PaymentStatus::Refunded,
+                        actor: 'system',
+                        reason: $reason,
+                        meta: ['refunded_to' => 'wallet', 'unfulfilled' => true],
+                        extra: [
+                            'refund_amount' => $refundable,
+                            'refunded_at' => now(),
+                        ],
+                    );
+            }
+
+            $locked->update(['payment_status' => 'refunded']);
+        });
     }
 
     /**

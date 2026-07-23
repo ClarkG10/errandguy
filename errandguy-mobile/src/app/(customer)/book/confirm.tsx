@@ -26,9 +26,10 @@ import type { BookingStatus } from '../../../types';
 import { toast } from '../../../stores/toastStore';
 import { LightColors, Elevation } from '../../../constants/colors';
 import { useResponsive } from '../../../constants/responsive';
+import dayjs from 'dayjs';
 
 
-type SearchState = 'searching' | 'matched' | 'no_runner' | 'cancelled';
+type SearchState = 'searching' | 'scheduled' | 'matched' | 'no_runner' | 'cancelled';
 
 // Rotating reassurance copy while searching — cycled every ~5s so a
 // longer wait never reads as a frozen screen.
@@ -41,6 +42,7 @@ const SEARCHING_LINES = [
 // Screen-reader announcements for each state transition.
 const STATE_ANNOUNCEMENTS: Record<SearchState, string> = {
   searching: 'Searching for a runner nearby',
+  scheduled: 'Booking scheduled. We will match a runner near your scheduled time.',
   matched: 'Runner found. Redirecting to tracking.',
   no_runner: 'No runners available right now.',
   cancelled: 'Booking cancelled.',
@@ -59,7 +61,31 @@ export default function ConfirmScreen() {
   const setStep = useBookingStore((s) => s.setStep);
 
   const bookingId = params.bookingId ?? activeBooking?.id;
-  const [state, setState] = useState<SearchState>('searching');
+
+  // A booking scheduled for a FUTURE time must NOT run the live "searching"
+  // radar — the server delays matching until near the scheduled slot, so the
+  // countdown would falsely time out to "No runners available". Detect it from
+  // whichever source is populated (the created booking, or the draft on the
+  // normal create flow) and land on a "scheduled" confirmation instead.
+  const scheduledSource = activeBooking ?? draftBooking;
+  const scheduledAtMs = scheduledSource?.scheduled_at
+    ? Date.parse(scheduledSource.scheduled_at)
+    : NaN;
+  const isScheduledFuture =
+    scheduledSource?.schedule_type === 'scheduled' &&
+    Number.isFinite(scheduledAtMs) &&
+    scheduledAtMs > Date.now();
+
+  const [state, setState] = useState<SearchState>(
+    isScheduledFuture ? 'scheduled' : 'searching',
+  );
+
+  // Cold-start / deep-link (e.g. returning from Xendit checkout after the app
+  // was killed): the store may hydrate the scheduled booking only after mount,
+  // so flip out of the guessed "searching" once we learn it's scheduled.
+  useEffect(() => {
+    if (isScheduledFuture && state === 'searching') setState('scheduled');
+  }, [isScheduledFuture, state]);
   const [showCancelModal, setShowCancelModal] = useState(false);
   const [isCancelling, setIsCancelling] = useState(false);
   // Tracks how many widened-radius retries the customer has used so the
@@ -562,6 +588,38 @@ export default function ConfirmScreen() {
                   variant="outline"
                   onPress={handleCancel}
                   disabled={isCancelling}
+                  fullWidth
+                />
+              </View>
+            </>
+          )}
+
+          {state === 'scheduled' && (
+            <>
+              <View style={{ alignSelf: 'center', alignItems: 'center' }}>
+                <SuccessCheck size={72} />
+              </View>
+              <Text className="text-xl font-montserrat-bold text-textPrimary mt-4 text-center">
+                Booking scheduled
+              </Text>
+              {Number.isFinite(scheduledAtMs) && (
+                <Text className="text-base font-montserrat-semibold text-textPrimary mt-1 text-center">
+                  {dayjs(scheduledAtMs).format('ddd, MMM D · h:mm A')}
+                </Text>
+              )}
+              <Text className="text-sm font-montserrat text-textSecondary mt-1 text-center">
+                We&apos;ll match you with a runner shortly before your scheduled
+                time. Track it anytime from Activity.
+              </Text>
+              {bookingNumber ? (
+                <Text className="text-xs font-inter text-textTertiary mt-2 text-center">
+                  Booking: {bookingNumber}
+                </Text>
+              ) : null}
+              <View className="mt-5 w-full">
+                <Button
+                  title="Done"
+                  onPress={() => router.replace('/(customer)/(tabs)/activity')}
                   fullWidth
                 />
               </View>

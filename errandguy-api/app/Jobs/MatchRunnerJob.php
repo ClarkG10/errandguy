@@ -144,6 +144,16 @@ class MatchRunnerJob implements ShouldQueue
                     );
                 }
                 event(new BookingStatusChanged($matchedBooking, 'pending', $newStatus));
+
+                // No runner was ever matched → the customer never received the
+                // service, so return any money already collected (online/wallet
+                // paid up front). Runs AFTER commit in its own locked+idempotent
+                // transaction; cash/unpaid bookings collected nothing so this is
+                // a no-op for them.
+                if ($newStatus === 'no_runner') {
+                    app(\App\Services\BookingService::class)
+                        ->refundUnfulfilled($this->bookingId, 'No runner available — auto-refund');
+                }
             }
         } catch (Throwable $e) {
             Log::error("MatchRunnerJob failed for booking {$this->bookingId}: {$e->getMessage()}");

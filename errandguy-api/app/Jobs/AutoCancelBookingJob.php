@@ -57,6 +57,12 @@ class AutoCancelBookingJob implements ShouldQueue
             'note' => "Auto-cancelled after {$timeoutMinutes} minutes with no runner",
         ]);
 
+        // Nobody was ever matched, so the customer got no service — return any
+        // money collected up front (idempotent; a no-op if MatchRunnerJob's
+        // no_runner path already refunded, or if nothing was paid).
+        app(\App\Services\BookingService::class)
+            ->refundUnfulfilled($this->bookingId, 'Auto-cancelled: no runner found within timeout');
+
         Log::info("Booking {$this->bookingId} auto-cancelled after {$timeoutMinutes} minutes");
     }
 }
