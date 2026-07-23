@@ -95,6 +95,23 @@ class NoRunnerRefundTest extends TestCase
         $this->assertEquals(0.0, (float) $this->customer->fresh()->wallet_balance);
     }
 
+    public function test_expired_negotiate_booking_refunds_the_paid_offer(): void
+    {
+        // A negotiate booking is charged the offer up front (H11); if it expires
+        // with no runner acceptance, that money must come back.
+        Event::fake();
+        $booking = $this->makeBooking('wallet', 'paid'); // pending, no runner
+
+        (new \App\Jobs\ExpireNegotiateBookingJob($booking->id))->handle();
+
+        $this->assertEquals('cancelled', $booking->fresh()->status);
+        $this->assertEquals('refunded', $booking->fresh()->payment_status);
+        $this->assertEquals(115.0, (float) $this->customer->fresh()->wallet_balance);
+        $this->assertDatabaseHas('wallet_transactions', [
+            'user_id' => $this->customer->id, 'type' => 'refund', 'reference_id' => $booking->id,
+        ]);
+    }
+
     public function test_refund_unfulfilled_is_idempotent(): void
     {
         $booking = $this->makeBooking('wallet', 'paid');

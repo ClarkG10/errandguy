@@ -6,6 +6,7 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { CacheService } from '../../cache/cache.service';
 import { SystemConfigService } from '../payment/system-config.service';
 import { LocationService } from './location.service';
+import { BookingService } from './booking.service';
 import { BookingEvents } from './booking.events';
 import type { QueueConfig } from '../../config/configuration';
 
@@ -25,7 +26,21 @@ export class BookingMaintenanceService {
     private readonly cache: CacheService,
     private readonly location: LocationService,
     private readonly events: EventEmitter2,
+    private readonly bookings: BookingService,
   ) {}
+
+  /**
+   * Return any money collected up front on a booking that ended without a
+   * runner. Wrapped so a rare double-refund (caught by the DB unique index)
+   * can't abort the whole sweep. Parity with Laravel's no-runner auto-refund.
+   */
+  private async refundUnfulfilledSafe(bookingId: string, reason: string): Promise<void> {
+    try {
+      await this.bookings.refundUnfulfilled(bookingId, reason);
+    } catch (e) {
+      this.logger.error(`Unfulfilled-refund failed for booking ${bookingId}: ${(e as Error).message}`);
+    }
+  }
 
   private enabled(): boolean {
     return this.appConfig.get<QueueConfig>('queue')!.schedulerEnabled;
@@ -49,6 +64,7 @@ export class BookingMaintenanceService {
       await this.prisma.bookingStatusLog.create({
         data: { bookingId: b.id, status: 'cancelled', changedBy: null, note: `Auto-cancelled after ${timeout} minutes with no runner` },
       });
+      await this.refundUnfulfilledSafe(b.id, 'Auto-cancelled: no runner found within timeout');
     }
     if (stale.length) this.logger.log(`Auto-cancelled ${stale.length} stale bookings`);
   }
@@ -74,6 +90,7 @@ export class BookingMaintenanceService {
       await this.prisma.bookingStatusLog.create({
         data: { bookingId: b.id, status: 'cancelled', changedBy: null, note: 'Negotiate mode expired' },
       });
+      await this.refundUnfulfilledSafe(b.id, 'Negotiation expired with no runner acceptance');
     }
     if (expired.length) this.logger.log(`Expired ${expired.length} negotiate bookings`);
   }

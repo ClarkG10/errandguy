@@ -75,6 +75,25 @@ describe('PricingService (money parity with Laravel)', () => {
     expect(p.runner_payout).toBeGreaterThanOrEqual(0);
   });
 
+  describe('applyNegotiateOffer (H11 parity)', () => {
+    it('makes the offer the total and gives the runner offer − flat service fee', async () => {
+      const fixed = await service.calculate('et1', 0, 0, null, null, 'motorcycle');
+      // motorcycle zero-distance: subtotal 75, service_fee 11.25
+      const negotiated = service.applyNegotiateOffer(fixed, 200);
+
+      expect(negotiated.total_amount).toBe(200);
+      expect(negotiated.service_fee).toBe(fixed.service_fee); // flat fee unchanged
+      expect(negotiated.runner_payout).toBe(Math.round((200 - fixed.service_fee) * 100) / 100);
+      expect(negotiated.runner_payout).toBe(188.75);
+    });
+
+    it('never returns a negative runner payout when the offer is below the fee', async () => {
+      const fixed = await service.calculate('et1', 0, 0, null, null, 'motorcycle');
+      const negotiated = service.applyNegotiateOffer(fixed, 0.01);
+      expect(negotiated.runner_payout).toBeGreaterThanOrEqual(0);
+    });
+  });
+
   describe('applyPromo', () => {
     it('percentage discount', () => {
       expect(service.applyPromo(100, { discount_type: 'percentage', discount_value: 10 }))

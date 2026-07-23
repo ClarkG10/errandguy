@@ -116,7 +116,7 @@ export class BookingService implements OnModuleInit {
     const dropoffAddress = dto.dropoff_address ?? dto.pickup_address;
     const vehicleType = dto.vehicle_type_rate ?? 'motorcycle';
 
-    const pricing = await this.pricing.calculate(
+    let pricing = await this.pricing.calculate(
       dto.errand_type_id,
       dto.pickup_lat,
       dto.pickup_lng,
@@ -125,6 +125,14 @@ export class BookingService implements OnModuleInit {
       vehicleType,
       dto.schedule_type,
     );
+
+    // Negotiate mode: the customer's offer IS the price they pay (the fixed
+    // fare becomes reference-only). Applied BEFORE promo so a promo discounts
+    // the offer. Parity with Laravel H11 — without this a negotiate booking is
+    // charged the fixed fare and customer_offer is cosmetic.
+    if (dto.pricing_mode === 'negotiate' && dto.customer_offer != null) {
+      pricing = this.pricing.applyNegotiateOffer(pricing, dto.customer_offer);
+    }
 
     let promoDiscount = 0;
     let promoCodeId: string | null = null;
@@ -420,7 +428,44 @@ export class BookingService implements OnModuleInit {
     if (result) {
       if (result.newStatus === 'matched' && result.runnerId) this.cache.forget(`runner_active_booking_id:${result.runnerId}`);
       this.emitStatusChanged(result.booking, 'pending', result.newStatus);
+
+      // No runner was ever matched → return any money collected up front.
+      if (result.newStatus === 'no_runner') {
+        await this.refundUnfulfilled(bookingId, 'No runner available — auto-refund');
+      }
     }
+  }
+
+  /**
+   * Refund a booking that ended with NO runner ever matched (matchRunner →
+   * no_runner, the auto-cancel timeout, or negotiate expiry). Full refund, no
+   * cancellation fee (the customer was at no fault). Idempotent: only acts
+   * while paymentStatus is 'paid', so a repeat call is a no-op; the idempotent
+   * wallet refund + the DB unique index uq_wallet_tx_user_reference_type are
+   * the double-refund backstops. Refunds to the wallet, matching cancel().
+   * Parity with Laravel BookingService::refundUnfulfilled (H13).
+   */
+  async refundUnfulfilled(bookingId: string, reason: string): Promise<void> {
+    const booking = await this.prisma.booking.findUnique({ where: { id: bookingId } });
+    if (!booking || booking.paymentStatus !== 'paid') return;
+
+    const refundable = Math.round(Number(booking.totalAmount) * 100) / 100;
+    if (refundable > 0) {
+      await this.wallet.refund(booking.customerId, refundable, booking.id);
+      const payment = await this.prisma.payment.findFirst({
+        where: { bookingId: booking.id, status: 'completed' },
+        orderBy: { createdAt: 'desc' },
+      });
+      if (payment) {
+        await transitionPayment(this.prisma, payment, PaymentStatus.Refunded, {
+          actor: 'system',
+          reason,
+          meta: { refunded_to: 'wallet', unfulfilled: true },
+          extra: { refundAmount: new Prisma.Decimal(refundable), refundedAt: new Date() },
+        });
+      }
+    }
+    await this.prisma.booking.update({ where: { id: booking.id }, data: { paymentStatus: 'refunded' } });
   }
 
   /** BroadcastToRunnersJob logic. */

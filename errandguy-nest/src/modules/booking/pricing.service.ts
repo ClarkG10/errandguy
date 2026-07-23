@@ -111,6 +111,22 @@ export class PricingService {
     return estimates;
   }
 
+  /**
+   * Negotiate mode: the customer's OFFER is the total they pay; the platform
+   * keeps its flat computed service fee (the offer only changes the runner's
+   * share). Mirrors Laravel PricingService::applyNegotiateOffer (H11) — without
+   * it, a negotiate booking is charged the fixed fare and customer_offer is
+   * cosmetic.
+   */
+  applyNegotiateOffer(pricing: PriceBreakdown, offer: number): PriceBreakdown {
+    const total = round2(offer);
+    return {
+      ...pricing,
+      total_amount: total,
+      runner_payout: Math.max(0, round2(total - pricing.service_fee)),
+    };
+  }
+
   applyPromo(
     subtotal: number,
     promo: { discount_type: string; discount_value: number; max_discount?: number | null },

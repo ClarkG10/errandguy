@@ -143,6 +143,13 @@ export class WalletService {
         Prisma.sql`SELECT wallet_balance FROM users WHERE id = ${userId}::uuid FOR UPDATE LIMIT 1`,
       );
       if (!rows.length) throw new Error('User not found.');
+      // Idempotency (parity with Laravel WalletService::deduct): a retry with
+      // the same reference must not charge twice. The DB partial-unique index
+      // uq_wallet_tx_user_reference_type is the hard backstop across backends.
+      const existing = await tx.walletTransaction.findFirst({
+        where: { userId, referenceId, type: 'payment' },
+      });
+      if (existing) return existing;
       const current = new Prisma.Decimal(rows[0].wallet_balance);
       if (current.lessThan(amount)) throw new Error('Insufficient wallet balance.');
       const newBalance = current.minus(amount);
@@ -165,6 +172,12 @@ export class WalletService {
       const rows = await tx.$queryRaw<{ wallet_balance: Prisma.Decimal }[]>(
         Prisma.sql`SELECT wallet_balance FROM users WHERE id = ${userId}::uuid FOR UPDATE LIMIT 1`,
       );
+      // Idempotency (parity with Laravel WalletService::refund): a repeat refund
+      // for the same reference must not credit twice.
+      const existing = await tx.walletTransaction.findFirst({
+        where: { userId, referenceId, type: 'refund' },
+      });
+      if (existing) return existing;
       const newBalance = new Prisma.Decimal(rows[0].wallet_balance).plus(amount);
       await tx.user.update({ where: { id: userId }, data: { walletBalance: newBalance } });
       return tx.walletTransaction.create({

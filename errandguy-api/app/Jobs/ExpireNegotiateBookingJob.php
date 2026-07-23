@@ -46,6 +46,12 @@ class ExpireNegotiateBookingJob implements ShouldQueue
             'note' => 'Negotiate mode expired',
         ]);
 
+        // A negotiate booking is charged the customer's offer up front (H11), so
+        // an expiry with no runner acceptance must return that money — same
+        // "unfulfilled paid booking" rule as the no-runner / auto-cancel paths.
+        app(\App\Services\BookingService::class)
+            ->refundUnfulfilled($this->bookingId, 'Negotiation expired with no runner acceptance');
+
         Log::info("Negotiate booking {$this->bookingId} expired");
     }
 }
