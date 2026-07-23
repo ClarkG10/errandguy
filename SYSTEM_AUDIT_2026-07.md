@@ -537,6 +537,25 @@ Zero regressions.
 Tests: **+2** (N notifications → one request with an N-row array body; empty list is a no-op). API
 suite **295 / 301** (same 6 pre-existing stale failures). Zero regressions.
 
+### Phase 11 — implemented (backend): multi-device push tokens
+
+- Push delivery keyed on a single `users.fcm_token` column overwritten on every device
+  registration — signing in on a second device silently stopped the first from receiving pushes,
+  and stale tokens were never cleaned up. Added a one-to-many `device_tokens` table (unique per
+  token, cascade on hard user-delete) with a **backfill** of existing `fcm_token` values so no
+  device loses push on deploy. Registration upserts the device row (keyed by token → re-register
+  re-points rather than duplicates) while still writing the legacy column for backward compat.
+  `NotificationService::sendPush` now fans out to ALL of a user's devices (Expo in one batched
+  call, FCM one by one) and **prunes** any token Expo reports `DeviceNotRegistered`; falls back to
+  the legacy column for pre-migration users. Account deletion drops the user's device tokens (the
+  FK cascade only fires on a hard delete; this is a soft delete).
+
+Tests: **+5** (register creates a row + keeps legacy; re-register de-dupes; fan-out is one Expo
+call; `DeviceNotRegistered` pruned; legacy fallback); backfill + `down()` verified on a scratch DB.
+API suite **300 / 306** (same 6 pre-existing stale failures). Zero regressions. NOTE: a `device_id`
+from the mobile client + Expo receipt-polling (vs the immediate-ticket prune) would harden this
+further — a reasonable follow-up, not required for correctness.
+
 ### H6 (private KYC storage) — assessed, deliberately deferred with a plan
 
 Not shipped this pass because it cannot be done safely blind: the fix requires (1) an **infra
