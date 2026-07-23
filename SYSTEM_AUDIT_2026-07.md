@@ -556,6 +556,24 @@ API suite **300 / 306** (same 6 pre-existing stale failures). Zero regressions. 
 from the mobile client + Expo receipt-polling (vs the immediate-ticket prune) would harden this
 further — a reasonable follow-up, not required for correctness.
 
+### Phase 12 — implemented (Nest port): first test harness + money-parity guard
+
+Decision taken with the user: **keep** the Nest port and pin it with parity tests (vs retiring it).
+
+- The Nest port had **zero** tests and no working jest config (its `test:e2e` script pointed at a
+  non-existent file) while running money logic on the same Supabase DB as Laravel prod — the
+  audit's #1 risk. Added a minimal unit harness (`jest.config.js`, ts-jest transpile-only; full
+  type-check stays with `npm run typecheck`) and the first parity spec: `PricingService` pinned to
+  Laravel's **exact** outputs — 15%-of-subtotal service fee, `total = subtotal + fee + surcharge`,
+  `runner_payout = total − fee` (clamped), canonical vehicle premiums (0/10/25/60), plus `applyPromo`.
+  Verified: `npm run typecheck` clean, `npx jest` 8/8, `nest build` clean.
+- **Documented parity gaps to close next** (Nest is committed but not deployed, so these are latent):
+  (1) Nest wallet `deduct`/`refund` lack Laravel's app-level idempotency guard — the shared DB
+  partial-unique index `uq_wallet_tx_user_reference_type` is the cross-backend backstop; (2) Nest
+  booking-create does not apply the negotiate `customer_offer` (Laravel H11), so a Nest-served
+  negotiate booking would still charge the fixed fare; (3) Nest has no no-runner auto-refund (H13).
+  Wallet/settlement parity needs DB-backed integration specs (Nest uses raw `FOR UPDATE`).
+
 ### H6 (private KYC storage) — assessed, deliberately deferred with a plan
 
 Not shipped this pass because it cannot be done safely blind: the fix requires (1) an **infra
