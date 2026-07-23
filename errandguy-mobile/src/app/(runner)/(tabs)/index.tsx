@@ -441,7 +441,7 @@ export default function RunnerHomeScreen() {
       router.push(`/(runner)/errand/${bookingId}` as any);
     } catch (err: any) {
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error).catch(() => {});
-      toast.error(err?.response?.data?.message ?? 'Failed to accept errand');
+      toast.error(err?.message ?? err?.response?.data?.message ?? 'Failed to accept errand');
       clearIncomingRequest();
     }
   };

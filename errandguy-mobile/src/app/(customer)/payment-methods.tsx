@@ -163,7 +163,7 @@ export default function PaymentMethodsScreen() {
           toast.info('Finishing up — your linked account will show as active once confirmed.');
         }
       } catch (err: any) {
-        toast.error(err?.response?.data?.message ?? 'Could not start linking. Please try again.');
+        toast.error(err?.message ?? err?.response?.data?.message ?? 'Could not start linking. Please try again.');
       } finally {
         setLinking(null);
       }

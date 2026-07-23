@@ -308,7 +308,7 @@ export default function TopUpScreen() {
         }
         onRetry={attempt?.checkoutUrl ? retryTopUp : undefined}
         onClose={() => finishTopUp()}
-        onSafeExit={() => finishTopUp({ keepAttempt: true })}
+        onSafeExit={() => finishTopUp()}
       />
       </KeyboardAvoidingView>
     </View>

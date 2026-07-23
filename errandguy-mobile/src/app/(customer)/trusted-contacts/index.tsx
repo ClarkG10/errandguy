@@ -242,7 +242,7 @@ export default function TrustedContactsScreen() {
       setModalVisible(false);
       await fetchContacts(true);
     } catch (err: any) {
-      toast.error(err?.response?.data?.message ?? 'Failed to save contact');
+      toast.error(err?.message ?? err?.response?.data?.message ?? 'Failed to save contact');
     } finally {
       setSaving(false);
     }

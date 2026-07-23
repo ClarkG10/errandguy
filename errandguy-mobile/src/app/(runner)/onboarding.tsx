@@ -188,7 +188,7 @@ export default function RunnerOnboardingScreen() {
       toast.success('Document uploaded successfully');
     } catch (err: any) {
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error).catch(() => {});
-      toast.error(err?.response?.data?.message ?? 'Failed to upload document');
+      toast.error(err?.message ?? err?.response?.data?.message ?? 'Failed to upload document');
     } finally {
       setUploading(null);
     }

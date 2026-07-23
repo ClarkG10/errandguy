@@ -118,7 +118,7 @@ export default function EditProfileScreen() {
       toast.success('Profile updated successfully');
       leaveScreen();
     } catch (err: any) {
-      toast.error(err?.response?.data?.message ?? 'Failed to update profile');
+      toast.error(err?.message ?? err?.response?.data?.message ?? 'Failed to update profile');
     } finally {
       setLoading(false);
     }

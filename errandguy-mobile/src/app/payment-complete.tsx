@@ -95,7 +95,10 @@ export default function PaymentComplete() {
           resolve();
           goHome();
         }}
-        onSafeExit={goHome}
+        onSafeExit={() => {
+          resolve();
+          goHome();
+        }}
       />
     </View>
   );

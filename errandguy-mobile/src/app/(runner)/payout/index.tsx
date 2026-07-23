@@ -170,7 +170,7 @@ export default function PayoutScreen() {
       toast.success('Payout information updated');
       await onRefresh();
     } catch (err: any) {
-      toast.error(err?.response?.data?.message ?? 'Failed to update');
+      toast.error(err?.message ?? err?.response?.data?.message ?? 'Failed to update');
     } finally {
       setSaving(false);
     }
@@ -213,7 +213,7 @@ export default function PayoutScreen() {
       await onRefresh();
     } catch (err: any) {
       // Keep the key so a retry of THIS payout dedupes server-side.
-      toast.error(err?.response?.data?.message ?? 'Failed to request payout');
+      toast.error(err?.message ?? err?.response?.data?.message ?? 'Failed to request payout');
     } finally {
       setRequesting(false);
       confirmLatch.current = false;

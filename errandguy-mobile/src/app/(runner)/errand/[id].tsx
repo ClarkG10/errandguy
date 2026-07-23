@@ -517,7 +517,7 @@ export default function ActiveErrandScreen() {
         setSlideResetKey((k) => k + 1);
         fetchedQ.mutate(prev);
         updateErrandStatus(prev.status as BookingStatus);
-        toast.error(err?.response?.data?.message ?? 'Failed to update status');
+        toast.error(err?.message ?? err?.response?.data?.message ?? 'Failed to update status');
       });
   };
 
@@ -567,7 +567,7 @@ export default function ActiveErrandScreen() {
       toast.success('PIN verified — ride may begin');
     } catch (err: any) {
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error).catch(() => {});
-      toast.error(err?.response?.data?.message ?? 'Incorrect PIN. Please try again.');
+      toast.error(err?.message ?? err?.response?.data?.message ?? 'Incorrect PIN. Please try again.');
       setPinInput('');
     } finally {
       setLoading(false);
@@ -1487,7 +1487,7 @@ export default function ActiveErrandScreen() {
               fetchedQ.mutate(prev);
               updateErrandStatus(prev.status as BookingStatus);
               toast.error(
-                err?.response?.data?.message ?? 'Failed to submit receipt',
+                err?.message ?? err?.response?.data?.message ?? 'Failed to submit receipt',
               );
             })
             .finally(() => setSubmittingReceipt(false));

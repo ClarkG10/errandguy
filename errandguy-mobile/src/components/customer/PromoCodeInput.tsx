@@ -49,7 +49,7 @@ export function PromoCodeInput({
         () => {},
       );
       setError(
-        err?.response?.data?.message ?? 'Invalid promo code',
+        err?.message ?? err?.response?.data?.message ?? 'Invalid promo code',
       );
     } finally {
       setLoading(false);

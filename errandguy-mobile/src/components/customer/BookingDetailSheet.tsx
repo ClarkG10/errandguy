@@ -73,7 +73,7 @@ export function BookingDetailSheet({
         Haptics.NotificationFeedbackType.Error,
       ).catch(() => {});
       toast.error(
-        err?.response?.data?.message ??
+        err?.message ?? err?.response?.data?.message ??
           "Couldn't rebook this errand. Please try again.",
       );
     } finally {

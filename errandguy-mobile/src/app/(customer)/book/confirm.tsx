@@ -384,7 +384,7 @@ export default function ConfirmScreen() {
       setState('searching');
     } catch (err: any) {
       toast.error(
-        err?.response?.data?.message ??
+        err?.message ?? err?.response?.data?.message ??
           'Could not retry matching right now. Try again in a moment.',
       );
     } finally {

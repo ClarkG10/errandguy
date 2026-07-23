@@ -931,7 +931,7 @@ export default function ReviewScreen() {
         }
         onRetry={attempt?.checkoutUrl ? retryBookingPayment : undefined}
         onClose={() => leaveForBooking()}
-        onSafeExit={() => leaveForBooking({ keepAttempt: true })}
+        onSafeExit={() => leaveForBooking()}
       />
     </View>
   );
