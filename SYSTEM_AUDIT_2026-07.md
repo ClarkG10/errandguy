@@ -383,6 +383,45 @@ Suite: **274 passing / 280** (6 pre-existing stale failures). Zero regressions.
 
 Suite: **274 passing / 280** (6 pre-existing stale failures). Zero regressions.
 
+### Phase 5 — implemented (follow-up, Laravel API)
+
+Each candidate was verified against current code and adversarially refuted before implementation.
+
+- **SOS live-tracking link always 404'd (safety).** The SOS token is stored on
+  `sos_alerts.live_link_token`, but `PublicTripController::show` only queried
+  `bookings.trip_share_token`, so the emergency link the SMS-to-be sends never resolved. Added an
+  SOS fallback: resolve the token against an **active, unexpired** `SOSAlert` (60-min TTL) and
+  load its booking. Safety deliberately overrides the trip-over status cutoff (an unresolved
+  emergency keeps the link live even after the booking closes); access stays gated by the alert
+  being `active` + within `live_link_expires_at`, and dies the moment `deactivateSOS` resolves it.
+- **Public trip-share link had no TTL (privacy).** Once shared it resolved forever (subject only
+  to the booking being non-terminal), leaking live location + addresses to any forwarded URL.
+  Added a nullable `bookings.trip_share_expires_at` (new `config/safety.php`, default 24h, env
+  `TRIP_SHARE_TTL_HOURS`), set on `share()`, cleared on `revoke()`, and backfilled for
+  currently-active links. The public resolver uses a **lenient** predicate (`NULL OR > now()`):
+  a legacy/other-backend NULL-expiry link must never 404 a live in-progress trip. (The original
+  strict `> now()` proposal was **refuted** for exactly this dual-backend reason.)
+- **Completion recompute lightened the row lock (perf).** `handleCompletion` recomputed
+  `completion_rate` with two `COUNT(*)` round-trips while holding the booking + runner row locks;
+  collapsed to a single conditional-aggregation query (`SUM(CASE WHEN status='completed'…)` over
+  the assigned set) — byte-identical result, one round-trip under the lock.
+- **Verified & DROPPED as misdiagnosed:** (a) *profile role self-escalation* — the `role` rule
+  whitelists `customer|runner` only, admins authenticate via a separate `AdminUser` guard, and
+  other fields are stripped by `validated()`; the customer→runner switch is intended onboarding
+  gated by `verification_status==='approved'`. (b) *payment-status-probe 404* — every pending
+  payment row is created synchronously before the gateway call, so pending/processing return
+  **200**; only a genuinely-unknown id 404s, which the mobile `usePaymentVerification` hook
+  deliberately treats as "keep polling," not failure.
+- **Follow-ups surfaced (not blocking):** the `/trip` payload still shows the *runner's* live GPS
+  even for a *customer*-triggered SOS (the alert's captured `customer_lat/lng` isn't surfaced);
+  `sos_alerts.live_link_token` has no dedicated index (fine under the 60/min throttle + short
+  TTL); and the Nest port must mirror the `trip_share_expires_at` column + lenient filter before
+  it can serve `/trip` without reopening the leak.
+
+Tests: **+8** (trip TTL incl. the null-expiry lenient case, SOS link resolve/expire/resolved,
+completion-rate `1/2 = 50.00` regression guard). Suite **282 passing / 288** (same 6 pre-existing
+stale failures). Zero regressions.
+
 ### H6 (private KYC storage) — assessed, deliberately deferred with a plan
 
 Not shipped this pass because it cannot be done safely blind: the fix requires (1) an **infra
