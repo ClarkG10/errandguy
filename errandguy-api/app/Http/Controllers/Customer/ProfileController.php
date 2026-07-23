@@ -71,11 +71,28 @@ class ProfileController extends Controller
     {
         $request->validate([
             'fcm_token' => ['required', 'string'],
+            'platform' => ['sometimes', 'nullable', 'string', 'max:15'],
         ]);
 
-        $request->user()->update([
-            'fcm_token' => $request->input('fcm_token'),
-        ]);
+        $user = $request->user();
+        $token = $request->input('fcm_token');
+
+        // Keep the legacy single column populated for backward compatibility.
+        $user->update(['fcm_token' => $token]);
+
+        // Register this specific device so a multi-device user keeps receiving
+        // pushes on every device (the single column used to be overwritten,
+        // silencing all but the most recent). Keyed by token, so the same
+        // device re-registering — even after a re-login under a new account —
+        // just re-points the row instead of duplicating it.
+        \App\Models\DeviceToken::updateOrCreate(
+            ['token' => $token],
+            [
+                'user_id' => $user->id,
+                'platform' => $request->input('platform'),
+                'last_used_at' => now(),
+            ],
+        );
 
         return response()->json([
             'message' => 'FCM token updated successfully.',
@@ -123,6 +140,11 @@ class ProfileController extends Controller
 
         // Revoke all tokens
         $user->tokens()->delete();
+
+        // Drop every registered push device (the FK cascade only fires on a
+        // HARD delete, and this is a soft delete) so a deleted account stops
+        // receiving pushes.
+        $user->deviceTokens()->delete();
 
         // Soft delete
         $user->delete();

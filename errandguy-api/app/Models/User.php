@@ -116,6 +116,11 @@ class User extends Authenticatable
         return $this->hasMany(PaymentMethod::class);
     }
 
+    public function deviceTokens(): HasMany
+    {
+        return $this->hasMany(DeviceToken::class);
+    }
+
     public function walletTransactions(): HasMany
     {
         return $this->hasMany(WalletTransaction::class);

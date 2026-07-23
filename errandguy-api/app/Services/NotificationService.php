@@ -30,15 +30,31 @@ class NotificationService
             'is_read' => false,
         ]);
 
-        $token = $user->fcm_token;
-        if (!$token) {
+        // Fan out to EVERY registered device, not just the most recent one.
+        // (The old single fcm_token column was overwritten per device, so only
+        // the last-registered device got pushes.)
+        $tokens = $user->deviceTokens()->pluck('token')->all();
+
+        // Fallback for users who registered before device_tokens existed (or
+        // whose backfill hasn't run yet): the legacy column still holds a token.
+        if (empty($tokens) && $user->fcm_token) {
+            $tokens = [$user->fcm_token];
+        }
+        if (empty($tokens)) {
             return;
         }
+        $tokens = array_values(array_unique($tokens));
 
-        if (str_starts_with($token, 'ExponentPushToken')) {
-            $this->sendExpoPush($token, $title, $body, $data);
-        } else {
-            $this->sendFCMPush($token, $title, $body, $data);
+        // Expo tokens support a single batched call (one HTTP request for all of
+        // a user's Expo devices); FCM tokens go one at a time via the SDK.
+        $expoTokens = array_values(array_filter($tokens, fn ($t) => str_starts_with($t, 'ExponentPushToken')));
+        $fcmTokens = array_values(array_filter($tokens, fn ($t) => ! str_starts_with($t, 'ExponentPushToken')));
+
+        if (! empty($expoTokens)) {
+            $this->sendExpoPush($expoTokens, $title, $body, $data);
+        }
+        foreach ($fcmTokens as $fcmToken) {
+            $this->sendFCMPush($fcmToken, $title, $body, $data);
         }
     }
 
@@ -69,11 +85,20 @@ class NotificationService
         }
     }
 
-    private function sendExpoPush(string $token, string $title, string $body, array $data): void
+    /**
+     * @param  array<int,string>  $tokens  one or more Expo push tokens
+     */
+    private function sendExpoPush(array $tokens, string $title, string $body, array $data): void
     {
+        if (empty($tokens)) {
+            return;
+        }
+
         try {
-            Http::post('https://exp.host/--/api/v2/push/send', [
-                'to' => $token,
+            // Expo accepts `to` as an array → one request delivers to every
+            // device and returns a tickets array aligned to the tokens.
+            $response = Http::post('https://exp.host/--/api/v2/push/send', [
+                'to' => $tokens,
                 'title' => $title,
                 'body' => $body,
                 'data' => $data,
@@ -81,11 +106,37 @@ class NotificationService
                 'priority' => 'high',
                 'channelId' => 'default',
             ]);
+
+            $this->pruneInvalidExpoTokens($tokens, $response->json('data') ?? []);
         } catch (\Throwable $e) {
             Log::error('Expo push notification failed', [
-                'token' => substr($token, 0, 20) . '...',
+                'count' => count($tokens),
                 'error' => $e->getMessage(),
             ]);
+        }
+    }
+
+    /**
+     * Delete device tokens Expo reported as permanently unusable
+     * (DeviceNotRegistered) so the fan-out doesn't keep spraying dead tokens.
+     * The tickets array is positionally aligned to the tokens we sent.
+     *
+     * @param  array<int,string>  $tokens
+     * @param  array<int,mixed>  $tickets
+     */
+    private function pruneInvalidExpoTokens(array $tokens, array $tickets): void
+    {
+        $dead = [];
+        foreach ($tickets as $i => $ticket) {
+            $status = is_array($ticket) ? ($ticket['status'] ?? null) : null;
+            $error = is_array($ticket) ? ($ticket['details']['error'] ?? null) : null;
+            if ($status === 'error' && $error === 'DeviceNotRegistered' && isset($tokens[$i])) {
+                $dead[] = $tokens[$i];
+            }
+        }
+
+        if (! empty($dead)) {
+            \App\Models\DeviceToken::whereIn('token', $dead)->delete();
         }
     }
 
