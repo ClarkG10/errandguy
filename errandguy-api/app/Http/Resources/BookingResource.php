@@ -53,14 +53,18 @@ class BookingResource extends JsonResource
             'dropoff_contact_phone' => $this->when($canSeeContacts, $this->dropoff_contact_phone),
             'description' => $this->description,
             'special_instructions' => $this->special_instructions,
-            'item_photos' => $this->item_photos,
+            // Customer-uploaded item photos can be documents / prescriptions /
+            // IDs — hide them from a non-participant runner browsing the
+            // negotiate broadcast (available()), as the comment above promises.
+            // Kept as [] (not omitted) so the mobile `string[]` contract holds.
+            'item_photos' => $this->when($canSeeContacts, $this->item_photos, []),
             'estimated_item_value' => $this->estimated_item_value,
             'shopping_budget' => $this->shopping_budget,
             // Itemized shopping checklist (array of {id,name,qty,checked,checked_at}).
             // Null-safe: the `array` cast yields null when no list was ever set.
             'shopping_items' => $this->shopping_items ?? [],
             'actual_item_cost' => $this->actual_item_cost,
-            'receipt_photo_url' => $this->receipt_photo_url,
+            'receipt_photo_url' => $this->when($canSeeContacts, $this->receipt_photo_url),
             'schedule_type' => $this->schedule_type,
             'scheduled_at' => $this->scheduled_at,
             'pricing_mode' => $this->pricing_mode,
@@ -76,14 +80,18 @@ class BookingResource extends JsonResource
             'runner_payout' => $this->runner_payout,
             'negotiate_expires_at' => $this->negotiate_expires_at,
             'is_transportation' => $this->is_transportation,
+            // The ride PIN is the out-of-band secret the passenger (customer)
+            // recites and the runner types at verify-pin. Disclosing it to the
+            // runner via this resource would make that check security theatre,
+            // so only the customer (and admins, for support) ever see it.
             'ride_pin' => $this->when(
-                $this->is_transportation && $this->isParticipant(),
+                $this->is_transportation && ($request->user()?->id === $this->customer_id || $isAdmin),
                 $this->ride_pin,
             ),
             'ride_pin_verified' => $this->ride_pin_verified,
-            'pickup_photo_url' => $this->pickup_photo_url,
-            'delivery_photo_url' => $this->delivery_photo_url,
-            'signature_url' => $this->signature_url,
+            'pickup_photo_url' => $this->when($canSeeContacts, $this->pickup_photo_url),
+            'delivery_photo_url' => $this->when($canSeeContacts, $this->delivery_photo_url),
+            'signature_url' => $this->when($canSeeContacts, $this->signature_url),
             'matched_at' => $this->matched_at,
             'accepted_at' => $this->accepted_at,
             'picked_up_at' => $this->picked_up_at,

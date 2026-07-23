@@ -241,8 +241,11 @@ class RunnerErrandController extends Controller
         // For fixed-price: trigger matching service to find next runner
         if ($booking->pricing_mode === 'fixed' && $booking->status === 'matched') {
             $booking->update(['status' => 'pending', 'runner_id' => null, 'matched_at' => null]);
-            // Re-dispatch matching
-            \App\Jobs\MatchRunnerJob::dispatch($booking->id);
+            // Re-dispatch matching, EXCLUDING the runner who just declined —
+            // otherwise findRunner (now that runner_id is null and they're still
+            // online/nearest) instantly re-offers the same errand to them,
+            // defeating the decline. Mirrors ExpireStaleMatchesJob.
+            \App\Jobs\MatchRunnerJob::dispatch($booking->id, null, $user->id);
         }
 
         return response()->json([

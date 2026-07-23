@@ -285,7 +285,17 @@ Route::prefix('v1')->group(function () {
         // Support report (legacy one-shot dispute intake — kept for back-compat)
         Route::post('/support/report', function (\Illuminate\Http\Request $request) {
             $validated = $request->validate([
-                'booking_id' => ['nullable', 'uuid', 'exists:bookings,id'],
+                // Scope by ownership so a user can't open a dispute referencing
+                // a stranger's booking (mirrors CreateTicketRequest). This is a
+                // route closure, so the subquery closure must `use ($request)`.
+                'booking_id' => [
+                    'nullable',
+                    'uuid',
+                    \Illuminate\Validation\Rule::exists('bookings', 'id')->where(function ($query) use ($request) {
+                        $query->where('customer_id', $request->user()->id)
+                            ->orWhere('runner_id', $request->user()->id);
+                    }),
+                ],
                 'subject' => ['required', 'string', 'max:200'],
                 'description' => ['required', 'string', 'max:2000'],
                 'category' => ['required', 'string', 'max:50'],

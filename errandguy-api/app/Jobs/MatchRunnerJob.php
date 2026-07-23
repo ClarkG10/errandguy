@@ -5,7 +5,6 @@ namespace App\Jobs;
 use App\Events\BookingStatusChanged;
 use App\Models\Booking;
 use App\Models\BookingStatusLog;
-use App\Models\Notification;
 use App\Services\MatchingService;
 use App\Services\NotificationService;
 use Illuminate\Bus\Queueable;
@@ -87,18 +86,13 @@ class MatchRunnerJob implements ShouldQueue
                         'note' => 'Runner matched: ' . ($runner->user->full_name ?? 'Unknown'),
                     ]);
 
-                    // Actively OFFER the errand to the matched runner. Without
-                    // this the fixed-mode runner is never told they were
-                    // assigned and only discovers it by polling — the offer
-                    // then times out and the booking strands.
-                    Notification::create([
-                        'user_id' => $runner->user_id,
-                        'title' => 'New errand offer',
-                        'body' => 'You were matched to an errand. Open the app to accept it.',
-                        'type' => 'booking_update',
-                        'data' => ['booking_id' => $booking->id],
-                    ]);
-
+                    // NOTE: the in-app "New errand offer" notification is
+                    // persisted by the post-commit NotificationService::sendPush
+                    // below (it does its own Notification::create), so we do NOT
+                    // create one here — doing both wrote two identical rows and
+                    // the runner saw a duplicate offer. Actively offering the
+                    // errand (vs. letting the runner discover it by polling) is
+                    // still the point — see the sendPush call after commit.
                     Log::info("Runner {$runner->user_id} matched to booking {$this->bookingId}");
                     $newStatus = 'matched';
                     $matchedBooking = $booking->fresh();

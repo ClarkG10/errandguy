@@ -60,7 +60,10 @@ class BookingManagementController extends Controller
         $booking->update([
             'status' => 'cancelled',
             'cancelled_at' => now(),
-            'cancelled_by' => 'admin',
+            // cancelled_by is a uuid column — binding the literal 'admin' threw
+            // SQLSTATE 22P02 on Postgres, 500-ing every admin cancel (SQLite
+            // tests silently accepted it). Record the acting admin's real id.
+            'cancelled_by' => $request->user()->id,
             'cancellation_reason' => $request->input('reason'),
         ]);
 
