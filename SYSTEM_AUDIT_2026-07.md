@@ -452,6 +452,35 @@ Tests: **+5** (canonical probe contract, pre-charge pending vs 404, wallet neste
 `transactionStatus` contract). Suite **287 passing / 293** (same 6 pre-existing stale failures).
 Zero regressions.
 
+### Phase 7 — implemented (follow-up, **mobile** — errandguy-mobile)
+
+First backend-free phase (the mobile working tree was clean, so no collision with in-progress
+edits). Each of four perf findings was verified against current code and adversarially refuted
+before implementation; the fixes are pure client-side, no API contract change.
+
+- **Runner Home re-rendered on every GPS tick** (~every 6s while online): it subscribed to
+  `useLocationStore()` with no selector, so each `currentLocation` write re-rendered the whole
+  screen for data it never renders. Switched to atomic action selectors (stable refs); the screen
+  reads no location field reactively (only an imperative `getState()`), so no re-render is lost.
+- **Cold-start preload fired ~13–16 GETs at once**, starving the landing screen's own fetches.
+  Extracted a reusable bounded-concurrency `runPool()` (`src/utils/asyncPool.ts`, limit 4) and ran
+  both `preload*Essentials` task lists through it as thunks, above-the-fold data first. Same
+  keys/TTLs/fetchers — only *when* each fires changes; any screen reached early still falls back to
+  its own `useQuery` + in-flight dedup.
+- **Pull-to-refresh silently served the ≤8s micro-cache.** `useQuery.refresh` now calls
+  `apiCache.clearResponses()` (clears cached responses, keeps the in-flight dedup map) before
+  revalidating. URL-agnostic — the originally-proposed per-key invalidate was **refuted** because
+  the semantic `key[0]` (`'payment-methods'`, `'runner'`) doesn't substring-match the REST URL, so
+  it no-oped on exactly the money screens.
+- **Axios micro-cache was unbounded** (grew for the whole session). Added a write-recency LRU
+  (`MAX_CACHE_ENTRIES = 100`) via `setCache()`; eviction only ever causes a correctness-preserving
+  fresh fetch, never a stale serve, and `ts` is never restamped on read so the TTL still bounds
+  staleness.
+
+Tests: **+3** (`runPool` concurrency-cap / run-all / failure-isolation). `tsc --noEmit` clean;
+jest **143 / 144** (the 1 failure is the pre-existing `authStore.loadFromStorage` test). Zero
+regressions.
+
 ### H6 (private KYC storage) — assessed, deliberately deferred with a plan
 
 Not shipped this pass because it cannot be done safely blind: the fix requires (1) an **infra
