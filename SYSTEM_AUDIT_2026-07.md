@@ -624,12 +624,20 @@ adversarially verified. Shipped the confirmed-safe-unblocked ones; declined/defe
   stale modal; `onSafeExit` now resolves the attempt in all three consumers.
 
 **Declined / deferred (verified):** a PricingService errand_type "N+1" (PK-cached ~10-row lookup —
-refactor would only add Laravel/Nest drift for no measurable gain); admin-cancel **refund** (needs a
-product decision: full refund vs fee for an admin-initiated cancel); a viewer-aware `review` relation
+refactor would only add Laravel/Nest drift for no measurable gain); a viewer-aware `review` relation
 (needs a contract decision).
 
 Tests: Laravel **+5** (suite 306/312, same 6 pre-existing stale); mobile `tsc` clean + jest 143/144.
 Zero regressions.
+
+### Phase 15 — implemented (follow-up): admin-cancel full refund
+
+Product decision taken: an admin/platform-initiated cancel of a paid booking refunds the customer
+**in full, no fee** (not the customer's fault). Wired the existing idempotent
+`BookingService::refundUnfulfilled` into `BookingManagementController::cancel` — the same
+full-refund primitive the no-runner / negotiate-expire paths use, so cash/unpaid are a no-op and a
+repeat cancel can't double-refund. Test **+1** (admin cancel of a paid booking → full refund). Suite
+**307/313** (same 6 pre-existing stale failures). Zero regressions.
 
 ### H6 (private KYC storage) — assessed, deliberately deferred with a plan
 
