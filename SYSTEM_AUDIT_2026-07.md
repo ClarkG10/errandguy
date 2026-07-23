@@ -422,6 +422,36 @@ Tests: **+8** (trip TTL incl. the null-expiry lenient case, SOS link resolve/exp
 completion-rate `1/2 = 50.00` regression guard). Suite **282 passing / 288** (same 6 pre-existing
 stale failures). Zero regressions.
 
+### Phase 6 — implemented (follow-up, Laravel API): API contract-hardening
+
+Preceded by a two-agent map of every payment-status probe and every list endpoint's envelope
+**and their mobile consumers**, so the consolidation could be proven backward-compatible. Key
+finding: the mobile client reads list rows at `res.data.data` in *every* envelope shape and the
+payment poll reads only stable keys (`status`, `amount`, `paid_at ?? processed_at`, `reference`,
+`method`, `failure_reason`) with `'completed'` as the sole success token — so an **additive**
+change needs no mobile release.
+
+- **Unified the 3 payment-status probes** (`/payments/{id}/status`, `/bookings/{id}/payment-status`,
+  `/wallet/transactions/{id}/status`) onto one self-describing contract, additively: added `kind`
+  (`payment`|`wallet_topup`), a canonical `id` alias, and a canonical `settled_at` alias to all
+  three while keeping every existing key (`payment_id`/`transaction_id`/`paid_at`/`processed_at`).
+  Widened `failure_reason` to **all** terminal-failure states (was payment `failed/expired`,
+  wallet `failed` only — `cancelled/refunded` wrongly returned null). Fixed the
+  `/bookings/{id}/payment-status` **404-overload**: a booking that exists but has no `Payment` row
+  yet now returns an honest `200 pending` (`id:null`); unknown/foreign bookings still `404`.
+- **Canonical pagination envelope.** Converted `/wallet/transactions` from the raw flat paginator
+  to the nested-meta `{data, links, meta}` shape every other paginated list uses (also stops
+  leaking absolute server URLs). Rows stay at `.data.data`, so all three mobile consumers are
+  unaffected.
+- **Deliberately DEFERRED:** the 5 `/admin/*` flat-paginator endpoints feed a **separate admin web
+  dashboard not in this repo** — converting their envelope (or applying the `perPage` macro) could
+  break that unverifiable client, so they're left unchanged pending admin-dashboard coordination
+  (same discipline as H6). Documented for a coordinated pass.
+
+Tests: **+5** (canonical probe contract, pre-charge pending vs 404, wallet nested-meta envelope,
+`transactionStatus` contract). Suite **287 passing / 293** (same 6 pre-existing stale failures).
+Zero regressions.
+
 ### H6 (private KYC storage) — assessed, deliberately deferred with a plan
 
 Not shipped this pass because it cannot be done safely blind: the fix requires (1) an **infra
