@@ -230,6 +230,34 @@ class CreateBookingTest extends TestCase
         ]);
     }
 
+    public function test_negotiate_booking_is_charged_the_customer_offer(): void
+    {
+        Bus::fake();
+
+        $data = array_merge($this->validBookingData, [
+            'pricing_mode' => 'negotiate',
+            'vehicle_type_rate' => 'motorcycle',
+            'customer_offer' => 200.00,
+        ]);
+
+        $this->actingAs($this->customer)
+            ->postJson('/api/v1/bookings', $data)
+            ->assertStatus(201);
+
+        $booking = \App\Models\Booking::where('customer_id', $this->customer->id)
+            ->latest()->firstOrFail();
+
+        // The customer pays their OFFER, not the fixed fare (this exact value
+        // would not arise from the distance/vehicle calc, so it also guards the
+        // override from being silently removed).
+        $this->assertEquals(200.00, (float) $booking->total_amount);
+        // Platform keeps its flat computed service fee; the runner gets the rest.
+        $this->assertEquals(
+            round(200.00 - (float) $booking->service_fee, 2),
+            (float) $booking->runner_payout,
+        );
+    }
+
     public function test_scheduled_booking_creation(): void
     {
         Bus::fake();

@@ -81,6 +81,32 @@ class PricingService
     }
 
     /**
+     * Apply a negotiate-mode customer offer to a computed fixed-price
+     * breakdown.
+     *
+     * Product policy (confirmed): the customer's OFFER is the total they pay,
+     * and the platform still takes its FLAT computed service fee (the same fee
+     * the standard distance/vehicle calc produced) — the offer only changes the
+     * runner's share. The component fees (base/distance/vehicle/surcharge) are
+     * kept for reference/records but no longer sum to the total, since the
+     * offer overrides it.
+     *
+     * Without this, negotiate bookings were priced at the fixed fare and the
+     * customer_offer was cosmetic (stored + shown to runners but never charged).
+     *
+     * @param  array<string,mixed>  $pricing  a calculate() result
+     * @return array<string,mixed>
+     */
+    public function applyNegotiateOffer(array $pricing, float $offer): array
+    {
+        $offer = round($offer, 2);
+        $pricing['total_amount'] = $offer;
+        $pricing['runner_payout'] = max(0, round($offer - (float) $pricing['service_fee'], 2));
+
+        return $pricing;
+    }
+
+    /**
      * Estimate prices for all vehicle types.
      */
     public function estimate(

@@ -45,6 +45,34 @@ class PricingServiceTest extends TestCase
         $this->assertArrayHasKey('vehicle_type', $result);
     }
 
+    public function test_apply_negotiate_offer_charges_offer_and_keeps_flat_fee(): void
+    {
+        $fixed = $this->service->calculate(
+            $this->deliveryType->id, 14.5995, 120.9842, 14.5547, 121.0244, 'motorcycle'
+        );
+
+        $negotiated = $this->service->applyNegotiateOffer($fixed, 250.00);
+
+        // The offer is exactly what the customer pays.
+        $this->assertEquals(250.00, $negotiated['total_amount']);
+        // Platform keeps the SAME flat computed service fee (not a % of the offer).
+        $this->assertEquals($fixed['service_fee'], $negotiated['service_fee']);
+        // Runner receives the offer minus that flat fee.
+        $this->assertEquals(round(250.00 - $fixed['service_fee'], 2), $negotiated['runner_payout']);
+    }
+
+    public function test_apply_negotiate_offer_never_makes_payout_negative(): void
+    {
+        $fixed = $this->service->calculate(
+            $this->deliveryType->id, 14.5995, 120.9842, 14.5547, 121.0244, 'motorcycle'
+        );
+
+        // An offer below the flat service fee clamps the runner payout at 0
+        // rather than going negative.
+        $negotiated = $this->service->applyNegotiateOffer($fixed, 0.01);
+        $this->assertEquals(0.0, $negotiated['runner_payout']);
+    }
+
     public function test_base_fee_matches_errand_type(): void
     {
         $result = $this->service->calculate(

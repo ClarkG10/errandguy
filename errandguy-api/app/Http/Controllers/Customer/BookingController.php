@@ -112,6 +112,19 @@ class BookingController extends Controller
             $validated['schedule_type']
         );
 
+        // Negotiate mode: the customer's offer IS the price they pay (the fixed
+        // fare above becomes reference-only). The platform keeps its flat
+        // computed service fee; the runner receives the offer minus that fee.
+        // Applied BEFORE the promo block so a promo discounts the offer and its
+        // min-spend check sees the real total. Without this, negotiate bookings
+        // charged the fixed fare and customer_offer was cosmetic.
+        if ($validated['pricing_mode'] === 'negotiate' && isset($validated['customer_offer'])) {
+            $pricing = $this->pricingService->applyNegotiateOffer(
+                $pricing,
+                (float) $validated['customer_offer'],
+            );
+        }
+
         // Handle promo code
         $promoDiscount = 0;
         $promoCodeId = null;
