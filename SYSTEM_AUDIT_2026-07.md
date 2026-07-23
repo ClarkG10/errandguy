@@ -481,6 +481,30 @@ Tests: **+3** (`runPool` concurrency-cap / run-all / failure-isolation). `tsc --
 jest **143 / 144** (the 1 failure is the pre-existing `authStore.loadFromStorage` test). Zero
 regressions.
 
+### Phase 8 — implemented (H13, **backend + mobile**): scheduled bookings + no-runner refund
+
+Two product/policy decisions were taken with the user first (scheduled → confirmation-then-Activity;
+auto-refund on no_runner) before touching the money flow.
+
+- **Auto-refund when no runner is ever matched (money).** A booking reaching `no_runner`
+  (`MatchRunnerJob`) or auto-cancelled for no runner within the timeout (`AutoCancelBookingJob`)
+  had money collected up front (online/wallet) but was never refunded — the platform kept money
+  for undelivered service, and "Book again" risked a second charge on top. Added
+  `BookingService::refundUnfulfilled()`: a locked, idempotent, **full** refund (no fee — no fault)
+  to the wallet, reusing `WalletService::refund` idempotency + the `Payment` state machine. Wired
+  into both no-runner paths; cash / unpaid / already-refunded bookings are a no-op. "Book again" is
+  now a clean separate booking → no double-charge.
+- **Scheduled bookings no longer show a false "searching → no runners" failure (mobile).**
+  `book/confirm.tsx` unconditionally ran the live searching radar + 60s countdown that times out to
+  "No runners available" — but the server delays matching for a scheduled booking until near its
+  slot, so a booking scheduled for later *always* showed a bogus failure. `confirm` now detects a
+  future `scheduled_at` and shows a calm "Booking scheduled · &lt;time&gt;" confirmation with a Done →
+  Activity button instead (matching runs automatically near the slot); handles cold-start / Xendit
+  deep-link hydration too.
+
+Tests: **+3** backend (paid → full refund, cash → no refund, idempotent). API suite **290 / 296**
+(same 6 pre-existing stale failures); mobile `tsc` clean, jest **143 / 144**. Zero regressions.
+
 ### H6 (private KYC storage) — assessed, deliberately deferred with a plan
 
 Not shipped this pass because it cannot be done safely blind: the fix requires (1) an **infra
