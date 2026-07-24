@@ -639,6 +639,17 @@ full-refund primitive the no-runner / negotiate-expire paths use, so cash/unpaid
 repeat cancel can't double-refund. Test **+1** (admin cancel of a paid booking → full refund). Suite
 **307/313** (same 6 pre-existing stale failures). Zero regressions.
 
+### Phase 16 — implemented (H23): money-OUT payout test coverage + a bug it surfaced
+
+The runner/admin payout flow (money *leaving* the platform) had **zero** tests. Adding coverage
+immediately surfaced a real bug: `AdminPayoutController::markFailed` threw
+`RuntimeException('only_pending')` *inside* the `DB::transaction` with no surrounding catch, so
+failing an already-completed/failed payout returned a **500** instead of a clean 422 (unlike
+`markCompleted`). Wrapped it → 422, which also blocks a double re-credit. Added **+7** tests
+(request debits under a lock; method/min/balance guards reject without debiting; admin complete;
+failed payout re-credits the wallet in full with an audit row; a failed payout can't be failed
+again). Suite **314/320** (same 6 pre-existing stale failures). Zero regressions.
+
 ### H6 (private KYC storage) — assessed, deliberately deferred with a plan
 
 Not shipped this pass because it cannot be done safely blind: the fix requires (1) an **infra
