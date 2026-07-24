@@ -98,7 +98,7 @@ export class AuthService {
 
     const { plainTextToken } = await this.sanctum.createToken(this.userType, created.id, userAgent);
     const withProfile = await this.loadWithProfile(created.id);
-    return { user: userResource(withProfile!, undefined), token: plainTextToken };
+    return { user: userResource(withProfile!, withProfile!.id), token: plainTextToken };
   }
 
   // ── login ─────────────────────────────────────────────────────────────────
@@ -137,7 +137,7 @@ export class AuthService {
     await this.prisma.user.update({ where: { id: user.id }, data: { lastActiveAt: new Date() } });
 
     const withProfile = await this.loadWithProfile(user.id);
-    return { user: userResource(withProfile!, undefined), token: plainTextToken };
+    return { user: userResource(withProfile!, withProfile!.id), token: plainTextToken };
   }
 
   // ── logout ────────────────────────────────────────────────────────────────
@@ -206,7 +206,7 @@ export class AuthService {
       const withProfile = await this.loadWithProfile(user.id);
       return {
         message: 'Verification successful.',
-        user: userResource(withProfile!, undefined),
+        user: userResource(withProfile!, withProfile!.id),
         token: plainTextToken,
       };
     }
@@ -251,7 +251,7 @@ export class AuthService {
     const { plainTextToken } = await this.sanctum.createToken(this.userType, user.id, userAgent);
     await this.prisma.user.update({ where: { id: user.id }, data: { lastActiveAt: new Date() } });
     const withProfile = await this.loadWithProfile(user.id);
-    return { user: userResource(withProfile!, undefined), token: plainTextToken };
+    return { user: userResource(withProfile!, withProfile!.id), token: plainTextToken };
   }
 
   private async verifyGoogleToken(token: string): Promise<SocialProfile | null> {

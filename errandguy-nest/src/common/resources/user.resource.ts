@@ -6,9 +6,10 @@ export type UserWithProfile = User & { runnerProfile?: RunnerProfile | null };
 
 /**
  * Mirrors UserResource. `[self]` keys (email/status/*_verified/wallet_balance)
- * are OMITTED unless the requester is the same user — which, on public auth
- * routes where there is no authenticated principal, means they are always
- * omitted there.
+ * are OMITTED unless the requester is the same user. Token-minting auth routes
+ * (register/login/verify-otp/social) pass the freshly-authenticated user's own
+ * id so the owner sees their own PII in the response — everywhere else a
+ * counterparty (e.g. runner ↔ customer inside a booking) sees only public keys.
  */
 export function userResource(u: UserWithProfile, currentUserId?: string): Record<string, unknown> {
   const isSelf = !!currentUserId && currentUserId === u.id;
