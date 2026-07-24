@@ -686,6 +686,34 @@ own concurrently-shipped H24 (flagged already-fixed).
 Laravel suite **332/338** (same 6 pre-existing stale failures); mobile `tsc` clean + jest 143/144.
 Zero regressions.
 
+### Phase 19 — implemented (discovery sweep 3: auth / state-races / validation / a11y)
+
+Third sweep, fresh lenses; 10 confirmed fixes, each adversarially verified. The two headline finds
+are **HIGH-severity concurrency races that corrupted state + money**.
+
+**Laravel (commit bff15aa):**
+- **Accept-clobber races (HIGH).** `AutoCancelBookingJob` and `ExpireNegotiateBookingJob` read the
+  booking *unlocked* and cancelled with no status predicate — a runner who accepted in the race
+  window was reverted to `cancelled` **and** (prepaid) wrongly refunded mid-errand. Both now decide
+  + write under a row lock and only refund on an actual cancel; a concurrent accept wins.
+- **`retryMatch` double-tap** re-opened the row without a lock (stale `runner_id`, double-match) →
+  now locks + re-asserts (409 if already in progress), dispatches after commit.
+- **`MatchRunnerJob` same-runner double-assign** → now locks the runner row and requeues the loser
+  excluding them instead of stranding it pending.
+- **OTP verify minted a token with no status gate** → now rejects suspended/banned like login.
+- **`/auth/forgot-password` account-enumeration oracle** → dropped the `exists` rule; identical
+  neutral 200 whether or not the email is registered.
+- **Unvalidated date filters** on `/bookings` + `/wallet/transactions` (Carbon 500) → validated (422).
+- **Unbounded address length** → `max:500`.
+
+**Mobile (commit e2e554f):**
+- **Customer SOS confirm had no re-entrancy guard** (double-trigger, no feedback) → `sosSubmitting`
+  guard + loading state + success toast, mirroring the runner side.
+
+Tests: **+7** (accept-clobber skip guards ×2, OTP-suspended 403, forgot-password non-enumeration,
+date-filter 422 ×2, address max). Laravel **339/345** (same 6 pre-existing stale failures); mobile
+`tsc` clean + jest 143/144. Zero regressions.
+
 ### H6 (private KYC storage) — assessed, deliberately deferred with a plan
 
 Not shipped this pass because it cannot be done safely blind: the fix requires (1) an **infra
