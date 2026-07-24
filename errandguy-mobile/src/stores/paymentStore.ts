@@ -145,9 +145,14 @@ export const usePaymentStore = create<PaymentStoreState>((set, get) => ({
       const stale =
         !attempt?.startedAt || Date.now() - attempt.startedAt > ATTEMPT_MAX_AGE_MS;
       // Drop stale, and drop already-concluded attempts — a terminal outcome
-      // shouldn't re-hijack the UI on every relaunch. Non-terminal attempts are
-      // kept so verification can resume.
-      if (stale || isAttemptTerminal(attempt)) {
+      // shouldn't re-hijack the UI on every relaunch. Also drop a rehydrated
+      // 'preparing' attempt: it's the pre-create state, so it holds no server
+      // reference (paymentId/bookingId/topupId/checkoutUrl) to resume or verify
+      // and no gateway charge has happened yet — but it IS "active", so keeping
+      // it would hold the one-payment-at-a-time lock forever and silently block
+      // every future booking AND top-up (neither poll nor safety-net clears it).
+      // Live-session 'preparing' attempts are untouched (only rehydrate drops).
+      if (stale || isAttemptTerminal(attempt) || attempt?.status === 'preparing') {
         await AsyncStorage.removeItem(STORAGE_KEY).catch(() => {});
         set({ isHydrated: true });
         return;

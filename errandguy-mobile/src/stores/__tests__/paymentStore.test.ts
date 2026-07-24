@@ -1,4 +1,5 @@
 import { act } from '@testing-library/react-native';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 
 // expo-crypto's randomUUID is a native module (unimplemented under jest) — give
 // it a unique-per-call stub so idempotency keys are distinct.
@@ -13,8 +14,11 @@ import {
   isAttemptTerminal,
 } from '../paymentStore';
 
-beforeEach(() => {
+const STORAGE_KEY = '@payment_attempt_v1';
+
+beforeEach(async () => {
   usePaymentStore.setState({ attempt: null, isHydrated: false });
+  await AsyncStorage.clear();
 });
 
 describe('paymentStore', () => {
@@ -75,5 +79,48 @@ describe('paymentStore', () => {
     act(() => usePaymentStore.getState().resolve());
     expect(usePaymentStore.getState().attempt).toBeNull();
     expect(isAttemptActive(usePaymentStore.getState().attempt)).toBe(false);
+  });
+
+  it('loadFromStorage drops a rehydrated preparing attempt (unresumable — would lock out payments)', async () => {
+    // A 'preparing' attempt was persisted before the create response returned
+    // (e.g. the app was force-quit mid-create). It holds no server reference,
+    // so it can never advance or verify — keeping it would hold the
+    // one-payment lock forever and silently block every booking AND top-up.
+    const now = Date.now();
+    await AsyncStorage.setItem(
+      STORAGE_KEY,
+      JSON.stringify({
+        attemptId: 'a1', idempotencyKey: 'k1', kind: 'booking',
+        amount: 100, status: 'preparing', startedAt: now, updatedAt: now,
+      }),
+    );
+
+    await act(async () => {
+      await usePaymentStore.getState().loadFromStorage();
+    });
+
+    expect(usePaymentStore.getState().attempt).toBeNull();
+    expect(usePaymentStore.getState().isHydrated).toBe(true);
+    expect(await AsyncStorage.getItem(STORAGE_KEY)).toBeNull();
+  });
+
+  it('loadFromStorage KEEPS a resumable non-terminal attempt so verification continues', async () => {
+    const now = Date.now();
+    await AsyncStorage.setItem(
+      STORAGE_KEY,
+      JSON.stringify({
+        attemptId: 'a2', idempotencyKey: 'k2', kind: 'booking', paymentId: 'pay_9',
+        amount: 250, status: 'verifying', startedAt: now, updatedAt: now,
+      }),
+    );
+
+    await act(async () => {
+      await usePaymentStore.getState().loadFromStorage();
+    });
+
+    const a = usePaymentStore.getState().attempt;
+    expect(a).toBeTruthy();
+    expect(a!.status).toBe('verifying');
+    expect(a!.paymentId).toBe('pay_9');
   });
 });
