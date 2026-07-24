@@ -5,6 +5,7 @@ import { CacheService } from '../../cache/cache.service';
 import { SupabaseStorageService } from '../../integrations/supabase-storage.service';
 import { LaravelValidationException, ValidationErrors } from '../../common/exceptions/validation.exception';
 import { BookingService } from '../booking/booking.service';
+import { PaymentStatus, canTransitionTo, transitionPayment } from '../payment/payment-status';
 
 /** A multipart file as delivered by Multer. */
 export interface MultipartFile {
@@ -166,7 +167,9 @@ export class RunnerService {
 
     if (booking.pricingMode === 'fixed' && booking.status === 'matched') {
       await this.prisma.booking.update({ where: { id: booking.id }, data: { status: 'pending', runnerId: null, matchedAt: null } });
-      await this.booking.enqueueMatch(booking.id, 0);
+      // Exclude the decliner from the re-match, else the nearest-runner sort
+      // re-offers the identical booking to them and decline is a no-op.
+      await this.booking.enqueueMatch(booking.id, 0, undefined, user.id);
     }
   }
 
@@ -305,45 +308,81 @@ export class RunnerService {
     return this.loadErrand(booking.id);
   }
 
-  /** Completion: idempotent earning credit + runner stats + payment mark. */
+  /**
+   * Completion: settlement, runner stats, audited payment mark. Mirrors
+   * Laravel RunnerErrandController::handleCompletion.
+   *
+   * Settlement is a function of what was ACTUALLY collected, never of status
+   * alone (that was the critical money leak):
+   *   - paid (wallet/online): platform holds the funds → credit the payout as
+   *     a withdrawable 'earning'.
+   *   - cash: the runner collected the full fare in person → they keep it and
+   *     OWE the platform its service fee, recorded as a negative 'commission'
+   *     that nets against their balance (may go negative — that debt is the point).
+   *   - unsettled online (expired/failed): nobody collected → credit nothing.
+   */
   private async handleCompletion(tx: Prisma.TransactionClient, booking: Booking, user: User): Promise<void> {
     const profile = await tx.runnerProfile.findUnique({ where: { userId: user.id } });
     if (!profile) return;
 
     const payoutAmount = new Prisma.Decimal(booking.runnerPayout ?? 0);
 
-    // Idempotency guard — never credit / bump stats twice for one booking.
-    const alreadyPaid = await tx.walletTransaction.findFirst({
-      where: { userId: user.id, referenceId: booking.id, type: 'earning' },
+    // Idempotency guard: settled already for this runner via an 'earning'
+    // credit OR a cash 'commission' debit → never settle twice.
+    const alreadySettled = await tx.walletTransaction.findFirst({
+      where: { userId: user.id, referenceId: booking.id, type: { in: ['earning', 'commission'] } },
       select: { id: true },
     });
-    if (alreadyPaid) {
-      const payment = await tx.payment.findFirst({ where: { bookingId: booking.id }, orderBy: { createdAt: 'asc' } });
-      if (payment && payment.status !== 'completed') {
-        await tx.payment.update({ where: { id: payment.id }, data: { status: 'completed', paidAt: new Date() } });
-      }
+    if (alreadySettled) {
+      await this.markPaymentCompleted(tx, booking.id, user.id);
       return;
     }
 
-    // Lock the runner row to serialize concurrent earnings writes.
+    // Lock the runner row to serialize concurrent balance writes.
     const rows = await tx.$queryRaw<{ wallet_balance: Prisma.Decimal }[]>(
       Prisma.sql`SELECT wallet_balance FROM users WHERE id = ${user.id}::uuid FOR UPDATE LIMIT 1`,
     );
-    const newBalance = new Prisma.Decimal(rows[0].wallet_balance).plus(payoutAmount);
-    await tx.walletTransaction.create({
-      data: {
-        userId: user.id,
-        type: 'earning',
-        amount: payoutAmount,
-        balanceAfter: newBalance,
-        referenceId: booking.id,
-        description: `Earning for errand #${booking.bookingNumber}`,
-      },
-    });
-    await tx.user.update({ where: { id: user.id }, data: { walletBalance: newBalance } });
+    const balance = new Prisma.Decimal(rows[0].wallet_balance);
+    let earnedForStats = new Prisma.Decimal(0);
+    let collected = false;
+
+    if (booking.paymentStatus === 'paid') {
+      const newBalance = balance.plus(payoutAmount);
+      await tx.walletTransaction.create({
+        data: {
+          userId: user.id,
+          type: 'earning',
+          amount: payoutAmount,
+          balanceAfter: newBalance,
+          referenceId: booking.id,
+          description: `Earning for errand #${booking.bookingNumber}`,
+        },
+      });
+      await tx.user.update({ where: { id: user.id }, data: { walletBalance: newBalance } });
+      earnedForStats = payoutAmount;
+      collected = true;
+    } else if (booking.paymentMethod === 'cash') {
+      // Runner nets their payout in cash; the platform is owed the service fee.
+      const commission = new Prisma.Decimal(booking.serviceFee ?? 0).toDecimalPlaces(2);
+      const newBalance = balance.minus(commission);
+      await tx.walletTransaction.create({
+        data: {
+          userId: user.id,
+          type: 'commission',
+          amount: commission.negated(),
+          balanceAfter: newBalance,
+          referenceId: booking.id,
+          description: `Platform commission for cash errand #${booking.bookingNumber}`,
+        },
+      });
+      await tx.user.update({ where: { id: user.id }, data: { walletBalance: newBalance } });
+      earnedForStats = payoutAmount; // earned in cash, in person
+      collected = true;
+    }
+    // else: unsettled online payment — nothing collected, credit nothing.
 
     const newTotalErrands = profile.totalErrands + 1;
-    const newTotalEarnings = new Prisma.Decimal(profile.totalEarnings).plus(payoutAmount);
+    const newTotalEarnings = new Prisma.Decimal(profile.totalEarnings).plus(earnedForStats);
 
     const completedCount = await tx.booking.count({ where: { runnerId: user.id, status: 'completed' } });
     const totalAssigned = await tx.booking.count({ where: { runnerId: user.id, status: { in: ['completed', 'cancelled'] } } });
@@ -358,10 +397,29 @@ export class RunnerService {
       },
     });
 
-    const payment = await tx.payment.findFirst({ where: { bookingId: booking.id }, orderBy: { createdAt: 'asc' } });
-    if (payment && payment.status !== 'completed') {
-      await tx.payment.update({ where: { id: payment.id }, data: { status: 'completed', paidAt: new Date() } });
+    // Only mark the payment settled when money was actually collected — an
+    // unsettled online charge must NOT be laundered to 'completed'.
+    if (collected) {
+      await this.markPaymentCompleted(tx, booking.id, user.id);
     }
+  }
+
+  /**
+   * Move the booking's payment to Completed through the audited
+   * transitionPayment funnel — never a raw update, which would skip the
+   * payment_status_transitions audit row and could launder an illegal
+   * failed/expired → completed move with a fabricated paidAt. No-ops safely
+   * when the payment is null, already completed, or cannot legally advance.
+   */
+  private async markPaymentCompleted(tx: Prisma.TransactionClient, bookingId: string, actorId: string): Promise<void> {
+    const payment = await tx.payment.findFirst({ where: { bookingId }, orderBy: { createdAt: 'asc' } });
+    if (!payment) return;
+    if (!canTransitionTo(payment.status, PaymentStatus.Completed)) return;
+    await transitionPayment(tx, payment, PaymentStatus.Completed, {
+      actor: actorId,
+      reason: 'Errand completed',
+      extra: { paidAt: new Date() },
+    });
   }
 
   // ── status-flow helpers ─────────────────────────────────────────────────
