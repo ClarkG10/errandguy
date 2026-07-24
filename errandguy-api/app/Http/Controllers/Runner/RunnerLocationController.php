@@ -47,11 +47,17 @@ class RunnerLocationController extends Controller
             // RunnerErrandController::updateStatus and acceptErrand) so
             // pickup/dropoff transitions are reflected immediately.
             $cacheKey = "runner_active_booking_id:{$user->id}";
-            $activeBookingId = Cache::remember($cacheKey, 30, function () use ($user) {
+            // Cache a non-null sentinel ('') for the no-active-booking case:
+            // Cache::remember never stores a null closure result, so without
+            // this the DOMINANT idle-online ping re-ran the query on every
+            // push, defeating the cache the comment above promises. Booking ids
+            // are UUID strings, so '' can never collide with a real id.
+            $cached = Cache::remember($cacheKey, 30, function () use ($user) {
                 return $user->runnerBookings()
                     ->whereNotIn('status', ['completed', 'cancelled', 'pending', 'no_runner'])
-                    ->value('id');
+                    ->value('id') ?? '';
             });
+            $activeBookingId = $cached ?: null;
         }
 
         $updated = $this->locationService->updateRunnerLocation(

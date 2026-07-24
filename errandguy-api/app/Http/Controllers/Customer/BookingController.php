@@ -29,6 +29,7 @@ use App\Services\WalletService;
 use Carbon\Carbon;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 
@@ -541,6 +542,13 @@ class BookingController extends Controller
         });
 
         $booking->refresh();
+
+        // Stop attributing the assigned runner's next ~30s of GPS pings to this
+        // now-cancelled booking (RunnerLocationController caches the active
+        // booking-id per runner). Mirrors the bust in RunnerErrandController.
+        if ($booking->runner_id) {
+            Cache::forget("runner_active_booking_id:{$booking->runner_id}");
+        }
 
         BookingStatusLog::create([
             'booking_id' => $booking->id,

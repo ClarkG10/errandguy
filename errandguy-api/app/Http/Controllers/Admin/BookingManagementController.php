@@ -7,6 +7,7 @@ use App\Models\Booking;
 use App\Http\Resources\BookingResource;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Cache;
 
 class BookingManagementController extends Controller
 {
@@ -66,6 +67,12 @@ class BookingManagementController extends Controller
             'cancelled_by' => $request->user()->id,
             'cancellation_reason' => $request->input('reason'),
         ]);
+
+        // Don't leave the assigned runner's GPS pings tagged to the cancelled
+        // booking for the next ~30s (per-runner active-booking cache).
+        if ($booking->runner_id) {
+            Cache::forget("runner_active_booking_id:{$booking->runner_id}");
+        }
 
         // An admin/platform-initiated cancel is not the customer's fault, so a
         // paid booking is refunded IN FULL with no cancellation fee (unlike the

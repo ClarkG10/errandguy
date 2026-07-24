@@ -57,7 +57,7 @@ class RealtimeService
         array $data = []
     ): void {
         try {
-            Http::withHeaders([
+            $response = Http::withHeaders([
                 'apikey' => $this->serviceKey,
                 'Authorization' => "Bearer {$this->serviceKey}",
                 'Content-Type' => 'application/json',
@@ -75,11 +75,29 @@ class RealtimeService
                 'data' => $data,
                 'is_read' => false,
             ]);
+
+            // Http does NOT throw on 4xx/5xx, so a Supabase reject (RLS /
+            // malformed) would otherwise be dropped silently — the push never
+            // lands and nothing is logged. Surface it.
+            $this->logIfFailed($response, 'insert notification', ['user_id' => $userId]);
         } catch (\Throwable $e) {
             Log::error('RealtimeService: Failed to insert notification', [
                 'user_id' => $userId,
                 'error' => $e->getMessage(),
             ]);
+        }
+    }
+
+    /**
+     * Log a non-OK Supabase response (Http doesn't throw on 4xx/5xx by default,
+     * so without this a failed insert/broadcast is silently dropped).
+     */
+    private function logIfFailed(\Illuminate\Http\Client\Response $response, string $op, array $context = []): void
+    {
+        if ($response->failed()) {
+            Log::warning("RealtimeService: {$op} returned a non-OK status", array_merge($context, [
+                'status' => $response->status(),
+            ]));
         }
     }
 
@@ -117,12 +135,18 @@ class RealtimeService
         ], array_values($notifications));
 
         try {
-            Http::withHeaders([
+            $response = Http::withHeaders([
                 'apikey' => $this->serviceKey,
                 'Authorization' => "Bearer {$this->serviceKey}",
                 'Content-Type' => 'application/json',
                 'Prefer' => 'return=minimal',
             ])->post("{$this->supabaseUrl}/rest/v1/notifications", $rows);
+
+            if ($response->failed()) {
+                $this->logIfFailed($response, 'bulk-insert notifications', ['count' => count($rows)]);
+
+                return 0;
+            }
 
             return count($rows);
         } catch (\Throwable $e) {
@@ -138,7 +162,7 @@ class RealtimeService
     public function broadcastRunnerLocation(string $bookingId, string $runnerId, array $coords): void
     {
         try {
-            Http::withHeaders([
+            $response = Http::withHeaders([
                 'apikey' => $this->serviceKey,
                 'Authorization' => "Bearer {$this->serviceKey}",
                 'Content-Type' => 'application/json',
@@ -152,6 +176,8 @@ class RealtimeService
                 'speed' => $coords['speed'] ?? null,
                 'accuracy' => $coords['accuracy'] ?? null,
             ]);
+
+            $this->logIfFailed($response, 'insert runner location', ['booking_id' => $bookingId]);
         } catch (\Throwable $e) {
             Log::error('RealtimeService: Failed to insert runner location', [
                 'booking_id' => $bookingId,
@@ -163,7 +189,7 @@ class RealtimeService
     public function broadcastChatMessage(string $bookingId, string $senderId, array $messageData): void
     {
         try {
-            Http::withHeaders([
+            $response = Http::withHeaders([
                 'apikey' => $this->serviceKey,
                 'Authorization' => "Bearer {$this->serviceKey}",
                 'Content-Type' => 'application/json',
@@ -175,6 +201,8 @@ class RealtimeService
                 'image_url' => $messageData['image_url'] ?? null,
                 'is_system' => $messageData['is_system'] ?? false,
             ]);
+
+            $this->logIfFailed($response, 'broadcast chat message', ['booking_id' => $bookingId]);
         } catch (\Throwable $e) {
             Log::error('RealtimeService: Failed to broadcast chat message', [
                 'booking_id' => $bookingId,
