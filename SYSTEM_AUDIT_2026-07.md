@@ -714,6 +714,29 @@ Tests: **+7** (accept-clobber skip guards ×2, OTP-suspended 403, forgot-passwor
 date-filter 422 ×2, address max). Laravel **339/345** (same 6 pre-existing stale failures); mobile
 `tsc` clean + jest 143/144. Zero regressions.
 
+### Phase 20 — implemented (discovery sweep 4: realtime/cache/scheduling + mobile resilience)
+
+Fourth sweep — **clear diminishing returns**: the remaining-perf lens found nothing, and the finds
+are medium/low (robustness/observability). 5 fixes shipped, each adversarially verified.
+
+**Laravel (commit 526b6a8):**
+- **RealtimeService silently dropped failed inserts** — `Http` doesn't throw on 4xx/5xx and the
+  catch only caught connection errors, so a Supabase reject vanished unlogged. Added a `failed()`
+  check to all four post paths (log-only).
+- **Idle-runner active-booking cache never cached** — `Cache::remember` discards a null result, so
+  the dominant idle ping re-ran the DB query every push; now caches a `''` sentinel.
+- **Cancel didn't bust that cache** (customer + admin) — up to ~30s of a cancelled booking's runner
+  pings stayed mis-tagged; both now `Cache::forget` it.
+
+**Mobile (commit 90d5fc8):**
+- **Runner status advance had no in-flight guard** — a double-tap fired two advances (skip-advance);
+  added a tap-path `advancingRef` latch.
+- **Top-up verify could strand on a button-less spinner** when the attempt had no pollId — added a
+  net flipping `'verifying'`→`'pending'` (the dismissable state).
+
+Tests: **+2** (idle-ping sentinel cached; cancel busts cache). Laravel **339/345** (same 6
+pre-existing stale failures); mobile `tsc` clean + jest 143/144. Zero regressions.
+
 ### H6 (private KYC storage) — assessed, deliberately deferred with a plan
 
 Not shipped this pass because it cannot be done safely blind: the fix requires (1) an **infra
