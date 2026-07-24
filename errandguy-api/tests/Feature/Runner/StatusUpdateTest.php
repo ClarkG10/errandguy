@@ -118,7 +118,7 @@ class StatusUpdateTest extends TestCase
             ]);
 
         $response->assertStatus(422)
-            ->assertJsonPath('message', "Invalid status transition from 'accepted' to 'in_transit'.");
+            ->assertJsonPath('message', "Invalid status transition from 'accepted' to 'in_transit' for this errand type.");
     }
 
     public function test_non_assigned_runner_cannot_update_status(): void

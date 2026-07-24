@@ -64,6 +64,12 @@ class LoginController extends Controller
             'ip' => $request->ip(),
         ]);
 
+        // The account belongs to the caller, so render the self-view (email /
+        // verified flags / wallet). The request isn't authenticated yet here,
+        // so without this UserResource would treat the owner as a third party
+        // and strip their own PII from the login response.
+        request()->setUserResolver(fn () => $user);
+
         return response()->json([
             'user' => new UserResource($user->load('runnerProfile')),
             'token' => $token,

@@ -50,6 +50,10 @@ class SocialLoginController extends Controller
         $token = $user->createToken($request->header('User-Agent', 'mobile'))->plainTextToken;
         $user->update(['last_active_at' => now()]);
 
+        // The account belongs to the caller, so render the self-view (email /
+        // verified flags / wallet); the request isn't authenticated yet here.
+        request()->setUserResolver(fn () => $user);
+
         return response()->json([
             'user' => new UserResource($user->load('runnerProfile')),
             'token' => $token,

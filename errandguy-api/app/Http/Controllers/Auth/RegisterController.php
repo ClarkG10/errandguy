@@ -59,6 +59,11 @@ class RegisterController extends Controller
 
         $token = $user->createToken($request->header('User-Agent', 'mobile'))->plainTextToken;
 
+        // The account belongs to the caller, so render the self-view (email /
+        // verified flags / wallet). The request isn't authenticated yet here,
+        // so without this UserResource would strip the owner's own PII.
+        request()->setUserResolver(fn () => $user);
+
         return response()->json([
             'user' => new UserResource($user->load('runnerProfile')),
             'token' => $token,

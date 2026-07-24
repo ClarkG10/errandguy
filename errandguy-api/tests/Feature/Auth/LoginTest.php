@@ -148,11 +148,13 @@ class LoginTest extends TestCase
             ]);
         }
 
-        // 6th attempt should be rate-limited even with correct password
+        // 6th attempt is blocked even with the correct password. The route's
+        // `throttle:auth` limiter (5 / 15 min per credential) trips first and
+        // returns 429 — the coarse network-level lockout that shields the
+        // controller's per-credential counter.
         $response = $this->postJson('/api/v1/auth/login', $this->validData);
 
-        $response->assertStatus(422)
-            ->assertJsonValidationErrors(['email']);
+        $response->assertStatus(429);
     }
 
     public function test_successful_login_clears_rate_limit(): void

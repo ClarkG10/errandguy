@@ -108,6 +108,10 @@ class OTPController extends Controller
 
             $token = $user->createToken($request->header('User-Agent', 'mobile'))->plainTextToken;
 
+            // The account belongs to the caller, so render the self-view
+            // (email / verified flags / wallet); request isn't authed yet here.
+            request()->setUserResolver(fn () => $user);
+
             return response()->json([
                 'message' => 'Verification successful.',
                 'user' => new UserResource($user->load('runnerProfile')),

@@ -103,8 +103,11 @@ class RegisterTest extends TestCase
     {
         $response = $this->postJson('/api/v1/auth/register', []);
 
+        // `role` is optional (nullable, defaults to customer), so empty input
+        // errors only on the genuinely-required fields: full_name, password,
+        // and one of phone/email (each required_without the other).
         $response->assertStatus(422)
-            ->assertJsonValidationErrors(['full_name', 'password', 'role']);
+            ->assertJsonValidationErrors(['full_name', 'password', 'phone', 'email']);
     }
 
     public function test_registration_fails_without_phone_or_email(): void
