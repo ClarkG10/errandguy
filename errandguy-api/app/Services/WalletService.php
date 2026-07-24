@@ -94,6 +94,22 @@ class WalletService
                 return $transaction;
             }
 
+            // Settlement-amount tripwire (parity with XenditWebhookController::
+            // verifySettledAmount on the booking path): the top-up invoice is
+            // fixed-amount and created by us, so a divergence between what the
+            // gateway confirms and what we recorded means a pricing/gateway bug
+            // or tampering. Log-only — we still credit our recorded amount, but
+            // ops get a reconciliation alarm instead of a silent credit.
+            $confirmed = $gatewayData['paid_amount'] ?? $gatewayData['amount'] ?? null;
+            if ($confirmed !== null && abs((float) $confirmed - (float) $transaction->amount) > 0.01) {
+                Log::critical('Xendit top-up settlement amount mismatch', [
+                    'transaction_id' => $transaction->id,
+                    'user_id' => $transaction->user_id,
+                    'expected' => (float) $transaction->amount,
+                    'gateway_confirmed' => (float) $confirmed,
+                ]);
+            }
+
             $user = User::lockForUpdate()->findOrFail($transaction->user_id);
             $newBalance = (float) $user->wallet_balance + (float) $transaction->amount;
             $user->update(['wallet_balance' => $newBalance]);

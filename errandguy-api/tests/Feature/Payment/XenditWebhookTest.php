@@ -102,6 +102,9 @@ class XenditWebhookTest extends TestCase
 
         $this->payment->refresh();
         $this->assertEquals('failed', $this->payment->status);
+        // The linked booking's payment_status is reconciled too (was left
+        // stranded before — payment=failed but booking still pending/unpaid).
+        $this->assertEquals('failed', $this->booking->fresh()->payment_status);
     }
 
     public function test_unknown_payment_id_is_ignored(): void

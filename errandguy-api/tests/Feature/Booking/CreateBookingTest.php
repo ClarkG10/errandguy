@@ -258,6 +258,36 @@ class CreateBookingTest extends TestCase
         );
     }
 
+    public function test_promo_code_reduces_the_charged_total_and_enforces_per_user_limit(): void
+    {
+        Bus::fake();
+        $this->customer->update(['wallet_balance' => 5000]);
+        $promo = \App\Models\PromoCode::factory()->create([
+            'code' => 'SAVE10', 'discount_type' => 'percentage', 'discount_value' => 10,
+            'max_discount' => null, 'min_order' => 0, 'usage_limit' => 100, 'per_user_limit' => 1,
+            'valid_from' => now()->subDay(), 'valid_until' => now()->addWeek(), 'is_active' => true,
+        ]);
+
+        $this->actingAs($this->customer)
+            ->postJson('/api/v1/bookings', [...$this->validBookingData, 'payment_method' => 'wallet', 'promo_code' => 'SAVE10'])
+            ->assertCreated();
+
+        $booking = Booking::firstOrFail();
+        // Discount applied: the charged total is the discounted one, and the
+        // wallet is debited by exactly that (not the pre-discount amount).
+        $this->assertGreaterThan(0, (float) $booking->promo_discount);
+        $this->assertEquals($promo->id, $booking->promo_code_id);
+        $this->assertEquals(1, $promo->fresh()->used_count);
+        $this->assertEquals(5000 - (float) $booking->total_amount, (float) $this->customer->fresh()->wallet_balance);
+
+        // Second use by the same user (per_user_limit = 1) is rejected and does
+        // NOT increment usage again.
+        $this->actingAs($this->customer)
+            ->postJson('/api/v1/bookings', [...$this->validBookingData, 'payment_method' => 'wallet', 'promo_code' => 'SAVE10'])
+            ->assertStatus(422);
+        $this->assertEquals(1, $promo->fresh()->used_count);
+    }
+
     public function test_scheduled_booking_creation(): void
     {
         Bus::fake();

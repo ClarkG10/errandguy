@@ -271,6 +271,15 @@ class XenditWebhookController extends Controller
             $payment->transitionTo(PaymentStatus::Failed, 'webhook', 'payment.failed', extra: [
                 'gateway_response' => $data,
             ]);
+
+            // Reconcile the booking's payment_status like the sibling handlers
+            // do (invoice.paid → 'paid', invoice.expired → 'expired'). Without
+            // this an abandoned saved-method auth left payment=Failed but
+            // booking payment_status='pending' forever — an inconsistent pair.
+            if ($payment->booking) {
+                $payment->booking->update(['payment_status' => 'failed']);
+            }
+
             return $payment;
         });
 

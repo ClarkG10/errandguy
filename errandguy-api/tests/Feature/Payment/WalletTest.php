@@ -174,4 +174,25 @@ class WalletTest extends TestCase
         $response = $this->getJson('/api/v1/wallet/balance');
         $response->assertStatus(401);
     }
+
+    public function test_topup_completion_logs_critical_on_settlement_amount_mismatch(): void
+    {
+        \Illuminate\Support\Facades\Log::spy();
+
+        $tx = WalletTransaction::create([
+            'user_id' => $this->user->id, 'type' => 'top_up', 'amount' => 200,
+            'balance_after' => 0, 'status' => 'pending', 'description' => 'Wallet top-up',
+        ]);
+
+        // Gateway confirms a DIFFERENT amount than we recorded.
+        app(\App\Services\WalletService::class)->completeTopUp($tx->id, ['id' => 'inv_x', 'paid_amount' => 300]);
+
+        // Tripwire fires (parity with the booking-charge path)...
+        \Illuminate\Support\Facades\Log::shouldHaveReceived('critical')
+            ->withArgs(fn ($msg) => str_contains($msg, 'top-up settlement amount mismatch'))
+            ->once();
+        // ...but the credit is log-only: still credits OUR recorded amount.
+        $this->assertEquals('completed', $tx->fresh()->status);
+        $this->assertEquals(700.0, (float) $this->user->fresh()->wallet_balance);
+    }
 }
