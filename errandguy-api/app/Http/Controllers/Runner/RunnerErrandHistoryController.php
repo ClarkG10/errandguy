@@ -11,6 +11,17 @@ class RunnerErrandHistoryController extends Controller
 {
     public function index(Request $request): JsonResponse
     {
+        // Guard the date filters so a malformed value returns 422 rather than
+        // an uncaught Carbon::parse InvalidFormatException -> 500 (mirrors the
+        // guard on BookingController::index / WalletController::transactions).
+        $request->validate([
+            'status' => ['nullable', 'string', 'max:30'],
+            'errand_type_id' => ['nullable', 'uuid'],
+            'date_from' => ['nullable', 'date'],
+            'date_to' => ['nullable', 'date'],
+            'search' => ['nullable', 'string', 'max:100'],
+        ]);
+
         $query = $request->user()
             ->runnerBookings()
             ->with([

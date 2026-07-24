@@ -14,6 +14,15 @@ class RunnerEarningsController extends Controller
 {
     public function summary(Request $request): JsonResponse
     {
+        // Validate the custom-range dates so a malformed value returns 422, not
+        // an uncaught Carbon::parse InvalidFormatException -> 500 (matches the
+        // guard already on WalletController::transactions / BookingController::index).
+        $request->validate([
+            'period' => ['nullable', 'string', 'max:30'],
+            'date_from' => ['nullable', 'date'],
+            'date_to' => ['nullable', 'date'],
+        ]);
+
         $user = $request->user();
         $profile = $user->runnerProfile;
 
@@ -79,6 +88,13 @@ class RunnerEarningsController extends Controller
 
     public function history(Request $request): JsonResponse
     {
+        // Guard the date filters against a Carbon::parse 500 on bad input.
+        $request->validate([
+            'errand_type_id' => ['nullable'],
+            'date_from' => ['nullable', 'date'],
+            'date_to' => ['nullable', 'date'],
+        ]);
+
         $query = $request->user()
             ->runnerBookings()
             ->completed()

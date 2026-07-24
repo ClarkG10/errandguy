@@ -21,6 +21,13 @@ class ExportController extends Controller
      */
     public function earningsPdf(Request $request): Response
     {
+        // Guard custom-range dates so bad input is a 422, not a Carbon 500.
+        $request->validate([
+            'period' => ['nullable', 'string', 'max:20'],
+            'date_from' => ['nullable', 'date'],
+            'date_to' => ['nullable', 'date'],
+        ]);
+
         $user = $request->user();
         $profile = $user->runnerProfile;
 
