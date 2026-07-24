@@ -41,6 +41,15 @@ class BookingController extends Controller
 
     public function index(Request $request): JsonResponse
     {
+        // Validate the filter params — date_from/date_to are fed straight into
+        // Carbon::parse below, which throws (uncaught 500) on garbage input.
+        $request->validate([
+            'status' => ['nullable', 'string', 'max:30'],
+            'errand_type_id' => ['nullable', 'uuid'],
+            'date_from' => ['nullable', 'date'],
+            'date_to' => ['nullable', 'date'],
+        ]);
+
         $query = $request->user()
             ->customerBookings()
             ->with([
@@ -728,23 +737,50 @@ class BookingController extends Controller
         $baseRadius = (float) \App\Models\SystemConfig::getValue('matching_radius_km', '10');
         $radius = $baseRadius * $multiplier;
 
-        $booking->update([
-            'status' => 'pending',
-            // Reviving an auto-cancelled booking — clear the cancellation
-            // marker so subsequent reads don't display "cancelled" copy.
-            'cancelled_at' => null,
-            'cancellation_reason' => null,
-        ]);
+        // Reset to pending under a row lock and re-assert eligibility inside
+        // the transaction. Without this, two concurrent retries (a mobile
+        // double-tap) — or a retry racing a match that just landed — both read
+        // the pre-match state, and the unguarded UPDATE re-opened the row while
+        // leaving a stale runner_id attached, producing a duplicate offer and a
+        // booking matched to two runners. A racing second retry now 409s.
+        $reset = DB::transaction(function () use ($booking, $request, $step, $radius) {
+            $locked = Booking::whereKey($booking->id)->lockForUpdate()->first();
 
-        BookingStatusLog::create([
-            'booking_id' => $booking->id,
-            'status' => 'pending',
-            'changed_by' => $request->user()->id,
-            'note' => sprintf('Retry match (step %d, radius %.1fkm)', $step, $radius),
-        ]);
+            if (! $locked
+                || $locked->runner_id !== null
+                || ! in_array($locked->status, ['pending', 'no_runner', 'cancelled'], true)) {
+                return false;
+            }
 
-        // Run matching inline so the customer sees the result in the same
-        // request (matches the immediate-booking path in store()).
+            $locked->update([
+                'status' => 'pending',
+                // Defensively clear the assignment + cancellation markers so a
+                // stale runner_id can't survive the reset.
+                'runner_id' => null,
+                'matched_at' => null,
+                'cancelled_at' => null,
+                'cancellation_reason' => null,
+            ]);
+
+            BookingStatusLog::create([
+                'booking_id' => $locked->id,
+                'status' => 'pending',
+                'changed_by' => $request->user()->id,
+                'note' => sprintf('Retry match (step %d, radius %.1fkm)', $step, $radius),
+            ]);
+
+            return true;
+        });
+
+        if (! $reset) {
+            return response()->json([
+                'message' => 'This booking is already in progress.',
+            ], 409);
+        }
+
+        // Run matching inline (AFTER commit — MatchRunnerJob opens its own
+        // locked transaction) so the customer sees the result in the same
+        // request, matching the immediate-booking path in store().
         MatchRunnerJob::dispatchSync($booking->id, $radius);
 
         // Re-arm auto-cancel — short window so the customer isn't left
@@ -756,7 +792,9 @@ class BookingController extends Controller
         AutoCancelBookingJob::dispatch($booking->id)
             ->delay(now()->addMinutes($autoCancelMinutes));
 
-        $booking->load(['errandType', 'statusLogs']);
+        // Refresh so the response reflects the just-run match result (the inline
+        // MatchRunnerJob may have flipped the row to 'matched').
+        $booking->refresh()->load(['errandType', 'statusLogs']);
 
         return response()->json([
             'data' => new BookingResource($booking),

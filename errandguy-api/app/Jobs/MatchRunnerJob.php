@@ -48,8 +48,9 @@ class MatchRunnerJob implements ShouldQueue
         try {
             $newStatus = null; // 'matched' | 'no_runner' | null (race-skipped)
             $matchedBooking = null;
+            $reMatchExcluding = null; // set when the chosen runner was taken mid-race
 
-            DB::transaction(function () use ($runner, &$newStatus, &$matchedBooking) {
+            DB::transaction(function () use ($runner, &$newStatus, &$matchedBooking, &$reMatchExcluding) {
                 // Re-fetch with FOR UPDATE so a concurrent MatchRunnerJob
                 // (re-dispatch, retry, or admin reassign) cannot also flip
                 // the same row from `pending` to `matched`.
@@ -61,15 +62,25 @@ class MatchRunnerJob implements ShouldQueue
                 }
 
                 if ($runner) {
-                    // Defensive: ensure the chosen runner hasn't been claimed
-                    // by another booking in the meantime.
+                    // Serialize competing matches ON THE RUNNER, not just the
+                    // booking: two bookings' jobs each lock their own (distinct)
+                    // booking row, so without also locking the runner, both could
+                    // pass the stillFree check under READ COMMITTED and assign the
+                    // same runner. Lock order is Booking→User, matching the
+                    // settle-earnings path (no new deadlock cycle).
+                    \App\Models\User::whereKey($runner->user_id)->lockForUpdate()->first();
+
+                    // Now re-check (under the runner lock) that the chosen runner
+                    // hasn't been claimed by another booking in the meantime.
                     $stillFree = ! Booking::where('runner_id', $runner->user_id)
                         ->whereNotIn('status', ['pending', 'completed', 'cancelled', 'no_runner'])
                         ->exists();
 
                     if (!$stillFree) {
                         Log::info("MatchRunnerJob: chosen runner {$runner->user_id} no longer free for booking {$this->bookingId}");
-                        // Leave booking pending — outer retry / scheduler will pick it up again.
+                        // Don't strand the booking pending (no sweeper re-matches
+                        // 'pending') — re-run matching excluding this runner.
+                        $reMatchExcluding = $runner->user_id;
                         return;
                     }
 
@@ -148,6 +159,14 @@ class MatchRunnerJob implements ShouldQueue
                     app(\App\Services\BookingService::class)
                         ->refundUnfulfilled($this->bookingId, 'No runner available — auto-refund');
                 }
+            }
+
+            // The chosen runner was claimed by another booking in the race
+            // window — requeue matching (excluding them) so the booking isn't
+            // left stranded 'pending' (mirrors ExpireStaleMatchesJob). Fires
+            // AFTER commit; async so we don't recurse inside this job.
+            if ($reMatchExcluding !== null) {
+                self::dispatch($this->bookingId, $this->radiusOverrideKm, $reMatchExcluding);
             }
         } catch (Throwable $e) {
             Log::error("MatchRunnerJob failed for booking {$this->bookingId}: {$e->getMessage()}");

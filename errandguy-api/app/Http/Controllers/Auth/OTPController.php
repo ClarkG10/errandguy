@@ -90,6 +90,16 @@ class OTPController extends Controller
             ->first();
 
         if ($user) {
+            // Gate on account status like LoginController / SocialLoginController
+            // do — this passwordless path was the one token-mint flow that
+            // skipped the check, so a suspended/banned user who still receives
+            // the OTP could obtain a live bearer token.
+            if ($user->status !== 'active') {
+                return response()->json([
+                    'message' => "Your account is {$user->status}. Please contact support.",
+                ], 403);
+            }
+
             if ($request->phone) {
                 $user->update(['phone_verified' => true]);
             } else {

@@ -17,37 +17,43 @@ class PasswordResetController extends Controller
 {
     public function forgotPassword(ForgotPasswordRequest $request): JsonResponse
     {
-        $token = Str::random(64);
+        // Only mint a token + send the email for a REAL account, but always
+        // return the same generic 200 below regardless — otherwise the distinct
+        // registered/unregistered responses leak which emails have accounts.
+        if (User::where('email', $request->email)->exists()) {
+            $token = Str::random(64);
 
-        DB::table('password_reset_tokens')->updateOrInsert(
-            ['email' => $request->email],
-            [
-                'token' => Hash::make($token),
-                'created_at' => now(),
-            ]
-        );
-
-        try {
-            Mail::raw(
-                "Your ErrandGuy password reset code is: {$token}\n\nThis code expires in 1 hour.",
-                function ($message) use ($request) {
-                    $message->to($request->email)
-                        ->subject('ErrandGuy - Password Reset');
-                }
+            DB::table('password_reset_tokens')->updateOrInsert(
+                ['email' => $request->email],
+                [
+                    'token' => Hash::make($token),
+                    'created_at' => now(),
+                ]
             );
-        } catch (\Throwable $e) {
-            Log::error('Failed to send password reset email', [
-                'email' => $request->email,
-                'error' => $e->getMessage(),
-            ]);
 
-            return response()->json([
-                'message' => 'Unable to send reset email at this time. Please try again later.',
-            ], 503);
+            try {
+                Mail::raw(
+                    "Your ErrandGuy password reset code is: {$token}\n\nThis code expires in 1 hour.",
+                    function ($message) use ($request) {
+                        $message->to($request->email)
+                            ->subject('ErrandGuy - Password Reset');
+                    }
+                );
+            } catch (\Throwable $e) {
+                Log::error('Failed to send password reset email', [
+                    'email' => $request->email,
+                    'error' => $e->getMessage(),
+                ]);
+
+                return response()->json([
+                    'message' => 'Unable to send reset email at this time. Please try again later.',
+                ], 503);
+            }
         }
 
+        // Neutral, identical for known + unknown emails.
         return response()->json([
-            'message' => 'Password reset link sent to your email.',
+            'message' => 'If an account exists for that email, a password reset link has been sent.',
         ]);
     }
 

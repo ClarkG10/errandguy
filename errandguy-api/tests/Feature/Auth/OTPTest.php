@@ -113,6 +113,20 @@ class OTPTest extends TestCase
         $this->assertTrue($user->fresh()->email_verified);
     }
 
+    public function test_verify_otp_rejects_a_suspended_user_without_minting_a_token(): void
+    {
+        $user = User::factory()->create(['email' => 'susp@example.com', 'status' => 'suspended']);
+        $otp = '111222';
+        Cache::put('otp:susp@example.com', Hash::make($otp), now()->addMinutes(5));
+
+        $this->postJson('/api/v1/auth/verify-otp', ['email' => 'susp@example.com', 'code' => $otp])
+            ->assertStatus(403)
+            ->assertJsonMissingPath('token');
+
+        // Verified flag must NOT flip for a denied account.
+        $this->assertFalse((bool) $user->fresh()->email_verified);
+    }
+
     public function test_verify_otp_without_existing_user_returns_verified_flag(): void
     {
         $otp = '111111';

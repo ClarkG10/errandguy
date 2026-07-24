@@ -60,6 +60,43 @@ class NoRunnerRefundTest extends TestCase
         return $booking;
     }
 
+    public function test_auto_cancel_does_not_clobber_a_booking_a_runner_just_accepted(): void
+    {
+        // Race guard: a runner accepted (status=accepted, paid) in the window
+        // before the timeout job ran. The job must NOT cancel/refund it.
+        Event::fake();
+        $runner = User::factory()->create(['role' => 'runner', 'status' => 'active']);
+        $booking = $this->makeBooking('wallet', 'paid');
+        $booking->update(['status' => 'accepted', 'runner_id' => $runner->id]);
+        // Force the timeout to have elapsed.
+        $booking->update(['created_at' => now()->subHours(2)]);
+
+        (new \App\Jobs\AutoCancelBookingJob($booking->id))->handle();
+
+        $this->assertEquals('accepted', $booking->fresh()->status);
+        $this->assertEquals('paid', $booking->fresh()->payment_status);
+        $this->assertDatabaseMissing('wallet_transactions', [
+            'user_id' => $this->customer->id, 'type' => 'refund', 'reference_id' => $booking->id,
+        ]);
+    }
+
+    public function test_expire_negotiate_does_not_clobber_a_booking_a_runner_just_accepted(): void
+    {
+        Event::fake();
+        $runner = User::factory()->create(['role' => 'runner', 'status' => 'active']);
+        $booking = $this->makeBooking('wallet', 'paid');
+        // Accepted negotiate booking whose window "expired" — must be left alone.
+        $booking->update(['status' => 'accepted', 'runner_id' => $runner->id, 'pricing_mode' => 'negotiate']);
+
+        (new \App\Jobs\ExpireNegotiateBookingJob($booking->id))->handle();
+
+        $this->assertEquals('accepted', $booking->fresh()->status);
+        $this->assertEquals('paid', $booking->fresh()->payment_status);
+        $this->assertDatabaseMissing('wallet_transactions', [
+            'user_id' => $this->customer->id, 'type' => 'refund', 'reference_id' => $booking->id,
+        ]);
+    }
+
     public function test_paid_booking_with_no_runner_is_fully_refunded(): void
     {
         Event::fake();

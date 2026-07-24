@@ -126,6 +126,14 @@ class WalletController extends Controller
 
     public function transactions(Request $request): JsonResponse
     {
+        // date_from/date_to are fed to Carbon::parse below, which throws an
+        // uncaught 500 on garbage input — validate first.
+        $request->validate([
+            'type' => ['nullable', 'string', 'max:30'],
+            'date_from' => ['nullable', 'date'],
+            'date_to' => ['nullable', 'date'],
+        ]);
+
         // Eager-load the booking + errand type so the appended
         // `display_description` accessor on each row can compose a
         // friendly label without triggering an N+1 lookup per row.

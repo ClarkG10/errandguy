@@ -18,7 +18,7 @@ class SavedAddressRequest extends FormRequest
 
         return [
             'label' => [$isUpdate ? 'sometimes' : 'required', 'string', 'max:50'],
-            'address' => [$isUpdate ? 'sometimes' : 'required', 'string'],
+            'address' => [$isUpdate ? 'sometimes' : 'required', 'string', 'max:500'],
             'lat' => [$isUpdate ? 'sometimes' : 'required', 'numeric', 'between:-90,90'],
             'lng' => [$isUpdate ? 'sometimes' : 'required', 'numeric', 'between:-180,180'],
             'is_default' => ['sometimes', 'boolean'],
