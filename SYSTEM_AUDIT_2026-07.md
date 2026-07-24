@@ -737,6 +737,38 @@ are medium/low (robustness/observability). 5 fixes shipped, each adversarially v
 Tests: **+2** (idle-ping sentinel cached; cancel busts cache). Laravel **339/345** (same 6
 pre-existing stale failures); mobile `tsc` clean + jest 143/144. Zero regressions.
 
+### Phase 21 — implemented (review-relation contract + auth self-view + the 6 pre-existing failures)
+
+Two correctness bugs plus retiring the suite's long-standing red.
+
+**Review relation — reviews are bidirectional (commits a1c18e6 api / 651bbca nest):**
+`reviews` has `unique(booking_id, reviewer_id)` and the customer rates the runner AND the runner
+rates the customer (`rate/[bookingId]` + `errand/[id]`→`submitCustomerReview`), so a completed
+booking holds up to two rows. `Booking::review()` was an unordered `hasOne`, so once both had rated,
+`BookingResource.review` (served by runner errand-history + admin show) returned an arbitrary row —
+a viewer could be shown the counterparty's review.
+- Laravel: `Booking::reviews()` hasMany; `review()`/`runnerReview()` scoped deterministic hasOnes.
+  `BookingResource` resolves `customer_review`/`runner_review` by reviewer_id, exposes `reviews[]`,
+  keeps legacy `review` = the customer's review (historical meaning), now deterministic. 4 eager-loads
+  switched `'review'`→`'reviews'`. **+3 tests** (regression: runner's review inserted first).
+- Nest: the port was **worse** — `BOOKING_FULL_INCLUDE`/`LIST_INCLUDE`/admin-show included `review`
+  (singular), which is not a Prisma relation (only `reviews` list exists) → those endpoints threw
+  `PrismaClientValidationError` at runtime (500). Aligned to `reviews` + the same role-keyed contract.
+
+**Auth responses stripped the owner's own PII (commits 6a5526d api / 5981d7a nest):**
+The UserResource PII-gate (`email`/`status`/`*_verified`/`wallet_balance` only when `isSelf`) also
+fired on the token-minting routes (register/login/verify-otp/social), where the request isn't
+authenticated yet — so the account owner got a `user` object with **no email**. Set the *container*
+request's user resolver (not the injected FormRequest) to the fresh user before serializing, so the
+owner sees the self-view like `GET /profile` does. Nest mirrored (passed the owner id to userResource).
+
+**The 6 pre-existing suite failures (carried since ≤ Phase 18) — resolved:**
+3 were the real regression above (login/register missing `email`); 3 were stale tests encoding
+superseded behavior — brute-force now trips `throttle:auth` → **429** (not 422+email); empty-body
+register does not error on nullable `role`; the invalid-transition message gained "for this errand
+type." Fixed the code once, corrected the three assertions. **Full suite now 350 passed, 0 failed**
+(first fully-green run of the audit); Nest `tsc` clean.
+
 ### H6 (private KYC storage) — assessed, deliberately deferred with a plan
 
 Not shipped this pass because it cannot be done safely blind: the fix requires (1) an **infra
