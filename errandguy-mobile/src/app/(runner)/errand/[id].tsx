@@ -402,6 +402,14 @@ export default function ActiveErrandScreen() {
     }
   }, [booking, sosLoading]);
 
+  // Re-entrancy latch for the TAP-driven status advance only. advanceStatus
+  // is optimistic + fire-and-forget with no loading state, and the CTA isn't a
+  // latching SlideToConfirm for the tap transitions, so a rapid double-tap
+  // fired two non-idempotent, customer-notifying advances (skip-advancing the
+  // booking). Cleared in advanceStatus's .then/.catch. NOT set by the
+  // modal-driven callers, so the delivered→completed chain is never blocked.
+  const advancingRef = useRef(false);
+
   const handleStatusUpdate = async () => {
     if (!booking) return;
     const nextStatus = getNextStatus(booking.status, errandSlug);
@@ -443,6 +451,10 @@ export default function ActiveErrandScreen() {
       return;
     }
 
+    // Guard placed AFTER the modal early-returns so those branches never touch
+    // the latch (a missed clear there would stick-lock the CTA).
+    if (advancingRef.current) return;
+    advancingRef.current = true;
     await advanceStatus(nextStatus);
   };
 
@@ -493,6 +505,7 @@ export default function ActiveErrandScreen() {
     runnerService
       .advanceErrandStatus(booking.id, status, opts)
       .then(() => {
+        advancingRef.current = false; // re-arm the tap guard for the next step
         // Server-confirmed transition — success tick. The `completed`
         // flip is skipped because the SuccessCheck overlay fires its own
         // success haptic (avoid a double buzz).
@@ -511,6 +524,7 @@ export default function ActiveErrandScreen() {
         }
       })
       .catch((err: any) => {
+        advancingRef.current = false; // re-arm on failure so the runner can retry
         // Revert optimistic state and surface the error.
         Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error).catch(() => {});
         if (status === 'completed') setShowSuccessMoment(false);

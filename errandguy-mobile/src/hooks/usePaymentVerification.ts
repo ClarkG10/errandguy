@@ -1,4 +1,4 @@
-import { useCallback, useRef } from 'react';
+import { useCallback, useEffect, useRef } from 'react';
 import { useSmartPolling } from './useSmartPolling';
 import { useNetworkStore } from '../stores/networkStore';
 import { paymentService } from '../services/payment.service';
@@ -93,6 +93,18 @@ export function usePaymentVerification(): PaymentVerificationState {
     attempt.kind !== 'payout' &&
     POLL_STATUSES.includes(attempt.status) &&
     !!pollId(attempt);
+
+  // Safety net: a non-payout attempt stuck in 'verifying' with no pollId can
+  // never poll (shouldPoll is false), so the tick that flips to the honest,
+  // dismissable 'pending' state never runs — leaving the user on a button-less
+  // spinner modal they can't close (iOS). Flip it to 'pending' so verification
+  // always terminates somewhere the user can leave. Scoped to 'verifying'
+  // (NOT the 'awaiting_gateway' redirect window, where the checkout URL opens).
+  useEffect(() => {
+    if (attempt && attempt.kind !== 'payout' && attempt.status === 'verifying' && !pollId(attempt)) {
+      setStatus('pending');
+    }
+  }, [attempt, setStatus]);
 
   const tick = useCallback(async () => {
     const current = usePaymentStore.getState().attempt;
