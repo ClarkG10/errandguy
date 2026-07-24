@@ -18,6 +18,16 @@ class BookingResource extends JsonResource
         $isAdmin = $request->user() instanceof \App\Models\AdminUser;
         $canSeeContacts = $isParticipant || $isAdmin;
 
+        // Reviews are bidirectional (customer→runner AND runner→customer), so
+        // a booking can hold two rows keyed by reviewer_id. Resolve them by
+        // role from the loaded collection instead of the old ambiguous hasOne,
+        // which returned an arbitrary single row once both parties had rated.
+        $reviews = $this->relationLoaded('reviews') ? $this->reviews : null;
+        $customerReview = $reviews?->firstWhere('reviewer_id', $this->customer_id);
+        $runnerReview = $this->runner_id
+            ? $reviews?->firstWhere('reviewer_id', $this->runner_id)
+            : null;
+
         return [
             'id' => $this->id,
             'booking_number' => $this->booking_number,
@@ -122,9 +132,24 @@ class BookingResource extends JsonResource
                     'paid_at' => $this->payment->paid_at,
                 ],
             ),
+            // Back-compat: `review` has always meant "the customer's rating of
+            // the runner" for existing clients, so keep it pointed there — now
+            // resolved deterministically rather than by an unordered hasOne.
             'review' => $this->when(
-                $this->relationLoaded('review') && $this->review,
-                fn () => new ReviewResource($this->review),
+                $customerReview !== null,
+                fn () => new ReviewResource($customerReview),
+            ),
+            'customer_review' => $this->when(
+                $customerReview !== null,
+                fn () => new ReviewResource($customerReview),
+            ),
+            'runner_review' => $this->when(
+                $runnerReview !== null,
+                fn () => new ReviewResource($runnerReview),
+            ),
+            'reviews' => $this->when(
+                $reviews !== null,
+                fn () => ReviewResource::collection($reviews),
             ),
             'can_cancel' => in_array($this->status, ['pending', 'matched', 'accepted']),
             'is_trackable' => in_array($this->status, ['accepted', 'heading_to_pickup', 'arrived_at_pickup', 'picked_up', 'in_transit', 'arrived_at_dropoff', 'delivered']),

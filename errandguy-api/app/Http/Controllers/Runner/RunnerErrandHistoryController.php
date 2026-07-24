@@ -16,7 +16,7 @@ class RunnerErrandHistoryController extends Controller
             ->with([
                 'errandType',
                 'customer:id,phone,full_name,avatar_url,role,status,phone_verified,avg_rating,total_ratings,created_at',
-                'review',
+                'reviews',
             ])
             ->whereIn('status', ['completed', 'cancelled'])
             ->orderByDesc('created_at');

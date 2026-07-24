@@ -41,7 +41,7 @@ class BookingManagementController extends Controller
             'customer:id,full_name,email,phone,avatar_url',
             'runner:id,full_name,email,phone,avatar_url',
             'statusLogs',
-            'review',
+            'reviews',
             'payment',
         ])->findOrFail($id);
 

@@ -56,7 +56,7 @@ class BookingController extends Controller
             ->with([
                 'errandType',
                 'runner:id,phone,full_name,avatar_url,role,status,phone_verified,avg_rating,total_ratings,created_at',
-                'review',
+                'reviews',
             ])
             ->orderByDesc('created_at');
 
@@ -462,7 +462,7 @@ class BookingController extends Controller
             'runner.runnerProfile:user_id,vehicle_type,vehicle_plate,vehicle_photo_url,verification_status,acceptance_rate,completion_rate,is_online,total_errands,approved_at',
             'statusLogs',
             'payment',
-            'review',
+            'reviews',
         ])->findOrFail($id);
 
         $this->authorize('view', $booking);

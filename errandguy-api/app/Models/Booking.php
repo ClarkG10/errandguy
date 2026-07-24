@@ -162,9 +162,35 @@ class Booking extends Model
         return $this->hasOne(Payment::class);
     }
 
+    /**
+     * All reviews on this booking. Reviews are bidirectional — the customer
+     * rates the runner AND the runner rates the customer — so a completed
+     * booking can hold up to two rows, keyed by reviewer_id.
+     */
+    public function reviews(): HasMany
+    {
+        return $this->hasMany(Review::class);
+    }
+
+    /**
+     * The customer's review of the runner — the canonical "review of this
+     * booking" for existing clients. Scoped to reviewer_id = customer_id so
+     * it is deterministic; the old unscoped hasOne returned an arbitrary row
+     * once the runner had also left a review.
+     */
     public function review(): HasOne
     {
-        return $this->hasOne(Review::class);
+        return $this->hasOne(Review::class)
+            ->whereColumn('reviewer_id', 'customer_id');
+    }
+
+    /**
+     * The runner's review of the customer.
+     */
+    public function runnerReview(): HasOne
+    {
+        return $this->hasOne(Review::class)
+            ->whereColumn('reviewer_id', 'runner_id');
     }
 
     public function promoCode(): BelongsTo
