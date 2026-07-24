@@ -798,6 +798,45 @@ already gate it) and a post-checkout race (polling is foreground-gated, can't fi
 Laravel **351/351**; Nest tsc+build clean, jest 10/10; mobile tsc clean, jest 145/146 (the 1 red is a
 pre-existing authStore.loadFromStorage test, unrelated — confirmed by stash). Zero regressions. 22 phases.
 
+### Phase 23 — implemented (discovery sweep 6: exception/500-surface, push/notification, mobile lifecycle, status-enum)
+
+Sixth adversarially-verified sweep (13 agents, 9 candidates → 8 confirmed / 1 misdiagnosed). Rejected:
+`Booking::scopeActive` omitting `no_runner` (intentional — keeps it on the customer's active surface).
+7 of 8 shipped; 1 deferred.
+
+**HIGH (production):**
+- **Cancel gate omitted `heading_to_pickup`** (commit dc3f863). BookingPolicy::cancel + BookingResource
+  can_cancel authorized only ['pending','matched','accepted'], but CancellationPolicy (tested) treats
+  `heading_to_pickup` as flat-₱20 cancellable and the mobile Cancel button shows it — so cancelling
+  while the runner was en route 403'd. Added the status to both; +1 regression test.
+- **Runner push taps routed to customer screens** (commit 257eeee). handleNotificationTapped hard-coded
+  customer routes; a runner's `booking_update` job-offer push opened the customer tracking screen,
+  breaking accept-from-push. Now routes booking_update/payment/chat by auth role.
+
+**Medium/low:**
+- **Cold-start launch tap routed nowhere** (257eeee) — the tap listener was gated behind `enabled`
+  (auth+verified), so a killed-state launch tap fired before it existed. Register listeners
+  unconditionally on mount + read getLastNotificationResponse() (deduped); keep only permission/token
+  gated.
+- **Carbon-500 on unvalidated date_from/date_to** (commit 13ecbfa) — RunnerEarnings summary+history,
+  RunnerErrandHistory index, Export earningsPdf fed raw params into Carbon::parse → 500. Added the
+  ['nullable','date'] guard the sibling list endpoints already had (→422).
+- **Realtime null-id opened an unfiltered whole-table channel** (commit 200f0ed) — useSupabaseRealtime
+  subscribed even when a caller passed a null id (only the filter was dropped). Added an `enabled`
+  option; wired useBookingStatus. (Latent — RLS/anon-key masks delivery today.)
+
+**Deferred:** duplicate customer notification (accept()/updateStatus() direct-create + the
+BookingStatusChanged listener both write an in-app row → unread +2). Low severity; the safe fix needs
+listener templates for 4 statuses + reworking two Event::fake() tests + depends on queue timing —
+disproportionate risk for a duplicate-inbox-row polish issue. Documented for a dedicated pass.
+
+Laravel **352/352**; mobile tsc clean + jest 146/146. NOTE: a large body of PARALLEL work appeared in
+the tree during this phase (~22 files: DashboardController, ShoppingChecklist, notification screens,
+useQuery/api/preload, Nest promo/cache/schema, new index migrations, ChatImage) — NOT part of this
+audit. Only the 9 files that were purely sweep-6 fixes were committed; useIncomingRequest +
+useRealtimeNotifications had my `enabled:` one-liners entangled with that parallel work and were left
+unstaged. 23 phases. origin/main HEAD=200f0ed.
+
 ### H6 (private KYC storage) — assessed, deliberately deferred with a plan
 
 Not shipped this pass because it cannot be done safely blind: the fix requires (1) an **infra
