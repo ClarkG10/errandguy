@@ -8,6 +8,13 @@ interface UseSupabaseRealtimeOptions {
   event?: 'INSERT' | 'UPDATE' | 'DELETE' | '*';
   filter?: string;
   schema?: string;
+  /**
+   * When false, no channel is opened. Callers that "disable" by passing a null
+   * id MUST also pass `enabled: false` — a null id only drops the `filter`,
+   * which would otherwise widen the subscription to the ENTIRE table (every
+   * row) under a `<name>:null` channel instead of turning it off.
+   */
+  enabled?: boolean;
   onPayload: (payload: any) => void;
 }
 
@@ -17,6 +24,7 @@ export function useSupabaseRealtime({
   event = '*',
   filter,
   schema = 'public',
+  enabled = true,
   onPayload,
 }: UseSupabaseRealtimeOptions) {
   const [isConnected, setIsConnected] = useState(false);
@@ -45,6 +53,10 @@ export function useSupabaseRealtime({
       supabase.removeChannel(existing);
     }
 
+    // Disabled (e.g. a caller passed a null id): tear down any prior channel
+    // above, then open nothing — never fall through to an unfiltered whole-table subscription.
+    if (!enabled) return;
+
     const channel: RealtimeChannel = supabase
       .channel(channelName)
       .on(
@@ -67,7 +79,7 @@ export function useSupabaseRealtime({
       supabase.removeChannel(channel);
       setIsConnected(false);
     };
-  }, [channelName, table, event, filter, schema]);
+  }, [channelName, table, event, filter, schema, enabled]);
 
   return { isConnected };
 }

@@ -12,6 +12,7 @@ export function useBookingStatus(bookingId: string | null) {
 
   const { isConnected } = useSupabaseRealtime({
     channel: `booking:${bookingId}`,
+    enabled: !!bookingId,
     table: 'bookings',
     event: 'UPDATE',
     filter: bookingId ? `id=eq.${bookingId}` : undefined,
