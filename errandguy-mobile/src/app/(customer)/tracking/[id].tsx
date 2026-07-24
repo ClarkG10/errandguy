@@ -230,6 +230,7 @@ export default function TrackingScreen() {
   } | null>(null);
   const [previewLoading, setPreviewLoading] = useState(false);
   const [showSOSModal, setShowSOSModal] = useState(false);
+  const [sosSubmitting, setSosSubmitting] = useState(false);
   // HERE tiles are billable, so the map mounts on a phase gate instead of a
   // blanket opt-in: auto-mount during the en-route phases (MAP_PHASES),
   // ref-latched hold through the arrived_* pauses, never on terminal
@@ -848,15 +849,23 @@ export default function TrackingScreen() {
   }, [id]);
 
   const confirmSOS = useCallback(async () => {
-    if (!id) return;
+    // Re-entrancy guard: without an in-flight flag, the modal stays open with
+    // the "Trigger SOS" button enabled until the request resolves, so an
+    // anxious user can tap it repeatedly and fire concurrent triggerSOS calls
+    // with zero feedback. Mirrors the runner-side handleConfirmSOS.
+    if (!id || sosSubmitting) return;
+    setSosSubmitting(true);
     try {
       await bookingService.triggerSOS(id);
       setSosActive(true);
       setShowSOSModal(false);
+      toast.success('Emergency contacts notified');
     } catch {
       toast.error('Failed to trigger SOS');
+    } finally {
+      setSosSubmitting(false);
     }
-  }, [id]);
+  }, [id, sosSubmitting]);
 
   const handleCall = useCallback(() => {
     const phone = booking?.runner?.phone ?? null;
@@ -2376,6 +2385,7 @@ export default function TrackingScreen() {
         confirmLabel="Trigger SOS"
         cancelLabel="Cancel"
         destructive
+        loading={sosSubmitting}
         onConfirm={confirmSOS}
         onCancel={() => setShowSOSModal(false)}
       />
