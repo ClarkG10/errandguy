@@ -32,7 +32,7 @@ import { PricingService } from './pricing.service';
 import { bookingResource, BOOKING_FULL_INCLUDE } from './booking.resource';
 import { CreateBookingDto, EstimateDto, CancelBookingDto, RetryMatchDto } from './dto/booking.dto';
 
-const LIST_INCLUDE = { errandType: true, runner: { include: { runnerProfile: true } }, review: { include: { reviewer: true } } } as const;
+const LIST_INCLUDE = { errandType: true, runner: { include: { runnerProfile: true } }, reviews: { include: { reviewer: true } } } as const;
 
 @Controller('bookings')
 @UseGuards(SanctumAuthGuard, ActiveGuard, RolesGuard)

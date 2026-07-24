@@ -112,7 +112,7 @@ export class RunnerEarningsController {
       }),
     ]);
 
-    const data = rows.map(({ reviews, ...b }) => bookingResource({ ...b, review: reviews[0] ?? null }, user.id));
+    const data = rows.map((b) => bookingResource(b, user.id));
     return paginate(data, total, page, perPage, this.path('errands/history'));
   }
 

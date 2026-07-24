@@ -46,6 +46,11 @@ export type BookingWithRelations = Booking & {
   customer?: User | null;
   statusLogs?: BookingStatusLog[];
   payment?: Payment | null;
+  // Reviews are bidirectional (customer→runner AND runner→customer), so a
+  // booking can hold up to two rows keyed by reviewerId. `reviews` is the
+  // Prisma relation name; `review` is an optional legacy single-row shim some
+  // callers still pass, resolved to the customer's review when absent.
+  reviews?: (Review & { reviewer?: User | null })[] | null;
   review?: (Review & { reviewer?: User | null }) | null;
 };
 
@@ -145,15 +150,26 @@ export function bookingResource(
       paid_at: iso(b.payment.paidAt),
     };
   }
-  if (b.review) {
-    out.review = {
-      id: b.review.id,
-      rating: b.review.rating,
-      comment: b.review.comment,
-      ...(b.review.reviewer ? { reviewer: userResource(b.review.reviewer, currentUserId) } : {}),
-      created_at: iso(b.review.createdAt),
-    };
-  }
+  // Resolve reviews by role from the loaded list (falling back to the legacy
+  // single `review` shim), so `review` is deterministic — the customer's
+  // rating of the runner — instead of an arbitrary row when both parties rated.
+  const reviewList: (Review & { reviewer?: User | null })[] =
+    b.reviews ?? (b.review ? [b.review] : []);
+  const serializeReview = (r: Review & { reviewer?: User | null }) => ({
+    id: r.id,
+    rating: r.rating,
+    comment: r.comment,
+    ...(r.reviewer ? { reviewer: userResource(r.reviewer, currentUserId) } : {}),
+    created_at: iso(r.createdAt),
+  });
+  const customerReview = reviewList.find((r) => r.reviewerId === b.customerId) ?? null;
+  const runnerReview = b.runnerId
+    ? reviewList.find((r) => r.reviewerId === b.runnerId) ?? null
+    : null;
+  if (customerReview) out.review = serializeReview(customerReview);
+  if (customerReview) out.customer_review = serializeReview(customerReview);
+  if (runnerReview) out.runner_review = serializeReview(runnerReview);
+  if (b.reviews) out.reviews = reviewList.map(serializeReview);
   return out;
 }
 
@@ -164,5 +180,5 @@ export const BOOKING_FULL_INCLUDE = {
   customer: true,
   statusLogs: { orderBy: { createdAt: 'asc' } },
   payment: true,
-  review: { include: { reviewer: true } },
+  reviews: { include: { reviewer: true } },
 } as const;
