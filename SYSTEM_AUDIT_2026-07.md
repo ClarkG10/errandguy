@@ -650,6 +650,16 @@ failing an already-completed/failed payout returned a **500** instead of a clean
 failed payout re-credits the wallet in full with an audit row; a failed payout can't be failed
 again). Suite **314/320** (same 6 pre-existing stale failures). Zero regressions.
 
+### Phase 17 — implemented (H24): cancellation-fee math + fee-aware refund coverage
+
+The cancellation-fee tiers and the fee-aware partial refund were untested (H24). Added coverage
+(no code change — the policy verified correct): a unit test locking every `CancellationPolicy` tier
+(free pre-match / ₱20 flat when accepted-or-heading / 50%-of-total once arrived+ / terminal =
+not-cancellable / 2dp rounding), and a feature test proving that cancelling an *accepted* paid
+booking withholds the ₱20 flat fee and refunds the remainder (`payment_status` → refunded,
+`cancellation_fee` recorded). Suite **320/326** (same 6 pre-existing stale failures). Zero
+regressions.
+
 ### H6 (private KYC storage) — assessed, deliberately deferred with a plan
 
 Not shipped this pass because it cannot be done safely blind: the fix requires (1) an **infra
