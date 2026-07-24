@@ -4,6 +4,7 @@ import * as Device from 'expo-device';
 import { Platform } from 'react-native';
 import { router } from 'expo-router';
 import { userService } from '../services/user.service';
+import { useAuthStore } from '../stores/authStore';
 
 Notifications.setNotificationHandler({
   handleNotification: async () => ({
@@ -59,24 +60,40 @@ export function useNotifications(enabled = true) {
     }
   }, []);
 
+  // Tap-handling is registered UNCONDITIONALLY on mount — independent of
+  // `enabled` (which only gates the permission prompt + token upload). A
+  // killed-state launch tap is delivered before auth/profile hydrate, so the
+  // listener must already be live AND we must read the buffered launch
+  // response (the live listener never replays it). Deduped by response id so
+  // the cold-start read and a possible live re-delivery don't double-route.
+  const handledResponseId = useRef<string | null>(null);
+  const routeTap = useCallback((response: Notifications.NotificationResponse) => {
+    const id = response?.notification?.request?.identifier ?? null;
+    if (id && handledResponseId.current === id) return;
+    handledResponseId.current = id;
+    handleNotificationTapped(response);
+  }, []);
+
   useEffect(() => {
-    if (!enabled) return;
-
-    registerForPush().then((token) => {
-      if (token) {
-        userService.updateFCMToken(token).catch(() => {});
-      }
-    });
-
     notificationListener.current =
       Notifications.addNotificationReceivedListener(() => {
         // Foreground notification — handled by setNotificationHandler above
       });
 
     responseListener.current =
-      Notifications.addNotificationResponseReceivedListener(
-        handleNotificationTapped,
-      );
+      Notifications.addNotificationResponseReceivedListener(routeTap);
+
+    // Killed-state launch tap: the OS emitted the response during startup
+    // before this listener existed, so read the buffered one and route it.
+    try {
+      const last = Notifications.getLastNotificationResponse();
+      if (last) {
+        routeTap(last);
+        Notifications.clearLastNotificationResponse();
+      }
+    } catch {
+      // getLastNotificationResponse is unavailable on web — safe to ignore.
+    }
 
     return () => {
       if (notificationListener.current) {
@@ -86,6 +103,17 @@ export function useNotifications(enabled = true) {
         responseListener.current.remove();
       }
     };
+  }, [routeTap]);
+
+  // Permission prompt + token upload stay gated on `enabled` so we don't ask
+  // for notification permission mid-OTP (before a contact is verified).
+  useEffect(() => {
+    if (!enabled) return;
+    registerForPush().then((token) => {
+      if (token) {
+        userService.updateFCMToken(token).catch(() => {});
+      }
+    });
   }, [enabled, registerForPush]);
 
   return {
@@ -104,21 +132,37 @@ function handleNotificationTapped(
     return;
   }
 
+  // The same notification `type` is sent to BOTH parties (e.g. booking_update
+  // is a customer status ping AND the runner's job-offer / completion push),
+  // so route by the recipient's role — otherwise a runner tapping a push lands
+  // on a customer-only screen (e.g. the job offer opened the customer tracking
+  // screen instead of the runner errand screen). Mirrors the in-app list
+  // handlers in (runner)/notifications.tsx and (customer)/notifications.tsx.
+  const isRunner = useAuthStore.getState().role === 'runner';
+
   switch (data.type) {
     case 'booking_update':
       if (data.booking_id) {
-        router.push(`/(customer)/tracking/${data.booking_id}` as never);
+        router.push(
+          (isRunner
+            ? `/(runner)/errand/${data.booking_id}`
+            : `/(customer)/tracking/${data.booking_id}`) as never,
+        );
       }
       break;
     case 'incoming_request':
       router.push('/(runner)/(tabs)/home' as never);
       break;
     case 'payment':
-      router.push('/(customer)/wallet/' as never);
+      router.push((isRunner ? '/(runner)/(tabs)/earnings' : '/(customer)/wallet/') as never);
       break;
     case 'chat':
       if (data.booking_id) {
-        router.push(`/(customer)/chat/${data.booking_id}` as never);
+        router.push(
+          (isRunner
+            ? `/(runner)/chat/${data.booking_id}`
+            : `/(customer)/chat/${data.booking_id}`) as never,
+        );
       }
       break;
     case 'sos':
