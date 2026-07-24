@@ -769,6 +769,35 @@ register does not error on nullable `role`; the invalid-transition message gaine
 type." Fixed the code once, corrected the three assertions. **Full suite now 350 passed, 0 failed**
 (first fully-green run of the audit); Nest `tsc` clean.
 
+### Phase 22 — implemented (discovery sweep 5: authz/IDOR, money precision, Nest parity, mobile store-state)
+
+Fifth adversarially-verified sweep (12 agents, 8 candidates → 6 confirmed / 2 misdiagnosed). Two
+misdiagnosed & correctly rejected: a claimed accept()-clobber IDOR (UUID ids + participant policy
+already gate it) and a post-checkout race (polling is foreground-gated, can't fire under the sheet).
+5 distinct bugs shipped (the Nest settlement bug was found independently by two lenses).
+
+**PRODUCTION (Laravel + mobile):**
+- **Laravel: negotiate `customer_offer: 0` was a free booking** (commit 0efb9d6). The min_negotiate_fee
+  guard used PHP truthiness (`&& $this->input('customer_offer')`), so an offer of exactly 0 skipped the
+  floor check; base rules accept 0 → priced to total 0 / payout 0. Guarded on `!== null`. +1 test.
+- **Mobile: a rehydrated `'preparing'` attempt locked out all payments** (commit 854fc49). loadFromStorage
+  kept the pre-create `preparing` status; it holds no server ref (can't poll, safety-net only rescues
+  `verifying`) yet is "active", so after a force-quit mid-create it held the one-payment lock forever,
+  silently blocking every booking AND top-up. Dropped on rehydrate (no charge occurs before
+  awaiting_gateway). +2 tests.
+
+**NEST PORT (latent, shared-DB drift = #1 audit risk):**
+- **handleCompletion ignored settlement** (commit f5270f4) — credited full payout regardless of
+  paid/cash/unsettled, no cash commission, and raw-wrote the payment to completed (bypassing the audit
+  funnel, laundering failed/expired→completed). Now mirrors Laravel exactly: paid→earning, cash→negative
+  commission of service_fee, unsettled→nothing; payment advanced only when collected via transitionPayment.
+- **payment.failed webhook** left booking.payment_status stranded at 'pending' (passed null) → now 'failed'.
+- **runner decline re-match** re-offered to the decliner (no exclude path) → threaded excludeUserId through
+  enqueueMatch→matchRunner→findRunner→getEligibleRunners; decline now excludes the decliner (commit 2b4bc6f).
+
+Laravel **351/351**; Nest tsc+build clean, jest 10/10; mobile tsc clean, jest 145/146 (the 1 red is a
+pre-existing authStore.loadFromStorage test, unrelated — confirmed by stash). Zero regressions. 22 phases.
+
 ### H6 (private KYC storage) — assessed, deliberately deferred with a plan
 
 Not shipped this pass because it cannot be done safely blind: the fix requires (1) an **infra
