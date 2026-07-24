@@ -60,6 +60,16 @@ export const secureStorage = {
   peek(key: string): string | null | undefined {
     return memCache.get(key);
   },
+
+  /**
+   * Drop the in-memory cache so the next `get` re-reads the backing store.
+   * The cache is a pure read-through perf layer (repopulated on the next
+   * get), so this is always safe. Primarily used to isolate tests, which
+   * share this module singleton across cases.
+   */
+  clearCache(): void {
+    memCache.clear();
+  },
 };
 
 export const storage = {

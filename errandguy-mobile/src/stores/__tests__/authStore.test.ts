@@ -1,5 +1,6 @@
 import { act } from '@testing-library/react-native';
 import { useAuthStore } from '../authStore';
+import { secureStorage } from '../../utils/storage';
 import { makeUser } from '../../__mocks__/factories';
 
 // Get mocked SecureStore
@@ -15,6 +16,11 @@ beforeEach(() => {
     role: null,
   });
   jest.clearAllMocks();
+  // secureStorage keeps a module-level read-through cache that survives
+  // between cases (the module is a singleton per test file). Without this,
+  // an earlier setToken/logout leaves 'auth_token' cached, short-circuiting
+  // the mocked getItemAsync in loadFromStorage.
+  secureStorage.clearCache();
 });
 
 describe('authStore', () => {
