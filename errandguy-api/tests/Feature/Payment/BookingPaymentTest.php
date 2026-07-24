@@ -166,6 +166,35 @@ class BookingPaymentTest extends TestCase
         ]);
     }
 
+    public function test_cancelling_an_accepted_paid_booking_withholds_the_flat_fee(): void
+    {
+        Bus::fake();
+        $this->customer->update(['wallet_balance' => 5000]);
+
+        $this->actingAs($this->customer)
+            ->postJson('/api/v1/bookings', [...$this->base, 'payment_method' => 'wallet'])
+            ->assertCreated();
+        $booking = Booking::firstOrFail();
+
+        // A runner has accepted → cancelling now withholds the ₱20 flat
+        // convenience fee (CancellationPolicy 'flat' tier); the rest is refunded.
+        $booking->update(['status' => 'accepted']);
+
+        $this->actingAs($this->customer)
+            ->postJson("/api/v1/bookings/{$booking->id}/cancel", ['reason' => 'Changed my mind'])
+            ->assertOk();
+
+        $booking->refresh();
+        $this->assertEquals('refunded', $booking->payment_status);
+        $this->assertEquals(20.0, (float) $booking->cancellation_fee);
+        // Paid the full fare, refunded (fare − ₱20) → net −₱20 from the 5000 start,
+        // regardless of the exact fare.
+        $this->assertEquals(4980.0, (float) $this->customer->fresh()->wallet_balance);
+        $this->assertDatabaseHas('wallet_transactions', [
+            'user_id' => $this->customer->id, 'type' => 'refund',
+        ]);
+    }
+
     public function test_invoice_paid_webhook_marks_booking_paid(): void
     {
         Bus::fake();
