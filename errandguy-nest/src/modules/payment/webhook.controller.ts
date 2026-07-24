@@ -165,9 +165,12 @@ export class XenditWebhookController {
   private async handlePaymentFailed(data: Record<string, any>): Promise<void> {
     const prId = data.payment_request_id;
     if (!prId) return;
+    // Reconcile the booking too (like the succeeded/expired siblings and the
+    // Laravel handler) — passing null left booking.payment_status stranded at
+    // 'pending' while the payment row moved to 'failed'.
     const changed = await this.advanceByTx(prId, PaymentStatus.Failed, 'payment.failed', {
       gatewayResponse: data as Prisma.InputJsonValue,
-    }, null);
+    }, 'failed');
     if (changed) await this.notifyPaymentByTx(prId, 'failed');
   }
 

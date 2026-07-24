@@ -48,7 +48,11 @@ export class BookingService implements OnModuleInit {
 
   onModuleInit(): void {
     this.queue.registerHandler('match-runner', async (payload) =>
-      this.matchRunner(payload.bookingId as string, (payload.radiusOverrideKm as number | null) ?? null),
+      this.matchRunner(
+        payload.bookingId as string,
+        (payload.radiusOverrideKm as number | null) ?? null,
+        (payload.excludeUserId as string | null) ?? null,
+      ),
     );
     this.queue.registerHandler('broadcast-runners', async (payload) =>
       this.broadcastToRunners(payload.bookingId as string),
@@ -391,19 +395,32 @@ export class BookingService implements OnModuleInit {
   }
 
   // ── job logic (also registered as queue handlers) ──
-  async enqueueMatch(bookingId: string, delayMs: number, radiusOverrideKm?: number): Promise<void> {
-    await this.queue.enqueue('match-runner', { bookingId, radiusOverrideKm: radiusOverrideKm ?? null }, delayMs);
+  async enqueueMatch(
+    bookingId: string,
+    delayMs: number,
+    radiusOverrideKm?: number,
+    excludeUserId?: string | null,
+  ): Promise<void> {
+    await this.queue.enqueue(
+      'match-runner',
+      { bookingId, radiusOverrideKm: radiusOverrideKm ?? null, excludeUserId: excludeUserId ?? null },
+      delayMs,
+    );
   }
   async enqueueBroadcast(bookingId: string, delayMs: number): Promise<void> {
     await this.queue.enqueue('broadcast-runners', { bookingId }, delayMs);
   }
 
   /** MatchRunnerJob logic. */
-  async matchRunner(bookingId: string, radiusOverrideKm?: number | null): Promise<void> {
+  async matchRunner(
+    bookingId: string,
+    radiusOverrideKm?: number | null,
+    excludeUserId?: string | null,
+  ): Promise<void> {
     const current = await this.prisma.booking.findUnique({ where: { id: bookingId } });
     if (!current || current.status !== 'pending') return;
 
-    const runner = await this.matching.findRunner(bookingId, radiusOverrideKm);
+    const runner = await this.matching.findRunner(bookingId, radiusOverrideKm, excludeUserId);
 
     const result = await this.prisma.$transaction(async (tx) => {
       const rows = await tx.$queryRaw<Booking[]>(Prisma.sql`SELECT * FROM bookings WHERE id = ${bookingId}::uuid FOR UPDATE LIMIT 1`);

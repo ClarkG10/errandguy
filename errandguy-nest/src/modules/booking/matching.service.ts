@@ -24,7 +24,11 @@ export class MatchingService {
     private readonly config: SystemConfigService,
   ) {}
 
-  async findRunner(bookingId: string, radiusOverrideKm?: number | null): Promise<EligibleRunner | null> {
+  async findRunner(
+    bookingId: string,
+    radiusOverrideKm?: number | null,
+    excludeUserId?: string | null,
+  ): Promise<EligibleRunner | null> {
     const booking = await this.prisma.booking.findUnique({ where: { id: bookingId } });
     if (!booking) throw new NotFoundException({ message: 'Not found.' });
 
@@ -34,6 +38,7 @@ export class MatchingService {
       Number(booking.pickupLng),
       radiusKm,
       booking.errandTypeId,
+      excludeUserId,
     );
     if (!runners.length) {
       this.logger.log(`No runners found for booking ${bookingId} (radius: ${radiusKm}km)`);
@@ -66,6 +71,7 @@ export class MatchingService {
     lng: number,
     radiusKm: number,
     errandTypeId: string,
+    excludeUserId?: string | null,
   ): Promise<EligibleRunner[]> {
     const latDelta = (radiusKm * 1.25) / 111.0;
     const cos = Math.max(0.000001, Math.cos((lat * Math.PI) / 180));
@@ -101,6 +107,8 @@ export class MatchingService {
 
     const eligible: EligibleRunner[] = [];
     for (const runner of candidates) {
+      // Skip the just-declined runner so a decline isn't a no-op re-offer.
+      if (excludeUserId && runner.userId === excludeUserId) continue;
       if (busy.has(runner.userId)) continue;
       const distance = haversine(lat, lng, Number(runner.currentLat), Number(runner.currentLng));
       if (distance > radiusKm) continue;
