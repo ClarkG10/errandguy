@@ -257,6 +257,13 @@ export default function SearchScreen() {
     [debouncedQ, persistRecent, router],
   );
 
+  // Stable handler for RecentErrandItem (its onPress takes the booking) so the
+  // row's React.memo isn't defeated by an inline closure.
+  const openBooking = useCallback(
+    (b: Booking) => openResult(`/(customer)/tracking/${b.id}`),
+    [openResult],
+  );
+
   const runRecent = useCallback((term: string) => {
     Haptics.selectionAsync().catch(() => {});
     setQuery(term);
@@ -388,7 +395,7 @@ export default function SearchScreen() {
             <View className="px-5">
               <RecentErrandItem
                 booking={item.booking}
-                onPress={() => openResult(`/(customer)/tracking/${item.booking.id}`)}
+                onPress={openBooking}
               />
             </View>
           );
@@ -534,7 +541,7 @@ export default function SearchScreen() {
           return null;
       }
     },
-    [openResult, expandCategory, debouncedQ],
+    [openResult, expandCategory, debouncedQ, openBooking],
   );
 
   return (

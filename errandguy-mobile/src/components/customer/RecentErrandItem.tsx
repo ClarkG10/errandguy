@@ -11,7 +11,10 @@ import type { Booking } from '../../types';
 
 interface RecentErrandItemProps {
   booking: Booking;
-  onPress: () => void;
+  // Receives the row's booking so callers can pass a STABLE handler (e.g. a
+  // useCallback) — an inline `() => onPress(item)` at the call site would
+  // allocate a fresh function per row and defeat this component's React.memo.
+  onPress: (booking: Booking) => void;
 }
 
 /**
@@ -34,7 +37,7 @@ export const RecentErrandItem = memo(function RecentErrandItem({
 
   return (
     <Card
-      onPress={onPress}
+      onPress={() => onPress(booking)}
       padding="sm"
       className="mb-2.5"
       accessibilityLabel={`${

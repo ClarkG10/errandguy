@@ -58,6 +58,10 @@ export default function ActivityScreen() {
   const chatUnread = useChatStore((s) => s.unreadCount);
   const [filter, setFilter] = useState<FilterKey>('all');
   const [selectedBooking, setSelectedBooking] = useState<Booking | null>(null);
+  // Stable handler so RecentErrandItem's React.memo actually skips rows — an
+  // inline `() => setSelectedBooking(item)` re-rendered every visible row on
+  // any state change (refreshing, loadingMore, filter…).
+  const handleSelectBooking = useCallback((b: Booking) => setSelectedBooking(b), []);
   // Lightweight client-side search over the loaded bookings — matches
   // errand type name or booking number. No server roundtrip.
   const [search, setSearch] = useState('');
@@ -308,7 +312,7 @@ export default function ActivityScreen() {
           <View className="px-5">
             <RecentErrandItem
               booking={item}
-              onPress={() => setSelectedBooking(item)}
+              onPress={handleSelectBooking}
             />
           </View>
         )}
