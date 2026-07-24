@@ -195,6 +195,33 @@ class BookingPaymentTest extends TestCase
         ]);
     }
 
+    public function test_cancelling_while_runner_is_heading_to_pickup_is_allowed_with_the_flat_fee(): void
+    {
+        Bus::fake();
+        $this->customer->update(['wallet_balance' => 5000]);
+
+        $this->actingAs($this->customer)
+            ->postJson('/api/v1/bookings', [...$this->base, 'payment_method' => 'wallet'])
+            ->assertCreated();
+        $booking = Booking::firstOrFail();
+
+        // The runner is en route ('heading_to_pickup'). The mobile Cancel button
+        // and CancellationPolicy both treat this as cancellable (flat ₱20), so
+        // the endpoint must authorize it (not 403) — regression guard for the
+        // BookingPolicy::cancel window that previously stopped at 'accepted'.
+        $booking->update(['status' => 'heading_to_pickup']);
+
+        $this->actingAs($this->customer)
+            ->postJson("/api/v1/bookings/{$booking->id}/cancel", ['reason' => 'Changed my mind'])
+            ->assertOk();
+
+        $booking->refresh();
+        $this->assertEquals('cancelled', $booking->status);
+        $this->assertEquals('refunded', $booking->payment_status);
+        $this->assertEquals(20.0, (float) $booking->cancellation_fee);
+        $this->assertEquals(4980.0, (float) $this->customer->fresh()->wallet_balance);
+    }
+
     public function test_invoice_paid_webhook_marks_booking_paid(): void
     {
         Bus::fake();

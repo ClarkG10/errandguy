@@ -15,8 +15,13 @@ class BookingPolicy
 
     public function cancel(User $user, Booking $booking): bool
     {
+        // Must match CancellationPolicy's cancellable window (and the mobile
+        // Cancel button's CAN_CANCEL_STATUSES): a customer can still cancel
+        // once the runner is 'heading_to_pickup' (flat ₱20 fee). Omitting it
+        // here 403'd the Cancel button while the runner was en route — a state
+        // reached on every accepted booking.
         return $user->id === $booking->customer_id
-            && in_array($booking->status, ['pending', 'matched', 'accepted']);
+            && in_array($booking->status, ['pending', 'matched', 'accepted', 'heading_to_pickup']);
     }
 
     public function review(User $user, Booking $booking): bool

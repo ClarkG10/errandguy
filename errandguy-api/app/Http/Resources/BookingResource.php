@@ -151,7 +151,7 @@ class BookingResource extends JsonResource
                 $reviews !== null,
                 fn () => ReviewResource::collection($reviews),
             ),
-            'can_cancel' => in_array($this->status, ['pending', 'matched', 'accepted']),
+            'can_cancel' => in_array($this->status, ['pending', 'matched', 'accepted', 'heading_to_pickup']),
             'is_trackable' => in_array($this->status, ['accepted', 'heading_to_pickup', 'arrived_at_pickup', 'picked_up', 'in_transit', 'arrived_at_dropoff', 'delivered']),
             'created_at' => $this->created_at,
             'updated_at' => $this->updated_at,
