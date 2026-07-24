@@ -115,8 +115,11 @@ class CreateBookingRequest extends FormRequest
         $validator->after(function ($validator) {
             $errandType = ErrandType::find($this->input('errand_type_id'));
 
-            // Validate customer_offer against min_negotiate_fee
-            if ($this->input('pricing_mode') === 'negotiate' && $this->input('customer_offer')) {
+            // Validate customer_offer against min_negotiate_fee. Guard on
+            // `!== null` (presence) NOT truthiness — an offer of exactly 0 is
+            // falsy in PHP, so a truthy guard skipped the floor check entirely
+            // and let a `customer_offer: 0` negotiate booking through for free.
+            if ($this->input('pricing_mode') === 'negotiate' && $this->input('customer_offer') !== null) {
                 if ($errandType && $this->input('customer_offer') < (float) $errandType->min_negotiate_fee) {
                     $validator->errors()->add(
                         'customer_offer',

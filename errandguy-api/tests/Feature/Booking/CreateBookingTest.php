@@ -230,6 +230,30 @@ class CreateBookingTest extends TestCase
         ]);
     }
 
+    public function test_negotiate_offer_of_zero_is_rejected_by_the_min_fee_floor(): void
+    {
+        Bus::fake();
+
+        // customer_offer: 0 is falsy in PHP — the floor guard used to skip it,
+        // letting a free (total 0 / payout 0) negotiate booking through. It
+        // must now be rejected exactly like any other sub-min offer.
+        $data = array_merge($this->validBookingData, [
+            'pricing_mode' => 'negotiate',
+            'vehicle_type_rate' => null,
+            'customer_offer' => 0,
+        ]);
+
+        $this->actingAs($this->customer)
+            ->postJson('/api/v1/bookings', $data)
+            ->assertStatus(422)
+            ->assertJsonValidationErrors(['customer_offer']);
+
+        $this->assertDatabaseMissing('bookings', [
+            'customer_id' => $this->customer->id,
+            'pricing_mode' => 'negotiate',
+        ]);
+    }
+
     public function test_negotiate_booking_is_charged_the_customer_offer(): void
     {
         Bus::fake();
