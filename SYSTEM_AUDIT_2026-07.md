@@ -660,6 +660,32 @@ booking withholds the ₱20 flat fee and refunds the remainder (`payment_status`
 `cancellation_fee` recorded). Suite **320/326** (same 6 pre-existing stale failures). Zero
 regressions.
 
+### Phase 18 — implemented (discovery sweep 2: fresh lenses)
+
+A second sweep (data-integrity, webhook/integration, mobile perf/leaks, test-coverage), each finding
+adversarially verified. Shipped 5 confirmed; the verifier correctly rejected a misdiagnosed
+"PostgREST insert omits uuid" (Supabase generates it), a risky-defer keystroke re-render, and my
+own concurrently-shipped H24 (flagged already-fixed).
+
+**Laravel (commit 4e6d487):**
+- **`payment.failed` webhook now reconciles the booking** — it transitioned the Payment to Failed
+  but left `booking.payment_status` stranded (abandoned saved-method auth → payment=failed but
+  booking=pending forever). Now writes `'failed'` in the same locked txn, mirroring the siblings.
+- **Top-up settlement tripwire** — `WalletService::completeTopUp` logs a `CRITICAL` on a
+  gateway-vs-recorded amount mismatch (parity with the booking charge; log-only, still credits).
+- **`bookings.promo_code_id` FK** — additive, Postgres-guarded, guard-if-clean, `ON DELETE SET NULL`.
+- **Promo coverage (was zero)** — `PromoServiceTest` (discount math + all rejection paths) and a
+  feature test proving a promo reduces the *charged* total, debits the wallet by the discounted
+  amount, increments `used_count` once, and enforces `per_user_limit`.
+
+**Mobile (commit 8f92d42):**
+- **Activity/Search row memo defeated** — `RecentErrandItem` is `React.memo`'d but got a fresh inline
+  `onPress` per row, so every visible row re-rendered on any list state change. Changed the prop to
+  `onPress(booking)` and pass stable `useCallback` handlers.
+
+Laravel suite **332/338** (same 6 pre-existing stale failures); mobile `tsc` clean + jest 143/144.
+Zero regressions.
+
 ### H6 (private KYC storage) — assessed, deliberately deferred with a plan
 
 Not shipped this pass because it cannot be done safely blind: the fix requires (1) an **infra
