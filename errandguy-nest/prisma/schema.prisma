@@ -157,8 +157,14 @@ model RunnerProfile {
   documents RunnerDocument[]
 
   @@index([userId], map: "idx_runner_profiles_user_id")
-  @@index([isOnline, verificationStatus], map: "idx_runner_profiles_online_status")
-  @@index([currentLat], map: "idx_runner_profiles_current_lat")
+  // Covering composite for the runner-matching geo scan (is_online +
+  // verification_status + current_lat range). Mirrors the Laravel migration
+  // 2026_07_24_000002_swap_runner_profiles_geo_composite_index (audit P21) —
+  // it subsumes the old (is_online, verification_status) index as a prefix and
+  // replaces the dead standalone current_lat index (lat is never filtered
+  // without lng). The Laravel migration is the source of truth for this shared
+  // table; keep these @@index lines in lockstep with it.
+  @@index([isOnline, verificationStatus, currentLat], map: "idx_runner_profiles_online_status_lat")
   @@map("runner_profiles")
 }
 

@@ -119,8 +119,22 @@ export class CacheService {
     );
   }
 
+  /**
+   * Bust cached reference data after an admin catalog / system-config edit.
+   * Keys MUST match what the writers actually store under:
+   *   - errand-types are cached under `errand_types:active`
+   *     (CatalogController.errandTypes SWR) — the previous bare `errand_types`
+   *     key was never written, so this method never actually busted the catalog.
+   *   - the aggregated config map is cached under `app_config`.
+   * Per-key `system_config:${key}` entries are already forgotten inline by
+   * SystemConfigService.setValue, so they are not swept here (the previous bare
+   * `system_config` key was likewise dead).
+   * NOTE: if per-id errand-type caching is added (see audit finding P20), also
+   * forget `errand_type:${id}` here, and wire this into the (not-yet-ported)
+   * admin errand-type/fee mutation path.
+   */
   forgetConfig(): void {
-    ['errand_types', 'system_config', 'app_config'].forEach((k) => this.forget(k));
+    ['errand_types:active', 'app_config'].forEach((k) => this.forget(k));
   }
 
   static userProfileKey(userId: string): string {

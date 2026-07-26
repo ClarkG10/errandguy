@@ -384,8 +384,16 @@ export class RunnerService {
     const newTotalErrands = profile.totalErrands + 1;
     const newTotalEarnings = new Prisma.Decimal(profile.totalEarnings).plus(earnedForStats);
 
-    const completedCount = await tx.booking.count({ where: { runnerId: user.id, status: 'completed' } });
-    const totalAssigned = await tx.booking.count({ where: { runnerId: user.id, status: { in: ['completed', 'cancelled'] } } });
+    // Completion rate from ONE grouped aggregate instead of two sequential
+    // booking.count() round-trips issued while holding the FOR UPDATE lock on
+    // the runner's user row above (one fewer in-lock round-trip per completion).
+    const statusCounts = await tx.booking.groupBy({
+      by: ['status'],
+      where: { runnerId: user.id, status: { in: ['completed', 'cancelled'] } },
+      _count: { _all: true },
+    });
+    const completedCount = statusCounts.find((s) => s.status === 'completed')?._count._all ?? 0;
+    const totalAssigned = statusCounts.reduce((sum, s) => sum + s._count._all, 0);
     const completionRate = totalAssigned > 0 ? Math.round((completedCount / totalAssigned) * 100 * 100) / 100 : 100.0;
 
     await tx.runnerProfile.update({

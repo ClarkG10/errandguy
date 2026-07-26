@@ -92,12 +92,29 @@ export class PromoService {
       where: { isActive: true, validFrom: { lte: now }, validUntil: { gte: now } },
       orderBy: { validFrom: 'desc' },
     });
+    if (candidates.length === 0) return [];
+
+    // Per-user redemption counts for ALL candidate promos in ONE grouped
+    // aggregate instead of a `booking.count()` per promo (previously N+1: one
+    // sequential round-trip per active promo on this public browse endpoint).
+    // NOTE: intentionally NO status filter here — listRedeemable counts ALL of
+    // the user's bookings for a promo (incl. cancelled), matching the prior
+    // per-promo count. Do NOT copy validate()'s `notIn: ['cancelled']`.
+    const grouped = await this.prisma.booking.groupBy({
+      by: ['promoCodeId'],
+      where: { customerId: userId, promoCodeId: { in: candidates.map((p) => p.id) } },
+      _count: { _all: true },
+    });
+    const usedByPromo = new Map<string, number>(
+      grouped.map((g) => [g.promoCodeId as string, g._count._all]),
+    );
+
     const out: PromoCode[] = [];
     for (const p of candidates) {
       if (p.usageLimit !== null && p.usedCount >= p.usageLimit) continue;
-      const used = await this.prisma.booking.count({
-        where: { promoCodeId: p.id, customerId: userId },
-      });
+      const used = usedByPromo.get(p.id) ?? 0;
+      // Preserve the existing `null > n === false` behaviour for a null
+      // perUserLimit (such promos are not surfaced by the browse endpoint).
       if (p.perUserLimit > used) out.push(p);
     }
     return out;
