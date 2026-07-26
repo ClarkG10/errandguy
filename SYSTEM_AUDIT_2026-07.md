@@ -837,6 +837,35 @@ audit. Only the 9 files that were purely sweep-6 fixes were committed; useIncomi
 useRealtimeNotifications had my `enabled:` one-liners entangled with that parallel work and were left
 unstaged. 23 phases. origin/main HEAD=200f0ed.
 
+### Phase 24 — implemented (the deferred duplicate-notification fix → uncovered a double listener registration)
+
+Picked up the Phase-23 deferred item (customer gets two in-app rows / unread +2 per accept + status).
+Investigating it surfaced a deeper, broader root cause than the finding described.
+
+**Root cause 1 — double listener registration (the big one).** Laravel 13 auto-discovers every listener
+in app/Listeners by the event type-hint on its public methods, and AppServiceProvider ALSO registered
+them explicitly via Event::listen — so `SendBookingStatusNotification` (plus the created / cancelled /
+referral / safety listeners) was registered TWICE and fired twice. Proven via `getRawListeners()`:
+`SendBookingStatusNotification` + `SendBookingStatusNotification@handle` both present. This double-sent
+EVERY booking notification (created/status/cancelled) + double pushes, not just accept. Fix: removed
+ALL explicit Event::listen calls (discovery is the single source of truth — it even finds the
+non-`handle` `handleDurationAlert`/`handleRouteDeviation` safety methods, so those explicit lines were
+redundant too). Verified each event now has exactly one registration per listener.
+
+**Root cause 2 — redundant direct create.** RunnerErrandController::accept + updateStatus did a
+`Notification::create` AND fired BookingStatusChanged (whose listener also creates the row + push).
+Removed both direct creates; added customer templates for heading_to_pickup / in_transit /
+arrived_at_dropoff / delivered so no status loses its notification (they had no template and relied on
+the direct create).
+
+Also **deleted `SendBookingNotification`** — superseded legacy (push-only via the single fcm_token
+column, no in-app row), unreferenced, made live as a duplicate push purely by auto-discovery.
+
+Tests: switched the notification assertions to `Event::fakeExcept([BookingStatusChanged])` so the
+listener path is exercised, + an exact-count guard (one booking_update row per accept). Laravel
+**352/352**. Commit b139730. NOTE: parallel work still landing in the tree (runner errand poll-interval
+tuning + RunnerActiveMap) — left untouched. Nest not affected (no Laravel-style event discovery). 24 phases.
+
 ### H6 (private KYC storage) — assessed, deliberately deferred with a plan
 
 Not shipped this pass because it cannot be done safely blind: the fix requires (1) an **infra
