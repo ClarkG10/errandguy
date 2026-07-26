@@ -222,7 +222,9 @@ class StatusUpdateTest extends TestCase
 
     public function test_status_update_notifies_customer(): void
     {
-        Event::fake();
+        // Let BookingStatusChanged fire so its listener creates the customer
+        // notification (heading_to_pickup now has a template); fake the rest.
+        Event::fakeExcept([\App\Events\BookingStatusChanged::class]);
 
         $this->actingAs($this->runner)
             ->postJson("/api/v1/runner/errand/{$this->booking->id}/status", [
@@ -269,7 +271,9 @@ class StatusUpdateTest extends TestCase
         // Guards the double-encode fix: the mobile app reads notification.data
         // as an object (no JSON.parse), so a re-introduced json_encode() would
         // silently break deep-link routing.
-        Event::fake();
+        // Let BookingStatusChanged fire so its listener creates the row (the
+        // status notification now comes from the listener, not a direct create).
+        Event::fakeExcept([\App\Events\BookingStatusChanged::class]);
 
         $this->actingAs($this->runner)
             ->postJson("/api/v1/runner/errand/{$this->booking->id}/status", [

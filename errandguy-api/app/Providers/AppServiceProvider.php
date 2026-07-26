@@ -2,18 +2,7 @@
 
 namespace App\Providers;
 
-use App\Events\BookingCancelled;
-use App\Events\BookingCreated;
-use App\Events\BookingStatusChanged;
-use App\Events\RideDurationAlert;
-use App\Events\RouteDeviationAlert;
-use App\Listeners\RewardReferralOnFirstBooking;
-use App\Listeners\SendBookingCancelledNotification;
-use App\Listeners\SendBookingCreatedNotification;
-use App\Listeners\SendBookingStatusNotification;
-use App\Listeners\SendSafetyAlertNotification;
 use Illuminate\Http\Request;
-use Illuminate\Support\Facades\Event;
 use Illuminate\Support\ServiceProvider;
 
 class AppServiceProvider extends ServiceProvider
@@ -25,12 +14,13 @@ class AppServiceProvider extends ServiceProvider
 
     public function boot(): void
     {
-        Event::listen(BookingCreated::class, SendBookingCreatedNotification::class);
-        Event::listen(BookingStatusChanged::class, SendBookingStatusNotification::class);
-        Event::listen(BookingStatusChanged::class, RewardReferralOnFirstBooking::class);
-        Event::listen(BookingCancelled::class, SendBookingCancelledNotification::class);
-        Event::listen(RideDurationAlert::class, [SendSafetyAlertNotification::class, 'handleDurationAlert']);
-        Event::listen(RouteDeviationAlert::class, [SendSafetyAlertNotification::class, 'handleRouteDeviation']);
+        // NOTE: no Event::listen() calls here on purpose. Laravel 13
+        // auto-discovers every listener in app/Listeners by the event type-hint
+        // on its public methods (including non-`handle` names like
+        // SendSafetyAlertNotification::handleDurationAlert). Registering the
+        // same listeners explicitly here registered them a SECOND time, so every
+        // booking-notification and safety-alert listener fired TWICE (duplicate
+        // in-app rows + double pushes). Discovery is the single source of truth.
 
         // Clamped page size for list endpoints. A client could otherwise pass
         // per_page=1000000 and force an unbounded query / huge payload. Use

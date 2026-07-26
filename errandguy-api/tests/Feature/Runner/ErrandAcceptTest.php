@@ -147,7 +147,9 @@ class ErrandAcceptTest extends TestCase
 
     public function test_acceptance_creates_status_log_and_notification(): void
     {
-        Event::fake();
+        // Let BookingStatusChanged fire (the customer notification now comes
+        // from its listener, not a direct create); fake everything else.
+        Event::fakeExcept([\App\Events\BookingStatusChanged::class]);
 
         $this->actingAs($this->runner)
             ->postJson("/api/v1/runner/errand/{$this->booking->id}/accept");
@@ -162,6 +164,17 @@ class ErrandAcceptTest extends TestCase
             'user_id' => $this->customer->id,
             'type' => 'booking_update',
         ]);
+
+        // Exactly ONE booking_update notification for the customer. This
+        // regression-guards BOTH duplicate sources fixed together: the direct
+        // Notification::create in the controller AND the double-registered
+        // listener (event discovery + explicit Event::listen).
+        $this->assertSame(
+            1,
+            \App\Models\Notification::where('user_id', $this->customer->id)
+                ->where('type', 'booking_update')
+                ->count(),
+        );
     }
 
     public function test_runner_can_decline_booking(): void

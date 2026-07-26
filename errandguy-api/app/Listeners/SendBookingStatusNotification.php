@@ -63,6 +63,34 @@ class SendBookingStatusNotification implements ShouldQueue
                 'body' => 'Your runner is heading to the pickup location.',
             ],
         ],
+        // The four flow statuses below previously had NO listener template and
+        // relied on a direct Notification::create in RunnerErrandController
+        // (removed to stop the duplicate in-app row). Templated here so each
+        // still notifies the customer — now via the single listener path.
+        'heading_to_pickup' => [
+            'customer' => [
+                'title' => 'On the Way',
+                'body' => 'Your runner is on the way to the pickup location.',
+            ],
+        ],
+        'in_transit' => [
+            'customer' => [
+                'title' => 'In Transit',
+                'body' => 'Your errand #{number} is on the way to the destination.',
+            ],
+        ],
+        'arrived_at_dropoff' => [
+            'customer' => [
+                'title' => 'Arrived at Drop-off',
+                'body' => 'Your runner has arrived at the drop-off location.',
+            ],
+        ],
+        'delivered' => [
+            'customer' => [
+                'title' => 'Delivered',
+                'body' => 'Your errand #{number} has been delivered.',
+            ],
+        ],
         'arrived_at_pickup' => [
             'customer' => [
                 'title' => 'Runner Arrived',

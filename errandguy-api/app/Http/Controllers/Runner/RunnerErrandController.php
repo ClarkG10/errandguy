@@ -191,15 +191,11 @@ class RunnerErrandController extends Controller
         // the stale (likely null) value held by RunnerLocationController.
         Cache::forget("runner_active_booking_id:{$user->id}");
 
-        // Notify customer
-        Notification::create([
-            'user_id' => $booking->customer_id,
-            'title' => 'Runner Assigned!',
-            'body' => "{$user->full_name} accepted your errand.",
-            'type' => 'booking_update',
-            'data' => ['booking_id' => $booking->id],
-        ]);
-
+        // The customer notification (in-app row + push) is created solely by
+        // the BookingStatusChanged listener (SendBookingStatusNotification's
+        // 'accepted' template) — the single source of truth, exactly like
+        // matched/created/cancelled. A direct Notification::create here wrote a
+        // duplicate in-app row (unread +2) the moment the queued listener ran.
         event(new BookingStatusChanged($booking, $oldStatus, 'accepted'));
 
         $booking->load([
@@ -435,15 +431,10 @@ class RunnerErrandController extends Controller
                 'lng' => $validated['lng'] ?? null,
             ]);
 
-            // Notify customer
-            $statusLabel = str_replace('_', ' ', ucfirst($newStatus));
-            Notification::create([
-                'user_id' => $booking->customer_id,
-                'title' => 'Errand Update',
-                'body' => "Your errand is now: {$statusLabel}",
-                'type' => 'booking_update',
-                'data' => ['booking_id' => $booking->id],
-            ]);
+            // The customer status notification (in-app row + push) is created
+            // solely by the BookingStatusChanged listener dispatched below —
+            // a direct Notification::create here duplicated that row (unread +2)
+            // for every status the listener also templates.
 
             // Handle completion
             if ($newStatus === 'completed') {
