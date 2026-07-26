@@ -5,7 +5,10 @@ import { notificationService } from '../services/notification.service';
 import type { AppNotification } from '../types';
 
 export function useRealtimeNotifications(userId: string | null) {
-  const { addNotification, setUnreadCount } = useNotificationStore();
+  // Per-field selectors — this hook is mounted app-wide; a whole-store
+  // useNotificationStore() would re-run it on every notification add/read.
+  const addNotification = useNotificationStore((s) => s.addNotification);
+  const setUnreadCount = useNotificationStore((s) => s.setUnreadCount);
 
   const fetchUnreadCount = useCallback(async () => {
     try {
@@ -18,6 +21,7 @@ export function useRealtimeNotifications(userId: string | null) {
 
   const { isConnected } = useSupabaseRealtime({
     channel: `notifications:${userId}`,
+    enabled: !!userId,
     table: 'notifications',
     event: 'INSERT',
     filter: userId ? `user_id=eq.${userId}` : undefined,

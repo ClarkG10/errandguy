@@ -17,6 +17,7 @@ import { RunnerEmptyState } from '../../../components/ui/RunnerEmptyState';
 import { Illustration } from '../../../components/ui/Illustration';
 import { ErrorState } from '../../../components/ui/ErrorState';
 import { runnerService } from '../../../services/runner.service';
+import { prefetchRunnerErrand } from '../../../services/preload.service';
 import { useQuery } from '../../../hooks/useQuery';
 import { CacheTTL } from '../../../services/cache.service';
 import { useAuthStore } from '../../../stores/authStore';
@@ -141,6 +142,9 @@ export default function HistoryScreen() {
           className="mx-5 mb-3"
           onPress={() => {
             Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
+            // History rows navigate cold otherwise — warm the detail cache on
+            // tap so the errand screen paints from cache, not a skeleton (P24).
+            prefetchRunnerErrand(item.id);
             router.push(`/(runner)/errand/${item.id}` as any);
           }}
           accessibilityLabel={`${item.errand_type?.name ?? 'Errand'}, ${isCompleted ? 'Completed' : 'Cancelled'}, ${dateStr}, ${formatCurrency(item.runner_payout ?? item.total_amount)}`}

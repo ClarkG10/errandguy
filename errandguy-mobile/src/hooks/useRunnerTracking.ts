@@ -4,7 +4,11 @@ import { useLocationStore } from '../stores/locationStore';
 import type { RunnerLocation } from '../types';
 
 export function useRunnerTracking(bookingId: string | null) {
-  const { runnerLocation, setRunnerLocation } = useLocationStore();
+  // Per-field selectors: this hook feeds the heavy customer TrackingScreen, so a
+  // whole-store useLocationStore() would re-render it on ANY location-store write
+  // (e.g. the customer's own GPS slice), not just runner-pin updates.
+  const runnerLocation = useLocationStore((s) => s.runnerLocation);
+  const setRunnerLocation = useLocationStore((s) => s.setRunnerLocation);
   const [isConnected, setIsConnected] = useState(false);
 
   useEffect(() => {

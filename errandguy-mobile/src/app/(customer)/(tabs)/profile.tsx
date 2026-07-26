@@ -38,6 +38,7 @@ import { EditProfileModal } from '../../../components/customer/EditProfileModal'
 import { useAuthStore } from '../../../stores/authStore';
 import { useAuth } from '../../../hooks/useAuth';
 import { userService } from '../../../services/user.service';
+import { prefetchPromos, prefetchReferral } from '../../../services/preload.service';
 import { formatCurrency } from '../../../utils/formatCurrency';
 import { LightColors } from '../../../constants/colors';
 import { TAB_CONTENT_BOTTOM_INSET } from '../../../constants/tabLayout';
@@ -81,7 +82,15 @@ export default function CustomerProfileScreen() {
   useFocusEffect(
     useCallback(() => {
       refreshUser();
-    }, [refreshUser]),
+      // Warm the one-tap-away Promos & Referral screens so they paint instantly
+      // when opened from here (both are deliberately excluded from the
+      // first-wave auth warm-up). Best-effort. (P32)
+      const uid = user?.id;
+      if (uid) {
+        prefetchPromos(uid);
+        prefetchReferral(uid);
+      }
+    }, [refreshUser, user?.id]),
   );
 
   const onRefresh = useCallback(async () => {

@@ -52,6 +52,13 @@ export interface UseQueryResult<T> {
    *  per-screen bookkeeping. */
   updatedAt: number | null;
   refresh: () => Promise<void>;
+  /** Revalidate THIS query only — refetch through the fetcher without dropping
+   *  the app-wide GET micro-cache. Use for background pollers: unlike
+   *  `refresh()` (which calls `apiCache.clearResponses()` and is reserved for
+   *  user-initiated pull-to-refresh), this leaves other screens' fresh cache
+   *  entries intact. Only meaningful at cadences ≥ the GET micro-cache TTL
+   *  (~8s); below that the fetcher's own `api.get` may resolve from cache. */
+  revalidate: () => Promise<void>;
   mutate: (updater: T | ((prev: T | null) => T)) => Promise<void>;
 }
 
@@ -259,7 +266,7 @@ export function useQuery<T>(
     [cacheKey, data, ttl],
   );
 
-  return { data, loading, error, isStale, updatedAt, refresh, mutate };
+  return { data, loading, error, isStale, updatedAt, refresh, revalidate, mutate };
 }
 
 /**

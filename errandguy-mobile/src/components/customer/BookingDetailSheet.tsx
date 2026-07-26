@@ -14,6 +14,7 @@ import { Button } from '../ui/Button';
 import { Eyebrow } from '../ui/Typography';
 import { PriceBreakdown } from '../ui/PriceBreakdown';
 import { bookingService } from '../../services/booking.service';
+import { warmTracking } from '../../services/preload.service';
 import { toast } from '../../stores/toastStore';
 import { formatCurrency } from '../../utils/formatCurrency';
 import { formatFullDate, formatTime } from '../../utils/formatDate';
@@ -82,6 +83,10 @@ export function BookingDetailSheet({
   };
 
   const handleTrack = () => {
+    // Seed the store + warm getBooking on the SAME tap so TrackingScreen paints
+    // from cache instead of a skeleton (the sheet holds the full booking, which
+    // list/notification entries otherwise never seed into the store). (P2)
+    warmTracking(booking);
     onClose();
     router.push(`/(customer)/tracking/${booking.id}`);
   };

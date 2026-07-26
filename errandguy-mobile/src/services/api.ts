@@ -111,6 +111,14 @@ const cacheKey = (config: AxiosRequestConfig): string => {
 
 const invalidateRelated = (url?: string) => {
   if (!url) return;
+  // POST /runner/location is append-only GPS telemetry (throttled ~1/5s while
+  // the runner is moving) — it is NOT a resource mutation. Running the generic
+  // prefix invalidation on it means its parent prefix `/runner` matches — and
+  // wipes — every cached runner-dashboard GET a few times a minute, defeating
+  // the micro-cache for the whole runner surface. Exempt it explicitly; the
+  // parent-prefix fallback below is kept intact for real mutations (e.g.
+  // POST /bookings/{id}/cancel must still invalidate the /bookings list cache).
+  if (url.includes('/runner/location')) return;
   // Drop any cache entry whose URL starts with the same resource prefix
   // (e.g., POST /bookings/{id}/cancel invalidates GET /bookings/{id} and /bookings).
   const root = url.split('?')[0].split('/').slice(0, 3).join('/'); // /bookings/{id}

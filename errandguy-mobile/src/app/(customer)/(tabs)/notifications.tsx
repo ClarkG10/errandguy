@@ -34,6 +34,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { useNotificationStore } from '../../../stores/notificationStore';
 import { useAuthStore } from '../../../stores/authStore';
 import { notificationService } from '../../../services/notification.service';
+import { warmTracking, prefetchPromos } from '../../../services/preload.service';
 import { useQuery } from '../../../hooks/useQuery';
 import { useReducedMotion } from '../../../hooks/useReducedMotion';
 import { CacheTTL } from '../../../services/cache.service';
@@ -610,6 +611,10 @@ export default function NotificationsScreen() {
       switch (notification.type) {
         case 'booking_update':
           if (data.booking_id) {
+            // Warm the tracking fetch before navigating (only the id is known
+            // here, so no store seed) so the screen's mount GET coalesces
+            // instead of landing cold from a push tap. (P2)
+            warmTracking(data.booking_id as string);
             router.push(
               `/(customer)/tracking/${data.booking_id as string}`,
             );
@@ -626,13 +631,16 @@ export default function NotificationsScreen() {
           }
           break;
         case 'promo':
+          // The Profile-focus prefetch doesn't cover a promo deep-link (it
+          // never mounts Profile), so warm the promos list on the tap too. (P32)
+          if (userId) prefetchPromos(userId);
           router.push('/(customer)/promos');
           break;
         default:
           break;
       }
     },
-    [router, markRead, closeOpenRow],
+    [router, markRead, closeOpenRow, userId],
   );
 
   const renderNotification = useCallback(

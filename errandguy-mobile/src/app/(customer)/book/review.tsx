@@ -15,6 +15,7 @@ import dayjs from 'dayjs';
 import { GradientHeader } from '../../../components/ui/GradientHeader';
 import { useBookingStore } from '../../../stores/bookingStore';
 import { bookingService } from '../../../services/booking.service';
+import { routeService } from '../../../services/route.service';
 import { Button } from '../../../components/ui/Button';
 import { BottomActionBar } from '../../../components/ui/BottomActionBar';
 import { PriceBreakdown } from '../../../components/ui/PriceBreakdown';
@@ -430,6 +431,24 @@ export default function ReviewScreen() {
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(
         () => {},
       );
+      // Warm the pickup→dropoff route geometry now, fire-and-forget, so the
+      // tracking screen's pre-dispatch polyline paints on its first frame —
+      // especially on the rebook path, which lands here via review without
+      // passing through the details map where this cache otherwise gets filled.
+      // Writes the same `route4:driving:{coords}` key getRoute/tracking read, so
+      // there are zero net HERE calls in steady state. Read the draft coords
+      // BEFORE clearDraft() wipes them. Guard null dropoff (single-location). (P31)
+      if (
+        draftBooking.pickup_lat != null &&
+        draftBooking.pickup_lng != null &&
+        draftBooking.dropoff_lat != null &&
+        draftBooking.dropoff_lng != null
+      ) {
+        void routeService.getRoute(
+          { lat: draftBooking.pickup_lat, lng: draftBooking.pickup_lng },
+          { lat: draftBooking.dropoff_lat, lng: draftBooking.dropoff_lng },
+        );
+      }
       setActiveBooking(booking);
       clearDraft();
       if (checkoutUrl) {

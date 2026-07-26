@@ -3,6 +3,7 @@ import {
   View,
   Text,
   SectionList,
+  type SectionListData,
   Pressable,
   ScrollView,
   InteractionManager,
@@ -387,6 +388,33 @@ export default function SearchScreen() {
     (addrLoading && !addrData) ||
     (txLoading && !txData);
 
+  // Memoized so the SectionList's section headers keep cell-level bail-out on
+  // every keystroke re-render (renderRow was already hoisted; this matches it).
+  // Body reads only its argument + module constants, so deps are empty.
+  const renderSectionHeader = useCallback(
+    ({ section }: { section: SectionListData<ResultRow, ResultSection> }) => {
+      const s = section as unknown as ResultSection;
+      return (
+        <View
+          className="flex-row items-center justify-between px-5 pt-3 pb-2 bg-background"
+          // Merge title + count into one header announcement so the
+          // count isn't read as a detached bare number.
+          accessible
+          accessibilityRole="header"
+          accessibilityLabel={
+            s.count != null ? `${s.title}, ${s.count} results` : s.title
+          }
+        >
+          <Eyebrow color={LightColors.textTertiary}>{s.title}</Eyebrow>
+          {s.count != null && (
+            <Text className="text-[10px] font-montserrat text-textTertiary">{s.count}</Text>
+          )}
+        </View>
+      );
+    },
+    [],
+  );
+
   const renderRow = useCallback(
     ({ item }: { item: ResultRow }) => {
       switch (item.type) {
@@ -675,26 +703,7 @@ export default function SearchScreen() {
           sections={sections}
           keyExtractor={(item) => item.key}
           renderItem={renderRow}
-          renderSectionHeader={({ section }) => {
-            const s = section as unknown as ResultSection;
-            return (
-              <View
-                className="flex-row items-center justify-between px-5 pt-3 pb-2 bg-background"
-                // Merge title + count into one header announcement so the
-                // count isn't read as a detached bare number.
-                accessible
-                accessibilityRole="header"
-                accessibilityLabel={
-                  s.count != null ? `${s.title}, ${s.count} results` : s.title
-                }
-              >
-                <Eyebrow color={LightColors.textTertiary}>{s.title}</Eyebrow>
-                {s.count != null && (
-                  <Text className="text-[10px] font-montserrat text-textTertiary">{s.count}</Text>
-                )}
-              </View>
-            );
-          }}
+          renderSectionHeader={renderSectionHeader}
           stickySectionHeadersEnabled={false}
           keyboardShouldPersistTaps="handled"
           keyboardDismissMode="on-drag"

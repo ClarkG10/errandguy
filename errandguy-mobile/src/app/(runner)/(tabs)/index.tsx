@@ -57,7 +57,7 @@ import { storage } from '../../../utils/storage';
 import { RunnerHomeSkeleton } from '../../../components/ui/Skeleton';
 import { useQuery } from '../../../hooks/useQuery';
 import { CacheTTL } from '../../../services/cache.service';
-import { prefetchQuery } from '../../../services/preload.service';
+import { prefetchRunnerErrand } from '../../../services/preload.service';
 import { useIncomingRequest } from '../../../hooks/useIncomingRequest';
 import { useSmartPolling } from '../../../hooks/useSmartPolling';
 import { useReducedMotion } from '../../../hooks/useReducedMotion';
@@ -91,6 +91,20 @@ const pesos = (v: number) => `₱${Math.round(v).toLocaleString('en-PH')}`;
  *   • Negotiate offers — only when online + offers present.
  *   • Recent — at most 3 hairline rows with a "See all" inline link.
  */
+/**
+ * Shape of GET /runner/earnings `data` (RunnerEarningsController::summary).
+ * The Earnings tab and preload.service both cache this OBJECT under
+ * ['runner','earnings',<period>,userId]; the home hero previously cached a bare
+ * NUMBER under the same key, so whichever mounted first wrote a shape the other
+ * misread (₱0.00 hero on first paint after login). Unify on the object here.
+ * Mirrors EarningsData in earnings.tsx.
+ */
+interface EarningsSummary {
+  total_earnings: number;
+  total_errands: number;
+  avg_per_errand: number;
+}
+
 export default function RunnerHomeScreen() {
   const router = useRouter();
   const user = useAuthStore((s) => s.user);
@@ -163,14 +177,17 @@ export default function RunnerHomeScreen() {
     async () => (await runnerService.getRunnerProfile()).data.data,
     { staleTime: 60_000, ttl: CacheTTL.LONG, enabled },
   );
-  const earningsTodayQ = useQuery<number>(
+  // Cache the full summary OBJECT (not a bare number) under this key so the
+  // Earnings tab / preload seeds and this hero agree on the value shape — the
+  // number is derived at read time below. See EarningsSummary above (P8).
+  const earningsTodayQ = useQuery<EarningsSummary>(
     ['runner', 'earnings', 'today', userId],
-    async () => (await runnerService.getEarnings('today')).data.data?.total_earnings ?? 0,
+    async () => (await runnerService.getEarnings('today')).data.data,
     { staleTime: 60_000, ttl: CacheTTL.MEDIUM, enabled },
   );
-  const earningsWeekQ = useQuery<number>(
+  const earningsWeekQ = useQuery<EarningsSummary>(
     ['runner', 'earnings', 'week', userId],
-    async () => (await runnerService.getEarnings('week')).data.data?.total_earnings ?? 0,
+    async () => (await runnerService.getEarnings('week')).data.data,
     { staleTime: 60_000, ttl: CacheTTL.MEDIUM, enabled },
   );
   const historyQ = useQuery<Booking[]>(
@@ -198,7 +215,12 @@ export default function RunnerHomeScreen() {
   // 30 s pull is the safety net.
   // Smart poll: only while online + foreground + connected; pauses offline
   // and ticks immediately on reconnect/foreground.
-  useSmartPolling(() => currentErrandQ.refresh(), {
+  // Revalidate ONLY this query — not `refresh()`, which calls
+  // apiCache.clearResponses() and would wipe the whole app's GET micro-cache
+  // every 30s while a runner sits on Home (dropping other screens' fresh
+  // entries for zero benefit — this query's own 8s entry is already expired at
+  // 30s cadence). See P27.
+  useSmartPolling(() => currentErrandQ.revalidate(), {
     interval: 30_000,
     enabled: enabled && isOnline,
     runOnMount: false,
@@ -224,7 +246,7 @@ export default function RunnerHomeScreen() {
   }, [profileQ.data, setRunnerProfile]);
   useEffect(() => {
     if (earningsTodayQ.data != null) {
-      setEarnings({ ...earnings, today: earningsTodayQ.data });
+      setEarnings({ ...earnings, today: earningsTodayQ.data.total_earnings ?? 0 });
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [earningsTodayQ.data]);
@@ -469,7 +491,7 @@ export default function RunnerHomeScreen() {
   }
 
   const todayEarnings = earnings.today ?? 0;
-  const weekEarnings = earningsWeekQ.data ?? 0;
+  const weekEarnings = earningsWeekQ.data?.total_earnings ?? 0;
   const canGoOnline = verificationStatus === 'approved';
 
   // Distinguish "failed with nothing cached" from a healthy ₱0.00 —
@@ -987,11 +1009,7 @@ export default function RunnerHomeScreen() {
                 onPress={() => {
                   // Warm the errand detail before navigating so the screen
                   // paints from cache instead of a skeleton.
-                  prefetchQuery(
-                    ['runner', 'errand', 'byId', offer.id],
-                    async () => (await runnerService.getErrand(offer.id)).data?.data ?? null,
-                    CacheTTL.SHORT,
-                  );
+                  prefetchRunnerErrand(offer.id);
                   router.push(`/(runner)/errand/${offer.id}` as any);
                 }}
               />
@@ -1071,7 +1089,12 @@ export default function RunnerHomeScreen() {
                     ? { borderBottomWidth: 1, borderBottomColor: LightColors.divider }
                     : undefined
                 }
-                onPress={() => router.push(`/(runner)/errand/${errand.id}` as any)}
+                onPress={() => {
+                  // Recent-errand rows navigate cold otherwise — warm the
+                  // detail cache on tap so it paints from cache, not a skeleton (P24).
+                  prefetchRunnerErrand(errand.id);
+                  router.push(`/(runner)/errand/${errand.id}` as any);
+                }}
                 accessibilityRole="button"
                 accessibilityLabel={`${errand.errand_type?.name ?? 'Errand'}, ${formatCurrency(errand.runner_payout ?? errand.total_amount)}`}
               >

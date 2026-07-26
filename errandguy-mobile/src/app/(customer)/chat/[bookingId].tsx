@@ -15,7 +15,7 @@ import {
   type NativeScrollEvent,
   type NativeSyntheticEvent,
 } from 'react-native';
-import { Image, type ImageLoadEventData } from 'expo-image';
+import { ChatImage } from '../../../components/chat/ChatImage';
 import { useLocalSearchParams } from 'expo-router';
 import { Send, Camera, Phone, Check, CheckCheck, Clock, AlertCircle, RotateCw, ArrowDown } from 'lucide-react-native';
 import * as Haptics from 'expo-haptics';
@@ -291,9 +291,8 @@ export default function ChatScreen() {
   const [firstUnreadId, setFirstUnreadId] = useState<string | null>(null);
   const firstUnreadResolvedRef = useRef(false);
   const flatListRef = useRef<FlatList<Row>>(null);
-  // Intrinsic aspect ratio per image message id (from expo-image onLoad)
-  // so photos keep their real shape instead of a forced 1:1 crop.
-  const [imageAspects, setImageAspects] = useState<Record<string, number>>({});
+  // (image aspect ratios now live inside <ChatImage>'s own local state, so a
+  //  photo resolving no longer re-renders the whole visible message window — P12)
   // Live-edge tracking: whether the viewport is within NEAR_BOTTOM_PT of
   // the newest message. Drives receipt honesty (don't mark read what the
   // user hasn't seen) and the floating "New message" chip.
@@ -465,14 +464,6 @@ export default function ChatScreen() {
     if (unreadCount > 0) markAsRead().catch(() => {});
   }, [reducedMotion, unreadCount, markAsRead]);
 
-  // Cache each photo's intrinsic aspect once; the bubble reserves a
-  // 220×220 box until it's known, then settles to the real shape.
-  const handleImageLoad = useCallback((id: string, e: ImageLoadEventData) => {
-    const { width: w, height: h } = e.source ?? {};
-    if (!w || !h) return;
-    setImageAspects((prev) => (prev[id] ? prev : { ...prev, [id]: w / h }));
-  }, []);
-
   const handleSend = useCallback(
     async (content?: string, imageUrl?: string) => {
       if (!bookingId) return;
@@ -609,13 +600,6 @@ export default function ChatScreen() {
       const imageOnly = !!m.image_url && !m.content;
 
       if (imageOnly) {
-        // Real aspect once known (from onLoad), square placeholder until
-        // then. Height clamped to 4:3…4:5 so panoramas / tall shots
-        // can't blow up the list.
-        const aspect = imageAspects[m.id];
-        const imageHeight = aspect
-          ? Math.round(Math.min(275, Math.max(165, 220 / aspect)))
-          : 220;
         return (
           <View className={`px-4 ${marginClasses} ${isMe ? 'items-end' : 'items-start'}`}>
             <Pressable
@@ -627,18 +611,12 @@ export default function ChatScreen() {
                 pressed && { opacity: 0.85 },
               ]}
             >
-              <Image
-                source={{ uri: resolveImageUrl(m.image_url)! }}
-                style={{
-                  width: 220,
-                  height: imageHeight,
-                  borderRadius: 16,
-                  backgroundColor: LightColors.divider,
-                }}
-                contentFit="cover"
-                transition={150}
-                cachePolicy="memory-disk"
-                onLoad={(e) => handleImageLoad(m.id, e)}
+              <ChatImage
+                uri={resolveImageUrl(m.image_url)!}
+                width={220}
+                borderRadius={16}
+                minHeight={165}
+                maxHeight={275}
               />
             </Pressable>
             {showMeta ? (
@@ -647,14 +625,6 @@ export default function ChatScreen() {
           </View>
         );
       }
-
-      // Captioned images (photo + text) keep their intrinsic shape too —
-      // the 192-wide box settles to the real aspect once known instead of
-      // a forced square crop (clamped 140…240 so extremes stay contained).
-      const captionedAspect = m.image_url ? imageAspects[m.id] : undefined;
-      const captionedImageHeight = captionedAspect
-        ? Math.round(Math.min(240, Math.max(140, 192 / captionedAspect)))
-        : 192;
 
       return (
         <View className={`px-4 ${marginClasses} ${isMe ? 'items-end' : 'items-start'}`}>
@@ -680,19 +650,13 @@ export default function ChatScreen() {
                 accessibilityLabel="View image full screen"
                 style={({ pressed }) => (pressed ? { opacity: 0.85 } : undefined)}
               >
-                <Image
-                  source={{ uri: resolveImageUrl(m.image_url)! }}
-                  style={{
-                    width: 192,
-                    height: captionedImageHeight,
-                    borderRadius: 12,
-                    marginBottom: 6,
-                    backgroundColor: LightColors.divider,
-                  }}
-                  contentFit="cover"
-                  transition={150}
-                  cachePolicy="memory-disk"
-                  onLoad={(e) => handleImageLoad(m.id, e)}
+                <ChatImage
+                  uri={resolveImageUrl(m.image_url)!}
+                  width={192}
+                  borderRadius={12}
+                  minHeight={140}
+                  maxHeight={240}
+                  marginBottom={6}
                 />
               </Pressable>
             )}
@@ -712,7 +676,7 @@ export default function ChatScreen() {
         </View>
       );
     },
-    [user?.id, handleRetry, imageAspects, handleImageLoad, width],
+    [user?.id, handleRetry, width],
   );
 
   return (

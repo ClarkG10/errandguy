@@ -28,6 +28,7 @@ import { useAuthStore } from '../../../stores/authStore';
 import { useBookingStore } from '../../../stores/bookingStore';
 import { useNotificationStore } from '../../../stores/notificationStore';
 import { bookingService } from '../../../services/booking.service';
+import { warmTracking } from '../../../services/preload.service';
 import { configService } from '../../../services/config.service';
 import { useQuery } from '../../../hooks/useQuery';
 import { CacheTTL } from '../../../services/cache.service';
@@ -512,9 +513,13 @@ export default function CustomerHomeScreen() {
           <View className="mx-5 mt-3">
             <ActiveBookingCard
               booking={activeBooking}
-              onPress={() =>
-                router.push(`/(customer)/tracking/${activeBooking.id}`)
-              }
+              onPress={() => {
+                // Warm the tracking fetch on the same tap so the screen's mount
+                // GET coalesces (activeBooking is already the store value, so
+                // the paint is instant regardless). (P2)
+                warmTracking(activeBooking);
+                router.push(`/(customer)/tracking/${activeBooking.id}`);
+              }}
             />
           </View>
         )}

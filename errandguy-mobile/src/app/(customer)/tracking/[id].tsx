@@ -74,6 +74,7 @@ import { getErrandTypeRule } from '../../../constants/errandTypeRules';
 import type { Booking, BookingStatus, BookingStatusLog } from '../../../types';
 import { toast } from '../../../stores/toastStore';
 import { routeService } from '../../../services/route.service';
+import { prefetchChatMessages } from '../../../services/preload.service';
 
 
 const CAN_CANCEL_STATUSES: BookingStatus[] = [
@@ -344,9 +345,12 @@ export default function TrackingScreen() {
   // for unrelated fields. Declared before the fetch effect that seeds it.
   const lastSyncedStatusRef = useRef<BookingStatus | null>(null);
 
-  // Live runner location via Supabase Realtime
+  // Live runner location via Supabase Realtime. Tear the channel down once the
+  // trip is terminal — a completed/cancelled booking still carries a runner_id,
+  // so without the !isTerminalUi guard the receipt would hold an idle websocket
+  // open for its whole dwell time. (P13)
   const { runnerLocation, isConnected } = useRunnerTracking(
-    booking?.runner_id ? (id ?? null) : null,
+    booking?.runner_id && !isTerminalUi ? (id ?? null) : null,
   );
 
   // Looping pulse driver shared between the on-map runner marker and
@@ -444,6 +448,17 @@ export default function TrackingScreen() {
     fetchBooking();
   }, [fetchBooking]);
 
+  // Warm the tracked errand's chat thread once a runner is assigned — this is
+  // by far the most likely conversation the user opens from here, so opening it
+  // shows history immediately instead of ChatThreadSkeleton. Replaces the old
+  // blanket cold-start top-4 warm; guarded on runner_id (no runner ⇒ no chat).
+  // prefetchChatMessages self-guards against clobbering an open thread. (P25)
+  useEffect(() => {
+    if (id && booking?.runner_id) {
+      void prefetchChatMessages(id);
+    }
+  }, [id, booking?.runner_id]);
+
   useEffect(() => {
     if (!id) return;
     // Only show the skeleton if we don't already have a cached snapshot.
@@ -476,7 +491,7 @@ export default function TrackingScreen() {
   const trackPollMs = realtimeHealthy ? 20_000 : 5_000;
   useForegroundInterval(
     () => {
-      if (!id || !booking?.runner_id) return;
+      if (!id || !booking?.runner_id || isTerminalUi) return;
       bookingService
         .trackBooking(id)
         .then((res) => {
@@ -507,7 +522,10 @@ export default function TrackingScreen() {
         .catch(() => {});
     },
     trackPollMs,
-    !!id && !!booking?.runner_id,
+    // Stop polling /track once the booking is terminal — the poll keyed only on
+    // runner presence before, and terminal bookings keep their runner_id, so a
+    // finished-trip receipt kept hitting /track every 5–20s. (P13)
+    !!id && !!booking?.runner_id && !isTerminalUi,
     true,
   );
 

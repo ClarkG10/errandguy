@@ -9,8 +9,9 @@ import { notificationService } from './notification.service';
 import { userService } from './user.service';
 import { chatService } from './chat.service';
 import { useChatStore } from '../stores/chatStore';
+import { useBookingStore } from '../stores/bookingStore';
 import { runPool } from '../utils/asyncPool';
-import type { Conversation, Message } from '../types';
+import type { Booking, Conversation, Message } from '../types';
 
 // Mirrors the AsyncStorage key used by the trusted-contacts screen
 // (which doesn't go through useQuery — see trusted-contacts/index.tsx).
@@ -92,6 +93,73 @@ const seed = async <T>(
  */
 export const prefetchQuery = seed;
 
+/**
+ * Warm the runner errand-detail cache before navigating to
+ * (runner)/errand/[id], so the screen paints from cache instead of a skeleton.
+ * Generalizes the prefetch that previously existed ONLY on NegotiateOfferCard
+ * to the genuinely-cold recent-errand rows (home) and History rows. Best-effort
+ * + silent (fire-and-forget); the destination revalidates regardless, so there
+ * is no correctness risk. Writes the exact key/shape errand/[id].tsx reads. (P24)
+ */
+export function prefetchRunnerErrand(id: string): void {
+  if (!id) return;
+  void seed(
+    ['runner', 'errand', 'byId', id],
+    async () => (await runnerService.getErrand(id)).data?.data ?? null,
+    CacheTTL.SHORT,
+  );
+}
+
+/**
+ * Warm the customer tracking screen on a tap, BEFORE navigating to
+ * tracking/[id], so it paints instantly instead of flashing TrackingSkeleton.
+ * TrackingScreen only fast-paints when the tapped booking already equals
+ * bookingStore.activeBooking; list rows, the booking-detail sheet, and
+ * notification taps don't satisfy that, so:
+ *  1. Seed bookingStore.activeBooking with the full Booking the caller holds
+ *     (when available) → instant first paint. TrackingScreen's own fetch
+ *     re-seeds on fresh data, so a slightly stale list-shaped row self-heals.
+ *  2. Fire getBooking(id) (4s micro-cache + in-flight dedupe) so the screen's
+ *     mount fetch coalesces onto this already-warm request.
+ * Pass the full Booking when you have it (sheet / list row); pass just the id
+ * for a push-notification tap (warms the fetch only). Best-effort + silent. (P2)
+ */
+export function warmTracking(bookingOrId: Booking | string): void {
+  const id = typeof bookingOrId === 'string' ? bookingOrId : bookingOrId?.id;
+  if (!id) return;
+  if (typeof bookingOrId !== 'string') {
+    useBookingStore.getState().setActiveBooking(bookingOrId);
+  }
+  void bookingService.getBooking(id).catch(() => {});
+}
+
+/**
+ * Warm the Promos and Referral screens. Both are one tap from the Profile tab,
+ * and Promos is also a promo-push deep-link target — yet neither had a warm
+ * entry, so the highest-intent entry always showed a spinner. Writes the exact
+ * useQuery keys/shapes those screens read (['promos', userId] → Promo[];
+ * ['user','referral', userId] → ReferralInfo). Deliberately kept OUT of the
+ * first-wave auth warm-up. Best-effort + silent. (P32)
+ */
+export function prefetchPromos(userId: string): void {
+  void seed(
+    ['promos', userId],
+    async () => ((await configService.getPromos()).data?.data ?? []) as unknown[],
+    CacheTTL.MEDIUM,
+  );
+}
+
+export function prefetchReferral(userId: string): void {
+  // No `?? null` fallback: if the payload is missing, seed writes `undefined`,
+  // which useQuery treats as a cache miss and fetches normally (rather than
+  // pinning an empty referral card until revalidate).
+  void seed(
+    ['user', 'referral', userId],
+    async () => (await userService.getReferral()).data?.data,
+    CacheTTL.MEDIUM,
+  );
+}
+
 export function preloadCoreImages() {
   if (!coreImagePreloadPromise) {
     coreImagePreloadPromise = Asset.loadAsync([...CORE_IMAGE_ASSETS])
@@ -102,24 +170,39 @@ export function preloadCoreImages() {
   return coreImagePreloadPromise;
 }
 
-const preloadConversationMessages = async (conversations: Conversation[]) => {
-  await Promise.all(
-    conversations.slice(0, 4).map(async (conversation) => {
-      try {
-        const bookingId = conversation.booking_id;
-        if (!bookingId) return;
-        const response = await chatService.getMessages(bookingId, { limit: 50 });
-        const messages = (response.data?.data ?? []) as Message[];
-        useChatStore.getState().setMessages(bookingId, messages);
-        await CacheService.set<Message[]>(`chat:messages:${bookingId}`, messages, CacheTTL.LONG);
-      } catch {
-        // Best-effort: opening the thread will fetch normally.
-      }
-    }),
-  );
-};
+/**
+ * Warm a SINGLE chat thread's messages into the store + persistent cache on
+ * INTENT — e.g. TrackingScreen mount for the errand being tracked (the thread
+ * the user is far and away most likely to open). Replaces the old blanket
+ * "top-4 threads on every cold start" warm, which fired up to 4 speculative
+ * requests per role for users who never opened chat AND still missed the
+ * tracked thread whenever it wasn't in the top 4.
+ *
+ * Chat messages live under CacheService('chat:messages:${id}') + chatStore —
+ * NOT a useQuery/seed key. Guarded (before AND after the await) so it never
+ * clobbers a thread the user already has open/streamed. Best-effort. (P25)
+ */
+export async function prefetchChatMessages(bookingId: string): Promise<void> {
+  if (!bookingId) return;
+  if (useChatStore.getState().messages[bookingId]?.length) return;
+  try {
+    const response = await chatService.getMessages(bookingId, { limit: 50 });
+    const messages = (response.data?.data ?? []) as Message[];
+    if (useChatStore.getState().messages[bookingId]?.length) return;
+    useChatStore.getState().setMessages(bookingId, messages);
+    await CacheService.set<Message[]>(`chat:messages:${bookingId}`, messages, CacheTTL.LONG);
+  } catch {
+    // Best-effort: opening the thread will fetch normally.
+  }
+}
 
-const preloadConversationsWithMessages = async (userId: string) => {
+/**
+ * Cold-start warm-up for the chat inbox: seed the conversations LIST only
+ * (above-the-fold on the chat tab, one cheap request). Per-thread message
+ * history is no longer fetched here — it moved to prefetchChatMessages() on
+ * intent (tracked thread on TrackingScreen mount). (P25)
+ */
+const preloadConversationsList = async (userId: string) => {
   const response = await chatService.getConversations();
   const conversations = (response.data?.data ?? []) as Conversation[];
   await CacheService.set<CachedEntry<Conversation[]>>(
@@ -127,7 +210,6 @@ const preloadConversationsWithMessages = async (userId: string) => {
     { value: conversations, fetchedAt: Date.now() },
     CacheTTL.MEDIUM,
   );
-  await preloadConversationMessages(conversations);
 };
 
 /**
@@ -239,7 +321,7 @@ export async function preloadCustomerEssentials(userId: string) {
         },
         CacheTTL.MEDIUM,
       ),
-    () => preloadConversationsWithMessages(userId),
+    () => preloadConversationsList(userId),
     () =>
       seed(
         ['bookings', 'activity', 'all', userId],
@@ -381,7 +463,7 @@ export async function preloadRunnerEssentials(userId: string) {
         },
         CacheTTL.MEDIUM,
       ),
-    () => preloadConversationsWithMessages(userId),
+    () => preloadConversationsList(userId),
   ]);
 }
 
