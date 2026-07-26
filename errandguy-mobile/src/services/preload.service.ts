@@ -10,6 +10,7 @@ import { userService } from './user.service';
 import { chatService } from './chat.service';
 import { useChatStore } from '../stores/chatStore';
 import { useBookingStore } from '../stores/bookingStore';
+import { refreshRealtimeAuth } from './realtimeAuth';
 import { runPool } from '../utils/asyncPool';
 import type { Booking, Conversation, Message } from '../types';
 
@@ -380,23 +381,21 @@ export async function preloadRunnerEssentials(userId: string) {
         CacheTTL.LONG,
       ),
     () =>
-      seed(
-        ['runner', 'earnings', 'today', userId],
-        async () => {
-          const r = await runnerService.getEarnings('today');
-          return r.data?.data ?? r.data ?? null;
-        },
-        CacheTTL.MEDIUM,
-      ),
-    () =>
-      seed(
-        ['runner', 'earnings', 'week', userId],
-        async () => {
-          const r = await runnerService.getEarnings('week');
-          return r.data?.data ?? r.data ?? null;
-        },
-        CacheTTL.MEDIUM,
-      ),
+      // One /earnings/overview request warms the today + week + month period
+      // caches (the home hero reads today/week, the Earnings tab reads all
+      // three), replacing three separate getEarnings() calls. (P9)
+      (async () => {
+        const r = await runnerService.getEarningsOverview().catch(() => null);
+        const o = (r?.data?.data ?? null) as
+          | { today?: unknown; this_week?: unknown; this_month?: unknown }
+          | null;
+        if (!o) return;
+        await Promise.all([
+          seed(['runner', 'earnings', 'today', userId], async () => o.today ?? null, CacheTTL.MEDIUM),
+          seed(['runner', 'earnings', 'week', userId], async () => o.this_week ?? null, CacheTTL.MEDIUM),
+          seed(['runner', 'earnings', 'month', userId], async () => o.this_month ?? null, CacheTTL.MEDIUM),
+        ]);
+      })(),
     () =>
       seed(
         ['runner', 'errands', 'recent', userId],
@@ -430,15 +429,8 @@ export async function preloadRunnerEssentials(userId: string) {
   // (month/history earnings, full errand history, payouts, notifications, chat
   // list). Un-awaited; runPool swallows per-task rejections internally. (P3)
   const belowFold: Array<() => Promise<unknown>> = [
-    () =>
-      seed(
-        ['runner', 'earnings', 'month', userId],
-        async () => {
-          const r = await runnerService.getEarnings('month');
-          return r.data?.data ?? r.data ?? null;
-        },
-        CacheTTL.MEDIUM,
-      ),
+    // (runner earnings today/week/month are warmed above-fold in one
+    //  /earnings/overview request — see P9)
     () =>
       seed(
         ['runner', 'earnings', 'history', 'week', userId],
@@ -495,6 +487,10 @@ export async function preloadRunnerEssentials(userId: string) {
 export async function preloadAfterAuth(role: 'customer' | 'runner' | null, userId?: string | null) {
   await preloadCoreImages();
   if (!userId) return;
+  // Authenticate the Supabase realtime client for this session (inert until the
+  // backend is configured — see realtimeAuth / audit P6). Fire-and-forget; it
+  // never throws and is a no-op while the feature is disabled.
+  void refreshRealtimeAuth();
   try {
     if (role === 'runner') {
       await preloadRunnerEssentials(userId);

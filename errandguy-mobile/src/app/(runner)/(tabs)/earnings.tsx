@@ -1,5 +1,5 @@
 import React, { useMemo, useState, useCallback } from 'react';
-import { View, Text, ScrollView, Pressable, Share } from 'react-native';
+import { View, Text, SectionList, type SectionListData, Pressable, Share } from 'react-native';
 import { useRouter } from 'expo-router';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Wallet, Download, FileText } from 'lucide-react-native';
@@ -114,6 +114,44 @@ function EarningsSkeleton() {
     </View>
   );
 }
+
+/** A day-group of completed errands for the virtualized SectionList (P11). */
+type EarningSection = { label: string; total: number; data: Booking[] };
+
+/**
+ * One per-errand row in the earnings list. Memoized so the SectionList only
+ * re-renders the rows that actually change — the list is virtualized (P11) so at
+ * most a windowful mounts at once regardless of how many errands the period has.
+ */
+const EarningsRow = React.memo(function EarningsRow({
+  errand,
+  showHairline,
+}: {
+  errand: Booking;
+  showHairline: boolean;
+}) {
+  return (
+    <View className="px-5">
+      <View className="flex-row items-center justify-between py-3">
+        <View className="flex-1 mr-2">
+          <Text className="text-[14px] font-montserrat-bold text-textPrimary" numberOfLines={1}>
+            {errand.errand_type?.name ?? 'Errand'}
+          </Text>
+          <Text className="text-[11px] font-inter tabular-nums text-textMuted mt-0.5">
+            {new Date(errand.completed_at ?? errand.created_at).toLocaleTimeString([], {
+              hour: '2-digit',
+              minute: '2-digit',
+            })}
+          </Text>
+        </View>
+        <Text className="text-[14px] font-inter-semi tabular-nums text-textPrimary">
+          {formatCurrency(errand.runner_payout ?? errand.total_amount)}
+        </Text>
+      </View>
+      {showHairline && <Hairline />}
+    </View>
+  );
+});
 
 export default function EarningsScreen() {
   const router = useRouter();
@@ -239,6 +277,45 @@ export default function EarningsScreen() {
     setPeriod(p);
   }, []);
 
+  // Virtualized per-errand list (P11): the grouped earningsByDay becomes
+  // SectionList sections so at most a windowful of rows mounts at once, instead
+  // of the previous ScrollView + nested .map() that mounted every completed
+  // errand in the period (up to 100).
+  const sections = useMemo<EarningSection[]>(
+    () => earningsByDay.map((g) => ({ label: g.label, total: g.total, data: g.errands })),
+    [earningsByDay],
+  );
+
+  const renderErrand = useCallback(
+    ({
+      item,
+      index,
+      section,
+    }: {
+      item: Booking;
+      index: number;
+      section: SectionListData<Booking, EarningSection>;
+    }) => <EarningsRow errand={item} showHairline={index < section.data.length - 1} />,
+    [],
+  );
+
+  const renderDayHeader = useCallback(
+    ({ section }: { section: SectionListData<Booking, EarningSection> }) => (
+      <View className="px-5 flex-row items-center justify-between mb-1.5 mt-4 bg-background">
+        <Text
+          className="text-[10px] font-montserrat-bold uppercase text-textSecondary"
+          style={{ letterSpacing: 1.2 }}
+        >
+          {section.label}
+        </Text>
+        <Text className="text-[11px] font-inter-semi tabular-nums text-textSecondary">
+          {formatCurrency(section.total)}
+        </Text>
+      </View>
+    ),
+    [],
+  );
+
   // Which export is in flight (disables both actions + shows a spinner).
   const [exporting, setExporting] = useState<null | 'csv' | 'pdf'>(null);
 
@@ -336,17 +413,95 @@ export default function EarningsScreen() {
     <View className="flex-1 bg-background">
       <GradientHeader title="Earnings" />
 
-      <ScrollView
-        className="flex-1"
+      <SectionList
+        sections={sections}
+        keyExtractor={(item) => item.id}
+        renderItem={renderErrand}
+        renderSectionHeader={renderDayHeader}
+        stickySectionHeadersEnabled={false}
         showsVerticalScrollIndicator={false}
         refreshControl={<BrandRefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
+        maxToRenderPerBatch={10}
+        windowSize={5}
+        removeClippedSubviews={true}
         contentContainerStyle={{
           width: '100%',
           maxWidth: contentMaxWidth,
           alignSelf: 'center',
           paddingBottom: 24,
         }}
-      >
+        ListEmptyComponent={
+          // historyFailed vs. genuinely-empty preserved from the old inline
+          // branch. (Only reached from the main render, which is gated behind
+          // the initialLoading skeleton, so this never flashes during load.) (P11)
+          <View className="px-5 mb-6">
+            {historyFailed ? (
+              <ErrorState
+                compact
+                title="Couldn't load your errands"
+                onRetry={() => historyQ.refresh()}
+                style={{ paddingVertical: 12 }}
+              />
+            ) : (
+              <RunnerEmptyState
+                illustration={<Illustration name="runner-earnings-empty" size={168} />}
+                eyebrow="This period"
+                title="No earnings yet"
+                description="Completed errands for this period will show up here."
+                actionLabel="Go online to start earning"
+                onAction={() => router.push('/(runner)/(tabs)' as any)}
+              />
+            )}
+          </View>
+        }
+        ListFooterComponent={
+          <View>
+            {/* Payout Button */}
+            <View className="px-5 mb-4 mt-4">
+              <Button
+                title="Request Payout"
+                variant="primary"
+                onPress={() => router.push('/(runner)/payout' as any)}
+                fullWidth
+              />
+            </View>
+
+            {/* Export — CSV (primary, from loaded rows) + PDF statement (server). */}
+            <View className="px-5 mb-4">
+              <Eyebrow className="mb-2">Export</Eyebrow>
+              <View className="flex-row" style={{ gap: 12 }}>
+                <View className="flex-1">
+                  <Button
+                    title="Export CSV"
+                    variant="secondary"
+                    icon={Download}
+                    onPress={handleExportCsv}
+                    loading={exporting === 'csv'}
+                    loadingTitle="Preparing CSV…"
+                    disabled={exporting === 'pdf'}
+                    fullWidth
+                    accessibilityHint="Share a CSV of this period's earnings"
+                  />
+                </View>
+                <View className="flex-1">
+                  <Button
+                    title="Download PDF"
+                    variant="ghost"
+                    icon={FileText}
+                    onPress={handleDownloadPdf}
+                    loading={exporting === 'pdf'}
+                    loadingTitle="Preparing PDF…"
+                    disabled={exporting === 'csv'}
+                    fullWidth
+                    accessibilityHint="Download and share the PDF earnings statement"
+                  />
+                </View>
+              </View>
+            </View>
+          </View>
+        }
+        ListHeaderComponent={
+          <View>
         {/* Hero Card — brand blue gradient balance card (same language
             as the wallet / runner-home hero). White numerals are the
             loudest thing on screen. When the summary fetch failed with
@@ -537,105 +692,15 @@ export default function EarningsScreen() {
           </View>
         )}
 
-        {/* Per-Errand Earnings List — hairline rows grouped by day. */}
-        <View className="px-5 mb-6">
+        {/* Per-errand section header. The rows themselves are the SectionList
+            sections (renderErrand), the empty/error state is ListEmptyComponent,
+            and Payout + Export moved to ListFooterComponent. (P11) */}
+        <View className="px-5">
           <Eyebrow className="mb-2">Per-errand</Eyebrow>
-          {historyFailed ? (
-            <ErrorState
-              compact
-              title="Couldn't load your errands"
-              onRetry={() => historyQ.refresh()}
-              style={{ paddingVertical: 12 }}
-            />
-          ) : earningsList.length === 0 ? (
-            <RunnerEmptyState
-              illustration={<Illustration name="runner-earnings-empty" size={168} />}
-              eyebrow="This period"
-              title="No earnings yet"
-              description="Completed errands for this period will show up here."
-              actionLabel="Go online to start earning"
-              onAction={() => router.push('/(runner)/(tabs)' as any)}
-            />
-          ) : (
-            earningsByDay.map((group) => (
-              <View key={group.label} className="mb-4">
-                <View className="flex-row items-center justify-between mb-1.5">
-                  <Text className="text-[10px] font-montserrat-bold uppercase text-textSecondary" style={{ letterSpacing: 1.2 }}>
-                    {group.label}
-                  </Text>
-                  <Text className="text-[11px] font-inter-semi tabular-nums text-textSecondary">
-                    {formatCurrency(group.total)}
-                  </Text>
-                </View>
-                {group.errands.map((errand, idx) => (
-                  <View key={errand.id}>
-                    <View className="flex-row items-center justify-between py-3">
-                      <View className="flex-1 mr-2">
-                        <Text className="text-[14px] font-montserrat-bold text-textPrimary" numberOfLines={1}>
-                          {errand.errand_type?.name ?? 'Errand'}
-                        </Text>
-                        <Text className="text-[11px] font-inter tabular-nums text-textMuted mt-0.5">
-                          {new Date(errand.completed_at ?? errand.created_at).toLocaleTimeString([], {
-                            hour: '2-digit',
-                            minute: '2-digit',
-                          })}
-                        </Text>
-                      </View>
-                      <Text className="text-[14px] font-inter-semi tabular-nums text-textPrimary">
-                        {formatCurrency(errand.runner_payout ?? errand.total_amount)}
-                      </Text>
-                    </View>
-                    {idx < group.errands.length - 1 && <Hairline />}
-                  </View>
-                ))}
-              </View>
-            ))
-          )}
         </View>
-
-        {/* Payout Button */}
-        <View className="px-5 mb-4">
-          <Button
-            title="Request Payout"
-            variant="primary"
-            onPress={() => router.push('/(runner)/payout' as any)}
-            fullWidth
-          />
-        </View>
-
-        {/* Export — CSV (primary, from loaded rows) + PDF statement (server). */}
-        <View className="px-5 mb-4">
-          <Eyebrow className="mb-2">Export</Eyebrow>
-          <View className="flex-row" style={{ gap: 12 }}>
-            <View className="flex-1">
-              <Button
-                title="Export CSV"
-                variant="secondary"
-                icon={Download}
-                onPress={handleExportCsv}
-                loading={exporting === 'csv'}
-                loadingTitle="Preparing CSV…"
-                disabled={exporting === 'pdf'}
-                fullWidth
-                accessibilityHint="Share a CSV of this period's earnings"
-              />
-            </View>
-            <View className="flex-1">
-              <Button
-                title="Download PDF"
-                variant="ghost"
-                icon={FileText}
-                onPress={handleDownloadPdf}
-                loading={exporting === 'pdf'}
-                loadingTitle="Preparing PDF…"
-                disabled={exporting === 'csv'}
-                fullWidth
-                accessibilityHint="Download and share the PDF earnings statement"
-              />
-            </View>
           </View>
-        </View>
-      </ScrollView>
+        }
+      />
     </View>
   );
 }

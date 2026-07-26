@@ -261,6 +261,15 @@ export const runnerService = {
     } as any);
   },
 
+  getEarningsOverview() {
+    // today + this_week + this_month in ONE request. Response shape:
+    // { data: { today, this_week, this_month } }, each a
+    // { total_earnings, total_errands, avg_per_errand } object. Used by preload
+    // to warm all three period caches in a single round-trip instead of three
+    // separate getEarnings() calls. (P9)
+    return api.get('/runner/earnings/overview', { cacheTtlMs: 15_000, silent: true } as any);
+  },
+
   getEarningsHistory(params?: { page?: number; per_page?: number; date_from?: string; date_to?: string }) {
     return api.get('/runner/earnings/history', { params, cacheTtlMs: 10_000, silent: true } as any);
   },
