@@ -23,7 +23,7 @@ import { ErrorState } from '../../../components/ui/ErrorState';
 import { Spinner } from '../../../components/ui/Spinner';
 import { useRunnerStore } from '../../../stores/runnerStore';
 import { useLocationStore } from '../../../stores/locationStore';
-import { useForegroundInterval } from '../../../hooks/useForegroundInterval';
+import { useSmartPolling } from '../../../hooks/useSmartPolling';
 import { useVoiceGuidance } from '../../../hooks/useVoiceGuidance';
 import { useReducedMotion } from '../../../hooks/useReducedMotion';
 import { runnerService } from '../../../services/runner.service';
@@ -319,9 +319,16 @@ export default function NavigateScreen() {
   }, [origin, navRoute, currentStepIdx, fetchNav]);
 
   // Periodic ETA refresh \u2014 every 60s rebuild the route so traffic +
-  // remaining duration stay reasonable. Cheap because Mapbox eats the
-  // request and the runner hasn't moved far between refreshes.
-  useForegroundInterval(() => { void fetchNav(); }, 60_000, !!origin && !!destination, false);
+  // remaining duration stay reasonable. Migrated off useForegroundInterval to
+  // pause the refresh while offline (its main win here \u2014 getNavigationRoute
+  // resolves to null rather than rejecting, so the backoff path rarely fires;
+  // maxInterval still caps it at 5min should it ever reject). (P29)
+  useSmartPolling(() => fetchNav(), {
+    interval: 60_000,
+    enabled: !!origin && !!destination,
+    runOnMount: false,
+    maxInterval: 300_000,
+  });
 
   // Camera follow: when followCamera is true, move to runner position on
   // each location update. Reduce Motion is a vestibular preference, so it

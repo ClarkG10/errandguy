@@ -77,6 +77,31 @@ const PICKUP_PHASE_STATUSES = new Set<string>([
   'arrived_at_pickup',
 ]);
 
+/**
+ * Subscribes to the hot `currentLocation` slice in a LEAF and computes the live
+ * ETA to a (rarely-changing) target, rendering its child via a render-prop with
+ * the current minutes. This keeps a per-GPS-fix re-render scoped to just the
+ * step-hero subtree instead of the ~1100-line ActiveErrandScreen. (P14)
+ */
+function RunnerEtaLeaf({
+  targetLat,
+  targetLng,
+  children,
+}: {
+  targetLat?: number | null;
+  targetLng?: number | null;
+  children: (minutes: number | null) => React.ReactElement | null;
+}) {
+  const currentLocation = useLocationStore((s) => s.currentLocation);
+  const eta = useEta(
+    currentLocation ? { lat: currentLocation.lat, lng: currentLocation.lng } : null,
+    targetLat != null && targetLng != null
+      ? { lat: Number(targetLat), lng: Number(targetLng) }
+      : null,
+  );
+  return children(eta.minutes);
+}
+
 export default function ActiveErrandScreen() {
   const router = useRouter();
   const { id } = useLocalSearchParams<{ id: string }>();
@@ -94,7 +119,11 @@ export default function ActiveErrandScreen() {
   // unmount because the dashboard owns the long-lived subscription.
   const isTracking = useLocationStore((s) => s.isTracking);
   const startTracking = useLocationStore((s) => s.startTracking);
-  const currentLocation = useLocationStore((s) => s.currentLocation);
+  // NOTE: this screen deliberately does NOT subscribe to `currentLocation` — a
+  // GPS fix writes a new object every ~6-10s and would re-render this entire
+  // ~1100-line screen. The live-ETA consumers (the map badge and the step hero)
+  // each subscribe to it in their own leaf instead (RunnerActiveMap + the
+  // <RunnerEtaLeaf> wrapper below), so location churn stays contained. (P14)
   useEffect(() => {
     if (!isTracking) {
       startTracking()
@@ -214,10 +243,15 @@ export default function ActiveErrandScreen() {
     !!id &&
     !!_bookingForPollGuard &&
     !['completed', 'cancelled', 'no_runner'].includes(_bookingForPollGuard.status);
-  // Smart poll: reconcile status while the errand is non-terminal. Realtime
-  // (useBookingStatus) is primary; this is the fallback. useSmartPolling adds
-  // offline-pause + immediate reconnect/foreground tick + backoff (errors
-  // propagate — no swallow-catch — so a failing reconcile backs off).
+  // Status reconcile poll while the errand is non-terminal. NOTE: unlike the
+  // customer tracking screen, this screen wires NO realtime status channel yet
+  // (no useBookingStatus/useSupabaseRealtime here — see audit P6/P15), so
+  // despite the previous "fallback" framing this poll is the ONLY status path.
+  // Kept at 30s (was a flat 15s) to halve idle GET load across the whole errand;
+  // once realtime actually delivers (P6) this can adapt like tracking's
+  // realtimeHealthy → interval mapping. useSmartPolling adds offline-pause +
+  // immediate reconnect/foreground tick + backoff (errors propagate — no
+  // swallow-catch — so a failing reconcile backs off). (P15)
   useSmartPolling(
     async () => {
       if (!id) return;
@@ -225,7 +259,9 @@ export default function ActiveErrandScreen() {
       const fresh = (r?.data?.data ?? null) as Booking | null;
       if (!fresh) return;
       // Mirror into the store when this is the runner's active job so the
-      // home screen + other consumers see the new status.
+      // home screen + other consumers see the new status. (Store-sync side
+      // effect must be preserved: terminal → updateErrandStatus, non-terminal
+      // → setState currentErrand — home/location/chat consumers read it.)
       const store = useRunnerStore.getState();
       if (store.currentErrand?.id === fresh.id && fresh.status !== store.currentErrand.status) {
         if (fresh.status === 'completed' || fresh.status === 'cancelled') {
@@ -235,7 +271,7 @@ export default function ActiveErrandScreen() {
         }
       }
     },
-    { interval: 15_000, enabled: _pollEnabled, runOnMount: false },
+    { interval: 30_000, enabled: _pollEnabled, runOnMount: false },
   );
 
   // ── Hooks below MUST stay above the early-return so that the hook
@@ -264,16 +300,11 @@ export default function ActiveErrandScreen() {
   // only after the package leaves pickup.
   const inPickupPhase =
     isSingleLocation || (booking ? PICKUP_PHASE_STATUSES.has(booking.status) : true);
+  // ETA target (pickup vs dropoff) changes only per status phase, not per GPS
+  // fix, so it stays in the parent; the moving-origin ETA itself is computed
+  // inside the leaves that subscribe to currentLocation. (P14)
   const etaTargetLat = inPickupPhase ? booking?.pickup_lat : booking?.dropoff_lat;
   const etaTargetLng = inPickupPhase ? booking?.pickup_lng : booking?.dropoff_lng;
-  const runnerEta = useEta(
-    currentLocation
-      ? { lat: currentLocation.lat, lng: currentLocation.lng }
-      : null,
-    etaTargetLat != null && etaTargetLng != null
-      ? { lat: Number(etaTargetLat), lng: Number(etaTargetLng) }
-      : null,
-  );
 
   // ── Auto-launch turn-by-turn when the runner enters a travel leg.
   // Triggers exactly once per status transition into `heading_to_pickup`
@@ -909,7 +940,6 @@ export default function ActiveErrandScreen() {
             dropoffLng={booking.dropoff_lng}
             inPickupPhase={inPickupPhase}
             singleLocation={isSingleLocation}
-            etaMinutes={runnerEta.minutes}
             bottomOffset={mapControlsOffset}
           />
         </View>
@@ -1074,15 +1104,19 @@ export default function ActiveErrandScreen() {
             >
               <JourneyBeads status={booking.status} showLabel={false} />
               <View className="mt-2">
-                <CurrentStepHero
-                  eyebrow={inPickupPhase ? 'PICKUP' : 'DROP-OFF'}
-                  title={runnerHeroTitle}
-                  subtitle={(inPickupPhase
-                    ? booking.pickup_address ?? errandRule.pickupLabel
-                    : booking.dropoff_address ?? errandRule.dropoffLabel) ?? undefined}
-                  etaMinutes={runnerEta.minutes != null ? Math.max(1, Math.round(runnerEta.minutes)) : null}
-                  accent={booking.status === 'cancelled' ? 'danger' : 'brand'}
-                />
+                <RunnerEtaLeaf targetLat={etaTargetLat} targetLng={etaTargetLng}>
+                  {(etaMin) => (
+                    <CurrentStepHero
+                      eyebrow={inPickupPhase ? 'PICKUP' : 'DROP-OFF'}
+                      title={runnerHeroTitle}
+                      subtitle={(inPickupPhase
+                        ? booking.pickup_address ?? errandRule.pickupLabel
+                        : booking.dropoff_address ?? errandRule.dropoffLabel) ?? undefined}
+                      etaMinutes={etaMin != null ? Math.max(1, Math.round(etaMin)) : null}
+                      accent={booking.status === 'cancelled' ? 'danger' : 'brand'}
+                    />
+                  )}
+                </RunnerEtaLeaf>
                 {/* Action row — Navigate (primary, in-app turn-by-turn)
                     + Maps (secondary, system maps fallback). Lives
                     INSIDE the sheet so it scrolls with the hero and

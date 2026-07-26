@@ -4,6 +4,7 @@ import { HereMapView, HereMarker, HerePolyline, type HereMapViewRef } from '../m
 import { Locate, Navigation } from 'lucide-react-native';
 import { useLocationStore } from '../../stores/locationStore';
 import { routeService } from '../../services/route.service';
+import { useEta } from '../../hooks/useEta';
 import { LightColors, Elevation } from '../../constants/colors';
 
 interface RunnerActiveMapProps {
@@ -51,6 +52,17 @@ export function RunnerActiveMap({
   const hasDest = destLat != null && destLng != null;
   const hasPickup = pLat != null && pLng != null;
   const hasDropoff = dLat != null && dLng != null;
+
+  // Live ETA to the destination this map actually draws its route to. Computed
+  // HERE — a leaf that already subscribes to currentLocation — rather than in
+  // the ~1100-line parent errand screen, so a GPS fix re-renders only this map
+  // instead of the whole errand tree. `etaMinutes` stays an optional override
+  // for any caller that wants to supply its own. (P14)
+  const internalEta = useEta(
+    hasRunner ? { lat: myLat!, lng: myLng! } : null,
+    hasDest ? { lat: destLat!, lng: destLng! } : null,
+  );
+  const displayEta = etaMinutes ?? internalEta.minutes;
 
   const [routeCoords, setRouteCoords] = useState<[number, number][]>([]);
 
@@ -197,7 +209,7 @@ export function RunnerActiveMap({
         )}
       </HereMapView>
 
-      {etaMinutes != null && (
+      {displayEta != null && (
         <Animated.View
           style={{
             position: 'absolute',
@@ -212,7 +224,7 @@ export function RunnerActiveMap({
           }}
         >
           <Text className="text-[11px] font-montserrat-bold text-textPrimary">
-            {Math.max(1, Math.round(etaMinutes))} min away
+            {Math.max(1, Math.round(displayEta))} min away
           </Text>
         </Animated.View>
       )}

@@ -144,21 +144,39 @@ export default function ReviewScreen() {
     ) {
       return;
     }
+    const estimateInput = {
+      errand_type_id: draftBooking.errand_type_id,
+      pickup_lat: draftBooking.pickup_lat,
+      pickup_lng: draftBooking.pickup_lng,
+      dropoff_lat: draftBooking.dropoff_lat,
+      dropoff_lng: draftBooking.dropoff_lng,
+    };
+    // P1: if the estimate was warmed at the details phase-flip and is still
+    // fresh, hydrate synchronously so the fare paints and Confirm is tappable on
+    // Review's very first frame — no POST round-trip. A manual retry
+    // (estimateAttempt > 0) bypasses the cache to force a fresh fetch.
+    const cached =
+      estimateAttempt === 0 ? bookingService.getCachedEstimate(estimateInput) : null;
+    if (cached) {
+      setEstimate(cached);
+      // Preserve the offer seed: only when the user hasn't set one.
+      if (cached.min_negotiate_fee && draftBooking.customer_offer == null) {
+        setOfferPrice(cached.min_negotiate_fee);
+      }
+      setEstimateError(false);
+      setIsEstimateLoading(false);
+      return;
+    }
     let cancelled = false;
     setIsEstimateLoading(true);
     setEstimateError(false);
     bookingService
-      .getEstimate({
-        errand_type_id: draftBooking.errand_type_id,
-        pickup_lat: draftBooking.pickup_lat,
-        pickup_lng: draftBooking.pickup_lng,
-        dropoff_lat: draftBooking.dropoff_lat,
-        dropoff_lng: draftBooking.dropoff_lng,
-      })
-      .then((res) => {
+      // Deduped fetch that also caches — coalesces with any prefetch still in
+      // flight; resolves to the unwrapped estimate (not the axios response).
+      .fetchEstimate(estimateInput)
+      .then((data) => {
         if (cancelled) return;
-        const data = res.data.data ?? null;
-        setEstimate(data);
+        setEstimate(data ?? null);
         // Only seed offer if the user hasn't already set one — never
         // overwrite their explicit choice with a server suggestion.
         if (data?.min_negotiate_fee && draftBooking.customer_offer == null) {

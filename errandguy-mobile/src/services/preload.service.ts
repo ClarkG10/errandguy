@@ -227,11 +227,13 @@ const preloadConversationsList = async (userId: string) => {
  * with any duplicate fetch the screen kicks off in race.
  */
 export async function preloadCustomerEssentials(userId: string) {
-  // Bounded-concurrency, order-preserving warm-up. Above-the-fold Home data
-  // (errand-types, active booking, recent bookings, wallet balance) is listed
-  // first so it warms in the first pool wave; lower-priority entries follow.
-  // Entries are thunks so the pool — not JS — decides when each fires.
-  await runPool([
+  // Above-the-fold Home data — the ONLY set the interactive login / register /
+  // social-login paths await before raising the success curtain, so the
+  // "Logging in…" button releases as soon as Home can paint instead of blocking
+  // on the ENTIRE warm-up pool below (wallet history, notifications, chat
+  // threads, activity, addresses, payment methods, trusted contacts). Entries
+  // are thunks so the pool — not JS — decides when each fires. (P3)
+  const aboveFold: Array<() => Promise<unknown>> = [
     () => preloadCoreImages(),
     () =>
       seed(
@@ -273,6 +275,14 @@ export async function preloadCustomerEssentials(userId: string) {
         },
         CacheTTL.MEDIUM,
       ),
+  ];
+
+  // Below-the-fold — warmed in the BACKGROUND once Home is already interactive.
+  // runPool swallows per-task rejections internally, so leaving this un-awaited
+  // can't produce an unhandled rejection (preloadConversationsList has no
+  // try/catch of its own). Cache keys are unchanged, so the deferred fetches
+  // still land under the same useQuery keys each screen reads. (P3)
+  const belowFold: Array<() => Promise<unknown>> = [
     () =>
       seed(
         // Default (unfiltered) transactions list — matches the wallet screen's
@@ -346,14 +356,19 @@ export async function preloadCustomerEssentials(userId: string) {
           // Best-effort; the screen falls back to its own fetch.
         }
       })(),
-  ]);
+  ];
+
+  // Await ONLY the above-fold set (what Home needs to paint); fire the rest
+  // fire-and-forget so the auth transition isn't held on background warm-up. (P3)
+  await runPool(aboveFold);
+  void runPool(belowFold);
 }
 
 export async function preloadRunnerEssentials(userId: string) {
-  // Bounded-concurrency, order-preserving warm-up (see preloadCustomerEssentials).
-  // Above-the-fold runner dashboard data (profile, today's earnings, current /
-  // available errands) leads; entries are thunks so the pool controls firing.
-  await runPool([
+  // Above-the-fold runner dashboard data — the ONLY set the interactive login
+  // path awaits before the success curtain lifts (profile, today's + week's
+  // earnings, recent errands, available offers, current errand). (P3)
+  const aboveFold: Array<() => Promise<unknown>> = [
     () => preloadCoreImages(),
     () =>
       seed(
@@ -384,36 +399,9 @@ export async function preloadRunnerEssentials(userId: string) {
       ),
     () =>
       seed(
-        ['runner', 'earnings', 'month', userId],
-        async () => {
-          const r = await runnerService.getEarnings('month');
-          return r.data?.data ?? r.data ?? null;
-        },
-        CacheTTL.MEDIUM,
-      ),
-    () =>
-      seed(
-        ['runner', 'earnings', 'history', 'week', userId],
-        async () => {
-          const r = await runnerService.getEarningsHistory({ page: 1, per_page: 30 });
-          return r.data?.data ?? r.data ?? [];
-        },
-        CacheTTL.MEDIUM,
-      ),
-    () =>
-      seed(
         ['runner', 'errands', 'recent', userId],
         async () => {
           const r = await runnerService.getErrandHistory({ page: 1, per_page: 3 });
-          return r.data?.data ?? r.data ?? [];
-        },
-        CacheTTL.LONG,
-      ),
-    () =>
-      seed(
-        ['runner', 'errands', 'history', 'all', userId],
-        async () => {
-          const r = await runnerService.getErrandHistory({ page: 1, per_page: 15 });
           return r.data?.data ?? r.data ?? [];
         },
         CacheTTL.LONG,
@@ -435,6 +423,39 @@ export async function preloadRunnerEssentials(userId: string) {
           return r.data?.data ?? r.data ?? null;
         },
         CacheTTL.SHORT,
+      ),
+  ];
+
+  // Below-the-fold — warmed in the BACKGROUND after the dashboard is interactive
+  // (month/history earnings, full errand history, payouts, notifications, chat
+  // list). Un-awaited; runPool swallows per-task rejections internally. (P3)
+  const belowFold: Array<() => Promise<unknown>> = [
+    () =>
+      seed(
+        ['runner', 'earnings', 'month', userId],
+        async () => {
+          const r = await runnerService.getEarnings('month');
+          return r.data?.data ?? r.data ?? null;
+        },
+        CacheTTL.MEDIUM,
+      ),
+    () =>
+      seed(
+        ['runner', 'earnings', 'history', 'week', userId],
+        async () => {
+          const r = await runnerService.getEarningsHistory({ page: 1, per_page: 30 });
+          return r.data?.data ?? r.data ?? [];
+        },
+        CacheTTL.MEDIUM,
+      ),
+    () =>
+      seed(
+        ['runner', 'errands', 'history', 'all', userId],
+        async () => {
+          const r = await runnerService.getErrandHistory({ page: 1, per_page: 15 });
+          return r.data?.data ?? r.data ?? [];
+        },
+        CacheTTL.LONG,
       ),
     () =>
       seed(
@@ -464,7 +485,10 @@ export async function preloadRunnerEssentials(userId: string) {
         CacheTTL.MEDIUM,
       ),
     () => preloadConversationsList(userId),
-  ]);
+  ];
+
+  await runPool(aboveFold);
+  void runPool(belowFold);
 }
 
 /** Auth warm-up for the authenticated role. */

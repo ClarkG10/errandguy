@@ -50,6 +50,7 @@ import type { SavedAddress } from '../../../types';
 import { toast } from '../../../stores/toastStore';
 import { geocodingService } from '../../../services/geocoding.service';
 import { routeService } from '../../../services/route.service';
+import { bookingService } from '../../../services/booking.service';
 
 const DEFAULT_CENTER: [number, number] = [121.0, 14.6];
 // Step labels live in `BookingStepIndicator`; keep this file lean.
@@ -222,6 +223,39 @@ export default function TaskDetailsScreen() {
         : ('pickup' as const);
 
   const [phase, setPhase] = useState<'pickup' | 'dropoff' | 'details'>(initialPhase);
+
+  // P1: warm the fare estimate the instant we reach the details phase — i.e. as
+  // soon as errand_type_id + pickup + dropoff coords are all finalized (covers
+  // the pickup/dropoff confirm flip, the initial-details rebook path, and
+  // returning to details after changing a location). Review then paints the
+  // fare and enables Confirm on its first frame instead of firing the POST on
+  // its own mount and gating the CTA on the round-trip. Fire-and-forget; the
+  // signature-keyed stash + in-flight dedupe collapse any double-POST.
+  useEffect(() => {
+    if (phase !== 'details') return;
+    if (
+      !draftBooking.errand_type_id ||
+      draftBooking.pickup_lat == null ||
+      draftBooking.pickup_lng == null
+    ) {
+      return;
+    }
+    bookingService.prefetchEstimate({
+      errand_type_id: draftBooking.errand_type_id,
+      pickup_lat: draftBooking.pickup_lat,
+      pickup_lng: draftBooking.pickup_lng,
+      dropoff_lat: draftBooking.dropoff_lat,
+      dropoff_lng: draftBooking.dropoff_lng,
+    });
+  }, [
+    phase,
+    draftBooking.errand_type_id,
+    draftBooking.pickup_lat,
+    draftBooking.pickup_lng,
+    draftBooking.dropoff_lat,
+    draftBooking.dropoff_lng,
+  ]);
+
   const mapOpen = true;
   const [currentAddress, setCurrentAddress] = useState('');
   const [isMoving, setIsMoving] = useState(false);

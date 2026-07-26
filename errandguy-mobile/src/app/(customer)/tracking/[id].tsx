@@ -49,7 +49,6 @@ import { useLocationStore } from '../../../stores/locationStore';
 import { bookingService } from '../../../services/booking.service';
 import { useRunnerTracking } from '../../../hooks/useRunnerTracking';
 import { useBookingStatus } from '../../../hooks/useBookingStatus';
-import { useForegroundInterval } from '../../../hooks/useForegroundInterval';
 import { useSmartPolling } from '../../../hooks/useSmartPolling';
 import { useBackGuard } from '../../../hooks/useBackGuard';
 import { useEta } from '../../../hooks/useEta';
@@ -489,10 +488,14 @@ export default function TrackingScreen() {
   // collapsing happy-path traffic 4\u00d7 (12 GETs/min \u2192 3).
   const realtimeHealthy = isConnected && statusConnected;
   const trackPollMs = realtimeHealthy ? 20_000 : 5_000;
-  useForegroundInterval(
+  useSmartPolling(
     () => {
       if (!id || !booking?.runner_id || isTerminalUi) return;
-      bookingService
+      // Return the promise (no swallow-catch) so a failed reconcile propagates
+      // to useSmartPolling → exponential backoff instead of hammering a
+      // struggling endpoint; a success snaps the cadence back to trackPollMs.
+      // Migrated off useForegroundInterval to also pause while offline. (P29)
+      return bookingService
         .trackBooking(id)
         .then((res) => {
           const data = res.data?.data;
@@ -518,15 +521,19 @@ export default function TrackingScreen() {
           if (fresh && fresh.status !== booking.status) {
             setActiveBooking(fresh);
           }
-        })
-        .catch(() => {});
+        });
     },
-    trackPollMs,
-    // Stop polling /track once the booking is terminal — the poll keyed only on
-    // runner presence before, and terminal bookings keep their runner_id, so a
-    // finished-trip receipt kept hitting /track every 5–20s. (P13)
-    !!id && !!booking?.runner_id && !isTerminalUi,
-    true,
+    {
+      interval: trackPollMs,
+      // Stop polling /track once the booking is terminal — the poll keyed only
+      // on runner presence before, and terminal bookings keep their runner_id,
+      // so a finished-trip receipt kept hitting /track every 5–20s. (P13)
+      enabled: !!id && !!booking?.runner_id && !isTerminalUi,
+      runOnMount: true,
+      // Cap the failure backoff so a live delivery's pin can't drift stale for
+      // minutes if the endpoint blips (default would be trackPollMs × 8). (P29)
+      maxInterval: 60_000,
+    },
   );
 
   // Phase-aware route target. While the runner is heading to the
