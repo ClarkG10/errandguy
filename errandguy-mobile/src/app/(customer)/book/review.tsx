@@ -36,6 +36,10 @@ import { formatCurrency } from '../../../utils/formatCurrency';
 import { serializeChecklist } from '../../../utils/shoppingChecklist';
 import { openCheckoutUrl, PAYMENT_RETURN_URL } from '../../../utils/browser';
 import { PaymentProgress } from '../../../components/ui/PaymentProgress';
+import {
+  BookingProgress,
+  type BookingStage,
+} from '../../../components/customer/BookingProgress';
 import { usePaymentStore, isAttemptActive } from '../../../stores/paymentStore';
 import { usePaymentVerification } from '../../../hooks/usePaymentVerification';
 import { mapFailureReason } from '../../../utils/paymentErrors';
@@ -110,6 +114,11 @@ export default function ReviewScreen() {
     draftBooking.customer_offer ?? 100,
   );
   const [isSubmitting, setIsSubmitting] = useState(false);
+  // Drives the full-screen create overlay (BookingProgress) through the real
+  // submit checkpoints, so the ~5-7s create round-trip shows staged progress
+  // instead of a lone button spinner. Hands off to PaymentProgress for online
+  // payments once the gateway verification begins.
+  const [bookingStage, setBookingStage] = useState<BookingStage | null>(null);
 
   // ── Money-safety: idempotent attempt + honest verification ──────────────
   const beginAttempt = usePaymentStore((s) => s.beginAttempt);
@@ -387,6 +396,10 @@ export default function ReviewScreen() {
       method: paymentMethodType ?? 'cash',
     });
     setIsSubmitting(true);
+    // Surface the full-screen staged overlay immediately on tap — "Checking
+    // your details ✓ / Creating your errand ⟳" — instead of a lone button
+    // spinner during the multi-second create round-trip.
+    setBookingStage('creating');
     try {
       const payload = {
         errand_type_id: draftBooking.errand_type_id!,
@@ -475,6 +488,9 @@ export default function ReviewScreen() {
         // booking). The inline PaymentProgress overlay drives navigation from
         // here based on the verified outcome.
         if (paymentId) linkPayment(paymentId);
+        // Bridge from create to the gateway sheet; PaymentProgress takes over
+        // from the verification stage onward (mutually exclusive — see render).
+        setBookingStage('checkout');
         setAttemptStatus('awaiting_gateway', {
           bookingId: booking.id,
           checkoutUrl,
@@ -482,16 +498,21 @@ export default function ReviewScreen() {
         });
         await openCheckoutUrl(checkoutUrl, PAYMENT_RETURN_URL);
         // Regardless of the sheet's reported outcome we now VERIFY with the
-        // backend — 'cancelled' doesn't prove they didn't pay.
+        // backend — 'cancelled' doesn't prove they didn't pay. Drop the create
+        // overlay so the verification overlay owns the screen.
+        setBookingStage(null);
         setAttemptStatus('verifying');
       } else {
         // Wallet/cash settle server-side already — nothing to verify.
         resolveAttempt();
+        // Drop the create overlay before the confirm screen replaces us.
+        setBookingStage(null);
         router.replace(`/(customer)/book/confirm?bookingId=${booking.id}`);
       }
     } catch (err: any) {
       // Create failed → no booking/charge exists to verify; clear the attempt.
       resolveAttempt();
+      setBookingStage(null);
       toast.error(err?.message ?? 'Failed to create booking');
     } finally {
       setIsSubmitting(false);
@@ -939,9 +960,22 @@ export default function ReviewScreen() {
         </View>
       </BottomActionBar>
 
+      {/* Full-screen create overlay — fills the multi-second create round-trip
+          that previously showed only a button spinner (staged: Checking →
+          Creating → Opening checkout). Mutually exclusive with PaymentProgress
+          below: once the gateway verification is live, that overlay wins so the
+          two Modals never stack. */}
+      <BookingProgress
+        stage={
+          attempt?.kind === 'booking' && verifyStage && verifyStage !== 'preparing'
+            ? null
+            : bookingStage
+        }
+      />
+
       {/* Honest payment verification for online / saved-method charges. Hidden
-          during 'preparing' (the button's own loading covers the create call);
-          it takes over from the gateway hand-off onward. Wallet/cash resolve
+          during 'preparing' (BookingProgress covers the create call above); it
+          takes over from the gateway hand-off onward. Wallet/cash resolve
           before this ever shows. */}
       <PaymentProgress
         stage={

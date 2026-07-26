@@ -510,7 +510,10 @@ export default function CustomerHomeScreen() {
             viewport. No eyebrow needed: the card itself communicates the
             live state via its progress track and headline. */}
         {activeBooking && (
-          <View className="mx-5 mt-3">
+          <View className="mx-5 mt-4" style={hs.activeZone}>
+            <Eyebrow className="ml-1 mb-2" color={LightColors.primary}>
+              Your errand
+            </Eyebrow>
             <ActiveBookingCard
               booking={activeBooking}
               onPress={() => {
@@ -699,26 +702,35 @@ export default function CustomerHomeScreen() {
                 </Text>
               </Pressable>
             </View>
-            {recentBookings.map((booking, idx) => {
+            {recentBookings.map((booking) => {
               const statusColor =
                 STATUS_COLORS[booking.status] ?? LightColors.textMuted;
               return (
                 <Pressable
                   key={booking.id}
-                  className="flex-row items-center py-3.5"
-                  // Edge-to-edge row: background wash on press, no scale.
-                  style={({ pressed }) => [
-                    idx < recentBookings.length - 1 && {
-                      borderBottomWidth: 1,
-                      borderBottomColor: LightColors.divider,
-                    },
-                    pressed && { backgroundColor: LightColors.surfaceMuted },
-                  ]}
+                  // Soft white card per errand (was an edge-to-edge hairline
+                  // row) — a leading errand-type glyph, the name + status/time,
+                  // and the fare, lifted on a subtle shadow so each errand
+                  // reads as its own surface with clear depth.
+                  className="flex-row items-center bg-surface rounded-2xl p-3 mb-2.5"
+                  android_ripple={{ color: 'rgba(37,99,235,0.08)' }}
+                  style={({ pressed }) => [hs.recentCard, pressed && hs.cardPressed]}
                   onPress={withLightImpact(() => setSelectedBooking(booking))}
                   accessibilityRole="button"
                   accessibilityLabel={`Open ${booking.errand_type?.name ?? 'errand'} from ${formatRelativeTime(booking.created_at)}`}
                 >
-                  <View className="flex-1 pr-3">
+                  {booking.errand_type?.icon_name ? (
+                    <ErrandTypeIcon
+                      name={booking.errand_type.icon_name}
+                      size="xs"
+                      variant="tinted"
+                    />
+                  ) : (
+                    <View className="w-9 h-9 rounded-full bg-primaryLight items-center justify-center">
+                      <Package size={18} color={LightColors.primary} strokeWidth={2} />
+                    </View>
+                  )}
+                  <View className="flex-1 pr-3 ml-3">
                     <Text
                       className="text-[14px] font-montserrat-bold text-textPrimary"
                       numberOfLines={1}
@@ -735,7 +747,10 @@ export default function CustomerHomeScreen() {
                           marginRight: 6,
                         }}
                       />
-                      <Text className="text-[11px] font-montserrat text-textSecondary">
+                      <Text
+                        className="text-[11px] font-montserrat text-textSecondary"
+                        numberOfLines={1}
+                      >
                         {STATUS_LABELS[booking.status] ?? booking.status}
                         {' · '}
                         {formatRelativeTime(booking.created_at)}
@@ -943,5 +958,21 @@ const hs = StyleSheet.create({
     backgroundColor: LightColors.primaryLight,
     paddingHorizontal: 12,
     paddingVertical: 7,
+  },
+  // Soft tinted "zone" behind the active errand — a light-blue wash with a
+  // hairline so the live errand reads as its own band. The white
+  // ActiveBookingCard floats inside it on its own shadow.
+  activeZone: {
+    backgroundColor: LightColors.primary50,
+    borderRadius: 24,
+    padding: 12,
+    borderWidth: 1,
+    borderColor: LightColors.primary100,
+  },
+  // Recent errand card — subtle lift so each errand reads as its own
+  // surface. Radius / bg / layout live in className; only the shadow (a
+  // pass-through prop NativeWind keeps) is applied here.
+  recentCard: {
+    ...Elevation.sm,
   },
 });
