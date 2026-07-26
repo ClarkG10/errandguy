@@ -33,25 +33,56 @@ export class RunnerEarningsController {
     }
 
     const period = query.period ? String(query.period) : 'today';
-    const where: Prisma.BookingWhereInput = { runnerId: user.id, status: 'completed' };
-    const range = this.periodRange(period, query);
-    if (range) where.completedAt = range;
-
-    const agg = await this.prisma.booking.aggregate({ where, _sum: { runnerPayout: true }, _count: true });
-    const totalEarnings = Number(agg._sum.runnerPayout ?? 0);
-    const totalErrands = agg._count;
-    const avgPerErrand = totalErrands > 0 ? Math.round((totalEarnings / totalErrands) * 100) / 100 : 0;
+    const agg = await this.aggregateEarnings(user.id, this.periodRange(period, query));
 
     return {
       data: {
         period,
-        total_earnings: totalEarnings,
-        total_errands: totalErrands,
-        avg_per_errand: avgPerErrand,
+        total_earnings: agg.total_earnings,
+        total_errands: agg.total_errands,
+        avg_per_errand: agg.avg_per_errand,
         acceptance_rate: Number(profile.acceptanceRate),
         completion_rate: Number(profile.completionRate),
         online_hours: null,
       },
+    };
+  }
+
+  /**
+   * GET /runner/earnings/overview — today + this_week + this_month in one call,
+   * so the home hero + preload warm all three in a single round-trip. Reuses
+   * periodRange() + aggregateEarnings() with summary(). Parity with Laravel. (P9)
+   */
+  @Get('earnings/overview')
+  async overview(@CurrentUser() user: User): Promise<Record<string, unknown>> {
+    const profile = await this.prisma.runnerProfile.findUnique({ where: { userId: user.id } });
+    if (!profile) {
+      await this.prisma.runnerProfile.create({ data: { userId: user.id, verificationStatus: 'pending' } });
+    }
+
+    const [today, thisWeek, thisMonth] = await Promise.all([
+      this.aggregateEarnings(user.id, this.periodRange('today', {})),
+      this.aggregateEarnings(user.id, this.periodRange('this_week', {})),
+      this.aggregateEarnings(user.id, this.periodRange('this_month', {})),
+    ]);
+
+    return { data: { today, this_week: thisWeek, this_month: thisMonth } };
+  }
+
+  /** SUM(runner_payout)+COUNT → {total_earnings, total_errands, avg_per_errand}. */
+  private async aggregateEarnings(
+    userId: string,
+    range: Prisma.DateTimeNullableFilter | null,
+  ): Promise<{ total_earnings: number; total_errands: number; avg_per_errand: number }> {
+    const where: Prisma.BookingWhereInput = { runnerId: userId, status: 'completed' };
+    if (range) where.completedAt = range;
+    const agg = await this.prisma.booking.aggregate({ where, _sum: { runnerPayout: true }, _count: true });
+    const totalEarnings = Number(agg._sum.runnerPayout ?? 0);
+    const totalErrands = agg._count;
+    return {
+      total_earnings: totalEarnings,
+      total_errands: totalErrands,
+      avg_per_errand: totalErrands > 0 ? Math.round((totalEarnings / totalErrands) * 100) / 100 : 0,
     };
   }
 
