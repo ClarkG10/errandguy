@@ -71,13 +71,29 @@ class PaymentMethodController extends Controller
                 url('/payment/complete'),
                 url('/payment/complete'),
             );
-        } catch (\Throwable $e) {
-            $message = 'Could not start linking. Please try again.';
-            if (config('app.debug') && $e instanceof PaymentGatewayException) {
-                $message = "Payment gateway error: {$e->reason()}";
-            }
+        } catch (PaymentGatewayException $e) {
+            // A gateway REJECTION (validation, unsupported channel, missing
+            // field) is not an origin outage. Returning a raw 502 both
+            // mislabels it AND gets intercepted by Cloudflare, which swaps our
+            // JSON for its own branded 502 page — so the app never sees the
+            // real reason (this masked a one-line payload bug as an "infra"
+            // incident). Return 422 so the message flows through. The detailed
+            // reason is already logged server-side in PaymentService regardless
+            // of APP_DEBUG; only expose it to the client while debugging.
+            $message = config('app.debug')
+                ? "Payment gateway error: {$e->reason()}"
+                : 'Could not start linking. Please try again.';
 
-            return response()->json(['message' => $message], 502);
+            return response()->json(['message' => $message], 422);
+        } catch (\Throwable $e) {
+            // Genuinely unexpected failure (not a gateway rejection) — keep a
+            // 502 and report it so it surfaces in logs/monitoring.
+            report($e);
+
+            return response()->json(
+                ['message' => 'Could not start linking. Please try again.'],
+                502,
+            );
         }
 
         $status = strtolower($pm['status'] ?? 'pending') === 'active' ? 'active' : 'pending';

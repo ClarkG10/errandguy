@@ -204,16 +204,32 @@ class PaymentService
 
         $customerId = $this->getOrCreateXenditCustomer($user);
 
+        // Xendit's e-wallet linking requires a `cancel_return_url` alongside
+        // success/failure — a missing one is rejected with API_VALIDATION_ERROR
+        // ("field 'cancel_return_url' is required"). Reuse the same in-app
+        // return bridge for all three outcomes; the app re-checks the method's
+        // status on any return, so cancel and failure can land the same place.
+        $channelProperties = [
+            'success_return_url' => $successUrl,
+            'failure_return_url' => $failureUrl,
+            'cancel_return_url' => $failureUrl,
+        ];
+
+        // GrabPay spans several SEA markets, so Xendit requires an explicit
+        // `country` for it ("country is required for channel_code 'GRABPAY'").
+        // GCash/Maya are PH-only and do NOT take this field, so scope it to
+        // GrabPay to avoid rejecting those two.
+        if ($channelCode === 'GRABPAY') {
+            $channelProperties['country'] = 'PH';
+        }
+
         $payload = [
             'type' => 'EWALLET',
             'reusability' => 'MULTIPLE_USE',
             'customer_id' => $customerId,
             'ewallet' => [
                 'channel_code' => $channelCode,
-                'channel_properties' => [
-                    'success_return_url' => $successUrl,
-                    'failure_return_url' => $failureUrl,
-                ],
+                'channel_properties' => $channelProperties,
             ],
         ];
 
