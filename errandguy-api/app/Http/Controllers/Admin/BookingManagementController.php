@@ -7,6 +7,7 @@ use App\Models\Booking;
 use App\Http\Resources\BookingResource;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Cache;
 
 class BookingManagementController extends Controller
@@ -27,7 +28,12 @@ class BookingManagementController extends Controller
         }
 
         if ($date = $request->query('date')) {
-            $query->whereDate('created_at', $date);
+            // Sargable half-open range instead of whereDate() (DATE(created_at)=?
+            // is non-sargable and defeats idx_bookings_created_at). app.tz=UTC and
+            // created_at is stored UTC, matching the prior whereDate() boundary.
+            $start = Carbon::parse($date)->startOfDay();
+            $query->where('created_at', '>=', $start)
+                  ->where('created_at', '<', $start->copy()->addDay());
         }
 
         $bookings = $query->orderByDesc('created_at')->paginate(20);

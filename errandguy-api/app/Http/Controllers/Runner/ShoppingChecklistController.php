@@ -78,18 +78,29 @@ class ShoppingChecklistController extends Controller
 
         $booking->update(['shopping_items' => $items]);
 
-        // Push the fresh list to the customer's realtime channel so ticks
-        // land live (same direct-broadcast pattern SOSService uses).
-        $this->realtime->insertNotification(
-            $booking->customer_id,
-            'Shopping list updated',
-            'Your runner updated the shopping checklist.',
-            'shopping_items_updated',
-            [
-                'booking_id' => $booking->id,
-                'shopping_items' => $items,
-            ],
-        );
+        // Push the fresh list to the customer's realtime channel so ticks land
+        // live — but AFTER the response is flushed. The DB write above is the
+        // authoritative state; the Supabase PostgREST insert is pure
+        // fire-and-forget and its round-trip (no client timeout) must not hold
+        // the runner's PATCH open, which is hit on every item tick. Same
+        // dispatch(fn)->afterResponse() pattern CacheService's SWR refresh uses.
+        // Values are captured by value so the deferred closure is independent of
+        // request-scoped state.
+        $realtime = $this->realtime;
+        $customerId = $booking->customer_id;
+        $bookingId = $booking->id;
+        dispatch(function () use ($realtime, $customerId, $bookingId, $items) {
+            $realtime->insertNotification(
+                $customerId,
+                'Shopping list updated',
+                'Your runner updated the shopping checklist.',
+                'shopping_items_updated',
+                [
+                    'booking_id' => $bookingId,
+                    'shopping_items' => $items,
+                ],
+            );
+        })->afterResponse();
 
         $booking->load(['errandType', 'runner', 'customer', 'statusLogs']);
 
