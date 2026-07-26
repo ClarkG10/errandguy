@@ -6,7 +6,6 @@ use App\Http\Controllers\Controller;
 use App\Http\Resources\BookingResource;
 use App\Http\Resources\EarningsResource;
 use App\Models\RunnerProfile;
-use App\Models\SystemConfig;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 
@@ -36,16 +35,66 @@ class RunnerEarningsController extends Controller
         $period = $request->input('period', 'today');
 
         $query = $user->runnerBookings()->completed();
+        $this->applyPeriodRange($query, $period, $request);
+        $agg = $this->aggregateEarnings($query);
 
-        // Use date-range comparisons (sargable) instead of whereDate /
-        // whereMonth which wrap the column in a function and prevent
-        // index usage on completed_at.
+        $data = [
+            'period' => $period,
+            'total_earnings' => $agg['total_earnings'],
+            'total_errands' => $agg['total_errands'],
+            'avg_per_errand' => $agg['avg_per_errand'],
+            'acceptance_rate' => (float) $profile->acceptance_rate,
+            'completion_rate' => (float) $profile->completion_rate,
+            'online_hours' => null, // Estimated from location data if needed
+        ];
+
+        return response()->json([
+            'data' => new EarningsResource($data),
+        ]);
+    }
+
+    /**
+     * GET /runner/earnings/overview — today + this_week + this_month in ONE
+     * response.
+     *
+     * The runner home hero + the login preload previously fired THREE separate
+     * /earnings requests to build this; one round-trip warms all three, removing
+     * ~2 cold-start requests and a second source of the hero flash. Reuses
+     * applyPeriodRange() + aggregateEarnings() with summary() so the two
+     * endpoints can never drift. (P9)
+     */
+    public function overview(Request $request): JsonResponse
+    {
+        $user = $request->user();
+
+        if (!$user->runnerProfile) {
+            RunnerProfile::create([
+                'user_id' => $user->id,
+                'verification_status' => 'pending',
+            ]);
+        }
+
+        $out = [];
+        foreach (['today', 'this_week', 'this_month'] as $p) {
+            $query = $user->runnerBookings()->completed();
+            $this->applyPeriodRange($query, $p, $request);
+            $out[$p] = $this->aggregateEarnings($query);
+        }
+
+        return response()->json(['data' => $out]);
+    }
+
+    /**
+     * Apply the completed_at date range for a period to an earnings query.
+     * Sargable range comparisons (not whereDate/whereMonth) so the completed_at
+     * index is usable. Shared by summary() and overview(). (P9)
+     */
+    private function applyPeriodRange($query, string $period, Request $request): void
+    {
         switch ($period) {
             case 'today':
-                $start = now()->startOfDay();
-                $end = now()->copy()->addDay()->startOfDay();
-                $query->where('completed_at', '>=', $start)
-                      ->where('completed_at', '<', $end);
+                $query->where('completed_at', '>=', now()->startOfDay())
+                      ->where('completed_at', '<', now()->copy()->addDay()->startOfDay());
                 break;
             case 'this_week':
                 $query->where('completed_at', '>=', now()->startOfWeek())
@@ -64,26 +113,24 @@ class RunnerEarningsController extends Controller
                 }
                 break;
         }
+    }
 
-        // Single aggregate query instead of separate sum() + count().
+    /**
+     * Single aggregate (SUM + COUNT) → {total_earnings, total_errands,
+     * avg_per_errand}. Shared by summary() and overview() so the money math is
+     * defined once. (P9)
+     */
+    private function aggregateEarnings($query): array
+    {
         $agg = $query->selectRaw('COALESCE(SUM(runner_payout), 0) as sum_payout, COUNT(*) as cnt')->first();
-        $totalEarnings = (float) ($agg->sum_payout ?? 0);
-        $totalErrands = (int) ($agg->cnt ?? 0);
-        $avgPerErrand = $totalErrands > 0 ? round($totalEarnings / $totalErrands, 2) : 0;
+        $total = (float) ($agg->sum_payout ?? 0);
+        $count = (int) ($agg->cnt ?? 0);
 
-        $data = [
-            'period' => $period,
-            'total_earnings' => $totalEarnings,
-            'total_errands' => $totalErrands,
-            'avg_per_errand' => $avgPerErrand,
-            'acceptance_rate' => (float) $profile->acceptance_rate,
-            'completion_rate' => (float) $profile->completion_rate,
-            'online_hours' => null, // Estimated from location data if needed
+        return [
+            'total_earnings' => $total,
+            'total_errands' => $count,
+            'avg_per_errand' => $count > 0 ? round($total / $count, 2) : 0,
         ];
-
-        return response()->json([
-            'data' => new EarningsResource($data),
-        ]);
     }
 
     public function history(Request $request): JsonResponse

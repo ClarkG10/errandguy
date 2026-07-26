@@ -38,6 +38,12 @@ return [
     'supabase' => [
         'url' => env('SUPABASE_URL'),
         'service_key' => env('SUPABASE_SERVICE_KEY'),
+        // Legacy HS256 JWT secret — used ONLY to mint short-lived realtime tokens
+        // so the mobile Supabase client can subscribe as role=authenticated
+        // instead of anon (see SupabaseTokenService, audit P6). Realtime auth
+        // stays DISABLED (tokens are null) until this is set AND the RLS policies
+        // in docs/supabase-realtime-p6.md are applied + verified in staging.
+        'jwt_secret' => env('SUPABASE_JWT_SECRET'),
     ],
 
     'xendit' => [

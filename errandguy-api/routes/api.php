@@ -96,6 +96,11 @@ Route::prefix('v1')->group(function () {
     // Authenticated routes
     Route::middleware(['auth:sanctum', 'active'])->group(function () {
 
+        // Short-lived Supabase realtime JWT (role=authenticated). Returns
+        // { token: null } until SUPABASE_JWT_SECRET is configured, so realtime
+        // stays on its current anon/polling behavior by default. (P6)
+        Route::get('/realtime-token', [\App\Http\Controllers\RealtimeTokenController::class, 'issue']);
+
         // User profile routes
         Route::prefix('user')->group(function () {
             Route::get('/profile', [ProfileController::class, 'show']);
@@ -169,6 +174,8 @@ Route::prefix('v1')->group(function () {
             Route::post('/errand/{id}/verify-pin', [RunnerErrandController::class, 'verifyPin']);
 
             Route::get('/earnings', [RunnerEarningsController::class, 'summary']);
+            // Today + this_week + this_month in one round-trip (home hero + preload). (P9)
+            Route::get('/earnings/overview', [RunnerEarningsController::class, 'overview']);
             Route::get('/earnings/history', [RunnerEarningsController::class, 'history']);
             // Throttled: synchronous DomPDF rendering of up to 500 line items
             // pins a PHP-FPM worker for seconds, so a retry storm / rapid taps
