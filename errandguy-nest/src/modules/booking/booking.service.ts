@@ -128,6 +128,7 @@ export class BookingService implements OnModuleInit {
       dropoffLng,
       vehicleType,
       dto.schedule_type,
+      errandType, // P20: reuse the row loaded above instead of re-fetching it
     );
 
     // Negotiate mode: the customer's offer IS the price they pay (the fixed

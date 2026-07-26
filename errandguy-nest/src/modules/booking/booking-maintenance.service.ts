@@ -56,17 +56,36 @@ export class BookingMaintenanceService {
       where: { status: { in: ['pending', 'no_runner'] }, createdAt: { lt: cutoff } },
       select: { id: true },
     });
-    for (const b of stale) {
-      await this.prisma.booking.update({
-        where: { id: b.id },
-        data: { status: 'cancelled', cancelledAt: new Date(), cancellationReason: 'Auto-cancelled: no runner found within timeout.' },
-      });
-      await this.prisma.bookingStatusLog.create({
-        data: { bookingId: b.id, status: 'cancelled', changedBy: null, note: `Auto-cancelled after ${timeout} minutes with no runner` },
-      });
-      await this.refundUnfulfilledSafe(b.id, 'Auto-cancelled: no runner found within timeout');
+    if (!stale.length) return;
+    const ids = stale.map((b) => b.id);
+    const now = new Date();
+    // Batch the status flip + log for ALL stale rows in one transaction instead
+    // of 2 writes per row in a loop. This is a raw update + manual log (not the
+    // event-emitting transition path), so batching is behavior-preserving. The
+    // per-row refund stays a loop — refundUnfulfilledSafe needs row-level logic
+    // and is order-independent. One captured `now`. (P35)
+    await this.prisma.$transaction([
+      this.prisma.booking.updateMany({
+        where: { id: { in: ids } },
+        data: {
+          status: 'cancelled',
+          cancelledAt: now,
+          cancellationReason: 'Auto-cancelled: no runner found within timeout.',
+        },
+      }),
+      this.prisma.bookingStatusLog.createMany({
+        data: ids.map((id) => ({
+          bookingId: id,
+          status: 'cancelled',
+          changedBy: null,
+          note: `Auto-cancelled after ${timeout} minutes with no runner`,
+        })),
+      }),
+    ]);
+    for (const id of ids) {
+      await this.refundUnfulfilledSafe(id, 'Auto-cancelled: no runner found within timeout');
     }
-    if (stale.length) this.logger.log(`Auto-cancelled ${stale.length} stale bookings`);
+    this.logger.log(`Auto-cancelled ${stale.length} stale bookings`);
   }
 
   /** ExpireNegotiateBookingJob: expire un-accepted negotiate bookings. */
@@ -82,17 +101,32 @@ export class BookingMaintenanceService {
       },
       select: { id: true },
     });
-    for (const b of expired) {
-      await this.prisma.booking.update({
-        where: { id: b.id },
-        data: { status: 'cancelled', cancelledAt: new Date(), cancellationReason: 'Negotiation period expired with no runner acceptance.' },
-      });
-      await this.prisma.bookingStatusLog.create({
-        data: { bookingId: b.id, status: 'cancelled', changedBy: null, note: 'Negotiate mode expired' },
-      });
-      await this.refundUnfulfilledSafe(b.id, 'Negotiation expired with no runner acceptance');
+    if (!expired.length) return;
+    const ids = expired.map((b) => b.id);
+    const now = new Date();
+    // Batch the status flip + log (see autoCancelSweep). Refunds stay per-row. (P35)
+    await this.prisma.$transaction([
+      this.prisma.booking.updateMany({
+        where: { id: { in: ids } },
+        data: {
+          status: 'cancelled',
+          cancelledAt: now,
+          cancellationReason: 'Negotiation period expired with no runner acceptance.',
+        },
+      }),
+      this.prisma.bookingStatusLog.createMany({
+        data: ids.map((id) => ({
+          bookingId: id,
+          status: 'cancelled',
+          changedBy: null,
+          note: 'Negotiate mode expired',
+        })),
+      }),
+    ]);
+    for (const id of ids) {
+      await this.refundUnfulfilledSafe(id, 'Negotiation expired with no runner acceptance');
     }
-    if (expired.length) this.logger.log(`Expired ${expired.length} negotiate bookings`);
+    this.logger.log(`Expired ${expired.length} negotiate bookings`);
   }
 
   /** CheckRideDurationJob: alert on transportation rides exceeding expected duration. */

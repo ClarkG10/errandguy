@@ -2,6 +2,7 @@ import { Injectable, NotFoundException } from '@nestjs/common';
 import type { ErrandType } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { SystemConfigService } from '../payment/system-config.service';
+import { CacheService } from '../../cache/cache.service';
 
 const VEHICLE_BASE_PREMIUM: Record<string, number> = {
   walk: 0,
@@ -30,7 +31,21 @@ export class PricingService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly config: SystemConfigService,
+    private readonly cache: CacheService,
   ) {}
+
+  // Cache the (static) ErrandType row across requests so the fare-estimate hot
+  // path — fired continuously as the pin drags — doesn't re-read the same PK
+  // row. Caching the ROW (not the price) is safe: distance is still recomputed
+  // per request. Short TTL bounds staleness because Nest admin fee-editing isn't
+  // ported yet; when it lands, also forget `errand_type:${id}` (see cache P37). (P20)
+  private getErrandType(id: string): Promise<ErrandType | null> {
+    return this.cache.remember(
+      `errand_type:${id}`,
+      () => this.prisma.errandType.findUnique({ where: { id } }),
+      60,
+    );
+  }
 
   async calculate(
     errandTypeId: string,
@@ -40,8 +55,13 @@ export class PricingService {
     dropoffLng: number | null,
     vehicleType: string,
     _scheduleType = 'now',
+    // P1/P20 in-request dedup: pass the already-loaded row to avoid re-fetching
+    // it. `undefined` = "not provided, load it"; an explicit `null` = "known
+    // absent" (throws below without a redundant lookup), preserving prior behavior.
+    preloadedErrandType?: ErrandType | null,
   ): Promise<PriceBreakdown> {
-    const errandType = await this.prisma.errandType.findUnique({ where: { id: errandTypeId } });
+    const errandType =
+      preloadedErrandType !== undefined ? preloadedErrandType : await this.getErrandType(errandTypeId);
     if (!errandType) throw new NotFoundException({ message: 'Not found.' });
 
     const distanceKm =
@@ -82,12 +102,24 @@ export class PricingService {
     dropoffLat: number | null,
     dropoffLng: number | null,
   ): Promise<Record<string, unknown>> {
-    const errandType = await this.prisma.errandType.findUnique({ where: { id: errandTypeId } });
+    // Load the row ONCE (cached) and thread it through every per-vehicle
+    // calculate() below, instead of each of them re-reading the same PK row —
+    // previously 1 + N identical lookups per fare-estimate request. (P20)
+    const errandType = await this.getErrandType(errandTypeId);
     const vehicleTypes = this.supportedVehicleTypes(errandType);
 
     const estimates: Record<string, unknown> = {};
     for (const type of vehicleTypes) {
-      estimates[type] = await this.calculate(errandTypeId, pickupLat, pickupLng, dropoffLat, dropoffLng, type);
+      estimates[type] = await this.calculate(
+        errandTypeId,
+        pickupLat,
+        pickupLng,
+        dropoffLat,
+        dropoffLng,
+        type,
+        'now',
+        errandType,
+      );
     }
 
     const distanceKm =

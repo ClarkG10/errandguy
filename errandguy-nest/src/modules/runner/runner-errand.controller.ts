@@ -12,7 +12,7 @@ import {
   UseInterceptors,
 } from '@nestjs/common';
 import { FileFieldsInterceptor } from '@nestjs/platform-express';
-import type { User } from '@prisma/client';
+import type { Prisma, User } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { SanctumAuthGuard } from '../../common/auth/auth.guard';
 import { ActiveGuard } from '../../common/auth/active.guard';
@@ -71,15 +71,40 @@ export class RunnerErrandController {
     const profile = await this.prisma.runnerProfile.findUnique({ where: { userId: user.id } });
     if (!profile || !profile.isOnline) return { data: [] };
 
+    // Bound the marketplace scan to a lat/lng bounding box around the runner
+    // (only when we know their location) so a busy city doesn't return every
+    // open negotiate booking + its joins to every polling runner just to
+    // discard most in JS. The exact-haversine filter below still trims the
+    // box's corners. radiusKm mirrors that filter (workingAreaRadius/1000 ||
+    // 10.0), not the config value. `take: 50` caps the frequently-polled feed
+    // (minor contract change: drops in-radius rows beyond the 50 newest). (P19)
+    const radiusKm = profile.workingAreaRadius ? Number(profile.workingAreaRadius) / 1000 : 10.0;
+    const baseWhere: Prisma.BookingWhereInput = {
+      status: 'pending',
+      pricingMode: 'negotiate',
+      negotiateExpiresAt: { gt: new Date() },
+      runnerId: null,
+    };
+    let where: Prisma.BookingWhereInput = baseWhere;
+    if (profile.currentLat != null && profile.currentLng != null) {
+      const lat = Number(profile.currentLat);
+      const lng = Number(profile.currentLng);
+      const latDelta = radiusKm / 111.0;
+      const lngDelta = radiusKm / (111.0 * Math.max(Math.cos((lat * Math.PI) / 180), 0.01));
+      // pickupLat/Lng are non-nullable in the schema, so the box filter is
+      // complete (the JS filter's `pickupLat != null` guard was always true).
+      where = {
+        ...baseWhere,
+        pickupLat: { gte: lat - latDelta, lte: lat + latDelta },
+        pickupLng: { gte: lng - lngDelta, lte: lng + lngDelta },
+      };
+    }
+
     const bookings = await this.prisma.booking.findMany({
-      where: {
-        status: 'pending',
-        pricingMode: 'negotiate',
-        negotiateExpiresAt: { gt: new Date() },
-        runnerId: null,
-      },
+      where,
       include: { errandType: true, customer: true },
       orderBy: { createdAt: 'desc' },
+      take: 50,
     });
 
     const preferredTypes = asArray<string>(profile.preferredTypes);

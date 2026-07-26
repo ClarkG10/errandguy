@@ -1,4 +1,6 @@
-import { Controller, Get, UseGuards } from '@nestjs/common';
+import { Controller, Get, Req, Res, UseGuards } from '@nestjs/common';
+import type { Request, Response } from 'express';
+import { createHash } from 'crypto';
 import type { ErrandType } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { CacheService } from '../../cache/cache.service';
@@ -36,7 +38,10 @@ export class CatalogController {
 
   /** GET /api/v1/errand-types — public, stale-while-revalidate (soft 1h / hard 24h). */
   @Get('errand-types')
-  async errandTypes(): Promise<{ data: unknown }> {
+  async errandTypes(
+    @Req() req: Request,
+    @Res({ passthrough: true }) res: Response,
+  ): Promise<{ data: unknown } | undefined> {
     const data = await this.cache.swr('errand_types:active', 3600, 86400, async () => {
       const rows = await this.prisma.errandType.findMany({
         where: { isActive: true },
@@ -44,7 +49,20 @@ export class CatalogController {
       });
       return rows.map(rawErrandType);
     });
-    return { data };
+    const body = { data };
+    // Public reference catalog — make it edge/browser-cacheable with a content
+    // ETag so repeat callers get cheap 304s instead of the full body. A short
+    // edge max-age (5min) keeps admin catalog-edit propagation quick despite the
+    // ~1h server SWR; stale-while-revalidate lets stale copies serve instantly
+    // while revalidating. (P22)
+    const etag = `"${createHash('sha1').update(JSON.stringify(body)).digest('base64')}"`;
+    res.setHeader('Cache-Control', 'public, max-age=300, stale-while-revalidate=86400');
+    res.setHeader('ETag', etag);
+    if (req.headers['if-none-match'] === etag) {
+      res.status(304);
+      return undefined;
+    }
+    return body;
   }
 
   /** GET /api/v1/config/app — authenticated; {key: value} map of system_config. */

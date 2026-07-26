@@ -31,8 +31,11 @@ describe('PricingService (money parity with Laravel)', () => {
     errandType: { findUnique: jest.fn().mockResolvedValue(errandType) },
   } as any;
   const config = { getValue: jest.fn().mockResolvedValue('15') } as any;
+  // remember() just runs the loader, so the prisma mock above still drives the
+  // ErrandType lookup (P20 added the cached accessor to PricingService).
+  const cache = { remember: jest.fn((_key: string, cb: () => unknown) => cb()) } as any;
 
-  const service = new PricingService(prisma, config);
+  const service = new PricingService(prisma, config, cache);
 
   it('prices a zero-distance motorcycle errand exactly like Laravel', async () => {
     // subtotal = 50 + 25 (motorcycle) + 0 = 75
