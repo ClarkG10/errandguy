@@ -52,11 +52,15 @@ class MatchingService
 
         $radiusKm = (float) SystemConfig::getValue('matching_radius_km', '10');
 
+        // Broadcast offers to ALL eligible runners, so use a larger cap than
+        // the findRunner path (which only needs the nearest one). Still bounded
+        // so a dense city can't return an unbounded set. (P5)
         $runners = $this->getEligibleRunners(
             $booking->pickup_lat,
             $booking->pickup_lng,
             $radiusKm,
-            $booking->errand_type_id
+            $booking->errand_type_id,
+            limit: 200,
         );
 
         // NOTE: negotiate_expires_at is deliberately NOT set here. The create
@@ -75,12 +79,20 @@ class MatchingService
     /**
      * Query eligible online runners within radius, sorted by score.
      */
+    /**
+     * @param  int  $limit  Max runners to hydrate. The findRunner path only
+     *         needs the nearest (->first()), so it takes the tight default; the
+     *         broadcast path offers to ALL eligible runners, so it passes a
+     *         larger cap. Either way the set is bounded — cost no longer scales
+     *         with idle-online-runner density.
+     */
     private function getEligibleRunners(
         float $lat,
         float $lng,
         float $radiusKm,
         string $errandTypeId,
-        ?string $excludeUserId = null
+        ?string $excludeUserId = null,
+        int $limit = 50
     ): Collection {
         $runners = RunnerProfile::where('is_online', true)
             ->where('verification_status', 'approved')
@@ -116,6 +128,18 @@ class MatchingService
                 $q->whereNotIn('status', ['pending', 'completed', 'cancelled', 'no_runner']);
             })
             ->with('user')
+            // Rank nearest-first IN SQL and cap the hydrated set, instead of
+            // loading every online runner inside the bounding box and sorting
+            // in PHP (cost scaled with idle-runner density, in the customer's
+            // synchronous create request). Squared planar distance is a fine
+            // proxy for ranking within this small box; the exact haversine +
+            // preferred-type filter below still runs over the nearest $limit
+            // rows, and re-sorts by (distance, acceptance_rate). (P5)
+            ->orderByRaw(
+                '((current_lat - ?) * (current_lat - ?)) + ((current_lng - ?) * (current_lng - ?)) asc',
+                [$lat, $lat, $lng, $lng]
+            )
+            ->limit($limit)
             ->get();
 
         // Filter by distance and preferred errand types

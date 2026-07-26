@@ -3,6 +3,7 @@
 namespace App\Http\Controllers\Admin;
 
 use App\Http\Controllers\Controller;
+use App\Jobs\SendPushJob;
 use App\Models\DisputeTicket;
 use App\Services\NotificationService;
 use Illuminate\Http\JsonResponse;
@@ -54,8 +55,9 @@ class DisputeController extends Controller
             'resolved_at' => now(),
         ]);
 
-        // Notify reporter
-        $this->notificationService->sendPush(
+        // Notify reporter — queued so the admin response isn't blocked on
+        // Expo/FCM latency. (P33)
+        SendPushJob::dispatch(
             $dispute->reported_by,
             'Dispute Resolved',
             'Your dispute has been reviewed and resolved. Check the details for more info.',

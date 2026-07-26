@@ -5,7 +5,6 @@ namespace App\Services;
 use App\Models\Booking;
 use App\Models\SOSAlert;
 use App\Models\TrustedContact;
-use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Str;
 
 class SOSService
@@ -54,40 +53,22 @@ class SOSService
             'status' => 'active',
         ]);
 
-        // Notify the trusted contacts of whoever triggered the alarm.
-        $contacts = TrustedContact::where('user_id', $triggeredBy)
+        // Record WHICH trusted contacts will be notified — part of the durable
+        // safety record, so it stays synchronous.
+        $contactIds = TrustedContact::where('user_id', $triggeredBy)
             ->orderBy('created_at')
-            ->get();
-
-        $contactIds = $contacts->pluck('id')->toArray();
+            ->pluck('id')
+            ->toArray();
         $alert->update(['contacts_notified' => $contactIds]);
-
-        $liveLink = config('app.url') . "/trip/{$alert->live_link_token}";
-
-        foreach ($contacts as $contact) {
-            $this->notifySMSContact($contact, $triggeredBy, $liveLink, $booking);
-        }
 
         $booking->update(['sos_triggered' => true]);
 
-        $this->realtimeService->broadcastSOSAlert($bookingId, $triggeredBy, [
-            'alert_id' => $alert->id,
-            'status' => 'active',
-            'live_link' => $liveLink,
-            'triggered_by_role' => $role,
-        ]);
-
-        $this->notificationService->sendToTopic(
-            'admin_safety',
-            '🚨 SOS Alert',
-            "Emergency triggered by {$role} for booking #{$booking->booking_number}",
-            [
-                'type' => 'sos',
-                'booking_id' => $bookingId,
-                'alert_id' => $alert->id,
-                'triggered_by_role' => $role,
-            ]
-        );
+        // Everything above is the durable safety write. The OUTBOUND fan-out —
+        // trusted-contact SMS, the Supabase realtime broadcast, and the admin
+        // FCM topic — is deferred to a job so the panic button returns the alert
+        // immediately instead of blocking on Supabase + Firebase (and, once SMS
+        // is wired, one HTTP call per contact). (P7)
+        \App\Jobs\NotifySosContactsJob::dispatch($alert->id);
 
         return $alert;
     }
@@ -121,19 +102,5 @@ class SOSService
             ->with(['booking', 'customer', 'runner'])
             ->orderByDesc('triggered_at')
             ->get();
-    }
-
-    private function notifySMSContact(TrustedContact $contact, string $userId, string $liveLink, Booking $booking): void
-    {
-        // SMS delivery to trusted contacts is not yet wired to a provider. Do
-        // NOT log the live-link token or the contact's phone number — the token
-        // grants unauthenticated access to the victim's live location, and the
-        // phone is PII. Emit only a non-sensitive breadcrumb so the gap is
-        // observable without leaking secrets. See SYSTEM_AUDIT_2026-07.md (C3):
-        // this must send a real SMS before SOS can claim "contacts notified".
-        Log::warning('SOS trusted-contact SMS not delivered (no SMS provider configured)', [
-            'booking_id' => $booking->id,
-            'contact_id' => $contact->id,
-        ]);
     }
 }

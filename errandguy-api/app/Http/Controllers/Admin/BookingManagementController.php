@@ -36,7 +36,13 @@ class BookingManagementController extends Controller
                   ->where('created_at', '<', $start->copy()->addDay());
         }
 
-        $bookings = $query->orderByDesc('created_at')->paginate(20);
+        $bookings = $query->orderByDesc('created_at')->paginate(20)
+            // Drop the large jsonb blobs (item_photos, shopping_items) from the
+            // LIST view — they're detail-screen data that bloat every row.
+            // makeHidden keeps every OTHER column, so no admin table cell is
+            // blanked (a fuller column projection needs validation against the
+            // admin UI first — see audit P39). ->through preserves pagination.
+            ->through(fn (Booking $b) => $b->makeHidden(['item_photos', 'shopping_items']));
 
         return response()->json($bookings);
     }

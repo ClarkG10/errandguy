@@ -3,6 +3,7 @@
 namespace App\Http\Controllers\Admin;
 
 use App\Http\Controllers\Controller;
+use App\Jobs\SendPushJob;
 use App\Models\RunnerDocument;
 use App\Models\RunnerProfile;
 use App\Services\NotificationService;
@@ -53,7 +54,8 @@ class RunnerVerificationController extends Controller
             ->where('status', 'pending')
             ->update(['status' => 'approved', 'reviewed_at' => now()]);
 
-        $this->notificationService->sendPush(
+        // Queue the push so the admin response isn't blocked on Expo/FCM latency. (P33)
+        SendPushJob::dispatch(
             $userId,
             'Verification Approved!',
             'Your runner account has been approved. You can now go online and start accepting errands.',
@@ -81,7 +83,8 @@ class RunnerVerificationController extends Controller
                 'reviewed_at' => now(),
             ]);
 
-        $this->notificationService->sendPush(
+        // Queue the push so the admin response isn't blocked on Expo/FCM latency. (P33)
+        SendPushJob::dispatch(
             $userId,
             'Verification Update',
             'Your runner verification was not approved. Please check the details and resubmit.',

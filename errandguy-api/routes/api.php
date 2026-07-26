@@ -70,14 +70,27 @@ Route::prefix('v1')->group(function () {
     });
 
     // Public config routes (no auth required)
-    Route::get('/errand-types', function () {
+    Route::get('/errand-types', function (\Illuminate\Http\Request $request) {
         // Stale-while-revalidate: instant reads, refreshed in the background
         // ~hourly so admin edits propagate without a 24h wait or a cron.
-        return response()->json([
+        $response = response()->json([
             'data' => \App\Services\CacheService::swr('errand_types:active', 3600, 86400, fn () =>
                 \App\Models\ErrandType::where('is_active', true)->orderBy('sort_order')->get()->toArray()
             ),
         ]);
+
+        // This is a PUBLIC catalog (no user ⇒ SecurityHeaders won't stamp
+        // no-store), so make it edge/browser-cacheable with a content ETag →
+        // cheap 304s instead of re-shipping the full body. A short edge max-age
+        // (5min) keeps admin catalog-edit propagation quick despite the ~1h
+        // server SWR; stale-while-revalidate lets stale copies serve instantly
+        // while revalidating. `isNotModified` flips the response to a bodyless
+        // 304 when the client's If-None-Match matches. (P22)
+        $response->headers->set('Cache-Control', 'public, max-age=300, stale-while-revalidate=86400');
+        $response->setEtag(md5($response->getContent()));
+        $response->isNotModified($request);
+
+        return $response;
     });
 
     // Authenticated routes
@@ -157,7 +170,14 @@ Route::prefix('v1')->group(function () {
 
             Route::get('/earnings', [RunnerEarningsController::class, 'summary']);
             Route::get('/earnings/history', [RunnerEarningsController::class, 'history']);
-            Route::get('/earnings/export', [ExportController::class, 'earningsPdf']);
+            // Throttled: synchronous DomPDF rendering of up to 500 line items
+            // pins a PHP-FPM worker for seconds, so a retry storm / rapid taps
+            // could starve the pool. 6/min per runner is ample for a real
+            // statement export. (The fuller fix — render in a queued job and
+            // hand back a signed URL — changes this endpoint's contract from a
+            // binary stream and needs a coordinated mobile change; see P17.)
+            Route::get('/earnings/export', [ExportController::class, 'earningsPdf'])
+                ->middleware('throttle:6,1');
             Route::get('/errands/history', [RunnerErrandHistoryController::class, 'index']);
             Route::post('/payout/request', [RunnerPayoutController::class, 'requestPayout'])->middleware('idempotent');
 

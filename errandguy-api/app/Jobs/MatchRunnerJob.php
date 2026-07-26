@@ -6,7 +6,6 @@ use App\Events\BookingStatusChanged;
 use App\Models\Booking;
 use App\Models\BookingStatusLog;
 use App\Services\MatchingService;
-use App\Services\NotificationService;
 use Illuminate\Bus\Queueable;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Bus\Dispatchable;
@@ -139,9 +138,12 @@ class MatchRunnerJob implements ShouldQueue
                 if ($newStatus === 'matched' && $runner) {
                     Cache::forget("runner_active_booking_id:{$runner->user_id}");
 
-                    // Push the offer AFTER commit (never make an outbound push
-                    // call inside the row lock).
-                    app(NotificationService::class)->sendPush(
+                    // Deliver the offer notification OFF the request thread via a
+                    // queued job. This job is dispatchSync'd for immediate
+                    // bookings, so calling sendPush() inline here ran the Expo/FCM
+                    // push HTTP inside the customer's create request. The in-app
+                    // row lands ms later; the 201 (matched/no_runner) is unaffected. (P4)
+                    SendPushJob::dispatch(
                         $runner->user_id,
                         'New errand offer',
                         'You were matched to an errand. Open the app to accept it.',

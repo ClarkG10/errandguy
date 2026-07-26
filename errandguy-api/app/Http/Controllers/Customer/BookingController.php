@@ -426,12 +426,16 @@ class BookingController extends Controller
             $booking->update([
                 'negotiate_expires_at' => $broadcastAt->copy()->addMinutes($negotiateMinutes),
             ]);
-            // Run the broadcast inline for immediate bookings (same reasoning
-            // as fixed-mode above — don't block on a queue worker).
+            // Queue the broadcast even for immediate bookings. Unlike fixed mode,
+            // the 201 does NOT depend on the broadcast result (the booking is
+            // already pending with negotiate_expires_at set above; runners
+            // respond later), so there's no reason to run the Supabase PostgREST
+            // fan-out inside the customer's request. Scheduled negotiate bookings
+            // already depend on the queue worker, so this is consistent. (P4)
             if ($matchAt && $matchAt->isFuture()) {
                 BroadcastToRunnersJob::dispatch($booking->id)->delay($matchAt);
             } else {
-                BroadcastToRunnersJob::dispatchSync($booking->id);
+                BroadcastToRunnersJob::dispatch($booking->id);
             }
             ExpireNegotiateBookingJob::dispatch($booking->id)
                 ->delay($broadcastAt->copy()->addMinutes($negotiateMinutes));
