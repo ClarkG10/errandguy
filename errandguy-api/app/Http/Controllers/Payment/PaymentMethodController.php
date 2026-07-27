@@ -37,7 +37,25 @@ class PaymentMethodController extends Controller
             ->whereIn('status', ['active', 'pending'])
             ->orderByDesc('is_default')
             ->orderBy('created_at')
-            ->get()
+            ->get();
+
+        // Confirm any still-`pending` linked method directly with the gateway so
+        // linking completes even when the `payment_method.activated` webhook is
+        // delayed or (in test mode) never configured — the app refetches this
+        // list the moment the authorization sheet closes. Idempotent + throttled
+        // per method. This is what turns a stuck-`pending` link into an `active`
+        // one the customer can then be charged against WITHOUT another redirect.
+        $svc = app(PaymentService::class);
+        foreach ($methods as $method) {
+            if ($method->status === 'pending') {
+                $svc->reconcileLinkedMethod($method);
+            }
+        }
+
+        // Drop anything that reconciled to a terminal-failure state.
+        $methods = $methods
+            ->whereIn('status', ['active', 'pending'])
+            ->values()
             ->makeHidden(['gateway_token', 'gateway_ref']);
 
         return response()->json([

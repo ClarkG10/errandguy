@@ -267,6 +267,69 @@ class PaymentService
     }
 
     /**
+     * Confirm a still-`pending` linked method against Xendit and advance it.
+     *
+     * Linking otherwise activates ONLY via the `payment_method.activated`
+     * webhook — so if that webhook is delayed, dropped, or (in test mode) never
+     * configured for the active key's mode, the method the customer just
+     * authorized sits `pending` forever and "linking doesn't work". This pulls
+     * the method's REAL status directly from the gateway, exactly as
+     * reconcileBookingPayment() does for charges, so linking completes without
+     * depending on webhook delivery.
+     *
+     * Safe to call on every payment-methods list read:
+     *   • no-op unless the method is `pending` with a gateway ref;
+     *   • a gateway hiccup never throws — it just stays pending, retries later;
+     *   • throttled per method so frequent list refetches don't hammer Xendit;
+     *   • only ever moves the method to the state the gateway itself reports.
+     */
+    public function reconcileLinkedMethod(PaymentMethod $method): PaymentMethod
+    {
+        if ($method->status !== 'pending' || blank($method->gateway_ref) || blank($this->secretKey)) {
+            return $method;
+        }
+
+        // Rate-limit the gateway pull per method (the app refetches the list on
+        // return, and pull-to-refresh can fire it repeatedly while pending).
+        if (! Cache::add("payment_method_reconcile_pull:{$method->id}", 1, self::RECONCILE_PULL_THROTTLE_SECONDS)) {
+            return $method;
+        }
+
+        try {
+            $response = $this->http()->get("{$this->baseUrl}/v2/payment_methods/{$method->gateway_ref}");
+            if (! $response->successful()) {
+                return $method;
+            }
+            $gatewayStatus = strtoupper((string) ($response->json('status') ?? ''));
+        } catch (\Throwable $e) {
+            return $method; // gateway unreachable/transient — never fail the read
+        }
+
+        $local = match ($gatewayStatus) {
+            'ACTIVE' => 'active',
+            'EXPIRED' => 'expired',
+            'FAILED', 'INACTIVE' => 'failed',
+            default => null, // PENDING / REQUIRES_ACTION — customer hasn't finished
+        };
+
+        if ($local === null || $local === $method->status) {
+            return $method;
+        }
+
+        $method->status = $local;
+        if ($local === 'active') {
+            // Parity with link(): the first active method becomes the default.
+            $method->is_default = ! PaymentMethod::where('user_id', $method->user_id)
+                ->where('status', 'active')
+                ->where('id', '!=', $method->id)
+                ->exists();
+        }
+        $method->save();
+
+        return $method;
+    }
+
+    /**
      * Charge a previously-linked payment method by its Xendit id — no redirect
      * for MULTIPLE_USE tokens. Returns the payment_request object; a first-time
      * charge may come back REQUIRES_ACTION with an auth URL in `actions`.
