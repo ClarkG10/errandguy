@@ -20,7 +20,9 @@ import { userService } from '../services/user.service';
 import { preloadAfterAuth, preloadCoreImages } from '../services/preload.service';
 import { initMutationQueue } from '../services/mutationQueue';
 import { useNotifications } from '../hooks/useNotifications';
+import { useOtaLaunchCheck } from '../hooks/useOtaUpdate';
 import { ToastProvider } from '../components/ui/ToastProvider';
+import { OtaUpdateGate } from '../components/ui/OtaUpdateGate';
 import { ApiActivityBar } from '../components/ui/ApiActivityBar';
 import { OfflineBanner } from '../components/ui/OfflineBanner';
 import { installErrorLogging } from '../utils/errorLogging';
@@ -158,6 +160,11 @@ export default function RootLayout() {
     isAuthenticated && !!(user?.phone_verified || user?.email_verified);
   useNotifications(canRegisterPush);
 
+  // Silently check for an OTA update once the app is past bootstrap. A
+  // non-critical update downloads and applies on the next launch; a critical
+  // one is force-applied via <OtaUpdateGate/>. No-op in dev / Expo Go.
+  useOtaLaunchCheck(!isLoading);
+
   useEffect(() => {
     loadFromStorage();
     loadDraftFromStorage();
@@ -266,6 +273,8 @@ export default function RootLayout() {
         <ApiActivityBar />
         <OfflineBanner />
         <ToastProvider />
+        {/* Blocking gate for a critical OTA update (invisible otherwise). */}
+        <OtaUpdateGate />
       </GestureHandlerRootView>
     </SafeAreaProvider>
   );

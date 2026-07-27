@@ -2,12 +2,12 @@
 
 namespace App\Http\Controllers\Admin;
 
+use App\Exceptions\PayoutStateException;
 use App\Http\Controllers\Controller;
-use App\Models\User;
 use App\Models\WalletTransaction;
+use App\Services\WalletService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
-use Illuminate\Support\Facades\DB;
 
 /**
  * Admin-side payout reconciliation.
@@ -35,80 +35,27 @@ class AdminPayoutController extends Controller
         );
     }
 
-    public function markCompleted(Request $request, string $id): JsonResponse
+    public function markCompleted(Request $request, string $id, WalletService $wallet): JsonResponse
     {
-        $tx = WalletTransaction::where('type', 'payout')->findOrFail($id);
-
-        if ($tx->status !== 'pending') {
-            return response()->json([
-                'message' => 'Only pending payouts can be marked completed.',
-            ], 422);
+        try {
+            $tx = $wallet->completePayout($id);
+        } catch (PayoutStateException $e) {
+            return response()->json(['message' => $e->getMessage()], 422);
         }
-
-        $tx->update([
-            'status' => 'completed',
-            'processed_at' => now(),
-        ]);
 
         return response()->json(['data' => $tx]);
     }
 
-    public function markFailed(Request $request, string $id): JsonResponse
+    public function markFailed(Request $request, string $id, WalletService $wallet): JsonResponse
     {
         $validated = $request->validate([
             'reason' => ['required', 'string', 'max:500'],
         ]);
 
-        // Refund + status update must be atomic so we don't leave the
-        // runner double-debited if the refund half fails.
         try {
-            $tx = DB::transaction(function () use ($id, $validated) {
-                $tx = WalletTransaction::where('type', 'payout')
-                    ->lockForUpdate()
-                    ->findOrFail($id);
-
-                if ($tx->status !== 'pending') {
-                    throw new \RuntimeException('only_pending');
-                }
-
-                $user = User::lockForUpdate()->findOrFail($tx->user_id);
-                // Re-credit the wallet using the same absolute amount that
-                // was debited when the payout was requested.
-                $refundAmount = abs((float) $tx->amount);
-                $newBalance = (float) $user->wallet_balance + $refundAmount;
-
-                // Audit-trail row so the refund is visible to the runner
-                // ("ErrandGuy · Refund for failed payout").
-                WalletTransaction::create([
-                    'user_id' => $user->id,
-                    'type' => 'refund',
-                    'amount' => $refundAmount,
-                    'balance_after' => $newBalance,
-                    'reference_id' => $tx->id,
-                    'description' => 'Refund for failed payout',
-                    'status' => 'completed',
-                    'processed_at' => now(),
-                ]);
-
-                $user->update(['wallet_balance' => $newBalance]);
-
-                $tx->update([
-                    'status' => 'failed',
-                    'processed_at' => now(),
-                    'failure_reason' => $validated['reason'],
-                ]);
-
-                return $tx->fresh();
-            });
-        } catch (\RuntimeException $e) {
-            // A non-pending payout (already completed/failed) — return a clean
-            // 422 instead of letting the guard exception bubble up as a 500.
-            if ($e->getMessage() === 'only_pending') {
-                return response()->json([
-                    'message' => 'Only pending payouts can be marked failed.',
-                ], 422);
-            }
-            throw $e;
+            $tx = $wallet->failPayout($id, $validated['reason']);
+        } catch (PayoutStateException $e) {
+            return response()->json(['message' => $e->getMessage()], 422);
         }
 
         return response()->json(['data' => $tx]);

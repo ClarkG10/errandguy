@@ -1,0 +1,84 @@
+<?php
+
+namespace App\Filament\Resources\SOSAlerts\Tables;
+
+use App\Support\AdminActivity;
+use Filament\Actions\Action;
+use Filament\Actions\ViewAction;
+use Filament\Forms\Components\Textarea;
+use Filament\Notifications\Notification;
+use Filament\Support\Icons\Heroicon;
+use Filament\Tables\Columns\TextColumn;
+use Filament\Tables\Filters\SelectFilter;
+use Filament\Tables\Table;
+
+class SOSAlertsTable
+{
+    public static function configure(Table $table): Table
+    {
+        return $table
+            ->defaultSort('created_at', 'desc')
+            ->columns([
+                TextColumn::make('created_at')
+                    ->label('Triggered')
+                    ->dateTime()
+                    ->sortable(),
+                TextColumn::make('customer.full_name')
+                    ->searchable(),
+                TextColumn::make('runner.full_name')
+                    ->label('Runner'),
+                TextColumn::make('triggered_by_role')
+                    ->badge(),
+                TextColumn::make('booking.booking_number')
+                    ->label('Booking')
+                    ->toggleable(),
+                TextColumn::make('status')
+                    ->badge()
+                    ->color(fn (string $state): string => match ($state) {
+                        'active' => 'danger',
+                        'resolved' => 'success',
+                        default => 'gray',
+                    }),
+                TextColumn::make('resolved_at')
+                    ->dateTime()
+                    ->toggleable(),
+            ])
+            ->filters([
+                SelectFilter::make('status')
+                    ->options([
+                        'active' => 'Active',
+                        'resolved' => 'Resolved',
+                    ])
+                    ->default('active'),
+            ])
+            ->recordActions([
+                ViewAction::make(),
+                Action::make('resolve')
+                    ->label('Resolve')
+                    ->icon(Heroicon::OutlinedShieldCheck)
+                    ->color('success')
+                    ->visible(fn ($record): bool => $record->status === 'active'
+                        && (auth('admin')->user()?->canHandleSupport() ?? false))
+                    ->schema([
+                        Textarea::make('note')
+                            ->label('Resolution note')
+                            ->maxLength(1000),
+                    ])
+                    ->action(function (array $data, $record): void {
+                        try {
+                            app(\App\Services\SOSService::class)->deactivateSOS($record->booking_id);
+
+                            if (! empty($data['note'])) {
+                                $record->refresh();
+                                $record->update(['resolution_note' => $data['note']]);
+                            }
+
+                            AdminActivity::log('sos.resolved', $record, ['note' => $data['note'] ?? null]);
+                            Notification::make()->title('SOS resolved')->success()->send();
+                        } catch (\Throwable $e) {
+                            Notification::make()->title($e->getMessage())->danger()->send();
+                        }
+                    }),
+            ]);
+    }
+}

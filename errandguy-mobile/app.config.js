@@ -4,6 +4,26 @@ module.exports = ({ config }) => {
 
   let updatedConfig = {
     ...config,
+    // --- OTA updates (EAS Update) ---
+    // JS-driven checks: the in-app useOtaUpdate hook owns the UX (auto on
+    // launch + a manual "Check for updates" button + a critical force-update),
+    // so we don't let expo-updates auto-check and block the splash.
+    runtimeVersion: { policy: 'appVersion' },
+    updates: {
+      url: 'https://u.expo.dev/1684a4bc-4b59-47f4-a87e-3b3262438098',
+      enabled: true,
+      checkAutomatically: 'ON_ERROR_RECOVERY',
+      fallbackToCacheTimeout: 0,
+    },
+    // Merge (don't clobber) the eas.projectId + router keys from app.json.
+    // `ota.critical` rides along in the published update manifest; set
+    // EXPO_OTA_CRITICAL=1 when publishing to force the update in-app.
+    extra: {
+      ...(config.extra || {}),
+      ota: {
+        critical: process.env.EXPO_OTA_CRITICAL === '1',
+      },
+    },
     plugins: [
       [
         'expo-router',
@@ -11,6 +31,7 @@ module.exports = ({ config }) => {
           root: './src/app',
         },
       ],
+      'expo-updates',
       'expo-secure-store',
       'expo-location',
       'expo-camera',

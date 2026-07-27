@@ -23,6 +23,8 @@ import {
   Flag,
   Gift,
   Ticket,
+  RefreshCw,
+  Info,
 } from 'lucide-react-native';
 import type { LucideIcon } from 'lucide-react-native';
 import * as Haptics from 'expo-haptics';
@@ -43,6 +45,8 @@ import { formatCurrency } from '../../../utils/formatCurrency';
 import { LightColors } from '../../../constants/colors';
 import { TAB_CONTENT_BOTTOM_INSET } from '../../../constants/tabLayout';
 import { toast } from '../../../stores/toastStore';
+import { checkForOtaUpdate } from '../../../hooks/useOtaUpdate';
+import { getAppVersionLabel } from '../../../utils/appVersion';
 
 interface MenuItem {
   label: string;
@@ -189,6 +193,22 @@ export default function CustomerProfileScreen() {
     { label: 'Help & Support', icon: HelpCircle, route: '/(customer)/help' },
     // Distinct destination from Help & Support: the in-app ticket flow.
     { label: 'Report an Issue', icon: Flag, route: '/(customer)/support' },
+    {
+      label: 'Check for updates',
+      icon: RefreshCw,
+      onPress: () => {
+        void checkForOtaUpdate({ silent: false });
+      },
+    },
+    {
+      label: 'App version',
+      icon: Info,
+      trailing: (
+        <Text className="text-[13px] font-montserrat text-textSecondary">
+          {getAppVersionLabel()}
+        </Text>
+      ),
+    },
   ];
 
   const renderMenuItem = (item: MenuItem, isLast: boolean) => {

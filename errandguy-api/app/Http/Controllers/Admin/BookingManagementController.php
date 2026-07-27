@@ -8,7 +8,6 @@ use App\Http\Resources\BookingResource;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Carbon;
-use Illuminate\Support\Facades\Cache;
 
 class BookingManagementController extends Controller
 {
@@ -60,38 +59,17 @@ class BookingManagementController extends Controller
         return response()->json(['data' => new BookingResource($booking)]);
     }
 
-    public function cancel(Request $request, string $id): JsonResponse
+    public function cancel(Request $request, string $id, \App\Services\BookingService $bookings): JsonResponse
     {
         $request->validate(['reason' => 'required|string|max:500']);
 
-        $booking = Booking::findOrFail($id);
-
-        if (in_array($booking->status, ['completed', 'cancelled'])) {
-            return response()->json(['message' => 'Booking already finalized'], 422);
+        try {
+            // Single money-safe path (raw status write + full wallet refund,
+            // no fee) shared with the Filament admin panel.
+            $bookings->adminCancel($id, $request->user()->id, $request->input('reason'));
+        } catch (\App\Exceptions\BookingStateException $e) {
+            return response()->json(['message' => $e->getMessage()], 422);
         }
-
-        $booking->update([
-            'status' => 'cancelled',
-            'cancelled_at' => now(),
-            // cancelled_by is a uuid column — binding the literal 'admin' threw
-            // SQLSTATE 22P02 on Postgres, 500-ing every admin cancel (SQLite
-            // tests silently accepted it). Record the acting admin's real id.
-            'cancelled_by' => $request->user()->id,
-            'cancellation_reason' => $request->input('reason'),
-        ]);
-
-        // Don't leave the assigned runner's GPS pings tagged to the cancelled
-        // booking for the next ~30s (per-runner active-booking cache).
-        if ($booking->runner_id) {
-            Cache::forget("runner_active_booking_id:{$booking->runner_id}");
-        }
-
-        // An admin/platform-initiated cancel is not the customer's fault, so a
-        // paid booking is refunded IN FULL with no cancellation fee (unlike the
-        // customer-initiated cancel). refundUnfulfilled is the shared
-        // full-refund-no-fee primitive (idempotent; no-op for cash/unpaid).
-        app(\App\Services\BookingService::class)
-            ->refundUnfulfilled($booking->id, 'Admin cancelled the booking');
 
         return response()->json(['message' => 'Booking cancelled by admin']);
     }

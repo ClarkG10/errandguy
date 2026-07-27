@@ -7,6 +7,7 @@ use App\Models\Booking;
 use App\Models\BookingStatusLog;
 use App\Models\ErrandType;
 use App\Models\Payment;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 
@@ -121,6 +122,42 @@ class BookingService
      * matching the cancellation refund path (gateway reversal is not wired).
      * Cash / unpaid / already-refunded bookings collected nothing to return.
      */
+    /**
+     * Admin/platform-initiated cancel — the single money-safe path shared by
+     * BookingManagementController::cancel and the Filament BookingResource
+     * cancel action.
+     *
+     * Because an admin/platform cancel is not the customer's fault, a paid
+     * booking is refunded IN FULL with no cancellation fee (unlike the
+     * customer-initiated cancel), via the shared refundUnfulfilled primitive.
+     *
+     * @throws BookingStateException when the booking is already finalized.
+     */
+    public function adminCancel(string $bookingId, string $adminId, string $reason): void
+    {
+        $booking = Booking::findOrFail($bookingId);
+
+        if (in_array($booking->status, ['completed', 'cancelled'], true)) {
+            throw new \App\Exceptions\BookingStateException('Booking already finalized');
+        }
+
+        $booking->update([
+            'status' => 'cancelled',
+            'cancelled_at' => now(),
+            // cancelled_by is a uuid column — record the acting admin's real id.
+            'cancelled_by' => $adminId,
+            'cancellation_reason' => $reason,
+        ]);
+
+        // Don't leave the assigned runner's GPS pings tagged to the cancelled
+        // booking for the next ~30s (per-runner active-booking cache).
+        if ($booking->runner_id) {
+            Cache::forget("runner_active_booking_id:{$booking->runner_id}");
+        }
+
+        $this->refundUnfulfilled($booking->id, 'Admin cancelled the booking');
+    }
+
     public function refundUnfulfilled(string $bookingId, string $reason): void
     {
         DB::transaction(function () use ($bookingId, $reason) {

@@ -14,6 +14,8 @@ import {
   Bell,
   LifeBuoy,
   FileText,
+  RefreshCw,
+  Info,
   type LucideIcon,
 } from 'lucide-react-native';
 import * as Haptics from 'expo-haptics';
@@ -35,6 +37,8 @@ import { userService } from '../../../services/user.service';
 import { toast } from '../../../stores/toastStore';
 import { LightColors } from '../../../constants/colors';
 import { useResponsive } from '../../../constants/responsive';
+import { checkForOtaUpdate } from '../../../hooks/useOtaUpdate';
+import { getAppVersionLabel } from '../../../utils/appVersion';
 
 interface MenuItem {
   label: string;
@@ -251,6 +255,14 @@ export default function RunnerProfileScreen() {
     { label: 'Notification Preferences', icon: Bell, route: '/(runner)/settings/notifications' },
     { label: 'Help & Support', icon: LifeBuoy, route: '/(runner)/settings/help' },
     { label: 'Terms & Privacy', icon: FileText, route: '/(runner)/settings/terms' },
+    {
+      label: 'Check for updates',
+      icon: RefreshCw,
+      onPress: () => {
+        void checkForOtaUpdate({ silent: false });
+      },
+    },
+    { label: 'App version', icon: Info, preview: getAppVersionLabel() },
   ];
 
   const renderMenuItem = (item: MenuItem, idx: number, arr: MenuItem[]) => (

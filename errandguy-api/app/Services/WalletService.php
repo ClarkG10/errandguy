@@ -268,4 +268,78 @@ class WalletService
             ]);
         });
     }
+
+    /**
+     * Mark a pending payout completed once funds have been disbursed.
+     *
+     * Shared money-safe path used by both AdminPayoutController and the
+     * Filament Payouts page. Throws PayoutStateException if the payout is
+     * not pending (callers surface a clean 422 / notification).
+     */
+    public function completePayout(string $txId): WalletTransaction
+    {
+        return DB::transaction(function () use ($txId) {
+            $tx = WalletTransaction::where('type', 'payout')
+                ->lockForUpdate()
+                ->findOrFail($txId);
+
+            if ($tx->status !== 'pending') {
+                throw new \App\Exceptions\PayoutStateException('Only pending payouts can be marked completed.');
+            }
+
+            $tx->update([
+                'status' => 'completed',
+                'processed_at' => now(),
+            ]);
+
+            return $tx->fresh();
+        });
+    }
+
+    /**
+     * Mark a pending payout failed and re-credit the runner's wallet.
+     *
+     * The refund + status update are atomic so a bounced disbursement never
+     * leaves the runner double-debited. Mirrors the original
+     * AdminPayoutController::markFailed logic exactly.
+     */
+    public function failPayout(string $txId, string $reason): WalletTransaction
+    {
+        return DB::transaction(function () use ($txId, $reason) {
+            $tx = WalletTransaction::where('type', 'payout')
+                ->lockForUpdate()
+                ->findOrFail($txId);
+
+            if ($tx->status !== 'pending') {
+                throw new \App\Exceptions\PayoutStateException('Only pending payouts can be marked failed.');
+            }
+
+            $user = User::lockForUpdate()->findOrFail($tx->user_id);
+            // Re-credit the wallet using the same absolute amount that was
+            // debited when the payout was requested.
+            $refundAmount = abs((float) $tx->amount);
+            $newBalance = (float) $user->wallet_balance + $refundAmount;
+
+            WalletTransaction::create([
+                'user_id' => $user->id,
+                'type' => 'refund',
+                'amount' => $refundAmount,
+                'balance_after' => $newBalance,
+                'reference_id' => $tx->id,
+                'description' => 'Refund for failed payout',
+                'status' => 'completed',
+                'processed_at' => now(),
+            ]);
+
+            $user->update(['wallet_balance' => $newBalance]);
+
+            $tx->update([
+                'status' => 'failed',
+                'processed_at' => now(),
+                'failure_reason' => $reason,
+            ]);
+
+            return $tx->fresh();
+        });
+    }
 }

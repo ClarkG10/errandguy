@@ -13,4 +13,8 @@ export const APP_CONFIG = {
   MAX_CHAT_IMAGE_SIZE: 2 * 1024 * 1024, // 2MB
   CURRENCY: '₱',
   CURRENCY_CODE: 'PHP',
+  // OTA (EAS Update): silently check + download an update on cold launch.
+  // Non-critical updates apply on the next natural launch; critical ones are
+  // force-applied via OtaUpdateGate. Toggle off to disable launch checks.
+  OTA_CHECK_ON_LAUNCH: true,
 } as const;
