@@ -12,6 +12,7 @@ import * as Haptics from 'expo-haptics';
 import { Illustration } from '../../../components/ui/Illustration';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
+import { HereMapView, HereMarker } from '../../../components/map';
 import { useBookingStore } from '../../../stores/bookingStore';
 import { useBookingStatus } from '../../../hooks/useBookingStatus';
 import { useBackGuard } from '../../../hooks/useBackGuard';
@@ -68,6 +69,11 @@ export default function ConfirmScreen() {
   // whichever source is populated (the created booking, or the draft on the
   // normal create flow) and land on a "scheduled" confirmation instead.
   const scheduledSource = activeBooking ?? draftBooking;
+  // Pickup coords for the searching map (re-enabled per request — this bills
+  // HERE tiles for the search duration). Falls back to the gradient if absent.
+  const pickupLat = Number(scheduledSource?.pickup_lat);
+  const pickupLng = Number(scheduledSource?.pickup_lng);
+  const hasPickup = Number.isFinite(pickupLat) && Number.isFinite(pickupLng);
   const scheduledAtMs = scheduledSource?.scheduled_at
     ? Date.parse(scheduledSource.scheduled_at)
     : NaN;
@@ -79,6 +85,17 @@ export default function ConfirmScreen() {
   const [state, setState] = useState<SearchState>(
     isScheduledFuture ? 'scheduled' : 'searching',
   );
+
+  // Cost guard: HERE tiles bill for the whole search, so show the live map for
+  // the first stretch of the wait, then fall back to the free gradient on a
+  // long search. Per screen mount.
+  const [mapExpired, setMapExpired] = useState(false);
+  useEffect(() => {
+    if (state !== 'searching' || !hasPickup) return;
+    const t = setTimeout(() => setMapExpired(true), 45000);
+    return () => clearTimeout(t);
+  }, [state, hasPickup]);
+  const showSearchMap = state === 'searching' && hasPickup && !mapExpired;
 
   // Cold-start / deep-link (e.g. returning from Xendit checkout after the app
   // was killed): the store may hydrate the scheduled booking only after mount,
@@ -459,20 +476,66 @@ export default function ConfirmScreen() {
           the stack, this wins over the soft headers below and pops back
           off when the screen unmounts. */}
       <StatusBar barStyle="light-content" />
-      {/* Static brand backdrop — the "searching" screen used to render a live
-          map behind the pulse, which streamed billed HERE tiles for the whole
-          wait. A gradient reads the same and costs nothing. The live map opens
-          on demand later, on the tracking screen. */}
-      <LinearGradient
-        colors={[
-          LightColors.gradientStart,
-          LightColors.gradientMid,
-          LightColors.gradientEnd,
-        ]}
-        start={{ x: 0, y: 0 }}
-        end={{ x: 1, y: 1 }}
-        style={StyleSheet.absoluteFill}
-      />
+      {/* Backdrop. While searching we show a live map centered on the pickup
+          (re-enabled per request — streams billed HERE tiles for the search);
+          every other state keeps the zero-cost brand gradient. */}
+      {showSearchMap ? (
+        <>
+          <HereMapView
+            style={StyleSheet.absoluteFill}
+            showsMyLocationButton={false}
+            showsCompass={false}
+            scrollEnabled={false}
+            zoomEnabled={false}
+            rotateEnabled={false}
+            pitchEnabled={false}
+            maxZoomLevel={16}
+            initialRegion={{
+              latitude: pickupLat,
+              longitude: pickupLng,
+              latitudeDelta: 0.014,
+              longitudeDelta: 0.014,
+            }}
+          >
+            {/* Pickup marker doubles as the search radar — the expanding rings
+                emanate from the real pickup coordinate and pan with the map. */}
+            <HereMarker
+              coordinate={{ latitude: pickupLat, longitude: pickupLng }}
+              anchor={{ x: 0.5, y: 0.5 }}
+              id="pickup"
+            >
+              <View style={cs.searchPulse}>
+                <RunnerSearchAnimation size={130} />
+              </View>
+            </HereMarker>
+          </HereMapView>
+          {/* Readable scrim: near-solid at the top (status-bar) and bottom
+              (behind the card), light through the middle so the map shows
+              around the pickup where the search pulse sits. */}
+          <LinearGradient
+            pointerEvents="none"
+            colors={[
+              `${LightColors.gradientStart}F2`,
+              `${LightColors.gradientMid}55`,
+              `${LightColors.gradientEnd}F2`,
+            ]}
+            start={{ x: 0, y: 0 }}
+            end={{ x: 0, y: 1 }}
+            style={StyleSheet.absoluteFill}
+          />
+        </>
+      ) : (
+        <LinearGradient
+          colors={[
+            LightColors.gradientStart,
+            LightColors.gradientMid,
+            LightColors.gradientEnd,
+          ]}
+          start={{ x: 0, y: 0 }}
+          end={{ x: 1, y: 1 }}
+          style={StyleSheet.absoluteFill}
+        />
+      )}
 
       {/* Bottom card */}
       <SafeAreaView style={cs.overlay} edges={['top']}>
@@ -480,7 +543,10 @@ export default function ConfirmScreen() {
             ABOVE the card — centered on the full screen, the bottom of
             the 200pt ring hides behind the card on SE-height phones. */}
         <View style={{ flex: 1 }}>
-          {state === 'searching' && <RunnerSearchAnimation />}
+          {/* Radar lives on the map's pickup pin when the map shows; only the
+              gradient fallback (cost-guard expired / no coords) uses this
+              centered pulse. */}
+          {state === 'searching' && !showSearchMap && <RunnerSearchAnimation />}
         </View>
         {/* Polite live region (Android) — mirrors the iOS announce call in
             the state-transition effect so screen readers hear searching →
@@ -733,6 +799,12 @@ export default function ConfirmScreen() {
 }
 
 const cs = StyleSheet.create({
+  // Sized box the pickup pin's search radar fills — RunnerSearchAnimation is
+  // absolute-fill, so it needs a fixed parent, anchored on the pickup coord.
+  searchPulse: {
+    width: 150,
+    height: 150,
+  },
   overlay: {
     ...StyleSheet.absoluteFillObject,
   },

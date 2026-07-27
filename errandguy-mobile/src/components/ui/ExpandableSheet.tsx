@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { View, Pressable, StyleSheet, useWindowDimensions } from 'react-native';
+import { View, Pressable, StyleSheet, useWindowDimensions, Keyboard, Platform } from 'react-native';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import Animated, {
   useSharedValue,
@@ -41,6 +41,13 @@ interface ExpandableSheetProps {
    * gesture-tracked motion is exempt per the HIG.
    */
   reduceMotion?: boolean;
+  /**
+   * Auto-expand the sheet to `full` when the keyboard opens (i.e. any input
+   * inside the sheet is focused), so form fields are never hidden behind the
+   * keyboard or a collapsed sheet. Default true; pass false for input-less
+   * sheets that shouldn't react to an unrelated keyboard.
+   */
+  expandOnKeyboard?: boolean;
 }
 
 /**
@@ -57,6 +64,7 @@ export function ExpandableSheet({
   children,
   footer,
   reduceMotion = false,
+  expandOnKeyboard = true,
 }: ExpandableSheetProps) {
   const insets = useSafeAreaInsets();
   // Measured footer height. The old fixed `88 + insets.bottom` reserve was
@@ -101,6 +109,24 @@ export function ExpandableSheet({
       : withSpring(target, SPRING);
     onSnapChange?.(snap);
   };
+
+  // Lift the sheet to `full` when the keyboard opens, so a focused input is
+  // never hidden behind the keyboard or a collapsed sheet. No-op when already
+  // at full. iOS uses the WILL event so the sheet rises in step with the
+  // keyboard; Android only exposes the DID event.
+  useEffect(() => {
+    if (!expandOnKeyboard) return;
+    const showEvt = Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow';
+    const sub = Keyboard.addListener(showEvt, () => {
+      if (Math.abs(translateY.value - fullY) > 4) {
+        translateY.value = reduceMotionRef.current
+          ? withTiming(fullY, { duration: 200 })
+          : withSpring(fullY, SPRING);
+        onSnapChange?.('full');
+      }
+    });
+    return () => sub.remove();
+  }, [expandOnKeyboard, fullY, translateY, onSnapChange]);
 
   // Where the sheet currently sits, by nearest snap point — mirrors the
   // no-velocity branch of the pan gesture below.

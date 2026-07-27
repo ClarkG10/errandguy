@@ -1,27 +1,31 @@
 import React, { useEffect, useMemo, useRef } from 'react';
 import { View, Text, Animated, Easing, Pressable } from 'react-native';
+import { LinearGradient } from 'expo-linear-gradient';
+import { Check, X } from 'lucide-react-native';
 import type { BookingStatus } from '../../types';
 import { useReducedMotion } from '../../hooks/useReducedMotion';
-import { LightColors } from '../../constants/colors';
+import { LightColors, Elevation } from '../../constants/colors';
 
 /**
- * Distinctive horizontal "journey beads" — replaces the verbose vertical
- * StatusTimeline. The layout is intentionally NOT a typical stepper:
+ * Premium horizontal "journey beads" — a single refined progress rail that
+ * replaces the verbose vertical StatusTimeline. Design language:
  *
- *   • A single thin horizontal track stretches the full width.
- *   • Each phase is a small bead on the track. Completed beads are
- *     filled, the active bead is filled + breathing-pulse animated,
- *     upcoming beads are hollow rings.
- *   • Phase labels are NOT rendered under every bead (which would be
- *     visually noisy on phones). Only the active phase's label appears,
- *     anchored under its bead, in a typographic style — uppercase,
- *     wide-tracked, small — so it reads as a section caption rather
- *     than a button.
- *   • A short numeric counter ("03 / 06") sits at the right end as a
- *     glanceable "where am I in this journey" hint.
+ *   • A rounded rail whose FILLED portion is a soft brand gradient with
+ *     rounded caps (not a flat hairline), so progress reads as a polished
+ *     bar rather than a thin line.
+ *   • Beads sit on the rail: completed = small solid dot, upcoming = hollow
+ *     ring, the ACTIVE bead is a layered "gem" — a breathing glow halo + a
+ *     lifted white core + a tinted center — so the current step feels alive
+ *     and premium without noisy per-bead labels.
+ *   • Terminal states get first-class treatment: COMPLETED fills green with a
+ *     check on the final bead; CANCELLED greys the whole path with a red stop
+ *     (X) at the end, so it reads "journey ended", never "completed".
+ *   • A glanceable counter ("03 / 06", or DONE / ENDED) sits at the right end.
  *
- * The component is purely visual — no buttons, no callbacks. The screen
- * supplies the active status and we work out everything else.
+ * Performance discipline is preserved from the original: the only animation
+ * is a NATIVE-driver opacity pulse on the active halo — no layout animation,
+ * no setState — so the rail stays smooth while the host screen runs live GPS,
+ * polling and chat.
  */
 
 type Phase = {
@@ -29,13 +33,6 @@ type Phase = {
   short: string; // 1–2 word label shown ONLY when active
 };
 
-/**
- * The canonical happy-path sequence. Errand types that skip steps (e.g.
- * a pure delivery without an "arrived_at_dropoff" beat) are still
- * mapped onto the closest matching bead so the strip stays the same
- * width across booking types — no janky resize when the runner moves
- * forward.
- */
 const PHASES: Phase[] = [
   { status: 'pending', short: 'Finding' },
   { status: 'accepted', short: 'Accepted' },
@@ -46,10 +43,9 @@ const PHASES: Phase[] = [
 ];
 
 /**
- * Map every backend status to one of the six visible beads. Mid-step
- * variants (matched, arrived_at_pickup, …) collapse upward to keep the
- * bar uncluttered while the screen-level "current step" hero still
- * shows the precise label.
+ * Map every backend status to one of the six visible beads. Mid-step variants
+ * (matched, arrived_at_pickup, …) collapse upward to keep the bar uncluttered
+ * while the screen-level hero still shows the precise label.
  */
 const STATUS_TO_PHASE_INDEX: Record<BookingStatus, number> = {
   pending: 0,
@@ -66,51 +62,70 @@ const STATUS_TO_PHASE_INDEX: Record<BookingStatus, number> = {
   cancelled: 5,
 };
 
+type Accent = 'brand' | 'danger' | 'success';
+
 interface JourneyBeadsProps {
   status: BookingStatus;
   /**
-   * Optional accent. When the booking is cancelled we tint the active
-   * bead red instead of the default brand blue so the strip carries the
-   * "this trip ended unhappily" signal even if the screen scrolls the
-   * detail card off.
+   * Optional accent override. When omitted it is derived from status
+   * (completed → success, cancelled → danger, else brand), so callers that
+   * only pass `status` still get correct terminal colouring.
    */
-  accent?: 'brand' | 'danger';
+  accent?: Accent;
   onPress?: () => void;
   /**
-   * Render the small "EN ROUTE" caption under the active bead. Defaults
-   * to true. Pass `false` when the surrounding screen already shows the
-   * current step in a hero (e.g. `CurrentStepHero`) — otherwise the two
-   * tiny uppercase captions stack on top of each other and read as one
-   * cluttered block.
+   * Render the small active-phase caption under the rail. Defaults to true.
+   * Pass `false` when the surrounding screen already shows the current step in
+   * a hero — otherwise the two tiny uppercase captions read as clutter.
    */
   showLabel?: boolean;
 }
 
-export function JourneyBeads({ status, accent = 'brand', onPress, showLabel = true }: JourneyBeadsProps) {
+const TRACK_HEIGHT = 16;
+const RAIL = 3;
+
+export function JourneyBeads({ status, accent, onPress, showLabel = true }: JourneyBeadsProps) {
   const activeIdx = STATUS_TO_PHASE_INDEX[status] ?? 0;
-  // Reduce Motion: the breathing loop never starts; the halo renders as a
-  // static wash instead (see the opacity branch on the halo below).
   const reduceMotion = useReducedMotion();
 
-  // Pulse animation for the active bead. We deliberately drive only an
-  // OPACITY interpolation on a NATIVE driver so the animation runs on
-  // the UI thread and never causes JS-side reflows when the rest of the
-  // screen is busy (live GPS, polling, chat). No setState anywhere.
+  const isCancelled = status === 'cancelled';
+  const isComplete = status === 'completed' || status === 'delivered';
+  const isTerminal = isCancelled || isComplete;
+
+  // Effective tone: explicit prop wins, else derived from status.
+  const tone: Accent = accent ?? (isCancelled ? 'danger' : isComplete ? 'success' : 'brand');
+
+  // Colour rungs. Cancelled greys the whole traversed path (a stopped journey
+  // must not read as a finished one) and puts the danger accent only on the
+  // final stop bead.
+  const activeColor =
+    tone === 'danger' ? LightColors.danger : tone === 'success' ? LightColors.success : LightColors.primary;
+  const completedColor = isCancelled ? LightColors.dividerStrong : activeColor;
+  const railFill: [string, string] = isCancelled
+    ? [LightColors.dividerStrong, LightColors.dividerStrong]
+    : tone === 'success'
+      ? [LightColors.success, LightColors.success]
+      : [LightColors.primary, LightColors.primary400];
+
+  // Breathing halo on the active bead — native-driver opacity ONLY (no layout
+  // work), frozen on terminal states and under Reduce Motion.
   const pulse = useRef(new Animated.Value(0)).current;
   useEffect(() => {
-    if (reduceMotion) return;
-    if (status === 'completed' || status === 'cancelled') return;
+    if (reduceMotion || isTerminal) {
+      pulse.setValue(0);
+      return;
+    }
     const loop = Animated.loop(
       Animated.sequence([
         Animated.timing(pulse, {
           toValue: 1,
-          duration: 900,
+          duration: 1100,
           easing: Easing.inOut(Easing.ease),
           useNativeDriver: true,
         }),
         Animated.timing(pulse, {
           toValue: 0,
-          duration: 900,
+          duration: 1100,
           easing: Easing.inOut(Easing.ease),
           useNativeDriver: true,
         }),
@@ -118,14 +133,16 @@ export function JourneyBeads({ status, accent = 'brand', onPress, showLabel = tr
     );
     loop.start();
     return () => loop.stop();
-  }, [pulse, status, reduceMotion]);
+  }, [pulse, reduceMotion, isTerminal]);
 
-  const activeColor = accent === 'danger' ? LightColors.danger : LightColors.primary;
+  const total = PHASES.length;
   const activePhase = PHASES[activeIdx];
-  const counter = useMemo(
-    () => `${String(activeIdx + 1).padStart(2, '0')} / ${String(PHASES.length).padStart(2, '0')}`,
-    [activeIdx],
-  );
+  const fillPct = (activeIdx / (total - 1)) * 100;
+  const counter = useMemo(() => {
+    if (isCancelled) return 'ENDED';
+    if (isComplete) return 'DONE';
+    return `${String(activeIdx + 1).padStart(2, '0')} / ${String(total).padStart(2, '0')}`;
+  }, [activeIdx, total, isCancelled, isComplete]);
 
   const Wrapper: React.ComponentType<{ children: React.ReactNode }> = ({ children }) =>
     onPress ? (
@@ -138,72 +155,129 @@ export function JourneyBeads({ status, accent = 'brand', onPress, showLabel = tr
 
   return (
     <Wrapper>
-      <View className="px-1 pt-1 pb-2">
-        {/* Top row: the track + beads, with the counter floated right. */}
+      <View className="px-1 pt-1 pb-1.5">
         <View className="flex-row items-center">
           <View className="flex-1">
-            <View className="relative h-3 justify-center">
-              {/* Track */}
+            <View className="relative justify-center" style={{ height: TRACK_HEIGHT }}>
+              {/* Rail — background groove */}
               <View
-                className="absolute left-0 right-0 h-[2px] bg-divider"
-                style={{ top: '50%', marginTop: -1 }}
-              />
-              {/* Filled portion up to and including the active bead. */}
-              <View
-                className="absolute left-0 h-[2px]"
                 style={{
+                  position: 'absolute',
+                  left: 3,
+                  right: 3,
                   top: '50%',
-                  marginTop: -1,
-                  width: `${(activeIdx / (PHASES.length - 1)) * 100}%`,
-                  backgroundColor: activeColor,
+                  marginTop: -RAIL / 2,
+                  height: RAIL,
+                  borderRadius: RAIL,
+                  backgroundColor: LightColors.divider,
                 }}
               />
+              {/* Rail — filled portion (soft gradient, rounded caps) */}
+              {fillPct > 0 && (
+                <View
+                  style={{
+                    position: 'absolute',
+                    left: 3,
+                    top: '50%',
+                    marginTop: -RAIL / 2,
+                    height: RAIL,
+                    width: `${fillPct}%`,
+                    borderRadius: RAIL,
+                    overflow: 'hidden',
+                  }}
+                >
+                  <LinearGradient
+                    colors={railFill}
+                    start={{ x: 0, y: 0 }}
+                    end={{ x: 1, y: 0 }}
+                    style={{ flex: 1 }}
+                  />
+                </View>
+              )}
+
               {/* Beads */}
               <View className="flex-row items-center justify-between">
                 {PHASES.map((p, i) => {
-                  const isCompleted = i < activeIdx;
+                  const done = i < activeIdx;
                   const isActive = i === activeIdx;
-                  const baseSize = isActive ? 12 : 8;
 
-                  if (isActive) {
+                  // Active bead — terminal: solid disc with a check / stop mark.
+                  if (isActive && isTerminal) {
                     return (
-                      <View key={p.status} style={{ width: 14, height: 14, alignItems: 'center', justifyContent: 'center' }}>
-                        {/* Pulsing halo. Native-driver opacity only — no
-                            layout work, so the rest of the screen
-                            (map, GPS pin) animates without contention. */}
-                        <Animated.View
-                          style={{
-                            position: 'absolute',
-                            width: 22,
-                            height: 22,
-                            borderRadius: 11,
-                            backgroundColor: activeColor,
-                            opacity: reduceMotion
-                              ? 0.25
-                              : pulse.interpolate({ inputRange: [0, 1], outputRange: [0.08, 0.28] }),
-                          }}
-                        />
-                        <View
-                          style={{
-                            width: baseSize,
-                            height: baseSize,
-                            borderRadius: baseSize / 2,
-                            backgroundColor: activeColor,
-                          }}
-                        />
+                      <View
+                        key={p.status}
+                        style={{
+                          width: 16,
+                          height: 16,
+                          borderRadius: 8,
+                          backgroundColor: activeColor,
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                          ...Elevation.sm,
+                        }}
+                      >
+                        {isComplete ? (
+                          <Check size={10} color={LightColors.textInverse} strokeWidth={3} />
+                        ) : (
+                          <X size={10} color={LightColors.textInverse} strokeWidth={3} />
+                        )}
                       </View>
                     );
                   }
 
+                  // Active bead — live: layered "gem" with a breathing halo.
+                  if (isActive) {
+                    return (
+                      <View
+                        key={p.status}
+                        style={{ width: 18, height: 18, alignItems: 'center', justifyContent: 'center' }}
+                      >
+                        <Animated.View
+                          style={{
+                            position: 'absolute',
+                            width: 18,
+                            height: 18,
+                            borderRadius: 9,
+                            backgroundColor: activeColor,
+                            opacity: reduceMotion
+                              ? 0.18
+                              : pulse.interpolate({ inputRange: [0, 1], outputRange: [0.12, 0.36] }),
+                          }}
+                        />
+                        <View
+                          style={{
+                            width: 13,
+                            height: 13,
+                            borderRadius: 6.5,
+                            backgroundColor: LightColors.surface,
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            ...Elevation.sm,
+                          }}
+                        >
+                          <View
+                            style={{
+                              width: 7,
+                              height: 7,
+                              borderRadius: 3.5,
+                              backgroundColor: activeColor,
+                            }}
+                          />
+                        </View>
+                      </View>
+                    );
+                  }
+
+                  // Completed / upcoming beads.
                   return (
                     <View
                       key={p.status}
                       style={{
-                        width: baseSize,
-                        height: baseSize,
-                        borderRadius: baseSize / 2,
-                        backgroundColor: isCompleted ? activeColor : 'transparent',
-                        borderWidth: isCompleted ? 0 : 1.5,
+                        width: 8,
+                        height: 8,
+                        borderRadius: 4,
+                        backgroundColor: done ? completedColor : LightColors.surface,
+                        borderWidth: done ? 0 : 1.5,
                         borderColor: LightColors.dividerStrong,
                       }}
                     />
@@ -212,40 +286,30 @@ export function JourneyBeads({ status, accent = 'brand', onPress, showLabel = tr
               </View>
             </View>
           </View>
-          {/* Counter — typographic, no box. Reads as a caption. 11px, not
-              10px: the tracking handle (this component's primary consumer)
-              holds an 11px floor for every label, and a stray 10px counter
-              was the last sub-11 micro-label surviving there. Capped at 1.3×
-              so it can't blow out the beads row under large Dynamic Type. */}
+
+          {/* Counter — typographic, tabular so it never shifts width. */}
           <Text
-            className="ml-3 text-[11px] font-montserrat-semi text-textSecondary"
-            style={{ letterSpacing: 1.2 }}
+            className="ml-3 text-[11px] font-montserrat-bold"
+            style={{
+              letterSpacing: 1,
+              fontVariant: ['tabular-nums'],
+              color: isTerminal ? activeColor : LightColors.textSecondary,
+            }}
             maxFontSizeMultiplier={1.3}
           >
             {counter}
           </Text>
         </View>
 
-        {/* Active phase label — uppercase, tracked, anchored under the
-            track. We compute its left offset from activeIdx so it sits
-            (roughly) under its own bead instead of always centered.
-            Suppressed when the host screen already renders a step
-            headline (CurrentStepHero) — otherwise two stacked tiny
-            captions read as cluttered text. */}
-        {showLabel && (
+        {/* Active-phase caption — anchored roughly under its own bead. Hidden on
+            terminal states (the screen hero carries the outcome) and when the
+            host opts out via showLabel={false}. */}
+        {showLabel && !isTerminal && (
           <View className="mt-1.5 flex-row">
-            <View
-              style={{
-                width: `${(activeIdx / (PHASES.length - 1)) * 100}%`,
-              }}
-            />
+            <View style={{ width: `${fillPct}%` }} />
             <Text
               className="text-[11px] font-montserrat-bold uppercase"
-              style={{
-                color: activeColor,
-                letterSpacing: 1.4,
-                transform: [{ translateX: -8 }],
-              }}
+              style={{ color: activeColor, letterSpacing: 1.4, transform: [{ translateX: -8 }] }}
               maxFontSizeMultiplier={1.3}
             >
               {activePhase.short}

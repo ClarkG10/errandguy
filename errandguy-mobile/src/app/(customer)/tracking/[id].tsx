@@ -83,7 +83,7 @@ const CAN_CANCEL_STATUSES: BookingStatus[] = [
 // Auto-map window. Exported so ops can tune when tiles auto-mount without a
 // redesign — HERE raster tiles are billed per request, so this list IS the
 // screen's cost bound.
-export const MAP_PHASES: BookingStatus[] = ['heading_to_pickup', 'picked_up', 'in_transit'];
+export const MAP_PHASES: BookingStatus[] = ['pending', 'matched', 'accepted', 'heading_to_pickup', 'picked_up', 'in_transit'];
 // Once the map auto-mounted, hold it through the arrived_* pauses so the
 // arrive→pickup boundary never unmounts/remounts the tiles (see mapLatchRef).
 const HOLD_PHASES: BookingStatus[] = ['arrived_at_pickup', 'arrived_at_dropoff'];
@@ -2030,7 +2030,7 @@ export default function TrackingScreen() {
         // (sheet 24 / footer 28 use elevation, not zIndex, on Android).
         style={{ position: 'absolute', top: 0, left: 0, right: 0, zIndex: 1001, elevation: 32 }}
       >
-        <View className="px-4 pt-2 flex-row items-center" pointerEvents="box-none">
+        <View className="px-4 pt-4 flex-row items-center" pointerEvents="box-none">
           <Reanimated.View entering={reduceMotion ? FadeIn.duration(120) : chromeEnter(0)}>
             <Pressable
               onPress={() => router.canGoBack() ? router.back() : router.replace('/(customer)/(tabs)')}
@@ -2048,6 +2048,10 @@ export default function TrackingScreen() {
           </Reanimated.View>
           {/* 44pt back circle + 44pt spacer keep the pill optically centered. */}
           <View className="flex-1 items-center px-2" pointerEvents="box-none">
+            {/* Live tracking: the status pill floats over the map. Terminal:
+                hidden — the sheet's own hero (illustration + status) carries it,
+                so the pill no longer stacks on top of the collapsed handle. */}
+            {!isTerminalUi && (
             <Reanimated.View
               entering={reduceMotion ? FadeIn.duration(120) : chromeEnter(40)}
               accessible
@@ -2107,6 +2111,7 @@ export default function TrackingScreen() {
                 ) : null}
               </Reanimated.View>
             </Reanimated.View>
+            )}
           </View>
           <View style={{ width: 44 }} />
         </View>
@@ -2119,7 +2124,24 @@ export default function TrackingScreen() {
         snapPoints={SNAP_POINTS}
         initial={isTerminalUi ? 'full' : 'half'}
         reduceMotion={reduceMotion}
-        renderHandle={() => (
+        renderHandle={() =>
+          isTerminalUi ? (
+            /* Terminal receipt: the scrollable body hero (illustration +
+               status + trip route) tells the whole story, so the handle
+               collapses to a slim premium journey-summary strip. Removes the
+               old triple-status stack (chrome pill + eyebrow + title) and the
+               overlap with the floating back chrome. no_runner has no journey
+               to summarise, so it collapses to a bare grab area. */
+            <View className="px-5 pt-2 pb-2">
+              {booking.status !== 'no_runner' && (
+                <JourneyBeads
+                  status={booking.status}
+                  accent={booking.status === 'cancelled' ? 'danger' : 'success'}
+                  showLabel={false}
+                />
+              )}
+            </View>
+          ) : (
           <View
             className="px-5 pt-1 pb-1"
             accessible
@@ -2233,7 +2255,8 @@ export default function TrackingScreen() {
               </View>
             ) : null}
           </View>
-        )}
+          )
+        }
         footer={
           // SOS stays through 'delivered' (post-dropoff safety window) and
           // only drops on completed/cancelled/no_runner — isLiveBooking is

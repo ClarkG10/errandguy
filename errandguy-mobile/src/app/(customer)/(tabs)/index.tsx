@@ -255,33 +255,11 @@ export default function CustomerHomeScreen() {
     },
   ];
 
-  // Decorative hero: clamp to ~36% of the viewport so SE-class phones
-  // and landscape don't drown in gradient, and shrink further when a
-  // live errand needs to win the first viewport.
-  const heroHeight = Math.min(
-    activeBooking ? 220 : 300,
-    Math.round(winHeight * 0.36),
-  );
-
-  // Waving delivery mascot peeking from behind the destination card in the
-  // hero's bottom-right. Only its UPPER body (head, waving arm, torso) is
-  // meant to show — the legs/feet are deliberately cut off below the card's
-  // top edge and the hero's clipped bottom. So we pick a LARGE intrinsic
-  // size and anchor it with a negative bottom offset so roughly
-  // MASCOT_VISIBLE_FRACTION of it sits above the card; the rest runs off the
-  // bottom (behind the card / clipped by the hero's overflow). Height is
-  // capped both by width (so the big figure still reads as a corner accent)
-  // and by the chrome band above (so the head never collides with it).
-  const MASCOT_CARD_OVERLAP = 44; // destination card floats up this far
-  const MASCOT_VISIBLE_FRACTION = 0.44; // top ~44% shown (head → torso)
-  const mascotMaxByChrome =
-    (heroHeight - MASCOT_CARD_OVERLAP - (insets.top + 60)) /
-    MASCOT_VISIBLE_FRACTION;
-  const mascotHeight = Math.min(240, mascotMaxByChrome);
-  const mascotWidth = mascotHeight * 0.5; // intrinsic aspect ~0.5 (w/h)
-  const mascotBottom =
-    MASCOT_CARD_OVERLAP - (1 - MASCOT_VISIBLE_FRACTION) * mascotHeight;
-  const showMascot = mascotHeight >= 110;
+  // Compact hero — just enough blue for the safe-area inset, the greeting +
+  // search chrome, and a slim gradient band the destination card floats over.
+  // (The mascot that used to fill this space is gone, so it no longer needs
+  // to be a third of the screen.)
+  const heroHeight = insets.top + (activeBooking ? 84 : 112);
 
   if (initialLoading) {
     // No SafeAreaView here — the skeleton mirrors the shipped hero and
@@ -341,29 +319,6 @@ export default function CustomerHomeScreen() {
             ]}
             style={hs.mapFade}
           />
-          {/* Waving mascot — decorative, so it never intercepts touches
-              (the hero tap-target below still starts a booking anywhere on
-              the gradient). Anchored bottom-right so its raised hand points
-              back toward the greeting; feet rest just above the destination
-              card that floats up over the hero's lower edge. */}
-          {showMascot && (
-            <View
-              pointerEvents="none"
-              style={[
-                hs.mascotWrap,
-                { height: mascotHeight, width: mascotWidth, bottom: mascotBottom },
-              ]}
-            >
-              <Image
-                source={require('../../../../assets/mascot-home.png')}
-                style={{ width: '100%', height: '100%' }}
-                contentFit="contain"
-                cachePolicy="memory-disk"
-                transition={200}
-                accessibilityIgnoresInvertColors
-              />
-            </View>
-          )}
           {/* Tap target starts BELOW the chrome band (inset top + chip
               row + hitSlop clearance) so a missed bell/avatar tap can't
               clear the draft and launch the booking flow. */}
@@ -397,66 +352,50 @@ export default function CustomerHomeScreen() {
               >
                 <Avatar uri={user?.avatar_url} name={user?.full_name} size="sm" />
               </Pressable>
-              <View style={[hs.floatingChip, hs.greetingPill]} pointerEvents="none">
+              {/* Premium greeting — elegant white type directly on the hero
+                  (no pill chrome): a light eyebrow over the bold first name,
+                  the way ride-hailing homes greet you by name. */}
+              <View className="flex-1 ml-3" pointerEvents="none">
                 <Text
-                  className="text-[12px] font-montserrat-bold text-textPrimary"
+                  className="text-[12px] font-montserrat-semi"
+                  style={{ color: 'rgba(255,255,255,0.82)', letterSpacing: 0.3 }}
                   numberOfLines={1}
                 >
-                  {greeting}, {firstName}
+                  {greeting}
+                </Text>
+                <Text
+                  className="text-[19px] font-montserrat-bold"
+                  style={{ color: '#FFFFFF' }}
+                  numberOfLines={1}
+                >
+                  {firstName}
                 </Text>
               </View>
-              {/* Box/size/bg via className — NativeWind drops backgroundColor
-                  + minWidth from the function-style form, which collapsed
-                  these to bare icons sitting ~14px apart (the "too close"
-                  report). className restores the white chip; mr-5 (20px) gives
-                  a clear gap to the bell. */}
+              {/* Notifications live in the bottom "Alerts" tab, so the header
+                  keeps a single search affordance and stays calm + premium. */}
               <Pressable
                 hitSlop={8}
                 onPress={withLightImpact(() => router.push('/(customer)/search' as any))}
                 accessibilityRole="button"
                 accessibilityLabel="Search"
-                className="w-10 h-10 rounded-full bg-surface items-center justify-center mr-5"
-                style={({ pressed }) => [hs.floatingChipShadow, pressed && hs.chipPressed]}
-              >
-                <Search size={20} color={LightColors.ink} strokeWidth={1.9} />
-              </Pressable>
-              <Pressable
-                hitSlop={8}
-                onPress={withLightImpact(() =>
-                  router.push('/(customer)/(tabs)/notifications'),
-                )}
-                accessibilityRole="button"
-                accessibilityLabel={
-                  unreadCount > 0
-                    ? `${unreadCount} unread notifications`
-                    : 'Notifications'
-                }
                 className="w-10 h-10 rounded-full bg-surface items-center justify-center"
                 style={({ pressed }) => [hs.floatingChipShadow, pressed && hs.chipPressed]}
               >
-                <Bell size={20} color={LightColors.ink} strokeWidth={1.9} />
-                {unreadCount > 0 && (
-                  <View
-                    className="absolute bg-danger items-center justify-center"
-                    style={hs.bellBadge}
-                  >
-                    <Text style={hs.bellBadgeText} allowFontScaling={false}>
-                      {unreadCount > 9 ? '9+' : unreadCount}
-                    </Text>
-                  </View>
-                )}
+                <Search size={20} color={LightColors.ink} strokeWidth={1.9} />
               </Pressable>
             </View>
           </SafeAreaView>
         </View>
 
-        {/* Destination card — floats up over the map's faded edge. */}
-        <View className="px-5" style={{ marginTop: -44 }}>
+        {/* Destination card — floats up over the SOLID blue of the hero (not
+            its faded edge) so the rounded top corners show blue behind them
+            and the radius actually reads. */}
+        <View className="px-5" style={{ marginTop: -32 }}>
           <Pressable
             onPress={withLightImpact(() => startBooking())}
             accessibilityRole="button"
             accessibilityLabel="Start a new booking"
-            className="bg-surface px-4 py-4"
+            className="bg-surface px-4 py-4 rounded-[28px] border border-divider"
             android_ripple={{ color: 'rgba(37,99,235,0.08)' }}
             style={({ pressed }) => [hs.searchBox, pressed && hs.cardPressed]}
           >
@@ -829,7 +768,10 @@ const hs = StyleSheet.create({
     left: 0,
     right: 0,
     bottom: 0,
-    height: 110,
+    // Tiny fade — just softens the hero's very bottom edge in the gaps beside
+    // the card. Kept short so the card's rounded top corners sit over SOLID
+    // blue (visible radius), not a near-white wash.
+    height: 12,
   },
   // Waving mascot in the hero's bottom-right corner. Height/width/bottom are
   // all set inline (responsive to the hero height): a negative bottom pushes
@@ -895,12 +837,10 @@ const hs = StyleSheet.create({
     color: LightColors.textInverse,
   },
   searchBox: {
-    // Clearly rounded card (per request) with a subtle hairline border on
-    // top of the soft lift, so it has a crisp, defined edge where it floats
-    // over the gradient/canvas seam.
-    borderRadius: 22,
-    borderWidth: 1,
-    borderColor: LightColors.divider,
+    // Radius + hairline border live in className now (NativeWind reliably
+    // applies them there; from this Pressable's function-style form it was
+    // DROPPING the radius, so the card rendered square). Only the shadow — a
+    // pass-through prop NativeWind keeps — stays here.
     ...Elevation.md,
   },
   pickupRing: {
