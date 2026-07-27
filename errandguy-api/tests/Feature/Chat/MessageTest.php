@@ -156,4 +156,60 @@ class MessageTest extends TestCase
         $message = Message::first();
         $this->assertNotNull($message->read_at);
     }
+
+    /** Create a message with an explicit created_at (created_at isn't fillable
+     *  and the DB default is second-precision, so set it directly to get a
+     *  deterministic order for the delta-cursor assertions). */
+    private function makeMessage(string $content, \Carbon\Carbon $when): Message
+    {
+        $m = new Message();
+        $m->forceFill([
+            'booking_id' => $this->booking->id,
+            'sender_id' => $this->customer->id,
+            'content' => $content,
+            'is_system' => false,
+            'created_at' => $when,
+        ])->save();
+
+        return $m;
+    }
+
+    public function test_after_cursor_returns_only_messages_newer_than_the_given_id(): void
+    {
+        $m1 = $this->makeMessage('first', now()->subMinutes(3));
+        $this->makeMessage('second', now()->subMinutes(2));
+        $this->makeMessage('third', now()->subMinute());
+
+        $this->actingAs($this->customer)
+            ->getJson("/api/v1/chat/{$this->booking->id}/messages?after={$m1->id}")
+            ->assertOk()
+            ->assertJsonPath('meta.mode', 'after')
+            ->assertJsonCount(2, 'data')
+            ->assertJsonPath('data.0.content', 'second') // ASC
+            ->assertJsonPath('data.1.content', 'third');
+    }
+
+    public function test_after_the_newest_message_returns_an_empty_delta(): void
+    {
+        $this->makeMessage('first', now()->subMinutes(2));
+        $newest = $this->makeMessage('second', now()->subMinute());
+
+        $this->actingAs($this->customer)
+            ->getJson("/api/v1/chat/{$this->booking->id}/messages?after={$newest->id}")
+            ->assertOk()
+            ->assertJsonPath('meta.mode', 'after')
+            ->assertJsonCount(0, 'data');
+    }
+
+    public function test_unknown_after_cursor_falls_back_to_the_head_page(): void
+    {
+        $this->makeMessage('only', now()->subMinute());
+
+        $this->actingAs($this->customer)
+            ->getJson("/api/v1/chat/{$this->booking->id}/messages?after=".\Illuminate\Support\Str::uuid())
+            ->assertOk()
+            // Head-page (not delta) response — no `mode`, carries `next_before`.
+            ->assertJsonStructure(['data', 'meta' => ['has_more', 'next_before']])
+            ->assertJsonCount(1, 'data');
+    }
 }

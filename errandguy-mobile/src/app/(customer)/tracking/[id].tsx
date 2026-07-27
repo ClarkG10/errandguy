@@ -395,7 +395,7 @@ export default function TrackingScreen() {
     }
     seededRunnerLocRef.current = true;
     bookingService
-      .trackBooking(id)
+      .trackBooking(id, { onlyLocation: true })
       .then((res) => {
         const loc = res.data?.data?.runner_location;
         if (loc?.lat != null && loc?.lng != null) {
@@ -496,7 +496,7 @@ export default function TrackingScreen() {
       // struggling endpoint; a success snaps the cadence back to trackPollMs.
       // Migrated off useForegroundInterval to also pause while offline. (P29)
       return bookingService
-        .trackBooking(id)
+        .trackBooking(id, { onlyLocation: true })
         .then((res) => {
           const data = res.data?.data;
           const loc = data?.runner_location;
@@ -513,13 +513,20 @@ export default function TrackingScreen() {
               created_at: loc.updated_at ?? new Date().toISOString(),
             });
           }
-          // Reconcile booking status from the poll. Pushing into the
-          // global store routes through the same realtime-driven
-          // useEffect above (`activeBooking` watcher), which fires the
-          // status-change toasts + triggers the status-log refresh.
-          const fresh = data?.booking;
-          if (fresh && fresh.status !== booking.status) {
-            setActiveBooking(fresh);
+          // The lean poll carries `status` but not a full booking. On an
+          // actual change, pull the full booking once and push it into the
+          // store — routing through the same realtime-driven `activeBooking`
+          // watcher above, which fires the status-change toasts + status-log
+          // refresh. Steady-state ticks stay lean; only a transition (rare)
+          // costs the full fetch.
+          if (data?.status && data.status !== booking.status) {
+            bookingService
+              .trackBooking(id)
+              .then((full) => {
+                const fresh = full.data?.data?.booking;
+                if (fresh) setActiveBooking(fresh);
+              })
+              .catch(() => {});
           }
         });
     },

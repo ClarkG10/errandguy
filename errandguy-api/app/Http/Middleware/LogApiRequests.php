@@ -31,7 +31,7 @@ class LogApiRequests
         // Hot-path noise filter: skip the GPS push and unread-count
         // poller (each fires every few seconds per online user). We
         // were spending 2 file-locking writes per request on log lines
-        // nobody reads. Errors and slow requests still go through.
+        // nobody reads.
         $isHotPath = false;
         foreach (self::SKIP_PATTERNS as $needle) {
             if (str_contains($path, $needle)) {
@@ -40,8 +40,17 @@ class LogApiRequests
             }
         }
 
-        $shouldLog = !$isHotPath || $status >= 400 || $duration > self::SLOW_THRESHOLD_MS;
-        if (!$shouldLog) {
+        $isError = $status >= 400;
+        $isSlow = $duration > self::SLOW_THRESHOLD_MS;
+
+        // The per-request `API Response` info line fired a file-lock append
+        // on ~every request — at scale that write is itself a bottleneck,
+        // and in prod the file channel is not where anyone reads success
+        // traffic. Drop the fast-success line on hot paths always, and in
+        // production everywhere; keep it for local/staging debugging. Errors
+        // and slow requests below still log in every environment (they are
+        // the only latency/error signal until APM lands).
+        if (! $isError && ! $isSlow && ($isHotPath || app()->isProduction())) {
             return $response;
         }
 
@@ -53,12 +62,17 @@ class LogApiRequests
             'user_id' => $request->user()?->id,
         ];
 
-        if ($status >= 400) {
+        if ($isError) {
             $content = $response->getContent();
             $decoded = json_decode($content, true);
             $logData['response_body'] = $decoded ?? mb_substr($content, 0, 500);
 
             Log::warning('API Error Response', $logData);
+        } elseif ($isSlow) {
+            // Slow but successful — kept in every environment (prod included)
+            // at `notice` so it survives the info suppression above and stays
+            // findable as our only pre-APM latency signal.
+            Log::notice('API Slow Response', $logData);
         } else {
             Log::info('API Response', $logData);
         }

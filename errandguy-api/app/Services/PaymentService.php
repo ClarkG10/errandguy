@@ -7,12 +7,24 @@ use App\Exceptions\PaymentGatewayException;
 use App\Models\Payment;
 use App\Models\PaymentMethod;
 use App\Models\User;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
 
 class PaymentService
 {
+    /**
+     * Minimum seconds between synchronous gateway pulls for the SAME payment
+     * during status polling. The app polls every ~3s during checkout and each
+     * pull is a blocking Xendit GET (up to a 25s timeout) that occupies an
+     * FPM worker; at scale many concurrent checkouts can drain the pool. The
+     * webhook remains the primary, real-time settlement path (it advances the
+     * row directly), so pulling at most once per this window loses no
+     * freshness — between pulls the poll returns the current DB state.
+     */
+    private const RECONCILE_PULL_THROTTLE_SECONDS = 10;
+
     private string $baseUrl;
     private string $secretKey;
 
@@ -434,6 +446,18 @@ class PaymentService
             || in_array($payment->method, ['cash', 'wallet'], true)
             || blank($payment->gateway_tx_id)
         ) {
+            return $payment;
+        }
+
+        // Rate-limit the blocking gateway pull per-payment. The first poll in
+        // each window pulls; polls arriving inside the window skip the Xendit
+        // GET and return the current DB state (kept live by the webhook). This
+        // caps FPM-worker occupancy during checkout without delaying real
+        // settlement. Cache::add is the throttle latch — it succeeds only when
+        // the key is absent, so exactly one poll per window wins the pull.
+        // (On the file cache this is best-effort under a rare race; on Redis
+        // — see the Tier-0 rollout — it becomes a truly atomic SET NX.)
+        if (! Cache::add("payment_reconcile_pull:{$payment->id}", 1, self::RECONCILE_PULL_THROTTLE_SECONDS)) {
             return $payment;
         }
 

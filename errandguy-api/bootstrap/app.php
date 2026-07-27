@@ -28,6 +28,7 @@ return Application::configure(basePath: dirname(__DIR__))
             'active' => \App\Http\Middleware\EnsureUserActive::class,
             'admin' => \App\Http\Middleware\EnsureAdminUser::class,
             'idempotent' => \App\Http\Middleware\EnsureIdempotency::class,
+            'etag' => \App\Http\Middleware\EtagConditional::class,
         ]);
 
         $middleware->throttleApi('api');

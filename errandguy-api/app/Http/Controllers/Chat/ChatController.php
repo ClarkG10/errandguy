@@ -20,12 +20,60 @@ class ChatController extends Controller
 
         $this->authorizeBookingParticipant($request->user(), $booking);
 
+        $limit = min(max($request->integer('limit', 50), 1), 100);
+
+        // Forward delta for the polling fallback: `?after=<message id>` returns
+        // only messages NEWER than the one the client already holds, ASC. The
+        // 8s poll used to re-download the whole 50-row head page every tick and
+        // dedupe client-side; this ships just what's new (usually nothing). The
+        // cursor is the message id — not a raw timestamp — so a sub-second
+        // timestamp collision can never skip a message: we compare on the same
+        // (created_at, id) tuple the ordering uses.
+        $afterId = $request->input('after');
+        if ($afterId) {
+            $cursor = Message::where('booking_id', $bookingId)
+                ->whereKey($afterId)
+                ->first(['id', 'created_at']);
+
+            // Unknown cursor (e.g. the message was purged) → fall through to the
+            // head page below so the client can resync from scratch.
+            if ($cursor) {
+                $rows = Message::query()
+                    ->where('booking_id', $bookingId)
+                    ->where(function ($q) use ($cursor) {
+                        $q->where('created_at', '>', $cursor->created_at)
+                            ->orWhere(function ($q2) use ($cursor) {
+                                $q2->where('created_at', $cursor->created_at)
+                                    ->where('id', '>', $cursor->id);
+                            });
+                    })
+                    ->with('sender:id,full_name,avatar_url')
+                    ->orderBy('created_at')
+                    ->orderBy('id')
+                    ->limit($limit + 1)
+                    ->get();
+
+                $hasMore = $rows->count() > $limit;
+                $page = $rows->take($limit)->values(); // already ASC
+
+                return response()->json([
+                    'data' => MessageResource::collection($page),
+                    'meta' => [
+                        'mode' => 'after',
+                        // More NEWER messages beyond this page (client was far
+                        // behind) — poll again with the returned tail id.
+                        'has_more' => $hasMore,
+                        'next_after' => $page->last()?->id,
+                    ],
+                ]);
+            }
+        }
+
         // Cursor-based pagination keyed by created_at. The mobile chat
         // renders oldest-to-newest, so we always return ASC. To load
         // older messages, the client passes ?before=<iso8601>; we then
         // grab the page of messages strictly OLDER than that point
         // (still ordered ASC for the client to prepend).
-        $limit = min(max($request->integer('limit', 50), 1), 100);
         $before = $request->input('before');
 
         // Pull `limit + 1` to know if there are still older messages

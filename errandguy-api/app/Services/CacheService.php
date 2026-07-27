@@ -113,7 +113,10 @@ class CacheService
      */
     public static function forgetConfig(): void
     {
-        Cache::forget('errand_types');
+        // Must match the key the catalog is actually stored under
+        // (SWR wraps it as `errand_types:active`). Route through the key
+        // builder so the read site and this bust can never drift again.
+        Cache::forget(self::errandTypesKey());
         Cache::forget('system_config');
         Cache::forget('app_config');
     }
@@ -197,7 +200,10 @@ class CacheService
 
     public static function errandTypesKey(): string
     {
-        return 'errand_types';
+        // Single source of truth: the active-errand-types catalog is stored
+        // under this exact key by the /errand-types SWR read and busted by
+        // forgetConfig(). Keep them pointed at the same string.
+        return 'errand_types:active';
     }
 
     public static function systemConfigKey(): string

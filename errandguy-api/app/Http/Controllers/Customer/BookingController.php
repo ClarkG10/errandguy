@@ -586,6 +586,40 @@ class BookingController extends Controller
 
     public function track(Request $request, string $id): JsonResponse
     {
+        // Lean poll path: `?only=location` skips the heavy eager-load (runner,
+        // runner profile, status logs, errand type + the full BookingResource)
+        // and returns just what the live-tracking screen consumes each tick —
+        // status + the runner's latest position. The full booking is fetched
+        // once on screen entry (no `only`); the 5–20s poll rides this instead,
+        // and the `etag` middleware collapses unchanged ticks to a 304 on top.
+        if ($request->query('only') === 'location') {
+            $booking = Booking::select('id', 'status', 'payment_status', 'customer_id', 'runner_id')
+                ->findOrFail($id);
+            $this->authorize('track', $booking);
+
+            $latestLocation = null;
+            if ($booking->runner_id) {
+                $latestLocation = RunnerLocation::where('booking_id', $booking->id)
+                    ->where('runner_id', $booking->runner_id)
+                    ->orderByDesc('created_at')
+                    ->first();
+            }
+
+            return response()->json([
+                'data' => [
+                    'status' => $booking->status,
+                    'payment_status' => $booking->payment_status,
+                    'runner_location' => $latestLocation ? [
+                        'lat' => $latestLocation->lat,
+                        'lng' => $latestLocation->lng,
+                        'heading' => $latestLocation->heading,
+                        'speed' => $latestLocation->speed,
+                        'updated_at' => $latestLocation->created_at,
+                    ] : null,
+                ],
+            ]);
+        }
+
         $booking = Booking::with([
             'errandType',
             'runner:id,phone,full_name,avatar_url,role,status,phone_verified,avg_rating,total_ratings,created_at',

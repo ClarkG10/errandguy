@@ -324,13 +324,23 @@ export function useChat(bookingId: string) {
   // pauses it while backgrounded/offline, ticks immediately on foreground +
   // reconnect, and backs off (up to 32s) if getMessages starts failing.
   const pollMessages = useCallback(async () => {
-    // Bypass the GET micro-cache — the whole point of this tick is to
-    // discover messages we don't yet have; the 10s response cache would
-    // otherwise short-circuit the poll. Errors propagate so backoff engages.
-    const response = await chatService.getMessages(bookingId, { limit: 50, noCache: true } as any);
+    // Forward-delta poll: ask only for messages NEWER than the newest we
+    // already hold (`after=<id>`), instead of re-downloading the whole 50-row
+    // head page every 8s and deduping client-side. Usually ships an empty
+    // list; the ETag layer then collapses those unchanged ticks to a 304.
+    // Falls back to a full head-page fetch when the store is empty (first
+    // open). Bypass the micro-cache so each tick reaches the network; errors
+    // propagate so useSmartPolling's backoff engages.
+    const existing = useChatStore.getState().messages[bookingId] ?? [];
+    const newestId = existing.length ? existing[existing.length - 1].id : undefined;
+    const response = await chatService.getMessages(
+      bookingId,
+      newestId
+        ? { after: newestId, limit: 50, noCache: true }
+        : { limit: 50, noCache: true },
+    );
     const fresh: Message[] = response.data?.data ?? [];
     if (fresh.length === 0) return;
-    const existing = useChatStore.getState().messages[bookingId] ?? [];
     const ids = new Set(existing.map((m) => m.id));
     for (const m of fresh) {
       if (!ids.has(m.id)) addMessage(bookingId, m);

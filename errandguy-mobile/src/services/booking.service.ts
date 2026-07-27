@@ -131,8 +131,17 @@ export const bookingService = {
     }>(`/bookings/${id}/cancel-preview`);
   },
 
-  trackBooking(id: string) {
-    return api.get(`/bookings/${id}/track`, { cacheTtlMs: 4000, silent: true } as any);
+  trackBooking(id: string, opts?: { onlyLocation?: boolean }) {
+    // The live-tracking poll (every 5–20s) only needs the runner's position +
+    // status — not the whole booking with its runner profile + status logs.
+    // `only=location` returns that lean slice, and the server ETag-304s
+    // unchanged ticks on top. Callers that need the full booking (status-log
+    // refresh on a transition) omit the flag; that keeps a distinct cache key.
+    return api.get(`/bookings/${id}/track`, {
+      params: opts?.onlyLocation ? { only: 'location' } : undefined,
+      cacheTtlMs: 4000,
+      silent: true,
+    } as any);
   },
 
   reviewBooking(id: string, data: { rating: number; comment?: string }) {

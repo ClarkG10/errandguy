@@ -74,7 +74,7 @@ Route::prefix('v1')->group(function () {
         // Stale-while-revalidate: instant reads, refreshed in the background
         // ~hourly so admin edits propagate without a 24h wait or a cron.
         $response = response()->json([
-            'data' => \App\Services\CacheService::swr('errand_types:active', 3600, 86400, fn () =>
+            'data' => \App\Services\CacheService::swr(\App\Services\CacheService::errandTypesKey(), 3600, 86400, fn () =>
                 \App\Models\ErrandType::where('is_active', true)->orderBy('sort_order')->get()->toArray()
             ),
         ]);
@@ -132,7 +132,7 @@ Route::prefix('v1')->group(function () {
             Route::get('/{id}', [BookingController::class, 'show']);
             Route::get('/{id}/cancel-preview', [BookingController::class, 'cancelPreview']);
             Route::post('/{id}/cancel', [BookingController::class, 'cancel']);
-            Route::get('/{id}/track', [BookingController::class, 'track']);
+            Route::get('/{id}/track', [BookingController::class, 'track'])->middleware('etag');
             // Payment settlement status for this booking (deep-link verify path).
             Route::get('/{id}/payment-status', [PaymentStatusController::class, 'forBooking'])
                 ->where('id', '[0-9a-fA-F-]{36}');
@@ -159,10 +159,11 @@ Route::prefix('v1')->group(function () {
             Route::put('/online', [RunnerOnlineController::class, 'toggle']);
             Route::post('/location', [RunnerLocationController::class, 'store'])->middleware('throttle:120,1');
 
-            Route::get('/errand/current', [RunnerErrandController::class, 'current']);
-            Route::get('/errand/available', [RunnerErrandController::class, 'available']);
+            Route::get('/errand/current', [RunnerErrandController::class, 'current'])->middleware('etag');
+            Route::get('/errand/available', [RunnerErrandController::class, 'available'])->middleware('etag');
             Route::get('/errand/{id}', [RunnerErrandController::class, 'show'])
-                ->where('id', '[0-9a-fA-F-]{36}');
+                ->where('id', '[0-9a-fA-F-]{36}')
+                ->middleware('etag');
             Route::post('/errand/{id}/accept', [RunnerErrandController::class, 'accept']);
             Route::post('/errand/{id}/decline', [RunnerErrandController::class, 'decline']);
             Route::post('/errand/{id}/status', [RunnerErrandController::class, 'updateStatus']);
@@ -178,7 +179,7 @@ Route::prefix('v1')->group(function () {
             // binary stream and needs a coordinated mobile change; see P17.)
             Route::get('/earnings/export', [ExportController::class, 'earningsPdf'])
                 ->middleware('throttle:6,1');
-            Route::get('/errands/history', [RunnerErrandHistoryController::class, 'index']);
+            Route::get('/errands/history', [RunnerErrandHistoryController::class, 'index'])->middleware('etag');
             Route::post('/payout/request', [RunnerPayoutController::class, 'requestPayout'])->middleware('idempotent');
 
             // Runner toggles shopping-checklist ticks while shopping.
@@ -201,7 +202,7 @@ Route::prefix('v1')->group(function () {
         Route::prefix('chat')->group(function () {
             Route::get('/unread-count', [ChatController::class, 'unreadCount']);
             Route::get('/conversations', [ChatController::class, 'conversations']);
-            Route::get('/{bookingId}/messages', [ChatController::class, 'index']);
+            Route::get('/{bookingId}/messages', [ChatController::class, 'index'])->middleware('etag');
             Route::post('/{bookingId}/messages', [ChatController::class, 'store'])->middleware('throttle:60,1');
             Route::post('/{bookingId}/read', [ChatController::class, 'markAsRead']);
         });
@@ -241,7 +242,7 @@ Route::prefix('v1')->group(function () {
 
         // Notification routes
         Route::prefix('notifications')->group(function () {
-            Route::get('/', [NotificationController::class, 'index']);
+            Route::get('/', [NotificationController::class, 'index'])->middleware('etag');
             Route::get('/unread-count', [NotificationController::class, 'unreadCount']);
             Route::put('/{id}/read', [NotificationController::class, 'markAsRead']);
             Route::put('/read-all', [NotificationController::class, 'markAllAsRead']);

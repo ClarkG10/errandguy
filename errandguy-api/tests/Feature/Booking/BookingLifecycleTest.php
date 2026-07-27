@@ -155,6 +155,20 @@ class BookingLifecycleTest extends TestCase
             ->assertJsonStructure(['data' => ['booking', 'runner_location']]);
     }
 
+    public function test_track_only_location_returns_lean_payload_without_the_full_booking(): void
+    {
+        $response = $this->actingAs($this->customer)
+            ->getJson("/api/v1/bookings/{$this->booking->id}/track?only=location")
+            ->assertOk();
+
+        // Lean slice the 5–20s live-tracking poll consumes …
+        $response->assertJsonStructure(['data' => ['status', 'payment_status', 'runner_location']])
+            ->assertJsonPath('data.status', 'pending');
+
+        // … and NOT the heavy full-booking object the initial load returns.
+        $this->assertArrayNotHasKey('booking', $response->json('data'));
+    }
+
     // ───── Estimate ─────
 
     public function test_customer_can_get_price_estimate(): void

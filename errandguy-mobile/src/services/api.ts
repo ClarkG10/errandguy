@@ -44,6 +44,10 @@ type ExtraConfig = AxiosRequestConfig & {
    *  never double-charges; a genuinely new attempt mints a fresh key. Set by
    *  paymentStore.beginAttempt() → forwarded as the `Idempotency-Key` header. */
   idempotencyKey?: string;
+  /** Opt OUT of conditional-GET (ETag/If-None-Match) revalidation for this
+   *  request, forcing a full-body fetch. Conditional GET is otherwise automatic
+   *  for any endpoint the server tags with an ETag. */
+  noConditional?: boolean;
 };
 
 const DEFAULT_GET_CACHE_MS = 8000;
@@ -54,6 +58,27 @@ const DEFAULT_GET_CACHE_MS = 8000;
 const MAX_CACHE_ENTRIES = 100;
 const inflight = new Map<string, Promise<AxiosResponse<any>>>();
 const microCache = new Map<string, { ts: number; response: AxiosResponse<any> }>();
+
+// ── Conditional-GET (ETag) store ──
+// Separate from the TTL micro-cache: it retains the last ETag + full body for
+// endpoints the server tags (the fat pollers — live-tracking, the runner
+// feed/active errand, notification lists). The next GET for that key sends
+// `If-None-Match`; a 304 lets us reuse the retained body so the server never
+// ships — and the device never parses — an unchanged payload. This is the main
+// lever during a Supabase-realtime outage, when clients fall back to a tight
+// REST poll of the same unchanged data. Bounded with the same write-recency
+// LRU as the micro-cache; a miss only ever causes a correct full fetch.
+const MAX_ETAG_ENTRIES = 60;
+const etagStore = new Map<string, { etag: string; response: AxiosResponse<any> }>();
+const setEtag = (key: string, etag: string, response: AxiosResponse<any>) => {
+  if (etagStore.has(key)) etagStore.delete(key);
+  etagStore.set(key, { etag, response });
+  while (etagStore.size > MAX_ETAG_ENTRIES) {
+    const oldest = etagStore.keys().next().value;
+    if (oldest === undefined) break;
+    etagStore.delete(oldest);
+  }
+};
 
 /**
  * ── Intelligent retry (idempotent GETs only) ──────────────────────────────
@@ -273,9 +298,10 @@ api.interceptors.response.use(
         } catch {
           /* store not yet initialised — safe to ignore */
         }
-        // Also drop the request micro-cache so the next sign-in doesn't
-        // serve the previous user's cached responses.
+        // Also drop the request micro-cache + ETag store so the next sign-in
+        // doesn't serve (or revalidate against) the previous user's responses.
         microCache.clear();
+        etagStore.clear();
         inflight.clear();
         apiActivity.reset();
       }
@@ -343,10 +369,32 @@ api.request = function patchedRequest<T = any, R = AxiosResponse<T>, D = any>(
     if (pending) return pending as unknown as Promise<R>;
   }
 
+  // Conditional GET: if we hold an ETag for this key and the caller hasn't
+  // opted out, revalidate with If-None-Match. A 304 returns the retained body
+  // (no re-download, no re-parse); a 200 carries fresh data + a new ETag.
+  // Axios treats 304 as a rejection by default, so widen validateStatus to
+  // accept it (preserving any caller-supplied predicate).
+  const conditional = config.noConditional ? undefined : etagStore.get(key);
+  if (conditional) {
+    config.headers = { ...(config.headers as any), 'If-None-Match': conditional.etag };
+    const prev = config.validateStatus;
+    config.validateStatus = (s: number) =>
+      s === 304 || (prev ? prev(s) : s >= 200 && s < 300);
+  }
+
   const promise = getWithRetry(config, config.retries ?? DEFAULT_GET_RETRIES)
     .then((res) => {
-      if (!config.noCache) setCache(key, res);
-      return res;
+      let effective = res;
+      if (res.status === 304 && conditional) {
+        // Not modified — reuse the body we already hold.
+        effective = conditional.response;
+      } else {
+        const etag = (res.headers?.etag ?? res.headers?.ETag) as string | undefined;
+        if (etag) setEtag(key, etag, res);
+        else if (conditional) etagStore.delete(key); // server stopped tagging
+      }
+      if (!config.noCache) setCache(key, effective);
+      return effective;
     })
     .finally(() => {
       inflight.delete(key);
@@ -360,6 +408,7 @@ api.request = function patchedRequest<T = any, R = AxiosResponse<T>, D = any>(
 export const apiCache = {
   clear() {
     microCache.clear();
+    etagStore.clear();
     inflight.clear();
   },
   // Drop only cached responses, leaving the in-flight dedup map intact. Used by
@@ -370,10 +419,16 @@ export const apiCache = {
   // invalidate would silently no-op on those screens.
   clearResponses() {
     microCache.clear();
+    // Also drop ETags so an explicit pull-to-refresh fetches full bodies
+    // rather than revalidating into a 304 against the just-cleared cache.
+    etagStore.clear();
   },
   invalidate(urlPrefix: string) {
     for (const k of Array.from(microCache.keys())) {
       if (k.includes(urlPrefix)) microCache.delete(k);
+    }
+    for (const k of Array.from(etagStore.keys())) {
+      if (k.includes(urlPrefix)) etagStore.delete(k);
     }
   },
 };
