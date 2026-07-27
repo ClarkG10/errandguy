@@ -18,6 +18,7 @@ import { usePaymentStore } from '../stores/paymentStore';
 import { useNetworkStore } from '../stores/networkStore';
 import { userService } from '../services/user.service';
 import { preloadAfterAuth, preloadCoreImages } from '../services/preload.service';
+import { initMutationQueue } from '../services/mutationQueue';
 import { useNotifications } from '../hooks/useNotifications';
 import { ToastProvider } from '../components/ui/ToastProvider';
 import { ApiActivityBar } from '../components/ui/ApiActivityBar';
@@ -162,6 +163,9 @@ export default function RootLayout() {
     loadDraftFromStorage();
     loadPaymentAttempt();
     preloadCoreImages();
+    // Rehydrate any offline-queued mutations and wire the reconnect flush so
+    // changes made while offline sync themselves the moment we're back online.
+    void initMutationQueue();
   }, [loadFromStorage, loadDraftFromStorage, loadPaymentAttempt]);
 
   // Validate token on app load

@@ -10,6 +10,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { CloudOff } from 'lucide-react-native';
 import api from '../../services/api';
 import { useNetworkStore } from '../../stores/networkStore';
+import { useQueuedMutationCount } from '../../services/mutationQueue';
 import { useForegroundInterval } from '../../hooks/useForegroundInterval';
 import { useReducedMotion } from '../../hooks/useReducedMotion';
 import { LightColors } from '../../constants/colors';
@@ -58,6 +59,9 @@ export function OfflineBanner() {
   const insets = useSafeAreaInsets();
   const isOffline = useNetworkStore((s) => s.isOffline);
   const reduceMotion = useReducedMotion();
+  // Changes made offline are held in the durable mutation queue and replay on
+  // reconnect — tell the user their edits aren't lost, just pending.
+  const queuedCount = useQueuedMutationCount();
 
   const translateY = useSharedValue(-HIDDEN_OFFSET);
 
@@ -103,7 +107,11 @@ export function OfflineBanner() {
         <CloudOff size={18} color={LightColors.warning} strokeWidth={2} />
         <View style={styles.copy} pointerEvents="none">
           <Text style={styles.title}>You're offline</Text>
-          <Text style={styles.subtitle}>Some features may not work.</Text>
+          <Text style={styles.subtitle}>
+            {queuedCount > 0
+              ? `${queuedCount} ${queuedCount === 1 ? 'change' : 'changes'} will sync when you're back`
+              : 'Some features may not work.'}
+          </Text>
         </View>
         <Pressable
           onPress={handleRetry}

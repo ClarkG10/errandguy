@@ -25,6 +25,7 @@ import { Skeleton, SkeletonCircle } from '../../components/ui/Skeleton';
 import { BrandRefreshControl } from '../../components/ui/BrandRefreshControl';
 import { paymentService } from '../../services/payment.service';
 import { runOptimistic } from '../../utils/optimistic';
+import { queueable } from '../../services/mutationQueue';
 import { useQuery } from '../../hooks/useQuery';
 import { CacheTTL } from '../../services/cache.service';
 import { useAuthStore } from '../../stores/authStore';
@@ -179,14 +180,21 @@ export default function PaymentMethodsScreen() {
       // invalidates ['payment-methods'] on success, which reconciles with
       // server truth (incl. any auto-promotion of another method).
       const prev = methodsQ.data;
+      // Which method is "default" is a display preference (no money moves), so
+      // it's safe to keep + replay if the tap happens offline.
+      const q = queueable('payment.setDefaultMethod', { id: m.id }, {
+        dedupeKey: 'payment-default',
+      });
       await runOptimistic({
         apply: () =>
           methodsQ.mutate((list) =>
             (list ?? []).map((x) => ({ ...x, is_default: x.id === m.id })),
           ),
         rollback: () => methodsQ.mutate(() => prev ?? []),
-        commit: () => paymentService.setDefaultMethod(m.id),
+        commit: q.commit,
+        offline: q.offline,
         errorMessage: 'Could not set default. Please try again.',
+        retry: true,
         onSuccess: () => {
           Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
           toast.success('Default updated.');
@@ -208,6 +216,7 @@ export default function PaymentMethodsScreen() {
       rollback: () => methodsQ.mutate(() => prev ?? []),
       commit: () => paymentService.removePaymentMethod(m.id),
       errorMessage: 'Could not remove. Please try again.',
+      retry: true,
       onSuccess: () => toast.success('Payment method removed.'),
     });
   }, [removing, methodsQ]);

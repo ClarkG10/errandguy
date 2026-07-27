@@ -14,6 +14,7 @@ import { ConfirmModal } from '../../../components/ui/ConfirmModal';
 import { useRunnerStore } from '../../../stores/runnerStore';
 import { runnerService } from '../../../services/runner.service';
 import { runOptimistic } from '../../../utils/optimistic';
+import { queueable } from '../../../services/mutationQueue';
 import { toast } from '../../../stores/toastStore';
 
 interface ErrandTypeOption {
@@ -73,13 +74,18 @@ export default function PreferredTypesScreen() {
     // invalidates ['runner','profile'] on success and the tab refetches on
     // focus.
     const prev = runnerProfile;
+    const q = queueable('runner.updateProfile', { preferred_types: selected }, {
+      dedupeKey: 'runner-profile-preferred-types',
+    });
     await runOptimistic({
       apply: () => {
         if (runnerProfile) setRunnerProfile({ ...runnerProfile, preferred_types: selected });
       },
       rollback: () => setRunnerProfile(prev),
-      commit: () => runnerService.updateRunnerProfile({ preferred_types: selected }),
+      commit: q.commit,
+      offline: q.offline,
       errorMessage: "Couldn't update your errand types.",
+      retry: true,
       onSuccess: () => {
         Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
         toast.success('Preferred errand types updated');

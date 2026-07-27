@@ -21,6 +21,7 @@ import * as Haptics from 'expo-haptics';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { userService } from '../../../services/user.service';
+import { runOptimistic } from '../../../utils/optimistic';
 import { Button } from '../../../components/ui/Button';
 import { BottomActionBar } from '../../../components/ui/BottomActionBar';
 import { GradientHeader } from '../../../components/ui/GradientHeader';
@@ -66,7 +67,6 @@ export default function TrustedContactsScreen() {
   const [nameError, setNameError] = useState<string | undefined>();
   const [phoneError, setPhoneError] = useState<string | undefined>();
   const [pendingDelete, setPendingDelete] = useState<TrustedContact | null>(null);
-  const [deletingContact, setDeletingContact] = useState(false);
 
   const insets = useSafeAreaInsets();
   const nameRef = useRef<InputHandle>(null);
@@ -261,50 +261,67 @@ export default function TrustedContactsScreen() {
     const current = contacts[0];
     if (!current || current.id === contact.id) return;
     Haptics.selectionAsync().catch(() => {});
-    // The API has no atomic "set primary" route, so this is a two-write
-    // priority swap. Track whether the first write landed so a failure of
-    // the second write can be rolled back — otherwise two contacts would
-    // be left sharing the lowest priority, and which one is "primary"
-    // (called first during an SOS) becomes indeterminate.
-    let firstWriteDone = false;
-    try {
-      await userService.updateTrustedContact(contact.id, {
-        name: contact.name,
-        phone: contact.phone,
-        relationship: contact.relationship,
-        priority: current.priority,
-        is_active: contact.is_active,
-      });
-      firstWriteDone = true;
-      await userService.updateTrustedContact(current.id, {
-        name: current.name,
-        phone: current.phone,
-        relationship: current.relationship,
-        priority: contact.priority,
-        is_active: current.is_active,
-      });
-      await fetchContacts(true);
-      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
-    } catch {
-      // Best-effort rollback of the first write so priorities can't be
-      // left corrupted; then resync the list to server truth regardless.
-      if (firstWriteDone) {
+    // Optimistic: swap the star to this contact instantly (reorder locally by
+    // swapping priorities), confirm in the background, roll the list back on
+    // failure. The API has no atomic "set primary" route, so the commit is a
+    // two-write priority swap — if the second write fails the first is undone
+    // server-side too, so priorities can never be left corrupted (which would
+    // make "who is called first during SOS" indeterminate).
+    const prev = contacts;
+    const reordered = contacts
+      .map((c) => {
+        if (c.id === contact.id) return { ...c, priority: current.priority };
+        if (c.id === current.id) return { ...c, priority: contact.priority };
+        return c;
+      })
+      .sort((a, b) => a.priority - b.priority);
+    await runOptimistic({
+      apply: () => {
+        setContacts(reordered);
+        void saveCache(reordered);
+      },
+      rollback: () => {
+        setContacts(prev);
+        void saveCache(prev);
+      },
+      commit: async () => {
+        await userService.updateTrustedContact(contact.id, {
+          name: contact.name,
+          phone: contact.phone,
+          relationship: contact.relationship,
+          priority: current.priority,
+          is_active: contact.is_active,
+        });
         try {
-          await userService.updateTrustedContact(contact.id, {
-            name: contact.name,
-            phone: contact.phone,
-            relationship: contact.relationship,
+          await userService.updateTrustedContact(current.id, {
+            name: current.name,
+            phone: current.phone,
+            relationship: current.relationship,
             priority: contact.priority,
-            is_active: contact.is_active,
+            is_active: current.is_active,
           });
-        } catch {
-          /* rollback failed — the refetch below surfaces real state */
+        } catch (e) {
+          // Undo the first write so the two contacts can't be left sharing
+          // the lowest priority, then rethrow so the UI rolls back + retries.
+          await userService
+            .updateTrustedContact(contact.id, {
+              name: contact.name,
+              phone: contact.phone,
+              relationship: contact.relationship,
+              priority: contact.priority,
+              is_active: contact.is_active,
+            })
+            .catch(() => {});
+          throw e;
         }
-      }
-      await fetchContacts(true).catch(() => {});
-      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error).catch(() => {});
-      toast.error('Could not update primary contact');
-    }
+      },
+      errorMessage: 'Could not update primary contact',
+      retry: true,
+      onSuccess: () => {
+        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
+        void fetchContacts(true);
+      },
+    });
   };
 
   // Re-POST the removed contact's captured payload. A new id is minted,
@@ -327,22 +344,32 @@ export default function TrustedContactsScreen() {
   const confirmDelete = async () => {
     if (!pendingDelete) return;
     const removed = pendingDelete;
-    setDeletingContact(true);
-    try {
-      await userService.deleteTrustedContact(removed.id);
-      await fetchContacts(true);
-      setPendingDelete(null);
-      toast.success(`${removed.name} removed`, {
-        actionLabel: 'Undo',
-        onAction: () => {
-          void undoDelete(removed);
-        },
-      });
-    } catch {
-      toast.error('Failed to remove contact');
-    } finally {
-      setDeletingContact(false);
-    }
+    const prev = contacts;
+    // Optimistic: close the confirm and drop the row instantly; a failure
+    // restores it (safe — a still-present contact is the fail-safe for SOS).
+    setPendingDelete(null);
+    await runOptimistic({
+      apply: () => {
+        const next = prev.filter((c) => c.id !== removed.id);
+        setContacts(next);
+        void saveCache(next);
+      },
+      rollback: () => {
+        setContacts(prev);
+        void saveCache(prev);
+      },
+      commit: () => userService.deleteTrustedContact(removed.id),
+      errorMessage: 'Failed to remove contact',
+      retry: true,
+      onSuccess: () => {
+        toast.success(`${removed.name} removed`, {
+          actionLabel: 'Undo',
+          onAction: () => {
+            void undoDelete(removed);
+          },
+        });
+      },
+    });
   };
 
   // The user's own safety data on their own device: show the full number
@@ -673,10 +700,8 @@ export default function TrustedContactsScreen() {
         title="Remove contact?"
         message={pendingDelete ? deleteMessage(pendingDelete) : ''}
         confirmLabel="Remove"
-        confirmLoadingLabel="Removing…"
         cancelLabel="Keep"
         destructive
-        loading={deletingContact}
         onConfirm={confirmDelete}
         onCancel={() => setPendingDelete(null)}
       />

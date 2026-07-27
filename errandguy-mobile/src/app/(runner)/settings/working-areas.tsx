@@ -20,6 +20,7 @@ import { useLocationStore } from '../../../stores/locationStore';
 import { runnerService } from '../../../services/runner.service';
 import { getCurrentCoords } from '../../../utils/locationPermission';
 import { runOptimistic } from '../../../utils/optimistic';
+import { queueable } from '../../../services/mutationQueue';
 import { toast } from '../../../stores/toastStore';
 
 // h-56 map frame height — the loading veil + delta math key off it.
@@ -158,6 +159,11 @@ export default function WorkingAreasScreen() {
     // Rolls back profile + radius on failure. The old post-save refetch was
     // redundant — the service invalidates ['runner','profile'].
     const prev = runnerProfile;
+    const q = queueable(
+      'runner.updateProfile',
+      { working_area: JSON.stringify({ lat, lng, radius }) },
+      { dedupeKey: 'runner-profile-working-area' },
+    );
     await runOptimistic({
       apply: () => {
         if (runnerProfile) {
@@ -173,11 +179,10 @@ export default function WorkingAreasScreen() {
       // slider is the user's in-progress input — apply never touched it, so
       // leave it intact on failure so they can just retry Save.
       rollback: () => setRunnerProfile(prev),
-      commit: () =>
-        runnerService.updateRunnerProfile({
-          working_area: JSON.stringify({ lat, lng, radius }),
-        }),
+      commit: q.commit,
+      offline: q.offline,
       errorMessage: "Couldn't update your working area.",
+      retry: true,
       onSuccess: () => {
         Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
         toast.success('Working area updated');

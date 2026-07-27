@@ -23,6 +23,7 @@ import { userService } from '../../../services/user.service';
 import { geocodingService } from '../../../services/geocoding.service';
 import { getCurrentCoords } from '../../../utils/locationPermission';
 import { runOptimistic } from '../../../utils/optimistic';
+import { queueable } from '../../../services/mutationQueue';
 import { LightColors, Elevation } from '../../../constants/colors';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
@@ -83,7 +84,6 @@ export default function AddressesScreen() {
   const [newAddress, setNewAddress] = useState('');
   const [newLat, setNewLat] = useState(0);
   const [newLng, setNewLng] = useState(0);
-  const [saving, setSaving] = useState(false);
   const [settingDefaultId, setSettingDefaultId] = useState<string | null>(null);
 
   // Map search
@@ -207,37 +207,42 @@ export default function AddressesScreen() {
       return;
     }
     const finalLabel = newLabel === 'other' && customLabel.trim() ? customLabel.trim() : newLabel;
-    setSaving(true);
-    try {
-      if (editingId) {
-        await userService.updateAddress(editingId, {
-          label: finalLabel,
-          address: trimmedAddress,
-          lat: newLat,
-          lng: newLng,
-        });
-      } else {
-        await userService.addAddress({
-          label: finalLabel,
-          address: trimmedAddress,
-          lat: newLat,
-          lng: newLng,
-          is_default: false,
-          created_at: new Date().toISOString(),
-        } as any);
-      }
-      setNewAddress('');
-      setCustomLabel('');
-      setShowAdd(false);
-      setEditingId(null);
-      fetchAddresses();
-      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
-      toast.success('Address saved');
-    } catch {
-      toast.error('Failed to save address');
-    } finally {
-      setSaving(false);
-    }
+    const fields = { label: finalLabel, address: trimmedAddress, lat: newLat, lng: newLng };
+    const isEdit = !!editingId;
+    const editId = editingId;
+    const prev = addressesQ.data ?? [];
+
+    // Close the form and reflect the change in the list immediately; the server
+    // write happens in the background and the list is rolled back on failure.
+    setNewAddress('');
+    setCustomLabel('');
+    setShowAdd(false);
+    setEditingId(null);
+
+    await runOptimistic({
+      apply: () =>
+        addressesQ.mutate((list) => {
+          const current = list ?? [];
+          if (isEdit) {
+            return current.map((a) => (a.id === editId ? { ...a, ...fields } : a));
+          }
+          // Temp id is replaced by the server record when `invalidate` refetches.
+          const tempRow = { id: `temp-${Date.now()}`, ...fields, is_default: false } as SavedAddress;
+          return [...current, tempRow];
+        }),
+      rollback: () => addressesQ.mutate(() => prev),
+      commit: () =>
+        isEdit
+          ? userService.updateAddress(editId as string, fields)
+          : userService.addAddress({ ...fields, is_default: false, created_at: new Date().toISOString() } as any),
+      invalidate: [['user', 'addresses', userId]],
+      errorMessage: 'Failed to save address',
+      retry: true,
+      onSuccess: () => {
+        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
+        toast.success('Address saved');
+      },
+    });
   };
 
   const handleEdit = (addr: SavedAddress) => {
@@ -279,15 +284,24 @@ export default function AddressesScreen() {
       // and an error is shown. On success we invalidate so the confirmed
       // server state (which also clears the prior default) is re-fetched.
       const prev = addressesQ.data ?? [];
+      // Queueable so promoting a default while offline is kept and replayed on
+      // reconnect; dedupeKey collapses rapid re-picks to the last one chosen.
+      const q = queueable(
+        'user.updateAddress',
+        { id: addr.id, data: { is_default: true } },
+        { invalidate: [['user', 'addresses', userId]], dedupeKey: 'addr-default' },
+      );
       await runOptimistic({
         apply: () =>
           addressesQ.mutate((list) =>
             (list ?? []).map((a) => ({ ...a, is_default: a.id === addr.id })),
           ),
         rollback: () => addressesQ.mutate(prev),
-        commit: () => userService.updateAddress(addr.id, { is_default: true }),
+        commit: q.commit,
+        offline: q.offline,
         invalidate: [['user', 'addresses', userId]],
         errorMessage: 'Failed to update address',
+        retry: true,
         onSuccess: () =>
           Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {}),
       });
@@ -333,6 +347,7 @@ export default function AddressesScreen() {
       commit: () => userService.deleteAddress(id),
       invalidate: [['user', 'addresses', userId]],
       errorMessage: 'Failed to delete address',
+      retry: true,
       onSuccess: () =>
         toast.success('Address removed', { actionLabel: 'Undo', onAction: undoDelete }),
     });
@@ -599,8 +614,6 @@ export default function AddressesScreen() {
                 <Button
                   title={editingId ? 'Update' : 'Save Address'}
                   onPress={handleAdd}
-                  loading={saving}
-                  loadingTitle="Saving…"
                   disabled={!newAddress.trim()}
                   size="sm"
                   fullWidth

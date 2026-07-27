@@ -11,6 +11,7 @@ import { Button } from '../ui/Button';
 import { UploadProgress } from '../ui/UploadProgress';
 import { toast } from '../../stores/toastStore';
 import { runOptimistic } from '../../utils/optimistic';
+import { queueable } from '../../services/mutationQueue';
 import { LightColors } from '../../constants/colors';
 
 interface EditProfileModalProps {
@@ -67,6 +68,11 @@ export function EditProfileModal({ visible, onClose }: EditProfileModalProps) {
     // does NOT re-fire the tab's focus-refresh on close, so there's no
     // server-read race to clobber the optimistic value).
     const prev = user;
+    const q = queueable(
+      'user.updateProfile',
+      { full_name: nextName, email: nextEmail || undefined },
+      { dedupeKey: 'user-profile' },
+    );
     await runOptimistic({
       apply: () => {
         updateProfile({ full_name: nextName, email: nextEmail || null });
@@ -75,12 +81,10 @@ export function EditProfileModal({ visible, onClose }: EditProfileModalProps) {
       rollback: () => {
         if (prev) updateProfile({ full_name: prev.full_name, email: prev.email ?? null });
       },
-      commit: () =>
-        userService.updateProfile({
-          full_name: nextName,
-          email: nextEmail || undefined,
-        }),
+      commit: q.commit,
+      offline: q.offline,
       errorMessage: "Couldn't update your profile.",
+      retry: true,
     });
   };
 

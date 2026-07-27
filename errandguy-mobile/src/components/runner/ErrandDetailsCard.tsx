@@ -8,7 +8,7 @@ import { resolveImageUrl } from '../../utils/resolveImageUrl';
 import { storage } from '../../utils/storage';
 import { parseChecklist } from '../../utils/shoppingChecklist';
 import { runnerService } from '../../services/runner.service';
-import { toast } from '../../stores/toastStore';
+import { runOptimistic } from '../../utils/optimistic';
 import { LightColors } from '../../constants/colors';
 import { formatCurrency } from '../../utils/formatCurrency';
 
@@ -88,21 +88,23 @@ export function ErrandDetailsCard({
     Haptics.selectionAsync().catch(() => {});
     const nextChecked = !item.checked;
     const previous = serverItems;
-    // Optimistic flip.
-    setServerItems((cur) =>
-      cur.map((it) =>
-        it.id === item.id
-          ? { ...it, checked: nextChecked, checked_at: nextChecked ? new Date().toISOString() : null }
-          : it,
-      ),
-    );
-    runnerService
-      .updateChecklistTicks(bookingId, [{ id: item.id, checked: nextChecked }])
-      .catch(() => {
-        // Roll back to the pre-toggle snapshot and surface the failure.
-        setServerItems(previous);
-        toast.error("Couldn't update the checklist. Please try again.");
-      });
+    // Optimistic flip via the shared helper — instant tick, rollback + one-tap
+    // Retry on failure.
+    void runOptimistic({
+      apply: () =>
+        setServerItems((cur) =>
+          cur.map((it) =>
+            it.id === item.id
+              ? { ...it, checked: nextChecked, checked_at: nextChecked ? new Date().toISOString() : null }
+              : it,
+          ),
+        ),
+      rollback: () => setServerItems(previous),
+      commit: () =>
+        runnerService.updateChecklistTicks(bookingId, [{ id: item.id, checked: nextChecked }]),
+      errorMessage: "Couldn't update the checklist. Please try again.",
+      retry: true,
+    });
   };
 
   const serverPickedCount = serverItems.filter((it) => it.checked).length;

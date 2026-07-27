@@ -36,6 +36,8 @@ import { toast } from '../../stores/toastStore';
 import { useNotificationStore } from '../../stores/notificationStore';
 import { useAuthStore } from '../../stores/authStore';
 import { notificationService } from '../../services/notification.service';
+import { runOptimistic } from '../../utils/optimistic';
+import { queueable } from '../../services/mutationQueue';
 import { useQuery } from '../../hooks/useQuery';
 import { useReducedMotion } from '../../hooks/useReducedMotion';
 import { CacheTTL } from '../../services/cache.service';
@@ -455,12 +457,19 @@ export default function RunnerNotificationsScreen() {
 
   const handleMarkAllRead = useCallback(async () => {
     Haptics.selectionAsync().catch(() => {});
-    try {
-      await notificationService.markAllAsRead();
-      markAllRead();
-    } catch {
-      // ignore — UI state will reconcile on next refresh
-    }
+    // Snapshot the list (with its original read flags) so a failure restores
+    // the exact prior state; setNotifications recomputes the unread badge.
+    const prev = useNotificationStore.getState().notifications;
+    const q = queueable('notification.markAllRead', {}, { dedupeKey: 'notif-mark-all-read' });
+    await runOptimistic({
+      apply: () => markAllRead(),
+      rollback: () => useNotificationStore.getState().setNotifications(prev),
+      commit: q.commit,
+      offline: q.offline,
+      errorMessage: "Couldn't mark all as read. Please try again.",
+      retry: true,
+      offlineMessage: null,
+    });
   }, [markAllRead]);
 
   // Optimistically drop the row, then reconcile with the server. On
@@ -523,22 +532,21 @@ export default function RunnerNotificationsScreen() {
 
   const handleClearAll = useCallback(async () => {
     // ConfirmModal fires the destructive warning haptic on confirm.
-    setClearing(true);
-    try {
-      await notificationService.clearAll();
-      // Clear-all supersedes any deferred single-row deletes.
-      pendingDeletes.current.forEach((t) => clearTimeout(t));
-      pendingDeletes.current.clear();
-      clear();
-      setClearConfirmVisible(false);
-    } catch {
-      // Close the modal BEFORE toasting — toasts can't render above a
-      // native Modal, so an error behind the open dialog is invisible.
-      setClearConfirmVisible(false);
-      toast.error("Couldn't clear notifications. Please try again.");
-    } finally {
-      setClearing(false);
-    }
+    const prev = useNotificationStore.getState().notifications;
+    // Clear-all supersedes any deferred single-row deletes.
+    pendingDeletes.current.forEach((t) => clearTimeout(t));
+    pendingDeletes.current.clear();
+    // Close the modal first: the list empties optimistically and a rollback
+    // restores it. Toasts can't render above a native Modal, so the failure
+    // toast must fire after the dialog is gone.
+    setClearConfirmVisible(false);
+    await runOptimistic({
+      apply: () => clear(),
+      rollback: () => useNotificationStore.getState().setNotifications(prev),
+      commit: () => notificationService.clearAll(),
+      errorMessage: "Couldn't clear notifications. Please try again.",
+      retry: true,
+    });
   }, [clear]);
 
   const handleNotificationPress = useCallback(

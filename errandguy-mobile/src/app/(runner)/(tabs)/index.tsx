@@ -355,6 +355,7 @@ export default function RunnerHomeScreen() {
         },
         commit: () => runnerService.toggleOnline(false),
         errorMessage: 'Could not go offline. Please try again.',
+        retry: true,
         onSuccess: () => {
           stopTracking();
           Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
