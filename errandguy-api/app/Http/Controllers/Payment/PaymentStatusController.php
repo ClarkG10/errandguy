@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Payment;
 use App\Http\Controllers\Controller;
 use App\Models\Booking;
 use App\Models\Payment;
+use App\Services\PaymentService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 
@@ -35,6 +36,11 @@ class PaymentStatusController extends Controller
             ->with('booking:id,booking_number,payment_status')
             ->findOrFail($id);
 
+        // Confirm settlement directly with the gateway so a delayed/undelivered
+        // webhook (or local dev, where webhooks can't reach us) never leaves a
+        // genuinely-paid charge stuck 'processing'. Idempotent + safe to poll.
+        $payment = app(PaymentService::class)->reconcileBookingPayment($payment);
+
         return response()->json([
             'data' => $this->present($payment),
         ]);
@@ -55,6 +61,10 @@ class PaymentStatusController extends Controller
             ->first();
 
         if ($payment) {
+            // Pull-based settlement confirmation (see show()) — makes the poll
+            // self-sufficient even when the Xendit webhook hasn't arrived.
+            $payment = app(PaymentService::class)->reconcileBookingPayment($payment);
+
             return response()->json(['data' => $this->present($payment)]);
         }
 

@@ -7,6 +7,7 @@ use App\Exceptions\PaymentGatewayException;
 use App\Models\Payment;
 use App\Models\PaymentMethod;
 use App\Models\User;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
 
@@ -402,6 +403,105 @@ class PaymentService
         }
 
         return $payment;
+    }
+
+    /**
+     * Pull-based settlement reconciliation for a booking's gateway charge.
+     *
+     * Production settles via the `payment.succeeded` webhook, but a webhook can
+     * be delayed, dropped, or — in local dev — simply never reach the server,
+     * leaving a genuinely-paid charge stuck at `processing` so the app's status
+     * poll can never confirm it. This asks Xendit for the payment request's REAL
+     * status and advances the Payment through the SAME audited `transitionTo`
+     * path the webhook uses (never a raw update), so settlement is confirmed
+     * without depending on webhook delivery.
+     *
+     * Safe to call on every status poll:
+     *   • no-op unless the charge is a non-terminal gateway payment with a ref;
+     *   • a gateway hiccup NEVER fails the poll (leaves it pending, retries next);
+     *   • row-locked + re-checked so concurrent polls / a racing webhook can't
+     *     double-advance the same charge (transitionTo also no-ops once terminal);
+     *   • only ever moves the Payment to the state the gateway itself reports;
+     *   • refuses to mark paid for LESS than we charged.
+     */
+    public function reconcileBookingPayment(Payment $payment): Payment
+    {
+        // Only a non-terminal gateway charge can be reconciled. Cash/wallet
+        // settle locally; a terminal payment is already resolved; a blank
+        // gateway ref means the charge never reached Xendit (create failed).
+        if (
+            ! in_array($payment->status, [PaymentStatus::Pending->value, PaymentStatus::Processing->value], true)
+            || in_array($payment->method, ['cash', 'wallet'], true)
+            || blank($payment->gateway_tx_id)
+        ) {
+            return $payment;
+        }
+
+        try {
+            $pr = $this->getPaymentRequest($payment->gateway_tx_id);
+        } catch (\Throwable $e) {
+            // Gateway unreachable / transient — never fail the poll.
+            return $payment;
+        }
+
+        $gatewayStatus = strtoupper((string) ($pr['status'] ?? ''));
+        if (! in_array($gatewayStatus, ['SUCCEEDED', 'FAILED', 'EXPIRED'], true)) {
+            // PENDING / REQUIRES_ACTION — the customer hasn't finished paying.
+            return $payment;
+        }
+
+        try {
+            return DB::transaction(function () use ($payment, $pr, $gatewayStatus) {
+                // Row-lock + re-read so two concurrent polls (or a poll racing
+                // the webhook) can't both advance the same charge.
+                $locked = Payment::whereKey($payment->id)->lockForUpdate()->first();
+                if (
+                    ! $locked
+                    || ! in_array($locked->status, [PaymentStatus::Pending->value, PaymentStatus::Processing->value], true)
+                ) {
+                    return $locked ?? $payment;
+                }
+
+                if ($gatewayStatus === 'SUCCEEDED') {
+                    // Never mark paid for LESS than we charged. A short settle is
+                    // left pending for the webhook / a human to resolve.
+                    $settled = (float) ($pr['amount'] ?? 0);
+                    if ($settled > 0 && $settled + 0.01 < (float) $locked->amount) {
+                        Log::warning('Xendit reconcile: settled amount below charged — left pending', [
+                            'payment_id' => $locked->id,
+                            'charged' => (float) $locked->amount,
+                            'settled' => $settled,
+                        ]);
+                        return $locked;
+                    }
+                    $locked->transitionTo(PaymentStatus::Completed, 'reconcile', 'payment_request.succeeded', extra: [
+                        'paid_at' => now(),
+                        'gateway_response' => $pr,
+                    ]);
+                    if ($locked->booking) {
+                        $locked->booking->update(['payment_status' => 'paid']);
+                    }
+                } elseif ($gatewayStatus === 'FAILED') {
+                    $locked->transitionTo(PaymentStatus::Failed, 'reconcile', 'payment_request.failed', extra: [
+                        'gateway_response' => $pr,
+                    ]);
+                } else { // EXPIRED
+                    $locked->transitionTo(PaymentStatus::Expired, 'reconcile', 'payment_request.expired', extra: [
+                        'gateway_response' => $pr,
+                    ]);
+                }
+
+                return $locked;
+            });
+        } catch (\Throwable $e) {
+            // A transition/DB error must never 500 the status poll — the webhook
+            // is still the primary settlement path. Log and report current state.
+            Log::warning('Xendit reconcile failed', [
+                'payment_id' => $payment->id,
+                'error' => $e->getMessage(),
+            ]);
+            return $payment->fresh() ?? $payment;
+        }
     }
 
     private function mapPaymentMethod(string $method): string

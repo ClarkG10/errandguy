@@ -106,6 +106,30 @@ export function usePaymentVerification(): PaymentVerificationState {
     }
   }, [attempt, setStatus]);
 
+  // GUARANTEED escape hatch — independent of the poll. A payment-status endpoint
+  // that ERRORS on every tick (undeployed, a 500 from a WIP change, a 404, an
+  // auth blip) makes tick() throw BEFORE it can reach its own pending-transition
+  // below — which would trap the user forever behind the button-less 'verifying'
+  // overlay (a full-screen Modal with no dismiss control on iOS). This timer
+  // flips 'verifying' → the honest, dismissable 'pending' state after
+  // PENDING_AFTER_MS no matter what the poll does, so a broken money-status
+  // endpoint degrades to "we'll notify you" but can NEVER brick the app. Keyed
+  // off the persisted startedAt, so it also bounds a rehydrated attempt.
+  useEffect(() => {
+    if (!attempt || attempt.kind === 'payout' || attempt.status !== 'verifying') return;
+    const flip = () => {
+      const cur = usePaymentStore.getState().attempt;
+      if (cur && cur.status === 'verifying') setStatus('pending');
+    };
+    const remaining = PENDING_AFTER_MS - (Date.now() - attempt.startedAt);
+    if (remaining <= 0) {
+      flip();
+      return;
+    }
+    const timer = setTimeout(flip, remaining);
+    return () => clearTimeout(timer);
+  }, [attempt, setStatus]);
+
   const tick = useCallback(async () => {
     const current = usePaymentStore.getState().attempt;
     if (!current || current.kind === 'payout' || !POLL_STATUSES.includes(current.status)) return;
@@ -142,6 +166,20 @@ export function usePaymentVerification(): PaymentVerificationState {
         if (elapsed > PENDING_AFTER_MS) setStatus('pending');
         else if (current.status === 'awaiting_gateway') setStatus('verifying');
       }
+    } catch (err) {
+      // A thrown probe (404/500/offline) is NEVER a payment failure — but it
+      // must not starve the pending-transition above, which sits after the
+      // throwing await. Degrade to the dismissable 'pending' state once we've
+      // waited long enough (defense-in-depth alongside the timeout effect), then
+      // rethrow so useSmartPolling still applies its error backoff.
+      const elapsed = Date.now() - current.startedAt;
+      if (
+        elapsed > PENDING_AFTER_MS &&
+        (current.status === 'awaiting_gateway' || current.status === 'verifying')
+      ) {
+        setStatus('pending');
+      }
+      throw err;
     } finally {
       inFlight.current = false;
     }

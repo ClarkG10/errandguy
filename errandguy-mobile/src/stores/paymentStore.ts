@@ -157,7 +157,18 @@ export const usePaymentStore = create<PaymentStoreState>((set, get) => ({
         set({ isHydrated: true });
         return;
       }
-      set({ attempt, isHydrated: true });
+      // Never RESUME into a non-dismissable overlay. 'verifying' and
+      // 'awaiting_gateway' render a button-less full-screen Modal
+      // (PaymentProgress), so if the status endpoint is erroring, a rehydrated
+      // attempt in one of those states would re-trap the user on EVERY relaunch
+      // (which is exactly why reloading never un-sticks the app). Bring it back
+      // as the honest, dismissable 'pending' state instead — still polled, still
+      // lands the real outcome, but the user can always leave.
+      const resumed: PaymentAttempt =
+        attempt.status === 'verifying' || attempt.status === 'awaiting_gateway'
+          ? { ...attempt, status: 'pending' }
+          : attempt;
+      set({ attempt: resumed, isHydrated: true });
     } catch {
       await AsyncStorage.removeItem(STORAGE_KEY).catch(() => {});
       set({ isHydrated: true });
