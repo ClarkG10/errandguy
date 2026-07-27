@@ -84,6 +84,13 @@ return [
             ]) : [],
         ],
 
+        // Primary request-traffic connection. In production at scale this
+        // should point at the Supabase Supavisor TRANSACTION pooler (host
+        // aws-<region>.pooler.supabase.com, port 6543, username
+        // postgres.<project-ref>) so thousands of PHP-FPM workers multiplex
+        // onto a small server-side pool instead of exhausting Postgres'
+        // direct-connection cap. Migrations/DDL use `pgsql_direct` below.
+        // See docs/scaling-tier0-rollout.md.
         'pgsql' => [
             'driver' => 'pgsql',
             'url' => env('DB_URL'),
@@ -91,6 +98,33 @@ return [
             'port' => env('DB_PORT', '5432'),
             'database' => env('DB_DATABASE', 'laravel'),
             'username' => env('DB_USERNAME', 'root'),
+            'password' => env('DB_PASSWORD', ''),
+            'charset' => env('DB_CHARSET', 'utf8'),
+            'prefix' => '',
+            'prefix_indexes' => true,
+            'search_path' => 'public',
+            'sslmode' => env('DB_SSLMODE', 'prefer'),
+            'options' => [
+                // Through the transaction pooler, server-side prepared
+                // statements can collide across multiplexed backends. Set
+                // DB_EMULATE_PREPARES=true in that deployment so PDO
+                // interpolates params client-side. Default false keeps the
+                // direct-connection behaviour unchanged.
+                PDO::ATTR_EMULATE_PREPARES => (bool) env('DB_EMULATE_PREPARES', false),
+            ],
+        ],
+
+        // DIRECT / session-mode Postgres (port 5432, username postgres) for
+        // migrations and maintenance — transaction poolers don't support the
+        // full session semantics DDL relies on. Every value falls back to the
+        // DB_* vars, so this is a no-op until DB_DIRECT_* is set in prod.
+        'pgsql_direct' => [
+            'driver' => 'pgsql',
+            'url' => env('DB_DIRECT_URL', env('DB_URL')),
+            'host' => env('DB_DIRECT_HOST', env('DB_HOST', '127.0.0.1')),
+            'port' => env('DB_DIRECT_PORT', env('DB_PORT', '5432')),
+            'database' => env('DB_DATABASE', 'laravel'),
+            'username' => env('DB_DIRECT_USERNAME', env('DB_USERNAME', 'root')),
             'password' => env('DB_PASSWORD', ''),
             'charset' => env('DB_CHARSET', 'utf8'),
             'prefix' => '',
