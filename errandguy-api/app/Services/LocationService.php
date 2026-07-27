@@ -14,6 +14,19 @@ use Illuminate\Support\Facades\Log;
 class LocationService
 {
     /**
+     * Minimum seconds between denormalised-position writes to `runner_profiles`
+     * per runner. The customer's live-track pin is fed by the fine-grained
+     * `runner_locations` rows (still inserted on every accepted ping), so this
+     * only governs the copy MatchingService reads — and matching tolerates a
+     * stale position (it filters `last_location_at >= now()-5min` and searches
+     * a radius). Writing that hot row on every 5s ping bloats the exact table
+     * every matching scan hits; a coarser cadence cuts the write/contention
+     * ~4× with no UX change. Comfortably inside the 5-min matching freshness
+     * gate. See docs/scaling-tier0-rollout.md ("location write pipeline").
+     */
+    private const PROFILE_POSITION_TTL_SECONDS = 20;
+
+    /**
      * Update a runner's location and insert into runner_locations table.
      * Throttled to max 1 update per 5 seconds per runner.
      */
@@ -30,7 +43,8 @@ class LocationService
             return false;
         }
 
-        // Insert location record
+        // Insert location record — kept at the full ingest cadence so the
+        // customer's live pin stays smooth (track reads the latest row).
         RunnerLocation::create([
             'runner_id' => $runnerId,
             'booking_id' => $bookingId,
@@ -41,12 +55,19 @@ class LocationService
             'accuracy' => $coords['accuracy'] ?? null,
         ]);
 
-        // Update runner profile current position
-        RunnerProfile::where('user_id', $runnerId)->update([
-            'current_lat' => $coords['lat'],
-            'current_lng' => $coords['lng'],
-            'last_location_at' => now(),
-        ]);
+        // Denormalised current position for MatchingService. Throttled per
+        // runner (see PROFILE_POSITION_TTL_SECONDS) so the hot row on the
+        // matching table isn't rewritten on every ping. The first ping after
+        // going online passes immediately (key absent), then at most once per
+        // window; RunnerOnlineController already seeds the position on toggle.
+        $profileKey = "runner_profile_pos_throttle:{$runnerId}";
+        if (Cache::add($profileKey, true, self::PROFILE_POSITION_TTL_SECONDS)) {
+            RunnerProfile::where('user_id', $runnerId)->update([
+                'current_lat' => $coords['lat'],
+                'current_lng' => $coords['lng'],
+                'last_location_at' => now(),
+            ]);
+        }
 
         return true;
     }

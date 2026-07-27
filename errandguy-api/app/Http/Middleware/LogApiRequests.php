@@ -2,6 +2,7 @@
 
 namespace App\Http\Middleware;
 
+use App\Support\RequestMetrics;
 use Closure;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Log;
@@ -18,9 +19,17 @@ class LogApiRequests
     /** Endpoints over this threshold are always logged so we can spot slow ones. */
     private const SLOW_THRESHOLD_MS = 500;
 
+    /** Query count above which a request is logged even if fast — a strong
+     *  N+1 / unbounded-fetch signal, which is what caps throughput at scale. */
+    private const HIGH_QUERY_THRESHOLD = 40;
+
     public function handle(Request $request, Closure $next): Response
     {
         $start = microtime(true);
+
+        // Reset the per-request query counter (AppServiceProvider's DB::listen
+        // increments it) so the count below reflects only this request.
+        app(RequestMetrics::class)->queries = 0;
 
         $response = $next($request);
 
@@ -40,17 +49,21 @@ class LogApiRequests
             }
         }
 
+        $queries = app(RequestMetrics::class)->queries;
         $isError = $status >= 400;
         $isSlow = $duration > self::SLOW_THRESHOLD_MS;
+        // A fast 2xx that ran a lot of queries is almost always an N+1 or an
+        // unbounded fetch — the thing that quietly caps throughput. Surface it.
+        $isHeavy = $queries > self::HIGH_QUERY_THRESHOLD;
 
         // The per-request `API Response` info line fired a file-lock append
         // on ~every request — at scale that write is itself a bottleneck,
         // and in prod the file channel is not where anyone reads success
         // traffic. Drop the fast-success line on hot paths always, and in
-        // production everywhere; keep it for local/staging debugging. Errors
-        // and slow requests below still log in every environment (they are
-        // the only latency/error signal until APM lands).
-        if (! $isError && ! $isSlow && ($isHotPath || app()->isProduction())) {
+        // production everywhere; keep it for local/staging debugging. Errors,
+        // slow requests, and query-heavy requests below still log in every
+        // environment (the only latency/query-load signal until APM lands).
+        if (! $isError && ! $isSlow && ! $isHeavy && ($isHotPath || app()->isProduction())) {
             return $response;
         }
 
@@ -59,6 +72,7 @@ class LogApiRequests
             'url' => $request->fullUrl(),
             'status' => $status,
             'duration_ms' => $duration,
+            'queries' => $queries,
             'user_id' => $request->user()?->id,
         ];
 
@@ -68,10 +82,10 @@ class LogApiRequests
             $logData['response_body'] = $decoded ?? mb_substr($content, 0, 500);
 
             Log::warning('API Error Response', $logData);
-        } elseif ($isSlow) {
-            // Slow but successful — kept in every environment (prod included)
-            // at `notice` so it survives the info suppression above and stays
-            // findable as our only pre-APM latency signal.
+        } elseif ($isSlow || $isHeavy) {
+            // Slow and/or query-heavy but successful — kept in every environment
+            // (prod included) at `notice` so it survives the info suppression
+            // above and stays findable as our pre-APM latency/query signal.
             Log::notice('API Slow Response', $logData);
         } else {
             Log::info('API Response', $logData);

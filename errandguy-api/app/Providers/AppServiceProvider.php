@@ -2,18 +2,32 @@
 
 namespace App\Providers;
 
+use App\Support\RequestMetrics;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\ServiceProvider;
 
 class AppServiceProvider extends ServiceProvider
 {
     public function register(): void
     {
-        //
+        // One counter instance per request (standard, non-Octane lifecycle).
+        $this->app->singleton(RequestMetrics::class);
     }
 
     public function boot(): void
     {
+        // Count DB queries per request for the slow/error log + N+1 flagging in
+        // LogApiRequests. Just an int increment per query; the middleware resets
+        // it at the start of each request. Gate exists so it can be disabled.
+        if (config('app.query_metrics', true)) {
+            DB::listen(function (): void {
+                if ($this->app->resolved(RequestMetrics::class)) {
+                    $this->app->make(RequestMetrics::class)->queries++;
+                }
+            });
+        }
+
         // NOTE: no Event::listen() calls here on purpose. Laravel 13
         // auto-discovers every listener in app/Listeners by the event type-hint
         // on its public methods (including non-`handle` names like

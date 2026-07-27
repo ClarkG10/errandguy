@@ -191,10 +191,13 @@ top-up settles and a runner payout credits before/after the queue switch.
 
 ## Not in Tier-0 (tracked for later)
 
-- **Location write pipeline → Redis** (last-write-wins position + GEO for
-  matching): removes the ~500–1k write-QPS `runner_profiles` hot-row load. The
-  single biggest sustained-DB item after this rollout.
-- **APM/Sentry**: prod has no error tracking or metrics — stand this up to make
-  every further optimization provable.
+- **Location write pipeline → Redis** (read-side): move the nearby-runner
+  search onto Redis GEO. *Write-side is already reduced* — the `runner_profiles`
+  hot-row UPDATE is now throttled per runner (`LocationService`), since matching
+  tolerates a stale position; the remaining Redis step needs a Redis instance to
+  build/validate against (none exists locally or in CI today).
+- **APM/Sentry**: a per-request DB-query counter now feeds the slow/error log
+  (`RequestMetrics`) as the interim "measure" signal. A full APM (Sentry) still
+  needs an external DSN — wire it behind env when the account exists.
 - **Octane/FrankenPHP**, **RLS-scoped realtime JWT**, **dual-backend decision**
   (never run Laravel + Nest schedulers on one DB).
