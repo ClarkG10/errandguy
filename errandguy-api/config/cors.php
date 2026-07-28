@@ -11,7 +11,10 @@ $origins = array_filter(array_map('trim', explode(',', (string) env(
 ))));
 
 return [
-    'paths' => ['api/*', 'sanctum/csrf-cookie'],
+    // `broadcasting/auth` authorizes private Reverb channels. Native mobile
+    // clients don't enforce CORS, but the Expo web build (and any browser
+    // tooling) does, so it must be listed alongside the API paths.
+    'paths' => ['api/*', 'broadcasting/auth', 'sanctum/csrf-cookie'],
 
     'allowed_methods' => ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
 

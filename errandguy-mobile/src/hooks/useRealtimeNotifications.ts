@@ -1,5 +1,5 @@
 import { useCallback } from 'react';
-import { useSupabaseRealtime } from './useSupabaseRealtime';
+import { useEchoChannel } from './useEchoChannel';
 import { useNotificationStore } from '../stores/notificationStore';
 import { notificationService } from '../services/notification.service';
 import type { AppNotification } from '../types';
@@ -19,14 +19,14 @@ export function useRealtimeNotifications(userId: string | null) {
     }
   }, [setUnreadCount]);
 
-  const { isConnected } = useSupabaseRealtime({
-    channel: `notifications:${userId}`,
+  const { isConnected } = useEchoChannel({
+    channel: `notifications.${userId}`,
+    event: 'notification.created',
     enabled: !!userId,
-    table: 'notifications',
-    event: 'INSERT',
-    filter: userId ? `user_id=eq.${userId}` : undefined,
-    onPayload: (payload) => {
-      addNotification(payload.new as AppNotification);
+    // Payload mirrors NotificationResource exactly (delivered directly, not in
+    // a Supabase `{ new }` envelope), so it drops straight into the store.
+    onEvent: (payload) => {
+      addNotification(payload as AppNotification);
     },
   });
 

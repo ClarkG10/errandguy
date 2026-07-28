@@ -2,6 +2,7 @@
 
 namespace App\Services;
 
+use App\Events\NotificationCreated;
 use App\Models\Notification;
 use App\Models\User;
 use Illuminate\Support\Facades\Http;
@@ -16,19 +17,11 @@ class NotificationService
             return;
         }
 
-        // ALWAYS persist the in-app notification first — it also reaches the
-        // app live over the Supabase realtime `notifications` channel. This is
-        // what makes the "we'll notify you once your payment is confirmed"
-        // promise real even for users who haven't granted push permission (no
-        // token). The remote push is a best-effort extra on top.
-        Notification::create([
-            'user_id' => $userId,
-            'title' => $title,
-            'body' => $body,
-            'type' => $data['type'] ?? 'system',
-            'data' => $data,
-            'is_read' => false,
-        ]);
+        // ALWAYS persist + broadcast the in-app notification first (see
+        // notifyInApp) — it reaches the app live over the
+        // `notifications.{userId}` Reverb channel even for users who never
+        // granted push permission. The remote push below is a best-effort extra.
+        $this->notifyInApp($userId, $title, $body, $data);
 
         // Fan out to EVERY registered device, not just the most recent one.
         // (The old single fcm_token column was overwritten per device, so only
@@ -63,6 +56,37 @@ class NotificationService
         foreach ($userIds as $userId) {
             $this->sendPush($userId, $title, $body, $data);
         }
+    }
+
+    /**
+     * Persist an in-app notification and broadcast it live over the
+     * `notifications.{userId}` Reverb channel — WITHOUT sending a remote
+     * (Expo/FCM) device push.
+     *
+     * Use this for updates that must land live in the app but where a device
+     * push would be noise or spam — shopping-list ticks, an SOS in-app banner,
+     * a negotiate offer fanned out to many nearby runners, a PIN-verified
+     * confirmation. These paths formerly wrote to Supabase via RealtimeService
+     * (PostgREST) and relied on the client's Supabase table subscription; that
+     * DB is no longer the one the app reads, so route them through here instead.
+     * sendPush() layers a remote push on top of this.
+     */
+    public function notifyInApp(string $userId, string $title, string $body, array $data = []): Notification
+    {
+        $notification = Notification::create([
+            'user_id' => $userId,
+            'title' => $title,
+            'body' => $body,
+            'type' => $data['type'] ?? 'system',
+            'data' => $data,
+            'is_read' => false,
+        ]);
+
+        // Queued broadcast — mirrors what the Supabase `notifications` table
+        // subscription delivered before the migration off Supabase Realtime.
+        NotificationCreated::dispatch($notification);
+
+        return $notification;
     }
 
     public function sendToTopic(string $topic, string $title, string $body, array $data = []): void

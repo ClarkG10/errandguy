@@ -2,6 +2,7 @@
 
 namespace App\Jobs;
 
+use App\Events\BookingStatusChanged;
 use App\Models\Booking;
 use App\Models\BookingStatusLog;
 use App\Models\SystemConfig;
@@ -79,6 +80,13 @@ class ExpireStaleMatchesJob implements ShouldQueue
             // just let the offer lapse so a different one is tried.
             if ($didReset) {
                 Log::info("ExpireStaleMatchesJob: re-matching booking {$staleBooking->id} (skipping ".($previousRunnerId ?? 'none').')');
+
+                // Broadcast matched -> pending so the customer's "Runner Found"
+                // screen drops the phantom (now-unassigned) runner live, exactly
+                // like the manual decline path. `pending` has no push template,
+                // so this is broadcast-only — no spurious notification.
+                event(new BookingStatusChanged(Booking::find($staleBooking->id), 'matched', 'pending'));
+
                 MatchRunnerJob::dispatch($staleBooking->id, null, $previousRunnerId);
             }
         }

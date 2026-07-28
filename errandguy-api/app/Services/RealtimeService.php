@@ -12,8 +12,15 @@ class RealtimeService
 
     public function __construct()
     {
-        $this->supabaseUrl = config('services.supabase.url');
-        $this->serviceKey = config('services.supabase.service_key');
+        // Cast to string: after the migration off Supabase, SUPABASE_URL /
+        // SUPABASE_SERVICE_KEY are gone from prod, so config() returns null.
+        // These typed string properties would throw a TypeError on construction
+        // otherwise. This service is now orphaned (all callers moved to
+        // NotificationService / Reverb broadcasts); the null-safe ctor just
+        // guarantees a stray resolve can't 500. Safe to delete this class once
+        // confirmed unreferenced.
+        $this->supabaseUrl = (string) config('services.supabase.url');
+        $this->serviceKey = (string) config('services.supabase.service_key');
     }
 
     public function broadcastBookingUpdate(string $bookingId, string $status, array $extra = []): void

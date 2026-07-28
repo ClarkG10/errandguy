@@ -3,6 +3,7 @@
 namespace App\Services;
 
 use App\Enums\PaymentStatus;
+use App\Events\BookingCancelled;
 use App\Models\Booking;
 use App\Models\BookingStatusLog;
 use App\Models\ErrandType;
@@ -155,6 +156,13 @@ class BookingService
             Cache::forget("runner_active_booking_id:{$booking->runner_id}");
         }
 
+        // Notify + broadcast the cancellation. BookingCancelled keeps its push
+        // listener (the customer should learn an admin cancelled their booking)
+        // and now also broadcasts `booking.status` to the booking channel, so
+        // both apps drop out of the active trip live — the admin-cancel path
+        // previously dispatched no event at all.
+        event(new BookingCancelled($booking));
+
         $this->refundUnfulfilled($booking->id, 'Admin cancelled the booking');
     }
 
@@ -162,10 +170,20 @@ class BookingService
     {
         DB::transaction(function () use ($bookingId, $reason) {
             $locked = Booking::whereKey($bookingId)->lockForUpdate()->first();
+            if (! $locked) {
+                return;
+            }
+
+            // Release the promo slot this booking held — it is being cancelled
+            // (no-runner / negotiate-expiry / admin) and will never complete, so
+            // it must not keep burning a use. Runs for cash/unpaid too (there's
+            // no money to refund, but the promo slot must still be freed).
+            // Consumption-verified + idempotent (P0-7).
+            $this->promoService->unredeem($locked->id);
 
             // Nothing was collected (cash/unpaid), or a racing call already
             // refunded it — either way there is nothing to return.
-            if (! $locked || $locked->payment_status !== 'paid') {
+            if ($locked->payment_status !== 'paid') {
                 return;
             }
 

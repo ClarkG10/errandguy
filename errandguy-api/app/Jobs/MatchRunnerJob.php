@@ -3,6 +3,7 @@
 namespace App\Jobs;
 
 use App\Events\BookingStatusChanged;
+use App\Events\IncomingRequest;
 use App\Models\Booking;
 use App\Models\BookingStatusLog;
 use App\Services\MatchingService;
@@ -149,6 +150,12 @@ class MatchRunnerJob implements ShouldQueue
                         'You were matched to an errand. Open the app to accept it.',
                         ['type' => 'booking_update', 'booking_id' => $matchedBooking->id],
                     );
+
+                    // Live "you've got an offer" popup on the runner's private
+                    // channel. Replaces the Supabase `bookings` UPDATE (filtered
+                    // by runner_id) the runner app used to subscribe to. Post-
+                    // commit, so the runner's fetch sees the assigned row.
+                    IncomingRequest::dispatch($matchedBooking);
                 }
                 event(new BookingStatusChanged($matchedBooking, 'pending', $newStatus));
 

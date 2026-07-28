@@ -3,6 +3,7 @@
 namespace App\Services;
 
 use App\Events\RouteDeviationAlert;
+use App\Events\RunnerLocationUpdated;
 use App\Models\ErrandType;
 use App\Models\RunnerLocation;
 use App\Models\RunnerProfile;
@@ -45,7 +46,7 @@ class LocationService
 
         // Insert location record — kept at the full ingest cadence so the
         // customer's live pin stays smooth (track reads the latest row).
-        RunnerLocation::create([
+        $location = RunnerLocation::create([
             'runner_id' => $runnerId,
             'booking_id' => $bookingId,
             'lat' => $coords['lat'],
@@ -54,6 +55,23 @@ class LocationService
             'speed' => $coords['speed'] ?? null,
             'accuracy' => $coords['accuracy'] ?? null,
         ]);
+
+        // Push the fix live to the customer tracking this booking. Only when a
+        // booking is attached — the `booking.{id}` channel is the customer's
+        // tracking screen; an untagged online ping has no subscriber. This is
+        // the one synchronous (ShouldBroadcastNow) broadcast, so guard it: a
+        // Reverb outage must never turn a location ping into a failed request
+        // (the ping also feeds matching freshness, which must always succeed).
+        if ($bookingId) {
+            try {
+                RunnerLocationUpdated::dispatch($location);
+            } catch (\Throwable $e) {
+                Log::warning('Runner location broadcast failed', [
+                    'booking_id' => $bookingId,
+                    'error' => $e->getMessage(),
+                ]);
+            }
+        }
 
         // Denormalised current position for MatchingService. Throttled per
         // runner (see PROFILE_POSITION_TTL_SECONDS) so the hot row on the

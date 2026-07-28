@@ -11,7 +11,6 @@ class SOSService
 {
     public function __construct(
         private NotificationService $notificationService,
-        private RealtimeService $realtimeService,
     ) {}
 
     /**
@@ -91,9 +90,23 @@ class SOSService
 
         Booking::where('id', $bookingId)->update(['sos_triggered' => false]);
 
-        $this->realtimeService->broadcastSOSAlert($bookingId, $alert->customer_id, [
-            'alert_id' => $alert->id,
-        ]);
+        // Tell the runner the emergency was resolved, live over their
+        // `notifications.{userId}` Reverb channel (replaces the old Supabase
+        // PostgREST insert). Broadcast-only — no device push.
+        $runnerId = Booking::where('id', $bookingId)->value('runner_id');
+        if ($runnerId) {
+            $this->notificationService->notifyInApp(
+                $runnerId,
+                'SOS Resolved',
+                'The emergency alert has been resolved.',
+                [
+                    'type' => 'sos',
+                    'booking_id' => $bookingId,
+                    'alert_id' => $alert->id,
+                    'status' => 'resolved',
+                ],
+            );
+        }
     }
 
     public function getActiveSOS(): \Illuminate\Database\Eloquent\Collection

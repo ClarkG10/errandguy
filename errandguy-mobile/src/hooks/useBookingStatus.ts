@@ -1,5 +1,4 @@
-import { useEffect } from 'react';
-import { useSupabaseRealtime } from './useSupabaseRealtime';
+import { useEchoChannel } from './useEchoChannel';
 import { useBookingStore } from '../stores/bookingStore';
 import type { Booking, BookingStatus } from '../types';
 
@@ -10,14 +9,14 @@ export function useBookingStatus(bookingId: string | null) {
   const updateBookingStatus = useBookingStore((s) => s.updateBookingStatus);
   const setActiveBooking = useBookingStore((s) => s.setActiveBooking);
 
-  const { isConnected } = useSupabaseRealtime({
-    channel: `booking:${bookingId}`,
+  const { isConnected } = useEchoChannel({
+    channel: `booking.${bookingId}`,
+    event: 'booking.status',
     enabled: !!bookingId,
-    table: 'bookings',
-    event: 'UPDATE',
-    filter: bookingId ? `id=eq.${bookingId}` : undefined,
-    onPayload: (payload) => {
-      const updated = payload.new as Partial<Booking>;
+    // Payload is BookingStatusChanged::broadcastWith() — the lifecycle fields
+    // directly (no Supabase `{ new }` envelope). Same merge semantics as before.
+    onEvent: (payload) => {
+      const updated = payload as Partial<Booking>;
       if (updated.status) {
         updateBookingStatus(updated.status as BookingStatus);
       }

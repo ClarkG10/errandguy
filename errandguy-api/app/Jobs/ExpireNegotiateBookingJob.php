@@ -2,6 +2,7 @@
 
 namespace App\Jobs;
 
+use App\Events\BookingCancelled;
 use App\Models\Booking;
 use App\Models\BookingStatusLog;
 use Illuminate\Bus\Queueable;
@@ -59,6 +60,11 @@ class ExpireNegotiateBookingJob implements ShouldQueue
             app(\App\Services\BookingService::class)
                 ->refundUnfulfilled($this->bookingId, 'Negotiation expired with no runner acceptance');
             Log::info("Negotiate booking {$this->bookingId} expired");
+
+            // Broadcast so the negotiate customer's waiting screen learns the
+            // offer expired (+ cancel push) instead of hanging on "finding a
+            // runner" until a manual refetch.
+            event(new BookingCancelled(Booking::find($this->bookingId)));
         }
     }
 }

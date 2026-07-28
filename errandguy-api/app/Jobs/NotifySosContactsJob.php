@@ -6,7 +6,6 @@ use App\Models\Booking;
 use App\Models\SOSAlert;
 use App\Models\TrustedContact;
 use App\Services\NotificationService;
-use App\Services\RealtimeService;
 use Illuminate\Support\Facades\Log;
 
 /**
@@ -25,7 +24,7 @@ class NotifySosContactsJob extends BaseJob
 {
     public function __construct(public string $alertId) {}
 
-    public function handle(NotificationService $notifications, RealtimeService $realtime): void
+    public function handle(NotificationService $notifications): void
     {
         $alert = SOSAlert::with('booking')->find($this->alertId);
         if (!$alert || !$alert->booking || $alert->status !== 'active') {
@@ -44,12 +43,28 @@ class NotifySosContactsJob extends BaseJob
             $this->notifySMSContact($contact, $liveLink, $booking);
         }
 
-        $realtime->broadcastSOSAlert($booking->id, $triggeredBy, [
-            'alert_id' => $alert->id,
-            'status' => 'active',
-            'live_link' => $liveLink,
-            'triggered_by_role' => $role,
-        ]);
+        // Live in-app SOS banner to the OTHER participant, over their
+        // `notifications.{userId}` Reverb channel. Replaces the old Supabase
+        // PostgREST insert (broadcastSOSAlert). Broadcast-only, matching prior
+        // behaviour — the admin FCM topic push below is the out-of-app alert.
+        $counterpartId = $triggeredBy === $booking->customer_id
+            ? $booking->runner_id
+            : $booking->customer_id;
+        if ($counterpartId) {
+            $notifications->notifyInApp(
+                $counterpartId,
+                'SOS Alert',
+                'An emergency alert has been triggered.',
+                [
+                    'type' => 'sos',
+                    'booking_id' => $booking->id,
+                    'alert_id' => $alert->id,
+                    'status' => 'active',
+                    'live_link' => $liveLink,
+                    'triggered_by_role' => $role,
+                ],
+            );
+        }
 
         $notifications->sendToTopic(
             'admin_safety',

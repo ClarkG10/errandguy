@@ -12,7 +12,11 @@
         "buildType": "apk"
       },
       "env": {
-        "EXPO_PUBLIC_API_URL": "https://errandguy-4stnztcd.on-forge.com/api/v1"
+        "EXPO_PUBLIC_API_URL": "https://errandguy-4stnztcd.on-forge.com/api/v1",
+        "EXPO_PUBLIC_REVERB_KEY": "d58t8bbtdnqgpihrtulm",
+        "EXPO_PUBLIC_REVERB_HOST": "errandguy-4stnztcd.on-forge.com",
+        "EXPO_PUBLIC_REVERB_PORT": "443",
+        "EXPO_PUBLIC_REVERB_SCHEME": "https"
       }
     },
     "preview": {
@@ -22,14 +26,22 @@
         "buildType": "apk"
       },
       "env": {
-        "EXPO_PUBLIC_API_URL": "https://api-staging.errandguy.app/api/v1"
+        "EXPO_PUBLIC_API_URL": "https://api-staging.errandguy.app/api/v1",
+        "EXPO_PUBLIC_REVERB_KEY": "REPLACE_WITH_REVERB_APP_KEY",
+        "EXPO_PUBLIC_REVERB_HOST": "api-staging.errandguy.app",
+        "EXPO_PUBLIC_REVERB_PORT": "443",
+        "EXPO_PUBLIC_REVERB_SCHEME": "https"
       }
     },
     "production": {
       "autoIncrement": true,
       "channel": "production",
       "env": {
-        "EXPO_PUBLIC_API_URL": "https://api.errandguy.app/api/v1"
+        "EXPO_PUBLIC_API_URL": "https://api.errandguy.app/api/v1",
+        "EXPO_PUBLIC_REVERB_KEY": "REPLACE_WITH_REVERB_APP_KEY",
+        "EXPO_PUBLIC_REVERB_HOST": "api.errandguy.app",
+        "EXPO_PUBLIC_REVERB_PORT": "443",
+        "EXPO_PUBLIC_REVERB_SCHEME": "https"
       }
     }
   },

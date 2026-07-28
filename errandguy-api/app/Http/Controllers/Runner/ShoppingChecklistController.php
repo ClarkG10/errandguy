@@ -5,7 +5,6 @@ namespace App\Http\Controllers\Runner;
 use App\Http\Controllers\Controller;
 use App\Http\Resources\BookingResource;
 use App\Models\Booking;
-use App\Services\RealtimeService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 
@@ -13,10 +12,6 @@ class ShoppingChecklistController extends Controller
 {
     /** Terminal statuses where a booking's checklist can no longer be ticked. */
     private const CLOSED_STATUSES = ['completed', 'cancelled'];
-
-    public function __construct(
-        private RealtimeService $realtime,
-    ) {}
 
     /**
      * PATCH /runner/errand/{id}/shopping-items — tick items off the list.
@@ -78,24 +73,24 @@ class ShoppingChecklistController extends Controller
 
         $booking->update(['shopping_items' => $items]);
 
-        // Push the fresh list to the customer's realtime channel so ticks land
-        // live — but AFTER the response is flushed. The DB write above is the
-        // authoritative state; the Supabase PostgREST insert is pure
-        // fire-and-forget and its round-trip (no client timeout) must not hold
-        // the runner's PATCH open, which is hit on every item tick. Same
-        // dispatch(fn)->afterResponse() pattern CacheService's SWR refresh uses.
-        // Values are captured by value so the deferred closure is independent of
-        // request-scoped state.
-        $realtime = $this->realtime;
+        // Push the fresh list to the customer live so ticks land immediately —
+        // but AFTER the response is flushed. The DB write above is the
+        // authoritative state; this in-app broadcast is pure fire-and-forget and
+        // must not hold the runner's PATCH open, which is hit on every item tick.
+        // notifyInApp persists a local Notification and broadcasts it over the
+        // customer's `notifications.{userId}` Reverb channel (replacing the old
+        // Supabase PostgREST insert) — broadcast-only, so a tick never fires a
+        // device push. Same dispatch(fn)->afterResponse() pattern the SWR refresh
+        // uses; values captured by value so the closure is request-independent.
         $customerId = $booking->customer_id;
         $bookingId = $booking->id;
-        dispatch(function () use ($realtime, $customerId, $bookingId, $items) {
-            $realtime->insertNotification(
+        dispatch(function () use ($customerId, $bookingId, $items) {
+            app(\App\Services\NotificationService::class)->notifyInApp(
                 $customerId,
                 'Shopping list updated',
                 'Your runner updated the shopping checklist.',
-                'shopping_items_updated',
                 [
+                    'type' => 'shopping_items_updated',
                     'booking_id' => $bookingId,
                     'shopping_items' => $items,
                 ],

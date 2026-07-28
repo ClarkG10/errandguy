@@ -1,4 +1,4 @@
-import { useSupabaseRealtime } from './useSupabaseRealtime';
+import { useEchoChannel } from './useEchoChannel';
 import { useRunnerStore } from '../stores/runnerStore';
 import type { Booking } from '../types';
 
@@ -7,14 +7,14 @@ export function useIncomingRequest(runnerId: string | null) {
   // useRunnerStore() would re-run it on every unrelated runner-state write.
   const setIncomingRequest = useRunnerStore((s) => s.setIncomingRequest);
 
-  const { isConnected } = useSupabaseRealtime({
-    channel: `runner-requests:${runnerId}`,
-    table: 'bookings',
-    event: 'UPDATE',
+  const { isConnected } = useEchoChannel({
+    channel: `runner.${runnerId}`,
+    event: 'booking.incoming',
     enabled: !!runnerId,
-    filter: runnerId ? `runner_id=eq.${runnerId}` : undefined,
-    onPayload: (payload) => {
-      const booking = payload.new as Partial<Booking>;
+    // Payload is a BookingResource (offer view — no contact/PIN fields until
+    // the runner accepts). Delivered directly, not wrapped in `{ new }`.
+    onEvent: (payload) => {
+      const booking = payload as Partial<Booking>;
       if (booking.status === 'matched') {
         setIncomingRequest({
           booking: booking as Booking,

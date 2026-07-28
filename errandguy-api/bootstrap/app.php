@@ -14,6 +14,16 @@ return Application::configure(basePath: dirname(__DIR__))
         commands: __DIR__.'/../routes/console.php',
         health: '/up',
     )
+    // Registers POST /broadcasting/auth for private-channel authorization.
+    // We register it explicitly (rather than via withRouting's `channels:`
+    // arg, which defaults to the `web` session guard) so it runs under
+    // Sanctum: the mobile app authorizes channels with the SAME bearer
+    // token it uses for the API, and routes/channels.php reuses the booking
+    // participant / user-id checks that already gate the REST endpoints.
+    ->withBroadcasting(
+        __DIR__.'/../routes/channels.php',
+        ['middleware' => ['auth:sanctum']],
+    )
     ->withMiddleware(function (Middleware $middleware): void {
         $middleware->api(prepend: [
             \App\Http\Middleware\LogApiRequests::class,

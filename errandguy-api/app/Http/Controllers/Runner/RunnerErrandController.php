@@ -237,6 +237,16 @@ class RunnerErrandController extends Controller
         // For fixed-price: trigger matching service to find next runner
         if ($booking->pricing_mode === 'fixed' && $booking->status === 'matched') {
             $booking->update(['status' => 'pending', 'runner_id' => null, 'matched_at' => null]);
+
+            // Surface the matched → pending revert to the customer live, so
+            // their tracking screen drops back to "finding a runner" instead of
+            // showing a runner who just walked away. Supabase's WAL feed used to
+            // deliver this automatically; now it's an explicit broadcast. The
+            // `pending` status has no push template (SendBookingStatusNotification)
+            // and the referral listener no-ops off `completed`, so this fires the
+            // broadcast only — no spurious notification.
+            event(new BookingStatusChanged($booking, 'matched', 'pending'));
+
             // Re-dispatch matching, EXCLUDING the runner who just declined —
             // otherwise findRunner (now that runner_id is null and they're still
             // online/nearest) instantly re-offers the same errand to them,
@@ -523,14 +533,16 @@ class RunnerErrandController extends Controller
             'note' => 'Ride PIN verified',
         ]);
 
-        // Notify customer
-        Notification::create([
-            'user_id' => $booking->customer_id,
-            'title' => 'PIN Verified',
-            'body' => 'Your ride PIN has been verified. Have a safe trip!',
-            'type' => 'booking_update',
-            'data' => ['booking_id' => $booking->id],
-        ]);
+        // Notify the customer live. notifyInApp persists the row AND broadcasts
+        // it on notifications.{userId}; a raw Notification::create would write
+        // the row but never reach the app live (the customer is mid-trip and
+        // waiting on this confirmation).
+        app(\App\Services\NotificationService::class)->notifyInApp(
+            $booking->customer_id,
+            'PIN Verified',
+            'Your ride PIN has been verified. Have a safe trip!',
+            ['type' => 'booking_update', 'booking_id' => $booking->id],
+        );
 
         return response()->json([
             'message' => 'PIN verified successfully.',

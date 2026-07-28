@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers\Chat;
 
+use App\Events\ChatMessageSent;
 use App\Http\Controllers\Controller;
 use App\Http\Requests\Chat\SendMessageRequest;
 use App\Http\Resources\MessageResource;
@@ -142,6 +143,11 @@ class ChatController extends Controller
         ]);
 
         $message->load('sender:id,full_name,avatar_url');
+
+        // Push to the other participant over the `chat.{bookingId}` Reverb
+        // channel. The sender already rendered it optimistically; the mobile
+        // chat store dedupes by id, so the echo back to the sender is a no-op.
+        ChatMessageSent::dispatch($message);
 
         return response()->json([
             'data' => new MessageResource($message),

@@ -2,6 +2,7 @@
 
 namespace App\Jobs;
 
+use App\Events\BookingCancelled;
 use App\Models\Booking;
 use App\Models\BookingStatusLog;
 use App\Models\SystemConfig;
@@ -75,6 +76,12 @@ class AutoCancelBookingJob implements ShouldQueue
             app(\App\Services\BookingService::class)
                 ->refundUnfulfilled($this->bookingId, 'Auto-cancelled: no runner found within timeout');
             Log::info("Booking {$this->bookingId} auto-cancelled after {$timeoutMinutes} minutes");
+
+            // Broadcast the cancellation so the customer's booking.{id} channel
+            // drops them off the "finding a runner" screen live (+ the cancel
+            // push). Under Supabase the WAL UPDATE propagated automatically;
+            // now it must be explicit or the screen hangs until a manual refetch.
+            event(new BookingCancelled(Booking::find($this->bookingId)));
         }
     }
 }

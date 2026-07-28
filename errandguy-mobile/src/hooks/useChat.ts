@@ -1,10 +1,9 @@
 import { useEffect, useCallback, useState, useRef } from 'react';
-import type { RealtimeChannel } from '@supabase/supabase-js';
 import { useChatStore } from '../stores/chatStore';
 import { chatService } from '../services/chat.service';
 import { useSmartPolling } from './useSmartPolling';
 import { CacheService, CacheTTL } from '../services/cache.service';
-import { supabase } from '../services/supabase';
+import { echo, retainChannel, releaseChannel } from '../services/echo';
 import { useAuthStore } from '../stores/authStore';
 import type { Message } from '../types';
 
@@ -236,57 +235,48 @@ export function useChat(bookingId: string) {
     chatService.markAsRead(bookingId).catch(() => {});
   }, [bookingId, markRead]);
 
-  // Live channel ref so sendTyping() can broadcast on whatever channel
+  // Live channel ref so sendTyping() can whisper on whatever channel
   // is currently subscribed without re-creating callbacks per effect run.
-  const channelRef = useRef<RealtimeChannel | null>(null);
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const channelRef = useRef<any>(null);
   const typingClearRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const lastTypingSentRef = useRef(0);
 
   useEffect(() => {
-    // Drop any stale channel registered under this name before opening
-    // a fresh one. supabase.channel(name) returns the same singleton
-    // when one already exists — if a previous mount hadn't been fully
-    // cleaned up yet (StrictMode double-effect, fast remount on route
-    // change, hot reload), the returned channel is already SUBSCRIBED
-    // and adding listeners after subscribe() throws.
-    const stale = supabase
-      .getChannels()
-      .find((c) => c.topic === `realtime:chat:${bookingId}`);
-    if (stale) supabase.removeChannel(stale);
+    if (!bookingId) return;
 
-    const channel = supabase
-      .channel(`chat:${bookingId}`)
-      .on(
-        'postgres_changes',
-        {
-          event: 'INSERT',
-          schema: 'public',
-          table: 'messages',
-          filter: `booking_id=eq.${bookingId}`,
-        },
-        (payload) => {
-          addMessage(bookingId, payload.new as Message);
-        },
-      )
-      // Typing indicator — pure broadcast, no backend involvement. The
-      // sender fans out `{ userId }`; anyone else on the channel lights
-      // the indicator and auto-clears it TYPING_HOLD_MS after the last
-      // event (each event resets the timer, so continuous typing holds).
-      .on('broadcast', { event: 'typing' }, ({ payload }) => {
-        const fromUserId = (payload as { userId?: string } | null)?.userId;
-        const myId = useAuthStore.getState().user?.id;
-        if (!fromUserId || fromUserId === myId) return;
-        setIsTyping(bookingId, true);
-        if (typingClearRef.current) clearTimeout(typingClearRef.current);
-        typingClearRef.current = setTimeout(() => {
-          setIsTyping(bookingId, false);
-          typingClearRef.current = null;
-        }, TYPING_HOLD_MS);
-      })
-      .subscribe();
+    const channelName = `chat.${bookingId}`;
+    const channel = echo.private(channelName);
+    retainChannel(channelName);
     channelRef.current = channel;
 
+    // New chat message — mirrors MessageResource (sender loaded). The store
+    // dedupes by id, so the sender's own echoed message is harmless.
+    const onMessage = (payload: Message) => {
+      addMessage(bookingId, payload);
+    };
+    channel.listen('.message.created', onMessage);
+
+    // Typing indicator — a pure client event (whisper), no backend involvement.
+    // The sender whispers `{ userId }`; anyone else on the channel lights the
+    // indicator and auto-clears it TYPING_HOLD_MS after the last event (each
+    // event resets the timer, so continuous typing holds).
+    const onTyping = (payload: { userId?: string } | null) => {
+      const fromUserId = payload?.userId;
+      const myId = useAuthStore.getState().user?.id;
+      if (!fromUserId || fromUserId === myId) return;
+      setIsTyping(bookingId, true);
+      if (typingClearRef.current) clearTimeout(typingClearRef.current);
+      typingClearRef.current = setTimeout(() => {
+        setIsTyping(bookingId, false);
+        typingClearRef.current = null;
+      }, TYPING_HOLD_MS);
+    };
+    channel.listenForWhisper('typing', onTyping);
+
     return () => {
+      channel.stopListening('.message.created', onMessage);
+      channel.stopListeningForWhisper('typing', onTyping);
       channelRef.current = null;
       if (typingClearRef.current) {
         clearTimeout(typingClearRef.current);
@@ -294,14 +284,14 @@ export function useChat(bookingId: string) {
       }
       // Never leave a stale "typing…" lit when the thread closes.
       setIsTyping(bookingId, false);
-      supabase.removeChannel(channel);
+      releaseChannel(channelName);
     };
   }, [bookingId, addMessage, setIsTyping]);
 
   /**
-   * Broadcast a throttled "I'm typing" event to the other participant.
+   * Whisper a throttled "I'm typing" event to the other participant.
    * Call from the composer's onChangeText — internally rate-limited to
-   * one broadcast per TYPING_THROTTLE_MS so keystrokes stay cheap.
+   * one whisper per TYPING_THROTTLE_MS so keystrokes stay cheap.
    * Fire-and-forget; delivery failures are silently ignored.
    */
   const sendTyping = useCallback(() => {
@@ -310,9 +300,11 @@ export function useChat(bookingId: string) {
     lastTypingSentRef.current = now;
     const userId = useAuthStore.getState().user?.id;
     if (!userId) return;
-    channelRef.current
-      ?.send({ type: 'broadcast', event: 'typing', payload: { userId } })
-      .catch?.(() => {});
+    try {
+      channelRef.current?.whisper('typing', { userId });
+    } catch {
+      /* whispers are best-effort */
+    }
   }, []);
 
   // Realtime fallback. The Supabase postgres_changes channel above is the

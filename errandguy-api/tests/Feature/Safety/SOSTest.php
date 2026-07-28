@@ -24,12 +24,21 @@ class SOSTest extends TestCase
     {
         parent::setUp();
 
-        // Mock external services
+        // Mock external services so SOS never makes a real push/broadcast call.
+        // The SOS in-app alert + resolution now route through
+        // NotificationService::notifyInApp (was RealtimeService PostgREST), so
+        // the mock must accept it too. notifyInApp returns a Notification, so
+        // hand back an unsaved instance to satisfy the return type.
         $this->app->bind(NotificationService::class, function () {
-            return Mockery::mock(NotificationService::class)->shouldReceive('sendToTopic')->andReturnNull()->getMock();
+            $mock = Mockery::mock(NotificationService::class);
+            $mock->shouldReceive('sendToTopic')->andReturnNull();
+            $mock->shouldReceive('sendPush')->andReturnNull();
+            $mock->shouldReceive('sendBulkPush')->andReturnNull();
+            $mock->shouldReceive('notifyInApp')->andReturn(new \App\Models\Notification());
+            return $mock;
         });
         $this->app->bind(RealtimeService::class, function () {
-            return Mockery::mock(RealtimeService::class)->shouldReceive('broadcastSOSAlert')->andReturnNull()->getMock();
+            return Mockery::mock(RealtimeService::class)->shouldIgnoreMissing();
         });
 
         $this->customer = User::factory()->create(['role' => 'customer', 'status' => 'active']);

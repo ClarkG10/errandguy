@@ -4,7 +4,7 @@ namespace App\Jobs;
 
 use App\Models\Booking;
 use App\Services\MatchingService;
-use App\Services\RealtimeService;
+use App\Services\NotificationService;
 use Illuminate\Bus\Queueable;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Bus\Dispatchable;
@@ -20,7 +20,7 @@ class BroadcastToRunnersJob implements ShouldQueue
         public string $bookingId,
     ) {}
 
-    public function handle(MatchingService $matchingService, RealtimeService $realtime): void
+    public function handle(MatchingService $matchingService, NotificationService $notifications): void
     {
         $runners = $matchingService->broadcastToRunners($this->bookingId);
 
@@ -38,6 +38,7 @@ class BroadcastToRunnersJob implements ShouldQueue
         }
 
         $payload = [
+            'type' => 'booking_update',
             'booking_id' => $booking->id,
             'booking_number' => $booking->booking_number,
             'errand_type' => $booking->errandType?->slug,
@@ -48,25 +49,25 @@ class BroadcastToRunnersJob implements ShouldQueue
             'negotiate_expires_at' => optional($booking->negotiate_expires_at)->toIso8601String(),
         ];
 
-        // One bulk PostgREST insert for ALL nearby runners instead of a
-        // sequential HTTP round-trip per runner — the old loop made create
-        // latency scale with the number of eligible runners (and could stack
-        // N Supabase timeouts). Each row fans out to that runner's realtime
-        // subscription on the `notifications` table exactly as before.
-        $notifications = $runners->map(fn ($runner) => [
-            'user_id' => $runner->user_id,
-            'title' => 'New Errand Request',
-            'body' => 'A new errand is available near you.',
-            'type' => 'booking_update',
-            'data' => $payload,
-        ])->all();
+        // Persist + broadcast an in-app offer to each nearby runner over their
+        // `notifications.{userId}` Reverb channel. This replaces the old bulk
+        // Supabase PostgREST insert (whose table the app no longer subscribes
+        // to). notifyInApp is broadcast-only — no device push — preserving the
+        // prior behaviour (the "push fallback" TODO below was never wired).
+        // This job is queued/off-request, so per-runner inserts are fine.
+        foreach ($runners as $runner) {
+            $notifications->notifyInApp(
+                $runner->user_id,
+                'New Errand Request',
+                'A new errand is available near you.',
+                $payload,
+            );
+        }
 
-        $delivered = $realtime->insertNotifications($notifications);
-
-        Log::info("BroadcastToRunnersJob: notified {$delivered}/{$runners->count()} runners for booking {$this->bookingId}");
+        Log::info("BroadcastToRunnersJob: notified {$runners->count()} runners for booking {$this->bookingId}");
 
         // TODO (push fallback): when a runner has the app backgrounded, the
-        // realtime channel is suspended on iOS. Add an FCM/APNs send here
-        // once the device-token table is wired up.
+        // WebSocket is suspended on iOS. Add an FCM/APNs send here (or switch
+        // the call above to sendPush) once we want offers to wake the device.
     }
 }
