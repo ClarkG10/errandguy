@@ -2,9 +2,11 @@
 
 namespace App\Providers;
 
+use App\Models\AdminUser;
 use App\Support\RequestMetrics;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Gate;
 use Illuminate\Support\ServiceProvider;
 
 class AppServiceProvider extends ServiceProvider
@@ -43,5 +45,14 @@ class AppServiceProvider extends ServiceProvider
             /** @var Request $this */
             return max(1, min($this->integer('per_page', $default), $max));
         });
+
+        // Admin-panel users authorize via Filament resource role-gates
+        // (canViewAny / per-action ->visible()), NOT the app's model policies —
+        // which type-hint App\Models\User and would TypeError when Filament
+        // delegates a per-record check (e.g. BookingPolicy::view) with an
+        // AdminUser. Short-circuit the Gate for AdminUser so those policies are
+        // never invoked; regular User authorization (mobile API) is untouched
+        // (returns null → normal policy evaluation).
+        Gate::before(fn ($user, string $ability) => $user instanceof AdminUser ? true : null);
     }
 }

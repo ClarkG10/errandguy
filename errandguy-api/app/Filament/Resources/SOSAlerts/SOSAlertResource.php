@@ -57,7 +57,10 @@ class SOSAlertResource extends Resource
 
     public static function getNavigationBadge(): ?string
     {
-        $n = SOSAlert::where('status', 'active')->count();
+        $n = \App\Support\AdminCache::remember(
+            \App\Support\AdminCache::BADGE_SOS,
+            fn () => SOSAlert::where('status', 'active')->count(),
+        );
 
         return $n ? (string) $n : null;
     }

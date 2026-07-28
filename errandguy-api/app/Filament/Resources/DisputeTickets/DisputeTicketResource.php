@@ -55,7 +55,10 @@ class DisputeTicketResource extends Resource
 
     public static function getNavigationBadge(): ?string
     {
-        $n = DisputeTicket::whereIn('status', ['open', 'reviewing'])->count();
+        $n = \App\Support\AdminCache::remember(
+            \App\Support\AdminCache::BADGE_DISPUTES,
+            fn () => DisputeTicket::whereIn('status', ['open', 'reviewing'])->count(),
+        );
 
         return $n ? (string) $n : null;
     }

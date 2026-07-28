@@ -32,5 +32,10 @@ class AdminActivity
         }
 
         $logger->log($description ?? $event);
+
+        // Every mutating admin action funnels through here, so this is the one
+        // place to invalidate the cached dashboard stats + nav badges — they
+        // recompute (fresh) on the next render instead of waiting out the TTL.
+        AdminCache::flush();
     }
 }

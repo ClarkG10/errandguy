@@ -44,7 +44,10 @@ class Payouts extends Page implements HasTable
 
     public static function getNavigationBadge(): ?string
     {
-        $n = WalletTransaction::where('type', 'payout')->where('status', 'pending')->count();
+        $n = \App\Support\AdminCache::remember(
+            \App\Support\AdminCache::BADGE_PAYOUTS,
+            fn () => WalletTransaction::where('type', 'payout')->where('status', 'pending')->count(),
+        );
 
         return $n ? (string) $n : null;
     }

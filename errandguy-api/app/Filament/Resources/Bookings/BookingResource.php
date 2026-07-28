@@ -55,6 +55,12 @@ class BookingResource extends Resource
         ];
     }
 
+    /** Global search (top bar): find bookings by their number. */
+    public static function getGloballySearchableAttributes(): array
+    {
+        return ['booking_number'];
+    }
+
     // --- Authorization: any signed-in admin can browse; view-only fields ---
 
     public static function canViewAny(): bool

@@ -60,7 +60,10 @@ class SupportTicketResource extends Resource
 
     public static function getNavigationBadge(): ?string
     {
-        $n = SupportTicket::where('status', 'open')->count();
+        $n = \App\Support\AdminCache::remember(
+            \App\Support\AdminCache::BADGE_SUPPORT,
+            fn () => SupportTicket::where('status', 'open')->count(),
+        );
 
         return $n ? (string) $n : null;
     }

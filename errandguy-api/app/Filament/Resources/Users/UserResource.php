@@ -51,6 +51,12 @@ class UserResource extends Resource
         ];
     }
 
+    /** Global search (top bar): find users by name, email, or phone. */
+    public static function getGloballySearchableAttributes(): array
+    {
+        return ['full_name', 'email', 'phone'];
+    }
+
     public static function getRecordRouteBindingEloquentQuery(): Builder
     {
         return parent::getRecordRouteBindingEloquentQuery()
