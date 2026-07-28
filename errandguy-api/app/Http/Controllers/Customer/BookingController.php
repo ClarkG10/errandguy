@@ -297,7 +297,7 @@ class BookingController extends Controller
                 }
             } catch (\Throwable $e) {
                 $payment->transitionTo(PaymentStatus::Failed, reason: 'Saved-method charge failed');
-                $booking->delete();
+                $this->failBooking($booking, $promoCodeId, $user->id, 'Payment failed: saved-method charge declined');
                 \Illuminate\Support\Facades\Log::error('Booking saved-method charge failed', [
                     'booking_number' => $booking->booking_number,
                     'error' => $e->getMessage(),
@@ -317,9 +317,10 @@ class BookingController extends Controller
                     "Payment for booking {$booking->booking_number}",
                 );
             } catch (\RuntimeException $e) {
-                // Not enough balance — undo the booking so we don't leave an
-                // orphaned unpayable row, and tell the client to add funds.
-                $booking->delete();
+                // Not enough balance — mark the booking failed (never hard-delete:
+                // a Payment row and/or a promo redemption may already reference it,
+                // which on Postgres would raise an FK error) and reverse the promo.
+                $this->failBooking($booking, $promoCodeId, $user->id, 'Payment failed: insufficient wallet balance');
                 return response()->json([
                     'message' => 'Insufficient wallet balance. Please add money or choose another payment method.',
                 ], 422);
@@ -376,7 +377,7 @@ class BookingController extends Controller
                 $booking->update(['payment_status' => 'pending']);
             } catch (\Throwable $e) {
                 $payment->transitionTo(PaymentStatus::Failed, reason: 'Gateway invoice creation failed');
-                $booking->delete();
+                $this->failBooking($booking, $promoCodeId, $user->id, 'Payment failed: could not create gateway invoice');
                 \Illuminate\Support\Facades\Log::error('Booking online payment failed', [
                     'booking_number' => $booking->booking_number,
                     'error' => $e->getMessage(),
@@ -458,6 +459,44 @@ class BookingController extends Controller
         ], 201);
     }
 
+    /**
+     * Terminate a booking whose payment collection failed at creation, without
+     * hard-deleting it (payment review P0-2).
+     *
+     * The old path called $booking->delete() on a payment failure, but a
+     * Payment row (and, before this, an already-incremented promo redemption)
+     * references the booking by then. On Postgres the NO ACTION foreign key
+     * raises 23503 → an uncaught 500 and orphaned rows; SQLite (FKs off) masked
+     * it in tests. Marking the booking terminally failed is crash-safe and a
+     * truthful record, and reversing the promo stops a failed attempt from
+     * burning a promo use (P0-7). These bookings never reach matching (the
+     * caller returns 422 first), so a 'cancelled' row with no runner is inert.
+     */
+    private function failBooking(Booking $booking, ?string $promoCodeId, string $actorId, string $reason): void
+    {
+        // Reverse the promo redemption (consumption-verified + idempotent; a
+        // no-op if this booking never consumed a slot).
+        if ($promoCodeId) {
+            $this->promoService->unredeem($booking->id);
+        }
+
+        $booking->update([
+            'status' => 'cancelled',
+            'payment_status' => 'failed',
+            'cancelled_at' => now(),
+            'cancelled_by' => $actorId,
+            'cancellation_reason' => $reason,
+        ]);
+
+        // Audit parity with every other terminal path.
+        BookingStatusLog::create([
+            'booking_id' => $booking->id,
+            'status' => 'cancelled',
+            'changed_by' => $actorId,
+            'note' => $reason,
+        ]);
+    }
+
     public function show(Request $request, string $id): JsonResponse
     {
         $booking = Booking::with([
@@ -517,6 +556,11 @@ class BookingController extends Controller
                 'trip_share_token' => null,
                 'trip_share_active' => false,
             ]);
+
+            // Release the promo slot this booking held — a cancelled errand
+            // never completed, so it must not keep burning a use (P0-7).
+            // Consumption-verified + idempotent; a no-op for non-promo bookings.
+            $this->promoService->unredeem($locked->id);
 
             // Refund money already collected, minus the cancellation fee, to the
             // customer's wallet. Applies to wallet AND online bookings that were

@@ -94,8 +94,14 @@ class BookingPaymentTest extends TestCase
             ->postJson('/api/v1/bookings', [...$this->base, 'payment_method' => 'wallet']);
 
         $res->assertStatus(422);
-        // No orphaned booking left behind.
-        $this->assertDatabaseCount('bookings', 0);
+        // The booking is kept as a terminal FAILED record rather than hard-deleted
+        // (payment review P0-2 — deleting a booking that a Payment/promo row
+        // references raises a Postgres FK error). It must be inert: never matched.
+        $booking = Booking::firstOrFail();
+        $this->assertEquals('cancelled', $booking->status);
+        $this->assertEquals('failed', $booking->payment_status);
+        // Wallet was not debited, and matching was never dispatched.
+        $this->assertEquals(10.0, (float) $this->customer->fresh()->wallet_balance);
         Bus::assertNotDispatched(\App\Jobs\MatchRunnerJob::class);
     }
 

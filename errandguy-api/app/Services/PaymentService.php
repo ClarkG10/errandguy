@@ -706,10 +706,28 @@ class PaymentService
                     $locked->transitionTo(PaymentStatus::Failed, 'reconcile', 'payment_request.failed', extra: [
                         'gateway_response' => $pr,
                     ]);
+                    // Mirror the webhook: sync the booking and release the promo
+                    // slot. The pull reconciler ALWAYS wins over the webhook in
+                    // dev/test (no webhooks) and whenever the webhook lags — once
+                    // it terminalizes the charge, the later webhook no-ops
+                    // (canAdvance=false), so the reversal must happen here too
+                    // (payment review P0-7). Consumption-verified + idempotent.
+                    if ($locked->booking) {
+                        $locked->booking->update(['payment_status' => 'failed']);
+                    }
+                    if ($locked->booking_id) {
+                        app(PromoService::class)->unredeem($locked->booking_id);
+                    }
                 } else { // EXPIRED
                     $locked->transitionTo(PaymentStatus::Expired, 'reconcile', 'payment_request.expired', extra: [
                         'gateway_response' => $pr,
                     ]);
+                    if ($locked->booking) {
+                        $locked->booking->update(['payment_status' => 'expired']);
+                    }
+                    if ($locked->booking_id) {
+                        app(PromoService::class)->unredeem($locked->booking_id);
+                    }
                 }
 
                 return $locked;

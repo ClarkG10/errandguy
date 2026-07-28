@@ -94,6 +94,84 @@ class PromoServiceTest extends TestCase
         $this->service->validate($this->promo(['usage_limit' => 5, 'used_count' => 5])->code, $this->user->id, 200);
     }
 
+    private function makeBooking(?string $promoCodeId = null): Booking
+    {
+        $errandType = ErrandType::firstOrCreate(
+            ['slug' => 'delivery'],
+            ['name' => 'Delivery', 'description' => 'x', 'icon_name' => 'Package',
+                'base_fee' => 50, 'per_km_walk' => 15, 'per_km_bicycle' => 12,
+                'per_km_motorcycle' => 10, 'per_km_car' => 18, 'min_negotiate_fee' => 30,
+                'is_active' => true, 'sort_order' => 1],
+        );
+
+        return Booking::create([
+            'booking_number' => 'EG-'.substr((string) \Illuminate\Support\Str::uuid(), 0, 8),
+            'customer_id' => $this->user->id, 'errand_type_id' => $errandType->id, 'status' => 'pending',
+            'pickup_address' => '1', 'pickup_lat' => 14.6, 'pickup_lng' => 121, 'dropoff_address' => '2',
+            'dropoff_lat' => 14.5, 'dropoff_lng' => 121, 'schedule_type' => 'now', 'pricing_mode' => 'fixed',
+            'vehicle_type_rate' => 'motorcycle', 'distance_km' => 5, 'base_fee' => 50, 'distance_fee' => 50,
+            'service_fee' => 15, 'surcharge' => 0, 'total_amount' => 115, 'runner_payout' => 85,
+            'is_transportation' => false, 'promo_code_id' => $promoCodeId,
+        ]);
+    }
+
+    public function test_redeem_never_pushes_used_count_past_the_global_limit(): void
+    {
+        // TOCTOU guard: even if two bookings both passed validate() at the limit
+        // boundary, redeem's conditional increment can't exceed usage_limit.
+        $promo = $this->promo(['usage_limit' => 1, 'used_count' => 0]);
+        $a = $this->makeBooking();
+        $b = $this->makeBooking();
+
+        $this->service->redeem($promo->id, $a->id);
+        $this->service->redeem($promo->id, $b->id);
+
+        $this->assertEquals(1, $promo->fresh()->used_count);
+        // Only the booking that actually incremented is flagged as consuming.
+        $this->assertTrue($a->fresh()->promo_redeemed);
+        $this->assertFalse($b->fresh()->promo_redeemed);
+    }
+
+    public function test_reversal_is_consumption_verified_so_a_skipped_redeem_cannot_undercount(): void
+    {
+        // The HIGH regression the review caught: B's redeem was SKIPPED (limit
+        // hit), so reversing B must NOT decrement a slot that A genuinely holds.
+        $promo = $this->promo(['usage_limit' => 1, 'used_count' => 0]);
+        $a = $this->makeBooking();
+        $b = $this->makeBooking();
+        $this->service->redeem($promo->id, $a->id); // 0 -> 1, A flagged
+        $this->service->redeem($promo->id, $b->id); // skipped, B NOT flagged
+
+        // Reversing the skipped booking is a no-op (it consumed nothing).
+        $this->service->unredeem($b->id);
+        $this->assertEquals(1, $promo->fresh()->used_count, 'skipped booking must not under-count');
+
+        // Reversing the real consumer releases exactly its slot.
+        $this->service->unredeem($a->id);
+        $this->assertEquals(0, $promo->fresh()->used_count);
+    }
+
+    public function test_unredeem_is_idempotent_and_skips_completed_bookings(): void
+    {
+        $promo = $this->promo(['usage_limit' => 5, 'used_count' => 0]);
+        $booking = $this->makeBooking();
+        $this->service->redeem($promo->id, $booking->id); // used_count 0 -> 1
+
+        $this->service->unredeem($booking->id);
+        $this->assertEquals(0, $promo->fresh()->used_count);
+        // A replayed reversal (webhook + reconcile + cancel all firing) is a no-op.
+        $this->service->unredeem($booking->id);
+        $this->assertEquals(0, $promo->fresh()->used_count);
+
+        // A completed errand keeps its redemption forever.
+        $promo2 = $this->promo(['usage_limit' => 5, 'used_count' => 0]);
+        $done = $this->makeBooking();
+        $this->service->redeem($promo2->id, $done->id);
+        $done->update(['status' => 'completed']);
+        $this->service->unredeem($done->id);
+        $this->assertEquals(1, $promo2->fresh()->used_count, 'completed booking must keep its use');
+    }
+
     public function test_per_user_limit_is_enforced(): void
     {
         $promo = $this->promo(['per_user_limit' => 1]);

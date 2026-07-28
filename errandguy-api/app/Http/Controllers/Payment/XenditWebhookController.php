@@ -261,6 +261,7 @@ class XenditWebhookController extends Controller
 
             if ($payment) {
                 $this->notifyPayment($payment, 'expired');
+                $this->unredeemBookingPromo($payment);
             }
         }
     }
@@ -371,6 +372,22 @@ class XenditWebhookController extends Controller
 
         if ($payment) {
             $this->notifyPayment($payment, 'failed');
+            $this->unredeemBookingPromo($payment);
+        }
+    }
+
+    /**
+     * Reverse a promo redemption when an online booking's charge never settles
+     * (invoice expired / payment failed). The redemption is incremented at
+     * booking-create, so without this an abandoned online checkout would burn a
+     * promo use forever (payment review P0-7). Safe against webhook replay: it
+     * runs only in the post-commit block, which is reached only when the
+     * terminal transition actually happened (canAdvance guards the replay).
+     */
+    private function unredeemBookingPromo(?Payment $payment): void
+    {
+        if ($payment?->booking_id) {
+            app(\App\Services\PromoService::class)->unredeem($payment->booking_id);
         }
     }
 

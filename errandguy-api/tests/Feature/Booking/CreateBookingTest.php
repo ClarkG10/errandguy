@@ -9,6 +9,7 @@ use App\Models\SystemConfig;
 use App\Models\User;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Bus;
+use Illuminate\Support\Facades\Http;
 use Tests\TestCase;
 
 class CreateBookingTest extends TestCase
@@ -310,6 +311,64 @@ class CreateBookingTest extends TestCase
             ->postJson('/api/v1/bookings', [...$this->validBookingData, 'payment_method' => 'wallet', 'promo_code' => 'SAVE10'])
             ->assertStatus(422);
         $this->assertEquals(1, $promo->fresh()->used_count);
+    }
+
+    public function test_cancelling_a_promo_booking_releases_the_promo_slot(): void
+    {
+        // A redeemed promo must be returned when the booking is cancelled before
+        // completing — otherwise a never-completed booking burns a use (P0-7).
+        Bus::fake();
+        $this->customer->update(['wallet_balance' => 5000]);
+        $promo = \App\Models\PromoCode::factory()->create([
+            'code' => 'SAVE10', 'discount_type' => 'percentage', 'discount_value' => 10,
+            'max_discount' => null, 'min_order' => 0, 'usage_limit' => 10, 'used_count' => 0,
+            'per_user_limit' => 5, 'valid_from' => now()->subDay(), 'valid_until' => now()->addWeek(),
+            'is_active' => true,
+        ]);
+
+        $this->actingAs($this->customer)
+            ->postJson('/api/v1/bookings', [...$this->validBookingData, 'payment_method' => 'wallet', 'promo_code' => 'SAVE10'])
+            ->assertCreated();
+        $booking = Booking::firstOrFail();
+        $this->assertEquals(1, $promo->fresh()->used_count);
+        $this->assertTrue($booking->fresh()->promo_redeemed);
+
+        // Free cancel of a still-pending booking → the promo slot is released.
+        $this->actingAs($this->customer)
+            ->postJson("/api/v1/bookings/{$booking->id}/cancel", ['reason' => 'Changed my mind'])
+            ->assertOk();
+
+        $this->assertEquals(0, $promo->fresh()->used_count);
+        $this->assertFalse($booking->fresh()->promo_redeemed);
+    }
+
+    public function test_online_payment_failure_marks_booking_failed_without_orphaning_or_500_and_reverses_promo(): void
+    {
+        // The gateway invoice creation fails. Old code hard-deleted the booking
+        // while a Payment FK referenced it → Postgres 23503 / uncaught 500 and a
+        // leaked promo use. It must instead 422, leave a terminal failed booking,
+        // and reverse the promo redemption (payment review P0-2 + P0-7).
+        Bus::fake();
+        Http::fake(['api.xendit.co/*' => Http::response(['message' => 'bad request'], 400)]);
+        $promo = \App\Models\PromoCode::factory()->create([
+            'code' => 'SAVE10', 'discount_type' => 'percentage', 'discount_value' => 10,
+            'max_discount' => null, 'min_order' => 0, 'usage_limit' => 10, 'used_count' => 0,
+            'per_user_limit' => 5, 'valid_from' => now()->subDay(), 'valid_until' => now()->addWeek(),
+            'is_active' => true,
+        ]);
+
+        $this->actingAs($this->customer)
+            ->postJson('/api/v1/bookings', [...$this->validBookingData, 'payment_method' => 'gcash', 'promo_code' => 'SAVE10'])
+            ->assertStatus(422); // NOT 500
+
+        $booking = Booking::first();
+        $this->assertNotNull($booking, 'booking must be kept as a failed record, not hard-deleted');
+        $this->assertEquals('cancelled', $booking->status);
+        $this->assertEquals('failed', $booking->payment_status);
+        // The Payment row still references it (proves delete would have FK-failed).
+        $this->assertDatabaseHas('payments', ['booking_id' => $booking->id, 'status' => 'failed']);
+        // Promo redemption reversed — a failed attempt must not burn a use.
+        $this->assertEquals(0, $promo->fresh()->used_count);
     }
 
     public function test_scheduled_booking_creation(): void
