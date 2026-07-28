@@ -71,6 +71,10 @@ class XenditWebhookController extends Controller
                 'payment_method.activated' => $this->handlePaymentMethodStatus($data, 'active'),
                 'payment_method.expired' => $this->handlePaymentMethodStatus($data, 'expired'),
                 'payment_method.failed' => $this->handlePaymentMethodStatus($data, 'failed'),
+                // Runner payouts (Xendit Payouts v2). Success marks the payout
+                // completed; failure/reversal re-credits the runner's wallet.
+                'payout.succeeded' => $this->handlePayoutSucceeded($data),
+                'payout.failed', 'payout.reversed' => $this->handlePayoutFailed($data),
                 default => null,
             };
         } else {
@@ -90,6 +94,61 @@ class XenditWebhookController extends Controller
         }
 
         return response()->json(['status' => 'ok']);
+    }
+
+    private function handlePayoutSucceeded(array $data): void
+    {
+        $tx = $this->findPayoutTransaction($data);
+        if (! $tx || $tx->status !== 'pending') {
+            return;
+        }
+
+        try {
+            app(\App\Services\WalletService::class)->completePayout($tx->id);
+        } catch (\App\Exceptions\PayoutStateException) {
+            // Already settled by a racing delivery — no-op.
+        }
+    }
+
+    private function handlePayoutFailed(array $data): void
+    {
+        $tx = $this->findPayoutTransaction($data);
+        if (! $tx || $tx->status !== 'pending') {
+            return;
+        }
+
+        $reason = $data['failure_code'] ?? $data['status'] ?? 'Payout failed at gateway';
+
+        try {
+            // Re-credits the runner's wallet atomically, then marks it failed.
+            app(\App\Services\WalletService::class)->failPayout($tx->id, (string) $reason);
+        } catch (\App\Exceptions\PayoutStateException) {
+            // Already settled — no-op.
+        }
+    }
+
+    /**
+     * Resolve the payout WalletTransaction from a Xendit payout webhook: match
+     * on the stored gateway payout id first, then fall back to the
+     * `payout-{tx}` reference_id set when the payout was created.
+     */
+    private function findPayoutTransaction(array $data): ?\App\Models\WalletTransaction
+    {
+        $query = \App\Models\WalletTransaction::where('type', 'payout');
+
+        if (! blank($data['id'] ?? null)) {
+            $tx = (clone $query)->where('gateway_ref', $data['id'])->first();
+            if ($tx) {
+                return $tx;
+            }
+        }
+
+        $ref = $data['reference_id'] ?? null;
+        if (is_string($ref) && str_starts_with($ref, 'payout-')) {
+            return (clone $query)->whereKey(substr($ref, 7))->first();
+        }
+
+        return null;
     }
 
     /**

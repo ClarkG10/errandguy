@@ -36,6 +36,7 @@ class RunnerProfile extends Model
         'bank_name',
         'bank_account_number',
         'ewallet_number',
+        'payout_channel_code',
         'approved_at',
     ];
 

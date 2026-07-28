@@ -377,6 +377,64 @@ class PaymentService
         return null;
     }
 
+    /**
+     * Send a runner payout to their bank / e-wallet via Xendit Payouts (v2).
+     *
+     * Money-safe: the wallet is already debited when the payout row is created
+     * (runner request or admin-initiated), so we do NOT mark it completed here.
+     * We store the Xendit payout id and let the payout.succeeded /
+     * payout.failed webhook settle it (a failure re-credits the wallet).
+     * Idempotency-key = po-{tx} so a retry collapses to the same Xendit payout
+     * instead of double-sending real money.
+     *
+     * @throws \RuntimeException on a gateway rejection.
+     */
+    public function createPayout(string $walletTxId, string $channelCode, string $accountNumber, string $accountHolderName): array
+    {
+        $tx = \App\Models\WalletTransaction::where('type', 'payout')->findOrFail($walletTxId);
+
+        if ($tx->status !== 'pending') {
+            throw new \RuntimeException('Only a pending payout can be sent.');
+        }
+
+        if (blank($this->secretKey)) {
+            throw new \RuntimeException('Xendit is not configured (XENDIT_SECRET_KEY empty).');
+        }
+
+        $amount = abs((float) $tx->amount);
+
+        $response = $this->http("po-{$tx->id}")
+            ->post("{$this->baseUrl}/v2/payouts", [
+                'reference_id' => "payout-{$tx->id}",
+                'channel_code' => $channelCode,
+                'channel_properties' => [
+                    'account_holder_name' => $accountHolderName,
+                    'account_number' => $accountNumber,
+                ],
+                'amount' => round($amount, 2),
+                'currency' => 'PHP',
+                'description' => 'ErrandGuy runner payout',
+            ]);
+
+        if (! $response->successful()) {
+            Log::error('Xendit: payout request failed', [
+                'wallet_tx' => $tx->id,
+                'response' => $response->json(),
+            ]);
+            throw new \RuntimeException(
+                $response->json('message') ?? 'Failed to send payout via Xendit.'
+            );
+        }
+
+        $data = $response->json();
+
+        // Record the gateway payout id so the webhook can settle this row; it
+        // stays 'pending' until payout.succeeded / payout.failed arrives.
+        $tx->update(['gateway_ref' => $data['id'] ?? $tx->gateway_ref]);
+
+        return $data;
+    }
+
     public function refundPayment(string $paymentId, ?float $amount = null, string $reason = 'REQUESTED_BY_CUSTOMER'): array
     {
         $payment = Payment::findOrFail($paymentId);
