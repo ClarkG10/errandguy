@@ -36,6 +36,11 @@ class AdminPanelProvider extends PanelProvider
                 'primary' => Color::Blue,
             ])
             ->sidebarCollapsibleOnDesktop()
+            // SPA mode: navigate between pages client-side (wire:navigate) so
+            // switching pages doesn't do a full reload / re-download assets —
+            // makes the panel feel instant instead of server-round-tripping
+            // every navigation.
+            ->spa()
             ->navigationGroups([
                 NavigationGroup::make('Operations'),
                 NavigationGroup::make('People'),
