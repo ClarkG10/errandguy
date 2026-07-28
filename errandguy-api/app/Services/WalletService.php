@@ -193,17 +193,28 @@ class WalletService
                 return $existing;
             }
 
-            if ((float) $user->wallet_balance < $amount) {
+            // Total spendable = withdrawable wallet + non-withdrawable bonus.
+            $walletBalance = (float) $user->wallet_balance;
+            $bonusBalance = (float) $user->bonus_balance;
+            if ($walletBalance + $bonusBalance < $amount) {
                 throw new \RuntimeException('Insufficient wallet balance.');
             }
 
-            $newBalance = (float) $user->wallet_balance - $amount;
-            $user->update(['wallet_balance' => $newBalance]);
+            // Spend the non-withdrawable bonus FIRST, then withdrawable cash.
+            // Recording bonusUsed lets a later refund return money to the same
+            // bucket instead of laundering promo credit into withdrawable cash.
+            $bonusUsed = min($bonusBalance, $amount);
+            $walletUsed = $amount - $bonusUsed;
+
+            $newBonus = $bonusBalance - $bonusUsed;
+            $newBalance = $walletBalance - $walletUsed;
+            $user->update(['wallet_balance' => $newBalance, 'bonus_balance' => $newBonus]);
 
             return WalletTransaction::create([
                 'user_id' => $userId,
                 'type' => 'payment',
                 'amount' => -$amount,
+                'bonus_portion' => $bonusUsed,
                 'balance_after' => $newBalance,
                 'reference_id' => $referenceId,
                 'description' => $description,
@@ -211,9 +222,22 @@ class WalletService
         });
     }
 
-    public function refund(string $userId, float $amount, string $referenceId): WalletTransaction
+    /**
+     * Credit a refund, returning money to the SAME bucket it was spent from.
+     *
+     * @param  string       $referenceId     Idempotency + audit key for the refund row.
+     * @param  string|null  $debitReference  Reference under which the ORIGINAL wallet
+     *   payment debit was recorded, used to recover the bonus/withdrawable split.
+     *   Defaults to $referenceId. These differ on the admin refund path: the wallet
+     *   debit is keyed on the BOOKING id (BookingController::store), but the refund
+     *   row is keyed on the PAYMENT id (PaymentService::refundToWallet) to stay
+     *   idempotent-distinct from the lifecycle cancel refunds — so that caller MUST
+     *   pass the booking id here or the split silently no-ops and bonus leaks into
+     *   withdrawable cash (payment review follow-up).
+     */
+    public function refund(string $userId, float $amount, string $referenceId, ?string $debitReference = null): WalletTransaction
     {
-        return DB::transaction(function () use ($userId, $amount, $referenceId) {
+        return DB::transaction(function () use ($userId, $amount, $referenceId, $debitReference) {
             $user = User::lockForUpdate()->findOrFail($userId);
 
             // Idempotency: a retried/double-tapped refund for the SAME reference
@@ -227,13 +251,37 @@ class WalletService
                 return $existing;
             }
 
-            $newBalance = (float) $user->wallet_balance + $amount;
-            $user->update(['wallet_balance' => $newBalance]);
+            // Return money to the SAME bucket it was spent from. Look up the
+            // original wallet payment debit (keyed on $debitReference) to see how
+            // much was withdrawable cash vs non-withdrawable bonus. Credit the
+            // withdrawable wallet only up to what was withdrawable-spent; any
+            // excess goes back to the non-withdrawable bonus balance. This
+            // guarantees withdrawable-out ≤ withdrawable-in, so a refund can
+            // never launder bonus credit into cashable balance. Gateway-funded
+            // (card/GCash/Maya) bookings have no wallet debit → whole amount is
+            // real money owed back → all to the withdrawable wallet.
+            $debit = WalletTransaction::where('user_id', $userId)
+                ->where('reference_id', $debitReference ?? $referenceId)
+                ->where('type', 'payment')
+                ->first();
+
+            $walletRefund = $amount;
+            $bonusRefund = 0.0;
+            if ($debit) {
+                $originalWalletUsed = abs((float) $debit->amount) - (float) $debit->bonus_portion;
+                $walletRefund = min($amount, max(0.0, $originalWalletUsed));
+                $bonusRefund = $amount - $walletRefund;
+            }
+
+            $newBalance = (float) $user->wallet_balance + $walletRefund;
+            $newBonus = (float) $user->bonus_balance + $bonusRefund;
+            $user->update(['wallet_balance' => $newBalance, 'bonus_balance' => $newBonus]);
 
             return WalletTransaction::create([
                 'user_id' => $userId,
                 'type' => 'refund',
                 'amount' => $amount,
+                'bonus_portion' => $bonusRefund,
                 'balance_after' => $newBalance,
                 'reference_id' => $referenceId,
                 'description' => 'Refund',
@@ -241,10 +289,32 @@ class WalletService
         });
     }
 
-    public function payout(string $userId, float $amount): WalletTransaction
+    /**
+     * Debit the wallet and create a pending payout (admin-initiated path).
+     *
+     * @param  string|null  $reference  Stable idempotency token. When supplied, a
+     *   second call with the same (user, reference) returns the original payout
+     *   instead of debiting again — the DB backstop is the partial unique index
+     *   on (user_id, reference_id, type). The admin "Pay a runner" form threads a
+     *   per-modal token so a double-submit can't double-debit + double-disburse
+     *   (payment review P0-8 follow-up). NULL preserves the legacy behaviour.
+     */
+    public function payout(string $userId, float $amount, ?string $reference = null): WalletTransaction
     {
-        return DB::transaction(function () use ($userId, $amount) {
+        return DB::transaction(function () use ($userId, $amount, $reference) {
             $user = User::lockForUpdate()->findOrFail($userId);
+
+            // Idempotent replay: a payout already exists for this reference →
+            // return it rather than debiting a second time.
+            if ($reference !== null) {
+                $existing = WalletTransaction::where('user_id', $userId)
+                    ->where('reference_id', $reference)
+                    ->where('type', 'payout')
+                    ->first();
+                if ($existing) {
+                    return $existing;
+                }
+            }
 
             $minPayout = 100.0;
             if ($amount < $minPayout) {
@@ -263,7 +333,7 @@ class WalletService
                 'type' => 'payout',
                 'amount' => -$amount,
                 'balance_after' => $newBalance,
-                'reference_id' => null,
+                'reference_id' => $reference,
                 'description' => 'Payout to bank/e-wallet',
             ]);
         });

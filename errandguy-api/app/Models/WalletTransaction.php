@@ -18,6 +18,7 @@ class WalletTransaction extends Model
         'user_id',
         'type',
         'amount',
+        'bonus_portion',
         'balance_after',
         'reference_id',
         'gateway_ref',
@@ -32,6 +33,7 @@ class WalletTransaction extends Model
     {
         return [
             'amount' => 'decimal:2',
+            'bonus_portion' => 'decimal:2',
             'balance_after' => 'decimal:2',
             'created_at' => 'datetime',
             'processed_at' => 'datetime',

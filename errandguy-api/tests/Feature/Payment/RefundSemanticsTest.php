@@ -79,6 +79,33 @@ class RefundSemanticsTest extends TestCase
         $this->assertEquals('refunded', $booking->fresh()->payment_status);
     }
 
+    public function test_admin_wallet_refund_of_a_bonus_funded_booking_restores_bonus_not_cash(): void
+    {
+        // Regression for the reference-mismatch leak: the wallet debit is keyed
+        // on booking id, the refund on payment id — refundToWallet must pass the
+        // booking id so the bonus/withdrawable split is recovered and the
+        // non-withdrawable bonus is NOT laundered into cashable wallet balance.
+        Bus::fake();
+        $this->customer->update(['wallet_balance' => 0, 'bonus_balance' => 5000]);
+        $this->actingAs($this->customer)
+            ->postJson('/api/v1/bookings', [...$this->base, 'payment_method' => 'wallet'])
+            ->assertCreated();
+        $booking = Booking::firstOrFail();
+        $payment = Payment::where('booking_id', $booking->id)->firstOrFail();
+        $fare = (float) $booking->total_amount;
+
+        // Paid entirely from the non-withdrawable bonus bucket.
+        $this->assertEqualsWithDelta(5000 - $fare, (float) $this->customer->fresh()->bonus_balance, 0.001);
+        $this->assertEquals(0.0, (float) $this->customer->fresh()->wallet_balance);
+
+        app(PaymentService::class)->refundToWallet($payment->id, 'test');
+
+        // Refund returns to BONUS, not to the withdrawable wallet.
+        $this->assertEqualsWithDelta(5000, (float) $this->customer->fresh()->bonus_balance, 0.001);
+        $this->assertEquals(0.0, (float) $this->customer->fresh()->wallet_balance);
+        $this->assertEquals('wallet', $payment->fresh()->refunded_to);
+    }
+
     public function test_wallet_refund_cannot_be_double_credited(): void
     {
         $booking = $this->bookViaWallet();

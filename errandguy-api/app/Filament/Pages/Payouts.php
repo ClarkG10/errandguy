@@ -10,6 +10,7 @@ use App\Services\WalletService;
 use App\Support\AdminActivity;
 use BackedEnum;
 use Filament\Actions\Action;
+use Filament\Forms\Components\Hidden;
 use Filament\Forms\Components\Select;
 use Filament\Forms\Components\TextInput;
 use Filament\Forms\Components\Textarea;
@@ -21,6 +22,7 @@ use Filament\Tables\Concerns\InteractsWithTable;
 use Filament\Tables\Contracts\HasTable;
 use Filament\Tables\Filters\SelectFilter;
 use Filament\Tables\Table;
+use Illuminate\Support\Str;
 
 /**
  * Payout reconciliation + real disbursement.
@@ -110,11 +112,16 @@ class Payouts extends Page implements HasTable
                     TextInput::make('account_number')->required()
                         ->helperText('E-wallet: the mobile number. Bank: the account number.'),
                     TextInput::make('account_holder_name')->required(),
+                    // Per-modal idempotency token: generated when the form opens
+                    // and resubmitted verbatim, so a double-click / re-fire of the
+                    // SAME payout collapses to one debit + one disbursement, while
+                    // a fresh "Pay a runner" always gets a new token (P0-8).
+                    Hidden::make('idem')->default(fn (): string => (string) Str::uuid()),
                 ])
                 ->action(function (array $data): void {
                     try {
                         // Debit + create the pending payout (money-safe), then disburse.
-                        $tx = app(WalletService::class)->payout($data['user_id'], (float) $data['amount']);
+                        $tx = app(WalletService::class)->payout($data['user_id'], (float) $data['amount'], $data['idem'] ?? null);
                         app(PaymentService::class)->createPayout(
                             $tx->id,
                             $data['channel_code'],

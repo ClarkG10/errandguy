@@ -220,6 +220,7 @@ class XenditWebhookController extends Controller
 
             if ($payment) {
                 $this->notifyPayment($payment, 'completed');
+                $this->rewardReferralIfEligible($payment);
             }
         }
     }
@@ -308,6 +309,32 @@ class XenditWebhookController extends Controller
 
         if ($payment) {
             $this->notifyPayment($payment, 'completed');
+            $this->rewardReferralIfEligible($payment);
+        }
+    }
+
+    /**
+     * Re-attempt a referral reward once an online charge actually settles.
+     *
+     * A referral only qualifies on a genuinely-paid non-cash booking. If the
+     * runner completed the errand BEFORE Xendit's webhook settled the charge
+     * (webhook lag / late checkout), the booking-completed listener ran while
+     * the Payment was still pending and no-op'd, permanently dropping the
+     * reward. This closes that window. Runs AFTER commit; ReferralService::
+     * reward is idempotent and re-checks the qualifying-booking gate itself.
+     */
+    private function rewardReferralIfEligible(?Payment $payment): void
+    {
+        $booking = $payment?->booking;
+        if ($booking && $booking->status === 'completed' && $booking->customer_id) {
+            try {
+                app(\App\Services\ReferralService::class)->reward($booking->customer_id);
+            } catch (\Throwable $e) {
+                \Illuminate\Support\Facades\Log::warning('Referral reward re-attempt failed after settlement', [
+                    'booking_id' => $booking->id,
+                    'error' => $e->getMessage(),
+                ]);
+            }
         }
     }
 

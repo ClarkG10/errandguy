@@ -29,6 +29,10 @@ class UserResource extends JsonResource
             'email_verified' => $this->when($isSelf, $this->email_verified),
             'phone_verified' => $this->when($isSelf, $this->phone_verified),
             'wallet_balance' => $this->when($isSelf, $this->wallet_balance),
+            // Non-withdrawable promotional balance (referral/welcome bonuses).
+            // Spendable on errands but excluded from payout; surfaced so the
+            // app can show total spendable = wallet_balance + bonus_balance.
+            'bonus_balance' => $this->when($isSelf, $this->bonus_balance),
             'avg_rating' => $this->avg_rating,
             'total_ratings' => $this->total_ratings,
             'created_at' => $this->created_at,

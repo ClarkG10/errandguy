@@ -180,7 +180,13 @@ Route::prefix('v1')->group(function () {
             Route::get('/earnings/export', [ExportController::class, 'earningsPdf'])
                 ->middleware('throttle:6,1');
             Route::get('/errands/history', [RunnerErrandHistoryController::class, 'index'])->middleware('etag');
-            Route::post('/payout/request', [RunnerPayoutController::class, 'requestPayout'])->middleware('idempotent');
+            // Money-OUT endpoint. Throttled (a runner needs at most a couple
+            // per minute) and `idempotent:required` — a payout request without
+            // an Idempotency-Key is refused (428) rather than risk a
+            // double-debit; the key also becomes the payout's stable
+            // reference_id so the DB unique guard is the final backstop (P0-8).
+            Route::post('/payout/request', [RunnerPayoutController::class, 'requestPayout'])
+                ->middleware(['throttle:10,1', 'idempotent:required']);
 
             // Runner toggles shopping-checklist ticks while shopping.
             Route::patch('/errand/{id}/shopping-items', [ShoppingChecklistController::class, 'update']);

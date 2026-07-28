@@ -17,9 +17,12 @@ use Symfony\Component\HttpFoundation\Response;
  * a replay of the SAME attempt returns the SAME outcome instead of charging /
  * booking twice.
  *
- *   • no key             → soft pass-through + warning (Phase 1: clients are
- *                          rolling out the header; flip to a hard 428 once the
- *                          app ships have propagated).
+ *   • no key (soft)      → soft pass-through + warning (default; clients are
+ *                          still rolling out the header on some routes).
+ *   • no key (required)  → hard 428 (money-out routes where a missing key is a
+ *                          client bug we refuse to double-charge on). Enable
+ *                          per route with the `required` parameter:
+ *                          `->middleware('idempotent:required')`.
  *   • new key            → run once, store the JSON outcome for replay.
  *   • replay, completed  → return the stored response verbatim.
  *   • replay, in-flight  → 409 (the first request is still running).
@@ -32,11 +35,19 @@ use Symfony\Component\HttpFoundation\Response;
  */
 class EnsureIdempotency
 {
-    public function handle(Request $request, Closure $next): Response
+    public function handle(Request $request, Closure $next, string $mode = 'soft'): Response
     {
         $key = $request->header('Idempotency-Key');
 
         if (blank($key)) {
+            // Money-out routes (payout) demand the key: a missing one is a
+            // client bug and we will not risk a double disbursement over it.
+            if ($mode === 'required') {
+                return response()->json([
+                    'message' => 'This request requires an Idempotency-Key header. Please update the app and try again.',
+                ], 428);
+            }
+
             Log::warning('Idempotency-Key header missing on money-mutation route', [
                 'path' => $request->path(),
                 'user_id' => $request->user()?->id,

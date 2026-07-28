@@ -508,7 +508,12 @@ class PaymentService
             }
 
             $amount = round((float) $payment->amount, 2);
-            app(WalletService::class)->refund($payment->customer_id, $amount, $payment->id);
+            // Refund row is keyed on the PAYMENT id (idempotent-distinct from the
+            // booking-keyed cancel refunds), but the ORIGINAL wallet debit was
+            // recorded under the BOOKING id — pass it so the bonus/withdrawable
+            // split is recovered and non-withdrawable bonus is not laundered into
+            // cashable wallet balance (payment review follow-up).
+            app(WalletService::class)->refund($payment->customer_id, $amount, $payment->id, $payment->booking_id);
 
             $this->recordRefund($payment, 'wallet', $amount, $reason);
         });
