@@ -101,13 +101,29 @@ class WalletService
             // or tampering. Log-only — we still credit our recorded amount, but
             // ops get a reconciliation alarm instead of a silent credit.
             $confirmed = $gatewayData['paid_amount'] ?? $gatewayData['amount'] ?? null;
-            if ($confirmed !== null && abs((float) $confirmed - (float) $transaction->amount) > 0.01) {
-                Log::critical('Xendit top-up settlement amount mismatch', [
-                    'transaction_id' => $transaction->id,
-                    'user_id' => $transaction->user_id,
-                    'expected' => (float) $transaction->amount,
-                    'gateway_confirmed' => (float) $confirmed,
-                ]);
+            if ($confirmed !== null) {
+                $settled = (float) $confirmed;
+                // Under-settled: the gateway confirmed LESS than the top-up we
+                // recorded. Never credit the full amount — leave the top-up
+                // pending for review instead of handing out uncollected balance
+                // (payment review P0-9). Over-settlement is logged but allowed.
+                if ($settled + 0.01 < (float) $transaction->amount) {
+                    Log::critical('Xendit top-up settlement BELOW recorded amount — left pending, NOT credited', [
+                        'transaction_id' => $transaction->id,
+                        'user_id' => $transaction->user_id,
+                        'expected' => (float) $transaction->amount,
+                        'gateway_confirmed' => $settled,
+                    ]);
+                    return $transaction;
+                }
+                if (abs($settled - (float) $transaction->amount) > 0.01) {
+                    Log::critical('Xendit top-up settlement amount mismatch (over-settled)', [
+                        'transaction_id' => $transaction->id,
+                        'user_id' => $transaction->user_id,
+                        'expected' => (float) $transaction->amount,
+                        'gateway_confirmed' => $settled,
+                    ]);
+                }
             }
 
             $user = User::lockForUpdate()->findOrFail($transaction->user_id);

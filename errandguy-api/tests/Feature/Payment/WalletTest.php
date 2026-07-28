@@ -191,8 +191,30 @@ class WalletTest extends TestCase
         \Illuminate\Support\Facades\Log::shouldHaveReceived('critical')
             ->withArgs(fn ($msg) => str_contains($msg, 'top-up settlement amount mismatch'))
             ->once();
-        // ...but the credit is log-only: still credits OUR recorded amount.
+        // ...and an OVER-settlement still credits OUR recorded amount (the payer
+        // overpaid the fixed-amount invoice — safe to credit what we recorded).
         $this->assertEquals('completed', $tx->fresh()->status);
         $this->assertEquals(700.0, (float) $this->user->fresh()->wallet_balance);
+    }
+
+    public function test_topup_under_settlement_is_left_pending_and_not_credited(): void
+    {
+        // P0-9: gateway confirms LESS than the recorded top-up → never hand out
+        // uncollected balance; leave the top-up pending for review.
+        \Illuminate\Support\Facades\Log::spy();
+        $before = (float) $this->user->fresh()->wallet_balance;
+
+        $tx = WalletTransaction::create([
+            'user_id' => $this->user->id, 'type' => 'top_up', 'amount' => 200,
+            'balance_after' => $before, 'status' => 'pending', 'description' => 'Wallet top-up',
+        ]);
+
+        app(\App\Services\WalletService::class)->completeTopUp($tx->id, ['id' => 'inv_short', 'paid_amount' => 150]);
+
+        \Illuminate\Support\Facades\Log::shouldHaveReceived('critical')
+            ->withArgs(fn ($msg) => str_contains($msg, 'top-up settlement BELOW recorded amount'))
+            ->once();
+        $this->assertEquals('pending', $tx->fresh()->status);
+        $this->assertEquals($before, (float) $this->user->fresh()->wallet_balance);
     }
 }

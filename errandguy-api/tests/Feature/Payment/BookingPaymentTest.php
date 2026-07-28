@@ -278,7 +278,42 @@ class BookingPaymentTest extends TestCase
         Log::shouldHaveReceived('critical')
             ->withArgs(fn ($msg) => str_contains($msg, 'settlement amount mismatch'))
             ->once();
-        // ...but the settlement flow is unchanged (log-only).
+        // ...and an OVER-settlement still completes (the customer overpaid — not
+        // a money-safety risk; we mark paid and keep the reconciliation alarm).
         $this->assertEquals('completed', $payment->fresh()->status);
+    }
+
+    public function test_webhook_leaves_an_under_settled_charge_pending_not_paid(): void
+    {
+        // The P0-9 fix: if the gateway confirms LESS than we charged, the
+        // booking must NOT be marked paid — it stays pending for the reconciler
+        // / a human, so a short-paid errand can't proceed as fully settled.
+        Bus::fake();
+        Log::spy();
+        Http::fake([
+            'api.xendit.co/v2/invoices' => Http::response([
+                'id' => 'inv_us', 'invoice_url' => 'https://checkout.xendit.co/inv_us',
+            ], 200),
+        ]);
+        $this->actingAs($this->customer)
+            ->postJson('/api/v1/bookings', [...$this->base, 'payment_method' => 'maya'])
+            ->assertCreated();
+        $payment = Payment::firstOrFail();
+
+        $this->postJson('/api/v1/webhooks/xendit', [
+            'event' => 'invoice.paid',
+            'data' => [
+                'external_id' => "booking-{$payment->id}",
+                'id' => 'inv_us',
+                'amount' => (float) $payment->amount - 50, // short settlement
+            ],
+        ], ['x-callback-token' => 'test-webhook-token'])->assertOk();
+
+        Log::shouldHaveReceived('critical')
+            ->withArgs(fn ($msg) => str_contains($msg, 'BELOW charged'))
+            ->once();
+        // Payment stays pending/processing — never marked completed/paid.
+        $this->assertNotEquals('completed', $payment->fresh()->status);
+        $this->assertNotEquals('paid', $payment->fresh()->booking->payment_status);
     }
 }

@@ -207,7 +207,10 @@ class XenditWebhookController extends Controller
                 if (!$payment || !$this->canAdvance($payment, PaymentStatus::Completed)) {
                     return null;
                 }
-                $this->verifySettledAmount($payment, $data);
+                // Under-settled → leave pending (do NOT mark paid or notify).
+                if (!$this->settledInFull($payment, $data)) {
+                    return null;
+                }
                 $payment->transitionTo(PaymentStatus::Completed, 'webhook', 'invoice.paid', extra: [
                     'paid_at' => now(),
                     'gateway_response' => $data,
@@ -296,7 +299,10 @@ class XenditWebhookController extends Controller
                 return null;
             }
 
-            $this->verifySettledAmount($payment, $data);
+            // Under-settled → leave pending (do NOT mark paid or notify).
+            if (!$this->settledInFull($payment, $data)) {
+                return null;
+            }
             $payment->transitionTo(PaymentStatus::Completed, 'webhook', 'payment.succeeded', extra: [
                 'paid_at' => now(),
                 'gateway_response' => $data,
@@ -471,21 +477,46 @@ class XenditWebhookController extends Controller
      * the caller and invoices are fixed-amount, so we don't refuse the
      * settlement here; the alert lets ops reconcile before money is lost.
      */
-    private function verifySettledAmount(Payment $payment, array $data): void
+    /**
+     * Is the gateway-confirmed amount enough to mark this charge paid?
+     *
+     * Returns false for an UNDER-settlement (gateway confirmed LESS than we
+     * charged): the webhook must then leave the payment pending for the pull
+     * reconciler / a human rather than mark a short-paid booking as fully paid
+     * (payment review P0-9 / audit H10). Mirrors reconcileBookingPayment, which
+     * already refuses short settlements. Over-settlement is logged but allowed
+     * (the customer overpaid — not a money-safety risk to complete). A missing
+     * amount means the event carried nothing to compare, so we trust it.
+     */
+    private function settledInFull(Payment $payment, array $data): bool
     {
         $confirmed = $data['paid_amount'] ?? $data['amount'] ?? null;
         if ($confirmed === null) {
-            return; // gateway didn't include a comparable amount
+            return true;
         }
 
-        if (abs((float) $confirmed - (float) $payment->amount) > 0.01) {
-            Log::critical('Xendit settlement amount mismatch', [
+        $settled = (float) $confirmed;
+
+        if ($settled + 0.01 < (float) $payment->amount) {
+            Log::critical('Xendit settlement BELOW charged — left pending for review, NOT marked paid', [
                 'payment_id' => $payment->id,
                 'booking_id' => $payment->booking_id,
                 'expected' => (float) $payment->amount,
-                'gateway_confirmed' => (float) $confirmed,
+                'gateway_confirmed' => $settled,
+            ]);
+            return false;
+        }
+
+        if (abs($settled - (float) $payment->amount) > 0.01) {
+            Log::critical('Xendit settlement amount mismatch (over-settled)', [
+                'payment_id' => $payment->id,
+                'booking_id' => $payment->booking_id,
+                'expected' => (float) $payment->amount,
+                'gateway_confirmed' => $settled,
             ]);
         }
+
+        return true;
     }
 
     /**
