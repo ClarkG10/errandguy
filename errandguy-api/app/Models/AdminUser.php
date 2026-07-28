@@ -3,13 +3,14 @@
 namespace App\Models;
 
 use Filament\Models\Contracts\FilamentUser;
+use Filament\Models\Contracts\HasName;
 use Filament\Panel;
 use Illuminate\Database\Eloquent\Concerns\HasUuids;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Foundation\Auth\User as Authenticatable;
 use Laravel\Sanctum\HasApiTokens;
 
-class AdminUser extends Authenticatable implements FilamentUser
+class AdminUser extends Authenticatable implements FilamentUser, HasName
 {
     use HasApiTokens, HasFactory, HasUuids;
 
