@@ -14,6 +14,10 @@ $FORGE_COMPOSER install --no-dev --no-interaction --prefer-dist --optimize-autol
 # confirmation from cancelling the deploy if any sub-command forgets
 # --force.
 $FORGE_PHP artisan optimize --no-interaction
+# Filament-specific caches (component registry + Blade icon set). `optimize`
+# above does NOT cover these; without them Filament resolves its icon set and
+# component list from disk on every render — noticeable on a large panel.
+$FORGE_PHP artisan filament:optimize --no-interaction
 $FORGE_PHP artisan storage:link --no-interaction || true
 
 # Run DDL on the DIRECT (session-mode) connection. Request traffic uses the

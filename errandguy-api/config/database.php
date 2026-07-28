@@ -104,14 +104,25 @@ return [
             'prefix_indexes' => true,
             'search_path' => 'public',
             'sslmode' => env('DB_SSLMODE', 'prefer'),
-            'options' => [
+            'options' => array_filter([
                 // Through the transaction pooler, server-side prepared
                 // statements can collide across multiplexed backends. Set
                 // DB_EMULATE_PREPARES=true in that deployment so PDO
                 // interpolates params client-side. Default false keeps the
                 // direct-connection behaviour unchanged.
                 PDO::ATTR_EMULATE_PREPARES => (bool) env('DB_EMULATE_PREPARES', false),
-            ],
+
+                // Persistent connections reuse a PHP-FPM worker's existing DB
+                // socket across requests instead of paying the TCP+TLS+SCRAM
+                // handshake (~1s when the DB is in a different region) on EVERY
+                // request. Only the first request per worker pays it. Big win
+                // while the app server and Supabase are cross-region; harmless
+                // once co-located. Set DB_PERSISTENT=true in prod to enable.
+                // Safe here because emulated prepares carry no server-side
+                // statement state that could leak between multiplexed requests.
+                // Default false = no behaviour change.
+                PDO::ATTR_PERSISTENT => (bool) env('DB_PERSISTENT', false) ?: null,
+            ], fn ($v) => $v !== null),
         ],
 
         // DIRECT / session-mode Postgres (port 5432, username postgres) for
