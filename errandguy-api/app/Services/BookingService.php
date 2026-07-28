@@ -185,6 +185,8 @@ class BookingService
                         extra: [
                             'refund_amount' => $refundable,
                             'refunded_at' => now(),
+                            // Honest record: money went to the wallet, not reversed to source.
+                            'refunded_to' => 'wallet',
                         ],
                     );
             }

@@ -6,7 +6,6 @@ use App\Support\AdminActivity;
 use Filament\Actions\Action;
 use Filament\Actions\ViewAction;
 use Filament\Forms\Components\Textarea;
-use Filament\Forms\Components\TextInput;
 use Filament\Notifications\Notification;
 use Filament\Support\Icons\Heroicon;
 use Filament\Tables\Columns\TextColumn;
@@ -76,31 +75,41 @@ class PaymentsTable
                     ->label('Refund')
                     ->icon(Heroicon::OutlinedBanknotes)
                     ->color('warning')
-                    // Money-critical gate: a refund is only legal from a COMPLETED
-                    // payment, and only finance/super_admin may issue it.
+                    ->requiresConfirmation()
+                    // Full refund only (partial awaits the P2 refunds ledger).
+                    // Finance/super_admin only, completed payments only.
                     ->visible(fn ($record): bool => $record->status === 'completed'
                         && (auth('admin')->user()?->canManageMoney() ?? false))
+                    ->modalDescription(fn ($record): string => match (true) {
+                        $record->method === 'card' => 'Full refund reversed to the original card via Xendit.',
+                        $record->method === 'cash' => 'Cash is settled with the runner directly — this cannot be refunded here.',
+                        default => 'Full refund to the customer\'s ErrandGuy wallet.',
+                    })
                     ->schema([
-                        TextInput::make('amount')
-                            ->numeric()
-                            ->prefix('₱')
-                            ->helperText('Leave blank for full refund.'),
                         Textarea::make('reason')
                             ->default('REQUESTED_BY_CUSTOMER')
-                            ->required(),
+                            ->required()
+                            ->maxLength(500),
                     ])
                     ->action(function (array $data, $record): void {
                         try {
-                            app(\App\Services\PaymentService::class)->refundPayment(
-                                $record->id,
-                                $data['amount'] !== null && $data['amount'] !== '' ? (float) $data['amount'] : null,
-                                $data['reason'],
-                            );
+                            $service = app(\App\Services\PaymentService::class);
+                            // Hybrid: card reverses to source; wallet/GCash/Maya go to
+                            // the wallet; cash is rejected by the service (never held).
+                            if ($record->method === 'card') {
+                                if (blank($record->gateway_tx_id)) {
+                                    throw new \RuntimeException('This card payment has no gateway reference to reverse.');
+                                }
+                                $service->refundPayment($record->id, null, $data['reason']);
+                            } else {
+                                $service->refundToWallet($record->id, $data['reason']);
+                            }
                             AdminActivity::log('payment.refunded', $record, [
-                                'amount' => $data['amount'],
+                                'method' => $record->method,
+                                'amount' => 'full',
                                 'reason' => $data['reason'],
                             ]);
-                            Notification::make()->title('Refund submitted')->success()->send();
+                            Notification::make()->title('Refund processed')->success()->send();
                         } catch (\Throwable $e) {
                             Notification::make()->title('Refund failed')->body($e->getMessage())->danger()->send();
                         }

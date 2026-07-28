@@ -538,6 +538,8 @@ class BookingController extends Controller
                             extra: [
                                 'refund_amount' => $refundable,
                                 'refunded_at' => now(),
+                                // Honest record: credited to wallet, not reversed to source.
+                                'refunded_to' => 'wallet',
                             ],
                         );
                 }

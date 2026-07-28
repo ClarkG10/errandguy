@@ -435,40 +435,111 @@ class PaymentService
         return $data;
     }
 
+    /**
+     * Issue a REAL, FULL gateway reversal to source via Xendit.
+     *
+     * Locked + status-guarded: the payment row is locked for the duration so
+     * concurrent refunds of the same payment serialize, and a second attempt
+     * no-ops once it is Refunded (this closes the over-refund window). Partial
+     * refunds are intentionally NOT supported here — they require the P2 refunds
+     * ledger to stay reconcilable and to avoid the cancel-path double-refund;
+     * full-only keeps the record and the cancel path unambiguous. Stamps
+     * refunded_to='gateway' and syncs booking.payment_status.
+     *
+     * @throws \RuntimeException if the payment has no gateway charge or is not completed.
+     */
     public function refundPayment(string $paymentId, ?float $amount = null, string $reason = 'REQUESTED_BY_CUSTOMER'): array
     {
-        $payment = Payment::findOrFail($paymentId);
+        return DB::transaction(function () use ($paymentId, $reason) {
+            $payment = Payment::whereKey($paymentId)->lockForUpdate()->firstOrFail();
 
-        $refundAmount = $amount ?? (float) $payment->amount;
+            if (blank($payment->gateway_tx_id)) {
+                throw new \RuntimeException('This payment has no gateway charge to reverse; use a wallet refund instead.');
+            }
+            if ($payment->status !== PaymentStatus::Completed->value) {
+                throw new \RuntimeException('Only a completed payment can be refunded.');
+            }
 
-        $response = $this->http("rf-{$payment->id}")
-            ->post("{$this->baseUrl}/refunds", [
-                'payment_request_id' => $payment->gateway_tx_id,
-                'amount' => round($refundAmount, 2),
-                'currency' => 'PHP',
-                'reason' => $reason,
-                'reference_id' => "refund-{$payment->id}",
+            $amount = round((float) $payment->amount, 2);
+
+            $response = $this->http("rf-{$payment->id}")
+                ->post("{$this->baseUrl}/refunds", [
+                    'payment_request_id' => $payment->gateway_tx_id,
+                    'amount' => $amount,
+                    'currency' => 'PHP',
+                    'reason' => $reason,
+                    'reference_id' => "refund-{$payment->id}",
+                ]);
+
+            if (! $response->successful()) {
+                Log::error('Xendit: Failed to process refund', [
+                    'payment' => $payment->id,
+                    'response' => $response->json(),
+                ]);
+                throw new \RuntimeException($response->json('message') ?? 'Failed to process refund.');
+            }
+
+            $this->recordRefund($payment, 'gateway', $amount, $reason);
+
+            return $response->json();
+        });
+    }
+
+    /**
+     * Refund a completed payment IN FULL to the customer's ErrandGuy wallet.
+     * Used for wallet-funded charges and — per the hybrid policy — GCash/Maya
+     * online charges (Xendit can't reliably reverse those to source). REJECTS
+     * cash: the platform never held that money (the customer paid the runner
+     * directly), so there is nothing to refund. Locked + status-guarded; the
+     * wallet credit is idempotent keyed on the PAYMENT id (not the booking id,
+     * which would collide with the lifecycle cancel refunds). Stamps
+     * refunded_to='wallet' so records never imply a reversal that didn't happen.
+     */
+    public function refundToWallet(string $paymentId, string $reason = 'REQUESTED_BY_CUSTOMER'): void
+    {
+        DB::transaction(function () use ($paymentId, $reason) {
+            $payment = Payment::whereKey($paymentId)->lockForUpdate()->firstOrFail();
+
+            if ($payment->method === 'cash') {
+                throw new \RuntimeException('Cash is settled directly with the runner; there is nothing for the platform to refund.');
+            }
+            if ($payment->status !== PaymentStatus::Completed->value) {
+                throw new \RuntimeException('Only a completed payment can be refunded to wallet.');
+            }
+
+            $amount = round((float) $payment->amount, 2);
+            app(WalletService::class)->refund($payment->customer_id, $amount, $payment->id);
+
+            $this->recordRefund($payment, 'wallet', $amount, $reason);
+        });
+    }
+
+    /**
+     * Shared post-refund bookkeeping (full refund). refund_amount + refunded_to
+     * are money fields written directly; the status move goes through the guarded
+     * transitionTo (idempotent no-op if already Refunded). Syncs
+     * booking.payment_status='refunded' — which a real gateway refund previously
+     * never did (payment review P0-5) and which also makes the refund visible to
+     * the cancel path so it can never double-refund.
+     */
+    private function recordRefund(Payment $payment, string $refundedTo, float $amount, string $reason): void
+    {
+        $payment->forceFill([
+            'refund_amount' => $amount,
+            'refunded_at' => now(),
+            'refunded_to' => $refundedTo,
+        ])->save();
+
+        if ($payment->status !== PaymentStatus::Refunded->value) {
+            $payment->transitionTo(PaymentStatus::Refunded, actor: 'system', reason: $reason, meta: [
+                'refund_amount' => $amount,
+                'refunded_to' => $refundedTo,
             ]);
-
-        if (!$response->successful()) {
-            Log::error('Xendit: Failed to process refund', [
-                'response' => $response->json(),
-            ]);
-            throw new \RuntimeException('Failed to process refund.');
         }
 
-        $payment->transitionTo(
-            PaymentStatus::Refunded,
-            actor: 'system',
-            reason: $reason,
-            meta: ['refund_amount' => $refundAmount],
-            extra: [
-                'refund_amount' => $refundAmount,
-                'refunded_at' => now(),
-            ],
-        );
-
-        return $response->json();
+        if ($payment->booking_id) {
+            \App\Models\Booking::whereKey($payment->booking_id)->update(['payment_status' => 'refunded']);
+        }
     }
 
     public function getPaymentRequest(string $paymentRequestId): array

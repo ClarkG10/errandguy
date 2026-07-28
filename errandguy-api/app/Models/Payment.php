@@ -28,6 +28,7 @@ class Payment extends Model
         'paid_at',
         'refund_amount',
         'refunded_at',
+        'refunded_to',
     ];
 
     protected $hidden = [
