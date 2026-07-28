@@ -65,6 +65,18 @@ class AdminUser extends Authenticatable implements FilamentUser, HasName
     }
 
     /**
+     * The column that stores the password. Laravel 11+ rehashes the password on
+     * every successful login and writes it to THIS column; the framework default
+     * is `password`, but ours is `password_hash` (without this override the
+     * post-login rehash does `update admin_users set password = ...` and 500s
+     * with "column password does not exist").
+     */
+    public function getAuthPasswordName(): string
+    {
+        return 'password_hash';
+    }
+
+    /**
      * Filament: which authenticated users may enter the panel.
      * Required in production. Active admins with a recognised role only.
      */
