@@ -63,6 +63,9 @@ import { useSmartPolling } from '../../../hooks/useSmartPolling';
 import { useReducedMotion } from '../../../hooks/useReducedMotion';
 import type { Booking } from '../../../types';
 import { toast } from '../../../stores/toastStore';
+import { errorMessage } from '../../../utils/errorCatalog';
+import { copy } from '../../../constants/copy';
+import { haptics } from '../../../utils/haptics';
 import { LightColors, Elevation } from '../../../constants/colors';
 
 /** Whole-peso display for the goal progress line — "₱650 of ₱1,000". */
@@ -458,13 +461,15 @@ export default function RunnerHomeScreen() {
     try {
       const res = await runnerService.acceptErrand(bookingId);
       // Server-confirmed accept — the success moment for this flow.
-      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
+      haptics.success();
       const updated = (res?.data?.data ?? incomingRequest.booking) as Booking;
       acceptErrand(updated);
       router.push(`/(runner)/errand/${bookingId}` as any);
     } catch (err: any) {
-      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error).catch(() => {});
-      toast.error(err?.message ?? err?.response?.data?.message ?? 'Failed to accept errand');
+      // Honest copy per backend code: BOOKING_STALE ("someone got there first")
+      // or BOOKING_CONFLICT ("finish your active errand first").
+      haptics.error();
+      toast.error(errorMessage(err, copy.runner.acceptFailed));
       clearIncomingRequest();
     }
   };

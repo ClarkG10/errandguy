@@ -4,6 +4,7 @@ namespace App\Http\Controllers\Runner;
 
 use App\Events\BookingStatusChanged;
 use App\Http\Controllers\Controller;
+use App\Support\ErrorCode;
 use App\Http\Requests\Runner\UpdateErrandStatusRequest;
 use App\Http\Resources\BookingResource;
 use App\Models\Booking;
@@ -172,11 +173,19 @@ class RunnerErrandController extends Controller
                 return $booking;
             });
         } catch (\RuntimeException $e) {
-            return response()->json([
-                'message' => $e->getMessage() === 'has_active'
-                    ? 'You already have an active errand. Complete it first.'
-                    : 'This booking is no longer available.',
-            ], 422);
+            if ($e->getMessage() === 'has_active') {
+                return $this->fail(
+                    ErrorCode::BOOKING_CONFLICT,
+                    'You already have an active errand. Finish it before accepting another.',
+                );
+            }
+
+            // Another runner accepted it, or it was cancelled, between the offer
+            // and this tap — a stale view, not the runner's fault.
+            return $this->fail(
+                ErrorCode::BOOKING_STALE,
+                'This errand is no longer available — someone may have already accepted it. Pull to refresh for new ones.',
+            );
         }
 
         BookingStatusLog::create([
@@ -222,9 +231,7 @@ class RunnerErrandController extends Controller
         // dispatch-tampering hole). Negotiate broadcasts have runner_id = null,
         // so a nearby runner declining an offer still works.
         if ($booking->runner_id !== null && $booking->runner_id !== $user->id) {
-            return response()->json([
-                'message' => 'You are not assigned to this errand.',
-            ], 403);
+            return $this->fail(ErrorCode::ERRAND_NOT_ASSIGNED, 'You are not assigned to this errand.', 403);
         }
 
         // Update acceptance rate

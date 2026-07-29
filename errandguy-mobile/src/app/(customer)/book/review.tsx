@@ -48,6 +48,9 @@ import { useResponsive } from '../../../constants/responsive';
 import { LightColors } from '../../../constants/colors';
 import type { PaymentMethodType, PricingMode } from '../../../types';
 import { toast } from '../../../stores/toastStore';
+import { errorMessage } from '../../../utils/errorCatalog';
+import { copy } from '../../../constants/copy';
+import { haptics } from '../../../utils/haptics';
 
 
 interface EstimateResult {
@@ -511,9 +514,12 @@ export default function ReviewScreen() {
       }
     } catch (err: any) {
       // Create failed → no booking/charge exists to verify; clear the attempt.
+      // Honest copy per backend code: promo invalid, insufficient balance,
+      // gateway ("you weren't charged"), or a booking conflict.
       resolveAttempt();
       setBookingStage(null);
-      toast.error(err?.message ?? 'Failed to create booking');
+      haptics.error();
+      toast.error(errorMessage(err, copy.booking.createFailed));
     } finally {
       setIsSubmitting(false);
       submitLatch.current = false;

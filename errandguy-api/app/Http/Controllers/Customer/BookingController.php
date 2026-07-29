@@ -22,6 +22,7 @@ use App\Models\Payment;
 use App\Models\PaymentMethod;
 use App\Models\RunnerLocation;
 use App\Services\CancellationPolicy;
+use App\Support\ErrorCode;
 use App\Services\PaymentService;
 use App\Services\PricingService;
 use App\Services\PromoService;
@@ -148,7 +149,9 @@ class BookingController extends Controller
                 $promoDiscount = $promo['discount'];
                 $promoCodeId = $promo['id'];
             } catch (\InvalidArgumentException $e) {
-                return response()->json(['message' => $e->getMessage()], 422);
+                // PromoService throws curated, user-facing copy (invalid/expired/
+                // not-eligible) — keep it, tagged with a machine code.
+                return $this->fail(ErrorCode::PROMO_INVALID, $e->getMessage());
             }
         }
 
@@ -302,11 +305,11 @@ class BookingController extends Controller
                     'booking_number' => $booking->booking_number,
                     'error' => $e->getMessage(),
                 ]);
-                $message = 'Could not charge your saved payment method. Please try another.';
+                $message = 'We couldn’t charge your saved payment method. You weren’t charged — try another method.';
                 if (config('app.debug') && $e instanceof PaymentGatewayException) {
                     $message = "Payment gateway error: {$e->reason()}";
                 }
-                return response()->json(['message' => $message], 422);
+                return $this->fail(ErrorCode::PAYMENT_GATEWAY_ERROR, $message);
             }
         } elseif ($paymentMethod === 'wallet') {
             try {
@@ -321,9 +324,10 @@ class BookingController extends Controller
                 // a Payment row and/or a promo redemption may already reference it,
                 // which on Postgres would raise an FK error) and reverse the promo.
                 $this->failBooking($booking, $promoCodeId, $user->id, 'Payment failed: insufficient wallet balance');
-                return response()->json([
-                    'message' => 'Insufficient wallet balance. Please add money or choose another payment method.',
-                ], 422);
+                return $this->fail(
+                    ErrorCode::INSUFFICIENT_WALLET_BALANCE,
+                    'Your wallet balance is too low for this booking. Top up or choose another payment method.',
+                );
             }
             // Wallet already debited above; create the payment as pending then
             // record the settlement transition so it lands in the audit log.
@@ -406,11 +410,11 @@ class BookingController extends Controller
                     'booking_number' => $booking->booking_number,
                     'error' => $e->getMessage(),
                 ]);
-                $message = 'Could not start your GCash/Maya payment. Please try again or choose another method.';
+                $message = 'We couldn’t start your GCash/Maya payment. You weren’t charged — try again or choose another method.';
                 if (config('app.debug') && $e instanceof \App\Exceptions\PaymentGatewayException) {
                     $message = "Payment gateway error: {$e->reason()}";
                 }
-                return response()->json(['message' => $message], 422);
+                return $this->fail(ErrorCode::PAYMENT_GATEWAY_ERROR, $message);
             }
         } else {
             // Card → Xendit hosted invoice. Cards are a small PH share and the
@@ -449,11 +453,11 @@ class BookingController extends Controller
                 ]);
                 // Friendly line in production; the real gateway reason in debug
                 // so it's diagnosable from the app itself.
-                $message = 'Could not start payment. Please try again or choose another method.';
+                $message = 'We couldn’t start your payment. You weren’t charged — try again or choose another method.';
                 if (config('app.debug') && $e instanceof \App\Exceptions\PaymentGatewayException) {
                     $message = "Payment gateway error: {$e->reason()}";
                 }
-                return response()->json(['message' => $message], 422);
+                return $this->fail(ErrorCode::PAYMENT_GATEWAY_ERROR, $message);
             }
         }
 
@@ -930,9 +934,10 @@ class BookingController extends Controller
         });
 
         if (! $reset) {
-            return response()->json([
-                'message' => 'This booking is already in progress.',
-            ], 409);
+            return $this->fail(
+                ErrorCode::BOOKING_CONFLICT,
+                'This booking is already in progress. Pull to refresh to see its current status.',
+            );
         }
 
         // Run matching inline (AFTER commit — MatchRunnerJob opens its own

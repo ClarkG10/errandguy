@@ -106,8 +106,11 @@ class ErrandAcceptTest extends TestCase
         $response = $this->actingAs($otherRunner)
             ->postJson("/api/v1/runner/errand/{$this->booking->id}/accept");
 
-        $response->assertStatus(422)
-            ->assertJsonPath('message', 'This booking is no longer available.');
+        // A booking taken/moved out from under the runner is a stale-view
+        // conflict (409 BOOKING_STALE), not a validation error.
+        $response->assertStatus(409)
+            ->assertJsonPath('code', 'BOOKING_STALE');
+        $this->assertStringContainsString('no longer available', (string) $response->json('message'));
     }
 
     public function test_runner_with_active_errand_cannot_accept_another(): void
@@ -130,8 +133,10 @@ class ErrandAcceptTest extends TestCase
         $response = $this->actingAs($this->runner)
             ->postJson("/api/v1/runner/errand/{$this->booking->id}/accept");
 
-        $response->assertStatus(422)
-            ->assertJsonPath('message', 'You already have an active errand. Complete it first.');
+        // Already having an active errand is a conflict (409 BOOKING_CONFLICT).
+        $response->assertStatus(409)
+            ->assertJsonPath('code', 'BOOKING_CONFLICT');
+        $this->assertStringContainsString('already have an active errand', (string) $response->json('message'));
     }
 
     public function test_offline_runner_cannot_accept(): void

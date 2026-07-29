@@ -2,15 +2,14 @@
 
 namespace App\Filament\Resources\Bookings\Tables;
 
+use App\Filament\Support\AdminNotify;
 use App\Filament\Support\DateRangeFilter;
 use App\Filament\Support\ExportCsv;
 use App\Models\AdminUser;
 use App\Models\Booking;
-use App\Support\AdminActivity;
 use Filament\Actions\Action;
 use Filament\Actions\ViewAction;
 use Filament\Forms\Components\Textarea;
-use Filament\Notifications\Notification;
 use Filament\Support\Icons\Heroicon;
 use Filament\Tables\Columns\Summarizers\Sum;
 use Filament\Tables\Columns\TextColumn;
@@ -116,6 +115,10 @@ class BookingsTable
                     ->label('Cancel booking')
                     ->icon(Heroicon::OutlinedXCircle)
                     ->color('danger')
+                    ->requiresConfirmation()
+                    ->modalDescription(fn (Booking $record): string => 'Cancels booking '
+                        .$record->booking_number.' for '.($record->customer?->full_name ?? 'the customer')
+                        .'. This runs the cancellation/refund policy and can’t be undone.')
                     ->schema([
                         Textarea::make('reason')->required()->maxLength(500),
                     ])
@@ -130,14 +133,23 @@ class BookingsTable
                             app(\App\Services\BookingService::class)
                                 ->adminCancel($record->id, auth('admin')->id(), $data['reason']);
                         } catch (\App\Exceptions\BookingStateException $e) {
-                            Notification::make()->title($e->getMessage())->danger()->send();
+                            AdminNotify::error('Could not cancel booking', $e, $record, [
+                                'Booking' => $record->booking_number,
+                            ]);
 
                             return;
                         }
 
-                        AdminActivity::log('booking.cancelled', $record, ['reason' => $data['reason']]);
-
-                        Notification::make()->title('Booking cancelled')->success()->send();
+                        AdminNotify::success(
+                            'Booking cancelled',
+                            $record,
+                            context: [
+                                'Booking' => $record->booking_number,
+                                'Customer' => $record->customer?->full_name,
+                            ],
+                            audit: 'booking.cancelled',
+                            properties: ['reason' => $data['reason']],
+                        );
                     }),
             ]);
     }
