@@ -317,6 +317,19 @@ class XenditWebhookController extends Controller
         if ($payment) {
             $this->notifyPayment($payment, 'completed');
             $this->rewardReferralIfEligible($payment);
+            return;
+        }
+
+        // No booking charge matched this payment_request — it may be a DIRECT
+        // e-wallet wallet top-up (its payment_request id is stored on the
+        // WalletTransaction as gateway_ref). completeTopUp does its own
+        // settled-in-full guard + credit + notify, and is idempotent.
+        $topup = \App\Models\WalletTransaction::where('type', 'top_up')
+            ->where('gateway_ref', $paymentRequestId)
+            ->where('status', 'pending')
+            ->first();
+        if ($topup) {
+            app(\App\Services\WalletService::class)->completeTopUp($topup->id, $data);
         }
     }
 
@@ -379,6 +392,18 @@ class XenditWebhookController extends Controller
         if ($payment) {
             $this->notifyPayment($payment, 'failed');
             $this->unredeemBookingPromo($payment);
+            return;
+        }
+
+        // No booking charge — a direct e-wallet top-up may have failed. Mark the
+        // pending top-up failed so the app stops "verifying" (mirrors the
+        // invoice.expired path). Idempotent: a non-pending top-up is untouched.
+        $topup = \App\Models\WalletTransaction::where('type', 'top_up')
+            ->where('gateway_ref', $paymentRequestId)
+            ->where('status', 'pending')
+            ->first();
+        if ($topup) {
+            app(\App\Services\WalletService::class)->expireTopUp($topup->id, 'Payment failed');
         }
     }
 

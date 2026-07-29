@@ -54,6 +54,77 @@ class WalletTopUpTest extends TestCase
         ]);
     }
 
+    public function test_ewallet_topup_returns_a_direct_deep_link_not_a_hosted_invoice(): void
+    {
+        // method=gcash → Payment Requests API: checkout_url is the wallet
+        // authorization deep-link, not a hosted invoice page.
+        Http::fake([
+            'api.xendit.co/payment_requests' => Http::response([
+                'id' => 'pr_tu', 'status' => 'PENDING',
+                'actions' => [['url' => 'https://gcash.example/authorize/pr_tu']],
+            ], 200),
+        ]);
+
+        $this->actingAs($this->user)
+            ->postJson('/api/v1/wallet/top-up', ['amount' => 500, 'method' => 'gcash'])
+            ->assertCreated()
+            ->assertJsonPath('checkout_url', 'https://gcash.example/authorize/pr_tu')
+            ->assertJsonPath('data.status', 'pending');
+
+        Http::assertSent(fn ($r) => str_contains($r->url(), '/payment_requests'));
+        Http::assertNotSent(fn ($r) => str_contains($r->url(), '/v2/invoices'));
+        // gateway_ref = payment_request id so payment.succeeded matches it.
+        $this->assertDatabaseHas('wallet_transactions', [
+            'user_id' => $this->user->id, 'type' => 'top_up', 'status' => 'pending', 'gateway_ref' => 'pr_tu',
+        ]);
+        $this->assertEquals(100.00, (float) $this->user->fresh()->wallet_balance);
+    }
+
+    public function test_payment_succeeded_webhook_credits_a_direct_ewallet_topup(): void
+    {
+        Http::fake([
+            'api.xendit.co/payment_requests' => Http::response([
+                'id' => 'pr_tu2', 'status' => 'PENDING',
+                'actions' => [['url' => 'https://gcash.example/authorize/pr_tu2']],
+            ], 200),
+        ]);
+        $this->actingAs($this->user)
+            ->postJson('/api/v1/wallet/top-up', ['amount' => 500, 'method' => 'gcash'])
+            ->assertCreated();
+        $tx = WalletTransaction::where('user_id', $this->user->id)->firstOrFail();
+
+        // Xendit confirms via payment.succeeded (matched on gateway_ref).
+        $this->postJson('/api/v1/webhooks/xendit', [
+            'event' => 'payment.succeeded',
+            'data' => ['payment_request_id' => 'pr_tu2', 'amount' => 500],
+        ], ['x-callback-token' => 'test-webhook-token'])->assertOk();
+
+        $this->assertEquals(600.00, (float) $this->user->fresh()->wallet_balance);
+        $this->assertEquals('completed', $tx->fresh()->status);
+    }
+
+    public function test_payment_failed_webhook_marks_a_direct_ewallet_topup_failed_without_crediting(): void
+    {
+        Http::fake([
+            'api.xendit.co/payment_requests' => Http::response([
+                'id' => 'pr_tu3', 'status' => 'PENDING',
+                'actions' => [['url' => 'https://gcash.example/authorize/pr_tu3']],
+            ], 200),
+        ]);
+        $this->actingAs($this->user)
+            ->postJson('/api/v1/wallet/top-up', ['amount' => 500, 'method' => 'gcash'])
+            ->assertCreated();
+        $tx = WalletTransaction::where('user_id', $this->user->id)->firstOrFail();
+
+        $this->postJson('/api/v1/webhooks/xendit', [
+            'event' => 'payment.failed',
+            'data' => ['payment_request_id' => 'pr_tu3'],
+        ], ['x-callback-token' => 'test-webhook-token'])->assertOk();
+
+        $this->assertEquals('failed', $tx->fresh()->status);
+        $this->assertEquals(100.00, (float) $this->user->fresh()->wallet_balance);
+    }
+
     public function test_invoice_paid_webhook_credits_wallet(): void
     {
         Http::fake([

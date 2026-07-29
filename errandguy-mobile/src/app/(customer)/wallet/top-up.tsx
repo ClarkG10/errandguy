@@ -28,6 +28,11 @@ import { LightColors, Elevation } from '../../../constants/colors';
 import { toast } from '../../../stores/toastStore';
 
 const QUICK_AMOUNTS = [100, 200, 500, 1000];
+const TOPUP_METHODS = [
+  { key: 'gcash', label: 'GCash', hint: 'Opens the GCash app to approve' },
+  { key: 'maya', label: 'Maya', hint: 'Opens the Maya app to approve' },
+  { key: 'card', label: 'Credit / Debit Card', hint: 'Secure card checkout' },
+] as const;
 // Sanity bounds enforced client-side so the user gets immediate feedback
 // instead of round-tripping a 422. Mirror the server's WalletController
 // validation (min:50, max:50000) so client + server agree.
@@ -57,6 +62,9 @@ export default function TopUpScreen() {
   const [amount, setAmount] = useState(0);
   const [customAmount, setCustomAmount] = useState('');
   const [loading, setLoading] = useState(false);
+  // How to pay. GCash/Maya charge directly and deep-link into the wallet app
+  // (no hosted page); card falls back to the secure Xendit hosted checkout.
+  const [method, setMethod] = useState<'gcash' | 'maya' | 'card'>('gcash');
 
   // ── Money-safety: idempotent attempt + honest verification ──────────────
   const beginAttempt = usePaymentStore((s) => s.beginAttempt);
@@ -95,14 +103,14 @@ export default function TopUpScreen() {
 
     // One attempt = one idempotency key, reused on retry so a double-tap /
     // network retry can never open two invoices or double-charge.
-    const payAttempt = beginAttempt({ kind: 'topup', amount: displayAmount });
+    const payAttempt = beginAttempt({ kind: 'topup', amount: displayAmount, method });
     setLoading(true);
     try {
       // The server creates a Xendit invoice and returns a hosted checkout URL.
       // The wallet is credited ONLY after Xendit confirms via webhook — we
       // never optimistically add funds, and we VERIFY the outcome after.
       const res = await paymentService.topUpWallet(
-        { amount: displayAmount },
+        { amount: displayAmount, method },
         { idempotencyKey: payAttempt.idempotencyKey },
       );
       const checkoutUrl: string | undefined = res.data?.checkout_url;
@@ -133,8 +141,12 @@ export default function TopUpScreen() {
       setLoading(false);
       submitLatch.current = false;
     }
-  }, [displayAmount, beginAttempt, setAttemptStatus, resolveAttempt]);
+  }, [displayAmount, method, beginAttempt, setAttemptStatus, resolveAttempt]);
 
+  // Re-open the SAME checkout URL on retry. Only safe for CARD (its hosted
+  // Xendit invoice stays payable); a GCash/Maya one-time payment_request URL is
+  // DEAD once the charge fails, so retry isn't offered for e-wallets (see the
+  // onRetry gate) — the customer starts a fresh top-up instead.
   const retryTopUp = useCallback(async () => {
     const url = usePaymentStore.getState().attempt?.checkoutUrl;
     if (!url) return;
@@ -232,11 +244,49 @@ export default function TopUpScreen() {
           helperText={`Min ${formatCurrency(MIN_TOPUP)} · Max ${formatCurrency(MAX_TOPUP)}`}
         />
 
-        {/* Secure checkout note — method is chosen on the Xendit page. */}
-        <View className="flex-row items-start bg-primaryLight rounded-2xl p-4 mt-5">
+        {/* Pay with — chosen up front so GCash/Maya can deep-link straight
+            into the wallet app instead of a hosted checkout page. */}
+        <Text className="text-[13px] font-montserrat-bold text-textPrimary mt-6 mb-2">
+          Pay with
+        </Text>
+        <View className="rounded-2xl bg-surface overflow-hidden" style={Elevation.sm}>
+          {TOPUP_METHODS.map((m, i) => {
+            const selected = method === m.key;
+            return (
+              <Pressable
+                key={m.key}
+                onPress={() => {
+                  Haptics.selectionAsync().catch(() => {});
+                  setMethod(m.key);
+                }}
+                className={`flex-row items-center px-4 py-3.5 ${i > 0 ? 'border-t border-divider' : ''}`}
+              >
+                <View className="flex-1">
+                  <Text className="text-[14px] font-inter-semi text-textPrimary">{m.label}</Text>
+                  <Text className="text-[11px] font-montserrat text-textSecondary mt-0.5">{m.hint}</Text>
+                </View>
+                <View
+                  className="w-5 h-5 rounded-full items-center justify-center"
+                  style={{
+                    borderWidth: 2,
+                    borderColor: selected ? LightColors.primary : LightColors.dividerStrong,
+                    backgroundColor: selected ? LightColors.primary : 'transparent',
+                  }}
+                >
+                  {selected ? <Check size={12} color="#fff" strokeWidth={3} /> : null}
+                </View>
+              </Pressable>
+            );
+          })}
+        </View>
+
+        {/* How the charge behaves, honestly, for the chosen method. */}
+        <View className="flex-row items-start bg-primaryLight rounded-2xl p-4 mt-4">
           <ShieldCheck size={18} color={LightColors.primary} strokeWidth={2} />
           <Text className="flex-1 ml-2.5 text-[12px] font-montserrat text-textSecondary leading-[17px]">
-            You&apos;ll choose GCash, Maya, or card on a secure Xendit checkout page. Your wallet updates automatically once payment is confirmed.
+            {method === 'card'
+              ? 'Your card is entered on a secure Xendit checkout page. Your wallet updates automatically once payment is confirmed.'
+              : `You'll approve the payment in the ${method === 'gcash' ? 'GCash' : 'Maya'} app, then come straight back. Your wallet updates automatically once it's confirmed.`}
           </Text>
         </View>
 
@@ -306,7 +356,7 @@ export default function TopUpScreen() {
         failureMessage={
           attempt?.failureReason ? mapFailureReason(attempt.failureReason).message : undefined
         }
-        onRetry={attempt?.checkoutUrl ? retryTopUp : undefined}
+        onRetry={attempt?.checkoutUrl && attempt?.method === 'card' ? retryTopUp : undefined}
         onClose={() => finishTopUp()}
         onSafeExit={() => finishTopUp()}
       />

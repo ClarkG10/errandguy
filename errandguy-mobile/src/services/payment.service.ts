@@ -58,7 +58,9 @@ export const paymentService = {
   // `checkout_url` the app must open; the wallet is credited only after
   // Xendit confirms via webhook.
   topUpWallet(
-    data: { amount: number; payment_method_id?: string },
+    // `method` (gcash|maya|card): gcash/maya charge directly and deep-link into
+    // the wallet app (no hosted page); card / omitted → the hosted invoice.
+    data: { amount: number; method?: 'gcash' | 'maya' | 'card'; payment_method_id?: string },
     opts?: { idempotencyKey?: string },
   ) {
     const p = api.post('/wallet/top-up', data, { idempotencyKey: opts?.idempotencyKey } as any);

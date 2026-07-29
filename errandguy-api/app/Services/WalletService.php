@@ -26,11 +26,17 @@ class WalletService
      *
      * @return array{transaction: WalletTransaction, checkout_url: ?string}
      */
-    public function initiateTopUp(string $userId, float $amount, ?string $payerEmail = null, ?string $successRedirectUrl = null): array
-    {
+    public function initiateTopUp(
+        string $userId,
+        float $amount,
+        ?string $payerEmail = null,
+        ?string $successRedirectUrl = null,
+        ?string $method = null,
+        ?string $failureRedirectUrl = null,
+    ): array {
         $user = User::findOrFail($userId);
 
-        // Pending row first, so we have a stable id to key the invoice's
+        // Pending row first, so we have a stable id to key the charge's
         // external_id on. balance_after mirrors the CURRENT balance because
         // nothing has moved yet; it's rewritten when the webhook completes it.
         $transaction = WalletTransaction::create([
@@ -42,7 +48,38 @@ class WalletService
             'description' => 'Wallet top-up (awaiting payment)',
         ]);
 
+        // GCash/Maya → direct Payment Requests charge: the action URL deep-links
+        // straight into the wallet app, no Xendit hosted invoice page (mirrors
+        // the booking checkout). Settles via the payment.succeeded webhook,
+        // matched on the payment_request id we store as gateway_ref. Anything
+        // else (card, or no method chosen) → the hosted invoice, which keeps
+        // card/PCI inside Xendit and preserves the pre-selector behaviour.
+        $isEwallet = in_array($method, ['gcash', 'maya'], true);
+
         try {
+            if ($isEwallet) {
+                $pr = app(PaymentService::class)->createPaymentRequest(
+                    $amount,
+                    "topup-{$transaction->id}",
+                    $method,
+                    'ErrandGuy wallet top-up',
+                    $successRedirectUrl,
+                    $failureRedirectUrl ?? $successRedirectUrl,
+                );
+
+                $checkoutUrl = PaymentService::extractActionUrl($pr);
+                if (blank($checkoutUrl)) {
+                    throw new \RuntimeException('Gateway returned no authorization action for the e-wallet top-up.');
+                }
+
+                $transaction->update([
+                    'gateway_ref' => $pr['id'] ?? null,
+                    'checkout_url' => $checkoutUrl,
+                ]);
+
+                return ['transaction' => $transaction, 'checkout_url' => $checkoutUrl];
+            }
+
             $invoice = app(PaymentService::class)->createInvoice(
                 $amount,
                 "topup-{$transaction->id}",
@@ -65,11 +102,12 @@ class WalletService
             // doesn't linger as a fake "pending top-up" forever.
             $transaction->update([
                 'status' => 'failed',
-                'failure_reason' => 'Could not create payment invoice.',
+                'failure_reason' => 'Could not start the payment.',
                 'processed_at' => now(),
             ]);
-            Log::error('Wallet top-up: invoice creation failed', [
+            Log::error('Wallet top-up: charge creation failed', [
                 'transaction_id' => $transaction->id,
+                'method' => $method,
                 'error' => $e->getMessage(),
             ]);
             throw $e;

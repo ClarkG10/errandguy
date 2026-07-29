@@ -29,6 +29,10 @@ class WalletController extends Controller
 
         $validated = $request->validate([
             'amount' => ['required', 'numeric', 'min:50', 'max:50000'],
+            // Optional in-app method choice. GCash/Maya → a direct charge that
+            // deep-links into the wallet app (no hosted page); card or omitted →
+            // the Xendit hosted invoice (unchanged; card entry stays in Xendit).
+            'method' => ['nullable', 'string', \Illuminate\Validation\Rule::in(['gcash', 'maya', 'card'])],
             // Optional: the Xendit hosted invoice lets the customer choose
             // GCash / Maya / card at checkout, so a saved method isn't
             // required. When supplied it must still belong to the caller.
@@ -45,21 +49,32 @@ class WalletController extends Controller
         // Idempotency guard: reuse an existing PENDING top-up of the same
         // amount created in the last 60s (network retry / double-tap) rather
         // than opening a second invoice.
-        $duplicate = WalletTransaction::where('user_id', $user->id)
-            ->where('type', 'top_up')
-            ->where('status', 'pending')
-            ->where('amount', $validated['amount'])
-            ->where('created_at', '>=', now()->subSeconds(60))
-            ->whereNotNull('checkout_url')
-            ->latest('created_at')
-            ->first();
+        //
+        // ONLY when no explicit method was chosen. With a method, the stored
+        // checkout_url is channel-specific (a GCash/Maya deep-link vs an invoice
+        // page), so reusing a same-amount pending row would hand back the wrong
+        // channel's URL on a method switch. Method-specific double-taps are
+        // already deduped by the `idempotent` middleware (same Idempotency-Key)
+        // and the client submit-latch; and since only the charge the customer
+        // actually authorizes ever settles, an extra abandoned pending row is
+        // money-safe (completeTopUp credits exactly once, per charge).
+        if (empty($validated['method'])) {
+            $duplicate = WalletTransaction::where('user_id', $user->id)
+                ->where('type', 'top_up')
+                ->where('status', 'pending')
+                ->where('amount', $validated['amount'])
+                ->where('created_at', '>=', now()->subSeconds(60))
+                ->whereNotNull('checkout_url')
+                ->latest('created_at')
+                ->first();
 
-        if ($duplicate) {
-            return response()->json([
-                'data' => $duplicate,
-                'checkout_url' => $duplicate->checkout_url,
-                'idempotent' => true,
-            ], 200);
+            if ($duplicate) {
+                return response()->json([
+                    'data' => $duplicate,
+                    'checkout_url' => $duplicate->checkout_url,
+                    'idempotent' => true,
+                ], 200);
+            }
         }
 
         try {
@@ -70,6 +85,10 @@ class WalletController extends Controller
                 // After paying, Xendit redirects here; the bridge page forwards
                 // to the app deep link so the in-app checkout sheet auto-closes.
                 url('/payment/complete'),
+                $validated['method'] ?? null,
+                // Failure return carries ?status=failed so the bridge shows
+                // honest copy instead of a green "Payment received".
+                url('/payment/complete?status=failed'),
             );
         } catch (\Throwable $e) {
             // The gateway rejected the request (e.g. API key lacks Invoice
