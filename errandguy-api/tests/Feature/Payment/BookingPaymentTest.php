@@ -105,8 +105,62 @@ class BookingPaymentTest extends TestCase
         Bus::assertNotDispatched(\App\Jobs\MatchRunnerJob::class);
     }
 
-    public function test_online_booking_creates_invoice_and_returns_checkout_url(): void
+    public function test_ewallet_booking_returns_a_direct_deep_link_not_a_hosted_invoice(): void
     {
+        // GCash/Maya now go through the Payment Requests API: the returned
+        // checkout_url is the wallet AUTHORIZATION action (deep-links into the
+        // GCash/Maya app), NOT a Xendit hosted invoice page. No /v2/invoices.
+        Bus::fake();
+        Http::fake([
+            'api.xendit.co/payment_requests' => Http::response([
+                'id' => 'pr_bk', 'status' => 'PENDING',
+                'actions' => [['url' => 'https://gcash.example/authorize/pr_bk']],
+            ], 200),
+        ]);
+
+        $res = $this->actingAs($this->customer)
+            ->postJson('/api/v1/bookings', [...$this->base, 'payment_method' => 'gcash']);
+
+        $res->assertCreated()
+            ->assertJsonPath('checkout_url', 'https://gcash.example/authorize/pr_bk');
+        // We hit payment_requests, never the hosted invoice endpoint.
+        Http::assertSent(fn ($r) => str_contains($r->url(), '/payment_requests'));
+        Http::assertNotSent(fn ($r) => str_contains($r->url(), '/v2/invoices'));
+
+        $booking = Booking::firstOrFail();
+        $this->assertEquals('pending', $booking->payment_status);
+        // gateway_tx_id is the payment_request id, so payment.succeeded + the
+        // pull reconciler (GET /payment_requests/{id}) both match.
+        $this->assertDatabaseHas('payments', [
+            'booking_id' => $booking->id, 'method' => 'gcash', 'status' => 'processing', 'gateway_tx_id' => 'pr_bk',
+        ]);
+    }
+
+    public function test_ewallet_charge_with_no_action_url_fails_cleanly_but_keeps_the_gateway_ref(): void
+    {
+        // The payment_request was created (so it exists at Xendit) but carried no
+        // authorization action. We fail the booking, but the payment must still
+        // record the gateway_tx_id so the stray charge is traceable (F4).
+        Bus::fake();
+        Http::fake([
+            'api.xendit.co/payment_requests' => Http::response(['id' => 'pr_noact', 'status' => 'PENDING', 'actions' => []], 200),
+        ]);
+
+        $this->actingAs($this->customer)
+            ->postJson('/api/v1/bookings', [...$this->base, 'payment_method' => 'gcash'])
+            ->assertStatus(422);
+
+        $booking = Booking::firstOrFail();
+        $this->assertEquals('cancelled', $booking->status);
+        $this->assertEquals('failed', $booking->payment_status);
+        $this->assertDatabaseHas('payments', [
+            'booking_id' => $booking->id, 'method' => 'gcash', 'status' => 'failed', 'gateway_tx_id' => 'pr_noact',
+        ]);
+    }
+
+    public function test_card_booking_still_uses_the_hosted_invoice(): void
+    {
+        // Cards keep the hosted invoice (PCI/3DS stay inside Xendit).
         Bus::fake();
         Http::fake([
             'api.xendit.co/v2/invoices' => Http::response([
@@ -115,15 +169,39 @@ class BookingPaymentTest extends TestCase
         ]);
 
         $res = $this->actingAs($this->customer)
-            ->postJson('/api/v1/bookings', [...$this->base, 'payment_method' => 'gcash']);
+            ->postJson('/api/v1/bookings', [...$this->base, 'payment_method' => 'card']);
 
         $res->assertCreated()
             ->assertJsonPath('checkout_url', 'https://checkout.xendit.co/inv_bk');
         $booking = Booking::firstOrFail();
-        $this->assertEquals('pending', $booking->payment_status);
         $this->assertDatabaseHas('payments', [
-            'booking_id' => $booking->id, 'method' => 'gcash', 'status' => 'processing', 'gateway_tx_id' => 'inv_bk',
+            'booking_id' => $booking->id, 'method' => 'card', 'status' => 'processing', 'gateway_tx_id' => 'inv_bk',
         ]);
+    }
+
+    public function test_ewallet_booking_is_settled_by_the_payment_succeeded_webhook(): void
+    {
+        config(['services.xendit.webhook_token' => 'test-webhook-token']);
+        Bus::fake();
+        Http::fake([
+            'api.xendit.co/payment_requests' => Http::response([
+                'id' => 'pr_set', 'status' => 'PENDING',
+                'actions' => [['url' => 'https://gcash.example/authorize/pr_set']],
+            ], 200),
+        ]);
+        $this->actingAs($this->customer)
+            ->postJson('/api/v1/bookings', [...$this->base, 'payment_method' => 'maya'])
+            ->assertCreated();
+        $payment = Payment::firstOrFail();
+
+        // Xendit confirms via payment.succeeded (matched on payment_request_id).
+        $this->postJson('/api/v1/webhooks/xendit', [
+            'event' => 'payment.succeeded',
+            'data' => ['payment_request_id' => 'pr_set', 'amount' => (float) $payment->amount],
+        ], ['x-callback-token' => 'test-webhook-token'])->assertOk();
+
+        $this->assertEquals('completed', $payment->fresh()->status);
+        $this->assertEquals('paid', $payment->fresh()->booking->payment_status);
     }
 
     public function test_cancelling_a_paid_wallet_booking_refunds_the_wallet(): void
@@ -237,7 +315,7 @@ class BookingPaymentTest extends TestCase
             ], 200),
         ]);
         $this->actingAs($this->customer)
-            ->postJson('/api/v1/bookings', [...$this->base, 'payment_method' => 'maya'])
+            ->postJson('/api/v1/bookings', [...$this->base, 'payment_method' => 'card'])
             ->assertCreated();
         $payment = Payment::firstOrFail();
 
@@ -260,7 +338,7 @@ class BookingPaymentTest extends TestCase
             ], 200),
         ]);
         $this->actingAs($this->customer)
-            ->postJson('/api/v1/bookings', [...$this->base, 'payment_method' => 'maya'])
+            ->postJson('/api/v1/bookings', [...$this->base, 'payment_method' => 'card'])
             ->assertCreated();
         $payment = Payment::firstOrFail();
 
@@ -296,7 +374,7 @@ class BookingPaymentTest extends TestCase
             ], 200),
         ]);
         $this->actingAs($this->customer)
-            ->postJson('/api/v1/bookings', [...$this->base, 'payment_method' => 'maya'])
+            ->postJson('/api/v1/bookings', [...$this->base, 'payment_method' => 'card'])
             ->assertCreated();
         $payment = Payment::firstOrFail();
 

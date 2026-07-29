@@ -129,7 +129,7 @@ class PaymentSafetyFoundationTest extends TestCase
         ]);
 
         $res = $this->actingAs($this->customer)
-            ->postJson('/api/v1/bookings', [...$this->base, 'payment_method' => 'gcash'])
+            ->postJson('/api/v1/bookings', [...$this->base, 'payment_method' => 'card'])
             ->assertCreated();
 
         $paymentId = $res->json('payment_id');
@@ -141,7 +141,7 @@ class PaymentSafetyFoundationTest extends TestCase
 
         $status->assertJsonPath('data.status', 'processing')
             ->assertJsonPath('data.payment_id', $paymentId)
-            ->assertJsonPath('data.method', 'gcash')
+            ->assertJsonPath('data.method', 'card')
             ->assertJsonPath('data.reference', 'inv_status');
     }
 
@@ -152,7 +152,7 @@ class PaymentSafetyFoundationTest extends TestCase
             'api.xendit.co/v2/invoices' => Http::response(['id' => 'inv_o', 'invoice_url' => 'https://x/inv_o'], 200),
         ]);
         $paymentId = $this->actingAs($this->customer)
-            ->postJson('/api/v1/bookings', [...$this->base, 'payment_method' => 'gcash'])
+            ->postJson('/api/v1/bookings', [...$this->base, 'payment_method' => 'card'])
             ->json('payment_id');
 
         $stranger = User::factory()->create(['role' => 'customer', 'status' => 'active']);
@@ -170,7 +170,7 @@ class PaymentSafetyFoundationTest extends TestCase
             'api.xendit.co/v2/invoices' => Http::response(['id' => 'inv_c', 'invoice_url' => 'https://x/inv_c'], 200),
         ]);
         $paymentId = $this->actingAs($this->customer)
-            ->postJson('/api/v1/bookings', [...$this->base, 'payment_method' => 'gcash'])
+            ->postJson('/api/v1/bookings', [...$this->base, 'payment_method' => 'card'])
             ->json('payment_id');
 
         $this->actingAs($this->customer)
@@ -248,7 +248,7 @@ class PaymentSafetyFoundationTest extends TestCase
         ]);
         $payment = null;
         $paymentId = $this->actingAs($this->customer)
-            ->postJson('/api/v1/bookings', [...$this->base, 'payment_method' => 'gcash'])
+            ->postJson('/api/v1/bookings', [...$this->base, 'payment_method' => 'card'])
             ->json('payment_id');
 
         $this->postJson('/api/v1/webhooks/xendit', [
@@ -297,7 +297,7 @@ class PaymentSafetyFoundationTest extends TestCase
             'api.xendit.co/v2/invoices' => Http::response(['id' => 'inv_dedupe', 'invoice_url' => 'https://x/inv_dedupe'], 200),
         ]);
         $paymentId = $this->actingAs($this->customer)
-            ->postJson('/api/v1/bookings', [...$this->base, 'payment_method' => 'maya'])
+            ->postJson('/api/v1/bookings', [...$this->base, 'payment_method' => 'card'])
             ->json('payment_id');
 
         $payload = [

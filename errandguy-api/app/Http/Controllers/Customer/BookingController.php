@@ -349,8 +349,73 @@ class BookingController extends Controller
             ]);
             $paymentId = $payment->id;
             $booking->update(['payment_status' => 'unpaid']);
+        } elseif ($paymentMethod === 'gcash' || $paymentMethod === 'maya') {
+            // Direct e-wallet charge via the Payment Requests API. The returned
+            // action URL deep-links STRAIGHT into the GCash/Maya app to approve
+            // — no Xendit hosted invoice page and no second method pick (the
+            // channel is fixed here). The only remaining hop is the wallet's own
+            // authorization, which no integration can remove. Settles via the
+            // payment.succeeded webhook (matched on the payment_request id we
+            // store as gateway_tx_id); the pull reconciler already GETs
+            // /payment_requests/{id}, so this also fixes the reconcile mismatch
+            // that the hosted-invoice path had for e-wallets.
+            $payment = Payment::create([
+                'booking_id' => $booking->id,
+                'customer_id' => $user->id,
+                'amount' => $amount,
+                'currency' => 'PHP',
+                'method' => $paymentMethod,
+                'status' => 'pending',
+            ]);
+            $paymentId = $payment->id;
+            try {
+                $pr = app(PaymentService::class)->createPaymentRequest(
+                    $amount,
+                    "booking-{$payment->id}",
+                    $paymentMethod,
+                    "ErrandGuy booking {$booking->booking_number}",
+                    // Success + failure both return to the bridge page → app deep
+                    // link so the in-app auth sheet auto-closes; the poll/webhook
+                    // decides the real outcome. The failure URL carries
+                    // ?status=failed so the bridge shows honest copy, not a green
+                    // "Payment received," when the customer declines/cancels.
+                    url('/payment/complete'),
+                    url('/payment/complete?status=failed'),
+                );
+
+                // Persist the gateway ref FIRST (before the action-URL check) so a
+                // created-but-unusable payment_request is always traceable /
+                // reconcilable rather than orphaned at Xendit.
+                $payment->transitionTo(PaymentStatus::Processing, extra: [
+                    'gateway_tx_id' => $pr['id'] ?? null,
+                    'gateway_response' => $pr,
+                ]);
+
+                $checkoutUrl = PaymentService::extractActionUrl($pr);
+                if (blank($checkoutUrl)) {
+                    // No authorization action to deep-link to — we can't collect
+                    // the payment, so don't leave the customer on a dead spinner.
+                    throw new \RuntimeException('Gateway returned no authorization action for the e-wallet charge.');
+                }
+
+                $booking->update(['payment_status' => 'pending']);
+            } catch (\Throwable $e) {
+                $payment->transitionTo(PaymentStatus::Failed, reason: 'E-wallet charge creation failed');
+                $this->failBooking($booking, $promoCodeId, $user->id, 'Payment failed: could not start the e-wallet charge');
+                \Illuminate\Support\Facades\Log::error('Booking e-wallet charge failed', [
+                    'booking_number' => $booking->booking_number,
+                    'error' => $e->getMessage(),
+                ]);
+                $message = 'Could not start your GCash/Maya payment. Please try again or choose another method.';
+                if (config('app.debug') && $e instanceof \App\Exceptions\PaymentGatewayException) {
+                    $message = "Payment gateway error: {$e->reason()}";
+                }
+                return response()->json(['message' => $message], 422);
+            }
         } else {
-            // Online (card / gcash / maya) via Xendit hosted invoice.
+            // Card → Xendit hosted invoice. Cards are a small PH share and the
+            // hosted page keeps card entry, 3DS, and PCI scope entirely inside
+            // Xendit at zero cost; a native in-app card form is a later phase.
             $payment = Payment::create([
                 'booking_id' => $booking->id,
                 'customer_id' => $user->id,

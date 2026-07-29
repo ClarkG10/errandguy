@@ -4,6 +4,7 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>Payment complete</title>
+    @php($failed = request()->query('status') === 'failed')
     {{-- Forward straight to the app's deep link. The in-app payment sheet
          watches for this URL and closes itself the instant we hit it, so the
          customer lands back in ErrandGuy without tapping anything. --}}
@@ -31,17 +32,28 @@
             padding: 12px 24px; border-radius: 999px; font-weight: 600; font-size: 14px;
         }
         .check {
-            width: 56px; height: 56px; border-radius: 50%; background: #DCFCE7;
+            width: 56px; height: 56px; border-radius: 50%;
             display: flex; align-items: center; justify-content: center; margin: 0 auto 16px;
-            font-size: 28px; color: #16A34A;
+            font-size: 28px;
         }
+        .check.ok   { background: #DCFCE7; color: #16A34A; }
+        .check.neutral { background: #E2E8F0; color: #475569; }
     </style>
 </head>
 <body>
     <div class="card">
-        <div class="check">&checkmark;</div>
-        <h1>Payment received</h1>
-        <p>Returning you to ErrandGuy&hellip; Your balance updates once the payment is confirmed.</p>
+        @if ($failed)
+            {{-- The customer cancelled or the authorization didn't go through.
+                 Don't assert a payment — just take them back; the app's own
+                 status poll shows the real outcome. --}}
+            <div class="check neutral">&hellip;</div>
+            <h1>Returning to ErrandGuy</h1>
+            <p>Taking you back to the app&hellip; If your payment didn&rsquo;t go through, you can try again there.</p>
+        @else
+            <div class="check ok">&checkmark;</div>
+            <h1>Payment received</h1>
+            <p>Returning you to ErrandGuy&hellip; Your balance updates once the payment is confirmed.</p>
+        @endif
         <a class="btn" href="errandguy://payment-complete">Back to ErrandGuy</a>
     </div>
 </body>

@@ -535,8 +535,12 @@ export default function ReviewScreen() {
     resolveAttempt,
   ]);
 
-  // Re-open the SAME invoice on a failed-payment retry (never re-create the
-  // booking). Safe because Xendit invoices stay payable until they expire.
+  // Re-open the SAME checkout URL on a failed-payment retry (never re-create
+  // the booking). Only safe for CARD: its hosted Xendit invoice stays payable
+  // until it expires, so re-opening re-offers the card form. GCash/Maya now use
+  // a ONE-TIME payment_request whose authorization URL is DEAD once the charge
+  // fails — re-opening it would land on a Xendit error page — so retry is not
+  // offered for e-wallets (see onRetry gate); the customer exits and rebooks.
   const retryBookingPayment = useCallback(async () => {
     const url = usePaymentStore.getState().attempt?.checkoutUrl;
     if (!url) return;
@@ -1000,7 +1004,7 @@ export default function ReviewScreen() {
         failureMessage={
           attempt?.failureReason ? mapFailureReason(attempt.failureReason).message : undefined
         }
-        onRetry={attempt?.checkoutUrl ? retryBookingPayment : undefined}
+        onRetry={attempt?.checkoutUrl && attempt?.method === 'card' ? retryBookingPayment : undefined}
         onClose={() => leaveForBooking()}
         onSafeExit={() => leaveForBooking()}
       />
