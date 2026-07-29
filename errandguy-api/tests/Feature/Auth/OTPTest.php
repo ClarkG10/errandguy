@@ -26,7 +26,10 @@ class OTPTest extends TestCase
             'phone' => '+639171234567',
         ]);
 
-        $response->assertStatus(502)
+        // Fails honestly as a clean 422 (never a 502 — Cloudflare masks app 5xx
+        // and the mobile client discards >=500 messages, losing this copy).
+        $response->assertStatus(422)
+            ->assertJsonPath('code', 'OTP_DELIVERY_FAILED')
             ->assertJson(['message' => 'Could not send verification code. Please try again.']);
 
         $this->assertFalse(Cache::has('otp:+639171234567'));

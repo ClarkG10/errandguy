@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Auth;
 use App\Http\Controllers\Controller;
 use App\Http\Requests\Auth\ForgotPasswordRequest;
 use App\Http\Requests\Auth\ResetPasswordRequest;
+use App\Support\ErrorCode;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
@@ -45,16 +46,17 @@ class PasswordResetController extends Controller
                     'error' => $e->getMessage(),
                 ]);
 
-                return response()->json([
-                    'message' => 'Unable to send reset email at this time. Please try again later.',
-                ], 503);
+                // 422, never a 503: Cloudflare masks app-level 5xx and the mobile
+                // client discards >=500 messages, so this line would be lost.
+                return $this->fail(
+                    ErrorCode::PASSWORD_RESET_DELIVERY_FAILED,
+                    'Unable to send reset email at this time. Please try again later.',
+                );
             }
         }
 
         // Neutral, identical for known + unknown emails.
-        return response()->json([
-            'message' => 'If an account exists for that email, a password reset link has been sent.',
-        ]);
+        return $this->ok(null, 'If an account exists for that email, a password reset link has been sent.');
     }
 
     public function resetPassword(ResetPasswordRequest $request): JsonResponse
@@ -64,9 +66,7 @@ class PasswordResetController extends Controller
             ->first();
 
         if (!$record || !Hash::check($request->token, $record->token)) {
-            return response()->json([
-                'message' => 'Invalid or expired reset token.',
-            ], 422);
+            return $this->fail(ErrorCode::VALIDATION_FAILED, 'Invalid or expired reset token. Request a new one to continue.');
         }
 
         // Carbon 3 makes diffInMinutes() SIGNED: now()->diffInMinutes($past)
@@ -75,9 +75,7 @@ class PasswordResetController extends Controller
         if (\Illuminate\Support\Carbon::parse($record->created_at)->addHour()->isPast()) {
             DB::table('password_reset_tokens')->where('email', $request->email)->delete();
 
-            return response()->json([
-                'message' => 'Reset token has expired. Please request a new one.',
-            ], 422);
+            return $this->fail(ErrorCode::VALIDATION_FAILED, 'Reset token has expired. Please request a new one.');
         }
 
         $user = User::where('email', $request->email)->firstOrFail();
@@ -90,8 +88,6 @@ class PasswordResetController extends Controller
 
         DB::table('password_reset_tokens')->where('email', $request->email)->delete();
 
-        return response()->json([
-            'message' => 'Password has been reset successfully.',
-        ]);
+        return $this->ok(null, 'Password has been reset successfully.');
     }
 }

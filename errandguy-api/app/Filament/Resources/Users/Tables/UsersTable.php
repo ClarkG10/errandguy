@@ -2,15 +2,14 @@
 
 namespace App\Filament\Resources\Users\Tables;
 
+use App\Filament\Support\AdminNotify;
 use App\Filament\Support\DateRangeFilter;
 use App\Filament\Support\ExportCsv;
 use App\Models\AdminUser;
 use App\Models\User;
-use App\Support\AdminActivity;
 use Filament\Actions\Action;
 use Filament\Actions\ViewAction;
 use Filament\Forms\Components\Textarea;
-use Filament\Notifications\Notification;
 use Filament\Support\Icons\Heroicon;
 use Filament\Tables\Columns\IconColumn;
 use Filament\Tables\Columns\ImageColumn;
@@ -93,6 +92,9 @@ class UsersTable
                     ->label('Suspend')
                     ->icon(Heroicon::OutlinedShieldExclamation)
                     ->color('danger')
+                    ->requiresConfirmation()
+                    ->modalDescription(fn (User $record): string => 'Suspends '
+                        .($record->full_name ?? 'this user').' and immediately revokes their active sessions.')
                     ->schema([
                         Textarea::make('reason')->required()->maxLength(500),
                     ])
@@ -110,9 +112,14 @@ class UsersTable
                         ]);
                         $record->tokens()->delete();
 
-                        AdminActivity::log('user.suspended', $record, ['reason' => $data['reason']]);
-
-                        Notification::make()->title('User suspended')->success()->send();
+                        AdminNotify::success(
+                            'User suspended',
+                            $record,
+                            context: ['User' => $record->full_name],
+                            audit: 'user.suspended',
+                            properties: ['reason' => $data['reason']],
+                            note: 'Their active sessions were revoked.',
+                        );
                     }),
 
                 Action::make('unsuspend')
@@ -133,9 +140,12 @@ class UsersTable
                             'suspended_at' => null,
                         ]);
 
-                        AdminActivity::log('user.unsuspended', $record);
-
-                        Notification::make()->title('User reinstated')->success()->send();
+                        AdminNotify::success(
+                            'User reinstated',
+                            $record,
+                            context: ['User' => $record->full_name],
+                            audit: 'user.unsuspended',
+                        );
                     }),
             ]);
     }

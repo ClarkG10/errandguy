@@ -3,6 +3,7 @@
 namespace App\Http\Controllers\Auth;
 
 use App\Http\Controllers\Controller;
+use App\Support\ErrorCode;
 use App\Http\Requests\Auth\SendOTPRequest;
 use App\Http\Requests\Auth\VerifyOTPRequest;
 use App\Http\Resources\UserResource;
@@ -48,14 +49,12 @@ class OTPController extends Controller
                 'channel' => $request->phone ? 'sms' : 'email',
                 'error' => $e->getMessage(),
             ]);
-            return response()->json([
-                'message' => 'Could not send verification code. Please try again.',
-            ], 502);
+            // 422, never a 502: Cloudflare masks app-level 5xx and the mobile
+            // client discards >=500 messages, so this friendly line would be lost.
+            return $this->fail(ErrorCode::OTP_DELIVERY_FAILED, 'Could not send verification code. Please try again.');
         }
 
-        return response()->json([
-            'message' => 'Verification code sent successfully.',
-        ]);
+        return $this->ok(null, 'Verification code sent successfully.');
     }
 
     public function verifyOTP(VerifyOTPRequest $request): JsonResponse
@@ -72,16 +71,16 @@ class OTPController extends Controller
         if ($attempts >= 5) {
             $this->otpService->invalidateOTP($identifier);
 
-            return response()->json([
-                'message' => 'Too many failed attempts. Please request a new code.',
-            ], 422);
+            return $this->fail(ErrorCode::OTP_MAX_ATTEMPTS, 'Too many failed attempts. Please request a new code.');
         }
 
         if (!$this->otpService->verifyOTP($identifier, $request->code)) {
-            return response()->json([
-                'message' => 'Invalid verification code.',
-                'attempts_remaining' => max(0, 4 - $attempts),
-            ], 422);
+            // attempts_remaining stays top-level (the app reads it) via $merge.
+            return $this->fail(
+                ErrorCode::OTP_INVALID,
+                'Invalid verification code.',
+                merge: ['attempts_remaining' => max(0, 4 - $attempts)],
+            );
         }
 
         // Mark phone/email as verified on user
@@ -95,9 +94,11 @@ class OTPController extends Controller
             // skipped the check, so a suspended/banned user who still receives
             // the OTP could obtain a live bearer token.
             if ($user->status !== 'active') {
-                return response()->json([
-                    'message' => "Your account is {$user->status}. Please contact support.",
-                ], 403);
+                return $this->fail(
+                    ErrorCode::ACCOUNT_INACTIVE,
+                    "Your account is {$user->status}. Please contact support.",
+                    403,
+                );
             }
 
             if ($request->phone) {

@@ -2,6 +2,7 @@
 
 namespace App\Filament\Resources\RunnerProfiles\Tables;
 
+use App\Filament\Support\AdminNotify;
 use App\Filament\Support\ExportCsv;
 use App\Models\AdminUser;
 use App\Models\RunnerDocument;
@@ -12,7 +13,6 @@ use Filament\Actions\BulkAction;
 use Filament\Actions\ViewAction;
 use Illuminate\Support\Collection;
 use Filament\Forms\Components\Textarea;
-use Filament\Notifications\Notification;
 use Filament\Support\Icons\Heroicon;
 use Filament\Tables\Columns\IconColumn;
 use Filament\Tables\Columns\TextColumn;
@@ -107,9 +107,12 @@ class RunnerProfilesTable
                             AdminActivity::log('runner.approved', $record, ['via' => 'bulk']);
                             $approved++;
                         }
-                        \Filament\Notifications\Notification::make()
-                            ->title($approved.' runner'.($approved === 1 ? '' : 's').' approved')
-                            ->success()->send();
+                        // Per-record audit already written in the loop above, so
+                        // this is a count-only confirmation (no audit param).
+                        AdminNotify::success(
+                            $approved.' runner'.($approved === 1 ? '' : 's').' approved',
+                            note: $approved === 0 ? 'No pending runners were in the selection.' : 'They’ve been notified.',
+                        );
                     }),
             ])
             ->recordActions([
@@ -142,15 +145,22 @@ class RunnerProfilesTable
                             'You can now start accepting errands.',
                         );
 
-                        AdminActivity::log('runner.approved', $record);
-
-                        Notification::make()->title('Runner approved')->success()->send();
+                        AdminNotify::success(
+                            'Runner approved',
+                            $record,
+                            context: ['Runner' => $record->user?->full_name],
+                            audit: 'runner.approved',
+                            note: 'They can now accept errands and have been notified.',
+                        );
                     }),
 
                 Action::make('reject')
                     ->label('Reject runner')
                     ->icon(Heroicon::OutlinedShieldExclamation)
                     ->color('danger')
+                    ->requiresConfirmation()
+                    ->modalDescription(fn ($record): string => 'Rejects '
+                        .($record->user?->full_name ?? 'this runner').'’s verification and notifies them with your reason.')
                     ->schema([
                         Textarea::make('reason')->required()->maxLength(500),
                     ])
@@ -176,9 +186,14 @@ class RunnerProfilesTable
                             $data['reason'],
                         );
 
-                        AdminActivity::log('runner.rejected', $record, ['reason' => $data['reason']]);
-
-                        Notification::make()->title('Runner rejected')->success()->send();
+                        AdminNotify::success(
+                            'Runner rejected',
+                            $record,
+                            context: ['Runner' => $record->user?->full_name],
+                            audit: 'runner.rejected',
+                            properties: ['reason' => $data['reason']],
+                            note: 'They’ve been notified with your reason.',
+                        );
                     }),
             ]);
     }
