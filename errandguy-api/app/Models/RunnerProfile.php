@@ -79,6 +79,12 @@ class RunnerProfile extends Model
         return $this->hasMany(RunnerDocument::class, 'runner_id');
     }
 
+    /** Errands this runner has taken (bookings.runner_id → users.id → this profile's user_id). */
+    public function bookings(): HasMany
+    {
+        return $this->hasMany(Booking::class, 'runner_id', 'user_id');
+    }
+
     public function scopeOnline($query)
     {
         return $query->where('is_online', true);

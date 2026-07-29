@@ -13,6 +13,11 @@ class ListPayments extends ListRecords
 {
     protected static string $resource = PaymentResource::class;
 
+    protected function getHeaderWidgets(): array
+    {
+        return [\App\Filament\Resources\Payments\Widgets\PaymentListStats::class];
+    }
+
     public function getTabs(): array
     {
         $c = ListTabs::counts('payments', Payment::class, 'status');

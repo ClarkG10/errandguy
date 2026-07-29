@@ -75,6 +75,17 @@ class UsersTable
                     'Joined' => fn (User $r) => $r->created_at,
                 ]),
             ])
+            ->toolbarActions([
+                ExportCsv::bulk('users', [
+                    'Name' => fn (User $r): ?string => $r->full_name,
+                    'Phone' => fn (User $r): ?string => $r->phone,
+                    'Email' => fn (User $r): ?string => $r->email,
+                    'Role' => fn (User $r): ?string => $r->role,
+                    'Status' => fn (User $r): ?string => $r->status,
+                    'Wallet balance (PHP)' => fn (User $r) => $r->wallet_balance,
+                    'Joined' => fn (User $r) => $r->created_at,
+                ]),
+            ])
             ->recordActions([
                 ViewAction::make(),
 

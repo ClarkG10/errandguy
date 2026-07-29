@@ -10,6 +10,7 @@ use App\Filament\Pages\Dashboard;
 use Filament\Navigation\NavigationGroup;
 use Filament\Panel;
 use Filament\PanelProvider;
+use Filament\Enums\ThemeMode;
 use Filament\Support\Colors\Color;
 use Filament\Support\Enums\Width;
 use Filament\Support\Facades\FilamentColor;
@@ -57,8 +58,9 @@ class AdminPanelProvider extends PanelProvider
                 'warning' => Color::Amber,
                 'danger' => Color::Rose,
             ])
-            // Follow the operator's OS theme, with a manual toggle in the topbar.
+            // Dark as the default (cinematic ops look), manual toggle still available.
             ->darkMode(true)
+            ->defaultThemeMode(ThemeMode::Dark)
             ->sidebarCollapsibleOnDesktop()
             ->sidebarWidth('17rem')
             ->maxContentWidth(Width::SevenExtraLarge)
@@ -78,7 +80,8 @@ class AdminPanelProvider extends PanelProvider
             // Inject the branded theme + login/sidebar chrome with NO Vite build
             // step — pure render hooks so the deploy pipeline is unchanged.
             ->renderHook(PanelsRenderHook::HEAD_END, fn (): string => view('filament.admin-theme')->render())
-            ->renderHook(PanelsRenderHook::AUTH_LOGIN_FORM_BEFORE, fn (): string => view('filament.login-tagline')->render())
+            ->renderHook(PanelsRenderHook::AUTH_LOGIN_FORM_BEFORE, fn (): string => view('filament.login-hero')->render())
+            ->renderHook(PanelsRenderHook::AUTH_LOGIN_FORM_AFTER, fn (): string => view('filament.login-footer')->render())
             ->renderHook(PanelsRenderHook::SIDEBAR_FOOTER, fn (): string => view('filament.sidebar-footer')->render())
             ->discoverResources(in: app_path('Filament/Resources'), for: 'App\Filament\Resources')
             ->discoverPages(in: app_path('Filament/Pages'), for: 'App\Filament\Pages')

@@ -88,6 +88,16 @@ class PaymentsTable
                     'Created' => fn (Payment $r) => $r->created_at,
                 ]),
             ])
+            ->toolbarActions([
+                ExportCsv::bulk('payments', [
+                    'Booking' => fn (Payment $r): ?string => $r->booking?->booking_number,
+                    'Customer' => fn (Payment $r): ?string => $r->customer?->full_name,
+                    'Amount (PHP)' => fn (Payment $r) => $r->amount,
+                    'Method' => fn (Payment $r): ?string => $r->method,
+                    'Status' => fn (Payment $r): ?string => $r->status,
+                    'Created' => fn (Payment $r) => $r->created_at,
+                ]),
+            ])
             ->recordActions([
                 ViewAction::make(),
                 Action::make('refund')

@@ -99,6 +99,16 @@ class BookingsTable
                     'Completed' => fn (Booking $r) => $r->completed_at,
                 ]),
             ])
+            ->toolbarActions([
+                ExportCsv::bulk('bookings', [
+                    'Booking' => fn (Booking $r): ?string => $r->booking_number,
+                    'Status' => fn (Booking $r): ?string => $r->status,
+                    'Customer' => fn (Booking $r): ?string => $r->customer?->full_name,
+                    'Runner' => fn (Booking $r): ?string => $r->runner?->full_name,
+                    'Total (PHP)' => fn (Booking $r) => $r->total_amount,
+                    'Placed' => fn (Booking $r) => $r->created_at,
+                ]),
+            ])
             ->recordActions([
                 ViewAction::make(),
 

@@ -13,6 +13,11 @@ class ListBookings extends ListRecords
 {
     protected static string $resource = BookingResource::class;
 
+    protected function getHeaderWidgets(): array
+    {
+        return [\App\Filament\Resources\Bookings\Widgets\BookingListStats::class];
+    }
+
     public function getTabs(): array
     {
         $c = ListTabs::counts('bookings', Booking::class, 'status');

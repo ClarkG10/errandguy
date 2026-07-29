@@ -8,7 +8,9 @@ use App\Models\RunnerDocument;
 use App\Models\RunnerProfile;
 use App\Support\AdminActivity;
 use Filament\Actions\Action;
+use Filament\Actions\BulkAction;
 use Filament\Actions\ViewAction;
+use Illuminate\Support\Collection;
 use Filament\Forms\Components\Textarea;
 use Filament\Notifications\Notification;
 use Filament\Support\Icons\Heroicon;
@@ -72,6 +74,43 @@ class RunnerProfilesTable
                     'Total earnings (PHP)' => fn (RunnerProfile $r) => $r->total_earnings,
                     'Joined' => fn (RunnerProfile $r) => $r->created_at,
                 ]),
+            ])
+            ->toolbarActions([
+                ExportCsv::bulk('runners', [
+                    'Runner' => fn (RunnerProfile $r): ?string => $r->user?->full_name,
+                    'Phone' => fn (RunnerProfile $r): ?string => $r->user?->phone,
+                    'Verification' => fn (RunnerProfile $r): ?string => $r->verification_status,
+                    'Vehicle' => fn (RunnerProfile $r): ?string => $r->vehicle_type,
+                    'Total earnings (PHP)' => fn (RunnerProfile $r) => $r->total_earnings,
+                ]),
+                BulkAction::make('bulkApprove')
+                    ->label('Approve selected')
+                    ->icon(Heroicon::OutlinedShieldCheck)
+                    ->color('success')
+                    ->requiresConfirmation()
+                    ->modalDescription('Approve every selected runner that is still pending, and notify them.')
+                    ->visible(fn (): bool => static::canModerate())
+                    ->deselectRecordsAfterCompletion()
+                    ->action(function (Collection $records): void {
+                        $approved = 0;
+                        foreach ($records as $record) {
+                            if ($record->verification_status === 'approved') {
+                                continue;
+                            }
+                            $record->update(['verification_status' => 'approved', 'approved_at' => now()]);
+                            RunnerDocument::where('runner_id', $record->id)->where('status', 'pending')->update([
+                                'status' => 'approved',
+                                'reviewed_by' => auth('admin')->id(),
+                                'reviewed_at' => now(),
+                            ]);
+                            \App\Jobs\SendPushJob::dispatch($record->user_id, 'Verification Approved!', 'You can now start accepting errands.');
+                            AdminActivity::log('runner.approved', $record, ['via' => 'bulk']);
+                            $approved++;
+                        }
+                        \Filament\Notifications\Notification::make()
+                            ->title($approved.' runner'.($approved === 1 ? '' : 's').' approved')
+                            ->success()->send();
+                    }),
             ])
             ->recordActions([
                 ViewAction::make(),

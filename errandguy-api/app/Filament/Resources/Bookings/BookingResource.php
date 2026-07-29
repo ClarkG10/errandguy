@@ -44,7 +44,9 @@ class BookingResource extends Resource
 
     public static function getRelations(): array
     {
-        return [];
+        return [
+            RelationManagers\ReviewsRelationManager::class,
+        ];
     }
 
     public static function getPages(): array

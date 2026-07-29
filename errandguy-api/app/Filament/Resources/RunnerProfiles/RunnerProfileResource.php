@@ -42,7 +42,9 @@ class RunnerProfileResource extends Resource
 
     public static function getRelations(): array
     {
-        return [];
+        return [
+            RelationManagers\RunnerErrandsRelationManager::class,
+        ];
     }
 
     public static function getPages(): array

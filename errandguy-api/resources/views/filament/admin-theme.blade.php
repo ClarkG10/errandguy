@@ -119,28 +119,64 @@
     .dark .eg-brand__word-a { color: #e2e8f0; }
     .dark .eg-brand__word-b { color: #60a5fa; }
 
-    /* ---- Login (simple layout): centred brand + soft gradient canvas ----- */
+    /* ====================================================================
+       LOGIN — cinematic, branded, dark-first sign-in
+       ==================================================================== */
     .fi-simple-layout {
-        background:
-            radial-gradient(60rem 60rem at 15% -10%, rgb(37 99 235 / 0.10), transparent 55%),
-            radial-gradient(48rem 48rem at 110% 10%, rgb(234 88 12 / 0.08), transparent 50%);
+        min-height: 100dvh;
+        background-color: #f1f5f9;
+        background-image:
+            radial-gradient(42rem 42rem at 12% -8%, rgb(37 99 235 / 0.16), transparent 55%),
+            radial-gradient(38rem 38rem at 112% 8%, rgb(234 88 12 / 0.12), transparent 52%),
+            radial-gradient(rgb(37 99 235 / 0.06) 1px, transparent 1px);
+        background-size: auto, auto, 22px 22px;
     }
     .dark .fi-simple-layout {
-        background:
-            radial-gradient(60rem 60rem at 15% -10%, rgb(37 99 235 / 0.18), transparent 55%),
-            radial-gradient(48rem 48rem at 110% 10%, rgb(234 88 12 / 0.12), transparent 50%);
+        background-color: #060b16;
+        background-image:
+            radial-gradient(46rem 46rem at 10% -10%, rgb(37 99 235 / 0.30), transparent 55%),
+            radial-gradient(40rem 40rem at 115% 6%, rgb(234 88 12 / 0.18), transparent 52%),
+            radial-gradient(rgb(96 165 250 / 0.07) 1px, transparent 1px);
+        background-size: auto, auto, 24px 24px;
     }
+
+    /* frosted, elevated card with a hairline brand ring */
     .fi-simple-main {
-        box-shadow: var(--eg-shadow-lift);
-        border-radius: 1rem;
+        border-radius: 1.25rem !important;
+        padding: 2.25rem 2rem !important;
+        box-shadow: var(--eg-shadow-lift), 0 0 0 1px rgb(37 99 235 / 0.10);
+        backdrop-filter: blur(6px);
     }
-    .eg-login-tagline {
-        margin-top: 0.25rem;
-        text-align: center;
-        font-size: 0.8125rem;
+    .dark .fi-simple-main {
+        background: rgb(17 26 44 / 0.82) !important;
+        box-shadow: 0 24px 60px -18px rgb(0 0 0 / 0.7), 0 0 0 1px rgb(96 165 250 / 0.14);
+    }
+
+    /* login hero (mascot + welcome) */
+    .eg-login-hero { text-align: center; margin: -0.25rem 0 1.25rem; }
+    .eg-login-mascot {
+        height: 84px; width: auto; margin: 0 auto 0.5rem; display: block;
+        filter: drop-shadow(0 10px 20px rgb(37 99 235 / 0.35));
+    }
+    .eg-login-title { margin: 0; font-size: 1.5rem; font-weight: 800; letter-spacing: -0.02em; }
+    .eg-login-sub {
+        margin: 0.35rem auto 0; max-width: 22rem; font-size: 0.82rem; line-height: 1.5;
         color: rgb(100 116 139);
     }
-    .dark .eg-login-tagline { color: rgb(148 163 184); }
+    .dark .eg-login-sub { color: rgb(148 163 184); }
+
+    /* make the sign-in button full-width + prominent */
+    .fi-simple-main .fi-form-actions .fi-btn { width: 100%; justify-content: center; font-weight: 600; }
+    .fi-simple-main .fi-form-actions { margin-top: 0.25rem; }
+
+    /* secure footer note */
+    .eg-login-foot {
+        margin-top: 1.25rem; padding-top: 1rem; border-top: 1px solid rgb(148 163 184 / 0.18);
+        display: flex; align-items: center; justify-content: center; gap: 0.4rem;
+        font-size: 0.72rem; color: rgb(100 116 139);
+    }
+    .dark .eg-login-foot { color: rgb(148 163 184); border-top-color: rgb(148 163 184 / 0.12); }
+    .eg-login-foot__lock { display: inline-flex; opacity: 0.8; }
 
     /* ---- Sidebar footer signature ---------------------------------------- */
     .eg-sidebar-footer {
