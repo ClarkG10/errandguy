@@ -187,6 +187,91 @@
     }
     .dark .eg-map-caption { color: rgb(148 163 184); }
 
+    /* ======================================================================
+       LAYOUT · SPACING · ALIGNMENT — one rhythm across every page
+       Scale: 4 / 8 / 12 / 16 / 20 / 24px. Everything below snaps to it so
+       padding, margins and gaps are consistent dashboard → tables → forms.
+       ====================================================================== */
+    :root {
+        --eg-s1: .25rem;  --eg-s2: .5rem;   --eg-s3: .75rem;
+        --eg-s4: 1rem;    --eg-s5: 1.25rem; --eg-s6: 1.5rem;  --eg-s8: 2rem;
+    }
+
+    /* Comfortable, consistent page gutter + vertical rhythm between blocks. */
+    .fi-main { padding: var(--eg-s6) var(--eg-s6) var(--eg-s8) !important; }
+    @media (max-width: 640px) { .fi-main { padding: var(--eg-s4) var(--eg-s4) var(--eg-s6) !important; } }
+    .fi-page > .fi-page-content,
+    .fi-page .fi-page-content { row-gap: var(--eg-s6) !important; }
+
+    /* Page header: heading + actions vertically aligned, tidy gap below. */
+    .fi-header { align-items: center; gap: var(--eg-s4); margin-bottom: var(--eg-s2); }
+    .fi-header-heading { line-height: 1.2; letter-spacing: -.02em; }
+    .fi-header-subheading { margin-top: var(--eg-s1); }
+
+    /* ---- Cards / sections: identical padding + internal rhythm ----------- */
+    .fi-section { overflow: hidden; }
+    .fi-section-content { padding: var(--eg-s5) var(--eg-s6) !important; }
+    .fi-section-header { padding: var(--eg-s5) var(--eg-s6) !important; align-items: center; gap: var(--eg-s3); }
+    /* section that has BOTH header and content: no double top padding */
+    .fi-section-header + .fi-section-content-ctn .fi-section-content { padding-top: var(--eg-s2) !important; }
+
+    /* ---- Grids: uniform gap so columns line up on every schema ----------- */
+    .fi-grid { gap: var(--eg-s5) !important; }
+    .fi-schema, .fi-fo-component-ctn, .fi-in-component-ctn { gap: var(--eg-s5) !important; }
+
+    /* ---- Dashboard widget grid: equal gaps + equal-height cards ---------- */
+    .fi-wi { gap: var(--eg-s5) !important; align-items: stretch; }
+    .fi-wi > * { min-width: 0; }               /* prevent chart overflow blowing out columns */
+    .fi-wi-stats-overview-stats-ctn { gap: var(--eg-s5) !important; }
+    .fi-wi-stats-overview-stat {
+        padding: var(--eg-s5) !important;
+        display: flex; flex-direction: column; justify-content: space-between; gap: var(--eg-s2);
+        min-height: 118px;                      /* uniform height whether or not a stat has a sparkline */
+    }
+    .fi-wi-stats-overview-stat-label { font-weight: 600; }
+    .fi-wi-stats-overview-stat-description { margin-top: auto; }
+    /* keep charts from stretching cards unevenly */
+    .fi-wi-chart { display: flex; flex-direction: column; }
+    .fi-wi-chart canvas { flex: 1; }
+
+    /* ---- Infolist entries: label + value aligned on a tidy stack --------- */
+    .fi-in-entry { align-content: start; }
+    .fi-in-entry-label { margin-bottom: var(--eg-s1); line-height: 1.3; }
+    .fi-in-entry .fi-in-entry-value, .fi-in-entry-value-ctn { line-height: 1.45; }
+    /* repeatable rows (timeline logs, docs) get even vertical spacing */
+    .fi-in-repeatable-item { padding: var(--eg-s4) !important; }
+    .fi-in-repeatable > *, .fi-in-repeatable-items { gap: var(--eg-s3) !important; }
+
+    /* ---- Tabs: even padding, aligned icons/labels ------------------------ */
+    .fi-tabs { gap: var(--eg-s1); padding: var(--eg-s1); }
+    .fi-tabs-item { padding: var(--eg-s2) var(--eg-s4) !important; gap: var(--eg-s2); border-radius: 8px; }
+    /* space between the tab strip and the panel below it */
+    .fi-tabs + * { margin-top: var(--eg-s5); }
+
+    /* ---- Tables: consistent cell rhythm, middle-aligned, tidy header ----- */
+    .fi-ta-header-cell, .fi-ta-cell { padding-top: var(--eg-s3) !important; padding-bottom: var(--eg-s3) !important; }
+    .fi-ta-cell { vertical-align: middle; }
+    .fi-ta-header-cell-label { line-height: 1.2; }
+    .fi-ta-row > .fi-ta-cell:first-child { padding-left: var(--eg-s6) !important; }
+    .fi-ta-row > .fi-ta-cell:last-child { padding-right: var(--eg-s6) !important; }
+    .fi-ta-header-row > .fi-ta-header-cell:first-child { padding-left: var(--eg-s6) !important; }
+    /* toolbar (search / filters / header actions) breathes + aligns */
+    .fi-ta-header-toolbar { padding: var(--eg-s4) var(--eg-s6) !important; gap: var(--eg-s3); align-items: center; }
+    .fi-ta-actions { gap: var(--eg-s2) !important; justify-content: flex-end; }
+
+    /* ---- Forms: even field spacing --------------------------------------- */
+    .fi-fo-field-wrp-label { margin-bottom: var(--eg-s1); }
+
+    /* ---- Modals: consistent inner padding -------------------------------- */
+    .fi-modal-content { gap: var(--eg-s4); }
+
+    /* ---- Badges / buttons vertical alignment ----------------------------- */
+    .fi-badge { vertical-align: middle; }
+    .fi-btn { align-items: center; gap: var(--eg-s2); }
+
+    /* ---- Custom entry views (gallery/timeline/map) share the card rhythm - */
+    .eg-map { margin: 0; }
+
     /* ---- Respect reduced motion ------------------------------------------ */
     @media (prefers-reduced-motion: reduce) {
         .fi-wi-stats-overview-stat,

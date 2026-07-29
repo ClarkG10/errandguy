@@ -12,6 +12,7 @@ use Filament\Actions\ViewAction;
 use Filament\Forms\Components\Textarea;
 use Filament\Notifications\Notification;
 use Filament\Support\Icons\Heroicon;
+use Filament\Tables\Columns\Summarizers\Sum;
 use Filament\Tables\Columns\TextColumn;
 use Filament\Tables\Filters\SelectFilter;
 use Filament\Tables\Table;
@@ -46,7 +47,8 @@ class BookingsTable
                     }),
                 TextColumn::make('payment_method')->badge()->color('gray')
                     ->toggleable(isToggledHiddenByDefault: true),
-                TextColumn::make('total_amount')->money('PHP')->sortable(),
+                TextColumn::make('total_amount')->money('PHP')->sortable()
+                    ->summarize(Sum::make()->money('PHP')->label('Total GMV')),
                 TextColumn::make('schedule_type')->badge()->color('gray')
                     ->toggleable(isToggledHiddenByDefault: true),
                 TextColumn::make('created_at')->dateTime()->sortable(),

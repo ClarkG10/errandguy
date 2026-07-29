@@ -6,6 +6,7 @@ use App\Filament\Support\DateRangeFilter;
 use App\Filament\Support\ExportCsv;
 use App\Models\WalletTransaction;
 use Filament\Actions\ViewAction;
+use Filament\Tables\Columns\Summarizers\Sum;
 use Filament\Tables\Columns\TextColumn;
 use Filament\Tables\Filters\SelectFilter;
 use Filament\Tables\Table;
@@ -31,7 +32,8 @@ class WalletTransactionsTable
                     ->money('PHP')
                     ->sortable()
                     // Negative amounts read as debits against the wallet.
-                    ->color(fn ($state): string => (float) $state < 0 ? 'danger' : 'success'),
+                    ->color(fn ($state): string => (float) $state < 0 ? 'danger' : 'success')
+                    ->summarize(Sum::make()->money('PHP')->label('Net')),
                 TextColumn::make('balance_after')
                     ->money('PHP')
                     ->toggleable(isToggledHiddenByDefault: true),

@@ -40,7 +40,12 @@ class UserResource extends Resource
 
     public static function getRelations(): array
     {
-        return [];
+        return [
+            RelationManagers\CustomerBookingsRelationManager::class,
+            RelationManagers\RunnerBookingsRelationManager::class,
+            RelationManagers\WalletTransactionsRelationManager::class,
+            RelationManagers\ReviewsRelationManager::class,
+        ];
     }
 
     public static function getPages(): array

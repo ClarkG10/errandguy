@@ -11,6 +11,7 @@ use Filament\Actions\ViewAction;
 use Filament\Forms\Components\Textarea;
 use Filament\Notifications\Notification;
 use Filament\Support\Icons\Heroicon;
+use Filament\Tables\Columns\Summarizers\Sum;
 use Filament\Tables\Columns\TextColumn;
 use Filament\Tables\Filters\SelectFilter;
 use Filament\Tables\Table;
@@ -29,7 +30,8 @@ class PaymentsTable
                     ->searchable(),
                 TextColumn::make('amount')
                     ->money('PHP')
-                    ->sortable(),
+                    ->sortable()
+                    ->summarize(Sum::make()->money('PHP')->label('Total')),
                 TextColumn::make('method')
                     ->badge()
                     ->toggleable(),
