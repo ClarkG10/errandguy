@@ -2,6 +2,8 @@
 
 namespace App\Filament\Resources\Notifications\Tables;
 
+use App\Filament\Support\ExportCsv;
+use App\Models\Notification;
 use Filament\Actions\ViewAction;
 use Filament\Tables\Columns\IconColumn;
 use Filament\Tables\Columns\TextColumn;
@@ -42,6 +44,15 @@ class NotificationsTable
                         ->all()),
                 TernaryFilter::make('is_read')
                     ->label('Read'),
+            ])
+            ->headerActions([
+                ExportCsv::make('notifications', [
+                    'User' => fn (Notification $r): ?string => $r->user?->full_name,
+                    'Title' => fn (Notification $r): ?string => $r->title,
+                    'Type' => fn (Notification $r): ?string => $r->type,
+                    'Read' => fn (Notification $r): bool => (bool) $r->is_read,
+                    'Created' => fn (Notification $r) => $r->created_at,
+                ]),
             ])
             ->recordActions([
                 ViewAction::make(),

@@ -2,8 +2,10 @@
 
 namespace App\Filament\Resources\RunnerProfiles\Tables;
 
+use App\Filament\Support\ExportCsv;
 use App\Models\AdminUser;
 use App\Models\RunnerDocument;
+use App\Models\RunnerProfile;
 use App\Support\AdminActivity;
 use Filament\Actions\Action;
 use Filament\Actions\ViewAction;
@@ -57,6 +59,19 @@ class RunnerProfilesTable
                     'rejected' => 'Rejected',
                 ]),
                 TernaryFilter::make('is_online'),
+            ])
+            ->headerActions([
+                ExportCsv::make('runners', [
+                    'Runner' => fn (RunnerProfile $r): ?string => $r->user?->full_name,
+                    'Phone' => fn (RunnerProfile $r): ?string => $r->user?->phone,
+                    'Verification' => fn (RunnerProfile $r): ?string => $r->verification_status,
+                    'Vehicle' => fn (RunnerProfile $r): ?string => $r->vehicle_type,
+                    'Plate' => fn (RunnerProfile $r): ?string => $r->vehicle_plate,
+                    'Online' => fn (RunnerProfile $r): bool => (bool) $r->is_online,
+                    'Total errands' => fn (RunnerProfile $r) => $r->total_errands,
+                    'Total earnings (PHP)' => fn (RunnerProfile $r) => $r->total_earnings,
+                    'Joined' => fn (RunnerProfile $r) => $r->created_at,
+                ]),
             ])
             ->recordActions([
                 ViewAction::make(),

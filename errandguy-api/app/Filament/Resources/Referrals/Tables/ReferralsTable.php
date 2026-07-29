@@ -2,6 +2,8 @@
 
 namespace App\Filament\Resources\Referrals\Tables;
 
+use App\Filament\Support\ExportCsv;
+use App\Models\Referral;
 use App\Support\AdminActivity;
 use Filament\Actions\Action;
 use Filament\Actions\ViewAction;
@@ -50,6 +52,17 @@ class ReferralsTable
                         'qualified' => 'Qualified',
                         'rewarded' => 'Rewarded',
                     ]),
+            ])
+            ->headerActions([
+                ExportCsv::make('referrals', [
+                    'Referrer' => fn (Referral $r): ?string => $r->referrer?->full_name,
+                    'Referee' => fn (Referral $r): ?string => $r->referee?->full_name,
+                    'Status' => fn (Referral $r): ?string => $r->status,
+                    'Reward (PHP)' => fn (Referral $r) => $r->reward_amount,
+                    'Qualified' => fn (Referral $r) => $r->qualified_at,
+                    'Rewarded' => fn (Referral $r) => $r->rewarded_at,
+                    'Created' => fn (Referral $r) => $r->created_at,
+                ]),
             ])
             ->recordActions([
                 ViewAction::make(),

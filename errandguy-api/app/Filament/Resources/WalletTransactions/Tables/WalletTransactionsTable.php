@@ -2,6 +2,9 @@
 
 namespace App\Filament\Resources\WalletTransactions\Tables;
 
+use App\Filament\Support\DateRangeFilter;
+use App\Filament\Support\ExportCsv;
+use App\Models\WalletTransaction;
 use Filament\Actions\ViewAction;
 use Filament\Tables\Columns\TextColumn;
 use Filament\Tables\Filters\SelectFilter;
@@ -65,6 +68,19 @@ class WalletTransactionsTable
                         'pending' => 'Pending',
                         'failed' => 'Failed',
                     ]),
+                DateRangeFilter::make('created_at', 'Date'),
+            ])
+            ->headerActions([
+                ExportCsv::make('wallet-transactions', [
+                    'User' => fn (WalletTransaction $r): ?string => $r->user?->full_name,
+                    'Type' => fn (WalletTransaction $r): ?string => $r->type,
+                    'Amount (PHP)' => fn (WalletTransaction $r) => $r->amount,
+                    'Balance after (PHP)' => fn (WalletTransaction $r) => $r->balance_after,
+                    'Status' => fn (WalletTransaction $r): ?string => $r->status,
+                    'Description' => fn (WalletTransaction $r): ?string => $r->description,
+                    'Reference' => fn (WalletTransaction $r): ?string => $r->reference_id,
+                    'Created' => fn (WalletTransaction $r) => $r->created_at,
+                ]),
             ])
             ->recordActions([
                 ViewAction::make(),

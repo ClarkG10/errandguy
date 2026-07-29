@@ -2,6 +2,8 @@
 
 namespace App\Filament\Resources\DisputeTickets\Tables;
 
+use App\Filament\Support\ExportCsv;
+use App\Models\DisputeTicket;
 use App\Support\AdminActivity;
 use Filament\Actions\Action;
 use Filament\Actions\ViewAction;
@@ -50,6 +52,16 @@ class DisputeTicketsTable
                         'resolved' => 'Resolved',
                         'escalated' => 'Escalated',
                     ]),
+            ])
+            ->headerActions([
+                ExportCsv::make('disputes', [
+                    'Booking' => fn (DisputeTicket $r): ?string => $r->booking?->booking_number,
+                    'Reporter' => fn (DisputeTicket $r): ?string => $r->reporter?->full_name,
+                    'Category' => fn (DisputeTicket $r): ?string => $r->category,
+                    'Status' => fn (DisputeTicket $r): ?string => $r->status,
+                    'Created' => fn (DisputeTicket $r) => $r->created_at,
+                    'Resolved' => fn (DisputeTicket $r) => $r->resolved_at,
+                ]),
             ])
             ->recordActions([
                 ViewAction::make(),

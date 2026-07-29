@@ -2,6 +2,8 @@
 
 namespace App\Filament\Resources\PromoCodes\Tables;
 
+use App\Filament\Support\ExportCsv;
+use App\Models\PromoCode;
 use Filament\Actions\BulkActionGroup;
 use Filament\Actions\DeleteBulkAction;
 use Filament\Actions\EditAction;
@@ -40,6 +42,17 @@ class PromoCodesTable
             ])
             ->filters([
                 TernaryFilter::make('is_active')->label('Active'),
+            ])
+            ->headerActions([
+                ExportCsv::make('promo-codes', [
+                    'Code' => fn (PromoCode $r): ?string => $r->code,
+                    'Discount type' => fn (PromoCode $r): ?string => $r->discount_type,
+                    'Value' => fn (PromoCode $r) => $r->discount_value,
+                    'Used' => fn (PromoCode $r) => $r->used_count,
+                    'Usage limit' => fn (PromoCode $r) => $r->usage_limit,
+                    'Active' => fn (PromoCode $r): bool => (bool) $r->is_active,
+                    'Valid until' => fn (PromoCode $r) => $r->valid_until,
+                ]),
             ])
             ->recordActions([
                 EditAction::make(),

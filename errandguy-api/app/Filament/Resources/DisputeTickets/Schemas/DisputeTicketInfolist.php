@@ -2,10 +2,12 @@
 
 namespace App\Filament\Resources\DisputeTickets\Schemas;
 
-use Filament\Infolists\Components\ImageEntry;
+use App\Models\DisputeTicket;
 use Filament\Infolists\Components\TextEntry;
+use Filament\Infolists\Components\ViewEntry;
 use Filament\Schemas\Components\Section;
 use Filament\Schemas\Schema;
+use Filament\Support\Enums\TextSize;
 
 class DisputeTicketInfolist
 {
@@ -13,9 +15,16 @@ class DisputeTicketInfolist
     {
         return $schema
             ->components([
-                Section::make('Dispute')
-                    ->columns(2)
+                // ---- Dispute hero ----
+                Section::make()
+                    ->columns(4)
                     ->schema([
+                        TextEntry::make('category')
+                            ->label('Category')
+                            ->weight('bold')
+                            ->size(TextSize::Large)
+                            ->placeholder('Dispute')
+                            ->columnSpan(2),
                         TextEntry::make('status')
                             ->badge()
                             ->color(fn (string $state): string => match ($state) {
@@ -24,22 +33,30 @@ class DisputeTicketInfolist
                                 'escalated' => 'danger',
                                 default => 'gray',
                             }),
-                        TextEntry::make('category')->placeholder('—'),
-                        TextEntry::make('reporter.full_name')->label('Reporter')->placeholder('—'),
+                        TextEntry::make('created_at')->label('Opened')->since()->dateTimeTooltip(),
+                        TextEntry::make('reporter.full_name')->label('Reporter')->icon('heroicon-m-user')->placeholder('—'),
                         TextEntry::make('booking.booking_number')->label('Booking')->placeholder('—'),
-                        TextEntry::make('created_at')->dateTime(),
                         TextEntry::make('description')->columnSpanFull()->placeholder('—'),
                     ]),
+
+                // ---- Evidence (click to enlarge) ----
                 Section::make('Evidence')
                     ->schema([
-                        ImageEntry::make('evidence_urls')
+                        ViewEntry::make('evidence_gallery')
                             ->hiddenLabel()
-                            ->placeholder('No evidence attached'),
+                            ->view('filament.entries.image-gallery', fn (DisputeTicket $record): array => [
+                                'images' => collect((array) ($record->evidence_urls ?? []))
+                                    ->map(fn ($url, $i): array => ['label' => 'Evidence '.((int) $i + 1), 'url' => $url])
+                                    ->values()
+                                    ->all(),
+                            ]),
                     ]),
+
+                // ---- Resolution ----
                 Section::make('Resolution')
                     ->columns(2)
                     ->schema([
-                        TextEntry::make('resolution')->columnSpanFull()->placeholder('—'),
+                        TextEntry::make('resolution')->columnSpanFull()->placeholder('Not yet resolved'),
                         TextEntry::make('resolved_by')->placeholder('—'),
                         TextEntry::make('resolved_at')->dateTime()->placeholder('—'),
                     ]),

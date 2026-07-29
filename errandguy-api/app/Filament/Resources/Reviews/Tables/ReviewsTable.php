@@ -2,7 +2,9 @@
 
 namespace App\Filament\Resources\Reviews\Tables;
 
+use App\Filament\Support\ExportCsv;
 use App\Models\AdminUser;
+use App\Models\Review;
 use App\Support\AdminActivity;
 use Filament\Actions\Action;
 use Filament\Actions\DeleteAction;
@@ -35,6 +37,17 @@ class ReviewsTable
             ])
             ->filters([
                 TernaryFilter::make('is_flagged'),
+            ])
+            ->headerActions([
+                ExportCsv::make('reviews', [
+                    'Booking' => fn (Review $r): ?string => $r->booking?->booking_number,
+                    'Reviewer' => fn (Review $r): ?string => $r->reviewer?->full_name,
+                    'Reviewee' => fn (Review $r): ?string => $r->reviewee?->full_name,
+                    'Rating' => fn (Review $r) => $r->rating,
+                    'Comment' => fn (Review $r): ?string => $r->comment,
+                    'Flagged' => fn (Review $r): bool => (bool) $r->is_flagged,
+                    'Created' => fn (Review $r) => $r->created_at,
+                ]),
             ])
             ->recordActions([
                 ViewAction::make(),

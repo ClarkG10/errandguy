@@ -2,7 +2,10 @@
 
 namespace App\Filament\Resources\Users\Tables;
 
+use App\Filament\Support\DateRangeFilter;
+use App\Filament\Support\ExportCsv;
 use App\Models\AdminUser;
+use App\Models\User;
 use App\Support\AdminActivity;
 use Filament\Actions\Action;
 use Filament\Actions\ViewAction;
@@ -58,6 +61,19 @@ class UsersTable
                     'suspended' => 'Suspended',
                 ]),
                 TernaryFilter::make('email_verified'),
+                DateRangeFilter::make('created_at', 'Joined'),
+            ])
+            ->headerActions([
+                ExportCsv::make('users', [
+                    'Name' => fn (User $r): ?string => $r->full_name,
+                    'Phone' => fn (User $r): ?string => $r->phone,
+                    'Email' => fn (User $r): ?string => $r->email,
+                    'Role' => fn (User $r): ?string => $r->role,
+                    'Status' => fn (User $r): ?string => $r->status,
+                    'Wallet balance (PHP)' => fn (User $r) => $r->wallet_balance,
+                    'Avg rating' => fn (User $r) => $r->avg_rating,
+                    'Joined' => fn (User $r) => $r->created_at,
+                ]),
             ])
             ->recordActions([
                 ViewAction::make(),

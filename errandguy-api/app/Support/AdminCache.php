@@ -18,6 +18,14 @@ class AdminCache
     public const BADGE_DISPUTES = 'admin:badge:disputes';
     public const BADGE_SUPPORT = 'admin:badge:support';
     public const BADGE_PAYOUTS = 'admin:badge:payouts';
+    public const BADGE_VERIFICATIONS = 'admin:badge:verifications';
+    public const QUEUE = 'admin:dashboard:queue';
+    public const TOP_RUNNERS = 'admin:dashboard:top-runners';
+    public const CHART_REVENUE = 'admin:chart:revenue';
+    public const CHART_BOOKINGS = 'admin:chart:bookings';
+    public const CHART_STATUS = 'admin:chart:status';
+    public const CHART_PAYMENT_MIX = 'admin:chart:payment-mix';
+    public const CHART_USER_GROWTH = 'admin:chart:user-growth';
 
     private const KEYS = [
         self::STATS,
@@ -25,12 +33,26 @@ class AdminCache
         self::BADGE_DISPUTES,
         self::BADGE_SUPPORT,
         self::BADGE_PAYOUTS,
+        self::BADGE_VERIFICATIONS,
+        self::QUEUE,
+        self::TOP_RUNNERS,
+        self::CHART_REVENUE,
+        self::CHART_BOOKINGS,
+        self::CHART_STATUS,
+        self::CHART_PAYMENT_MIX,
+        self::CHART_USER_GROWTH,
     ];
 
     /** Cache a value under $key for the short (60s) TTL. */
     public static function remember(string $key, callable $callback): mixed
     {
         return CacheService::rememberShort($key, $callback);
+    }
+
+    /** Cache a value under $key for a custom TTL (e.g. charts change slowly). */
+    public static function rememberFor(string $key, int $ttl, callable $callback): mixed
+    {
+        return CacheService::remember($key, $callback, $ttl);
     }
 
     /** Invalidate all admin dashboard/badge caches (call after a mutation). */

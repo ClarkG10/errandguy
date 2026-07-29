@@ -53,6 +53,46 @@ class RunnerProfileResource extends Resource
         ];
     }
 
+    /** Sidebar badge: runners awaiting verification (the review queue). */
+    public static function getNavigationBadge(): ?string
+    {
+        $n = \App\Support\AdminCache::remember(
+            \App\Support\AdminCache::BADGE_VERIFICATIONS,
+            fn () => RunnerProfile::where('verification_status', 'pending')->count(),
+        );
+
+        return $n ? (string) $n : null;
+    }
+
+    public static function getNavigationBadgeColor(): ?string
+    {
+        return 'warning';
+    }
+
+    public static function getNavigationBadgeTooltip(): ?string
+    {
+        return 'Runners awaiting verification';
+    }
+
+    /** Global search (top bar): find runners by name, plate, or phone. */
+    public static function getGloballySearchableAttributes(): array
+    {
+        return ['user.full_name', 'user.phone', 'vehicle_plate'];
+    }
+
+    public static function getGlobalSearchResultTitle(Model $record): string
+    {
+        return $record->user?->full_name ?? 'Runner';
+    }
+
+    public static function getGlobalSearchResultDetails(Model $record): array
+    {
+        return [
+            'Status' => ucfirst((string) $record->verification_status),
+            'Vehicle' => $record->vehicle_type ? ucfirst((string) $record->vehicle_type) : '—',
+        ];
+    }
+
     // --- Authorization: any signed-in admin can browse; view-only ---
 
     public static function canViewAny(): bool

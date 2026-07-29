@@ -28,6 +28,11 @@ class PromoCodeResource extends Resource
 
     protected static ?string $recordTitleAttribute = 'code';
 
+    public static function getGloballySearchableAttributes(): array
+    {
+        return ['code', 'description'];
+    }
+
     public static function form(Schema $schema): Schema
     {
         return PromoCodeForm::configure($schema);

@@ -58,6 +58,11 @@ class SupportTicketResource extends Resource
         ];
     }
 
+    public static function getGloballySearchableAttributes(): array
+    {
+        return ['subject'];
+    }
+
     public static function getNavigationBadge(): ?string
     {
         $n = \App\Support\AdminCache::remember(

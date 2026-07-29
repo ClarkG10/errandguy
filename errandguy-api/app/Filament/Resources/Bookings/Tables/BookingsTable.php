@@ -2,7 +2,10 @@
 
 namespace App\Filament\Resources\Bookings\Tables;
 
+use App\Filament\Support\DateRangeFilter;
+use App\Filament\Support\ExportCsv;
 use App\Models\AdminUser;
+use App\Models\Booking;
 use App\Support\AdminActivity;
 use Filament\Actions\Action;
 use Filament\Actions\ViewAction;
@@ -77,6 +80,21 @@ class BookingsTable
                     'maya' => 'Maya',
                     'card' => 'Card',
                     'cash' => 'Cash',
+                ]),
+                DateRangeFilter::make('created_at', 'Date placed'),
+            ])
+            ->headerActions([
+                ExportCsv::make('bookings', [
+                    'Booking' => fn (Booking $r): ?string => $r->booking_number,
+                    'Status' => fn (Booking $r): ?string => $r->status,
+                    'Payment status' => fn (Booking $r): ?string => $r->payment_status,
+                    'Payment method' => fn (Booking $r): ?string => $r->payment_method,
+                    'Customer' => fn (Booking $r): ?string => $r->customer?->full_name,
+                    'Runner' => fn (Booking $r): ?string => $r->runner?->full_name,
+                    'Total (PHP)' => fn (Booking $r) => $r->total_amount,
+                    'Runner payout (PHP)' => fn (Booking $r) => $r->runner_payout,
+                    'Placed' => fn (Booking $r) => $r->created_at,
+                    'Completed' => fn (Booking $r) => $r->completed_at,
                 ]),
             ])
             ->recordActions([

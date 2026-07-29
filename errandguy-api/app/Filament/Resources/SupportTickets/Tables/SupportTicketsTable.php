@@ -2,6 +2,8 @@
 
 namespace App\Filament\Resources\SupportTickets\Tables;
 
+use App\Filament\Support\ExportCsv;
+use App\Models\SupportTicket;
 use App\Support\AdminActivity;
 use Filament\Actions\Action;
 use Filament\Actions\ViewAction;
@@ -50,6 +52,16 @@ class SupportTicketsTable
                         'resolved' => 'Resolved',
                         'closed' => 'Closed',
                     ]),
+            ])
+            ->headerActions([
+                ExportCsv::make('support-tickets', [
+                    'Subject' => fn (SupportTicket $r): ?string => $r->subject,
+                    'User' => fn (SupportTicket $r): ?string => $r->user?->full_name,
+                    'Category' => fn (SupportTicket $r): ?string => $r->category,
+                    'Status' => fn (SupportTicket $r): ?string => $r->status,
+                    'Last message' => fn (SupportTicket $r) => $r->last_message_at,
+                    'Created' => fn (SupportTicket $r) => $r->created_at,
+                ]),
             ])
             ->recordActions([
                 ViewAction::make(),

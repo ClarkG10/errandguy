@@ -2,6 +2,9 @@
 
 namespace App\Filament\Resources\Payments\Tables;
 
+use App\Filament\Support\DateRangeFilter;
+use App\Filament\Support\ExportCsv;
+use App\Models\Payment;
 use App\Support\AdminActivity;
 use Filament\Actions\Action;
 use Filament\Actions\ViewAction;
@@ -68,6 +71,20 @@ class PaymentsTable
                         'card' => 'Card',
                         'cash' => 'Cash',
                     ]),
+                DateRangeFilter::make('created_at', 'Date'),
+            ])
+            ->headerActions([
+                ExportCsv::make('payments', [
+                    'Booking' => fn (Payment $r): ?string => $r->booking?->booking_number,
+                    'Customer' => fn (Payment $r): ?string => $r->customer?->full_name,
+                    'Amount (PHP)' => fn (Payment $r) => $r->amount,
+                    'Method' => fn (Payment $r): ?string => $r->method,
+                    'Status' => fn (Payment $r): ?string => $r->status,
+                    'Gateway Tx ID' => fn (Payment $r): ?string => $r->gateway_tx_id,
+                    'Paid at' => fn (Payment $r) => $r->paid_at,
+                    'Refund amount (PHP)' => fn (Payment $r) => $r->refund_amount,
+                    'Created' => fn (Payment $r) => $r->created_at,
+                ]),
             ])
             ->recordActions([
                 ViewAction::make(),

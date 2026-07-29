@@ -2,6 +2,8 @@
 
 namespace App\Filament\Resources\SOSAlerts\Tables;
 
+use App\Filament\Support\ExportCsv;
+use App\Models\SOSAlert;
 use App\Support\AdminActivity;
 use Filament\Actions\Action;
 use Filament\Actions\ViewAction;
@@ -50,6 +52,17 @@ class SOSAlertsTable
                         'resolved' => 'Resolved',
                     ])
                     ->default('active'),
+            ])
+            ->headerActions([
+                ExportCsv::make('sos-alerts', [
+                    'Booking' => fn (SOSAlert $r): ?string => $r->booking?->booking_number,
+                    'Customer' => fn (SOSAlert $r): ?string => $r->customer?->full_name,
+                    'Runner' => fn (SOSAlert $r): ?string => $r->runner?->full_name,
+                    'Status' => fn (SOSAlert $r): ?string => $r->status,
+                    'Triggered' => fn (SOSAlert $r) => $r->triggered_at,
+                    'Resolved' => fn (SOSAlert $r) => $r->resolved_at,
+                    'Contacts notified' => fn (SOSAlert $r): bool => (bool) $r->contacts_notified,
+                ]),
             ])
             ->recordActions([
                 ViewAction::make(),
