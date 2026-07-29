@@ -2,12 +2,11 @@
 
 namespace App\Filament\Resources\Referrals\Tables;
 
+use App\Filament\Support\AdminNotify;
 use App\Filament\Support\ExportCsv;
 use App\Models\Referral;
-use App\Support\AdminActivity;
 use Filament\Actions\Action;
 use Filament\Actions\ViewAction;
-use Filament\Notifications\Notification;
 use Filament\Support\Icons\Heroicon;
 use Filament\Tables\Columns\TextColumn;
 use Filament\Tables\Filters\SelectFilter;
@@ -76,10 +75,14 @@ class ReferralsTable
                     ->action(function ($record): void {
                         try {
                             app(\App\Services\ReferralService::class)->reward($record->referee_id);
-                            AdminActivity::log('referral.rewarded', $record);
-                            Notification::make()->title('Referral rewarded')->success()->send();
+                            AdminNotify::success(
+                                'Referral rewarded',
+                                $record,
+                                context: ['Reward' => '₱'.number_format((float) $record->reward_amount, 2)],
+                                audit: 'referral.rewarded',
+                            );
                         } catch (\Throwable $e) {
-                            Notification::make()->title('Failed')->body($e->getMessage())->danger()->send();
+                            AdminNotify::error('Could not reward referral', $e, $record);
                         }
                     }),
             ]);

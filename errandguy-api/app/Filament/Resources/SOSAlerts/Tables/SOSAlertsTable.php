@@ -2,13 +2,12 @@
 
 namespace App\Filament\Resources\SOSAlerts\Tables;
 
+use App\Filament\Support\AdminNotify;
 use App\Filament\Support\ExportCsv;
 use App\Models\SOSAlert;
-use App\Support\AdminActivity;
 use Filament\Actions\Action;
 use Filament\Actions\ViewAction;
 use Filament\Forms\Components\Textarea;
-use Filament\Notifications\Notification;
 use Filament\Support\Icons\Heroicon;
 use Filament\Tables\Columns\TextColumn;
 use Filament\Tables\Filters\SelectFilter;
@@ -86,10 +85,15 @@ class SOSAlertsTable
                                 $record->update(['resolution_note' => $data['note']]);
                             }
 
-                            AdminActivity::log('sos.resolved', $record, ['note' => $data['note'] ?? null]);
-                            Notification::make()->title('SOS resolved')->success()->send();
+                            AdminNotify::success(
+                                'SOS alert resolved',
+                                $record,
+                                context: ['Booking' => $record->booking?->booking_number],
+                                audit: 'sos.resolved',
+                                properties: ['note' => $data['note'] ?? null],
+                            );
                         } catch (\Throwable $e) {
-                            Notification::make()->title($e->getMessage())->danger()->send();
+                            AdminNotify::error('Could not resolve SOS alert', $e, $record);
                         }
                     }),
             ]);
