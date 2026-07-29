@@ -22,6 +22,9 @@ import { useResponsive } from '../../../constants/responsive';
 import { CacheTTL } from '../../../services/cache.service';
 import { formatCurrency } from '../../../utils/formatCurrency';
 import { toast } from '../../../stores/toastStore';
+import { errorMessage } from '../../../utils/errorCatalog';
+import { copy } from '../../../constants/copy';
+import { haptics } from '../../../utils/haptics';
 import type { WalletTransaction } from '../../../types';
 import { LightColors, Elevation } from '../../../constants/colors';
 
@@ -170,7 +173,8 @@ export default function PayoutScreen() {
       toast.success('Payout information updated');
       await onRefresh();
     } catch (err: any) {
-      toast.error(err?.message ?? err?.response?.data?.message ?? 'Failed to update');
+      haptics.error();
+      toast.error(errorMessage(err, copy.profile.saveFailed));
     } finally {
       setSaving(false);
     }
@@ -178,11 +182,13 @@ export default function PayoutScreen() {
 
   const handleRequestPayout = () => {
     if (requestedAmount < MIN_PAYOUT) {
-      toast.error(`Minimum payout is ${formatCurrency(MIN_PAYOUT)}`);
+      haptics.warning();
+      toast.error(`The minimum payout is ${formatCurrency(MIN_PAYOUT)}. Enter at least that amount.`);
       return;
     }
     if (requestedAmount > balance) {
-      toast.error('Amount exceeds your available balance');
+      haptics.warning();
+      toast.error(`That's more than your available balance of ${formatCurrency(balance)}. Lower the amount and try again.`);
       return;
     }
     setShowRequestModal(true);
@@ -212,8 +218,10 @@ export default function PayoutScreen() {
       toast.success('Payout request submitted');
       await onRefresh();
     } catch (err: any) {
-      // Keep the key so a retry of THIS payout dedupes server-side.
-      toast.error(err?.message ?? err?.response?.data?.message ?? 'Failed to request payout');
+      // Keep the key so a retry of THIS payout dedupes server-side. Copy is
+      // honest per code (insufficient balance / below minimum / no method).
+      haptics.error();
+      toast.error(errorMessage(err, copy.wallet.payoutFailed));
     } finally {
       setRequesting(false);
       confirmLatch.current = false;

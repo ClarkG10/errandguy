@@ -242,7 +242,7 @@ class WalletTopUpTest extends TestCase
             ->assertStatus(422);
     }
 
-    public function test_gateway_rejection_returns_clean_502_not_500(): void
+    public function test_gateway_rejection_returns_a_clean_422_never_a_masked_5xx(): void
     {
         // Simulate Xendit rejecting the request (e.g. the API key lacks the
         // Invoice permission — the real-world REQUEST_FORBIDDEN_ERROR).
@@ -256,9 +256,15 @@ class WalletTopUpTest extends TestCase
         $response = $this->actingAs($this->user)
             ->postJson('/api/v1/wallet/top-up', ['amount' => 500]);
 
-        // A clean, actionable error — not a raw 500 "Server Error".
-        $response->assertStatus(502)
-            ->assertJsonStructure(['message']);
+        // A gateway rejection must surface as a clean, honest 422 through the
+        // standardized envelope — never a 502/503 (Cloudflare masks those and
+        // the mobile client discards >=500 messages). The friendly copy tells
+        // the user they weren't charged, and the raw gateway text never leaks.
+        $response->assertStatus(422)
+            ->assertJsonPath('success', false)
+            ->assertJsonPath('code', 'PAYMENT_GATEWAY_ERROR');
+        $this->assertStringContainsString('weren’t charged', (string) $response->json('message'));
+        $this->assertStringNotContainsString('API key is forbidden', (string) $response->json('message'));
 
         // Balance untouched, and the pending row is marked failed (not left
         // lingering as a fake "pending top-up").

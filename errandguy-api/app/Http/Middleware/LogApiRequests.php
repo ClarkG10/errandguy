@@ -74,6 +74,10 @@ class LogApiRequests
             'duration_ms' => $duration,
             'queries' => $queries,
             'user_id' => $request->user()?->id,
+            // Correlation id assigned by AssignRequestId (runs before this
+            // middleware). Also present via Log::withContext, but made explicit
+            // here so it survives context stripping and stays greppable.
+            'request_id' => $request->attributes->get('request_id'),
         ];
 
         if ($isError) {

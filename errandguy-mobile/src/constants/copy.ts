@@ -1,0 +1,71 @@
+/**
+ * App-OWNED user-facing strings — the copy that is NOT inherited from the
+ * backend `message`. Follows the static-map convention of `statusLabels.ts`
+ * (data only, no logic; error resolution lives in `errorCatalog.ts`).
+ *
+ * Two uses:
+ *   • Success confirmations shown after an action the client considers done.
+ *   • Domain fallbacks passed to `errorMessage(err, copy.<domain>.<x>)` so a
+ *     failure with no useful backend message still reads specifically.
+ *
+ * Copy convention: full sentences, sentence case, end with a period, honest and
+ * action-oriented. Keep terminology aligned with the backend `Messages` catalog.
+ */
+export const copy = {
+  auth: {
+    loginSuccess: 'Welcome back!',
+    signupSuccess: 'Your account is ready.',
+    loggedOut: 'You’ve been signed out.',
+    otpResent: 'We’ve sent a new code.',
+    otpResendFailed: 'Couldn’t send a new code. Please try again in a moment.',
+    resetSent: 'If an account exists for that email, a reset link is on its way.',
+  },
+  booking: {
+    created: 'Booking placed — finding you a runner.',
+    createFailed: 'Couldn’t place your booking. Please try again.',
+    cancelled: 'Booking cancelled.',
+    cancelFailed: 'Couldn’t cancel this booking. Please try again.',
+    rated: 'Thanks — your review has been submitted.',
+    rateFailed: 'Couldn’t submit your review. Please try again.',
+  },
+  wallet: {
+    topupStartFailed: 'Couldn’t start your top-up. Please try again in a moment.',
+    payoutRequested: 'Payout requested — we’ll notify you when it’s sent.',
+    payoutFailed: 'Couldn’t request your payout. Please try again.',
+  },
+  profile: {
+    saved: 'Your changes have been saved.',
+    saveFailed: 'Couldn’t save your changes. Please try again.',
+    avatarUploadFailed: 'Couldn’t upload your photo. Please try again.',
+    deleteAccountFailed: 'Couldn’t delete your account. Please try again or contact support.',
+  },
+  address: {
+    saved: 'Address saved.',
+    saveFailed: 'Couldn’t save this address. Please try again.',
+    updateFailed: 'Couldn’t update this address. Please try again.',
+    deleteFailed: 'Couldn’t remove this address. Please try again.',
+  },
+  runner: {
+    statusUpdateFailed: 'Couldn’t update the errand status. Please try again.',
+    receiptSubmitFailed: 'Couldn’t submit the receipt. Please try again.',
+    acceptFailed: 'Couldn’t accept this errand — it may have been taken.',
+    toggleFailed: 'Couldn’t change your online status. Please try again.',
+    documentUploadFailed: 'Couldn’t upload your document. Please try again.',
+    vehicleSaveFailed: 'Couldn’t update your vehicle details. Please try again.',
+  },
+  chat: {
+    sendFailed: 'Message didn’t send. Tap to retry.',
+    imageSendFailed: 'Couldn’t send your image. Please try again.',
+  },
+  safety: {
+    sosFailed: 'Couldn’t trigger SOS. Please try again, or call for help directly.',
+    shareTripFailed: 'Couldn’t share your trip. Please try again.',
+    contactSaveFailed: 'Couldn’t save this contact. Please try again.',
+    contactRemoveFailed: 'Couldn’t remove this contact. Please try again.',
+  },
+  generic: {
+    saveFailed: 'Couldn’t save your changes. Please try again.',
+    loadMoreFailed: 'Couldn’t load more. Pull to refresh or try again.',
+    tryAgain: 'Please try again.',
+  },
+} as const;

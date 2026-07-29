@@ -2,14 +2,13 @@
 
 namespace App\Filament\Resources\Payments\Tables;
 
+use App\Filament\Support\AdminNotify;
 use App\Filament\Support\DateRangeFilter;
 use App\Filament\Support\ExportCsv;
 use App\Models\Payment;
-use App\Support\AdminActivity;
 use Filament\Actions\Action;
 use Filament\Actions\ViewAction;
 use Filament\Forms\Components\Textarea;
-use Filament\Notifications\Notification;
 use Filament\Support\Icons\Heroicon;
 use Filament\Tables\Columns\Summarizers\Sum;
 use Filament\Tables\Columns\TextColumn;
@@ -133,14 +132,21 @@ class PaymentsTable
                             } else {
                                 $service->refundToWallet($record->id, $data['reason']);
                             }
-                            AdminActivity::log('payment.refunded', $record, [
-                                'method' => $record->method,
-                                'amount' => 'full',
-                                'reason' => $data['reason'],
-                            ]);
-                            Notification::make()->title('Refund processed')->success()->send();
+                            AdminNotify::success(
+                                'Refund processed',
+                                $record,
+                                context: [
+                                    'Amount' => '₱'.number_format((float) $record->amount, 2),
+                                    'Method' => ucfirst((string) $record->method),
+                                    'Customer' => $record->customer?->full_name,
+                                ],
+                                audit: 'payment.refunded',
+                                properties: ['method' => $record->method, 'amount' => 'full', 'reason' => $data['reason']],
+                            );
                         } catch (\Throwable $e) {
-                            Notification::make()->title('Refund failed')->body($e->getMessage())->danger()->send();
+                            AdminNotify::error('Refund failed', $e, $record, context: [
+                                'Amount' => '₱'.number_format((float) $record->amount, 2),
+                            ]);
                         }
                     }),
             ]);

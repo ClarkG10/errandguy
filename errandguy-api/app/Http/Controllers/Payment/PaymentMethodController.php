@@ -8,6 +8,7 @@ use App\Models\PaymentMethod;
 use App\Services\CacheService;
 use App\Services\PaymentMethodCatalog;
 use App\Services\PaymentService;
+use App\Support\ErrorCode;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 
@@ -20,14 +21,12 @@ class PaymentMethodController extends Controller
      */
     public function available(): JsonResponse
     {
-        return response()->json([
-            'data' => CacheService::swr(
-                'payments:available_methods',
-                300,   // fresh 5 min
-                3600,  // survive 1 h
-                fn () => PaymentMethodCatalog::enabled(),
-            ),
-        ]);
+        return $this->ok(CacheService::swr(
+            'payments:available_methods',
+            300,   // fresh 5 min
+            3600,  // survive 1 h
+            fn () => PaymentMethodCatalog::enabled(),
+        ));
     }
 
     public function index(Request $request): JsonResponse
@@ -58,9 +57,7 @@ class PaymentMethodController extends Controller
             ->values()
             ->makeHidden(['gateway_token', 'gateway_ref']);
 
-        return response()->json([
-            'data' => $methods,
-        ]);
+        return $this->ok($methods);
     }
 
     /**
@@ -91,27 +88,22 @@ class PaymentMethodController extends Controller
             );
         } catch (PaymentGatewayException $e) {
             // A gateway REJECTION (validation, unsupported channel, missing
-            // field) is not an origin outage. Returning a raw 502 both
-            // mislabels it AND gets intercepted by Cloudflare, which swaps our
-            // JSON for its own branded 502 page — so the app never sees the
-            // real reason (this masked a one-line payload bug as an "infra"
-            // incident). Return 422 so the message flows through. The detailed
-            // reason is already logged server-side in PaymentService regardless
-            // of APP_DEBUG; only expose it to the client while debugging.
-            $message = config('app.debug')
-                ? "Payment gateway error: {$e->reason()}"
-                : 'Could not start linking. Please try again.';
-
-            return response()->json(['message' => $message], 422);
+            // field) is not an origin outage. It must surface as a 422 with
+            // honest copy — never a raw 502, which Cloudflare swaps for its own
+            // branded page (hiding the real reason). The detailed reason is
+            // already logged in PaymentService; expose it only in debug meta.
+            return $this->fail(
+                ErrorCode::PAYMENT_GATEWAY_ERROR,
+                'We couldn’t start linking that account right now. You weren’t charged — please try again in a moment.',
+                meta: config('app.debug') ? ['debug' => $e->reason()] : [],
+            );
         } catch (\Throwable $e) {
-            // Genuinely unexpected failure (not a gateway rejection) — keep a
-            // 502 and report it so it surfaces in logs/monitoring.
+            // Genuinely unexpected failure (not a gateway rejection). Report it
+            // and return the standardized 500 envelope (NOT a 502 — Cloudflare
+            // masks 5xx gateway codes and swallows our JSON).
             report($e);
 
-            return response()->json(
-                ['message' => 'Could not start linking. Please try again.'],
-                502,
-            );
+            return $this->fail(ErrorCode::SERVER_ERROR, 'We couldn’t start linking that account right now. Please try again in a moment.');
         }
 
         $status = strtolower($pm['status'] ?? 'pending') === 'active' ? 'active' : 'pending';
@@ -129,11 +121,10 @@ class PaymentMethodController extends Controller
             'is_default' => $isFirstActive && $status === 'active',
         ]);
 
-        return response()->json([
-            'data' => $method->makeHidden(['gateway_token', 'gateway_ref']),
+        return $this->created($method->makeHidden(['gateway_token', 'gateway_ref']), merge: [
             // The app opens this to authorize the link; null if already active.
             'action_url' => PaymentService::extractActionUrl($pm),
-        ], 201);
+        ]);
     }
 
     public function store(Request $request): JsonResponse
@@ -162,9 +153,7 @@ class PaymentMethodController extends Controller
             'is_default' => $isFirst,
         ]);
 
-        return response()->json([
-            'data' => $method->makeHidden(['gateway_token']),
-        ], 201);
+        return $this->created($method->makeHidden(['gateway_token']));
     }
 
     public function destroy(Request $request, string $id): JsonResponse
@@ -182,9 +171,7 @@ class PaymentMethodController extends Controller
                 ?->update(['is_default' => true]);
         }
 
-        return response()->json([
-            'message' => 'Payment method removed.',
-        ]);
+        return $this->ok(null, 'Payment method removed.');
     }
 
     public function setDefault(Request $request, string $id): JsonResponse
@@ -198,8 +185,6 @@ class PaymentMethodController extends Controller
             ->where('id', $id)
             ->update(['is_default' => true]);
 
-        return response()->json([
-            'message' => 'Default payment method updated.',
-        ]);
+        return $this->ok(null, 'Default payment method updated.');
     }
 }

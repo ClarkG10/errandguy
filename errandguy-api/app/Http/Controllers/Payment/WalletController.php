@@ -18,9 +18,7 @@ class WalletController extends Controller
     {
         $balance = $this->walletService->getBalance($request->user()->id);
 
-        return response()->json([
-            'data' => ['balance' => $balance],
-        ]);
+        return $this->ok(['balance' => $balance]);
     }
 
     public function topUp(Request $request): JsonResponse
@@ -69,47 +67,37 @@ class WalletController extends Controller
                 ->first();
 
             if ($duplicate) {
-                return response()->json([
-                    'data' => $duplicate,
+                return $this->ok($duplicate, merge: [
                     'checkout_url' => $duplicate->checkout_url,
                     'idempotent' => true,
-                ], 200);
+                ]);
             }
         }
 
-        try {
-            $result = $this->walletService->initiateTopUp(
-                $user->id,
-                (float) $validated['amount'],
-                $user->email,
-                // After paying, Xendit redirects here; the bridge page forwards
-                // to the app deep link so the in-app checkout sheet auto-closes.
-                url('/payment/complete'),
-                $validated['method'] ?? null,
-                // Failure return carries ?status=failed so the bridge shows
-                // honest copy instead of a green "Payment received".
-                url('/payment/complete?status=failed'),
-            );
-        } catch (\Throwable $e) {
-            // The gateway rejected the request (e.g. API key lacks Invoice
-            // permission) or was unreachable. The real reason is always logged
-            // by WalletService/PaymentService. In debug mode we also put the
-            // gateway's own reason in the message so it's visible in the app —
-            // production users just get the friendly line.
-            $message = 'We couldn’t start your payment right now. Please try again in a moment.';
-            if (config('app.debug') && $e instanceof \App\Exceptions\PaymentGatewayException) {
-                $message = "Payment gateway error: {$e->reason()}";
-            }
+        // A gateway rejection throws PaymentGatewayException, which
+        // ApiExceptionRenderer renders as a clean 422 with honest "you weren’t
+        // charged" copy — NEVER a Cloudflare-masked 502. Any other failure
+        // becomes the standardized 500 envelope. The real gateway reason is
+        // logged by WalletService and echoed into the error envelope's
+        // meta.debug when APP_DEBUG is on.
+        $result = $this->walletService->initiateTopUp(
+            $user->id,
+            (float) $validated['amount'],
+            $user->email,
+            // After paying, Xendit redirects here; the bridge page forwards
+            // to the app deep link so the in-app checkout sheet auto-closes.
+            url('/payment/complete'),
+            $validated['method'] ?? null,
+            // Failure return carries ?status=failed so the bridge shows
+            // honest copy instead of a green "Payment received".
+            url('/payment/complete?status=failed'),
+        );
 
-            return response()->json(['message' => $message], 502);
-        }
-
-        return response()->json([
-            'data' => $result['transaction'],
+        return $this->created($result['transaction'], merge: [
             // Client must open this URL to actually pay; the wallet is
             // credited only after Xendit confirms via webhook.
             'checkout_url' => $result['checkout_url'],
-        ], 201);
+        ]);
     }
 
     /**
@@ -126,20 +114,18 @@ class WalletController extends Controller
         $failureStates = ['failed', 'expired', 'cancelled', 'refunded'];
         $processedAt = optional($tx->processed_at)->toIso8601String();
 
-        return response()->json([
-            'data' => [
-                // Canonical contract shared with PaymentStatusController.
-                'kind' => 'wallet_topup',
-                'id' => $tx->id,
-                'transaction_id' => $tx->id, // alias kept for existing clients
-                'status' => $tx->status,
-                'type' => $tx->type,
-                'amount' => (float) $tx->amount,
-                'balance_after' => (float) $tx->balance_after,
-                'settled_at' => $processedAt,
-                'processed_at' => $processedAt, // alias kept for existing clients
-                'failure_reason' => in_array($tx->status, $failureStates, true) ? $tx->failure_reason : null,
-            ],
+        return $this->ok([
+            // Canonical contract shared with PaymentStatusController.
+            'kind' => 'wallet_topup',
+            'id' => $tx->id,
+            'transaction_id' => $tx->id, // alias kept for existing clients
+            'status' => $tx->status,
+            'type' => $tx->type,
+            'amount' => (float) $tx->amount,
+            'balance_after' => (float) $tx->balance_after,
+            'settled_at' => $processedAt,
+            'processed_at' => $processedAt, // alias kept for existing clients
+            'failure_reason' => in_array($tx->status, $failureStates, true) ? $tx->failure_reason : null,
         ]);
     }
 
@@ -174,29 +160,10 @@ class WalletController extends Controller
 
         $transactions = $query->paginate($request->perPage(20));
 
-        // Emit the canonical nested-meta envelope ({data, links, meta}) that
-        // every other paginated list endpoint uses, instead of the raw flat
-        // LengthAwarePaginator (which serialized pagination at the top level
-        // and leaked absolute server URLs). Rows are still the same raw
-        // WalletTransaction models — the mobile client reads them at .data.data
-        // in both shapes, so this is backward compatible.
-        return response()->json([
-            'data' => $transactions->items(),
-            'links' => [
-                'first' => $transactions->url(1),
-                'last' => $transactions->url($transactions->lastPage()),
-                'prev' => $transactions->previousPageUrl(),
-                'next' => $transactions->nextPageUrl(),
-            ],
-            'meta' => [
-                'current_page' => $transactions->currentPage(),
-                'from' => $transactions->firstItem(),
-                'last_page' => $transactions->lastPage(),
-                'path' => $transactions->path(),
-                'per_page' => $transactions->perPage(),
-                'to' => $transactions->lastItem(),
-                'total' => $transactions->total(),
-            ],
-        ]);
+        // The canonical nested-meta envelope ({data, links, meta}) is now
+        // produced by the shared ApiResponse::paginated() helper (previously
+        // this block was copy-pasted per list endpoint). Rows stay the same raw
+        // WalletTransaction models the mobile client reads at .data.data.
+        return $this->paginated($transactions);
     }
 }

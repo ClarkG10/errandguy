@@ -3,18 +3,17 @@
 namespace App\Filament\Pages;
 
 use App\Exceptions\PayoutStateException;
+use App\Filament\Support\AdminNotify;
 use App\Models\User;
 use App\Models\WalletTransaction;
 use App\Services\PaymentService;
 use App\Services\WalletService;
-use App\Support\AdminActivity;
 use BackedEnum;
 use Filament\Actions\Action;
 use Filament\Forms\Components\Hidden;
 use Filament\Forms\Components\Select;
 use Filament\Forms\Components\TextInput;
 use Filament\Forms\Components\Textarea;
-use Filament\Notifications\Notification;
 use Filament\Pages\Page;
 use Filament\Support\Icons\Heroicon;
 use Filament\Tables\Columns\TextColumn;
@@ -96,6 +95,7 @@ class Payouts extends Page implements HasTable
                 ->label('Pay a runner')
                 ->icon(Heroicon::OutlinedBanknotes)
                 ->modalHeading('Send a payout to a runner')
+                ->modalDescription('This debits the runner’s wallet and disburses real funds via Xendit immediately.')
                 ->schema([
                     Select::make('user_id')
                         ->label('Runner')
@@ -128,14 +128,22 @@ class Payouts extends Page implements HasTable
                             $data['account_number'],
                             $data['account_holder_name'],
                         );
-                        AdminActivity::log('payout.admin_initiated', $tx, [
-                            'channel' => $data['channel_code'],
-                            'amount' => $data['amount'],
-                        ]);
-                        Notification::make()->title('Payout sent to Xendit')
-                            ->body('It will show as completed once Xendit confirms.')->success()->send();
+                        AdminNotify::success(
+                            'Payout sent to Xendit',
+                            $tx,
+                            context: [
+                                'Runner' => $tx->user?->full_name,
+                                'Amount' => '₱'.number_format(abs((float) $tx->amount), 2),
+                                'Channel' => $data['channel_code'],
+                            ],
+                            audit: 'payout.admin_initiated',
+                            properties: ['channel' => $data['channel_code'], 'amount' => $data['amount']],
+                            note: 'It will show as completed once Xendit confirms.',
+                        );
                     } catch (\Throwable $e) {
-                        Notification::make()->title('Could not send payout')->body($e->getMessage())->danger()->send();
+                        AdminNotify::error('Could not send payout', $e, context: [
+                            'Amount' => '₱'.number_format((float) $data['amount'], 2),
+                        ]);
                     }
                 }),
         ];
@@ -181,6 +189,9 @@ class Payouts extends Page implements HasTable
                     ->color('primary')
                     ->visible(fn (WalletTransaction $record): bool => $record->status === 'pending')
                     ->modalHeading('Send this payout via Xendit')
+                    ->modalDescription(fn (WalletTransaction $record): string => 'Disburses ₱'
+                        .number_format(abs((float) $record->amount), 2).' to '
+                        .($record->user?->full_name ?? 'the runner').' via Xendit. Real money leaves now.')
                     ->fillForm(function (WalletTransaction $record): array {
                         $profile = $record->user?->runnerProfile;
 
@@ -204,11 +215,22 @@ class Payouts extends Page implements HasTable
                                 $data['account_number'],
                                 $data['account_holder_name'],
                             );
-                            AdminActivity::log('payout.sent', $record, ['channel' => $data['channel_code']]);
-                            Notification::make()->title('Payout sent to Xendit')
-                                ->body('It will show as completed once Xendit confirms.')->success()->send();
+                            AdminNotify::success(
+                                'Payout sent to Xendit',
+                                $record,
+                                context: [
+                                    'Runner' => $record->user?->full_name,
+                                    'Amount' => '₱'.number_format(abs((float) $record->amount), 2),
+                                    'Channel' => $data['channel_code'],
+                                ],
+                                audit: 'payout.sent',
+                                properties: ['channel' => $data['channel_code']],
+                                note: 'It will show as completed once Xendit confirms.',
+                            );
                         } catch (\Throwable $e) {
-                            Notification::make()->title('Payout failed')->body($e->getMessage())->danger()->send();
+                            AdminNotify::error('Payout failed', $e, $record, context: [
+                                'Runner' => $record->user?->full_name,
+                            ]);
                         }
                     }),
                 Action::make('complete')
@@ -221,16 +243,27 @@ class Payouts extends Page implements HasTable
                     ->action(function (WalletTransaction $record): void {
                         try {
                             $tx = app(WalletService::class)->completePayout($record->id);
-                            AdminActivity::log('payout.completed', $tx);
-                            Notification::make()->title('Payout marked completed')->success()->send();
+                            AdminNotify::success(
+                                'Payout marked completed',
+                                $tx,
+                                context: [
+                                    'Runner' => $tx->user?->full_name,
+                                    'Amount' => '₱'.number_format(abs((float) $tx->amount), 2),
+                                ],
+                                audit: 'payout.completed',
+                            );
                         } catch (PayoutStateException $e) {
-                            Notification::make()->title($e->getMessage())->danger()->send();
+                            AdminNotify::error('Could not complete payout', $e, $record);
                         }
                     }),
                 Action::make('fail')
                     ->label('Mark failed')
                     ->icon(Heroicon::OutlinedXCircle)
                     ->color('danger')
+                    ->requiresConfirmation()
+                    ->modalDescription(fn (WalletTransaction $record): string => 'Marks this payout failed and re-credits ₱'
+                        .number_format(abs((float) $record->amount), 2).' to '
+                        .($record->user?->full_name ?? 'the runner').'’s wallet.')
                     ->schema([
                         Textarea::make('reason')->label('Failure reason')->required()->maxLength(500),
                     ])
@@ -238,10 +271,18 @@ class Payouts extends Page implements HasTable
                     ->action(function (array $data, WalletTransaction $record): void {
                         try {
                             $tx = app(WalletService::class)->failPayout($record->id, $data['reason']);
-                            AdminActivity::log('payout.failed', $tx, ['reason' => $data['reason']]);
-                            Notification::make()->title('Payout failed — wallet re-credited')->success()->send();
+                            AdminNotify::success(
+                                'Payout failed — wallet re-credited',
+                                $tx,
+                                context: [
+                                    'Runner' => $tx->user?->full_name,
+                                    'Amount' => '₱'.number_format(abs((float) $tx->amount), 2),
+                                ],
+                                audit: 'payout.failed',
+                                properties: ['reason' => $data['reason']],
+                            );
                         } catch (PayoutStateException $e) {
-                            Notification::make()->title($e->getMessage())->danger()->send();
+                            AdminNotify::error('Could not mark payout failed', $e, $record);
                         }
                     }),
             ]);

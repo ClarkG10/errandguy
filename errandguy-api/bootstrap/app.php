@@ -26,6 +26,9 @@ return Application::configure(basePath: dirname(__DIR__))
     )
     ->withMiddleware(function (Middleware $middleware): void {
         $middleware->api(prepend: [
+            // FIRST: assign a correlation id before anything logs or renders, so
+            // every log line + error envelope carries request_id.
+            \App\Http\Middleware\AssignRequestId::class,
             \App\Http\Middleware\LogApiRequests::class,
             \App\Http\Middleware\SecurityHeaders::class,
             \App\Http\Middleware\LimitRequestSize::class,
@@ -52,8 +55,17 @@ return Application::configure(basePath: dirname(__DIR__))
                 'url' => request()?->fullUrl(),
                 'method' => request()?->method(),
                 'user_id' => request()?->user()?->id,
+                // request_id is also attached via Log::withContext (AssignRequestId),
+                // but keep it explicit here so the unhandled-exception line is
+                // greppable by correlation id even if context is stripped.
+                'request_id' => request()?->attributes->get('request_id'),
             ]);
         });
+
+        // Standardized API error envelope for every JSON/api request. Kept in a
+        // dedicated class so this bootstrap file stays scannable and the mapping
+        // is unit-testable. Web (Filament) responses are untouched.
+        \App\Exceptions\ApiExceptionRenderer::register($exceptions);
     })
     ->booting(function () {
         RateLimiter::for('api', function (Request $request) {

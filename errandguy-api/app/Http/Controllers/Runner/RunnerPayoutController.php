@@ -7,6 +7,7 @@ use App\Http\Requests\Runner\PayoutRequest;
 use App\Models\SystemConfig;
 use App\Models\User;
 use App\Models\WalletTransaction;
+use App\Support\ErrorCode;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Support\Facades\DB;
 
@@ -18,25 +19,25 @@ class RunnerPayoutController extends Controller
         $profile = $user->runnerProfile;
 
         if (!$profile) {
-            return response()->json([
-                'message' => 'Runner profile not found.',
-            ], 404);
+            return $this->fail(ErrorCode::NOT_FOUND, 'We couldn’t find your runner profile. Please contact support.', 404);
         }
 
         // Check payout method is configured
         if (!$profile->bank_name && !$profile->ewallet_number) {
-            return response()->json([
-                'message' => 'Please configure a bank account or e-wallet before requesting a payout.',
-            ], 422);
+            return $this->fail(
+                ErrorCode::PAYOUT_METHOD_REQUIRED,
+                'Add a bank account or e-wallet in your payout settings before requesting a payout.',
+            );
         }
 
         $amount = (float) $request->validated('amount');
         $minPayout = (float) SystemConfig::getValue('min_payout_amount', '100');
 
         if ($amount < $minPayout) {
-            return response()->json([
-                'message' => "Minimum payout amount is ₱{$minPayout}.",
-            ], 422);
+            return $this->fail(
+                ErrorCode::PAYOUT_MIN_AMOUNT,
+                'The minimum payout is ₱'.number_format($minPayout, 2).'. Please request at least that amount.',
+            );
         }
 
         // The Idempotency-Key (guaranteed present by `idempotent:required`)
@@ -88,14 +89,21 @@ class RunnerPayoutController extends Controller
                 return $tx;
             });
         } catch (\RuntimeException $e) {
-            return response()->json([
-                'message' => 'Insufficient wallet balance.',
-            ], 422);
+            $balance = number_format((float) $user->fresh()->wallet_balance, 2);
+
+            return $this->fail(
+                ErrorCode::INSUFFICIENT_WALLET_BALANCE,
+                "You requested ₱".number_format($amount, 2)." but your available balance is ₱{$balance}. Lower the amount and try again.",
+            );
         }
 
-        return response()->json([
-            'data' => $transaction,
-            'message' => "Payout of ₱{$amount} has been requested.",
-        ]);
+        $destination = $profile->bank_name
+            ? "your {$profile->bank_name} account"
+            : 'your e-wallet';
+
+        return $this->ok(
+            $transaction,
+            "Payout of ₱".number_format($amount, 2)." to {$destination} requested. We’ll review it and notify you once it’s on the way.",
+        );
     }
 }

@@ -2,6 +2,7 @@ import axios, { AxiosRequestConfig, AxiosResponse } from 'axios';
 import { secureStorage } from '../utils/storage';
 import { apiActivity } from '../stores/apiActivityStore';
 import { network } from '../stores/networkStore';
+import { classifyError } from '../utils/classifyError';
 
 const api = axios.create({
   baseURL: process.env.EXPO_PUBLIC_API_URL,
@@ -278,8 +279,16 @@ api.interceptors.response.use(
       }
     }
 
+    // axios error code (e.g. 'ECONNABORTED' on a client-side timeout). Used to
+    // tell a timeout apart from being offline — both have no response.
+    const axiosCode: string | undefined = error?.code;
+
     if (error.response) {
       const { status, data } = error.response;
+      // Machine-readable code from the standardized backend envelope (additive;
+      // absent on legacy/not-yet-migrated responses). Powers errorCatalog copy.
+      const backendCode: string | undefined = data?.code;
+      const kind = classifyError(status, axiosCode, backendCode);
 
       if (status === 401) {
         await secureStorage.remove('auth_token');
@@ -311,14 +320,21 @@ api.interceptors.response.use(
           status: 422,
           message: data.message || 'Validation failed',
           errors: data.errors || {},
+          code: backendCode,
+          kind,
         });
       }
 
       if (status >= 500) {
         return Promise.reject({
           status,
+          // Kept as a fallback; describeError() overrides with honest
+          // server-kind copy. Retained so untouched call sites still read
+          // something sensible.
           message: 'Something went wrong. Please try again later.',
           errors: {},
+          code: backendCode,
+          kind,
         });
       }
 
@@ -326,14 +342,22 @@ api.interceptors.response.use(
         status,
         message: data.message || 'An error occurred',
         errors: data.errors || {},
+        code: backendCode,
+        kind,
         ...('attempts_remaining' in (data || {}) && { attempts_remaining: data.attempts_remaining }),
       });
     }
 
+    // No HTTP response: offline vs a client-side timeout are distinct cases.
+    const noResponseKind = classifyError(0, axiosCode);
     return Promise.reject({
       status: 0,
-      message: 'Network error. Please check your connection.',
+      message:
+        noResponseKind === 'timeout'
+          ? 'The server took too long to respond. Please try again.'
+          : 'Network error. Please check your connection.',
       errors: {},
+      kind: noResponseKind,
     });
   },
 );

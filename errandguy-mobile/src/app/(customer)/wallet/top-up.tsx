@@ -23,9 +23,12 @@ import { openCheckoutUrl, PAYMENT_RETURN_URL } from '../../../utils/browser';
 import { usePaymentStore, isAttemptActive } from '../../../stores/paymentStore';
 import { usePaymentVerification } from '../../../hooks/usePaymentVerification';
 import { mapFailureReason } from '../../../utils/paymentErrors';
+import { errorMessage } from '../../../utils/errorCatalog';
 import { invalidateQuery } from '../../../hooks/useQuery';
 import { LightColors, Elevation } from '../../../constants/colors';
 import { toast } from '../../../stores/toastStore';
+import { copy } from '../../../constants/copy';
+import { haptics } from '../../../utils/haptics';
 
 const QUICK_AMOUNTS = [100, 200, 500, 1000];
 const TOPUP_METHODS = [
@@ -136,7 +139,10 @@ export default function TopUpScreen() {
       setAttemptStatus('verifying');
     } catch (err: any) {
       resolveAttempt();
-      toast.error(err?.response?.data?.message ?? err?.message ?? 'Failed to start top-up');
+      // Honest copy: a gateway 422 (PAYMENT_GATEWAY_ERROR) resolves to
+      // "you weren't charged"; anything else falls back to the wallet copy.
+      haptics.error();
+      toast.error(errorMessage(err, copy.wallet.topupStartFailed));
     } finally {
       setLoading(false);
       submitLatch.current = false;
