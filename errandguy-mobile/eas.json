@@ -25,6 +25,9 @@
       "android": {
         "buildType": "apk"
       },
+      "ios": {
+        "simulator": true
+      },
       "env": {
         "EXPO_PUBLIC_API_URL": "https://errandguy-4stnztcd.on-forge.com/api/v1",
         "EXPO_PUBLIC_REVERB_KEY": "d58t8bbtdnqgpihrtulm",
