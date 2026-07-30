@@ -104,7 +104,7 @@ describe('paymentStore', () => {
     expect(await AsyncStorage.getItem(STORAGE_KEY)).toBeNull();
   });
 
-  it('loadFromStorage KEEPS a resumable non-terminal attempt so verification continues', async () => {
+  it('loadFromStorage resumes a non-terminal attempt but coerces it to dismissable pending', async () => {
     const now = Date.now();
     await AsyncStorage.setItem(
       STORAGE_KEY,
@@ -118,9 +118,13 @@ describe('paymentStore', () => {
       await usePaymentStore.getState().loadFromStorage();
     });
 
+    // The attempt is KEPT (still resumable — same paymentId, still polled), but a
+    // rehydrated 'verifying'/'awaiting_gateway' is brought back as the honest,
+    // DISMISSABLE 'pending' state — never the button-less overlay that would
+    // re-trap the user on every relaunch (see paymentStore.ts:160-171).
     const a = usePaymentStore.getState().attempt;
     expect(a).toBeTruthy();
-    expect(a!.status).toBe('verifying');
+    expect(a!.status).toBe('pending');
     expect(a!.paymentId).toBe('pay_9');
   });
 });
