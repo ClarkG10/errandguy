@@ -130,7 +130,7 @@ export default function TopUpScreen() {
       if (outcome === 'failed') {
         // Couldn't even open the checkout → nothing was charged.
         resolveAttempt();
-        toast.error('Could not open checkout. Please try again.');
+        toast.error('Couldn’t open checkout — you weren’t charged. Please try again.');
         return;
       }
       // Any other outcome ('success' | 'cancelled' | 'opened') is inconclusive
@@ -355,7 +355,14 @@ export default function TopUpScreen() {
         successCta="View wallet"
         receipt={
           attempt
-            ? { amount: attempt.amount, method: attempt.method, paidAt: attempt.paidAt }
+            ? {
+                amount: attempt.amount,
+                method: attempt.method,
+                paidAt: attempt.paidAt,
+                // Include the reference so the top-up receipt is screenshot-able,
+                // consistent with the booking + payment-complete receipts.
+                reference: attempt.reference,
+              }
             : undefined
         }
         onSuccessDone={() => finishTopUp()}

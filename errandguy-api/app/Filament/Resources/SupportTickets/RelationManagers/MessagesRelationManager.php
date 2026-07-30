@@ -2,9 +2,9 @@
 
 namespace App\Filament\Resources\SupportTickets\RelationManagers;
 
+use App\Filament\Support\AdminNotify;
 use Filament\Actions\Action;
 use Filament\Forms\Components\Textarea;
-use Filament\Notifications\Notification;
 use Filament\Resources\RelationManagers\RelationManager;
 use Filament\Tables\Columns\TextColumn;
 use Filament\Tables\Table;
@@ -39,8 +39,7 @@ class MessagesRelationManager extends RelationManager
                             'content' => $data['content'],
                         ]);
                         $ticket->update(['last_message_at' => now(), 'status' => 'pending']);
-                        \App\Support\AdminActivity::log('support.replied', $ticket);
-                        Notification::make()->title('Reply sent')->success()->send();
+                        AdminNotify::success('Reply sent', $ticket, ['Ticket' => $ticket->id], audit: 'support.replied');
                     }),
             ])
             ->recordActions([]);

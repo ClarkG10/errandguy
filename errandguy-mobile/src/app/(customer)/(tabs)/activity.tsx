@@ -26,6 +26,8 @@ import { BrandRefreshControl } from '../../../components/ui/BrandRefreshControl'
 import { Eyebrow } from '../../../components/ui/Typography';
 import type { Booking } from '../../../types';
 import { LightColors } from '../../../constants/colors';
+import { copy } from '../../../constants/copy';
+import { errorMessage } from '../../../utils/errorCatalog';
 import { toast } from '../../../stores/toastStore';
 import { TAB_CONTENT_BOTTOM_INSET } from '../../../constants/tabLayout';
 
@@ -193,8 +195,8 @@ export default function ActivityScreen() {
       setExtraPages((prev) => [...prev, ...data]);
       setPage(nextPage);
       setHasMore(data.length >= PER_PAGE);
-    } catch {
-      toast.error('Failed to load more.');
+    } catch (err) {
+      toast.error(errorMessage(err, copy.generic.loadMoreFailed));
     } finally {
       setLoadingMore(false);
     }

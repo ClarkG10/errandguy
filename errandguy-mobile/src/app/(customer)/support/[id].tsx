@@ -26,6 +26,8 @@ import { ErrorState } from '../../../components/ui/ErrorState';
 import { LightColors } from '../../../constants/colors';
 import { useResponsive } from '../../../constants/responsive';
 import { formatTime, formatChatDayLabel } from '../../../utils/formatDate';
+import { errorMessage } from '../../../utils/errorCatalog';
+import { copy } from '../../../constants/copy';
 import { toast } from '../../../stores/toastStore';
 
 // A thread message plus local-only send state.
@@ -171,7 +173,7 @@ export default function SupportThreadScreen() {
       Haptics.notificationAsync(
         Haptics.NotificationFeedbackType.Error,
       ).catch(() => {});
-      toast.error('Failed to send message');
+      toast.error(errorMessage(undefined, copy.support.messageSendFailed));
       // Drop the optimistic bubble and restore the text for a retry.
       setMessages((prev) => prev.filter((m) => m.id !== tempId));
       setInputText((prev) => (prev ? prev : text));

@@ -4,6 +4,7 @@ namespace App\Http\Controllers\Admin;
 
 use App\Http\Controllers\Controller;
 use App\Models\AdminUser;
+use App\Support\ErrorCode;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Hash;
@@ -27,7 +28,7 @@ class AdminAuthController extends Controller
         }
 
         if (!$admin->is_active) {
-            return response()->json(['message' => 'Account is deactivated'], 403);
+            return $this->fail(ErrorCode::ACCOUNT_INACTIVE, 'This admin account is deactivated. Contact a super admin.', 403);
         }
 
         $admin->update(['last_login_at' => now()]);

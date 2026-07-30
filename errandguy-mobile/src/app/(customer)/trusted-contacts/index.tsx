@@ -22,6 +22,8 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { userService } from '../../../services/user.service';
 import { runOptimistic } from '../../../utils/optimistic';
+import { errorMessage } from '../../../utils/errorCatalog';
+import { haptics } from '../../../utils/haptics';
 import { Button } from '../../../components/ui/Button';
 import { BottomActionBar } from '../../../components/ui/BottomActionBar';
 import { GradientHeader } from '../../../components/ui/GradientHeader';
@@ -36,6 +38,7 @@ import { ContactsSkeleton } from '../../../components/ui/Skeleton';
 import { ConfirmModal } from '../../../components/ui/ConfirmModal';
 import { BrandRefreshControl } from '../../../components/ui/BrandRefreshControl';
 import { LightColors } from '../../../constants/colors';
+import { copy } from '../../../constants/copy';
 import type { TrustedContact } from '../../../types';
 import { toast } from '../../../stores/toastStore';
 
@@ -242,7 +245,8 @@ export default function TrustedContactsScreen() {
       setModalVisible(false);
       await fetchContacts(true);
     } catch (err: any) {
-      toast.error(err?.message ?? err?.response?.data?.message ?? 'Failed to save contact');
+      haptics.error();
+      toast.error(errorMessage(err, copy.safety.contactSaveFailed));
     } finally {
       setSaving(false);
     }
@@ -359,7 +363,7 @@ export default function TrustedContactsScreen() {
         void saveCache(prev);
       },
       commit: () => userService.deleteTrustedContact(removed.id),
-      errorMessage: 'Failed to remove contact',
+      errorMessage: copy.safety.contactRemoveFailed,
       retry: true,
       onSuccess: () => {
         toast.success(`${removed.name} removed`, {

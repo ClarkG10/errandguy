@@ -32,9 +32,9 @@
       "edgeToEdgeEnabled": true,
       "softwareKeyboardLayoutMode": "resize",
       "adaptiveIcon": {
-        "backgroundColor": "#FFFFFF",
+        "backgroundColor": "#0F6FE6",
         "foregroundImage": "./assets/android-icon-square.png",
-        "monochromeImage": "./assets/android-icon-square.png"
+        "monochromeImage": "./assets/android-monochrome.png"
       },
       "permissions": [
         "android.permission.ACCESS_FINE_LOCATION",

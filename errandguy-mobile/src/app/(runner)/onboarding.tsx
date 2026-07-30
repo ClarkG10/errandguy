@@ -39,6 +39,9 @@ import { runnerService } from '../../services/runner.service';
 import { userService } from '../../services/user.service';
 import type { DocumentType, RunnerDocument } from '../../types';
 import { toast } from '../../stores/toastStore';
+import { errorMessage } from '../../utils/errorCatalog';
+import { copy } from '../../constants/copy';
+import { haptics } from '../../utils/haptics';
 import { LightColors, Elevation } from '../../constants/colors';
 import { useResponsive } from '../../constants/responsive';
 
@@ -185,10 +188,10 @@ export default function RunnerOnboardingScreen() {
       await runnerService.uploadDocument(formData);
       await fetchProfile();
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
-      toast.success('Document uploaded successfully');
+      toast.success('Document uploaded — we’ll review it shortly.');
     } catch (err: any) {
-      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error).catch(() => {});
-      toast.error(err?.message ?? err?.response?.data?.message ?? 'Failed to upload document');
+      haptics.error();
+      toast.error(errorMessage(err, copy.runner.documentUploadFailed));
     } finally {
       setUploading(null);
     }

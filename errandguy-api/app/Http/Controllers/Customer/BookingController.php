@@ -324,9 +324,12 @@ class BookingController extends Controller
                 // a Payment row and/or a promo redemption may already reference it,
                 // which on Postgres would raise an FK error) and reverse the promo.
                 $this->failBooking($booking, $promoCodeId, $user->id, 'Payment failed: insufficient wallet balance');
+                $balance = number_format((float) $user->fresh()->wallet_balance, 2);
+
                 return $this->fail(
                     ErrorCode::INSUFFICIENT_WALLET_BALANCE,
-                    'Your wallet balance is too low for this booking. Top up or choose another payment method.',
+                    'This booking costs ₱'.number_format((float) $amount, 2).' but your wallet balance is ₱'.$balance
+                        .'. Top up or choose another payment method — you weren’t charged.',
                 );
             }
             // Wallet already debited above; create the payment as pending then
@@ -680,12 +683,36 @@ class BookingController extends Controller
 
         $booking->load(['errandType', 'statusLogs']);
 
+        // State what actually moved. A refund was credited to the wallet inside
+        // the transaction above (L638-660) whenever the booking was paid; the
+        // amount is total − fee. Never announce the fee without the refund —
+        // the customer must never be left wondering where the rest of their
+        // money went.
+        $fee = (float) $policy['fee'];
+        $refunded = $booking->payment_status === 'refunded'
+            ? round(max(0, (float) $booking->total_amount - $fee), 2)
+            : 0.0;
+
+        if ($refunded > 0) {
+            $newBalance = number_format((float) $request->user()->fresh()->wallet_balance, 2);
+            $message = $fee > 0
+                ? 'Booking cancelled. A ₱'.number_format($fee, 2).' cancellation fee was applied and ₱'
+                    .number_format($refunded, 2).' was refunded to your ErrandGuy wallet (new balance ₱'.$newBalance.').'
+                : 'Booking cancelled. ₱'.number_format($refunded, 2)
+                    .' was refunded to your ErrandGuy wallet (new balance ₱'.$newBalance.').';
+        } elseif ($fee > 0) {
+            $message = 'Booking cancelled. A ₱'.number_format($fee, 2)
+                .' cancellation fee was applied. Nothing else was collected, so there is no refund.';
+        } else {
+            $message = 'Booking cancelled — no fee was charged.';
+        }
+
         return response()->json([
             'data' => new BookingResource($booking),
-            'cancellation' => $policy,
-            'message' => $policy['fee'] > 0
-                ? 'Booking cancelled. A ₱'.number_format($policy['fee'], 2).' cancellation fee was applied.'
-                : 'Booking cancelled successfully.',
+            // Expose the refunded amount alongside the fee so the app can show a
+            // precise breakdown, not just the fee.
+            'cancellation' => array_merge((array) $policy, ['refunded' => $refunded]),
+            'message' => $message,
         ]);
     }
 

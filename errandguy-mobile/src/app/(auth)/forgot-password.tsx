@@ -22,6 +22,8 @@ import { useReducedMotion } from '../../hooks/useReducedMotion';
 import { useResponsive } from '../../constants/responsive';
 import { authService } from '../../services/auth.service';
 import { toast } from '../../stores/toastStore';
+import { errorMessage } from '../../utils/errorCatalog';
+import { copy } from '../../constants/copy';
 import { LightColors } from '../../constants/colors';
 
 interface ForgotPasswordFormData {
@@ -79,10 +81,7 @@ export default function ForgotPasswordScreen() {
       } else if (status >= 500) {
         message = 'Something went wrong on our end. Please try again later.';
       } else {
-        message =
-          error?.errors?.email?.[0] ||
-          error?.message ||
-          'Something went wrong. Please try again.';
+        message = errorMessage(error, copy.generic.tryAgain);
       }
       toast.error(message);
     } finally {
@@ -100,7 +99,7 @@ export default function ForgotPasswordScreen() {
       start();
       toast.success('Reset link sent again.');
     } catch (error: any) {
-      toast.error(error?.message || 'Failed to resend. Please try again later.');
+      toast.error(errorMessage(error, copy.auth.otpResendFailed));
     } finally {
       setResending(false);
     }

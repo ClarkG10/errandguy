@@ -88,7 +88,7 @@ class RunnerPayoutController extends Controller
 
                 return $tx;
             });
-        } catch (\RuntimeException $e) {
+        } catch (\RuntimeException) {
             $balance = number_format((float) $user->fresh()->wallet_balance, 2);
 
             return $this->fail(
@@ -103,7 +103,8 @@ class RunnerPayoutController extends Controller
 
         return $this->ok(
             $transaction,
-            "Payout of ₱".number_format($amount, 2)." to {$destination} requested. We’ll review it and notify you once it’s on the way.",
+            "Payout of ₱".number_format($amount, 2)." to {$destination} requested. It’s being reviewed and usually "
+                ."arrives within 1–3 business days — we’ll notify you the moment it’s sent.",
         );
     }
 }

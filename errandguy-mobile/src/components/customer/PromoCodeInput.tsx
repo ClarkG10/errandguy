@@ -6,6 +6,8 @@ import { Eyebrow } from '../ui/Typography';
 import { Spinner } from '../ui/Spinner';
 import { configService } from '../../services/config.service';
 import { LightColors } from '../../constants/colors';
+import { copy } from '../../constants/copy';
+import { errorMessage } from '../../utils/errorCatalog';
 import { formatCurrency } from '../../utils/formatCurrency';
 
 interface PromoCodeInputProps {
@@ -48,9 +50,7 @@ export function PromoCodeInput({
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error).catch(
         () => {},
       );
-      setError(
-        err?.message ?? err?.response?.data?.message ?? 'Invalid promo code',
-      );
+      setError(errorMessage(err, copy.promo.applyFailed));
     } finally {
       setLoading(false);
     }

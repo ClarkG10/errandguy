@@ -18,6 +18,8 @@ import { useCountdown } from '../../hooks/useCountdown';
 import { authService } from '../../services/auth.service';
 import { useAuthStore } from '../../stores/authStore';
 import { toast } from '../../stores/toastStore';
+import { errorMessage } from '../../utils/errorCatalog';
+import { copy } from '../../constants/copy';
 import { LightColors } from '../../constants/colors';
 import { useResponsive } from '../../constants/responsive';
 
@@ -81,7 +83,7 @@ export default function VerifyOTPScreen() {
       if (remaining !== undefined) {
         setAttemptsRemaining(remaining);
       }
-      const base = error?.message || 'Verification failed. Please try again.';
+      const base = errorMessage(error, 'That code didn’t work. Check it and try again.');
       // Single feedback locus: attempts info is folded into the inline
       // error on the OTP cells (red + shake via OTPInput) instead of a
       // toast or a second text block — the feedback lands exactly where
@@ -123,9 +125,9 @@ export default function VerifyOTPScreen() {
       start();
       setAttemptsRemaining(5);
       setOtpError(null);
-      toast.success('Code resent successfully.');
+      toast.success(copy.auth.otpResent);
     } catch (error: any) {
-      const message = error?.message || 'Failed to resend code. Please try again later.';
+      const message = errorMessage(error, copy.auth.otpResendFailed);
       toast.error(message);
     } finally {
       setResending(false);

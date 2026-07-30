@@ -11,8 +11,11 @@ import { Button } from '../ui/Button';
 import { UploadProgress } from '../ui/UploadProgress';
 import { toast } from '../../stores/toastStore';
 import { runOptimistic } from '../../utils/optimistic';
+import { errorMessage } from '../../utils/errorCatalog';
+import { haptics } from '../../utils/haptics';
 import { queueable } from '../../services/mutationQueue';
 import { LightColors } from '../../constants/colors';
+import { copy } from '../../constants/copy';
 
 interface EditProfileModalProps {
   visible: boolean;
@@ -106,8 +109,9 @@ export function EditProfileModal({ visible, onClose }: EditProfileModalProps) {
       if (avatarUrl) {
         updateProfile({ avatar_url: avatarUrl });
       }
-    } catch {
-      toast.error('Failed to upload avatar');
+    } catch (err) {
+      haptics.error();
+      toast.error(errorMessage(err, copy.profile.avatarUploadFailed));
     } finally {
       setUploadingAvatar(false);
       setAvatarPct(null);

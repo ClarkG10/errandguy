@@ -25,7 +25,10 @@ import { SuccessCheck } from '../../../components/ui/SuccessCheck';
 import { Illustration } from '../../../components/ui/Illustration';
 import { Skeleton } from '../../../components/ui/Skeleton';
 import { formatDateTime } from '../../../utils/formatDate';
+import { errorMessage } from '../../../utils/errorCatalog';
+import { haptics } from '../../../utils/haptics';
 import { LightColors } from '../../../constants/colors';
+import { copy } from '../../../constants/copy';
 import { useResponsive } from '../../../constants/responsive';
 import { useReducedMotion } from '../../../hooks/useReducedMotion';
 import type { Booking } from '../../../types';
@@ -103,7 +106,8 @@ export default function RateScreen() {
       // success haptic and calls onDone once the animation settles.
       setShowSuccess(true);
     } catch (err: any) {
-      toast.error(err?.message ?? 'Failed to submit review');
+      haptics.error();
+      toast.error(errorMessage(err, copy.booking.rateFailed));
     } finally {
       setIsSubmitting(false);
     }

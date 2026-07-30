@@ -25,6 +25,7 @@ import { getCurrentCoords } from '../../../utils/locationPermission';
 import { runOptimistic } from '../../../utils/optimistic';
 import { queueable } from '../../../services/mutationQueue';
 import { LightColors, Elevation } from '../../../constants/colors';
+import { copy } from '../../../constants/copy';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import type { SavedAddress } from '../../../types';
@@ -236,7 +237,7 @@ export default function AddressesScreen() {
           ? userService.updateAddress(editId as string, fields)
           : userService.addAddress({ ...fields, is_default: false, created_at: new Date().toISOString() } as any),
       invalidate: [['user', 'addresses', userId]],
-      errorMessage: 'Failed to save address',
+      errorMessage: copy.address.saveFailed,
       retry: true,
       onSuccess: () => {
         Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
@@ -300,7 +301,7 @@ export default function AddressesScreen() {
         commit: q.commit,
         offline: q.offline,
         invalidate: [['user', 'addresses', userId]],
-        errorMessage: 'Failed to update address',
+        errorMessage: copy.address.updateFailed,
         retry: true,
         onSuccess: () =>
           Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {}),
@@ -346,7 +347,7 @@ export default function AddressesScreen() {
       rollback: () => addressesQ.mutate(() => prev),
       commit: () => userService.deleteAddress(id),
       invalidate: [['user', 'addresses', userId]],
-      errorMessage: 'Failed to delete address',
+      errorMessage: copy.address.deleteFailed,
       retry: true,
       onSuccess: () =>
         toast.success('Address removed', { actionLabel: 'Undo', onAction: undoDelete }),

@@ -25,6 +25,7 @@ import { Skeleton, SkeletonCircle } from '../../components/ui/Skeleton';
 import { BrandRefreshControl } from '../../components/ui/BrandRefreshControl';
 import { paymentService } from '../../services/payment.service';
 import { runOptimistic } from '../../utils/optimistic';
+import { errorMessage } from '../../utils/errorCatalog';
 import { queueable } from '../../services/mutationQueue';
 import { useQuery } from '../../hooks/useQuery';
 import { CacheTTL } from '../../services/cache.service';
@@ -36,6 +37,7 @@ import {
 } from '../../utils/browser';
 import { LightColors, Elevation } from '../../constants/colors';
 import { useResponsive } from '../../constants/responsive';
+import { copy } from '../../constants/copy';
 import { toast } from '../../stores/toastStore';
 import type { PaymentMethod, PaymentMethodType } from '../../types';
 import type { PaymentMethodStatus } from '../../types/payment';
@@ -164,7 +166,7 @@ export default function PaymentMethodsScreen() {
           toast.info('Finishing up — your linked account will show as active once confirmed.');
         }
       } catch (err: any) {
-        toast.error(err?.message ?? err?.response?.data?.message ?? 'Could not start linking. Please try again.');
+        toast.error(errorMessage(err, copy.payment.linkFailed));
       } finally {
         setLinking(null);
       }

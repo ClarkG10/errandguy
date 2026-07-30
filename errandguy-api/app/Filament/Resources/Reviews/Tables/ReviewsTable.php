@@ -2,6 +2,7 @@
 
 namespace App\Filament\Resources\Reviews\Tables;
 
+use App\Filament\Support\AdminNotify;
 use App\Filament\Support\ExportCsv;
 use App\Models\AdminUser;
 use App\Models\Review;
@@ -9,7 +10,6 @@ use App\Support\AdminActivity;
 use Filament\Actions\Action;
 use Filament\Actions\DeleteAction;
 use Filament\Actions\ViewAction;
-use Filament\Notifications\Notification;
 use Filament\Support\Icons\Heroicon;
 use Filament\Tables\Columns\IconColumn;
 use Filament\Tables\Columns\TextColumn;
@@ -60,15 +60,12 @@ class ReviewsTable
                     ->action(function ($record): void {
                         $record->update(['is_flagged' => ! $record->is_flagged]);
 
-                        AdminActivity::log(
-                            $record->is_flagged ? 'review.flagged' : 'review.unflagged',
+                        AdminNotify::success(
+                            $record->is_flagged ? 'Review flagged' : 'Review unflagged',
                             $record,
+                            ['Rating' => $record->rating, 'Reviewer' => $record->reviewer?->full_name],
+                            audit: $record->is_flagged ? 'review.flagged' : 'review.unflagged',
                         );
-
-                        Notification::make()
-                            ->title($record->is_flagged ? 'Review flagged' : 'Review unflagged')
-                            ->success()
-                            ->send();
                     }),
 
                 DeleteAction::make()

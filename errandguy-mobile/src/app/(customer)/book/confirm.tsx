@@ -19,6 +19,9 @@ import { useBackGuard } from '../../../hooks/useBackGuard';
 import { useForegroundInterval } from '../../../hooks/useForegroundInterval';
 import { useSmartPolling } from '../../../hooks/useSmartPolling';
 import { bookingService } from '../../../services/booking.service';
+import { errorMessage } from '../../../utils/errorCatalog';
+import { haptics } from '../../../utils/haptics';
+import { copy } from '../../../constants/copy';
 import { Button } from '../../../components/ui/Button';
 import { ConfirmModal } from '../../../components/ui/ConfirmModal';
 import { SuccessCheck } from '../../../components/ui/SuccessCheck';
@@ -376,8 +379,9 @@ export default function ConfirmScreen() {
       );
       toast.success('Booking cancelled — no fee charged.');
       router.replace('/(customer)/(tabs)');
-    } catch {
-      toast.error('Failed to cancel booking');
+    } catch (err) {
+      haptics.error();
+      toast.error(errorMessage(err, copy.booking.cancelFailed));
     } finally {
       setIsCancelling(false);
     }
@@ -401,8 +405,7 @@ export default function ConfirmScreen() {
       setState('searching');
     } catch (err: any) {
       toast.error(
-        err?.message ?? err?.response?.data?.message ??
-          'Could not retry matching right now. Try again in a moment.',
+        errorMessage(err, 'Could not retry matching right now. Try again in a moment.'),
       );
     } finally {
       setIsRetrying(false);

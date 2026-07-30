@@ -34,6 +34,8 @@ import { ConfirmModal } from '../../../components/ui/ConfirmModal';
 import { LightColors, Elevation } from '../../../constants/colors';
 import { useResponsive } from '../../../constants/responsive';
 import { formatRelativeTime } from '../../../utils/formatDate';
+import { errorMessage } from '../../../utils/errorCatalog';
+import { copy } from '../../../constants/copy';
 import { toast } from '../../../stores/toastStore';
 
 // Ticket status → Badge variant + human label. Mirrors the server's
@@ -162,7 +164,7 @@ export default function SupportTicketsScreen() {
       Haptics.notificationAsync(
         Haptics.NotificationFeedbackType.Error,
       ).catch(() => {});
-      toast.error(err?.message ?? 'Could not create ticket');
+      toast.error(errorMessage(err, copy.support.createFailed));
     } finally {
       setSubmitting(false);
     }

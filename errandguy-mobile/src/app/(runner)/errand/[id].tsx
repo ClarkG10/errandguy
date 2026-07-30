@@ -53,6 +53,9 @@ import { getErrandTypeRule } from '../../../constants/errandTypeRules';
 import { formatCurrency } from '../../../utils/formatCurrency';
 import type { BookingStatus } from '../../../types';
 import { toast } from '../../../stores/toastStore';
+import { errorMessage } from '../../../utils/errorCatalog';
+import { copy } from '../../../constants/copy';
+import { haptics } from '../../../utils/haptics';
 
 const TIMELINE_STEPS: BookingStatus[] = [
   'accepted',
@@ -557,12 +560,12 @@ export default function ActiveErrandScreen() {
       .catch((err: any) => {
         advancingRef.current = false; // re-arm on failure so the runner can retry
         // Revert optimistic state and surface the error.
-        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error).catch(() => {});
+        haptics.error();
         if (status === 'completed') setShowSuccessMoment(false);
         setSlideResetKey((k) => k + 1);
         fetchedQ.mutate(prev);
         updateErrandStatus(prev.status as BookingStatus);
-        toast.error(err?.message ?? err?.response?.data?.message ?? 'Failed to update status');
+        toast.error(errorMessage(err, copy.runner.statusUpdateFailed));
       });
   };
 
@@ -1531,12 +1534,10 @@ export default function ActiveErrandScreen() {
               Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
             })
             .catch((err: any) => {
-              Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error).catch(() => {});
+              haptics.error();
               fetchedQ.mutate(prev);
               updateErrandStatus(prev.status as BookingStatus);
-              toast.error(
-                err?.message ?? err?.response?.data?.message ?? 'Failed to submit receipt',
-              );
+              toast.error(errorMessage(err, copy.runner.receiptSubmitFailed));
             })
             .finally(() => setSubmittingReceipt(false));
         }}

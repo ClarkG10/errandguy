@@ -16,6 +16,7 @@ import { PriceBreakdown } from '../ui/PriceBreakdown';
 import { bookingService } from '../../services/booking.service';
 import { warmTracking } from '../../services/preload.service';
 import { toast } from '../../stores/toastStore';
+import { errorMessage } from '../../utils/errorCatalog';
 import { formatCurrency } from '../../utils/formatCurrency';
 import { formatFullDate, formatTime } from '../../utils/formatDate';
 import {
@@ -74,8 +75,7 @@ export function BookingDetailSheet({
         Haptics.NotificationFeedbackType.Error,
       ).catch(() => {});
       toast.error(
-        err?.message ?? err?.response?.data?.message ??
-          "Couldn't rebook this errand. Please try again.",
+        errorMessage(err, "Couldn't rebook this errand. Please try again."),
       );
     } finally {
       setRebooking(false);

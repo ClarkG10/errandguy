@@ -4,8 +4,8 @@
      obvious active navigation, elevated cards, and premium data surfaces. --}}
 <style>
     :root {
-        --eg-brand: #2563eb;
-        --eg-brand-2: #1d4ed8;
+        --eg-brand: #1e88ff;
+        --eg-brand-2: #0f6fe6;
         --eg-accent: #ea580c;
         --eg-r-sm: .5rem; --eg-r: .85rem; --eg-r-lg: 1.15rem; --eg-r-xl: 1.4rem;
         --eg-s1: .25rem; --eg-s2: .5rem; --eg-s3: .75rem; --eg-s4: 1rem; --eg-s5: 1.25rem; --eg-s6: 1.5rem; --eg-s8: 2rem;
@@ -150,11 +150,14 @@
     .fi-in-repeatable-item { padding: var(--eg-s4) !important; border-radius: var(--eg-r) !important; }
 
     /* ===== BRAND lockup (topbar) ======================================== */
-    .eg-brand { display: inline-flex; align-items: center; gap: .55rem; line-height: 1; }
-    .eg-brand__mark { height: 2rem; width: 2rem; object-fit: contain; flex: none; filter: drop-shadow(0 2px 4px rgb(37 99 235 / .35)); }
-    .eg-brand__word { font-size: 1.2rem; font-weight: 800; letter-spacing: -.02em; white-space: nowrap; }
-    .eg-brand__word-a { color: #1e3a8a; } .eg-brand__word-b { color: #2563eb; }
-    .dark .eg-brand__word-a { color: #e2e8f0; } .dark .eg-brand__word-b { color: #60a5fa; }
+    .eg-brand { display: inline-flex; align-items: center; line-height: 1; }
+    /* Inline SVG lockup (frosted-parcel mark + custom "ErrandGuy"). Badge is
+       self-coloured; wordmark letters are themed here so they read on both grounds. */
+    .eg-brand .eg-lockup { height: 2.1rem; width: auto; display: block; filter: drop-shadow(0 2px 5px rgb(15 111 230 / .35)); }
+    .eg-lockup .w-a { fill: #0f6fe6; stroke: #0f6fe6; }
+    .eg-lockup .w-b { fill: #ea580c; stroke: #ea580c; }
+    .dark .eg-lockup .w-a { fill: #bad8ff; stroke: #bad8ff; }
+    .dark .eg-lockup .w-b { fill: #fb923c; stroke: #fb923c; }
 
     /* ===== SIDEBAR FOOTER =============================================== */
     .eg-sidebar-footer { padding: .75rem 1rem; font-size: .68rem; color: rgb(100 116 139); border-top: 1px solid var(--eg-border); display: flex; align-items: center; gap: .4rem; }

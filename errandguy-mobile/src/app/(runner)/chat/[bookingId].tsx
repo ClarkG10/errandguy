@@ -39,6 +39,8 @@ import { resolveImageUrl } from '../../../utils/resolveImageUrl';
 import { RUNNER_QUICK_MESSAGES } from '../../../constants/quickMessages';
 import type { Message } from '../../../types';
 import { toast } from '../../../stores/toastStore';
+import { errorMessage } from '../../../utils/errorCatalog';
+import { copy } from '../../../constants/copy';
 
 /**
  * One row in the local (screen-level) inverted chat list. Message rows
@@ -450,11 +452,11 @@ export default function RunnerChatScreen() {
       }
       try {
         await chatSendMessage(text || undefined, imageUrl);
-      } catch {
+      } catch (err: any) {
         Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error).catch(
           () => {},
         );
-        toast.error('Failed to send message');
+        toast.error(errorMessage(err, copy.chat.sendFailed));
         if (!content) setInputText((prev) => (prev ? prev : text));
       }
     },
@@ -471,11 +473,11 @@ export default function RunnerChatScreen() {
         // canonical URL on the message row. Sending the raw `file://` URI
         // through the JSON path would be silently dropped.
         await chatSendImage(uri);
-      } catch {
+      } catch (err: any) {
         Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error).catch(
           () => {},
         );
-        toast.error('Failed to send image');
+        toast.error(errorMessage(err, copy.chat.imageSendFailed));
       } finally {
         setSending(false);
       }

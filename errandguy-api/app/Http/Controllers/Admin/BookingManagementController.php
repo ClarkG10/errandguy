@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Admin;
 use App\Http\Controllers\Controller;
 use App\Models\Booking;
 use App\Http\Resources\BookingResource;
+use App\Support\ErrorCode;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Carbon;
@@ -68,9 +69,9 @@ class BookingManagementController extends Controller
             // no fee) shared with the Filament admin panel.
             $bookings->adminCancel($id, $request->user()->id, $request->input('reason'));
         } catch (\App\Exceptions\BookingStateException $e) {
-            return response()->json(['message' => $e->getMessage()], 422);
+            return $this->fail(ErrorCode::BOOKING_STATE_INVALID, $e->getMessage());
         }
 
-        return response()->json(['message' => 'Booking cancelled by admin']);
+        return $this->ok(null, 'Booking cancelled.');
     }
 }

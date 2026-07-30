@@ -66,8 +66,11 @@ import { ExpandableSheet } from '../../../components/ui/ExpandableSheet';
 import { formatTime } from '../../../utils/formatDate';
 import { formatCurrency } from '../../../utils/formatCurrency';
 import { resolveImageUrl } from '../../../utils/resolveImageUrl';
+import { errorMessage } from '../../../utils/errorCatalog';
+import { haptics } from '../../../utils/haptics';
 import { STATUS_LABELS } from '../../../constants/statusLabels';
 import { LightColors, Elevation } from '../../../constants/colors';
+import { copy } from '../../../constants/copy';
 
 import { getErrandTypeRule } from '../../../constants/errandTypeRules';
 import type { Booking, BookingStatus, BookingStatusLog } from '../../../types';
@@ -866,8 +869,9 @@ export default function TrackingScreen() {
       setActiveBooking(null);
       setShowCancelModal(false);
       router.replace('/(customer)/(tabs)');
-    } catch {
-      toast.error('Failed to cancel booking');
+    } catch (err) {
+      haptics.error();
+      toast.error(errorMessage(err, copy.booking.cancelFailed));
     } finally {
       setIsCancelling(false);
     }
@@ -892,8 +896,9 @@ export default function TrackingScreen() {
       setSosActive(true);
       setShowSOSModal(false);
       toast.success('Emergency contacts notified');
-    } catch {
-      toast.error('Failed to trigger SOS');
+    } catch (err) {
+      haptics.error();
+      toast.error(errorMessage(err, copy.safety.sosFailed));
     } finally {
       setSosSubmitting(false);
     }
@@ -925,7 +930,7 @@ export default function TrackingScreen() {
       const res = await bookingService.shareTrip(id);
       const url = res.data?.data?.link;
       if (!url) {
-        toast.error('Failed to share trip');
+        toast.error(errorMessage(undefined, copy.safety.shareTripFailed));
         return;
       }
       Haptics.selectionAsync().catch(() => {});
@@ -939,8 +944,8 @@ export default function TrackingScreen() {
       setBooking((prev) =>
         prev && prev.id === id ? { ...prev, trip_share_active: true } : prev,
       );
-    } catch {
-      toast.error('Failed to share trip');
+    } catch (err) {
+      toast.error(errorMessage(err, copy.safety.shareTripFailed));
     } finally {
       setSharingTrip(false);
     }
@@ -962,7 +967,7 @@ export default function TrackingScreen() {
       setBooking((prev) =>
         prev && prev.id === id ? { ...prev, trip_share_active: true } : prev,
       );
-      toast.error('Could not stop sharing');
+      toast.error('Couldn’t stop sharing your trip. Please try again.');
     }
   }, [id]);
 

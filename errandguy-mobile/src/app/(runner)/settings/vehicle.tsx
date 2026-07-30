@@ -19,6 +19,8 @@ import { useRunnerStore } from '../../../stores/runnerStore';
 import { runnerService } from '../../../services/runner.service';
 import type { VehicleType } from '../../../types';
 import { toast } from '../../../stores/toastStore';
+import { errorMessage } from '../../../utils/errorCatalog';
+import { copy } from '../../../constants/copy';
 
 // Lucide doesn't ship a motorcycle glyph, so we reuse `Bike` for the
 // two-wheeled options and let the label disambiguate.
@@ -109,7 +111,7 @@ export default function VehicleScreen() {
       toast.success('Vehicle information updated');
       leaveScreen();
     } catch (err: any) {
-      toast.error(err?.message ?? err?.response?.data?.message ?? 'Failed to update vehicle');
+      toast.error(errorMessage(err, copy.runner.vehicleSaveFailed));
     } finally {
       setLoading(false);
     }

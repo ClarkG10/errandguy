@@ -62,7 +62,7 @@ class UserManagementController extends Controller
         // expires.
         $user->tokens()->delete();
 
-        return response()->json(['message' => 'User suspended']);
+        return $this->ok(null, 'User suspended. Their active sessions were revoked.');
     }
 
     public function unsuspend(string $id): JsonResponse
@@ -74,6 +74,6 @@ class UserManagementController extends Controller
             'suspended_at' => null,
         ]);
 
-        return response()->json(['message' => 'User reactivated']);
+        return $this->ok(null, 'User reactivated.');
     }
 }

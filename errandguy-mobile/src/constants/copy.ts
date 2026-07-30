@@ -57,6 +57,16 @@ export const copy = {
     sendFailed: 'Message didn’t send. Tap to retry.',
     imageSendFailed: 'Couldn’t send your image. Please try again.',
   },
+  support: {
+    createFailed: 'Couldn’t open your support ticket. Please try again.',
+    messageSendFailed: 'Couldn’t send your message. Please try again.',
+  },
+  promo: {
+    applyFailed: 'Couldn’t apply that promo code. Check it and try again.',
+  },
+  payment: {
+    linkFailed: 'Couldn’t start linking that payment method. Please try again.',
+  },
   safety: {
     sosFailed: 'Couldn’t trigger SOS. Please try again, or call for help directly.',
     shareTripFailed: 'Couldn’t share your trip. Please try again.',

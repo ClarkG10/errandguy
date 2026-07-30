@@ -27,6 +27,7 @@ import { preloadCoreImages } from '../../services/preload.service';
 import { userService } from '../../services/user.service';
 import { useAuthStore } from '../../stores/authStore';
 import { toast } from '../../stores/toastStore';
+import { errorMessage } from '../../utils/errorCatalog';
 import { LightColors } from '../../constants/colors';
 import type { User } from '../../types';
 
@@ -197,7 +198,7 @@ export default function LoginScreen() {
       } else if (status === 405) {
         message = 'Service temporarily unavailable. Please try again later.';
       } else if (status >= 500) {
-        message = 'Something went wrong on our end. Please try again later.';
+        message = errorMessage(error, 'Couldn’t sign you in. Please try again.');
       } else if (status === 429) {
         message = 'Too many attempts. Please wait a few minutes and try again.';
       } else if (status === 422) {
@@ -608,10 +609,12 @@ export default function LoginScreen() {
           </Text>
         </View>
       )}
+      {/* Success curtain. The brand mark is now a full-colour badge, so it is
+          shown untinted on a soft surface (matching the boot/logout splashes)
+          instead of being flattened to a white silhouette on a blue field. */}
       <LogoutSplash
         visible={succeeded}
-        backgroundColor={LightColors.primaryDark}
-        logoTintColor={LightColors.textInverse}
+        backgroundColor={LightColors.background}
         logoSize={172}
       />
     </SafeAreaView>

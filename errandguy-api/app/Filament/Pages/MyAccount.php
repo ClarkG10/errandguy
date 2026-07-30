@@ -2,11 +2,10 @@
 
 namespace App\Filament\Pages;
 
-use App\Support\AdminActivity;
+use App\Filament\Support\AdminNotify;
 use BackedEnum;
 use Filament\Actions\Action;
 use Filament\Forms\Components\TextInput;
-use Filament\Notifications\Notification;
 use Filament\Pages\Page;
 use Filament\Support\Icons\Heroicon;
 use Illuminate\Support\Facades\Hash;
@@ -61,8 +60,7 @@ class MyAccount extends Page
                 ->action(function (array $data): void {
                     $admin = auth('admin')->user();
                     $admin->update(['full_name' => $data['full_name'], 'email' => $data['email']]);
-                    AdminActivity::log('account.profile_updated', $admin);
-                    Notification::make()->title('Profile updated')->success()->send();
+                    AdminNotify::success('Your profile has been updated.', audit: 'account.profile_updated');
                 }),
 
             Action::make('changePassword')
@@ -85,8 +83,7 @@ class MyAccount extends Page
                 ->action(function (array $data): void {
                     $admin = auth('admin')->user();
                     $admin->update(['password_hash' => Hash::make($data['password'])]);
-                    AdminActivity::log('account.password_changed', $admin);
-                    Notification::make()->title('Password changed')->success()->send();
+                    AdminNotify::success('Your password has been changed.', audit: 'account.password_changed');
                 }),
         ];
     }

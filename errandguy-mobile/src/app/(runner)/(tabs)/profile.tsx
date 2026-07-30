@@ -35,6 +35,9 @@ import { useAuthStore } from '../../../stores/authStore';
 import { runnerService } from '../../../services/runner.service';
 import { userService } from '../../../services/user.service';
 import { toast } from '../../../stores/toastStore';
+import { errorMessage } from '../../../utils/errorCatalog';
+import { copy } from '../../../constants/copy';
+import { haptics } from '../../../utils/haptics';
 import { LightColors } from '../../../constants/colors';
 import { useResponsive } from '../../../constants/responsive';
 import { checkForOtaUpdate } from '../../../hooks/useOtaUpdate';
@@ -186,8 +189,9 @@ export default function RunnerProfileScreen() {
       await userService.deleteAccount();
       await logout();
       router.replace('/(auth)/welcome' as any);
-    } catch {
-      toast.error('Failed to delete account. Please try again.');
+    } catch (err: any) {
+      haptics.error();
+      toast.error(errorMessage(err, copy.profile.deleteAccountFailed));
     } finally {
       setDeleting(false);
       setShowDeleteModal(false);

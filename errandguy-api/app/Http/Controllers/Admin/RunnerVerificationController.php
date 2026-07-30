@@ -62,7 +62,7 @@ class RunnerVerificationController extends Controller
             ['type' => 'document_update']
         );
 
-        return response()->json(['message' => 'Runner approved']);
+        return $this->ok(null, 'Runner approved — they can now accept errands.');
     }
 
     public function reject(Request $request, string $userId): JsonResponse
@@ -91,6 +91,6 @@ class RunnerVerificationController extends Controller
             ['type' => 'document_update']
         );
 
-        return response()->json(['message' => 'Runner rejected']);
+        return $this->ok(null, 'Runner rejected. They’ve been notified.');
     }
 }

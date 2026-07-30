@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Admin;
 use App\Exceptions\PayoutStateException;
 use App\Http\Controllers\Controller;
 use App\Models\WalletTransaction;
+use App\Support\ErrorCode;
 use App\Services\WalletService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -40,7 +41,7 @@ class AdminPayoutController extends Controller
         try {
             $tx = $wallet->completePayout($id);
         } catch (PayoutStateException $e) {
-            return response()->json(['message' => $e->getMessage()], 422);
+            return $this->fail(ErrorCode::PAYOUT_STATE_INVALID, $e->getMessage());
         }
 
         return response()->json(['data' => $tx]);
@@ -55,7 +56,7 @@ class AdminPayoutController extends Controller
         try {
             $tx = $wallet->failPayout($id, $validated['reason']);
         } catch (PayoutStateException $e) {
-            return response()->json(['message' => $e->getMessage()], 422);
+            return $this->fail(ErrorCode::PAYOUT_STATE_INVALID, $e->getMessage());
         }
 
         return response()->json(['data' => $tx]);

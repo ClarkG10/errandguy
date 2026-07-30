@@ -2,12 +2,11 @@
 
 namespace App\Filament\Pages;
 
+use App\Filament\Support\AdminNotify;
 use App\Services\PaymentMethodCatalog;
-use App\Support\AdminActivity;
 use BackedEnum;
 use Filament\Actions\Action;
 use Filament\Forms\Components\CheckboxList;
-use Filament\Notifications\Notification;
 use Filament\Pages\Page;
 use Filament\Support\Icons\Heroicon;
 
@@ -60,8 +59,12 @@ class PlatformPaymentMethods extends Page
                         $data['methods'] ?? [],
                         auth('admin')->id(),
                     );
-                    AdminActivity::log('payment_methods.updated', null, ['enabled' => $saved]);
-                    Notification::make()->title('Payment methods updated')->success()->send();
+                    AdminNotify::success(
+                        'Payment methods updated',
+                        audit: 'payment_methods.updated',
+                        properties: ['enabled' => $saved],
+                        note: 'Customers will see the change on their next refresh.',
+                    );
                 }),
         ];
     }

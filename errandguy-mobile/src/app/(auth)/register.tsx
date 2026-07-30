@@ -28,6 +28,7 @@ import { userService } from '../../services/user.service';
 import { authService } from '../../services/auth.service';
 import { geocodingService, type PlaceFeature } from '../../services/geocoding.service';
 import { toast } from '../../stores/toastStore';
+import { errorMessage } from '../../utils/errorCatalog';
 import { LightColors, Elevation } from '../../constants/colors';
 
 interface RegisterFormData {
@@ -290,7 +291,7 @@ export default function RegisterScreen() {
           const first = FIELD_ORDER.find((k) => serverErrors[k]);
           if (first) scrollToField(first);
         } else {
-          toast.error(error?.message || 'Registration failed. Please try again.');
+          toast.error(errorMessage(error, 'Couldn’t create your account. Please try again.'));
         }
       } else {
         let message: string;
@@ -299,9 +300,9 @@ export default function RegisterScreen() {
         } else if (status === 429) {
           message = 'Too many attempts. Please wait a few minutes and try again.';
         } else if (status >= 500) {
-          message = 'Something went wrong on our end. Please try again later.';
+          message = errorMessage(error, 'Couldn’t create your account. Please try again.');
         } else {
-          message = error?.message || 'Registration failed. Please try again.';
+          message = errorMessage(error, 'Couldn’t create your account. Please try again.');
         }
         toast.error(message);
       }

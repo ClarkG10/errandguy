@@ -11,6 +11,8 @@ import { useAuth } from '../../hooks/useAuth';
 import { useReducedMotion } from '../../hooks/useReducedMotion';
 import { userService } from '../../services/user.service';
 import { toast } from '../../stores/toastStore';
+import { errorMessage } from '../../utils/errorCatalog';
+import { copy } from '../../constants/copy';
 import { LightColors } from '../../constants/colors';
 import { useResponsive } from '../../constants/responsive';
 import type { UserRole } from '../../types';
@@ -64,8 +66,7 @@ export default function RoleSelectScreen() {
       }
     } catch (error: any) {
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error).catch(() => {});
-      const message =
-        error?.message || 'Something went wrong. Please try again.';
+      const message = errorMessage(error, copy.generic.tryAgain);
       toast.error(message);
     } finally {
       setLoading(false);

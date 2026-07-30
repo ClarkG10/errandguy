@@ -2,6 +2,7 @@ import { invalidateQuery } from '../hooks/useQuery';
 import { toast } from '../stores/toastStore';
 import { network } from '../stores/networkStore';
 import { enqueueMutation, type QueueSpec } from '../services/mutationQueue';
+import { describeError } from './errorCatalog';
 
 type QueryKey = (string | number | null | undefined)[];
 
@@ -134,15 +135,19 @@ export async function runOptimistic(options: OptimisticOptions): Promise<boolean
       return false;
     }
     if (errorMessage) {
+      // Code/kind-aware copy: a backend `code` (or offline/timeout/server kind)
+      // wins; the caller's string is only the last-resort fallback. This makes
+      // every runOptimistic call site honest without touching each one.
+      const msg = describeError(err, { fallback: errorMessage }).message;
       if (retry) {
-        toast.error(errorMessage, {
+        toast.error(msg, {
           actionLabel: typeof retry === 'string' ? retry : 'Retry',
           onAction: () => {
             void runOptimistic(options);
           },
         });
       } else {
-        toast.error(errorMessage);
+        toast.error(msg);
       }
     }
     return false;

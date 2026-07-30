@@ -42,6 +42,8 @@ class WalletController extends Controller
             ],
         ], [
             'payment_method_id.exists' => 'Selected payment method is not available on your account.',
+            'amount.min' => 'The minimum top-up is ₱50. Please enter ₱50 or more.',
+            'amount.max' => 'The maximum top-up is ₱50,000. Please enter a smaller amount.',
         ]);
 
         // Idempotency guard: reuse an existing PENDING top-up of the same

@@ -12,8 +12,9 @@ import { Image } from 'expo-image';
  * single `height` prop.
  */
 
-// Intrinsic aspect (width / height) of assets/wordmark-lockup.png (2729×662).
-const WORDMARK_ASPECT = 4.122;
+// Intrinsic aspect (width / height) of assets/wordmark-lockup.png — icon-free
+// two-tone "ErrandGuy" custom wordmark (1123×340).
+const WORDMARK_ASPECT = 3.303;
 
 interface WordmarkProps {
   /** Rendered height in points. Width derives from the intrinsic aspect. */

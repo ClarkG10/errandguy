@@ -15,6 +15,8 @@ import { useResponsive } from '../../../constants/responsive';
 import { useAuthStore } from '../../../stores/authStore';
 import { userService } from '../../../services/user.service';
 import { toast } from '../../../stores/toastStore';
+import { errorMessage } from '../../../utils/errorCatalog';
+import { copy } from '../../../constants/copy';
 
 export default function EditProfileScreen() {
   const router = useRouter();
@@ -115,10 +117,10 @@ export default function EditProfileScreen() {
       });
       updateProfile(res.data.data);
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
-      toast.success('Profile updated successfully');
+      toast.success('Your profile changes have been saved.');
       leaveScreen();
     } catch (err: any) {
-      toast.error(err?.message ?? err?.response?.data?.message ?? 'Failed to update profile');
+      toast.error(errorMessage(err, copy.profile.saveFailed));
     } finally {
       setLoading(false);
     }

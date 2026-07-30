@@ -206,7 +206,7 @@ export default function PayoutScreen() {
     if (!payoutKeyRef.current) payoutKeyRef.current = newIdempotencyKey();
     setRequesting(true);
     try {
-      await runnerService.requestPayout(requestedAmount, {
+      const res = await runnerService.requestPayout(requestedAmount, {
         idempotencyKey: payoutKeyRef.current,
       });
       // Success → this payout is filed; a fresh withdrawal needs a fresh key.
@@ -215,7 +215,9 @@ export default function PayoutScreen() {
       setAmountInput('');
       // SuccessCheck fires its own success haptic on mount.
       setShowPayoutSuccess(true);
-      toast.success('Payout request submitted');
+      // Prefer the backend's detailed confirmation (amount + destination + ETA)
+      // over a bare "submitted" — falls back to the copy catalog.
+      toast.success(res?.data?.message ?? copy.wallet.payoutRequested);
       await onRefresh();
     } catch (err: any) {
       // Keep the key so a retry of THIS payout dedupes server-side. Copy is

@@ -2,13 +2,12 @@
 
 namespace App\Filament\Resources\SupportTickets\Tables;
 
+use App\Filament\Support\AdminNotify;
 use App\Filament\Support\ExportCsv;
 use App\Models\SupportTicket;
-use App\Support\AdminActivity;
 use Filament\Actions\Action;
 use Filament\Actions\ViewAction;
 use Filament\Forms\Components\Select;
-use Filament\Notifications\Notification;
 use Filament\Support\Icons\Heroicon;
 use Filament\Tables\Columns\TextColumn;
 use Filament\Tables\Filters\SelectFilter;
@@ -82,8 +81,13 @@ class SupportTicketsTable
                     ->fillForm(fn ($record): array => ['status' => $record->status])
                     ->action(function (array $data, $record): void {
                         $record->update(['status' => $data['status']]);
-                        AdminActivity::log('support.status_changed', $record, ['status' => $data['status']]);
-                        Notification::make()->title('Status updated')->success()->send();
+                        AdminNotify::success(
+                            'Ticket status updated',
+                            $record,
+                            ['Ticket' => $record->id, 'New status' => $data['status'] ?? $record->status],
+                            audit: 'support.status_changed',
+                            properties: ['status' => $data['status']],
+                        );
                     }),
             ]);
     }

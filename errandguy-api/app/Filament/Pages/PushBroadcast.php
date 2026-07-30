@@ -5,14 +5,13 @@ namespace App\Filament\Pages;
 use App\Jobs\SendPushJob;
 use App\Models\AdminUser;
 use App\Models\User;
+use App\Filament\Support\AdminNotify;
 use App\Services\NotificationService;
-use App\Support\AdminActivity;
 use BackedEnum;
 use Filament\Actions\Action;
 use Filament\Forms\Components\Select;
 use Filament\Forms\Components\TextInput;
 use Filament\Forms\Components\Textarea;
-use Filament\Notifications\Notification;
 use Filament\Pages\Page;
 use Filament\Support\Icons\Heroicon;
 
@@ -79,16 +78,24 @@ class PushBroadcast extends Page
 
         if ($data['audience'] === 'topic') {
             app(NotificationService::class)->sendToTopic($data['topic'], $title, $body, $payload);
-            AdminActivity::log('push.broadcast', null, ['audience' => 'topic', 'topic' => $data['topic']]);
-            Notification::make()->title('Broadcast sent to topic')->success()->send();
+            AdminNotify::success(
+                'Broadcast sent to topic',
+                audit: 'push.broadcast',
+                properties: ['audience' => 'topic', 'topic' => $data['topic']],
+                note: "Sent to topic {$data['topic']}.",
+            );
 
             return;
         }
 
         if ($data['audience'] === 'user') {
             SendPushJob::dispatch($data['user_id'], $title, $body, $payload);
-            AdminActivity::log('push.broadcast', null, ['audience' => 'user', 'user_id' => $data['user_id']]);
-            Notification::make()->title('Push queued for user')->success()->send();
+            AdminNotify::success(
+                'Push queued for user',
+                audit: 'push.broadcast',
+                properties: ['audience' => 'user', 'user_id' => $data['user_id']],
+                note: "Queued for user {$data['user_id']}.",
+            );
 
             return;
         }
@@ -109,7 +116,11 @@ class PushBroadcast extends Page
             }
         });
 
-        AdminActivity::log('push.broadcast', null, ['audience' => $data['audience'], 'recipients' => $count]);
-        Notification::make()->title("Broadcast queued for {$count} users")->success()->send();
+        AdminNotify::success(
+            "Broadcast queued for {$count} users",
+            audit: 'push.broadcast',
+            properties: ['audience' => $data['audience'], 'recipients' => $count],
+            note: "Targeting the {$data['audience']} segment.",
+        );
     }
 }

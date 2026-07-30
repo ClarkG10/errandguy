@@ -64,7 +64,7 @@ class DisputeController extends Controller
             ['type' => 'system']
         );
 
-        return response()->json(['message' => 'Dispute resolved']);
+        return $this->ok(null, 'Dispute resolved.');
     }
 
     public function escalate(string $id): JsonResponse
@@ -72,6 +72,6 @@ class DisputeController extends Controller
         $dispute = DisputeTicket::findOrFail($id);
         $dispute->update(['status' => 'escalated']);
 
-        return response()->json(['message' => 'Dispute escalated']);
+        return $this->ok(null, 'Dispute escalated.');
     }
 }

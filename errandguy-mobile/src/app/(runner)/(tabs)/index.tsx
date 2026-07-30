@@ -430,8 +430,7 @@ export default function RunnerHomeScreen() {
     } catch (err: any) {
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error).catch(() => {});
       const status = err?.status ?? err?.response?.status;
-      const message: string =
-        err?.message ?? err?.response?.data?.message ?? 'Failed to toggle status';
+      const message: string = errorMessage(err, copy.runner.toggleFailed);
 
       if (status === 422 && /preferred errand type/i.test(message)) {
         toast.warning(

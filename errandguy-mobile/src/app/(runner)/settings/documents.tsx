@@ -23,6 +23,8 @@ import { CacheTTL } from '../../../services/cache.service';
 import { useResponsive } from '../../../constants/responsive';
 import type { RunnerDocument, DocumentType, RunnerProfile } from '../../../types';
 import { toast } from '../../../stores/toastStore';
+import { errorMessage } from '../../../utils/errorCatalog';
+import { copy } from '../../../constants/copy';
 
 interface DocConfig {
   type: DocumentType;
@@ -155,10 +157,9 @@ export default function DocumentsScreen() {
       await runnerService.uploadDocument(formData, (p) => setUploadPct(p));
       await profileQ.refresh();
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
-      toast.success('Document uploaded successfully');
+      toast.success('Document uploaded — we’ll review it shortly.');
     } catch (err: any) {
-      const message =
-        err?.message ?? err?.response?.data?.message ?? 'Failed to upload document';
+      const message = errorMessage(err, copy.runner.documentUploadFailed);
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error).catch(() => {});
       toast.error(message);
     } finally {

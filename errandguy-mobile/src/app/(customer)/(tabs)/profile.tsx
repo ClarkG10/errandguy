@@ -43,8 +43,11 @@ import { userService } from '../../../services/user.service';
 import { prefetchPromos, prefetchReferral } from '../../../services/preload.service';
 import { formatCurrency } from '../../../utils/formatCurrency';
 import { LightColors } from '../../../constants/colors';
+import { copy } from '../../../constants/copy';
 import { TAB_CONTENT_BOTTOM_INSET } from '../../../constants/tabLayout';
 import { toast } from '../../../stores/toastStore';
+import { errorMessage } from '../../../utils/errorCatalog';
+import { haptics } from '../../../utils/haptics';
 import { checkForOtaUpdate } from '../../../hooks/useOtaUpdate';
 import { getAppVersionLabel } from '../../../utils/appVersion';
 
@@ -124,8 +127,9 @@ export default function CustomerProfileScreen() {
       setDeleteConfirmText('');
       await logout();
       router.replace('/(auth)/welcome' as any);
-    } catch {
-      toast.error('Failed to delete account. Please try again.');
+    } catch (err) {
+      haptics.error();
+      toast.error(errorMessage(err, copy.profile.deleteAccountFailed));
     } finally {
       setDeleting(false);
     }
