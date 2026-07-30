@@ -6,7 +6,7 @@
     :root {
         --eg-brand: #1e88ff;
         --eg-brand-2: #0f6fe6;
-        --eg-accent: #ea580c;
+        --eg-accent: #f59e0b;
         --eg-r-sm: .5rem; --eg-r: .85rem; --eg-r-lg: 1.15rem; --eg-r-xl: 1.4rem;
         --eg-s1: .25rem; --eg-s2: .5rem; --eg-s3: .75rem; --eg-s4: 1rem; --eg-s5: 1.25rem; --eg-s6: 1.5rem; --eg-s8: 2rem;
 
@@ -155,9 +155,9 @@
        self-coloured; wordmark letters are themed here so they read on both grounds. */
     .eg-brand .eg-lockup { height: 2.1rem; width: auto; display: block; filter: drop-shadow(0 2px 5px rgb(15 111 230 / .35)); }
     .eg-lockup .w-a { fill: #0f6fe6; stroke: #0f6fe6; }
-    .eg-lockup .w-b { fill: #ea580c; stroke: #ea580c; }
+    .eg-lockup .w-b { fill: #f59e0b; stroke: #f59e0b; }
     .dark .eg-lockup .w-a { fill: #bad8ff; stroke: #bad8ff; }
-    .dark .eg-lockup .w-b { fill: #fb923c; stroke: #fb923c; }
+    .dark .eg-lockup .w-b { fill: #fbbf24; stroke: #fbbf24; }
 
     /* ===== SIDEBAR FOOTER =============================================== */
     .eg-sidebar-footer { padding: .75rem 1rem; font-size: .68rem; color: rgb(100 116 139); border-top: 1px solid var(--eg-border); display: flex; align-items: center; gap: .4rem; }

@@ -31,7 +31,7 @@ class AdminPanelProvider extends PanelProvider
         // on badges / "attention" states across the panel (Color::hex builds the
         // full 50→950 shade ramp from the single brand hex).
         FilamentColor::register([
-            'accent' => Color::hex('#ea580c'),
+            'accent' => Color::hex('#f59e0b'),
         ]);
 
         return $panel
