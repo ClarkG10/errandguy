@@ -32,6 +32,7 @@ const CORE_IMAGE_ASSETS = [
   require('../../assets/logo-new.png'),
   require('../../assets/mascot-home.png'),
   require('../../assets/wordmark-lockup.png'),
+  require('../../assets/wordmark-stacked.png'),
   require('../../assets/ONBOARDING-1.png'),
   require('../../assets/ONBOARDING-2.png'),
   require('../../assets/ONBOARDING-3.png'),

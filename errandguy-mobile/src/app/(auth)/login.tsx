@@ -328,7 +328,7 @@ export default function LoginScreen() {
               When a remembered profile exists the heading becomes a
               personal greeting with the user's avatar. */}
           <View className="mt-8 mb-8">
-            <Wordmark height={38} style={{ alignSelf: 'center' }} />
+            <Wordmark variant="stacked" height={84} style={{ alignSelf: 'center' }} />
             {rememberedProfile ? (
               <>
                 {/* Returning-user card — groups the avatar, an eyebrow label
