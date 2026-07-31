@@ -26,16 +26,16 @@ class ListPayments extends ListRecords
             'all' => Tab::make('All')->badge(array_sum($c)),
             'completed' => Tab::make('Completed')->icon('heroicon-m-check-circle')->badgeColor('success')
                 ->badge(ListTabs::sum($c, 'completed'))
-                ->modifyQueryUsing(fn (Builder $q): Builder => $q->where('status', 'completed')),
+                ->modifyQueryUsing(fn (Builder $query): Builder => $query->where('status', 'completed')),
             'pending' => Tab::make('Pending')->icon('heroicon-m-clock')->badgeColor('warning')
                 ->badge(ListTabs::sum($c, 'pending', 'processing'))
-                ->modifyQueryUsing(fn (Builder $q): Builder => $q->whereIn('status', ['pending', 'processing'])),
+                ->modifyQueryUsing(fn (Builder $query): Builder => $query->whereIn('status', ['pending', 'processing'])),
             'refunded' => Tab::make('Refunded')->icon('heroicon-m-arrow-uturn-left')->badgeColor('info')
                 ->badge(ListTabs::sum($c, 'refunded'))
-                ->modifyQueryUsing(fn (Builder $q): Builder => $q->where('status', 'refunded')),
+                ->modifyQueryUsing(fn (Builder $query): Builder => $query->where('status', 'refunded')),
             'failed' => Tab::make('Failed')->icon('heroicon-m-x-circle')->badgeColor('danger')
                 ->badge(ListTabs::sum($c, 'failed', 'cancelled', 'expired'))
-                ->modifyQueryUsing(fn (Builder $q): Builder => $q->whereIn('status', ['failed', 'cancelled', 'expired'])),
+                ->modifyQueryUsing(fn (Builder $query): Builder => $query->whereIn('status', ['failed', 'cancelled', 'expired'])),
         ];
     }
 }

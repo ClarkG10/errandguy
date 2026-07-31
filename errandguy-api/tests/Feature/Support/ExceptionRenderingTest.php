@@ -36,6 +36,22 @@ class ExceptionRenderingTest extends TestCase
             Route::get('model-missing', fn () => User::query()->findOrFail('does-not-exist'));
             Route::get('boom', fn () => throw new \RuntimeException('SECRET internal stack detail'));
         });
+
+        // A NON-api route (mimics a Filament/Livewire request path) that throws,
+        // to prove the renderer does NOT hijack it even when Accept: application/json.
+        Route::get('_webtest/boom', fn () => throw new \RuntimeException('web boom'));
+    }
+
+    public function test_non_api_json_request_is_not_hijacked_by_the_api_renderer(): void
+    {
+        // Filament runs on Livewire, whose update requests satisfy expectsJson().
+        // The renderer must ignore anything outside /api/* so Filament handles its
+        // own exceptions — otherwise every admin tab/filter shows "Error while
+        // loading page". Assert our envelope is NOT applied here (no success/code
+        // keys; Laravel's default JSON error shape has neither).
+        $res = $this->getJson('/_webtest/boom');
+        $this->assertNull($res->json('code'));
+        $this->assertNull($res->json('success'));
     }
 
     public function test_gateway_failure_renders_as_422_never_5xx(): void

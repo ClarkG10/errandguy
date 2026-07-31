@@ -21,10 +21,10 @@ class ListSOSAlerts extends ListRecords
             'all' => Tab::make('All')->badge(array_sum($c)),
             'active' => Tab::make('Active')->icon('heroicon-m-shield-exclamation')->badgeColor('danger')
                 ->badge(ListTabs::sum($c, 'active'))
-                ->modifyQueryUsing(fn (Builder $q): Builder => $q->where('status', 'active')),
+                ->modifyQueryUsing(fn (Builder $query): Builder => $query->where('status', 'active')),
             'resolved' => Tab::make('Resolved')->icon('heroicon-m-check-circle')->badgeColor('success')
                 ->badge(ListTabs::sum($c, 'resolved'))
-                ->modifyQueryUsing(fn (Builder $q): Builder => $q->where('status', 'resolved')),
+                ->modifyQueryUsing(fn (Builder $query): Builder => $query->where('status', 'resolved')),
         ];
     }
 }

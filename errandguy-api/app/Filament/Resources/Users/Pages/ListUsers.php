@@ -22,13 +22,13 @@ class ListUsers extends ListRecords
             'all' => Tab::make('All')->badge(array_sum($roles)),
             'customers' => Tab::make('Customers')->icon('heroicon-m-user')->badgeColor('gray')
                 ->badge(ListTabs::sum($roles, 'customer'))
-                ->modifyQueryUsing(fn (Builder $q): Builder => $q->where('role', 'customer')),
+                ->modifyQueryUsing(fn (Builder $query): Builder => $query->where('role', 'customer')),
             'runners' => Tab::make('Runners')->icon('heroicon-m-truck')->badgeColor('info')
                 ->badge(ListTabs::sum($roles, 'runner'))
-                ->modifyQueryUsing(fn (Builder $q): Builder => $q->where('role', 'runner')),
+                ->modifyQueryUsing(fn (Builder $query): Builder => $query->where('role', 'runner')),
             'suspended' => Tab::make('Suspended')->icon('heroicon-m-shield-exclamation')->badgeColor('danger')
                 ->badge(ListTabs::sum($status, 'suspended'))
-                ->modifyQueryUsing(fn (Builder $q): Builder => $q->where('status', 'suspended')),
+                ->modifyQueryUsing(fn (Builder $query): Builder => $query->where('status', 'suspended')),
         ];
     }
 }

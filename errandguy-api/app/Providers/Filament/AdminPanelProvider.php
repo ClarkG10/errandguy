@@ -45,7 +45,11 @@ class AdminPanelProvider extends PanelProvider
             ->brandName('ErrandGuy Admin')
             // Mode-adaptive lockup (icon + CSS wordmark) instead of a raster that
             // only reads on one background — see resources/views/filament/brand.
-            ->brandLogo(fn (): string => view('filament.brand')->render())
+            // MUST return an Htmlable (not a plain string): Filament renders a
+            // string brandLogo as an <img src="…"> — passing raw SVG markup as a
+            // string produced a broken image with alt "ErrandGuy Admin logo".
+            // HtmlString makes Filament emit the SVG inline.
+            ->brandLogo(fn (): \Illuminate\Support\HtmlString => new \Illuminate\Support\HtmlString(view('filament.brand')->render()))
             ->brandLogoHeight('2.1rem')
             ->favicon(asset('brand/logo.png'))
             ->font('Inter')

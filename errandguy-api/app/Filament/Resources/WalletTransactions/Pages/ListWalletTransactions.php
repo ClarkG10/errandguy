@@ -21,16 +21,16 @@ class ListWalletTransactions extends ListRecords
             'all' => Tab::make('All')->badge(array_sum($c)),
             'topups' => Tab::make('Top-ups')->icon('heroicon-m-arrow-down-circle')->badgeColor('success')
                 ->badge(ListTabs::sum($c, 'top_up'))
-                ->modifyQueryUsing(fn (Builder $q): Builder => $q->where('type', 'top_up')),
+                ->modifyQueryUsing(fn (Builder $query): Builder => $query->where('type', 'top_up')),
             'payouts' => Tab::make('Payouts')->icon('heroicon-m-arrow-up-circle')->badgeColor('warning')
                 ->badge(ListTabs::sum($c, 'payout'))
-                ->modifyQueryUsing(fn (Builder $q): Builder => $q->where('type', 'payout')),
+                ->modifyQueryUsing(fn (Builder $query): Builder => $query->where('type', 'payout')),
             'earnings' => Tab::make('Earnings')->icon('heroicon-m-banknotes')->badgeColor('info')
                 ->badge(ListTabs::sum($c, 'earning'))
-                ->modifyQueryUsing(fn (Builder $q): Builder => $q->where('type', 'earning')),
+                ->modifyQueryUsing(fn (Builder $query): Builder => $query->where('type', 'earning')),
             'refunds' => Tab::make('Refunds')->icon('heroicon-m-arrow-uturn-left')->badgeColor('gray')
                 ->badge(ListTabs::sum($c, 'refund'))
-                ->modifyQueryUsing(fn (Builder $q): Builder => $q->where('type', 'refund')),
+                ->modifyQueryUsing(fn (Builder $query): Builder => $query->where('type', 'refund')),
         ];
     }
 }

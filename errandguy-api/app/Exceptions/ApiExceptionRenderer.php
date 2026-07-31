@@ -91,7 +91,14 @@ final class ApiExceptionRenderer
 
     private static function wantsJson(Request $request): bool
     {
-        return $request->is('api/*') || $request->expectsJson();
+        // Match ONLY the mobile API surface (everything lives under /api/*).
+        // Do NOT also key off $request->expectsJson(): Filament runs on Livewire,
+        // whose update requests satisfy expectsJson(), so including it made this
+        // renderer hijack Filament exceptions into a JSON envelope Livewire can't
+        // parse — surfacing as "Error while loading page" on every admin
+        // tab/filter/poll. Restricting to the path leaves web/admin/Livewire to
+        // Filament's own error handling.
+        return $request->is('api/*');
     }
 
     private static function fallback(\Throwable $e): JsonResponse
