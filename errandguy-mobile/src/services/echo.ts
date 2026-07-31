@@ -1,7 +1,18 @@
 import Echo from 'laravel-echo';
-import Pusher from 'pusher-js';
+import PusherImport from 'pusher-js';
 import axios from 'axios';
 import { secureStorage } from '../utils/storage';
+
+// pusher-js's react-native bundle exports its constructor as a NAMED CommonJS
+// export (`module.exports.Pusher`) with no `default` and no `__esModule` flag —
+// while its TYPE declarations declare a default export. Under Metro/Babel interop
+// that mismatch makes `import Pusher from 'pusher-js'` bind the *namespace* object
+// `{ Pusher }` rather than the class, so `new Pusher()` threw on Hermes
+// ("constructor is not callable") and silently disabled realtime. Unwrap to the
+// real constructor, falling back to the import itself for any build (e.g. web)
+// that does export the class as its default.
+const Pusher = ((PusherImport as unknown as { Pusher?: typeof PusherImport }).Pusher ??
+  PusherImport) as typeof PusherImport;
 
 // laravel-echo's reverb/pusher connector reads a global `Pusher`. pusher-js is
 // pure JS and transports over React Native's built-in WebSocket — the same
