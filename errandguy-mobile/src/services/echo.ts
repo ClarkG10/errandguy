@@ -123,10 +123,26 @@ function createEcho(): EchoInstance {
       }),
     });
   } catch (err) {
+    // Name the culprit in the failure log so the root cause is diagnosable from
+    // normal logs. Reflect.construct(dummy, [], f) tests whether `f` is usable
+    // as a constructor with NO side effects — whichever of echo/pusher reports
+    // false is the non-constructor behind "constructor is not callable".
+    const constructable = (f: unknown): boolean => {
+      try {
+        Reflect.construct(function () {}, [], f as new () => unknown);
+        return true;
+      } catch {
+        return false;
+      }
+    };
     // eslint-disable-next-line no-console
     console.warn(
       '[echo] realtime disabled — Echo failed to construct; app continues without live updates.',
-      err,
+      {
+        error: String(err),
+        echoConstructable: constructable(Echo),
+        pusherConstructable: constructable(Pusher),
+      },
     );
     return makeEchoStub();
   }
