@@ -31,6 +31,15 @@ class TopRunners extends TableWidget
             ->paginated([10])
             ->defaultSort('total_earnings', 'desc')
             ->columns([
+                TextColumn::make('rank')
+                    ->label('#')
+                    ->state(fn (RunnerProfile $record): int => RunnerProfile::query()
+                        ->where('verification_status', 'approved')
+                        ->where('total_earnings', '>', $record->total_earnings)
+                        ->count() + 1)
+                    ->badge()
+                    ->color(fn (int $state): string => $state <= 3 ? 'accent' : 'gray')
+                    ->alignCenter(),
                 TextColumn::make('user.full_name')
                     ->label('Runner')
                     ->searchable()
@@ -42,7 +51,7 @@ class TopRunners extends TableWidget
                     ->label('Rating')
                     ->numeric(2)
                     ->icon('heroicon-m-star')
-                    ->iconColor('warning')
+                    ->iconColor('accent')
                     ->placeholder('—')
                     ->alignEnd(),
                 TextColumn::make('total_earnings')

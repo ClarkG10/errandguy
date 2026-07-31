@@ -34,7 +34,9 @@ class ReferralsTable
                         default => 'gray',
                     }),
                 TextColumn::make('reward_amount')
-                    ->money('PHP'),
+                    ->money('PHP')
+                    ->icon(Heroicon::OutlinedGift)
+                    ->color('accent'),
                 TextColumn::make('qualified_at')
                     ->dateTime()
                     ->toggleable(isToggledHiddenByDefault: true),

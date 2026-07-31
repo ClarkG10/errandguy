@@ -18,7 +18,7 @@ class ReviewInfolist
                     ->schema([
                         TextEntry::make('rating')
                             ->formatStateUsing(fn (int $state): string => str_repeat('★', $state).str_repeat('☆', 5 - $state))
-                            ->color('warning'),
+                            ->color('accent'),
                         IconEntry::make('is_flagged')->boolean(),
                         TextEntry::make('reviewer.full_name')->label('Reviewer'),
                         TextEntry::make('reviewee.full_name')->label('Reviewee'),

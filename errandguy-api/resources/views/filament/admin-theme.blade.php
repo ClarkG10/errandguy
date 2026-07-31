@@ -112,6 +112,8 @@
     }
     .fi-wi-stats-overview-stat:hover { transform: translateY(-3px); box-shadow: var(--eg-shadow-lg); border-color: rgb(37 99 235 / .35); }
     .fi-wi-stats-overview-stat:hover::after { opacity: 1; }
+    /* money KPIs keep the gold-tipped hairline lit at rest */
+    .fi-wi-stats-overview-stat.eg-stat--money::after { opacity: 1; }
     .fi-wi-stats-overview-stat-label { font-weight: 600; font-size: .8rem; opacity: .85; }
     .fi-wi-stats-overview-stat-value { font-weight: 800; letter-spacing: -.02em; font-size: 1.75rem; line-height: 1.1; }
     .fi-wi-stats-overview-stat-description { margin-top: auto; font-weight: 500; }

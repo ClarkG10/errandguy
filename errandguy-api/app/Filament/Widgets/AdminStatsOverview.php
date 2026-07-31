@@ -82,14 +82,16 @@ class AdminStatsOverview extends StatsOverviewWidget
                 ->color('info'),
 
             $this->trendStat('GMV today', '₱'.number_format($d['gmv_today'], 2), $d['gmv_today'], $d['gmv_yesterday'])
-                ->chart($d['gmv_spark']),
+                ->chart($d['gmv_spark'])
+                ->extraAttributes(['class' => 'eg-stat--money']),
 
             $this->trendStat('Completed today', number_format($d['completed_today']), $d['completed_today'], $d['completed_yesterday']),
 
             Stat::make('Platform revenue today', '₱'.number_format($d['revenue_today'], 2))
                 ->description('Service fees on completed errands')
                 ->descriptionIcon('heroicon-m-building-library')
-                ->color('success'),
+                ->color('success')
+                ->extraAttributes(['class' => 'eg-stat--money']),
         ];
     }
 

@@ -27,11 +27,16 @@ class AdminPanelProvider extends PanelProvider
 {
     public function panel(Panel $panel): Panel
     {
-        // Delivery-orange accent registered as a named colour so it can be used
-        // on badges / "attention" states across the panel (Color::hex builds the
-        // full 50→950 shade ramp from the single brand hex).
+        // Amber BRAND accent = the "Guy" half of the wordmark. Registered as a
+        // named colour (Color::hex builds the full 50→950 ramp) so ratings,
+        // rewards, referral and money-highlight surfaces can opt into brand gold.
+        // Pinned to #fbbf24 (amber-400) — deliberately ONE RUNG LIGHTER than
+        // `warning` (Color::Amber = amber-500 #f59e0b) so a gold rating star and
+        // an amber "pending" badge stay distinguishable. accent = brand, never
+        // a status; keep it off single-series/status charts (see BookingStatusChart,
+        // whose "pending" segment already owns amber).
         FilamentColor::register([
-            'accent' => Color::hex('#f59e0b'),
+            'accent' => Color::hex('#fbbf24'),
         ]);
 
         return $panel

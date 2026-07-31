@@ -55,7 +55,7 @@ class RunnerProfileInfolist
                                     ->schema([
                                         TextEntry::make('acceptance_rate')->suffix('%')->placeholder('—'),
                                         TextEntry::make('completion_rate')->suffix('%')->placeholder('—'),
-                                        TextEntry::make('user.avg_rating')->label('Rating')->numeric(2)->icon('heroicon-m-star')->iconColor('warning')->placeholder('—'),
+                                        TextEntry::make('user.avg_rating')->label('Rating')->numeric(2)->icon('heroicon-m-star')->iconColor('accent')->placeholder('—'),
                                         TextEntry::make('working_area_radius')->label('Working radius')->suffix(' m')->numeric()->placeholder('—'),
                                         TextEntry::make('bank_name')->placeholder('—'),
                                     ]),

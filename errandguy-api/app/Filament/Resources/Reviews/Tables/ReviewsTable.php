@@ -26,7 +26,7 @@ class ReviewsTable
                 TextColumn::make('rating')
                     ->sortable()
                     ->formatStateUsing(fn (int $state): string => str_repeat('★', $state).str_repeat('☆', 5 - $state))
-                    ->color('warning'),
+                    ->color('accent'),
                 TextColumn::make('reviewer.full_name')->label('Reviewer')->searchable(),
                 TextColumn::make('reviewee.full_name')->label('Reviewee')->searchable(),
                 TextColumn::make('comment')->limit(40)->wrap()->placeholder('—'),

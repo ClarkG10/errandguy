@@ -49,7 +49,7 @@ class UserInfolist
                     ->columns(4)
                     ->schema([
                         TextEntry::make('wallet_balance')->money('PHP')->weight('bold')->color('success'),
-                        TextEntry::make('avg_rating')->label('Rating')->numeric(2)->icon('heroicon-m-star')->iconColor('warning')->placeholder('—'),
+                        TextEntry::make('avg_rating')->label('Rating')->numeric(2)->icon('heroicon-m-star')->iconColor('accent')->placeholder('—'),
                         TextEntry::make('total_ratings')->label('Total ratings')->numeric()->placeholder('0'),
                         TextEntry::make('customer_bookings_count')
                             ->label('Bookings placed')
