@@ -17,7 +17,7 @@ import { MotiView } from 'moti';
 import { Check, CheckCircle, Lock, Settings as SettingsIcon } from 'lucide-react-native';
 import { Button } from '../ui/Button';
 import { toast } from '../../stores/toastStore';
-import { LightColors, Elevation } from '../../constants/colors';
+import { LightColors } from '../../constants/colors';
 import { useResponsive } from '../../constants/responsive';
 import { useReducedMotion } from '../../hooks/useReducedMotion';
 
@@ -217,7 +217,7 @@ export function PermissionPrimer({
 
   // Content-priority in landscape: the checklist is the core content, the
   // illustration is decoration — hide it rather than clip the CTA.
-  const illustrationSize = isLandscape ? 0 : Math.min(260, vScale(230), width - 72);
+  const illustrationSize = isLandscape ? 0 : Math.min(320, vScale(300), width - 48);
   const maxWidthClamp = { width: '100%' as const, maxWidth: contentMaxWidth, alignSelf: 'center' as const };
 
   return (
@@ -236,24 +236,16 @@ export function PermissionPrimer({
             accessibilityElementsHidden
             importantForAccessibility="no-hide-descendants"
           >
-            {/* The artwork PNGs ship with an opaque white background, which
-                showed as a hard rectangle edge on the gray screen. Frame the
-                image in a soft white medallion so the white reads as an
-                intentional surface (rounded corners + diffuse lift), not a
-                stray box. */}
-            <View
-              style={[
-                s.illustrationFrame,
-                { width: illustrationSize, height: illustrationSize },
-              ]}
-            >
-              <Image
-                source={illustrationSource}
-                style={{ width: '86%', height: '86%' }}
-                resizeMode="contain"
-                accessible={false}
-              />
-            </View>
+            {/* The artwork PNGs are transparent, so render them directly on the
+                screen — no white medallion (which read as a stray box). Sized
+                up now that the image blends into the background instead of
+                sitting inside a frame. */}
+            <Image
+              source={illustrationSource}
+              style={{ width: illustrationSize, height: illustrationSize, marginBottom: 16 }}
+              resizeMode="contain"
+              accessible={false}
+            />
           </MotiView>
         )}
 
@@ -373,15 +365,6 @@ const s = StyleSheet.create({
   container: { paddingHorizontal: 24 },
   scroll: { flex: 1 },
   content: { flexGrow: 1, justifyContent: 'center', alignItems: 'center' },
-  illustrationFrame: {
-    marginBottom: 16,
-    borderRadius: 28,
-    backgroundColor: LightColors.surface,
-    alignItems: 'center',
-    justifyContent: 'center',
-    overflow: 'hidden',
-    ...Elevation.sm,
-  },
   stepRow: { flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 16 },
   stepDot: {
     width: 6,
