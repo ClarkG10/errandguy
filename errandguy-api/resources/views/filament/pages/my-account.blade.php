@@ -1,22 +1,25 @@
+{{-- Uses Filament's native <x-filament::section> (styled by Filament's shipped
+     CSS) + inline styles for layout. The admin has NO Tailwind build step, so
+     utility classes like grid-cols-3/px-4 do NOT resolve — inline styles do. --}}
 <x-filament-panels::page>
     @php($account = $this->getAccount())
-    <div class="fi-section rounded-xl bg-white p-6 shadow-sm ring-1 ring-gray-950/5 dark:bg-gray-900 dark:ring-white/10">
-        <dl class="grid grid-cols-1 gap-4 sm:grid-cols-3">
+    <x-filament::section>
+        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:1.25rem;">
             <div>
-                <dt class="text-sm text-gray-500">Name</dt>
-                <dd class="mt-1 font-medium text-gray-950 dark:text-white">{{ $account['full_name'] ?? '—' }}</dd>
+                <div style="font-size:.78rem;letter-spacing:.02em;text-transform:uppercase;opacity:.55;">Name</div>
+                <div style="font-weight:600;margin-top:.35rem;">{{ $account['full_name'] ?? '—' }}</div>
             </div>
             <div>
-                <dt class="text-sm text-gray-500">Email</dt>
-                <dd class="mt-1 font-medium text-gray-950 dark:text-white">{{ $account['email'] ?? '—' }}</dd>
+                <div style="font-size:.78rem;letter-spacing:.02em;text-transform:uppercase;opacity:.55;">Email</div>
+                <div style="font-weight:600;margin-top:.35rem;">{{ $account['email'] ?? '—' }}</div>
             </div>
             <div>
-                <dt class="text-sm text-gray-500">Role</dt>
-                <dd class="mt-1 font-medium text-gray-950 dark:text-white">{{ $account['role'] ?? '—' }}</dd>
+                <div style="font-size:.78rem;letter-spacing:.02em;text-transform:uppercase;opacity:.55;">Role</div>
+                <div style="font-weight:600;margin-top:.35rem;">{{ $account['role'] ?? '—' }}</div>
             </div>
-        </dl>
-        <p class="mt-4 text-sm text-gray-500">
-            Use <span class="font-medium">Edit profile</span> or <span class="font-medium">Change password</span> above.
+        </div>
+        <p style="margin-top:1.25rem;font-size:.875rem;opacity:.6;">
+            Use <strong>Edit profile</strong> or <strong>Change password</strong> (top right) to make changes.
         </p>
-    </div>
+    </x-filament::section>
 </x-filament-panels::page>
