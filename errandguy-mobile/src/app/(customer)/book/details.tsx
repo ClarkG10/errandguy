@@ -35,6 +35,7 @@ import { useDebounce } from '../../../hooks/useDebounce';
 import { Button } from '../../../components/ui/Button';
 import { Spinner } from '../../../components/ui/Spinner';
 import { Input, type InputHandle } from '../../../components/ui/Input';
+import { KeyboardDockInput } from '../../../components/ui/KeyboardDockInput';
 import { useReducedMotion } from '../../../hooks/useReducedMotion';
 import { PhotoGrid } from '../../../components/customer/PhotoGrid';
 import { ImagePickerModal } from '../../../components/ui/ImagePickerModal';
@@ -1485,13 +1486,14 @@ export default function TaskDetailsScreen() {
                     <ChevronUp size={14} color={LightColors.primary} />
                   </Pressable>
                 )}
-                <Input
+                {/* Docks a big, focused editor above the keyboard so long notes
+                    aren't cramped behind it (Messenger-style). See KeyboardDockInput. */}
+                <KeyboardDockInput
                   label="Special Instructions (optional)"
                   value={draftBooking.special_instructions ?? ''}
                   onChangeText={(v) => updateDraft({ special_instructions: v })}
                   placeholder="Any special notes..."
                   multiline
-                  numberOfLines={2}
                   maxLength={300}
                 />
               </>
