@@ -6,6 +6,7 @@ import {
   Pressable,
   StyleSheet,
   Platform,
+  InputAccessoryView,
   type TextInputProps,
 } from 'react-native';
 import * as Haptics from 'expo-haptics';
@@ -32,6 +33,10 @@ interface InputProps extends Omit<TextInputProps, 'onChange'> {
   onRightIconPress?: () => void;
   /** Screen-reader label for the tappable right icon. */
   rightIconAccessibilityLabel?: string;
+  /** Show a "Done" bar above the keyboard (iOS InputAccessoryView). Defaults on
+   *  for multiline and numeric/phone keyboards — which have no return key, so the
+   *  keyboard otherwise traps the user over the field. Pass false to force off. */
+  keyboardToolbar?: boolean;
 }
 
 /** Imperative surface exposed via ref — lets screens chain focus from a
@@ -74,6 +79,7 @@ export const Input = forwardRef<InputHandle, InputProps>(function Input(
     numberOfLines,
     onFocus,
     onBlur,
+    keyboardToolbar,
     ...rest
   }: InputProps,
   ref,
@@ -83,6 +89,17 @@ export const Input = forwardRef<InputHandle, InputProps>(function Input(
   const isPassword = secureTextEntry !== undefined;
   const inputRef = useRef<TextInput>(null);
   const { mScale } = useResponsive();
+
+  // iOS numeric/phone keyboards (and multiline) have no return key to dismiss,
+  // so the keyboard can trap the user over the field. A "Done" accessory bar
+  // above the keyboard fixes that. Auto-on for those cases; callers override via
+  // the keyboardToolbar prop. InputAccessoryView is iOS-only.
+  const numericKeyboard =
+    keyboardType != null &&
+    ['numeric', 'number-pad', 'decimal-pad', 'phone-pad'].includes(keyboardType);
+  const showToolbar =
+    Platform.OS === 'ios' && (keyboardToolbar ?? (!!multiline || numericKeyboard));
+  const accessoryId = `eg-kbd${React.useId().replace(/:/g, '')}`;
 
   useImperativeHandle(ref, () => ({
     focus: () => inputRef.current?.focus(),
@@ -146,6 +163,7 @@ export const Input = forwardRef<InputHandle, InputProps>(function Input(
           multiline={multiline}
           numberOfLines={numberOfLines}
           textAlignVertical={multiline ? 'top' : 'center'}
+          inputAccessoryViewID={showToolbar ? accessoryId : undefined}
           // Merge caller callbacks so form libraries (react-hook-form's
           // onTouched mode) still see blur events without clobbering the
           // internal focus styling.
@@ -215,6 +233,20 @@ export const Input = forwardRef<InputHandle, InputProps>(function Input(
       ) : helperText ? (
         <Text style={fs.helper}>{helperText}</Text>
       ) : null}
+      {showToolbar && (
+        <InputAccessoryView nativeID={accessoryId}>
+          <View style={fs.kbdBar}>
+            <Pressable
+              onPress={() => inputRef.current?.blur()}
+              hitSlop={10}
+              accessibilityRole="button"
+              accessibilityLabel="Done editing"
+            >
+              <Text style={fs.kbdDone}>Done</Text>
+            </Pressable>
+          </View>
+        </InputAccessoryView>
+      )}
     </View>
   );
 });
@@ -276,5 +308,20 @@ const fs = StyleSheet.create({
     color: LightColors.dangerDark,
     marginTop: 4,
     marginLeft: 4,
+  },
+  // iOS keyboard "Done" accessory bar — neutral bar, brand-blue action.
+  kbdBar: {
+    backgroundColor: '#F2F3F5',
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderColor: LightColors.dividerStrong,
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    flexDirection: 'row',
+    justifyContent: 'flex-end',
+  },
+  kbdDone: {
+    color: LightColors.primary,
+    fontFamily: 'Quicksand_500Medium',
+    fontSize: 16,
   },
 });
