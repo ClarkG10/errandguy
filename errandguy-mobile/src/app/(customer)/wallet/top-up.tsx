@@ -287,7 +287,11 @@ export default function TopUpScreen() {
         </View>
 
         {/* How the charge behaves, honestly, for the chosen method. */}
-        <View className="flex-row items-start bg-surfaceMuted rounded-2xl p-4 mt-4">
+        {/* bg-divider (not surfaceMuted): this border-less callout sits on
+            bg-background, where surfaceMuted is imperceptibly close and the
+            box dissolves — divider keeps a visible boundary (matches the
+            twin note in payment-methods.tsx). */}
+        <View className="flex-row items-start bg-divider rounded-2xl p-4 mt-4">
           <ShieldCheck size={18} color={LightColors.primary} strokeWidth={2} />
           <Text className="flex-1 ml-2.5 text-[12px] font-montserrat text-textSecondary leading-[17px]">
             {method === 'card'

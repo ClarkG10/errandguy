@@ -102,18 +102,32 @@ export function ActiveBookingCard({ booking, onPress }: ActiveBookingCardProps) 
   const filled = FILLED_SEGMENTS[phase];
   const runnerName = booking.runner?.full_name?.split(' ')[0] ?? null;
   const headline = headlineFor(booking.status, runnerName);
-  const isSearching = phase === 'searching';
+  // no_runner shares the 'searching' phase but is NOT an active search —
+  // exclude it so the dot stops pulsing and the caption doesn't claim
+  // we're still "finding" one while the headline says none are available.
+  const isNoRunner = booking.status === 'no_runner';
+  const isSearching = phase === 'searching' && !isNoRunner;
   const isCancelled = phase === 'cancelled';
   const reduceMotion = useReducedMotion();
 
   // One-line progress cue under the bar (e.g. "Transit · step 3 of 4").
   // The bar shows how far along at a glance; this names the stage and
-  // quantifies it, which the bar alone can't.
-  const stageCaption = isCancelled
-    ? null
-    : isSearching
-    ? 'Finding a runner nearby'
-    : `${STAGE_WORD[phase]} · step ${filled} of 4`;
+  // quantifies it, which the bar alone can't. The terminal 'done' phase
+  // covers both delivered (awaiting confirmation) and completed, so the
+  // word is taken from the raw status — never say "Completed" on the card
+  // that's asking the customer to confirm completion.
+  const stageWord =
+    phase === 'done'
+      ? booking.status === 'completed'
+        ? 'Completed'
+        : 'Delivered'
+      : STAGE_WORD[phase];
+  const stageCaption =
+    isCancelled || isNoRunner
+      ? null
+      : isSearching
+      ? 'Finding a runner nearby'
+      : `${stageWord} · step ${filled} of 4`;
 
   // Pulsing status dot — only animates while searching so the card
   // doesn't waste cycles once a runner is matched. Frozen to a static

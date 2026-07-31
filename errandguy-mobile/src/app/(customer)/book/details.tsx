@@ -1263,7 +1263,7 @@ export default function TaskDetailsScreen() {
               // background from the old `style={() => [st.quickBtn]}` function
               // (no className present), which stacked the icon above the label
               // and hid the pill fill. className applies reliably.
-              className="flex-1 flex-row items-center justify-center bg-surfaceMuted rounded-xl px-2.5 py-2.5"
+              className="flex-1 flex-row items-center justify-center bg-divider rounded-xl px-2.5 py-2.5"
               style={({ pressed }) => (pressed ? st.quickBtnPressed : null)}
               hitSlop={8}
               onPress={() => {
@@ -1284,7 +1284,7 @@ export default function TaskDetailsScreen() {
               // background from the old `style={() => [st.quickBtn]}` function
               // (no className present), which stacked the icon above the label
               // and hid the pill fill. className applies reliably.
-              className="flex-1 flex-row items-center justify-center bg-surfaceMuted rounded-xl px-2.5 py-2.5"
+              className="flex-1 flex-row items-center justify-center bg-divider rounded-xl px-2.5 py-2.5"
               style={({ pressed }) => (pressed ? st.quickBtnPressed : null)}
               hitSlop={8}
               onPress={() => {

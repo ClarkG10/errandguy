@@ -67,7 +67,12 @@ export function Avatar({
           />
         ) : (
           <View
-            className="bg-surfaceMuted items-center justify-center"
+            // bg-divider, not surfaceMuted: the fallback disc renders on
+            // bg-background on several runner screens, where surfaceMuted is
+            // imperceptibly close and the circle vanishes behind the blue
+            // initials. divider (#ECEFF3) keeps the disc visible on both the
+            // grey canvas and white cards.
+            className="bg-divider items-center justify-center"
             style={{ width: container, height: container }}
           >
             <Text className={`${text} font-montserrat-bold text-primary`}>
