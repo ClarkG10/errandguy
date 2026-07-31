@@ -1495,6 +1495,13 @@ export default function TaskDetailsScreen() {
                   placeholder="Any special notes..."
                   multiline
                   maxLength={300}
+                  chips={[
+                    'Leave at the gate',
+                    'Call on arrival',
+                    'Hand to me directly',
+                    'Fragile — handle with care',
+                    'Leave with guard',
+                  ]}
                 />
               </>
             )}

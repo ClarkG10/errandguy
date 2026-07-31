@@ -3,6 +3,7 @@ import {
   View,
   Text,
   Pressable,
+  ScrollView,
   TextInput,
   Modal,
   KeyboardAvoidingView,
@@ -44,6 +45,9 @@ export interface KeyboardDockInputProps
   label?: string;
   /** Called when the user taps Done / submits from the dock. */
   onSubmit?: () => void;
+  /** One-tap suggestion chips shown in the dock above the input (e.g. note
+   *  templates). Tapping appends the chip to the current value. */
+  chips?: string[];
 }
 
 export function KeyboardDockInput({
@@ -52,6 +56,7 @@ export function KeyboardDockInput({
   label,
   placeholder,
   onSubmit,
+  chips,
   secureTextEntry,
   multiline,
   ...textInputProps
@@ -135,6 +140,29 @@ export function KeyboardDockInput({
                 >
                   {label}
                 </Text>
+              ) : null}
+              {chips && chips.length > 0 ? (
+                <ScrollView
+                  horizontal
+                  showsHorizontalScrollIndicator={false}
+                  keyboardShouldPersistTaps="handled"
+                  contentContainerStyle={{ gap: 6, paddingHorizontal: 2, paddingBottom: 8 }}
+                >
+                  {chips.map((c) => (
+                    <Pressable
+                      key={c}
+                      onPress={() => {
+                        onChangeText(value.trim() ? `${value.trim()}, ${c}` : c);
+                        inputRef.current?.focus();
+                      }}
+                      accessibilityRole="button"
+                      accessibilityLabel={`Insert ${c}`}
+                      className="rounded-full bg-surfaceMuted border border-divider px-3 py-1.5"
+                    >
+                      <Text className="text-[12px] text-textPrimary font-montserrat">{c}</Text>
+                    </Pressable>
+                  ))}
+                </ScrollView>
               ) : null}
               <View className="flex-row items-end" style={{ gap: 8 }}>
                 <TextInput
