@@ -36,44 +36,103 @@ async function currentToken(): Promise<string | null> {
  * constructed once at module load, but the token changes on login/logout/
  * refresh, and a stale header would 403 every subscription after re-auth.
  */
-export const echo = new Echo({
-  broadcaster: 'reverb',
-  key: process.env.EXPO_PUBLIC_REVERB_KEY,
-  wsHost: process.env.EXPO_PUBLIC_REVERB_HOST,
-  wsPort: REVERB_PORT,
-  wssPort: REVERB_PORT,
-  forceTLS: REVERB_TLS,
-  enabledTransports: ['ws', 'wss'],
-  // Don't hammer a dead socket forever; pusher-js will retry with backoff.
-  authorizer: (channel: { name: string }) => ({
-    authorize: async (
-      socketId: string,
-      // Matches laravel-echo's ChannelAuthorizationCallback (opaque pusher-
-      // protocol auth payload). `any` on the data slot sidesteps the library's
-      // internal ChannelAuthorizationData type without importing it.
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      callback: (error: Error | null, data: any) => void,
-    ) => {
-      try {
-        const token = await currentToken();
-        const res = await axios.post(
-          `${ORIGIN}/broadcasting/auth`,
-          { socket_id: socketId, channel_name: channel.name },
-          {
-            headers: {
-              Accept: 'application/json',
-              ...(token ? { Authorization: `Bearer ${token}` } : {}),
-            },
-            timeout: 15000,
-          },
-        );
-        callback(null, res.data);
-      } catch (err) {
-        callback(err instanceof Error ? err : new Error(String(err)), null);
-      }
+type EchoInstance = InstanceType<typeof Echo>;
+
+/**
+ * No-op Echo stand-in. If the realtime library ever fails to construct (it has —
+ * a Hermes "constructor is not callable" on some Metro/laravel-echo builds), the
+ * module-load `new Echo()` would otherwise THROW and take down the entire
+ * (customer) tree that imports this. Degrading to a stub keeps the whole app
+ * usable with live updates simply disabled. Every method is a chainable no-op
+ * covering the surface the app actually uses (private/channel + listen /
+ * stopListening / subscribed / error / whisper / listenForWhisper, leave, and
+ * connector.pusher.connection.state for isSocketConnected).
+ */
+function makeEchoStub(): EchoInstance {
+  const channel: Record<string, (...args: unknown[]) => unknown> = {};
+  const chain = () => channel;
+  for (const m of [
+    'listen', 'listenToAll', 'stopListening', 'stopListeningToAll', 'subscribed',
+    'error', 'on', 'listenForWhisper', 'stopListeningForWhisper', 'whisper',
+    'notification', 'stopListeningForNotification', 'here', 'joining', 'leaving',
+  ]) {
+    channel[m] = chain;
+  }
+  const stub = {
+    channel: () => channel,
+    private: () => channel,
+    encryptedPrivate: () => channel,
+    presence: () => channel,
+    join: () => channel,
+    listen: () => channel,
+    leave: () => {},
+    leaveChannel: () => {},
+    leaveAllChannels: () => {},
+    socketId: () => undefined,
+    connectionStatus: () => 'disconnected',
+    disconnect: () => {},
+    connector: {
+      pusher: { connection: { state: 'disconnected', bind: () => {}, unbind: () => {} } },
     },
-  }),
-});
+  };
+  return stub as unknown as EchoInstance;
+}
+
+/**
+ * Singleton Echo client. Constructed in a guard so a realtime-library failure
+ * degrades (no live updates) instead of crashing the app at import time.
+ */
+function createEcho(): EchoInstance {
+  try {
+    return new Echo({
+      broadcaster: 'reverb',
+      key: process.env.EXPO_PUBLIC_REVERB_KEY,
+      wsHost: process.env.EXPO_PUBLIC_REVERB_HOST,
+      wsPort: REVERB_PORT,
+      wssPort: REVERB_PORT,
+      forceTLS: REVERB_TLS,
+      enabledTransports: ['ws', 'wss'],
+      // Don't hammer a dead socket forever; pusher-js will retry with backoff.
+      authorizer: (channel: { name: string }) => ({
+        authorize: async (
+          socketId: string,
+          // Matches laravel-echo's ChannelAuthorizationCallback (opaque pusher-
+          // protocol auth payload). `any` on the data slot sidesteps the
+          // library's internal ChannelAuthorizationData type without importing it.
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          callback: (error: Error | null, data: any) => void,
+        ) => {
+          try {
+            const token = await currentToken();
+            const res = await axios.post(
+              `${ORIGIN}/broadcasting/auth`,
+              { socket_id: socketId, channel_name: channel.name },
+              {
+                headers: {
+                  Accept: 'application/json',
+                  ...(token ? { Authorization: `Bearer ${token}` } : {}),
+                },
+                timeout: 15000,
+              },
+            );
+            callback(null, res.data);
+          } catch (err) {
+            callback(err instanceof Error ? err : new Error(String(err)), null);
+          }
+        },
+      }),
+    });
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.warn(
+      '[echo] realtime disabled — Echo failed to construct; app continues without live updates.',
+      err,
+    );
+    return makeEchoStub();
+  }
+}
+
+export const echo = createEcho();
 
 /** Reference-count of live subscribers per channel name. Two hooks can share a
  *  channel (e.g. booking status + runner location both on `booking.{id}`), so
