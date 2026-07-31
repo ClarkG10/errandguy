@@ -22,7 +22,6 @@ import { PriceBreakdown } from '../../../components/ui/PriceBreakdown';
 import { ErrorState } from '../../../components/ui/ErrorState';
 import {
   VehicleTypeSelector,
-  VEHICLE_ICONS,
   type VehicleOption,
 } from '../../../components/customer/VehicleTypeSelector';
 import { PromoCodeInput } from '../../../components/customer/PromoCodeInput';
@@ -244,7 +243,6 @@ export default function ReviewScreen() {
     {
       key: 'walk',
       label: 'Walk',
-      icon: VEHICLE_ICONS.walk,
       perKm: 0,
       estimatedTotal: estimate?.walk?.total_amount ?? 0,
       eta: etaFor('walk'),
@@ -252,7 +250,6 @@ export default function ReviewScreen() {
     {
       key: 'bicycle',
       label: 'Bicycle',
-      icon: VEHICLE_ICONS.bicycle,
       perKm: 0,
       estimatedTotal: estimate?.bicycle?.total_amount ?? 0,
       eta: etaFor('bicycle'),
@@ -260,7 +257,6 @@ export default function ReviewScreen() {
     {
       key: 'motorcycle',
       label: 'Motorcycle',
-      icon: VEHICLE_ICONS.motorcycle,
       perKm: 0,
       estimatedTotal: estimate?.motorcycle?.total_amount ?? 0,
       eta: etaFor('motorcycle'),
@@ -268,7 +264,6 @@ export default function ReviewScreen() {
     {
       key: 'car',
       label: 'Car',
-      icon: VEHICLE_ICONS.car,
       perKm: 0,
       estimatedTotal: estimate?.car?.total_amount ?? 0,
       eta: etaFor('car'),

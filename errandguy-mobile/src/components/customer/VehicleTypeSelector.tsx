@@ -1,15 +1,12 @@
 import React from 'react';
 import { View, Text, Pressable, ScrollView } from 'react-native';
 import * as Haptics from 'expo-haptics';
-import { Footprints, Bike, Motorbike, Car, Check } from 'lucide-react-native';
-import type { LucideIcon } from 'lucide-react-native';
 import { formatCurrency } from '../../utils/formatCurrency';
 import { Elevation, LightColors } from '../../constants/colors';
 
 interface VehicleOption {
   key: string;
   label: string;
-  icon: LucideIcon;
   perKm: number;
   estimatedTotal: number;
   eta?: string;
@@ -21,13 +18,6 @@ interface VehicleTypeSelectorProps {
   onSelect: (key: string) => void;
 }
 
-const VEHICLE_ICONS: Record<string, LucideIcon> = {
-  walk: Footprints,
-  bicycle: Bike,
-  motorcycle: Motorbike,
-  car: Car,
-};
-
 // Short marketing-style descriptors so the user can scan vehicle
 // trade-offs at a glance instead of pricing alone.
 const VEHICLE_TAGLINES: Record<string, string> = {
@@ -37,14 +27,18 @@ const VEHICLE_TAGLINES: Record<string, string> = {
   car: 'Bulky items',
 };
 
+/**
+ * Horizontal vehicle chooser — icon-free by design. Each card leads with the
+ * vehicle NAME (the anchor now that icons are gone), a one-line trade-off
+ * tagline, then the estimated price as the hero figure with its ETA. The
+ * cheapest option gets a "Best price" pill; the chosen card fills solid brand
+ * blue with white content and a selected dot.
+ */
 export function VehicleTypeSelector({
   options,
   selectedKey,
   onSelect,
 }: VehicleTypeSelectorProps) {
-  // Cheapest option gets a discrete "Best price" pill so the user can
-  // anchor their decision quickly. Falls back to undefined if no option
-  // has resolved a price yet.
   const cheapestKey = (() => {
     const priced = options.filter((o) => o.estimatedTotal > 0);
     if (priced.length === 0) return undefined;
@@ -54,11 +48,10 @@ export function VehicleTypeSelector({
   })();
 
   return (
-    // mb-1 + the 16px shadow gutter inside the scroller = the section's
-    // 20px bottom rhythm (see contentContainerStyle below).
     <View className="mb-1">
       <View className="flex-row items-baseline justify-between mb-1.5">
-        <Text className="text-[10px] font-montserrat-bold uppercase text-textSecondary"
+        <Text
+          className="text-[10px] font-montserrat-bold uppercase text-textSecondary"
           style={{ letterSpacing: 1.4 }}
         >
           Choose vehicle
@@ -73,9 +66,8 @@ export function VehicleTypeSelector({
         horizontal
         showsHorizontalScrollIndicator={false}
         // Bleed to the screen edges (the review screen's px-5 gutter) so
-        // scrolled cards slide under the gutter instead of clipping 20px
-        // early; the vertical padding gives the card shadows room inside
-        // the scroller's clip bounds.
+        // scrolled cards slide under the gutter instead of clipping early;
+        // the vertical padding gives the card shadows room inside the clip.
         style={{ marginHorizontal: -20 }}
         contentContainerStyle={{
           paddingHorizontal: 20,
@@ -87,7 +79,6 @@ export function VehicleTypeSelector({
         accessibilityLabel="Choose vehicle"
       >
         {options.map((opt) => {
-          const Icon = opt.icon;
           const isSelected = selectedKey === opt.key;
           const isCheapest = cheapestKey === opt.key && options.length > 1;
           const tagline = VEHICLE_TAGLINES[opt.key];
@@ -103,80 +94,74 @@ export function VehicleTypeSelector({
               accessibilityLabel={`${opt.label}${
                 opt.estimatedTotal > 0 ? `, ${formatCurrency(opt.estimatedTotal)}` : ''
               }${opt.eta ? `, about ${opt.eta}` : ''}`}
-              // Ride-hailing selection pattern — chosen card fills solid
-              // brand blue with white content; the rest stay quiet white.
-              // The fill MUST live in className, not the style() callback: a
-              // NativeWind <Pressable> styled only via style={()=>[…]} silently
-              // drops backgroundColor, which left the ACTIVE card transparent
-              // (white) with invisible white text. className backgrounds apply.
-              className={isSelected ? 'bg-primary' : 'bg-white'}
+              // The fill/border MUST live in className: a NativeWind <Pressable>
+              // styled only via style={()=>[…]} silently drops backgroundColor,
+              // which left the active card transparent (white) with invisible
+              // white text. className backgrounds apply reliably.
+              className={`border ${
+                isSelected ? 'bg-primary border-primary' : 'bg-white border-divider'
+              }`}
               style={({ pressed }) => [
-                {
-                  width: 132,
-                  borderRadius: 20,
-                  paddingVertical: 14,
-                  paddingHorizontal: 12,
-                },
-                isSelected
-                  ? { ...Elevation.primary, shadowOpacity: 0.22 }
-                  : Elevation.sm,
-                pressed ? { opacity: 0.92, transform: [{ scale: 0.985 }] } : null,
+                { width: 148, borderRadius: 20, paddingVertical: 14, paddingHorizontal: 14 },
+                isSelected ? { ...Elevation.primary, shadowOpacity: 0.22 } : Elevation.sm,
+                pressed ? { opacity: 0.94, transform: [{ scale: 0.985 }] } : null,
               ]}
               android_ripple={{ color: `${LightColors.primary}14`, borderless: false }}
             >
-              {/* Top row: icon + selection check */}
-              <View className="flex-row items-start justify-between">
-                <View
-                  className="w-11 h-11 rounded-xl items-center justify-center"
-                  style={{
-                    backgroundColor: isSelected
-                      ? 'rgba(255,255,255,0.18)'
-                      : LightColors.surfaceMuted,
-                  }}
-                >
-                  <Icon
-                    size={20}
-                    color={isSelected ? LightColors.textInverse : LightColors.textSecondary}
-                    strokeWidth={2.2}
-                  />
-                </View>
-                {isSelected ? (
+              {/* Top row: "Best price" pill and/or the selected dot. No icons. */}
+              <View
+                className="flex-row items-center justify-between"
+                style={{ minHeight: 20 }}
+              >
+                {isCheapest ? (
                   <View
-                    className="w-5 h-5 rounded-full items-center justify-center"
-                    style={{ backgroundColor: 'rgba(255,255,255,0.25)' }}
+                    className="px-2 py-0.5 rounded-full"
+                    style={{
+                      backgroundColor: isSelected
+                        ? 'rgba(255,255,255,0.22)'
+                        : LightColors.successSoft,
+                    }}
                   >
-                    <Check size={12} color={LightColors.textInverse} strokeWidth={3} />
-                  </View>
-                ) : isCheapest ? (
-                  <View
-                    className="px-1.5 py-0.5 rounded-md"
-                    style={{ backgroundColor: LightColors.successSoft }}
-                  >
-                    {/* successDark, not success — 10px text on the soft
-                        wash needs the *Dark rung (base green is ~3:1). */}
                     <Text
-                      className="text-[10px] font-montserrat-bold"
-                      style={{ color: LightColors.successDark, letterSpacing: 0.4 }}
+                      className="text-[9px] font-montserrat-bold"
+                      style={{
+                        color: isSelected ? '#FFFFFF' : LightColors.successDark,
+                        letterSpacing: 0.5,
+                      }}
                     >
-                      BEST
+                      BEST PRICE
                     </Text>
                   </View>
-                ) : null}
+                ) : (
+                  <View />
+                )}
+                {isSelected && (
+                  <View
+                    className="w-4 h-4 rounded-full items-center justify-center"
+                    style={{ backgroundColor: 'rgba(255,255,255,0.92)' }}
+                    accessibilityElementsHidden
+                  >
+                    <View
+                      className="w-1.5 h-1.5 rounded-full"
+                      style={{ backgroundColor: LightColors.primary }}
+                    />
+                  </View>
+                )}
               </View>
 
-              {/* Label + tagline */}
+              {/* Vehicle name — the visual anchor now that icons are removed. */}
               <Text
-                className={`text-[14px] font-montserrat-bold mt-3 ${
+                numberOfLines={1}
+                className={`text-[16px] font-montserrat-bold mt-2.5 ${
                   isSelected ? 'text-white' : 'text-textPrimary'
                 }`}
               >
                 {opt.label}
               </Text>
               {tagline && (
-                // white/90, not /75 — 10px text over brand blue drops to
-                // ~2:1 at 75% alpha; 90% sits right at the AA floor.
                 <Text
-                  className={`text-[10px] font-montserrat mt-0.5 ${
+                  numberOfLines={1}
+                  className={`text-[11px] font-montserrat mt-0.5 ${
                     isSelected ? 'text-white/90' : 'text-textSecondary'
                   }`}
                 >
@@ -184,11 +169,11 @@ export function VehicleTypeSelector({
                 </Text>
               )}
 
-              {/* Price + ETA */}
-              <View className="mt-2.5">
+              {/* Price as the hero figure + ETA. tabular-nums keeps columns steady. */}
+              <View className="mt-3.5">
                 {opt.estimatedTotal > 0 ? (
                   <Text
-                    className={`text-[15px] font-inter-semi tabular-nums ${
+                    className={`text-[19px] font-inter-semi tabular-nums ${
                       isSelected ? 'text-white' : 'text-textPrimary'
                     }`}
                   >
@@ -196,19 +181,17 @@ export function VehicleTypeSelector({
                   </Text>
                 ) : (
                   <View
-                    className="h-3 rounded-full bg-divider"
-                    style={{ width: 56, opacity: 0.6 }}
+                    className="h-3.5 rounded-full bg-divider"
+                    style={{ width: 60, opacity: 0.6 }}
                   />
                 )}
-                {opt.eta && (
-                  <Text
-                    className={`text-[10px] font-montserrat mt-0.5 ${
-                      isSelected ? 'text-white/90' : 'text-textSecondary'
-                    }`}
-                  >
-                    ~{opt.eta}
-                  </Text>
-                )}
+                <Text
+                  className={`text-[11px] font-montserrat mt-0.5 ${
+                    isSelected ? 'text-white/90' : 'text-textSecondary'
+                  }`}
+                >
+                  {opt.eta ? `~${opt.eta}` : 'ETA —'}
+                </Text>
               </View>
             </Pressable>
           );
@@ -218,5 +201,4 @@ export function VehicleTypeSelector({
   );
 }
 
-export { VEHICLE_ICONS };
 export type { VehicleOption };
