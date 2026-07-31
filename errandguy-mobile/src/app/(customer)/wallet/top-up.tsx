@@ -287,7 +287,7 @@ export default function TopUpScreen() {
         </View>
 
         {/* How the charge behaves, honestly, for the chosen method. */}
-        <View className="flex-row items-start bg-primaryLight rounded-2xl p-4 mt-4">
+        <View className="flex-row items-start bg-surfaceMuted rounded-2xl p-4 mt-4">
           <ShieldCheck size={18} color={LightColors.primary} strokeWidth={2} />
           <Text className="flex-1 ml-2.5 text-[12px] font-montserrat text-textSecondary leading-[17px]">
             {method === 'card'

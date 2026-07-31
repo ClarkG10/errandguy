@@ -304,7 +304,7 @@ export default function TypeSelectionScreen() {
                   />
                   {isTransportation && (
                     <Text
-                      className="text-[10px] font-montserrat-bold uppercase mt-1 text-warningDark"
+                      className="text-[10px] font-montserrat-bold uppercase mt-1 text-accentDark bg-accentSoft rounded-full px-2 py-0.5"
                       style={{ letterSpacing: 1.2 }}
                     >
                       Ride

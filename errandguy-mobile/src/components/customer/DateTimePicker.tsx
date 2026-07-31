@@ -465,7 +465,7 @@ export function DateTimePicker({ value, onChange }: DateTimePickerProps) {
           accessibilityRole="button"
           accessibilityLabel={calendarOpen ? 'Close calendar' : 'Open calendar'}
           accessibilityState={{ expanded: calendarOpen }}
-          className="flex-row items-center px-2.5 py-1.5 rounded-lg bg-primaryLight"
+          className="flex-row items-center px-2.5 py-1.5 rounded-lg bg-surfaceMuted"
         >
           {calendarOpen ? (
             <X size={13} color={LightColors.primary} strokeWidth={2.4} />
@@ -694,7 +694,7 @@ const ps = StyleSheet.create({
     borderRadius: 10,
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: LightColors.primaryLight,
+    backgroundColor: LightColors.surfaceMuted,
   },
   calNavDisabled: {
     backgroundColor: LightColors.surfaceMuted,

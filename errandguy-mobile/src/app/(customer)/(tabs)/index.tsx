@@ -308,6 +308,22 @@ export default function CustomerHomeScreen() {
             end={{ x: 1, y: 1 }}
             style={StyleSheet.absoluteFill}
           />
+          {/* Warm brand sheen — a faint gold glow that only reaches the
+              bottom-right corner (first two stops are transparent). The
+              greeting sits over the SOLID blue upper-left, so white-text
+              contrast is untouched; this just revives the dead terminal
+              stop with a subtle "Guy" gold warmth rather than a flat blue. */}
+          <LinearGradient
+            pointerEvents="none"
+            colors={[
+              `${LightColors.accent}00`,
+              `${LightColors.accent}00`,
+              `${LightColors.accent}1A`,
+            ]}
+            start={{ x: 0, y: 0 }}
+            end={{ x: 1, y: 1 }}
+            style={StyleSheet.absoluteFill}
+          />
           {/* Fade the hero into the canvas so the content below reads
               as one continuous surface. */}
           <LinearGradient
@@ -559,14 +575,14 @@ export default function CustomerHomeScreen() {
                     hitSlop={{ top: 8, bottom: 8 }}
                     accessibilityRole="button"
                     accessibilityLabel={`Frequently booked: start a ${frequentType.name} errand`}
-                    className="mb-3 self-start flex-row items-center"
+                    className="mb-3 self-start flex-row items-center bg-accentSoft"
                   >
                     <TrendingUp
                       size={13}
-                      color={LightColors.primary}
+                      color={LightColors.accentStrong}
                       strokeWidth={2.2}
                     />
-                    <Text className="ml-1.5 text-[11px] font-montserrat-bold text-primary">
+                    <Text className="ml-1.5 text-[11px] font-montserrat-bold text-accentDark">
                       Frequently booked · {frequentType.name}
                     </Text>
                   </Pressable>
@@ -596,7 +612,7 @@ export default function CustomerHomeScreen() {
                           variant="tinted"
                         />
                       ) : (
-                        <View className="w-10 h-10 rounded-full bg-primaryLight items-center justify-center">
+                        <View className="w-10 h-10 rounded-full bg-surfaceMuted items-center justify-center">
                           <Icon
                             size={20}
                             color={LightColors.primary}
@@ -665,7 +681,7 @@ export default function CustomerHomeScreen() {
                       variant="tinted"
                     />
                   ) : (
-                    <View className="w-9 h-9 rounded-full bg-primaryLight items-center justify-center">
+                    <View className="w-9 h-9 rounded-full bg-surfaceMuted items-center justify-center">
                       <Package size={18} color={LightColors.primary} strokeWidth={2} />
                     </View>
                   )}
@@ -895,7 +911,9 @@ const hs = StyleSheet.create({
   // "Frequently booked" personalization chip above the service tiles.
   frequentChip: {
     borderRadius: 999,
-    backgroundColor: LightColors.primaryLight,
+    // Gold "Guy" personalization chip — bg-accentSoft lives in className
+    // (NativeWind drops backgroundColor from the style-function form), so
+    // only radius / padding stay here.
     paddingHorizontal: 12,
     paddingVertical: 7,
   },

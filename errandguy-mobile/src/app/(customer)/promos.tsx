@@ -158,7 +158,7 @@ export default function PromosScreen() {
               return (
                 <Card key={promo.id} padding="lg" className="mb-4">
                   <View className="flex-row items-start">
-                    <View className="w-10 h-10 rounded-full bg-primaryLight items-center justify-center mr-3">
+                    <View className="w-10 h-10 rounded-full bg-surfaceMuted items-center justify-center mr-3">
                       <Ticket size={18} color={LightColors.primary} strokeWidth={1.9} />
                     </View>
                     <View className="flex-1">

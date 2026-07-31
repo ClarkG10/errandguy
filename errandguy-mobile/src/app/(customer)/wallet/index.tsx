@@ -46,7 +46,7 @@ const TX_ICONS: Record<WalletTransactionType, { icon: LucideIcon; color: string 
   payment: { icon: ArrowDownCircle, color: LightColors.danger },
   refund: { icon: RotateCcw, color: LightColors.primary },
   payout: { icon: ArrowDownCircle, color: LightColors.warning },
-  bonus: { icon: Star, color: LightColors.warning },
+  bonus: { icon: Star, color: LightColors.accentStrong },
 };
 
 // Transaction type filter — maps 1:1 onto the server's `type` query param
@@ -462,7 +462,7 @@ export default function WalletScreen() {
         <Eyebrow className="mb-2">Payment methods</Eyebrow>
         <Card padding="none" className="px-4">
           <View className="flex-row items-center py-3.5">
-            <View className="w-10 h-10 rounded-full bg-primaryLight items-center justify-center mr-3">
+            <View className="w-10 h-10 rounded-full bg-surfaceMuted items-center justify-center mr-3">
               <Wallet size={18} color={LightColors.primary} strokeWidth={1.9} />
             </View>
             <View className="flex-1">
@@ -485,7 +485,7 @@ export default function WalletScreen() {
             accessibilityRole="button"
             accessibilityLabel="Add payment method"
           >
-            <View className="w-10 h-10 rounded-full bg-primaryLight items-center justify-center mr-3">
+            <View className="w-10 h-10 rounded-full bg-surfaceMuted items-center justify-center mr-3">
               <Plus size={18} color={LightColors.primary} strokeWidth={2.2} />
             </View>
             <Text className="flex-1 text-[14px] font-montserrat-bold text-primary">

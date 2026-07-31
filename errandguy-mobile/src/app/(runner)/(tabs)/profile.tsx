@@ -288,7 +288,7 @@ export default function RunnerProfileScreen() {
       }`}
     >
       {item.icon ? (
-        <View className="w-10 h-10 rounded-full bg-primaryLight items-center justify-center mr-3">
+        <View className="w-10 h-10 rounded-full bg-surfaceMuted items-center justify-center mr-3">
           <item.icon size={18} color={LightColors.primary} strokeWidth={1.9} />
         </View>
       ) : null}
@@ -342,7 +342,7 @@ export default function RunnerProfileScreen() {
               {user?.full_name ?? 'Runner'}
             </Text>
             <View className="flex-row items-center mt-1">
-              <Star size={11} color={LightColors.warning} fill={LightColors.warning} />
+              <Star size={11} color={LightColors.accentStrong} fill={LightColors.accentStrong} />
               <Text className="text-[12px] font-inter tabular-nums text-textSecondary ml-1">
                 {isUnrated ? 'New' : avgRating.toFixed(1)}
               </Text>

@@ -78,7 +78,7 @@ const TX_ICONS: Record<WalletTransactionType, { icon: LucideIcon; color: string 
   payment: { icon: ArrowDownCircle, color: LightColors.danger },
   refund: { icon: RotateCcw, color: LightColors.primary },
   payout: { icon: ArrowDownCircle, color: LightColors.warning },
-  bonus: { icon: Star, color: LightColors.warning },
+  bonus: { icon: Star, color: LightColors.accentStrong },
 };
 
 /** Primary result line with the matched substring emphasised, so the user
@@ -483,7 +483,7 @@ export default function SearchScreen() {
                 accessibilityLabel={`Saved address ${a.label}`}
               >
                 <View className="flex-row items-center">
-                  <View className="w-10 h-10 rounded-full bg-primaryLight items-center justify-center mr-3">
+                  <View className="w-10 h-10 rounded-full bg-surfaceMuted items-center justify-center mr-3">
                     <Icon size={18} color={LightColors.primary} strokeWidth={1.9} />
                   </View>
                   <View className="flex-1 mr-2">
@@ -658,7 +658,7 @@ export default function SearchScreen() {
             </View>
           ) : (
             <View className="items-center px-8 pt-16">
-              <View className="w-16 h-16 rounded-full bg-primaryLight items-center justify-center">
+              <View className="w-16 h-16 rounded-full bg-divider items-center justify-center">
                 <SearchIcon size={28} color={LightColors.primary} strokeWidth={1.9} />
               </View>
               <Text className="text-base font-montserrat-bold text-textPrimary mt-4 text-center">

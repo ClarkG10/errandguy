@@ -770,7 +770,7 @@ export default function RunnerChatScreen() {
               // hitSlop lifts the 32pt pill to a >=44pt effective target.
               style={{ height: 32 }}
               hitSlop={{ top: 6, bottom: 6 }}
-              className={`px-3 items-center justify-center rounded-full ${sending ? 'bg-surfaceMuted' : 'bg-primaryLight'}`}
+              className={`px-3 items-center justify-center rounded-full ${sending ? 'bg-surfaceMuted' : 'bg-divider'}`}
               onPress={() => {
                 Haptics.selectionAsync().catch(() => {});
                 handleSend(msg);

@@ -189,8 +189,8 @@ export function OfferSlider({
       </View>
 
       {recommendedMin != null && recommendedMax != null && (
-        <View className="mt-3 p-3 bg-primaryLight rounded-lg">
-          <Text className="text-xs font-montserrat text-primary text-center">
+        <View className="mt-3 p-3 bg-accentSoft rounded-lg">
+          <Text className="text-xs font-montserrat text-accentDark text-center">
             Suggested: {formatCurrency(recommendedMin)} -{' '}
             {formatCurrency(recommendedMax)}
           </Text>

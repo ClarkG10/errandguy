@@ -1263,7 +1263,7 @@ export default function TaskDetailsScreen() {
               // background from the old `style={() => [st.quickBtn]}` function
               // (no className present), which stacked the icon above the label
               // and hid the pill fill. className applies reliably.
-              className="flex-1 flex-row items-center justify-center bg-primaryLight rounded-xl px-2.5 py-2.5"
+              className="flex-1 flex-row items-center justify-center bg-surfaceMuted rounded-xl px-2.5 py-2.5"
               style={({ pressed }) => (pressed ? st.quickBtnPressed : null)}
               hitSlop={8}
               onPress={() => {
@@ -1284,7 +1284,7 @@ export default function TaskDetailsScreen() {
               // background from the old `style={() => [st.quickBtn]}` function
               // (no className present), which stacked the icon above the label
               // and hid the pill fill. className applies reliably.
-              className="flex-1 flex-row items-center justify-center bg-primaryLight rounded-xl px-2.5 py-2.5"
+              className="flex-1 flex-row items-center justify-center bg-surfaceMuted rounded-xl px-2.5 py-2.5"
               style={({ pressed }) => (pressed ? st.quickBtnPressed : null)}
               hitSlop={8}
               onPress={() => {
@@ -1892,7 +1892,7 @@ const st = StyleSheet.create({
     width: 64,
     height: 64,
     borderRadius: 32,
-    backgroundColor: LightColors.primaryLight,
+    backgroundColor: LightColors.surfaceMuted,
     alignItems: 'center',
     justifyContent: 'center',
     marginBottom: 14,
@@ -1997,7 +1997,7 @@ const st = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: LightColors.primaryLight,
+    backgroundColor: LightColors.surfaceMuted,
     paddingHorizontal: 10,
     paddingVertical: 9,
     borderRadius: 12,
@@ -2064,7 +2064,7 @@ const st = StyleSheet.create({
     marginBottom: 4,
   },
   helperNote: {
-    backgroundColor: LightColors.primaryLight,
+    backgroundColor: LightColors.surfaceMuted,
     borderRadius: 16,
     padding: 12,
     marginBottom: 14,

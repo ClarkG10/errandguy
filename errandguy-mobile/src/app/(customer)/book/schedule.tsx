@@ -177,7 +177,7 @@ export default function ScheduleScreen() {
         {scheduleType === 'now' ? (
           // Soft info card — flat panel with subtle background, no
           // accent stripe.
-          <View className="flex-row items-start bg-primaryLight rounded-xl p-4">
+          <View className="flex-row items-start bg-divider rounded-xl p-4">
             <Info size={18} color={LightColors.primary} style={{ marginTop: 2 }} />
             <Text className="text-sm font-montserrat text-textPrimary ml-3 flex-1">
               Your errand will be matched to a runner immediately after booking.

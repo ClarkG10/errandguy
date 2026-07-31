@@ -87,7 +87,7 @@ const styles = StyleSheet.create({
   preview: {
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: LightColors.primaryLight,
+    backgroundColor: LightColors.surfaceMuted,
     borderWidth: 1,
     borderColor: LightColors.divider,
   },

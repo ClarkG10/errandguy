@@ -424,8 +424,8 @@ export default function TrustedContactsScreen() {
                 >
                   <Star
                     size={14}
-                    color={LightColors.warning}
-                    fill={LightColors.warning}
+                    color={LightColors.accentStrong}
+                    fill={LightColors.accentStrong}
                   />
                 </View>
               )}
@@ -448,17 +448,17 @@ export default function TrustedContactsScreen() {
               <Pressable
                 onPress={() => handleMakePrimary(item)}
                 hitSlop={8}
-                className="w-8 h-8 rounded-full bg-warningSoft items-center justify-center"
+                className="w-8 h-8 rounded-full bg-accentSoft items-center justify-center"
                 accessibilityRole="button"
                 accessibilityLabel={`Make ${item.name} the primary contact`}
               >
-                <Star size={14} color={LightColors.warningDark} />
+                <Star size={14} color={LightColors.accentDark} />
               </Pressable>
             )}
             <Pressable
               onPress={() => openEditModal(item)}
               hitSlop={8}
-              className="w-8 h-8 rounded-full bg-primaryLight items-center justify-center"
+              className="w-8 h-8 rounded-full bg-surfaceMuted items-center justify-center"
               accessibilityRole="button"
               accessibilityLabel={`Edit ${item.name}`}
             >
@@ -515,8 +515,8 @@ export default function TrustedContactsScreen() {
       <View className="flex-row items-start gap-2 mx-5 mb-4 p-3 bg-primaryLight rounded-xl">
         <Star
           size={14}
-          color={LightColors.warning}
-          fill={LightColors.warning}
+          color={LightColors.accentStrong}
+          fill={LightColors.accentStrong}
           style={{ marginTop: 2 }}
         />
         <Text className="flex-1 text-xs font-montserrat text-primary">

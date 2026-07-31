@@ -94,6 +94,41 @@ module.exports = {
         'info-soft': '#E0F2FE',
         infoSoft: '#E0F2FE',
 
+        // Amber BRAND ACCENT — the "Guy" half of the wordmark. Decorative
+        // only, NEVER a status. One rung brighter than `warning` (amber-400
+        // vs amber-500) so brand-gold and caution-amber never read alike.
+        // `accent-strong`/`accentStrong` (#F59E0B) is the dense rung for
+        // star fills. Exposed in both dash- and camelCase like `primary*`.
+        accent: '#FBBF24',
+        'accent-strong': '#F59E0B',
+        accentStrong: '#F59E0B',
+        'accent-dark': '#B45309',
+        accentDark: '#B45309',
+        'accent-soft': '#FEF0C7',
+        accentSoft: '#FEF0C7',
+        'accent-light': '#FFFAEC',
+        accentLight: '#FFFAEC',
+        'accent-50': '#FFFAEC',
+        accent50: '#FFFAEC',
+        'accent-100': '#FEF0C7',
+        accent100: '#FEF0C7',
+        'accent-200': '#FDE29A',
+        accent200: '#FDE29A',
+        'accent-300': '#FCD34D',
+        accent300: '#FCD34D',
+        'accent-400': '#FBBF24',
+        accent400: '#FBBF24',
+        'accent-500': '#F59E0B',
+        accent500: '#F59E0B',
+        'accent-600': '#D97706',
+        accent600: '#D97706',
+        'accent-700': '#B45309',
+        accent700: '#B45309',
+        'accent-800': '#92400E',
+        accent800: '#92400E',
+        'accent-900': '#78350F',
+        accent900: '#78350F',
+
         // Dark mode.
         'surface-dark': '#0F172A',
         surfaceDark: '#0F172A',

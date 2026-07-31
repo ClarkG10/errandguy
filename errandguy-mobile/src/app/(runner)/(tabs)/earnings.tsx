@@ -378,6 +378,23 @@ export default function EarningsScreen() {
               ...Elevation.md,
             }}
           >
+            {/* Warm brand-gold glow behind the coins — a low-alpha accent
+                wash that hints at "earnings" without lifting the local
+                background under any numerals. Purely decorative and kept
+                to the top-right corner; the white balance stays loudest. */}
+            <View
+              pointerEvents="none"
+              style={{
+                position: 'absolute',
+                top: -18,
+                right: -14,
+                width: 108,
+                height: 108,
+                borderRadius: 54,
+                backgroundColor: LightColors.accent,
+                opacity: 0.16,
+              }}
+            />
             {/* Subtle 3D coins accent — decorative only, tucked into the
                 top-right corner behind the left-aligned numerals so it
                 never competes with or crowds the total-earnings figure. */}
@@ -492,7 +509,7 @@ export default function EarningsScreen() {
                               width: 5,
                               height: 5,
                               borderRadius: 2.5,
-                              backgroundColor: LightColors.primaryDark,
+                              backgroundColor: LightColors.accentStrong,
                             }}
                           />
                         )}
@@ -500,7 +517,7 @@ export default function EarningsScreen() {
                       <Text
                         className={`text-[12px] tabular-nums mb-1 ${
                           isBest
-                            ? 'font-inter-bold text-primaryDark'
+                            ? 'font-inter-bold text-accentDark'
                             : 'font-inter-semi text-textSecondary'
                         }`}
                         numberOfLines={1}
@@ -516,7 +533,7 @@ export default function EarningsScreen() {
                             total <= 0
                               ? LightColors.dividerStrong
                               : isBest
-                                ? LightColors.primaryDark
+                                ? LightColors.accentStrong
                                 : LightColors.primary500,
                         }}
                       />

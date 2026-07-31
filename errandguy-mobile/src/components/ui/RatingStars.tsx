@@ -90,14 +90,16 @@ export function RatingStars({
               selected: star <= value,
             }}
           >
-            {/* Unfilled outlines stroke warningDark: #F59E0B on white is
-                ~2.15:1, under the 3:1 floor for meaningful UI glyphs, so
-                empty stars washed out in bright light. Filled stars keep
-                the brand amber. */}
+            {/* Rating stars are the brand-GOLD accent, not a warning — so
+                they source the `accent` family (accentStrong == #F59E0B keeps
+                the exact filled look). Unfilled outlines stroke accentDark:
+                the base gold on white is ~2.15:1, under the 3:1 floor for
+                meaningful UI glyphs, so empty stars washed out in bright
+                light. */}
             <Star
               size={size}
-              color={filled ? LightColors.warning : LightColors.warningDark}
-              fill={filled ? LightColors.warning : halfFilled ? LightColors.warningSoft : 'transparent'}
+              color={filled ? LightColors.accentStrong : LightColors.accentDark}
+              fill={filled ? LightColors.accentStrong : halfFilled ? LightColors.accentSoft : 'transparent'}
             />
           </Pressable>
         );

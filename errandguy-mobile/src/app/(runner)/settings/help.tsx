@@ -267,7 +267,7 @@ export default function HelpScreen() {
             accessibilityLabel="Chat with support"
             className="flex-row items-center gap-3 p-4 border-b border-divider"
           >
-            <View className="w-10 h-10 rounded-full bg-primaryLight items-center justify-center">
+            <View className="w-10 h-10 rounded-full bg-surfaceMuted items-center justify-center">
               <Headphones size={18} color={LightColors.primary} strokeWidth={1.8} />
             </View>
             <View className="flex-1">
@@ -289,7 +289,7 @@ export default function HelpScreen() {
             accessibilityLabel="Email Support, support@errandguy.app"
             className="flex-row items-center gap-3 p-4 border-b border-divider"
           >
-            <View className="w-10 h-10 rounded-full bg-primaryLight items-center justify-center">
+            <View className="w-10 h-10 rounded-full bg-surfaceMuted items-center justify-center">
               <Mail size={18} color={LightColors.primary} strokeWidth={1.8} />
             </View>
             <View className="flex-1">
@@ -309,7 +309,7 @@ export default function HelpScreen() {
             accessibilityLabel="Phone Support, +63 912 345 6789"
             className="flex-row items-center gap-3 p-4"
           >
-            <View className="w-10 h-10 rounded-full bg-primaryLight items-center justify-center">
+            <View className="w-10 h-10 rounded-full bg-surfaceMuted items-center justify-center">
               <Phone size={18} color={LightColors.primary} strokeWidth={1.8} />
             </View>
             <View className="flex-1">

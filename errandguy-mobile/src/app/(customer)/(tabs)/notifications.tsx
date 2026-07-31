@@ -63,7 +63,7 @@ const TYPE_META: Record<
     icon: Package,
     color: LightColors.primary,
     textColor: LightColors.primary,
-    chipClass: 'bg-primaryLight',
+    chipClass: 'bg-surfaceMuted',
   },
   payment: {
     icon: CreditCard,
@@ -73,15 +73,15 @@ const TYPE_META: Record<
   },
   promo: {
     icon: Gift,
-    color: LightColors.warning,
-    textColor: LightColors.warningDark,
-    chipClass: 'bg-warningSoft',
+    color: LightColors.accentStrong,
+    textColor: LightColors.accentDark,
+    chipClass: 'bg-accentSoft',
   },
   chat: {
     icon: MessageCircle,
     color: LightColors.primary,
     textColor: LightColors.primary,
-    chipClass: 'bg-primaryLight',
+    chipClass: 'bg-surfaceMuted',
   },
   sos: {
     icon: AlertTriangle,
@@ -99,7 +99,7 @@ const TYPE_META: Record<
     icon: FileText,
     color: LightColors.primary,
     textColor: LightColors.primary,
-    chipClass: 'bg-primaryLight',
+    chipClass: 'bg-surfaceMuted',
   },
 };
 

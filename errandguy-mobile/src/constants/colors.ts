@@ -83,6 +83,31 @@ export const LightColors = {
   warningLight: '#FFFBEB',
   info: '#0EA5E9',
   infoSoft: '#E0F2FE',
+
+  // ── Amber BRAND ACCENT — the "Guy" half of the wordmark ──────────────
+  // Semantically DISTINCT from `warning` above: warning = caution / pending;
+  // accent = brand warmth — rewards, ratings, earnings & premium highlights.
+  // Deliberately one rung BRIGHTER than warning (amber-400 #FBBF24 vs
+  // warning's amber-500 #F59E0B) so brand-gold and caution-amber never read
+  // alike side by side. `accentStrong` (#F59E0B) is reserved for star fills /
+  // small glyphs on white where the dense look must be preserved exactly.
+  // NEVER use accent to mean a status, and never place an accent chip in the
+  // same row as a warning chip (they'd blur).
+  accent: '#FBBF24',
+  accentStrong: '#F59E0B',
+  accentDark: '#B45309',
+  accentSoft: '#FEF0C7',
+  accentLight: '#FFFAEC',
+  accent50: '#FFFAEC',
+  accent100: '#FEF0C7',
+  accent200: '#FDE29A',
+  accent300: '#FCD34D',
+  accent400: '#FBBF24',
+  accent500: '#F59E0B',
+  accent600: '#D97706',
+  accent700: '#B45309',
+  accent800: '#92400E',
+  accent900: '#78350F',
 } as const;
 
 export const DarkColors = {
@@ -139,6 +164,26 @@ export const DarkColors = {
   warningLight: '#422006',
   info: '#38BDF8',
   infoSoft: '#0B2A3F',
+
+  // Amber brand accent (dark). accentDark is pinned to #FCD34D — NOT
+  // #FBBF24 — because DarkColors.warningDark already owns #FBBF24, so
+  // reusing it would merge accent and warning in dark mode. See LightColors
+  // for the semantic rules (accent = brand gold, never a status).
+  accent: '#FBBF24',
+  accentStrong: '#FBBF24',
+  accentDark: '#FCD34D',
+  accentSoft: '#40300A',
+  accentLight: '#4A2A08',
+  accent50: '#4A2A08',
+  accent100: '#40300A',
+  accent200: '#78350F',
+  accent300: '#92400E',
+  accent400: '#B45309',
+  accent500: '#D97706',
+  accent600: '#F59E0B',
+  accent700: '#FBBF24',
+  accent800: '#FCD34D',
+  accent900: '#FDE29A',
 } as const;
 
 export type ColorToken = keyof typeof LightColors;

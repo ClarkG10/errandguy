@@ -58,7 +58,7 @@ export function BookingStepIndicator({
             <View className="items-center" style={{ width: 56 }}>
               <View
                 className={`w-7 h-7 rounded-full items-center justify-center ${
-                  isCompleted || isActive ? 'bg-primary' : 'bg-surface'
+                  isCompleted ? 'bg-accentStrong' : isActive ? 'bg-primary' : 'bg-surface'
                 }`}
                 style={[
                   // dividerStrong, not divider — the faint hairline is
@@ -101,7 +101,7 @@ export function BookingStepIndicator({
                   isActive
                     ? 'font-montserrat-semi text-textPrimary'
                     : isCompleted
-                    ? 'font-montserrat text-primary'
+                    ? 'font-montserrat text-accentDark'
                     : 'font-montserrat text-textTertiary'
                 }`}
               >
@@ -113,7 +113,7 @@ export function BookingStepIndicator({
                 style={{
                   flex: 1,
                   height: 2,
-                  backgroundColor: isCompleted ? LightColors.primary : LightColors.dividerStrong,
+                  backgroundColor: isCompleted ? LightColors.accentStrong : LightColors.dividerStrong,
                   // Circle is 28px tall — 13 + half the 2px line centres
                   // the connector on the circle midline (y = 14).
                   marginTop: 13,

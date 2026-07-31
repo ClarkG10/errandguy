@@ -1218,7 +1218,7 @@ export default function ActiveErrandScreen() {
                   accessibilityLabel="Call customer"
                   hitSlop={6}
                   className={`w-10 h-10 rounded-full items-center justify-center mr-2 ${
-                    customerPhone ? 'bg-primaryLight' : 'bg-surfaceMuted'
+                    customerPhone ? 'bg-surfaceMuted' : 'bg-surfaceMuted'
                   }`}
                 >
                   <Phone size={17} color={customerPhone ? LightColors.primary : LightColors.textMuted} strokeWidth={2} />
@@ -1232,7 +1232,7 @@ export default function ActiveErrandScreen() {
                       : 'Open chat with customer'
                   }
                   hitSlop={6}
-                  className="w-10 h-10 rounded-full bg-primaryLight items-center justify-center"
+                  className="w-10 h-10 rounded-full bg-surfaceMuted items-center justify-center"
                 >
                   <MessageCircle size={17} color={LightColors.primary} strokeWidth={2} />
                   {unreadForBooking > 0 && (

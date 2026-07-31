@@ -1298,7 +1298,7 @@ export default function TrackingScreen() {
         </View>
         {/* Phase chip is live-only — "In transit" on a finished receipt lies. */}
         {!isTerminalUi && (
-          <View className="rounded-full px-3 py-1.5" style={{ backgroundColor: LightColors.primaryLight }}>
+          <View className="rounded-full px-3 py-1.5" style={{ backgroundColor: LightColors.surfaceMuted }}>
             <Text
               className="text-[11px] font-montserrat-bold uppercase"
               style={{ color: LightColors.primary700, letterSpacing: 0.8 }}
@@ -1322,7 +1322,7 @@ export default function TrackingScreen() {
           hitSlop={6}
           style={({ pressed }) => pressFx(pressed)}
         >
-          <View className="w-11 h-11 rounded-full items-center justify-center mb-1.5" style={{ backgroundColor: LightColors.primaryLight }}>
+          <View className="w-11 h-11 rounded-full items-center justify-center mb-1.5" style={{ backgroundColor: LightColors.surfaceMuted }}>
             <Phone size={18} color={LightColors.primary} strokeWidth={2} />
           </View>
           <Text className="text-[11px] font-montserrat-semi text-textSecondary">Call</Text>
@@ -1339,7 +1339,7 @@ export default function TrackingScreen() {
           hitSlop={6}
           style={({ pressed }) => pressFx(pressed)}
         >
-          <View className="w-11 h-11 rounded-full items-center justify-center mb-1.5" style={{ backgroundColor: LightColors.primaryLight }}>
+          <View className="w-11 h-11 rounded-full items-center justify-center mb-1.5" style={{ backgroundColor: LightColors.surfaceMuted }}>
             <MessageCircle size={18} color={LightColors.primary} strokeWidth={2} />
             {unreadForBooking > 0 && (
               <View className="absolute -top-0.5 -right-0.5 min-w-[16px] h-4 px-1 bg-danger rounded-full items-center justify-center border-[1.5px] border-white">
@@ -1365,7 +1365,7 @@ export default function TrackingScreen() {
           hitSlop={6}
           style={({ pressed }) => pressFx(pressed)}
         >
-          <View className="w-11 h-11 rounded-full items-center justify-center mb-1.5" style={{ backgroundColor: LightColors.primaryLight }}>
+          <View className="w-11 h-11 rounded-full items-center justify-center mb-1.5" style={{ backgroundColor: LightColors.surfaceMuted }}>
             <Share2 size={18} color={LightColors.primary} strokeWidth={2} />
           </View>
           <Text className="text-[11px] font-montserrat-semi text-textSecondary">

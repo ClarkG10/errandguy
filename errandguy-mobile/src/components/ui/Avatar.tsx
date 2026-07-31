@@ -67,7 +67,7 @@ export function Avatar({
           />
         ) : (
           <View
-            className="bg-primaryLight items-center justify-center"
+            className="bg-surfaceMuted items-center justify-center"
             style={{ width: container, height: container }}
           >
             <Text className={`${text} font-montserrat-bold text-primary`}>

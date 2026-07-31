@@ -7,18 +7,11 @@ import {
   Easing,
   StyleSheet,
 } from 'react-native';
-import {
-  ArrowRight,
-  MapPin,
-  Search,
-  Star,
-  CheckCircle2,
-} from 'lucide-react-native';
+import { ArrowRight, MapPin, Search, Star } from 'lucide-react-native';
 import * as Haptics from 'expo-haptics';
 import { Avatar } from '../ui/Avatar';
 import { useReducedMotion } from '../../hooks/useReducedMotion';
 import { LightColors, Elevation } from '../../constants/colors';
-import { STATUS_LABELS } from '../../constants/statusLabels';
 import { formatCurrency } from '../../utils/formatCurrency';
 import type { Booking, BookingStatus } from '../../types';
 
@@ -50,9 +43,20 @@ const FILLED_SEGMENTS: Record<Phase, number> = {
   pickup: 2,
   transit: 3,
   done: 4,
-  // Cancelled must not read as a completed journey — empty track, no
-  // stage checkmarks (filled 0 suppresses them all).
+  // Cancelled must not read as a completed journey — empty track.
   cancelled: 0,
+};
+
+// Short word under the bar naming the current stage. The "step N of 4"
+// count is appended at the call site so the slim bar isn't the only
+// quantitative cue.
+const STAGE_WORD: Record<Phase, string> = {
+  searching: 'Finding a runner',
+  matched: 'Matched',
+  pickup: 'Pickup',
+  transit: 'Transit',
+  done: 'Completed',
+  cancelled: 'Cancelled',
 };
 
 function headlineFor(
@@ -101,6 +105,15 @@ export function ActiveBookingCard({ booking, onPress }: ActiveBookingCardProps) 
   const isSearching = phase === 'searching';
   const isCancelled = phase === 'cancelled';
   const reduceMotion = useReducedMotion();
+
+  // One-line progress cue under the bar (e.g. "Transit · step 3 of 4").
+  // The bar shows how far along at a glance; this names the stage and
+  // quantifies it, which the bar alone can't.
+  const stageCaption = isCancelled
+    ? null
+    : isSearching
+    ? 'Finding a runner nearby'
+    : `${STAGE_WORD[phase]} · step ${filled} of 4`;
 
   // Pulsing status dot — only animates while searching so the card
   // doesn't waste cycles once a runner is matched. Frozen to a static
@@ -154,110 +167,38 @@ export function ActiveBookingCard({ booking, onPress }: ActiveBookingCardProps) 
         pressed && { opacity: 0.97, transform: [{ scale: 0.997 }] },
       ]}
     >
-      {/* Status row */}
-      <View style={styles.statusRow}>
+      {/* Header — errand CATEGORY + fare. Not the status: the live status
+          is the headline below, so a "EN ROUTE" pill over "Ana is en
+          route" only said it twice. The dot alone carries "live" (it
+          pulses while searching, turns red if cancelled). Fare is a plain
+          ink figure so blue stays reserved for the Track CTA. */}
+      <View style={styles.headerRow}>
         <View style={styles.statusBadgeRow}>
           <Animated.View
             style={[
               styles.dot,
-              // Base danger tone for the fill, dangerDark for the 11px
-              // text — per the small-text status convention.
               isCancelled && { backgroundColor: LightColors.danger },
               { transform: [{ scale: dotScale }], opacity: dotOpacity },
             ]}
           />
-          <Text
-            style={[
-              styles.statusBadgeText,
-              isCancelled && { color: LightColors.dangerDark },
-            ]}
-          >
-            {STATUS_LABELS[booking.status] ?? 'Active'}
+          <Text style={styles.categoryText} numberOfLines={1}>
+            {booking.errand_type?.name ?? 'Errand'}
           </Text>
         </View>
-        <View style={styles.amountChip}>
-          <Text style={styles.amountChipText}>
-            {formatCurrency(booking.total_amount)}
-          </Text>
-        </View>
+        <Text style={styles.amountText}>
+          {formatCurrency(booking.total_amount)}
+        </Text>
       </View>
 
-      {/* Headline */}
+      {/* Headline — the single thing that's happening right now. */}
       <Text style={styles.headline} numberOfLines={2}>
         {headline}
       </Text>
 
-      {/* Runner / search block */}
-      {booking.runner ? (
-        <View style={styles.infoRow}>
-          <Avatar
-            uri={booking.runner.avatar_url ?? undefined}
-            name={booking.runner.full_name}
-            size="sm"
-          />
-          <View style={styles.infoMeta}>
-            <Text style={styles.infoTitle} numberOfLines={1}>
-              {booking.runner.full_name}
-            </Text>
-            {booking.runner.avg_rating != null && (
-              <View style={styles.ratingRow}>
-                <Star
-                  size={11}
-                  color={LightColors.warning}
-                  fill={LightColors.warning}
-                />
-                <Text style={styles.ratingText}>
-                  {Number(booking.runner.avg_rating).toFixed(1)}
-                </Text>
-                {booking.runner.total_ratings ? (
-                  <Text style={styles.ratingCount}>
-                    {' · '}
-                    {booking.runner.total_ratings} trips
-                  </Text>
-                ) : null}
-              </View>
-            )}
-          </View>
-          <View style={styles.trackPill}>
-            <Text style={styles.trackPillText}>Track</Text>
-            <ArrowRight
-              size={13}
-              color={LightColors.textInverse}
-              style={{ marginLeft: 3 }}
-            />
-          </View>
-        </View>
-      ) : (
-        <View style={styles.infoRow}>
-          <View style={styles.searchIconWrap}>
-            <Search size={16} color={PRIMARY} />
-          </View>
-          <View style={styles.infoMeta}>
-            <View style={styles.addrRow}>
-              <MapPin size={11} color={TEXT_SECONDARY} />
-              <Text style={styles.addrText} numberOfLines={1}>
-                {booking.pickup_address}
-              </Text>
-            </View>
-            <View style={[styles.addrRow, { marginTop: 2 }]}>
-              <MapPin size={11} color={TEXT_SECONDARY} />
-              <Text style={styles.addrText} numberOfLines={1}>
-                {booking.dropoff_address}
-              </Text>
-            </View>
-          </View>
-          <View style={styles.trackPill}>
-            <Text style={styles.trackPillText}>View</Text>
-            <ArrowRight
-              size={13}
-              color={LightColors.textInverse}
-              style={{ marginLeft: 3 }}
-            />
-          </View>
-        </View>
-      )}
-
-      {/* Progress segments */}
+      {/* Slim journey bar — a glanceable summary. The stage-by-stage
+          stepper with labels lives on the dedicated tracking screen; on
+          the home card the headline already names the current stage, so
+          repeating it as four labelled checkmarks only crowded the card. */}
       <View
         style={styles.progressTrack}
         accessibilityRole="progressbar"
@@ -271,42 +212,84 @@ export function ActiveBookingCard({ booking, onPress }: ActiveBookingCardProps) 
               i < filled
                 ? styles.progressSegmentFilled
                 : styles.progressSegmentEmpty,
-              i < 3 && { marginRight: 4 },
+              i < 3 && { marginRight: 5 },
             ]}
           />
         ))}
       </View>
 
-      {/* Stage labels */}
-      <View style={styles.stageLabelsRow}>
-        <StageLabel label="Match" done={filled >= 1} />
-        <StageLabel label="Pickup" done={filled >= 2} />
-        <StageLabel label="Transit" done={filled >= 3} />
-        <StageLabel label="Done" done={filled >= 4} />
+      {stageCaption ? (
+        <Text style={styles.stageCaption}>{stageCaption}</Text>
+      ) : null}
+
+      {/* Footer — who's on it + the way in. Flattened onto the card
+          behind a hairline (no nested grey box), so the card reads as one
+          surface instead of a box-within-a-box. */}
+      <View style={styles.footerRow}>
+        {booking.runner ? (
+          <>
+            <Avatar
+              uri={booking.runner.avatar_url ?? undefined}
+              name={booking.runner.full_name}
+              size="sm"
+            />
+            <View style={styles.footerMeta}>
+              <Text style={styles.footerTitle} numberOfLines={1}>
+                {booking.runner.full_name}
+              </Text>
+              {booking.runner.avg_rating != null && (
+                <View style={styles.ratingRow}>
+                  <Star
+                    size={11}
+                    color={LightColors.accentStrong}
+                    fill={LightColors.accentStrong}
+                  />
+                  <Text style={styles.ratingText}>
+                    {Number(booking.runner.avg_rating).toFixed(1)}
+                  </Text>
+                  {booking.runner.total_ratings ? (
+                    <Text style={styles.ratingCount}>
+                      {' · '}
+                      {booking.runner.total_ratings} trips
+                    </Text>
+                  ) : null}
+                </View>
+              )}
+            </View>
+          </>
+        ) : (
+          <>
+            <View style={styles.searchIconWrap}>
+              <Search size={16} color={PRIMARY} />
+            </View>
+            <View style={styles.footerMeta}>
+              <View style={styles.addrRow}>
+                <MapPin size={11} color={TEXT_SECONDARY} />
+                <Text style={styles.addrText} numberOfLines={1}>
+                  {booking.pickup_address}
+                </Text>
+              </View>
+              <View style={[styles.addrRow, { marginTop: 2 }]}>
+                <MapPin size={11} color={TEXT_SECONDARY} />
+                <Text style={styles.addrText} numberOfLines={1}>
+                  {booking.dropoff_address}
+                </Text>
+              </View>
+            </View>
+          </>
+        )}
+        <View style={styles.trackPill}>
+          <Text style={styles.trackPillText}>
+            {booking.runner ? 'Track' : 'View'}
+          </Text>
+          <ArrowRight
+            size={13}
+            color={LightColors.textInverse}
+            style={{ marginLeft: 3 }}
+          />
+        </View>
       </View>
     </Pressable>
-  );
-}
-
-function StageLabel({ label, done }: { label: string; done: boolean }) {
-  return (
-    <View style={styles.stageLabelWrap}>
-      {done ? (
-        <CheckCircle2
-          size={10}
-          color={PRIMARY}
-          style={{ marginRight: 3 }}
-        />
-      ) : null}
-      <Text
-        style={[
-          styles.stageLabelText,
-          { color: done ? PRIMARY : TEXT_SECONDARY },
-        ]}
-      >
-        {label}
-      </Text>
-    </View>
   );
 }
 
@@ -317,11 +300,11 @@ const styles = StyleSheet.create({
     padding: 16,
     ...Elevation.md,
   },
-  statusRow: {
+  headerRow: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    marginBottom: 8,
+    marginBottom: 10,
   },
   statusBadgeRow: {
     flexDirection: 'row',
@@ -334,47 +317,63 @@ const styles = StyleSheet.create({
     backgroundColor: PRIMARY,
     marginRight: 7,
   },
-  statusBadgeText: {
+  categoryText: {
     fontSize: 11,
     fontFamily: 'Quicksand_700Bold',
-    color: PRIMARY,
+    // Muted, not blue — it's an eyebrow-style category label, not a status.
+    color: TEXT_SECONDARY,
     letterSpacing: 0.4,
     textTransform: 'uppercase',
   },
-  amountChip: {
-    backgroundColor: LightColors.primaryLight,
-    borderRadius: 999,
-    paddingHorizontal: 10,
-    paddingVertical: 3,
-  },
-  amountChipText: {
-    fontSize: 12,
+  amountText: {
+    fontSize: 15,
     // Inter for currency (app-wide numeric convention); tabular digits
-    // keep the chip width stable as the fare updates mid-errand.
-    fontFamily: 'Inter_600SemiBold',
+    // keep the figure steady as the fare updates mid-errand.
+    fontFamily: 'Inter_700Bold',
     fontVariant: ['tabular-nums'],
-    color: PRIMARY,
+    color: TEXT_PRIMARY,
   },
   headline: {
-    fontSize: 16,
+    fontSize: 17,
     fontFamily: 'Quicksand_700Bold',
     color: TEXT_PRIMARY,
-    lineHeight: 21,
-    marginBottom: 12,
+    lineHeight: 22,
+    marginBottom: 14,
   },
-  infoRow: {
+  progressTrack: {
+    flexDirection: 'row',
+  },
+  progressSegment: {
+    flex: 1,
+    height: 4,
+    borderRadius: 2,
+  },
+  progressSegmentFilled: {
+    backgroundColor: PRIMARY,
+  },
+  progressSegmentEmpty: {
+    backgroundColor: TRACK_EMPTY,
+  },
+  stageCaption: {
+    fontSize: 11,
+    fontFamily: 'Quicksand_600SemiBold',
+    color: TEXT_SECONDARY,
+    marginTop: 7,
+  },
+  footerRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: LightColors.surfaceMuted,
-    borderRadius: 16,
-    padding: 10,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: LightColors.divider,
+    marginTop: 14,
+    paddingTop: 14,
   },
-  infoMeta: {
+  footerMeta: {
     flex: 1,
     marginLeft: 10,
     marginRight: 8,
   },
-  infoTitle: {
+  footerTitle: {
     fontSize: 13,
     fontFamily: 'Quicksand_700Bold',
     color: TEXT_PRIMARY,
@@ -399,7 +398,9 @@ const styles = StyleSheet.create({
     width: 32,
     height: 32,
     borderRadius: 8,
-    backgroundColor: LightColors.primaryLight,
+    // Neutral chip (blue glyph on top) — matches the app-wide move to
+    // quiet, neutral icon chrome so blue/gold read as intentional.
+    backgroundColor: LightColors.surfaceMuted,
     alignItems: 'center',
     justifyContent: 'center',
   },
@@ -426,34 +427,5 @@ const styles = StyleSheet.create({
     fontSize: 11,
     fontFamily: 'Quicksand_700Bold',
     color: LightColors.textInverse,
-  },
-  progressTrack: {
-    flexDirection: 'row',
-    marginTop: 14,
-  },
-  progressSegment: {
-    flex: 1,
-    height: 4,
-    borderRadius: 2,
-  },
-  progressSegmentFilled: {
-    backgroundColor: PRIMARY,
-  },
-  progressSegmentEmpty: {
-    backgroundColor: TRACK_EMPTY,
-  },
-  stageLabelsRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    marginTop: 8,
-  },
-  stageLabelWrap: {
-    flexDirection: 'row',
-    alignItems: 'center',
-  },
-  stageLabelText: {
-    fontSize: 10,
-    fontFamily: 'Quicksand_600SemiBold',
-    letterSpacing: 0.2,
   },
 });

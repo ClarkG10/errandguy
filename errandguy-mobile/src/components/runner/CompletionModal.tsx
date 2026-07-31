@@ -204,7 +204,7 @@ export function CompletionModal({
             ) : (
               <>
                 {/* Confirm-only flow: no customer present to sign. */}
-                <View className="bg-primaryLight rounded-lg p-4 mb-4 flex-row items-start gap-3">
+                <View className="bg-surfaceMuted rounded-lg p-4 mb-4 flex-row items-start gap-3">
                   <CheckCircle2 size={20} color={LightColors.primary} />
                   <Text className="flex-1 text-sm font-montserrat text-textPrimary leading-5">
                     {subtitle ??

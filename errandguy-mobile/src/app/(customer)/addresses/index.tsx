@@ -644,8 +644,8 @@ export default function AddressesScreen() {
                   accessibilityLabel={`Edit ${addr.label} address`}
                 >
                   <View className="flex-row items-center">
-                    {/* Leading icon chip — soft blue circle, primary icon. */}
-                    <View className="w-10 h-10 rounded-full bg-primaryLight items-center justify-center mr-3">
+                    {/* Leading icon chip — neutral grey circle, primary icon. */}
+                    <View className="w-10 h-10 rounded-full bg-surfaceMuted items-center justify-center mr-3">
                       <Icon
                         size={18}
                         color={LightColors.primary}
@@ -663,13 +663,13 @@ export default function AddressesScreen() {
                     {addr.is_default ? (
                       <View
                         className="flex-row items-center rounded-full px-2.5 py-1 mr-2"
-                        style={{ backgroundColor: LightColors.primaryLight }}
+                        style={{ backgroundColor: LightColors.accentSoft }}
                         accessibilityLabel="Default address"
                       >
-                        <Star size={11} color={LightColors.primary} fill={LightColors.primary} strokeWidth={0} />
+                        <Star size={11} color={LightColors.accentStrong} fill={LightColors.accentStrong} strokeWidth={0} />
                         <Text
                           className="text-[10px] font-montserrat-bold uppercase ml-1"
-                          style={{ color: LightColors.primary, letterSpacing: 0.5 }}
+                          style={{ color: LightColors.accentDark, letterSpacing: 0.5 }}
                         >
                           Default
                         </Text>

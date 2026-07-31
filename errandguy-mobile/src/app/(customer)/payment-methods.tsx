@@ -447,7 +447,7 @@ export default function PaymentMethodsScreen() {
         {/* Cards — usable at checkout today; saving for reuse is coming next. */}
         <View
           className="flex-row items-start rounded-2xl px-4 py-3.5 mt-3"
-          style={{ backgroundColor: LightColors.primaryLight }}
+          style={{ backgroundColor: LightColors.divider }}
         >
           <CreditCard size={18} color={LightColors.primary} style={{ marginTop: 1 }} />
           <Text className="flex-1 ml-3 text-[12px] font-montserrat text-textSecondary leading-[17px]">

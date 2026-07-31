@@ -215,7 +215,7 @@ export default function CustomerProfileScreen() {
     },
   ];
 
-  const renderMenuItem = (item: MenuItem, isLast: boolean) => {
+  const renderMenuItem = (item: MenuItem, isLast: boolean, accent = false) => {
     const RowIcon = item.icon;
     return (
       <React.Fragment key={item.label}>
@@ -228,9 +228,18 @@ export default function CustomerProfileScreen() {
           accessibilityRole="button"
           accessibilityLabel={item.label}
         >
-          {/* Leading icon chip — soft blue circle + primary icon. */}
-          <View className="w-10 h-10 rounded-full bg-primaryLight items-center justify-center mr-3">
-            <RowIcon size={18} color={LightColors.primary} strokeWidth={1.9} />
+          {/* Leading icon chip — soft blue circle + primary icon; the
+              EARN & SAVE (rewards) section instead gets a gold chip. */}
+          <View
+            className={`w-10 h-10 rounded-full items-center justify-center mr-3 ${
+              accent ? 'bg-accentSoft' : 'bg-surfaceMuted'
+            }`}
+          >
+            <RowIcon
+              size={18}
+              color={accent ? LightColors.accentStrong : LightColors.primary}
+              strokeWidth={1.9}
+            />
           </View>
           <Text className="flex-1 text-[15px] font-montserrat-semi text-textPrimary">
             {item.label}
@@ -246,14 +255,14 @@ export default function CustomerProfileScreen() {
 
   // Section blocks — an eyebrow label above a white Card that groups
   // the rows, hairline-separated, per the grouped-list reference.
-  const renderSection = (label: string, items: MenuItem[]) => (
+  const renderSection = (label: string, items: MenuItem[], accent = false) => (
     <View className="px-5 mb-5">
       <Eyebrow className="mb-2">{label}</Eyebrow>
       {/* overflow-hidden clips the rows' pressed wash/ripple to the
           card's rounded corners. */}
       <Card padding="none" className="px-4 py-1">
         {items.map((item, idx) =>
-          renderMenuItem(item, idx === items.length - 1),
+          renderMenuItem(item, idx === items.length - 1, accent),
         )}
       </Card>
     </View>
@@ -409,7 +418,7 @@ export default function CustomerProfileScreen() {
 
         {renderSection('ACCOUNT', accountMenu)}
         {renderSection('PAYMENT', paymentMenu)}
-        {renderSection('EARN & SAVE', earnMenu)}
+        {renderSection('EARN & SAVE', earnMenu, true)}
         {renderSection('SUPPORT', supportMenu)}
 
         {/* Logout / Delete — inline tap-to-confirm. The previous

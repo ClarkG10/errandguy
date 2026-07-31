@@ -219,7 +219,7 @@ export default function CustomerHelpScreen() {
             accessibilityLabel="Chat with support"
             accessibilityHint="Opens a support ticket where you can message our team"
           >
-            <View className="w-10 h-10 rounded-full bg-primaryLight items-center justify-center">
+            <View className="w-10 h-10 rounded-full bg-surfaceMuted items-center justify-center">
               <Headphones size={18} color={LightColors.primary} strokeWidth={1.9} />
             </View>
             <View className="flex-1 ml-3">
@@ -244,7 +244,7 @@ export default function CustomerHelpScreen() {
             accessibilityLabel="Email support"
             accessibilityHint="Opens your mail app addressed to support@errandguy.ph"
           >
-            <View className="w-10 h-10 rounded-full bg-primaryLight items-center justify-center">
+            <View className="w-10 h-10 rounded-full bg-surfaceMuted items-center justify-center">
               <Mail size={18} color={LightColors.primary} strokeWidth={1.9} />
             </View>
             <View className="flex-1 ml-3">
@@ -267,7 +267,7 @@ export default function CustomerHelpScreen() {
             accessibilityLabel="Call support hotline"
             accessibilityHint={`Calls ${SUPPORT_PHONE}, open 8 AM to 10 PM daily`}
           >
-            <View className="w-10 h-10 rounded-full bg-primaryLight items-center justify-center">
+            <View className="w-10 h-10 rounded-full bg-surfaceMuted items-center justify-center">
               <Phone size={18} color={LightColors.primary} strokeWidth={1.9} />
             </View>
             <View className="flex-1 ml-3">
@@ -294,7 +294,7 @@ export default function CustomerHelpScreen() {
             accessibilityLabel="Report an issue"
             accessibilityHint="Opens a pre-filled email; we respond within one business day"
           >
-            <View className="w-10 h-10 rounded-full bg-primaryLight items-center justify-center">
+            <View className="w-10 h-10 rounded-full bg-surfaceMuted items-center justify-center">
               <MessageCircle
                 size={18}
                 color={LightColors.primary}

@@ -9,7 +9,11 @@ import { View, Text } from 'react-native';
  *  - `soft`     — washed-blue background, blue text. Default for
  *                 non-counter labels (e.g. "NEW", "PRO", status chips).
  *  - `success`  — green for confirmed / paid / verified states.
- *  - `warning`  — amber for pending / verification needed.
+ *  - `warning`  — amber for pending / verification needed (a CAUTION).
+ *  - `accent`   — brand gold for highlight markers: "NEW", "POPULAR",
+ *                 "FEATURED", "RECOMMENDED". A gold accent badge means
+ *                 "special", never a status — keep it out of any row that
+ *                 also shows a `warning` badge (the two ambers would blur).
  *  - `danger`   — red for unread error / cancelled.
  *  - `neutral`  — slate for inactive / informational.
  *
@@ -21,6 +25,7 @@ type BadgeVariant =
   | 'soft'
   | 'success'
   | 'warning'
+  | 'accent'
   | 'danger'
   | 'neutral';
 type BadgeSize = 'sm' | 'md';
@@ -37,6 +42,7 @@ const variantClasses: Record<BadgeVariant, { bg: string; text: string }> = {
   soft: { bg: 'bg-primary50', text: 'text-primary700' },
   success: { bg: 'bg-successSoft', text: 'text-success' },
   warning: { bg: 'bg-warningSoft', text: 'text-warning' },
+  accent: { bg: 'bg-accentSoft', text: 'text-accentDark' },
   danger: { bg: 'bg-danger', text: 'text-white' },
   neutral: { bg: 'bg-divider', text: 'text-textSecondary' },
 };

@@ -794,14 +794,19 @@ export default function RunnerHomeScreen() {
                           height: 6,
                           borderRadius: 999,
                           width: `${Math.max(0, Math.min(1, goalProgress)) * 100}%`,
-                          backgroundColor: LightColors.textInverse,
+                          backgroundColor:
+                            goalProgress >= 1
+                              ? LightColors.accentStrong
+                              : LightColors.textInverse,
                         }}
                       />
                     </View>
                     {goalProgress >= 1 ? (
-                      <Text className="text-[10px] font-montserrat-bold text-white mt-1.5">
-                        Daily goal reached
-                      </Text>
+                      <View className="self-start mt-1.5 px-2 py-0.5 rounded-full bg-accentSoft">
+                        <Text className="text-[10px] font-montserrat-bold text-accentDark">
+                          Daily goal reached
+                        </Text>
+                      </View>
                     ) : null}
                   </View>
                 ) : (
@@ -959,8 +964,8 @@ export default function RunnerHomeScreen() {
                 </Text>
                 <Star
                   size={13}
-                  color={LightColors.warning}
-                  fill={LightColors.warning}
+                  color={LightColors.accentStrong}
+                  fill={LightColors.accentStrong}
                   style={{ marginLeft: 4 }}
                 />
               </View>
@@ -1048,7 +1053,7 @@ export default function RunnerHomeScreen() {
                   accessibilityLabel={label}
                   className="bg-surface px-4 py-4 rounded-2xl border border-divider flex-row items-center"
                 >
-                  <View className="w-10 h-10 rounded-full bg-primaryLight items-center justify-center mr-3">
+                  <View className="w-10 h-10 rounded-full bg-surfaceMuted items-center justify-center mr-3">
                     <Icon size={18} color={LightColors.primary} strokeWidth={1.8} />
                   </View>
                   <Text

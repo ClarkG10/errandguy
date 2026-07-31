@@ -302,7 +302,7 @@ export function PaymentMethodSelector({
         )}
         {isSelected && !disabled && <Check size={20} color={LightColors.primary} />}
         {opt.isDefault && !isSelected && !disabled && (
-          <Text className="text-[10px] font-montserrat text-primary bg-primaryLight px-2 py-0.5 rounded">
+          <Text className="text-[10px] font-montserrat text-primary bg-surfaceMuted px-2 py-0.5 rounded">
             Default
           </Text>
         )}
@@ -344,7 +344,7 @@ export function PaymentMethodSelector({
             ) : (
               <View
                 className="w-10 h-10 rounded-full items-center justify-center"
-                style={{ backgroundColor: LightColors.primaryLight }}
+                style={{ backgroundColor: LightColors.surfaceMuted }}
               />
             )}
             <View className="flex-1 ml-3">

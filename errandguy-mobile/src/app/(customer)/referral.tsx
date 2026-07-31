@@ -160,7 +160,10 @@ export default function ReferralScreen() {
           >
             {/* Hero — the code, front and centre, with copy + share. */}
             <Card tone="tinted" padding="lg" className="items-center mb-6">
-              <Illustration name="3d-gift" size={92} style={{ marginBottom: 6 }} />
+              {/* Soft gold wash behind the gift — warms the reward moment. */}
+              <View className="bg-accentSoft rounded-full items-center justify-center p-2 mb-1.5">
+                <Illustration name="3d-gift" size={92} />
+              </View>
               <Text className="text-[15px] font-montserrat-bold text-textPrimary text-center">
                 Give credit, get credit
               </Text>
@@ -228,6 +231,7 @@ export default function ReferralScreen() {
                 icon={Coins}
                 value={formatCurrency(info.total_earned)}
                 label="Earned"
+                accent
               />
             </Card>
 
@@ -243,7 +247,7 @@ export default function ReferralScreen() {
                   accessibilityRole="text"
                   accessibilityLabel={`Step ${i + 1}: ${step}`}
                 >
-                  <View className="w-7 h-7 rounded-full bg-primaryLight items-center justify-center mr-3">
+                  <View className="w-7 h-7 rounded-full bg-surfaceMuted items-center justify-center mr-3">
                     <Text className="text-[13px] font-inter-semi tabular-nums text-primary">
                       {i + 1}
                     </Text>
@@ -296,10 +300,13 @@ function StatCell({
   icon: Icon,
   value,
   label,
+  accent = false,
 }: {
   icon: LucideIcon;
   value: string;
   label: string;
+  // Gold treatment reserved for money-in-hand ("Earned"); brand reward, not a status.
+  accent?: boolean;
 }) {
   return (
     <View
@@ -308,9 +315,13 @@ function StatCell({
       accessibilityRole="text"
       accessibilityLabel={`${label}: ${value}`}
     >
-      <Icon size={18} color={LightColors.primary} strokeWidth={2} />
+      <Icon
+        size={18}
+        color={accent ? LightColors.accentStrong : LightColors.primary}
+        strokeWidth={2}
+      />
       <Text
-        className="text-[16px] font-inter-semi tabular-nums text-textPrimary mt-1.5"
+        className={`text-[16px] font-inter-semi tabular-nums mt-1.5 ${accent ? 'text-accentDark' : 'text-textPrimary'}`}
         numberOfLines={1}
         adjustsFontSizeToFit
         minimumFontScale={0.85}

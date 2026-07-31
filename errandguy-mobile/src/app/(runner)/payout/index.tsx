@@ -534,7 +534,7 @@ export default function PayoutScreen() {
         <View className="px-5 mb-4">
           <Card className="p-4">
             <View className="flex-row items-center mb-3">
-              <View className="w-10 h-10 rounded-full bg-primaryLight items-center justify-center mr-3">
+              <View className="w-10 h-10 rounded-full bg-surfaceMuted items-center justify-center mr-3">
                 <CreditCard size={18} color={LightColors.primary} strokeWidth={1.8} />
               </View>
               <Text className="text-sm font-montserrat-bold text-textPrimary">
@@ -569,7 +569,7 @@ export default function PayoutScreen() {
         <View className="px-5 mb-4">
           <Card className="p-4">
             <View className="flex-row items-center mb-3">
-              <View className="w-10 h-10 rounded-full bg-primaryLight items-center justify-center mr-3">
+              <View className="w-10 h-10 rounded-full bg-surfaceMuted items-center justify-center mr-3">
                 <Smartphone size={18} color={LightColors.primary} strokeWidth={1.8} />
               </View>
               <Text className="text-sm font-montserrat-bold text-textPrimary">

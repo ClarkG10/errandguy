@@ -283,7 +283,7 @@ const st = StyleSheet.create({
     paddingVertical: 8,
     paddingHorizontal: 12,
     borderRadius: 20,
-    backgroundColor: LightColors.primaryLight,
+    backgroundColor: LightColors.surfaceMuted,
     marginTop: 2,
   },
   addText: {

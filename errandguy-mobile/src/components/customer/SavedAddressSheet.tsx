@@ -142,7 +142,7 @@ export function SavedAddressSheet({
               >
                 <View
                   className={`w-9 h-9 rounded-xl items-center justify-center mr-3 ${
-                    item.is_default ? 'bg-primary' : 'bg-primaryLight'
+                    item.is_default ? 'bg-primary' : 'bg-surfaceMuted'
                   }`}
                 >
                   {item.is_default ? (

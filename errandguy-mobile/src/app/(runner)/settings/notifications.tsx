@@ -115,11 +115,23 @@ export default function NotificationsScreen() {
             {PREFERENCES.map((pref, idx) => {
               const isOn = pref.locked ? true : !!prefs[pref.key];
               const borderCls = idx < PREFERENCES.length - 1 ? 'border-b border-divider' : '';
+              // Reviews & Ratings is a brand-gold reward moment, not a status —
+              // its chip wears the accent wash + dense gold star glyph. Every
+              // other row stays blue.
+              const isReviews = pref.key === 'reviews';
               const rowBody = (
                 <>
                   <View className="flex-row items-center gap-3 flex-1 mr-3">
-                    <View className="w-10 h-10 rounded-full bg-primaryLight items-center justify-center">
-                      <pref.icon size={18} color={LightColors.primary} strokeWidth={1.8} />
+                    <View
+                      className={`w-10 h-10 rounded-full items-center justify-center ${
+                        isReviews ? 'bg-accentSoft' : 'bg-surfaceMuted'
+                      }`}
+                    >
+                      <pref.icon
+                        size={18}
+                        color={isReviews ? LightColors.accentStrong : LightColors.primary}
+                        strokeWidth={1.8}
+                      />
                     </View>
                     <View className="flex-1">
                       <Text className="text-[14px] font-montserrat-semi text-textPrimary">

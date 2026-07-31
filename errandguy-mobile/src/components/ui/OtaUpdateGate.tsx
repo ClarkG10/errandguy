@@ -28,7 +28,7 @@ export function OtaUpdateGate() {
           className="bg-surface rounded-t-3xl px-6 pt-6"
           style={{ paddingBottom: insets.bottom + 24 }}
         >
-          <View className="w-12 h-12 rounded-full bg-primaryLight items-center justify-center mb-4">
+          <View className="w-12 h-12 rounded-full bg-surfaceMuted items-center justify-center mb-4">
             <DownloadCloud size={24} color={LightColors.primary} strokeWidth={2} />
           </View>
           <Text className="text-[18px] font-montserrat-bold text-textPrimary mb-1">
