@@ -105,13 +105,17 @@ export function VehicleTypeSelector({
               }${opt.eta ? `, about ${opt.eta}` : ''}`}
               // Ride-hailing selection pattern — chosen card fills solid
               // brand blue with white content; the rest stay quiet white.
+              // The fill MUST live in className, not the style() callback: a
+              // NativeWind <Pressable> styled only via style={()=>[…]} silently
+              // drops backgroundColor, which left the ACTIVE card transparent
+              // (white) with invisible white text. className backgrounds apply.
+              className={isSelected ? 'bg-primary' : 'bg-white'}
               style={({ pressed }) => [
                 {
                   width: 132,
                   borderRadius: 20,
                   paddingVertical: 14,
                   paddingHorizontal: 12,
-                  backgroundColor: isSelected ? LightColors.primary : LightColors.surface,
                 },
                 isSelected
                   ? { ...Elevation.primary, shadowOpacity: 0.22 }
