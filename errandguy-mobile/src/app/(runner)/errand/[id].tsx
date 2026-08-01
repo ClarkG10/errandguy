@@ -1217,9 +1217,10 @@ export default function ActiveErrandScreen() {
                   accessibilityRole="button"
                   accessibilityLabel="Call customer"
                   hitSlop={6}
-                  className={`w-10 h-10 rounded-full items-center justify-center mr-2 ${
-                    customerPhone ? 'bg-surfaceMuted' : 'bg-surfaceMuted'
-                  }`}
+                  // Neutral chip; the enabled/disabled state is carried by the
+                  // glyph colour (blue Phone when callable, muted when not) —
+                  // the chip background no longer differentiates.
+                  className="w-10 h-10 rounded-full items-center justify-center mr-2 bg-surfaceMuted"
                 >
                   <Phone size={17} color={customerPhone ? LightColors.primary : LightColors.textMuted} strokeWidth={2} />
                 </Pressable>
