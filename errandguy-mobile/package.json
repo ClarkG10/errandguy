@@ -25,7 +25,6 @@
     "dayjs": "^1.11.20",
     "expo": "~55.0.8",
     "expo-application": "~55.0.17",
-    "expo-auth-session": "~55.0.17",
     "expo-camera": "~55.0.11",
     "expo-clipboard": "~55.0.14",
     "expo-constants": "~55.0.17",

@@ -16,7 +16,6 @@ import { MotiView } from 'moti';
 import { Input, type InputHandle } from '../../components/ui/Input';
 import { Button } from '../../components/ui/Button';
 import { Avatar } from '../../components/ui/Avatar';
-import { SocialLoginButton } from '../../components/auth/SocialLoginButton';
 import { Wordmark } from '../../components/ui/Wordmark';
 import { LogoutSplash } from '../../components/ui/LogoutSplash';
 import { useAuth } from '../../hooks/useAuth';
@@ -543,31 +542,6 @@ export default function LoginScreen() {
 
           {/* Primary CTA */}
           <Button title="Log in" fullWidth size="lg" loading={loading} loadingTitle="Logging in…" onPress={handleSubmit(onSubmit)} />
-
-          {/* Divider */}
-          <View className="flex-row items-center my-6">
-            <View className="flex-1 h-px bg-divider" />
-            <Text className="text-[12px] font-montserrat text-textMuted mx-3">or continue with</Text>
-            <View className="flex-1 h-px bg-divider" />
-          </View>
-
-          {/* Social */}
-          <View className="flex-row" style={{ gap: 12 }}>
-            <SocialLoginButton
-              provider="google"
-              badge="Soon"
-              onPress={() =>
-                toast.info('Google sign-in is being finalized. Please use your phone or email for now.')
-              }
-            />
-            <SocialLoginButton
-              provider="facebook"
-              badge="Soon"
-              onPress={() =>
-                toast.info('Facebook sign-in is being finalized. Please use your phone or email for now.')
-              }
-            />
-          </View>
 
           {/* Sign up */}
           <View className="flex-row items-center justify-center mt-auto pt-8 pb-2">

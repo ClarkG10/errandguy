@@ -22,10 +22,6 @@ export const authService = {
     return api.post('/auth/verify-otp', data);
   },
 
-  socialLogin(provider: string, token: string) {
-    return api.post('/auth/social-login', { provider, token });
-  },
-
   logout() {
     return api.post('/auth/logout');
   },

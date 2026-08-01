@@ -5,7 +5,6 @@ use App\Http\Controllers\Auth\LogoutController;
 use App\Http\Controllers\Auth\OTPController;
 use App\Http\Controllers\Auth\PasswordResetController;
 use App\Http\Controllers\Auth\RegisterController;
-use App\Http\Controllers\Auth\SocialLoginController;
 use App\Http\Controllers\Customer\BookingController;
 use App\Http\Controllers\Customer\ProfileController;
 use App\Http\Controllers\Customer\ReviewController;
@@ -62,7 +61,6 @@ Route::prefix('v1')->group(function () {
         Route::post('/login', [LoginController::class, 'login'])->middleware('throttle:auth');
         Route::post('/send-otp', [OTPController::class, 'sendOTP'])->middleware('throttle:otp');
         Route::post('/verify-otp', [OTPController::class, 'verifyOTP'])->middleware('throttle:auth');
-        Route::post('/social-login', [SocialLoginController::class, 'login'])->middleware('throttle:auth');
         Route::post('/forgot-password', [PasswordResetController::class, 'forgotPassword'])->middleware('throttle:auth');
         Route::post('/reset-password', [PasswordResetController::class, 'resetPassword'])->middleware('throttle:auth');
 

@@ -57,18 +57,6 @@ export function useAuth() {
     [setToken, setUser],
   );
 
-  const socialLogin = useCallback(
-    async (provider: 'google' | 'facebook', providerToken: string) => {
-      const response = await authService.socialLogin(provider, providerToken);
-      const { user: userData, token: authToken } = response.data;
-      await setToken(authToken);
-      setUser(userData);
-      await preloadAfterAuth(userData?.role ?? null, userData?.id);
-      return userData;
-    },
-    [setToken, setUser],
-  );
-
   return {
     user,
     token,
@@ -78,7 +66,6 @@ export function useAuth() {
     login,
     logout,
     register,
-    socialLogin,
     loadFromStorage,
     updateProfile,
   };

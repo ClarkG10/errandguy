@@ -216,7 +216,7 @@ const preloadConversationsList = async (userId: string) => {
 /**
  * Preload critical queries the user is about to need.
  *
- * Called once after a successful login / register / social-login,
+ * Called once after a successful login / register,
  * and once at app open if a session was restored. The goal is that
  * by the time the user lands on Home, every above-the-fold piece
  * of data is already sitting in AsyncStorage under the same cache
@@ -228,8 +228,8 @@ const preloadConversationsList = async (userId: string) => {
  * with any duplicate fetch the screen kicks off in race.
  */
 export async function preloadCustomerEssentials(userId: string) {
-  // Above-the-fold Home data — the ONLY set the interactive login / register /
-  // social-login paths await before raising the success curtain, so the
+  // Above-the-fold Home data — the ONLY set the interactive login / register
+  // paths await before raising the success curtain, so the
   // "Logging in…" button releases as soon as Home can paint instead of blocking
   // on the ENTIRE warm-up pool below (wallet history, notifications, chat
   // threads, activity, addresses, payment methods, trusted contacts). Entries

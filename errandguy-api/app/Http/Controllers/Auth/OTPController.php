@@ -89,7 +89,7 @@ class OTPController extends Controller
             ->first();
 
         if ($user) {
-            // Gate on account status like LoginController / SocialLoginController
+            // Gate on account status like LoginController
             // do — this passwordless path was the one token-mint flow that
             // skipped the check, so a suspended/banned user who still receives
             // the OTP could obtain a live bearer token.

@@ -68,7 +68,8 @@ function headlineFor(
     case 'pending':
       return 'Looking for a runner nearby…';
     case 'no_runner':
-      return 'No runners available yet';
+      // Terminal state (no runner was found) — no "yet"; it isn't still trying.
+      return 'No runners available';
     case 'matched':
       return `${name} matched — confirming…`;
     case 'accepted':
@@ -192,6 +193,9 @@ export function ActiveBookingCard({ booking, onPress }: ActiveBookingCardProps) 
             style={[
               styles.dot,
               isCancelled && { backgroundColor: LightColors.danger },
+              // no_runner is terminal — a blue dot would falsely read as
+              // "live". Neutral grey matches how the app colours it elsewhere.
+              isNoRunner && { backgroundColor: LightColors.textMuted },
               { transform: [{ scale: dotScale }], opacity: dotOpacity },
             ]}
           />
