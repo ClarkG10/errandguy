@@ -21,8 +21,8 @@ that runners can withdraw.
 
 | Codebase | Stack | Role | Reality |
 |---|---|---|---|
-| `errandguy-api` | Laravel 13 / PHP 8.3, Sanctum, Eloquent, Supabase Postgres, Redis-ish (actually **file** cache), Firebase, Resend, Xendit | **The live production backend** (mobile talks to it via `EXPO_PUBLIC_API_URL`, a Forge host) | 26 models, 45 migrations, ~47 controllers, **125 routes**, 35 test files (SQLite-only) |
-| `errandguy-nest` | NestJS 10 + Prisma 5 on the **same** Supabase DB, same `/api/v1` contract | An in-progress re-implementation intended to replace Laravel | Claims 125-route parity — but **0 tests, untracked by git, already behaviorally diverged** |
+| `errandguy-api` | Laravel 13 / PHP 8.3, Sanctum, Eloquent, Postgres, Redis-ish (actually **file** cache), Firebase, Resend, Xendit | **The live production backend** (mobile talks to it via `EXPO_PUBLIC_API_URL`, a Forge host) | 26 models, 45 migrations, ~47 controllers, **125 routes**, 35 test files (SQLite-only) |
+| `errandguy-nest` | NestJS 10 + Prisma 5 on the **same** Postgres DB, same `/api/v1` contract | An in-progress re-implementation intended to replace Laravel | Claims 125-route parity — but **0 tests, untracked by git, already behaviorally diverged** |
 | `errandguy-mobile` | React Native / Expo Router, Zustand, custom SWR/dedup fetch layer | The client both sides use | 71 route screens, 18 test files (state/UI only — no network/money tests) |
 
 ### The core flows, as implemented
@@ -129,9 +129,9 @@ C2 is reported by both booking-lifecycle and payment-money-safety lenses.)*
   TypeError + never dispatched).
 
 **Performance / scale:**
-- **H16 Booking-create blocks on a sequential per-runner Supabase HTTP fan-out** (negotiate),
+- **H16 Booking-create blocks on a sequential per-runner HTTP fan-out** (negotiate),
   after already making a synchronous gateway call — latency scales with N runners; a slow
-  Supabase can hang create for up to N×timeout.
+  the write path can hang create for up to N×timeout.
 
 **Architecture / DevOps / QA:**
 - **H17 Money logic hand-duplicated across two backends, no shared source of truth**, already
@@ -525,10 +525,10 @@ Zero regressions.
 
 ### Phase 10 — implemented (H16, backend): bulk offer broadcast
 
-- Broadcasting a negotiate booking looped over eligible runners with one sequential Supabase REST
+- Broadcasting a negotiate booking looped over eligible runners with one sequential REST
   insert **per runner** (`BroadcastToRunnersJob` → `RealtimeService::broadcastIncomingRequest`).
   For immediate bookings this runs synchronously in the create request, so create latency scaled
-  linearly with the runner count and a slow Supabase could stack N timeouts. Added
+  linearly with the runner count and a slow endpoint could stack N timeouts. Added
   `RealtimeService::insertNotifications()` — a single PostgREST **bulk** insert (array body) that is
   O(1) HTTP round-trips regardless of N, keeping the existing sync model (no queue-worker
   dependency). Each row's jsonb `data` is still a real object, so realtime fan-out + mobile
@@ -561,7 +561,7 @@ further — a reasonable follow-up, not required for correctness.
 Decision taken with the user: **keep** the Nest port and pin it with parity tests (vs retiring it).
 
 - The Nest port had **zero** tests and no working jest config (its `test:e2e` script pointed at a
-  non-existent file) while running money logic on the same Supabase DB as Laravel prod — the
+  non-existent file) while running money logic on the same Postgres DB as Laravel prod — the
   audit's #1 risk. Added a minimal unit harness (`jest.config.js`, ts-jest transpile-only; full
   type-check stays with `npm run typecheck`) and the first parity spec: `PricingService` pinned to
   Laravel's **exact** outputs — 15%-of-subtotal service fee, `total = subtotal + fee + surcharge`,
@@ -664,7 +664,7 @@ regressions.
 
 A second sweep (data-integrity, webhook/integration, mobile perf/leaks, test-coverage), each finding
 adversarially verified. Shipped 5 confirmed; the verifier correctly rejected a misdiagnosed
-"PostgREST insert omits uuid" (Supabase generates it), a risky-defer keystroke re-render, and my
+"PostgREST insert omits uuid" (the DB generates it), a risky-defer keystroke re-render, and my
 own concurrently-shipped H24 (flagged already-fixed).
 
 **Laravel (commit 4e6d487):**
@@ -721,7 +721,7 @@ are medium/low (robustness/observability). 5 fixes shipped, each adversarially v
 
 **Laravel (commit 526b6a8):**
 - **RealtimeService silently dropped failed inserts** — `Http` doesn't throw on 4xx/5xx and the
-  catch only caught connection errors, so a Supabase reject vanished unlogged. Added a `failed()`
+  catch only caught connection errors, so a rejected write vanished unlogged. Added a `failed()`
   check to all four post paths (log-only).
 - **Idle-runner active-booking cache never cached** — `Cache::remember` discards a null result, so
   the dominant idle ping re-ran the DB query every push; now caches a `''` sentinel.
@@ -821,7 +821,7 @@ Sixth adversarially-verified sweep (13 agents, 9 candidates → 8 confirmed / 1 
 - **Carbon-500 on unvalidated date_from/date_to** (commit 13ecbfa) — RunnerEarnings summary+history,
   RunnerErrandHistory index, Export earningsPdf fed raw params into Carbon::parse → 500. Added the
   ['nullable','date'] guard the sibling list endpoints already had (→422).
-- **Realtime null-id opened an unfiltered whole-table channel** (commit 200f0ed) — useSupabaseRealtime
+- **Realtime null-id opened an unfiltered whole-table channel** (commit 200f0ed) — the realtime subscription hook
   subscribed even when a caller passed a null id (only the filter was dropped). Added an `enabled`
   option; wired useBookingStatus. (Latent — RLS/anon-key masks delivery today.)
 
@@ -869,14 +869,14 @@ tuning + RunnerActiveMap) — left untouched. Nest not affected (no Laravel-styl
 ### H6 (private KYC storage) — assessed, deliberately deferred with a plan
 
 Not shipped this pass because it cannot be done safely blind: the fix requires (1) an **infra
-decision** — make the KYC/delivery-proof storage private (a Supabase bucket-privacy flip, or move
+decision** — make the KYC/delivery-proof storage private (a bucket-privacy flip, or move
 off Laravel's local `public` disk); (2) a **contract change** — serve documents to admins via
 short-lived **signed URLs** instead of the permanent public URL currently stored in
 `runner_documents.file_url`; and (3) a **backfill** of existing files. Crucially, the **admin
 panel that consumes `file_url` is not in this repo**, so I can't verify the change won't break KYC
-review. Recommended staged plan: add `createSignedUrl()` to `SupabaseStorageService`
+review. Recommended staged plan: add `createSignedUrl()` to the storage service
 (`/storage/v1/object/sign/...`) → mark the `runner-documents` / `delivery-proofs` buckets private
-→ route uploads through `SupabaseStorageService` and store the object *path* (not a public URL) →
+→ route uploads through the storage service and store the object *path* (not a public URL) →
 generate a signed URL at read-time in `RunnerDocumentResource` / the admin document endpoint →
 backfill. Happy to implement once the storage decision + admin-panel consumer are confirmed.
 
