@@ -247,8 +247,8 @@ class RunnerErrandController extends Controller
 
             // Surface the matched → pending revert to the customer live, so
             // their tracking screen drops back to "finding a runner" instead of
-            // showing a runner who just walked away. Supabase's WAL feed used to
-            // deliver this automatically; now it's an explicit broadcast. The
+            // showing a runner who just walked away. The old WAL-tail feed used to
+            // deliver this automatically; now it's an explicit Reverb broadcast. The
             // `pending` status has no push template (SendBookingStatusNotification)
             // and the referral listener no-ops off `completed`, so this fires the
             // broadcast only — no spurious notification.

@@ -6,8 +6,8 @@ rewrite; they are configuration changes plus the small, already-merged code
 that makes them safe.
 
 At 10k concurrent the mobile fleet generates **~1,080 req/s** steady state
-(~500 of it runner-GPS writes), rising to **~1,830 req/s** if Supabase Realtime
-drops and clients fall back to REST polling. Today the app hits a wall in the
+(~500 of it runner-GPS writes), rising to **~1,830 req/s** if the Reverb realtime
+channel drops and clients fall back to REST polling. Today the app hits a wall in the
 low hundreds of concurrent because of the items below — long before any CPU/RAM
 limit.
 
@@ -16,7 +16,7 @@ limit.
 > direct connection (`deploy.sh`), documented env (`.env.example`), and the
 > Tier-1 app load-reducers (ETag/304 on hot GETs, Xendit-reconcile throttle,
 > chat forward-delta, location-only track poll, prod log trimming). Everything
-> below is what **you** set on Forge / Supabase. Nothing here changes behaviour
+> below is what **you** set on Forge. Nothing here changes behaviour
 > until the corresponding env vars are set.
 
 Apply in order. Each step is independently reversible.
@@ -37,32 +37,31 @@ Capture before/after for each step:
 
 ---
 
-## 1. Supabase transaction pooler (the #1 unblocker)
+## 1. Connection pooling (PgBouncer) — only if FPM worker count outgrows Postgres max_connections
 
 **Why:** the app connects **directly** to Postgres on `:5432`. Every cold
 PHP-FPM worker opens its own connection (+ a fresh TLS/auth handshake per
-request, since there's no Octane). Supabase caps direct connections (~60–200),
-so a few hundred concurrent workers exhaust them. The Supavisor **transaction**
-pooler multiplexes thousands of client connections onto a small server pool.
-(The Nest port already assumes this via Prisma `directUrl`/`url`.)
+request, since there's no Octane). With Postgres now co-located on the Forge box
+the old cross-region direct-connection cap no longer applies, so this is no
+longer the #1 ceiling. If the FPM fleet ever grows enough to approach the local
+Postgres `max_connections`, front `pgsql` with a **PgBouncer transaction pool**
+on the same box and keep migrations on the unpooled socket.
 
-**Set on Forge → site → Environment:**
+**Only if needed — set on Forge → site → Environment:**
 
 ```dotenv
-# pgsql (request traffic) → transaction pooler
-DB_HOST=aws-<region>.pooler.supabase.com
-DB_PORT=6543
-DB_USERNAME=postgres.<project-ref>      # note the ref suffix
+# pgsql (request traffic) → local PgBouncer transaction pool
+DB_HOST=127.0.0.1
+DB_PORT=6432                             # PgBouncer's listen port
 DB_EMULATE_PREPARES=true                 # required in transaction mode
 
-# pgsql_direct (migrations only) → direct endpoint
-DB_DIRECT_HOST=db.<project-ref>.supabase.co
+# pgsql_direct (migrations only) → unpooled Postgres socket
+DB_DIRECT_HOST=127.0.0.1
 DB_DIRECT_PORT=5432
-DB_DIRECT_USERNAME=postgres
 ```
 
-`DB_PASSWORD`, `DB_DATABASE`, `DB_SSLMODE` are shared. Get the exact pooler host
-from Supabase → Project → Settings → Database → *Connection pooling*.
+`DB_PASSWORD`, `DB_DATABASE`, `DB_USERNAME`, `DB_SSLMODE` are shared. Point
+PgBouncer at `127.0.0.1:5432` as its upstream in `pgbouncer.ini`.
 
 **Deploy** (migrations already run on `pgsql_direct` via `deploy.sh`), then
 **verify**:
@@ -73,7 +72,7 @@ php artisan migrate:status --database=pgsql_direct   # DDL path still works
 # Under load, pg_stat_activity connection count should stay flat + low.
 ```
 
-**Rollback:** clear the four vars above → `pgsql` falls back to the direct
+**Rollback:** clear the pooler vars above → `pgsql` falls back to the direct
 endpoint exactly as before.
 
 **Caveats:** transaction mode has no session-level state — no `LISTEN/NOTIFY`,

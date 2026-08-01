@@ -23,7 +23,7 @@ class DiscoverySweep4Test extends TestCase
     {
         parent::setUp();
         $this->seed(\Database\Seeders\SystemConfigSeeder::class);
-        // The location push fans out to Supabase over HTTP — stub it.
+        // The location push fans out over HTTP — stub it.
         Http::fake(['*' => Http::response('', 201)]);
     }
 

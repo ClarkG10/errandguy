@@ -51,7 +51,7 @@ class BroadcastToRunnersJob implements ShouldQueue
 
         // Persist + broadcast an in-app offer to each nearby runner over their
         // `notifications.{userId}` Reverb channel. This replaces the old bulk
-        // Supabase PostgREST insert (whose table the app no longer subscribes
+        // realtime table insert (whose table the app no longer subscribes
         // to). notifyInApp is broadcast-only — no device push — preserving the
         // prior behaviour (the "push fallback" TODO below was never wired).
         // This job is queued/off-request, so per-runner inserts are fine.

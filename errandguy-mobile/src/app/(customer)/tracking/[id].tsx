@@ -347,7 +347,7 @@ export default function TrackingScreen() {
   // for unrelated fields. Declared before the fetch effect that seeds it.
   const lastSyncedStatusRef = useRef<BookingStatus | null>(null);
 
-  // Live runner location via Supabase Realtime. Tear the channel down once the
+  // Live runner location via Reverb realtime. Tear the channel down once the
   // trip is terminal — a completed/cancelled booking still carries a runner_id,
   // so without the !isTerminalUi guard the receipt would hold an idle websocket
   // open for its whole dwell time. (P13)
@@ -378,7 +378,7 @@ export default function TrackingScreen() {
     return () => loop.stop();
   }, [runnerLocation?.speed, runnerPulse, reduceMotion]);
 
-  // Live booking status updates via Supabase Realtime
+  // Live booking status updates via Reverb realtime
   const { isConnected: statusConnected } = useBookingStatus(id ?? null);
 
   // Seed last-known runner location from /track once a runner has been
@@ -478,11 +478,11 @@ export default function TrackingScreen() {
   // so there's nothing to back off from.)
   useSmartPolling(refreshUnread, { interval: 30_000, backoffOnError: false });
 
-  // Polling fallback for the runner's live position. Supabase Realtime
+  // Polling fallback for the runner's live position. Reverb realtime
   // is the primary path (useRunnerTracking) but in production we have
   // observed cases where the channel reports SUBSCRIBED yet never
-  // delivers payloads (RLS blocks anon SELECT, table not in the
-  // realtime publication, free-tier websocket eviction, etc.). We
+  // delivers payloads (dropped socket, failed broadcasting-auth, or
+  // idle websocket eviction, etc.). We
   // adapt the poll cadence to the realtime health: when BOTH the
   // location channel and the booking-status channel are connected we
   // tail the server every 20s purely as a sanity reconcile; if either

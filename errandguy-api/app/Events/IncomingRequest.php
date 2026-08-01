@@ -11,7 +11,7 @@ use Illuminate\Queue\SerializesModels;
 
 /**
  * Broadcasts a just-matched booking to the runner's private stream — the
- * "you've got an offer" popup. Replaces the Supabase `bookings` UPDATE
+ * "you've got an offer" popup. Replaces the old `bookings` UPDATE
  * subscription the runner app filtered by runner_id.
  *
  * SECURITY: the payload is an EXPLICIT non-participant offer projection — NOT

@@ -14,7 +14,7 @@ use Illuminate\Queue\SerializesModels;
  *  - queued listeners (push notifications, referral reward) — unchanged, and
  *  - the customer/runner mobile apps, via the broadcast below.
  *
- * Broadcasting replaces what Supabase Realtime used to deliver by tailing the
+ * Broadcasting replaces what the old realtime path used to deliver by tailing the
  * `bookings` table WAL. Every explicit dispatch site is post-commit, so the
  * queued broadcast reloads a persisted row.
  */

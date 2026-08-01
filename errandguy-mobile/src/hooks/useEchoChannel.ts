@@ -18,13 +18,13 @@ interface UseEchoChannelOptions {
    */
   enabled?: boolean;
   /** Receives the broadcast payload — i.e. the event's broadcastWith() array,
-   *  delivered directly (NOT wrapped in Supabase's `{ new, old }` envelope). */
+   *  delivered directly (NOT wrapped in any `{ new, old }` change envelope). */
   onEvent: (payload: any) => void;
 }
 
 /**
  * Subscribe to a single event on a private Reverb channel — the Echo
- * replacement for the old `useSupabaseRealtime` postgres_changes wrapper.
+ * replacement for the app's previous realtime-subscription wrapper.
  *
  * `isConnected` is true once the socket is up AND this channel's subscription
  * has succeeded; it drops on subscription error or socket loss. The tracking

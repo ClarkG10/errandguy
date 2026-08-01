@@ -287,7 +287,7 @@ export default function ConfirmScreen() {
   );
 
   // ── Realtime status updates ──
-  // Subscribes to Supabase Realtime; reacts to status transitions instantly
+  // Subscribes to Reverb realtime; reacts to status transitions instantly
   // instead of polling every 3s. We still keep one fallback fetch every 30s
   // in case the socket disconnects (handled below).
   useBookingStatus(bookingId ?? null);

@@ -85,12 +85,10 @@ return [
         ],
 
         // Primary request-traffic connection. In production at scale this
-        // should point at the Supabase Supavisor TRANSACTION pooler (host
-        // aws-<region>.pooler.supabase.com, port 6543, username
-        // postgres.<project-ref>) so thousands of PHP-FPM workers multiplex
-        // onto a small server-side pool instead of exhausting Postgres'
-        // direct-connection cap. Migrations/DDL use `pgsql_direct` below.
-        // See docs/scaling-tier0-rollout.md.
+        // should point at a managed Postgres transaction pooler so thousands
+        // of PHP-FPM workers multiplex onto a small server-side pool instead
+        // of exhausting Postgres' direct-connection cap. Migrations/DDL use
+        // `pgsql_direct` below. See docs/scaling-tier0-rollout.md.
         'pgsql' => [
             'driver' => 'pgsql',
             'url' => env('DB_URL'),
@@ -116,7 +114,7 @@ return [
                 // socket across requests instead of paying the TCP+TLS+SCRAM
                 // handshake (~1s when the DB is in a different region) on EVERY
                 // request. Only the first request per worker pays it. Big win
-                // while the app server and Supabase are cross-region; harmless
+                // while the app server and DB are cross-region; harmless
                 // once co-located. Set DB_PERSISTENT=true in prod to enable.
                 // Safe here because emulated prepares carry no server-side
                 // statement state that could leak between multiplexed requests.

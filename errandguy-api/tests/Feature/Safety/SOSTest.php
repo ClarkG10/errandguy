@@ -7,7 +7,6 @@ use App\Models\ErrandType;
 use App\Models\SOSAlert;
 use App\Models\User;
 use App\Services\NotificationService;
-use App\Services\RealtimeService;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Mockery;
 use Tests\TestCase;
@@ -25,10 +24,9 @@ class SOSTest extends TestCase
         parent::setUp();
 
         // Mock external services so SOS never makes a real push/broadcast call.
-        // The SOS in-app alert + resolution now route through
-        // NotificationService::notifyInApp (was RealtimeService PostgREST), so
-        // the mock must accept it too. notifyInApp returns a Notification, so
-        // hand back an unsaved instance to satisfy the return type.
+        // The SOS in-app alert + resolution route through
+        // NotificationService::notifyInApp. notifyInApp returns a Notification,
+        // so hand back an unsaved instance to satisfy the return type.
         $this->app->bind(NotificationService::class, function () {
             $mock = Mockery::mock(NotificationService::class);
             $mock->shouldReceive('sendToTopic')->andReturnNull();
@@ -36,9 +34,6 @@ class SOSTest extends TestCase
             $mock->shouldReceive('sendBulkPush')->andReturnNull();
             $mock->shouldReceive('notifyInApp')->andReturn(new \App\Models\Notification());
             return $mock;
-        });
-        $this->app->bind(RealtimeService::class, function () {
-            return Mockery::mock(RealtimeService::class)->shouldIgnoreMissing();
         });
 
         $this->customer = User::factory()->create(['role' => 'customer', 'status' => 'active']);

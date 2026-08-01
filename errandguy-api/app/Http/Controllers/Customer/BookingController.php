@@ -502,7 +502,7 @@ class BookingController extends Controller
             // Queue the broadcast even for immediate bookings. Unlike fixed mode,
             // the 201 does NOT depend on the broadcast result (the booking is
             // already pending with negotiate_expires_at set above; runners
-            // respond later), so there's no reason to run the Supabase PostgREST
+            // respond later), so there's no reason to run the realtime
             // fan-out inside the customer's request. Scheduled negotiate bookings
             // already depend on the queue worker, so this is consistent. (P4)
             if ($matchAt && $matchAt->isFuture()) {

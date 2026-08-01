@@ -66,7 +66,7 @@ const microCache = new Map<string, { ts: number; response: AxiosResponse<any> }>
 // feed/active errand, notification lists). The next GET for that key sends
 // `If-None-Match`; a 304 lets us reuse the retained body so the server never
 // ships — and the device never parses — an unchanged payload. This is the main
-// lever during a Supabase-realtime outage, when clients fall back to a tight
+// lever during a realtime (Reverb) outage, when clients fall back to a tight
 // REST poll of the same unchanged data. Bounded with the same write-recency
 // LRU as the micro-cache; a miss only ever causes a correct full fetch.
 const MAX_ETAG_ENTRIES = 60;

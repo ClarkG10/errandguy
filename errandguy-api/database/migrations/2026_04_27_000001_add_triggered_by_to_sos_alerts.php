@@ -22,7 +22,7 @@ return new class extends Migration
             $table->string('triggered_by_role', 15)->nullable()->after('triggered_by');
         });
 
-        // Loosen runner_id NOT NULL via raw SQL (Postgres + supabase).
+        // Loosen runner_id NOT NULL via raw SQL (Postgres).
         DB::statement('ALTER TABLE sos_alerts ALTER COLUMN runner_id DROP NOT NULL');
 
         // Backfill existing rows (assume customer-triggered, since that was

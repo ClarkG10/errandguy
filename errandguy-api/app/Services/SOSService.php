@@ -63,9 +63,9 @@ class SOSService
         $booking->update(['sos_triggered' => true]);
 
         // Everything above is the durable safety write. The OUTBOUND fan-out —
-        // trusted-contact SMS, the Supabase realtime broadcast, and the admin
+        // trusted-contact SMS, the Reverb realtime broadcast, and the admin
         // FCM topic — is deferred to a job so the panic button returns the alert
-        // immediately instead of blocking on Supabase + Firebase (and, once SMS
+        // immediately instead of blocking on the broadcast + Firebase (and, once SMS
         // is wired, one HTTP call per contact). (P7)
         \App\Jobs\NotifySosContactsJob::dispatch($alert->id);
 
@@ -91,8 +91,8 @@ class SOSService
         Booking::where('id', $bookingId)->update(['sos_triggered' => false]);
 
         // Tell the runner the emergency was resolved, live over their
-        // `notifications.{userId}` Reverb channel (replaces the old Supabase
-        // PostgREST insert). Broadcast-only — no device push.
+        // `notifications.{userId}` Reverb channel (replaces the old realtime
+        // table insert). Broadcast-only — no device push.
         $runnerId = Booking::where('id', $bookingId)->value('runner_id');
         if ($runnerId) {
             $this->notificationService->notifyInApp(

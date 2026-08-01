@@ -10,13 +10,13 @@ use Illuminate\Support\Facades\Log;
 
 /**
  * Fan an SOS alert OUT to trusted contacts (SMS), the participants' realtime
- * channel (Supabase PostgREST), and the admin safety topic (FCM) — off the
+ * channel (Reverb broadcast), and the admin safety topic (FCM) — off the
  * request thread.
  *
  * The durable safety record — the SOSAlert row, the `sos_triggered` flag, and
  * `contacts_notified` — is written synchronously by SOSService::triggerSOS.
  * Only this outbound fan-out is deferred, so the panic button returns as soon
- * as the record is persisted instead of blocking on Supabase + Firebase
+ * as the record is persisted instead of blocking on the Reverb broadcast + Firebase
  * round-trips (and, once wired, one SMS HTTP call per trusted contact — which
  * would make emergency-alert latency scale linearly with contact count). (P7)
  */
@@ -44,8 +44,8 @@ class NotifySosContactsJob extends BaseJob
         }
 
         // Live in-app SOS banner to the OTHER participant, over their
-        // `notifications.{userId}` Reverb channel. Replaces the old Supabase
-        // PostgREST insert (broadcastSOSAlert). Broadcast-only, matching prior
+        // `notifications.{userId}` Reverb channel. Replaces the old realtime
+        // table insert (broadcastSOSAlert). Broadcast-only, matching prior
         // behaviour — the admin FCM topic push below is the out-of-app alert.
         $counterpartId = $triggeredBy === $booking->customer_id
             ? $booking->runner_id

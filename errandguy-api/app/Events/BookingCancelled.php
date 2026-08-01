@@ -14,7 +14,7 @@ use Illuminate\Queue\SerializesModels;
  * existing push-notification listener AND broadcasts to the booking channel,
  * under the SAME `booking.status` event name/shape as BookingStatusChanged so
  * the mobile app handles a cancellation through one code path — replacing the
- * Supabase WAL update that used to surface the `cancelled` status live.
+ * old WAL update that used to surface the `cancelled` status live.
  */
 class BookingCancelled implements ShouldBroadcast
 {

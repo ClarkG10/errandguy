@@ -50,7 +50,7 @@ Navigation and actions auto-hide by role:
 
 ## First-time setup / deploy (Forge)
 
-> The `.env` here points at the **production Supabase DB**. Run DB-writing
+> The `.env` here points at the **production Forge Postgres DB**. Run DB-writing
 > commands (`migrate`, `errandguy:make-admin`) deliberately, on the box you
 > intend to affect.
 

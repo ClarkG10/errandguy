@@ -16,7 +16,7 @@ use Symfony\Component\HttpFoundation\Response;
  * What this buys, honestly:
  *   • WAF/network egress + on-device JSON parse are skipped when nothing
  *     changed between polls — which is the common case for a stationary trip
- *     or an idle feed, and doubly so during a Supabase-realtime outage when
+ *     or an idle feed, and doubly so during a realtime-broadcast outage when
  *     the client falls back to a tight REST poll.
  * What it does NOT buy:
  *   • the controller query still runs and the body is still serialized here to

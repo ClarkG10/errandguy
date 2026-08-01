@@ -66,9 +66,10 @@ class NotificationService
      * Use this for updates that must land live in the app but where a device
      * push would be noise or spam — shopping-list ticks, an SOS in-app banner,
      * a negotiate offer fanned out to many nearby runners, a PIN-verified
-     * confirmation. These paths formerly wrote to Supabase via RealtimeService
-     * (PostgREST) and relied on the client's Supabase table subscription; that
-     * DB is no longer the one the app reads, so route them through here instead.
+     * confirmation. These paths formerly wrote to a realtime table over
+     * PostgREST and relied on the client's table subscription; that path is
+     * gone — they now fan out over the `NotificationCreated` Reverb broadcast,
+     * so route them through here instead.
      * sendPush() layers a remote push on top of this.
      */
     public function notifyInApp(string $userId, string $title, string $body, array $data = []): Notification
@@ -82,8 +83,8 @@ class NotificationService
             'is_read' => false,
         ]);
 
-        // Queued broadcast — mirrors what the Supabase `notifications` table
-        // subscription delivered before the migration off Supabase Realtime.
+        // Queued broadcast — mirrors what the old `notifications` table
+        // subscription delivered before the migration to Reverb.
         NotificationCreated::dispatch($notification);
 
         return $notification;

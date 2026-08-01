@@ -1,10 +1,9 @@
-# Realtime: Supabase → Laravel Reverb
+# Realtime: Laravel Reverb
 
-We moved the database off Supabase (cross-region latency), which killed the
-mobile app's realtime — it subscribed to **Supabase Realtime** (WAL tail of the
-Supabase Postgres). This replaces that with **Laravel Reverb**, a self-hosted
-WebSocket server co-located with the API on the Forge box. Realtime and the API
-now share one stack, one auth (Sanctum), and one host.
+Realtime is served by **Laravel Reverb**, a self-hosted WebSocket server
+co-located with the API and the Forge-managed Postgres on the Forge box — one
+stack, one auth (Sanctum), one host. It replaced the earlier WAL-tail realtime
+subscription that broke when the database moved onto the Forge box.
 
 ## Architecture
 
@@ -87,7 +86,7 @@ Authorizers: `routes/channels.php` (Sanctum-guarded, UUID string compares, parti
 
 ## Deploy — Mobile (EAS)
 
-The realtime swap is pure JS (`laravel-echo` + `pusher-js`, Supabase removed),
+The realtime swap is pure JS (`laravel-echo` + `pusher-js`),
 so it ships **over-the-air** — no store rebuild.
 
 1. Set `EXPO_PUBLIC_REVERB_KEY` in `eas.json` (each profile) to the matching

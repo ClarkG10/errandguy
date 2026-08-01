@@ -7,7 +7,7 @@ use App\Services\CacheService;
 /**
  * Small Redis-backed cache for the admin panel's hot, per-render aggregates
  * (dashboard stats + sidebar nav badges). These COUNT/SUM queries otherwise run
- * on EVERY page and Livewire action against the remote Supabase DB, which is the
+ * on EVERY page and Livewire action against the remote DB, which is the
  * main source of admin sluggishness. Cached for 60s (CacheService::rememberShort)
  * and flushed after any mutating admin action so numbers stay fresh.
  */

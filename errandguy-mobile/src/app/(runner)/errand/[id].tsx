@@ -248,7 +248,7 @@ export default function ActiveErrandScreen() {
     !['completed', 'cancelled', 'no_runner'].includes(_bookingForPollGuard.status);
   // Status reconcile poll while the errand is non-terminal. NOTE: unlike the
   // customer tracking screen, this screen wires NO realtime status channel yet
-  // (no useBookingStatus/useSupabaseRealtime here — see audit P6/P15), so
+  // (no useBookingStatus / realtime channel wired here — see audit P6/P15), so
   // despite the previous "fallback" framing this poll is the ONLY status path.
   // Kept at 30s (was a flat 15s) to halve idle GET load across the whole errand;
   // once realtime actually delivers (P6) this can adapt like tracking's
@@ -1406,7 +1406,7 @@ export default function ActiveErrandScreen() {
                 This is THE in-system action: tapping it calls
                 POST /runner/errand/{id}/status which advances the
                 booking, fires BookingStatusChanged, broadcasts via
-                Supabase Realtime, and is mirrored on the customer
+                Reverb realtime, and is mirrored on the customer
                 tracking screen within ~5s. */}
             {!isReadOnly ? (
               <View

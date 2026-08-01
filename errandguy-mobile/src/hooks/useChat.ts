@@ -307,11 +307,10 @@ export function useChat(bookingId: string) {
     }
   }, []);
 
-  // Realtime fallback. The Supabase postgres_changes channel above is the
-  // primary push path, but it depends on the realtime publication delivering
-  // rows under RLS — if the mobile client doesn't carry a Supabase JWT (we
-  // authenticate via Laravel Sanctum), the SELECT policy on `messages` blocks
-  // the subscription and pushes silently never arrive. Polling closes that
+  // Realtime fallback. The private Reverb chat channel above is the primary
+  // push path, but it depends on the socket staying live and the
+  // broadcasting-auth handshake (Laravel Sanctum) succeeding — if the channel
+  // drops or auth fails, pushes silently never arrive. Polling closes that
   // gap. At 8s (not 2s) it's a light fallback; useSmartPolling additionally
   // pauses it while backgrounded/offline, ticks immediately on foreground +
   // reconnect, and backs off (up to 32s) if getMessages starts failing.

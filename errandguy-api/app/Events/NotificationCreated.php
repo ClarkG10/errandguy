@@ -12,7 +12,7 @@ use Illuminate\Queue\SerializesModels;
 
 /**
  * Broadcasts a freshly-persisted in-app notification to its owner's private
- * stream. Replaces the Supabase `notifications` table subscription the mobile
+ * stream. Replaces the old `notifications` table subscription the mobile
  * app used to hold. Payload mirrors NotificationResource exactly, so a
  * notification is byte-for-byte identical whether it arrives live here or via
  * the REST list endpoint.

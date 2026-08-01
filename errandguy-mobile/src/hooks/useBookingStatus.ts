@@ -14,7 +14,7 @@ export function useBookingStatus(bookingId: string | null) {
     event: 'booking.status',
     enabled: !!bookingId,
     // Payload is BookingStatusChanged::broadcastWith() — the lifecycle fields
-    // directly (no Supabase `{ new }` envelope). Same merge semantics as before.
+    // directly (no `{ new }` change envelope). Same merge semantics as before.
     onEvent: (payload) => {
       const updated = payload as Partial<Booking>;
       if (updated.status) {

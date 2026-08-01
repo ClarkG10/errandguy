@@ -15,9 +15,8 @@ const Pusher = ((PusherImport as unknown as { Pusher?: typeof PusherImport }).Pu
   PusherImport) as typeof PusherImport;
 
 // laravel-echo's reverb/pusher connector reads a global `Pusher`. pusher-js is
-// pure JS and transports over React Native's built-in WebSocket — the same
-// primitive @supabase/supabase-js realtime used — so this ships over-the-air
-// with no native rebuild.
+// pure JS and transports over React Native's built-in WebSocket, so this
+// ships over-the-air with no native rebuild.
 // @ts-expect-error — augmenting the RN global with the Pusher constructor.
 global.Pusher = Pusher;
 

@@ -24,7 +24,7 @@ export function useRealtimeNotifications(userId: string | null) {
     event: 'notification.created',
     enabled: !!userId,
     // Payload mirrors NotificationResource exactly (delivered directly, not in
-    // a Supabase `{ new }` envelope), so it drops straight into the store.
+    // any `{ new }` change envelope), so it drops straight into the store.
     onEvent: (payload) => {
       addNotification(payload as AppNotification);
     },

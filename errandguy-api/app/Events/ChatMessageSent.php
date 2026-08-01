@@ -12,7 +12,7 @@ use Illuminate\Queue\SerializesModels;
 
 /**
  * Broadcasts a new chat message to the booking's chat channel. Replaces the
- * Supabase `messages` table subscription. Payload mirrors MessageResource
+ * old `messages` table subscription. Payload mirrors MessageResource
  * (sender relation loaded) so a message looks identical over the wire whether
  * pushed live or fetched via REST — the mobile chat store dedupes by id, so
  * the sender receiving their own echo is harmless.

@@ -79,7 +79,7 @@ class ShoppingChecklistController extends Controller
         // must not hold the runner's PATCH open, which is hit on every item tick.
         // notifyInApp persists a local Notification and broadcasts it over the
         // customer's `notifications.{userId}` Reverb channel (replacing the old
-        // Supabase PostgREST insert) — broadcast-only, so a tick never fires a
+        // realtime table insert) — broadcast-only, so a tick never fires a
         // device push. Same dispatch(fn)->afterResponse() pattern the SWR refresh
         // uses; values captured by value so the closure is request-independent.
         $customerId = $booking->customer_id;

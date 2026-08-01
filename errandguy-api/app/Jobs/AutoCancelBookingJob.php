@@ -79,7 +79,7 @@ class AutoCancelBookingJob implements ShouldQueue
 
             // Broadcast the cancellation so the customer's booking.{id} channel
             // drops them off the "finding a runner" screen live (+ the cancel
-            // push). Under Supabase the WAL UPDATE propagated automatically;
+            // push). Under the old realtime path the WAL UPDATE propagated automatically;
             // now it must be explicit or the screen hangs until a manual refetch.
             event(new BookingCancelled(Booking::find($this->bookingId)));
         }

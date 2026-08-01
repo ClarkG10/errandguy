@@ -5,8 +5,10 @@ The Filament admin taking 5–10s per page is **not a Filament problem and not a
 problem** — the resource tables are already eager-loaded, filters use static options,
 dashboard widgets are Redis-cached, and the Bookings table has only ~31 rows.
 
-The bottleneck is **network distance between the Forge app server and the Supabase
-database (different regions)**. Every PHP-FPM request opens a fresh DB connection, and:
+The bottleneck WAS network distance between the app server and the Postgres
+database when they lived in different regions. This is resolved now that Postgres
+is co-located on the Forge box (connect drops from ~1.2s to sub-millisecond). For
+the record, the cross-region cost looked like:
 
 ```
 connect + TLS + SCRAM auth:   ~1168 ms   ← paid on EVERY request (share-nothing FPM)
@@ -20,9 +22,9 @@ API on the same Forge box that opens the same 1.2s connection to the same distan
 ## Fixes, by impact
 
 ### 1. Co-locate the app server and the database (the real fix — 10× win)
-Put Forge and Supabase in the **same cloud region**. Easiest path: create a new Forge
-server in the region of the Supabase project, deploy, cut over. This turns ~1.2s
-connects into ~50ms and ~150ms queries into ~5ms → 5–10s pages become sub-500ms.
+Put the app server and Postgres in the same box/region. Done: Postgres is now
+Forge-managed and local to the app server, so cross-region connect latency no
+longer applies.
 
 ### 2. Persistent DB connections (stopgap while cross-region — done in code, off by default)
 `config/database.php` now supports `DB_PERSISTENT`. Enabling it reuses each FPM worker's

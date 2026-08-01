@@ -11,7 +11,7 @@ use Illuminate\Queue\SerializesModels;
 
 /**
  * Broadcasts a runner's live position to the customer tracking the booking.
- * Replaces the Supabase `runner_locations` subscription. This is the one
+ * Replaces the old `runner_locations` subscription. This is the one
  * latency-critical stream (the moving map pin), so it broadcasts synchronously
  * (ShouldBroadcastNow) rather than via the queue — the dispatch site wraps it
  * in a try/catch so a Reverb hiccup can never fail a location ping.
@@ -36,7 +36,7 @@ class RunnerLocationUpdated implements ShouldBroadcastNow
 
     /**
      * lat/lng/heading/speed are Eloquent `decimal` casts, which serialize as
-     * STRINGS. The mobile map marker needs NUMBERS (Supabase's WAL feed
+     * STRINGS. The mobile map marker needs NUMBERS (the old WAL feed
      * delivered numerics); without these explicit float casts the pin silently
      * freezes. `RunnerLocation` type on the client expects number | null.
      */

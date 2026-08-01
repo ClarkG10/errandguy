@@ -35,11 +35,6 @@ return [
         ],
     ],
 
-    'supabase' => [
-        'url' => env('SUPABASE_URL'),
-        'service_key' => env('SUPABASE_SERVICE_KEY'),
-    ],
-
     'xendit' => [
         'secret_key' => env('XENDIT_SECRET_KEY'),
         'public_key' => env('XENDIT_PUBLIC_KEY'),

@@ -152,7 +152,7 @@ class MatchRunnerJob implements ShouldQueue
                     );
 
                     // Live "you've got an offer" popup on the runner's private
-                    // channel. Replaces the Supabase `bookings` UPDATE (filtered
+                    // channel. Replaces the old `bookings` table UPDATE (filtered
                     // by runner_id) the runner app used to subscribe to. Post-
                     // commit, so the runner's fetch sees the assigned row.
                     IncomingRequest::dispatch($matchedBooking);

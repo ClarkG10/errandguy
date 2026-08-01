@@ -68,7 +68,7 @@ export function CompletionModal({
       // Rasterise the SVG strokes → PNG file in the cache dir, then
       // hand the local file URI to the parent. The runner.service
       // upload helper attaches it as the `signature` form field, the
-      // backend stores it in Supabase and writes `signature_url` on
+      // backend persists it to storage and writes `signature_url` on
       // the booking, and the customer tracking screen reads it back.
       const uri = await padRef.current?.exportToFile();
       // A signature-required completion must NEVER submit empty proof —
