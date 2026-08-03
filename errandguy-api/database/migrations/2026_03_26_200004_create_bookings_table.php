@@ -27,7 +27,9 @@ return new class extends Migration
             $table->string('dropoff_contact_phone', 20)->nullable();
             $table->text('description')->nullable();
             $table->text('special_instructions')->nullable();
-            $table->jsonb('item_photos')->default('[]');
+            // MySQL 8+ needs the expression form DEFAULT ('[]') for JSON columns
+            // (a literal default errors 1101); an Expression is emitted raw.
+            $table->jsonb('item_photos')->default(new \Illuminate\Database\Query\Expression("('[]')"));
             $table->decimal('estimated_item_value', 10, 2)->nullable();
             $table->string('schedule_type', 10)->default('now');
             $table->timestampTz('scheduled_at')->nullable();

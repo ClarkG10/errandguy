@@ -22,8 +22,8 @@ class BookingManagementController extends Controller
 
         if ($search = $request->query('search')) {
             $query->where(function ($q) use ($search) {
-                $q->where('booking_number', 'ilike', "%{$search}%")
-                  ->orWhereHas('customer', fn ($q2) => $q2->where('full_name', 'ilike', "%{$search}%"));
+                $q->where('booking_number', 'like', "%{$search}%")
+                  ->orWhereHas('customer', fn ($q2) => $q2->where('full_name', 'like', "%{$search}%"));
             });
         }
 

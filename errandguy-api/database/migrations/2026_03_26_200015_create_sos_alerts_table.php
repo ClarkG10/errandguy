@@ -18,7 +18,9 @@ return new class extends Migration
             $table->decimal('customer_lng', 10, 7)->nullable();
             $table->decimal('runner_lat', 10, 7)->nullable();
             $table->decimal('runner_lng', 10, 7)->nullable();
-            $table->jsonb('contacts_notified')->default('[]');
+            // MySQL 8+ needs the expression form DEFAULT ('[]') for JSON columns
+            // (a literal default errors 1101); an Expression is emitted raw.
+            $table->jsonb('contacts_notified')->default(new \Illuminate\Database\Query\Expression("('[]')"));
             $table->string('live_link_token', 64)->nullable();
             $table->timestampTz('live_link_expires_at')->nullable();
             $table->timestampTz('resolved_at')->nullable();

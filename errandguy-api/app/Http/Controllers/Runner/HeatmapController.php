@@ -116,11 +116,11 @@ class HeatmapController extends Controller
     }
 
     /**
-     * Driver-portable SQL fragments. Production runs on PostgreSQL (which
-     * needs `::numeric` casts and `extract(... from ...)`); the test suite
-     * runs on in-memory SQLite (which uses plain round() and strftime()).
-     * `strftime('%w')` and Postgres `extract(dow ...)` both return 0=Sunday,
-     * so the resulting grid is identical across drivers.
+     * Driver-portable SQL fragments. Production runs on MySQL; the test suite
+     * runs on in-memory SQLite; a Postgres arm is kept for portability.
+     * All three day-of-week expressions return 0=Sunday..6=Saturday and all
+     * hour expressions return 0..23, so the resulting grid is identical across
+     * drivers.
      */
     private function driver(): string
     {
@@ -129,6 +129,8 @@ class HeatmapController extends Controller
 
     private function roundExpr(string $col): string
     {
+        // round(col, 3) is valid on MySQL and SQLite alike; Postgres needs the
+        // ::numeric cast.
         return $this->driver() === 'pgsql'
             ? "round({$col}::numeric, 3)"
             : "round({$col}, 3)";
@@ -136,15 +138,20 @@ class HeatmapController extends Controller
 
     private function dowExpr(): string
     {
-        return $this->driver() === 'pgsql'
-            ? 'extract(dow from created_at)'
-            : "cast(strftime('%w', created_at) as integer)";
+        return match ($this->driver()) {
+            'pgsql' => 'extract(dow from created_at)',
+            // MySQL DAYOFWEEK() is 1=Sun..7=Sat; shift to 0=Sun..6=Sat.
+            'mysql', 'mariadb' => '(dayofweek(created_at) - 1)',
+            default => "cast(strftime('%w', created_at) as integer)", // sqlite
+        };
     }
 
     private function hourExpr(): string
     {
-        return $this->driver() === 'pgsql'
-            ? 'extract(hour from created_at)'
-            : "cast(strftime('%H', created_at) as integer)";
+        return match ($this->driver()) {
+            'pgsql' => 'extract(hour from created_at)',
+            'mysql', 'mariadb' => 'hour(created_at)',
+            default => "cast(strftime('%H', created_at) as integer)", // sqlite
+        };
     }
 }

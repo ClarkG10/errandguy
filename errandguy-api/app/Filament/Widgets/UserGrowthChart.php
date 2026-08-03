@@ -42,7 +42,7 @@ class UserGrowthChart extends ChartWidget
             User::query()
                 ->where('created_at', '>=', AdminChartData::since($days))
                 ->whereIn('role', ['customer', 'runner'])
-                ->selectRaw("to_char(created_at, 'YYYY-MM-DD') as d, role, count(*) as c")
+                ->selectRaw(AdminChartData::dayBucket('created_at').' as d, role, count(*) as c')
                 ->groupBy('d', 'role')
                 ->get()
                 ->each(function ($row) use (&$custMap, &$runMap): void {

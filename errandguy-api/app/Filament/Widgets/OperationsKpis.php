@@ -4,6 +4,7 @@ namespace App\Filament\Widgets;
 
 use App\Models\Booking;
 use App\Support\AdminCache;
+use App\Support\AdminChartData;
 use Filament\Widgets\StatsOverviewWidget;
 use Filament\Widgets\StatsOverviewWidget\Stat;
 
@@ -39,7 +40,7 @@ class OperationsKpis extends StatsOverviewWidget
             $avgMin = (float) Booking::where('status', 'completed')
                 ->whereNotNull('accepted_at')->whereNotNull('completed_at')
                 ->where('completed_at', '>=', $since)
-                ->selectRaw('avg(extract(epoch from (completed_at - accepted_at)) / 60) as m')
+                ->selectRaw('avg('.AdminChartData::minutesBetween('accepted_at', 'completed_at').') as m')
                 ->value('m');
 
             return compact('total', 'completed', 'cancelled', 'noRunner', 'avgMin');

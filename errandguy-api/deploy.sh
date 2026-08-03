@@ -20,16 +20,12 @@ $FORGE_PHP artisan optimize --no-interaction
 $FORGE_PHP artisan filament:optimize --no-interaction
 $FORGE_PHP artisan storage:link --no-interaction || true
 
-# Run DDL on the DIRECT (session-mode) connection. Request traffic uses the
-# `pgsql` connection (the transaction pooler in prod), which does not support
-# the full session semantics migrations rely on. `pgsql_direct` falls back to
-# the same DB_* vars until DB_DIRECT_* is set, so this is safe pre-pooler.
-# See docs/scaling-tier0-rollout.md.
-$FORGE_PHP artisan migrate --database=pgsql_direct --force --no-interaction
+# Run migrations on the app's default DB connection (MySQL in production).
+$FORGE_PHP artisan migrate --force --no-interaction
 
 # Idempotent seeders only (ErrandTypeSeeder uses updateOrCreate, so it's
 # safe to run on every deploy).
-$FORGE_PHP artisan db:seed --database=pgsql_direct --class=ErrandTypeSeeder --force --no-interaction
+$FORGE_PHP artisan db:seed --class=ErrandTypeSeeder --force --no-interaction
 
 $FORGE_PHP artisan queue:restart
 

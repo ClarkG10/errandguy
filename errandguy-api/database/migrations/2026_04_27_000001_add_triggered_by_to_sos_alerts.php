@@ -22,8 +22,14 @@ return new class extends Migration
             $table->string('triggered_by_role', 15)->nullable()->after('triggered_by');
         });
 
-        // Loosen runner_id NOT NULL via raw SQL (Postgres).
-        DB::statement('ALTER TABLE sos_alerts ALTER COLUMN runner_id DROP NOT NULL');
+        // Loosen runner_id NOT NULL so a customer can SOS while still searching
+        // for a runner. Schema change() is driver-portable (MySQL MODIFY,
+        // Postgres ALTER COLUMN, SQLite table rebuild) in Laravel 11+ — the
+        // previous raw `ALTER COLUMN ... DROP NOT NULL` was Postgres-only and
+        // is invalid MySQL syntax.
+        Schema::table('sos_alerts', function (Blueprint $table) {
+            $table->uuid('runner_id')->nullable()->change();
+        });
 
         // Backfill existing rows (assume customer-triggered, since that was
         // the only path before this migration).
@@ -43,6 +49,8 @@ return new class extends Migration
             $table->dropColumn(['triggered_by', 'triggered_by_role']);
         });
 
-        DB::statement('ALTER TABLE sos_alerts ALTER COLUMN runner_id SET NOT NULL');
+        Schema::table('sos_alerts', function (Blueprint $table) {
+            $table->uuid('runner_id')->nullable(false)->change();
+        });
     }
 };

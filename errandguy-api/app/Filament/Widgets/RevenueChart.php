@@ -41,7 +41,7 @@ class RevenueChart extends ChartWidget
             Booking::query()
                 ->where('status', 'completed')
                 ->where('completed_at', '>=', AdminChartData::since($days))
-                ->selectRaw("to_char(completed_at, 'YYYY-MM-DD') as d, sum(total_amount) as gmv, sum(service_fee) as rev")
+                ->selectRaw(AdminChartData::dayBucket('completed_at').' as d, sum(total_amount) as gmv, sum(service_fee) as rev')
                 ->groupBy('d')
                 ->get()
                 ->each(function ($row) use (&$gmvMap, &$revMap): void {

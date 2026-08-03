@@ -14,7 +14,9 @@ return new class extends Migration
             $table->uuid('reported_by');
             $table->string('category', 30);
             $table->text('description');
-            $table->jsonb('evidence_urls')->default('[]');
+            // MySQL 8+ needs the expression form DEFAULT ('[]') for JSON columns
+            // (a literal default errors 1101); an Expression is emitted raw.
+            $table->jsonb('evidence_urls')->default(new \Illuminate\Database\Query\Expression("('[]')"));
             $table->string('status', 15)->default('open');
             $table->text('resolution')->nullable();
             $table->uuid('resolved_by')->nullable();

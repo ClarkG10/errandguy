@@ -244,19 +244,17 @@ class ChatController extends Controller
 
         $bookingIds = $bookings->pluck('id');
 
-        // Latest message per booking. Previously we hydrated EVERY
-        // message row across all 60 bookings just to keep the first one
-        // of each group — that's O(history) memory + bandwidth on each
-        // inbox open. Postgres `DISTINCT ON` picks the newest row per
-        // booking_id directly in SQL with the new
-        // (booking_id, created_at) composite index.
-        $latestRows = DB::table('messages')
+        // Latest message per booking, picked in SQL with a window function so
+        // we never hydrate the full history. ROW_NUMBER() OVER (PARTITION BY
+        // ...) is portable across MySQL 8, Postgres and SQLite 3.25+ — unlike
+        // Postgres `DISTINCT ON`, which MySQL does not support (there
+        // ->distinct('booking_id') would de-dupe on the whole row and return
+        // many rows per booking). Backed by the (booking_id, created_at) index.
+        $ranked = DB::table('messages')
             ->whereIn('booking_id', $bookingIds)
-            ->orderBy('booking_id')
-            ->orderByDesc('created_at')
             ->select('booking_id', 'content', 'image_url', 'is_system', 'sender_id', 'created_at')
-            ->distinct('booking_id')
-            ->get();
+            ->selectRaw('row_number() over (partition by booking_id order by created_at desc) as rn');
+        $latestRows = DB::query()->fromSub($ranked, 't')->where('rn', 1)->get();
         $latestPerBooking = collect($latestRows)->keyBy('booking_id');
 
         // Unread counts per booking for messages not sent by the user.

@@ -40,7 +40,7 @@ class BookingsTrendChart extends ChartWidget
 
             Booking::query()
                 ->where('created_at', '>=', AdminChartData::since($days))
-                ->selectRaw("to_char(created_at, 'YYYY-MM-DD') as d, count(*) as c")
+                ->selectRaw(AdminChartData::dayBucket('created_at').' as d, count(*) as c')
                 ->groupBy('d')
                 ->get()
                 ->each(function ($row) use (&$placedMap): void {
@@ -52,7 +52,7 @@ class BookingsTrendChart extends ChartWidget
             Booking::query()
                 ->where('status', 'completed')
                 ->where('completed_at', '>=', AdminChartData::since($days))
-                ->selectRaw("to_char(completed_at, 'YYYY-MM-DD') as d, count(*) as c")
+                ->selectRaw(AdminChartData::dayBucket('completed_at').' as d, count(*) as c')
                 ->groupBy('d')
                 ->get()
                 ->each(function ($row) use (&$completedMap): void {

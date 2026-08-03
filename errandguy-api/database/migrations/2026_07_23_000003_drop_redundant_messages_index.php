@@ -26,9 +26,13 @@ use Illuminate\Support\Facades\Log;
  * can never be lost. If the keeper is somehow absent, we SKIP with a loud
  * CRITICAL log rather than leave the read path unindexed.
  *
- * Driver-aware: Postgres (prod) uses DROP INDEX CONCURRENTLY to avoid taking
- * an ACCESS EXCLUSIVE lock on the messages table — which is why this migration
- * runs OUTSIDE a transaction. SQLite (test suite) uses a plain drop.
+ * Driver-aware:
+ *   - Postgres (prod-legacy) uses DROP INDEX CONCURRENTLY to avoid an ACCESS
+ *     EXCLUSIVE lock on the hot messages table — which is why this migration
+ *     runs OUTSIDE a transaction.
+ *   - MySQL has no `IF EXISTS`/`CONCURRENTLY` on DROP INDEX and requires the
+ *     owning table, so we pre-check the catalog and issue a plain scoped drop.
+ *   - SQLite (test suite) uses a plain `DROP INDEX IF EXISTS`.
  */
 return new class extends Migration
 {
@@ -54,24 +58,33 @@ return new class extends Migration
             return;
         }
 
-        if ($driver === 'pgsql') {
-            DB::statement('DROP INDEX CONCURRENTLY IF EXISTS '.self::DROP);
-        } else {
-            DB::statement('DROP INDEX IF EXISTS '.self::DROP);
+        if (! $this->indexExists(self::DROP, $driver)) {
+            return; // already dropped — nothing to do
         }
+
+        match ($driver) {
+            'pgsql' => DB::statement('DROP INDEX CONCURRENTLY IF EXISTS '.self::DROP),
+            'mysql', 'mariadb' => DB::statement('DROP INDEX `'.self::DROP.'` ON `messages`'),
+            default => DB::statement('DROP INDEX IF EXISTS '.self::DROP), // sqlite
+        };
     }
 
     public function down(): void
     {
         $driver = DB::getDriverName();
 
-        if ($driver === 'pgsql') {
-            DB::statement('CREATE INDEX CONCURRENTLY IF NOT EXISTS '.self::DROP
-                .' ON "messages" ("booking_id", "created_at")');
-        } else {
-            DB::statement('CREATE INDEX IF NOT EXISTS '.self::DROP
-                .' ON "messages" ("booking_id", "created_at")');
+        if ($this->indexExists(self::DROP, $driver)) {
+            return; // already present — nothing to recreate
         }
+
+        match ($driver) {
+            'pgsql' => DB::statement('CREATE INDEX CONCURRENTLY IF NOT EXISTS '.self::DROP
+                .' ON "messages" ("booking_id", "created_at")'),
+            'mysql', 'mariadb' => DB::statement('CREATE INDEX `'.self::DROP
+                .'` ON `messages` (`booking_id`, `created_at`)'),
+            default => DB::statement('CREATE INDEX IF NOT EXISTS '.self::DROP
+                .' ON "messages" ("booking_id", "created_at")'), // sqlite
+        };
     }
 
     private function indexExists(string $name, string $driver): bool
@@ -83,7 +96,15 @@ return new class extends Migration
             ) !== null;
         }
 
-        // SQLite (and other drivers fall back to the portable catalog query).
+        if ($driver === 'mysql' || $driver === 'mariadb') {
+            return DB::selectOne(
+                'SELECT 1 FROM information_schema.statistics '
+                .'WHERE table_schema = DATABASE() AND table_name = ? AND index_name = ? LIMIT 1',
+                ['messages', $name]
+            ) !== null;
+        }
+
+        // SQLite (and any other driver) — portable catalog query.
         return DB::selectOne(
             "SELECT 1 FROM sqlite_master WHERE type = 'index' AND name = ? AND tbl_name = ?",
             [$name, 'messages']

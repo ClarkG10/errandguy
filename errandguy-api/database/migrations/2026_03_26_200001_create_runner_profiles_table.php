@@ -23,7 +23,11 @@ return new class extends Migration
             $table->decimal('completion_rate', 5, 2)->default(0.00);
             $table->integer('total_errands')->default(0);
             $table->decimal('total_earnings', 12, 2)->default(0.00);
-            $table->jsonb('preferred_types')->default('[]');
+            // MySQL 8+ rejects a literal JSON default (error 1101); it requires
+            // the expression form DEFAULT ('[]'). An Expression is emitted raw by
+            // the schema grammar, so this yields `default ('[]')` — valid on
+            // MySQL, SQLite and Postgres alike, keeping the column NOT NULL [].
+            $table->jsonb('preferred_types')->default(new \Illuminate\Database\Query\Expression("('[]')"));
             $table->decimal('working_area_lat', 10, 7)->nullable();
             $table->decimal('working_area_lng', 10, 7)->nullable();
             $table->integer('working_area_radius')->default(5000);

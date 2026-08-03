@@ -51,9 +51,9 @@ class RunnerErrandHistoryController extends Controller
         if ($request->filled('search')) {
             $search = $request->input('search');
             $query->where(function ($q) use ($search) {
-                $q->where('booking_number', 'ilike', "%{$search}%")
+                $q->where('booking_number', 'like', "%{$search}%")
                   ->orWhereHas('customer', function ($cq) use ($search) {
-                      $cq->where('full_name', 'ilike', "%{$search}%");
+                      $cq->where('full_name', 'like', "%{$search}%");
                   });
             });
         }

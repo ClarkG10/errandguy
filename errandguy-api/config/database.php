@@ -84,11 +84,9 @@ return [
             ]) : [],
         ],
 
-        // Primary request-traffic connection. In production at scale this
-        // should point at a managed Postgres transaction pooler so thousands
-        // of PHP-FPM workers multiplex onto a small server-side pool instead
-        // of exhausting Postgres' direct-connection cap. Migrations/DDL use
-        // `pgsql_direct` below. See docs/scaling-tier0-rollout.md.
+        // Legacy PostgreSQL connection. The app now runs on MySQL in
+        // production; this is kept for local/optional use and is selected only
+        // when DB_CONNECTION=pgsql.
         'pgsql' => [
             'driver' => 'pgsql',
             'url' => env('DB_URL'),
@@ -121,25 +119,6 @@ return [
                 // Default false = no behaviour change.
                 PDO::ATTR_PERSISTENT => (bool) env('DB_PERSISTENT', false) ?: null,
             ], fn ($v) => $v !== null),
-        ],
-
-        // DIRECT / session-mode Postgres (port 5432, username postgres) for
-        // migrations and maintenance — transaction poolers don't support the
-        // full session semantics DDL relies on. Every value falls back to the
-        // DB_* vars, so this is a no-op until DB_DIRECT_* is set in prod.
-        'pgsql_direct' => [
-            'driver' => 'pgsql',
-            'url' => env('DB_DIRECT_URL', env('DB_URL')),
-            'host' => env('DB_DIRECT_HOST', env('DB_HOST', '127.0.0.1')),
-            'port' => env('DB_DIRECT_PORT', env('DB_PORT', '5432')),
-            'database' => env('DB_DATABASE', 'laravel'),
-            'username' => env('DB_DIRECT_USERNAME', env('DB_USERNAME', 'root')),
-            'password' => env('DB_PASSWORD', ''),
-            'charset' => env('DB_CHARSET', 'utf8'),
-            'prefix' => '',
-            'prefix_indexes' => true,
-            'search_path' => 'public',
-            'sslmode' => env('DB_SSLMODE', 'prefer'),
         ],
 
         'sqlsrv' => [
