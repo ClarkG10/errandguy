@@ -8,7 +8,7 @@
     "icon": "./assets/icon-square.png",
     "userInterfaceStyle": "light",
     "splash": {
-      "image": "./assets/logo-new.png",
+      "image": "./assets/wordmark-stacked.png",
       "resizeMode": "contain",
       "backgroundColor": "#F7F8FA"
     },

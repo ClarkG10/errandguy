@@ -1,15 +1,18 @@
 import React from 'react';
 import { Modal, View, StyleSheet } from 'react-native';
-import { Image } from 'expo-image';
 import { MotiView } from 'moti';
 import { LightColors } from '../../constants/colors';
-
-const LOGO = require('../../../assets/logo-new.png');
+import { Wordmark } from './Wordmark';
 
 interface LogoutSplashProps {
   visible: boolean;
   backgroundColor?: string;
+  /** Deprecated: the mark is now the full-colour stacked wordmark, so a
+   *  tint no longer applies. Kept for call-site compatibility. */
   logoTintColor?: string;
+  /** Overall footprint of the mark. The stacked wordmark is sized by
+   *  height at ~62% of this value so its two lines sit comfortably where
+   *  the old square badge did. */
   logoSize?: number;
 }
 
@@ -24,7 +27,6 @@ interface LogoutSplashProps {
 export function LogoutSplash({
   visible,
   backgroundColor = LightColors.surface,
-  logoTintColor,
   logoSize = 156,
 }: LogoutSplashProps) {
   return (
@@ -43,17 +45,9 @@ export function LogoutSplash({
           transition={{ type: 'timing', duration: 420 }}
           style={styles.brand}
         >
-          <Image
-            source={LOGO}
-            style={[
-              styles.logo,
-              { width: logoSize, height: logoSize },
-              logoTintColor ? { tintColor: logoTintColor } : null,
-            ]}
-            contentFit="contain"
-            cachePolicy="memory-disk"
-            transition={0}
-          />
+          {/* The loader now shows the two-tone stacked wordmark (Errand /
+              Guy) rather than the square badge — matching the login hero. */}
+          <Wordmark variant="stacked" height={Math.round(logoSize * 0.62)} />
         </MotiView>
       </View>
     </Modal>
@@ -69,9 +63,5 @@ const styles = StyleSheet.create({
   },
   brand: {
     alignItems: 'center',
-  },
-  logo: {
-    width: 156,
-    height: 156,
   },
 });
