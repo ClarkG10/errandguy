@@ -93,15 +93,16 @@ const variantTextColors: Record<ButtonVariant, string> = {
 const ANDROID_TEXT_SCALE = 0;
 const ANDROID_PAD_SCALE = 0;
 
-// "Modern compact" ladder — 34/44/48 (trimmed from 36/46/52). The prior
-// heights read oversized on Android, where mScale() (width-driven) inflates
-// them further than on iPhone; this ladder matches the tighter iOS button
-// feel while keeping md/lg exactly at/above Apple's 44pt touch minimum.
-// sm (34) is a compact inline/secondary action (paired with hitSlop).
+// "Compact" ladder — 30/40/44 (trimmed again from 34/44/48). lg (the
+// primary CTA) now sits exactly at Apple's 44pt touch minimum — the floor
+// for a main action, so it shouldn't go lower. md (40) / sm (30) dip below
+// for dense or secondary/inline use and are paired with hitSlop at their
+// call sites to keep the effective tap target comfortable. The tighter base
+// also narrows the Android gap (width-driven mScale scales up from less).
 const BASE_SIZES: Record<ButtonSize, { padV: number; padH: number; minH: number; text: number; icon: number }> = {
-  sm: { padV: 6,  padH: 14, minH: 34, text: 13, icon: 15 },
-  md: { padV: 9,  padH: 18, minH: 44, text: 15, icon: 17 },
-  lg: { padV: 11, padH: 20, minH: 48, text: 16, icon: 18 },
+  sm: { padV: 5,  padH: 14, minH: 30, text: 13, icon: 15 },
+  md: { padV: 8,  padH: 18, minH: 40, text: 15, icon: 17 },
+  lg: { padV: 10, padH: 20, minH: 44, text: 16, icon: 18 },
 };
 
 // One family on every platform — the system-font remap turns this into
