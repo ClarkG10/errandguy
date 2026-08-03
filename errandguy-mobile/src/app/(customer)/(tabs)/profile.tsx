@@ -25,6 +25,7 @@ import {
   Ticket,
   RefreshCw,
   Info,
+  Accessibility,
 } from 'lucide-react-native';
 import type { LucideIcon } from 'lucide-react-native';
 import * as Haptics from 'expo-haptics';
@@ -196,6 +197,11 @@ export default function CustomerProfileScreen() {
   ];
 
   const supportMenu: MenuItem[] = [
+    {
+      label: 'Appearance & Accessibility',
+      icon: Accessibility,
+      route: '/(customer)/appearance',
+    },
     { label: 'Help & Support', icon: HelpCircle, route: '/(customer)/help' },
     // Distinct destination from Help & Support: the in-app ticket flow.
     { label: 'Report an Issue', icon: Flag, route: '/(customer)/support' },

@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { AccessibilityInfo, type AccessibilityInfoStatic } from 'react-native';
+import { usePreferencesStore } from '../stores/preferencesStore';
 
 /**
  * Live tracker for the OS-level "Reduce Motion" accessibility setting.
@@ -47,5 +48,10 @@ export function useReducedMotion(): boolean {
     };
   }, []);
 
-  return enabled;
+  // The in-app "Reduce Motion" preference can only ADD reduction on top of the
+  // OS value — it never re-enables motion the OS has already suppressed. So the
+  // effective answer is a simple OR; the OS value stays the base.
+  const override = usePreferencesStore((s) => s.reduceMotionOverride);
+
+  return enabled || override;
 }

@@ -23,6 +23,7 @@ import { useNotifications } from '../hooks/useNotifications';
 import { useOtaLaunchCheck } from '../hooks/useOtaUpdate';
 import { ToastProvider } from '../components/ui/ToastProvider';
 import { OtaUpdateGate } from '../components/ui/OtaUpdateGate';
+import { WhatsNewSheet } from '../components/ui/WhatsNewSheet';
 import { ApiActivityBar } from '../components/ui/ApiActivityBar';
 import { OfflineBanner } from '../components/ui/OfflineBanner';
 import { ErrorBoundary } from '../components/ui/ErrorBoundary';
@@ -282,6 +283,10 @@ export default function RootLayout() {
         <ToastProvider />
         {/* Blocking gate for a critical OTA update (invisible otherwise). */}
         <OtaUpdateGate />
+        {/* Once-per-release "What's New" changelog after a non-critical OTA
+            swap. Self-gating — renders null until the runtime version changes.
+            Never blocks launch. */}
+        <WhatsNewSheet />
       </GestureHandlerRootView>
     </SafeAreaProvider>
   );

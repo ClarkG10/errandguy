@@ -9,7 +9,7 @@ import Animated, {
   interpolate,
   Extrapolation,
 } from 'react-native-reanimated';
-import * as Haptics from 'expo-haptics';
+import { haptics } from '../../utils/haptics';
 import { ChevronsRight } from 'lucide-react-native';
 import { Spinner } from './Spinner';
 import { useReducedMotion } from '../../hooks/useReducedMotion';
@@ -71,9 +71,7 @@ export function SlideToConfirm({
   const handleComplete = useCallback(() => {
     if (completedRef.current) return;
     completedRef.current = true;
-    Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(
-      () => {},
-    );
+    haptics.success();
     onComplete();
   }, [onComplete]);
 

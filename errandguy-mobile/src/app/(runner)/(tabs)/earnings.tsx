@@ -469,6 +469,7 @@ export default function EarningsScreen() {
             syncing={summaryQ.isStale || historyQ.isStale}
             updatedAt={summaryQ.updatedAt}
             error={!!summaryQ.error}
+            offline={!!summaryQ.servedFromCacheOffline || !!historyQ.servedFromCacheOffline}
             onRetry={onRefresh ?? summaryQ.refresh}
             align="flex-start"
           />

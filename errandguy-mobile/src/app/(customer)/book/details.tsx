@@ -24,8 +24,12 @@ import {
   UserPlus,
   MessageSquarePlus,
   Crosshair,
+  BookmarkPlus,
+  Home,
+  Briefcase,
 } from 'lucide-react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
+import { BottomSheet } from '../../../components/ui/BottomSheet';
 import { HereMapView, HereMarker, HerePolyline, type HereMapViewRef, type Region } from '../../../components/map';
 import * as Location from 'expo-location';
 import { ensureLocationPermission, getCurrentCoords } from '../../../utils/locationPermission';
@@ -53,6 +57,10 @@ import { toast } from '../../../stores/toastStore';
 import { geocodingService } from '../../../services/geocoding.service';
 import { routeService } from '../../../services/route.service';
 import { bookingService } from '../../../services/booking.service';
+import { userService } from '../../../services/user.service';
+import { useQuery } from '../../../hooks/useQuery';
+import { CacheTTL } from '../../../services/cache.service';
+import { useAuthStore } from '../../../stores/authStore';
 import { formatCurrency } from '../../../utils/formatCurrency';
 
 const DEFAULT_CENTER: [number, number] = [121.0, 14.6];
@@ -331,6 +339,19 @@ export default function TaskDetailsScreen() {
   const [currentCoord, setCurrentCoord] = useState<[number, number] | null>(null);
   const [showSavedSheet, setShowSavedSheet] = useState(false);
   const [photoPickerVisible, setPhotoPickerVisible] = useState(false);
+
+  // ── Save-this-address (details phase) ──
+  // Which confirmed point the user is saving, plus the label-prompt state.
+  // Reuses the SAME query key SavedAddressSheet reads, so saving here feeds
+  // that sheet on its next open (addAddress invalidates the key).
+  const savedAddrUserId = useAuthStore((s) => s.user?.id ?? 'anon');
+  const [savePromptFor, setSavePromptFor] = useState<'pickup' | 'dropoff' | null>(null);
+  const [savingAddress, setSavingAddress] = useState(false);
+  const [customLabelMode, setCustomLabelMode] = useState(false);
+  const [customLabel, setCustomLabel] = useState('');
+  // Coords saved this session — hides the chip instantly, before the
+  // background query revalidation lands.
+  const [locallySavedKeys, setLocallySavedKeys] = useState<string[]>([]);
 
   // Search
   const [searchQuery, setSearchQuery] = useState('');
@@ -765,6 +786,99 @@ export default function TaskDetailsScreen() {
               latitudeDelta: 0.008, longitudeDelta: 0.008,
             }, 800);
   }, []);
+
+  /* ── Saved addresses (to detect already-saved pins) ──
+     Cache-first, and only fetched once we reach the details phase where the
+     chip can appear. Shares the SavedAddressSheet cache key. */
+  const savedAddressesQ = useQuery<SavedAddress[]>(
+    ['user', 'addresses', savedAddrUserId],
+    async () => ((await userService.getAddresses()).data.data ?? []) as SavedAddress[],
+    { staleTime: 60_000, ttl: CacheTTL.LONG, enabled: phase === 'details' },
+  );
+  const savedAddresses = savedAddressesQ.data ?? [];
+
+  const coordKey = (lat: number, lng: number) => `${lat.toFixed(5)},${lng.toFixed(5)}`;
+
+  // A pin counts as "already saved" when a stored address sits within ~11m
+  // (1e-4°) of it, or it was saved earlier this session.
+  const coordIsSaved = useCallback(
+    (lat?: number | null, lng?: number | null) => {
+      if (lat == null || lng == null) return false;
+      if (locallySavedKeys.includes(coordKey(lat, lng))) return true;
+      return savedAddresses.some(
+        (a) => Math.abs(a.lat - lat) < 1e-4 && Math.abs(a.lng - lng) < 1e-4,
+      );
+    },
+    [savedAddresses, locallySavedKeys],
+  );
+
+  // Only offer to save once the saved list has actually loaded — otherwise an
+  // already-saved pin briefly reads as unsaved (data is [] mid-load) and the
+  // chip flashes, and `is_default` below can't be trusted.
+  const addressesLoaded = savedAddressesQ.data != null;
+
+  const canSavePickup =
+    addressesLoaded &&
+    draftBooking.pickup_lat != null &&
+    draftBooking.pickup_lng != null &&
+    !!draftBooking.pickup_address &&
+    !coordIsSaved(draftBooking.pickup_lat, draftBooking.pickup_lng);
+
+  const canSaveDropoff =
+    addressesLoaded &&
+    !rule.singleLocation &&
+    draftBooking.dropoff_lat != null &&
+    draftBooking.dropoff_lng != null &&
+    !!draftBooking.dropoff_address &&
+    !coordIsSaved(draftBooking.dropoff_lat, draftBooking.dropoff_lng);
+
+  const closeSavePrompt = useCallback(() => {
+    setSavePromptFor(null);
+    setCustomLabelMode(false);
+    setCustomLabel('');
+  }, []);
+
+  const promptAddress =
+    savePromptFor === 'pickup'
+      ? draftBooking.pickup_address
+      : savePromptFor === 'dropoff'
+        ? draftBooking.dropoff_address
+        : '';
+
+  const handleSaveAddress = useCallback(
+    async (label: string) => {
+      const trimmed = label.trim();
+      if (!trimmed || !savePromptFor || savingAddress) return;
+      const lat = savePromptFor === 'pickup' ? draftBooking.pickup_lat : draftBooking.dropoff_lat;
+      const lng = savePromptFor === 'pickup' ? draftBooking.pickup_lng : draftBooking.dropoff_lng;
+      const address =
+        savePromptFor === 'pickup' ? draftBooking.pickup_address : draftBooking.dropoff_address;
+      if (lat == null || lng == null || !address) return;
+      setSavingAddress(true);
+      try {
+        await userService.addAddress({
+          label: trimmed,
+          address,
+          lat,
+          lng,
+          // First saved address becomes the default; later ones don't steal it.
+          // Guarded on a loaded list so a not-yet-hydrated query can't wrongly
+          // claim default (the Save chip is gated on addressesLoaded anyway).
+          is_default: addressesLoaded && savedAddresses.length === 0,
+          created_at: new Date().toISOString(),
+        } as any);
+        setLocallySavedKeys((prev) => [...prev, coordKey(lat, lng)]);
+        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
+        toast.success(`Saved as ${trimmed}`);
+        closeSavePrompt();
+      } catch (err: any) {
+        toast.error(err?.message ?? 'Could not save address. Try again.');
+      } finally {
+        setSavingAddress(false);
+      }
+    },
+    [savePromptFor, savingAddress, draftBooking, savedAddresses.length, closeSavePrompt],
+  );
 
   /* ── Fetch route (cached) ──
      Only when the map is actually mounted — the polyline is its sole
@@ -1460,6 +1574,53 @@ export default function TaskDetailsScreen() {
                 </Pressable>
               </>
             )}
+
+            {/* Save-this-address chips — one per confirmed pin that isn't
+                already in the user's saved addresses. Opens a tiny
+                Home/Work/Custom label prompt, then POSTs and feeds the
+                Saved-addresses sheet. Blue tint pill, blue glyph + label. */}
+            {(canSavePickup || canSaveDropoff) && (
+              <View style={st.saveChipRow}>
+                {canSavePickup && (
+                  <Pressable
+                    style={({ pressed }) => [st.saveChip, pressed && st.saveChipPressed]}
+                    hitSlop={6}
+                    onPress={() => {
+                      Haptics.selectionAsync().catch(() => {});
+                      setCustomLabelMode(false);
+                      setCustomLabel('');
+                      setSavePromptFor('pickup');
+                    }}
+                    accessibilityRole="button"
+                    accessibilityLabel={`Save ${rule.pickupLabel.toLowerCase()} to your addresses`}
+                  >
+                    <BookmarkPlus size={13} color={LightColors.primary} />
+                    <Text style={st.saveChipText} numberOfLines={1}>
+                      {rule.singleLocation ? 'Save this address' : `Save ${rule.pickupLabel.toLowerCase()}`}
+                    </Text>
+                  </Pressable>
+                )}
+                {canSaveDropoff && (
+                  <Pressable
+                    style={({ pressed }) => [st.saveChip, pressed && st.saveChipPressed]}
+                    hitSlop={6}
+                    onPress={() => {
+                      Haptics.selectionAsync().catch(() => {});
+                      setCustomLabelMode(false);
+                      setCustomLabel('');
+                      setSavePromptFor('dropoff');
+                    }}
+                    accessibilityRole="button"
+                    accessibilityLabel={`Save ${rule.dropoffLabel.toLowerCase()} to your addresses`}
+                  >
+                    <BookmarkPlus size={13} color={LightColors.primary} />
+                    <Text style={st.saveChipText} numberOfLines={1}>
+                      {`Save ${rule.dropoffLabel.toLowerCase()}`}
+                    </Text>
+                  </Pressable>
+                )}
+              </View>
+            )}
           </View>
 
           <ScrollView
@@ -1776,6 +1937,93 @@ export default function TaskDetailsScreen() {
         onClose={() => setShowSavedSheet(false)}
         onSelect={handleSavedAddressSelect}
       />
+
+      {/* Save-this-address label prompt — one tap for Home/Work, or a
+          custom name. Blue CTA saves and closes. */}
+      <BottomSheet
+        isVisible={savePromptFor !== null}
+        onClose={closeSavePrompt}
+        snapPoints={[customLabelMode ? 0.5 : 0.42]}
+        scrollable={false}
+      >
+        <View style={{ paddingHorizontal: 4 }}>
+          <Text style={st.savePromptTitle}>Save this address</Text>
+          {!!promptAddress && (
+            <Text style={st.savePromptSub} numberOfLines={2}>
+              {promptAddress}
+            </Text>
+          )}
+
+          {!customLabelMode ? (
+            <>
+              <Pressable
+                style={({ pressed }) => [st.labelOption, pressed && st.labelOptionPressed]}
+                onPress={() => handleSaveAddress('Home')}
+                disabled={savingAddress}
+                accessibilityRole="button"
+                accessibilityLabel="Save as Home"
+              >
+                <View style={st.labelOptionIcon}>
+                  <Home size={18} color={LightColors.primary} />
+                </View>
+                <Text style={st.labelOptionText}>Home</Text>
+              </Pressable>
+              <Pressable
+                style={({ pressed }) => [st.labelOption, pressed && st.labelOptionPressed]}
+                onPress={() => handleSaveAddress('Work')}
+                disabled={savingAddress}
+                accessibilityRole="button"
+                accessibilityLabel="Save as Work"
+              >
+                <View style={st.labelOptionIcon}>
+                  <Briefcase size={18} color={LightColors.primary} />
+                </View>
+                <Text style={st.labelOptionText}>Work</Text>
+              </Pressable>
+              <Pressable
+                style={({ pressed }) => [st.labelOption, pressed && st.labelOptionPressed]}
+                onPress={() => {
+                  Haptics.selectionAsync().catch(() => {});
+                  setCustomLabelMode(true);
+                }}
+                disabled={savingAddress}
+                accessibilityRole="button"
+                accessibilityLabel="Save with a custom label"
+              >
+                <View style={st.labelOptionIcon}>
+                  <BookmarkPlus size={18} color={LightColors.primary} />
+                </View>
+                <Text style={st.labelOptionText}>Custom label…</Text>
+              </Pressable>
+            </>
+          ) : (
+            <View style={{ marginTop: 6 }}>
+              <TextInput
+                style={st.customLabelInput}
+                value={customLabel}
+                onChangeText={setCustomLabel}
+                placeholder="e.g. Mom's house, Gym"
+                placeholderTextColor={LightColors.textMuted}
+                maxLength={50}
+                autoFocus
+                returnKeyType="done"
+                onSubmitEditing={() => handleSaveAddress(customLabel)}
+                editable={!savingAddress}
+              />
+              <View style={{ marginTop: 12 }}>
+                <Button
+                  title="Save address"
+                  onPress={() => handleSaveAddress(customLabel)}
+                  loading={savingAddress}
+                  loadingTitle="Saving…"
+                  disabled={!customLabel.trim()}
+                  fullWidth
+                />
+              </View>
+            </View>
+          )}
+        </View>
+      </BottomSheet>
 
       {/* Image Picker Modal */}
       <ImagePickerModal
@@ -2160,6 +2408,80 @@ const st = StyleSheet.create({
     // visually breaking the form rhythm.
     paddingVertical: 12,
     marginBottom: 4,
+  },
+  saveChipRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+    // Sits just under the pickup/dropoff beads; the +6 hitSlop lifts the
+    // slim pills to a comfortable target without adding visual height.
+    marginTop: 6,
+    marginLeft: 20,
+  },
+  saveChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: LightColors.primary50,
+    borderRadius: 999,
+    paddingHorizontal: 12,
+    paddingVertical: 7,
+  },
+  saveChipPressed: {
+    backgroundColor: LightColors.primary100,
+  },
+  saveChipText: {
+    fontSize: 12,
+    fontFamily: 'Quicksand_600SemiBold',
+    color: LightColors.primary,
+    marginLeft: 6,
+  },
+  savePromptTitle: {
+    fontSize: 17,
+    fontFamily: 'Quicksand_700Bold',
+    color: LightColors.textPrimary,
+    marginBottom: 4,
+  },
+  savePromptSub: {
+    fontSize: 13,
+    fontFamily: 'Quicksand_400Regular',
+    color: LightColors.textSecondary,
+    marginBottom: 12,
+    lineHeight: 18,
+  },
+  labelOption: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: LightColors.divider,
+  },
+  labelOptionPressed: {
+    backgroundColor: LightColors.surfaceMuted,
+  },
+  labelOptionIcon: {
+    width: 36,
+    height: 36,
+    borderRadius: 12,
+    backgroundColor: LightColors.surfaceMuted,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: 12,
+  },
+  labelOptionText: {
+    fontSize: 15,
+    fontFamily: 'Quicksand_600SemiBold',
+    color: LightColors.textPrimary,
+  },
+  customLabelInput: {
+    borderWidth: 1,
+    borderColor: LightColors.dividerStrong,
+    borderRadius: 14,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    fontSize: 15,
+    fontFamily: 'Quicksand_500Medium',
+    color: LightColors.textPrimary,
+    backgroundColor: LightColors.surface,
   },
   helperNote: {
     backgroundColor: LightColors.surfaceMuted,

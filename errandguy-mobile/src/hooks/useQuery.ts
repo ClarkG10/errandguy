@@ -51,6 +51,12 @@ export interface UseQueryResult<T> {
    *  arrives. Lets <SyncIndicator> render "Updated Xm ago" with zero
    *  per-screen bookkeeping. */
   updatedAt: number | null;
+  /** True when we're showing cached data that we currently can't refresh —
+   *  the device is offline, or the last revalidation failed while a cached
+   *  value is still held. Lets <SyncIndicator> render a calm "showing saved
+   *  data" cue. Clears automatically on the next successful fetch. Optional so
+   *  callers that don't care keep type-checking untouched. */
+  servedFromCacheOffline?: boolean;
   refresh: () => Promise<void>;
   /** Revalidate THIS query only — refetch through the fetcher without dropping
    *  the app-wide GET micro-cache. Use for background pollers: unlike
@@ -266,7 +272,14 @@ export function useQuery<T>(
     [cacheKey, data, ttl],
   );
 
-  return { data, loading, error, isStale, updatedAt, refresh, revalidate, mutate };
+  // Stale-data cue: we hold a cached value AND the device is offline, so a
+  // fresher fetch can't succeed right now. Scoped to genuine offline only — an
+  // ONLINE fetch that errors keeps `error` set and is surfaced by the caller's
+  // own error/tap-to-retry affordance, which stays actionable (retry can work).
+  // Flips live on reconnect via the already-subscribed `isOffline`.
+  const servedFromCacheOffline = data != null && isOffline;
+
+  return { data, loading, error, isStale, updatedAt, servedFromCacheOffline, refresh, revalidate, mutate };
 }
 
 /**

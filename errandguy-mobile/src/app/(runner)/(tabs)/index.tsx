@@ -44,6 +44,7 @@ import { Avatar } from '../../../components/ui/Avatar';
 import { Button } from '../../../components/ui/Button';
 import { ErrorState } from '../../../components/ui/ErrorState';
 import { Illustration } from '../../../components/ui/Illustration';
+import { SyncIndicator } from '../../../components/ui/SyncIndicator';
 import { useRunnerStore } from '../../../stores/runnerStore';
 import { useLocationStore } from '../../../stores/locationStore';
 import { ensureLocationPermission, getCurrentCoords } from '../../../utils/locationPermission';
@@ -937,6 +938,22 @@ export default function RunnerHomeScreen() {
                   </Text>
                 </View>
               </LinearGradient>
+
+              {/* Offline stale-data cue — renders ONLY while we're showing
+                  cached figures we can't refresh (device offline / last fetch
+                  failed offline). On the canvas below the card so the tertiary
+                  ink stays legible (it would vanish on the blue gradient), and
+                  self-clears on the next successful fetch. */}
+              <SyncIndicator
+                syncing={false}
+                updatedAt={null}
+                offline={
+                  !!earningsTodayQ.servedFromCacheOffline ||
+                  !!earningsWeekQ.servedFromCacheOffline
+                }
+                align="flex-start"
+                style={{ marginTop: 10 }}
+              />
             </View>
           </SafeAreaView>
         </View>

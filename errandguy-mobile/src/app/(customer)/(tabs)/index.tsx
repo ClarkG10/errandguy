@@ -23,16 +23,21 @@ import {
   Clock,
   ChevronRight,
   X,
+  Ticket,
+  Wallet,
+  Gift,
 } from 'lucide-react-native';
 import type { LucideIcon } from 'lucide-react-native';
 import * as Haptics from 'expo-haptics';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useAuthStore } from '../../../stores/authStore';
-import { useBookingStore } from '../../../stores/bookingStore';
+import { useBookingStore, type DraftBooking } from '../../../stores/bookingStore';
 import { useNotificationStore } from '../../../stores/notificationStore';
 import { bookingService } from '../../../services/booking.service';
 import { warmTracking } from '../../../services/preload.service';
-import { configService } from '../../../services/config.service';
+import { configService, type Promo } from '../../../services/config.service';
+import { paymentService } from '../../../services/payment.service';
+import { userService, type ReferralInfo } from '../../../services/user.service';
 import { useQuery } from '../../../hooks/useQuery';
 import { useHideTabBarOnScroll } from '../../../hooks/useHideTabBarOnScroll';
 import { CacheTTL } from '../../../services/cache.service';
@@ -66,6 +71,71 @@ const RESUME_STEP_ROUTES: Record<number, string> = {
   2: '/(customer)/book/schedule',
   3: '/(customer)/book/review',
 };
+
+// Terminal-success statuses whose full route/items we're willing to clone
+// straight onto Review (a fresh, clean repeat). Cancelled/no_runner
+// deliberately excluded — a "repeat" of a failed errand isn't a happy-path.
+const REPEATABLE_STATUSES = ['completed', 'delivered'];
+
+// Promos within this window read as "expiring" — worth nudging before they
+// lapse. Anything past it is just a standard available promo.
+const PROMO_EXPIRY_SOON_MS = 7 * 24 * 60 * 60 * 1000;
+
+/**
+ * Clone a terminal booking into a fresh booking draft so "Repeat last" can
+ * drop the customer straight onto the pre-filled Review screen — no backend
+ * round-trip. Mirrors buildDraftFromBooking in BookingDetailSheet.tsx (kept
+ * local so the home screen doesn't have to widen that component's exports).
+ *
+ * When the source lacks pickup coordinates the route can't be reconstructed,
+ * so we degrade to seeding just the errand type and let the caller re-pick.
+ */
+function buildDraftFromBooking(b: Booking): Partial<DraftBooking> {
+  const slug = b.errand_type?.slug;
+  const typeSeed: Partial<DraftBooking> = {
+    errand_type_id: b.errand_type_id,
+    ...(slug ? { errand_type_slug: slug } : {}),
+  };
+
+  const hasPickupCoords = b.pickup_lat != null && b.pickup_lng != null;
+  if (!hasPickupCoords) return typeSeed;
+
+  return {
+    ...typeSeed,
+    pickup_address: b.pickup_address,
+    pickup_lat: b.pickup_lat,
+    pickup_lng: b.pickup_lng,
+    ...(b.pickup_contact_name ? { pickup_contact_name: b.pickup_contact_name } : {}),
+    ...(b.pickup_contact_phone ? { pickup_contact_phone: b.pickup_contact_phone } : {}),
+    ...(b.dropoff_address != null ? { dropoff_address: b.dropoff_address } : {}),
+    ...(b.dropoff_lat != null ? { dropoff_lat: b.dropoff_lat } : {}),
+    ...(b.dropoff_lng != null ? { dropoff_lng: b.dropoff_lng } : {}),
+    ...(b.dropoff_contact_name ? { dropoff_contact_name: b.dropoff_contact_name } : {}),
+    ...(b.dropoff_contact_phone ? { dropoff_contact_phone: b.dropoff_contact_phone } : {}),
+    ...(b.description != null ? { description: b.description } : {}),
+    ...(b.special_instructions != null
+      ? { special_instructions: b.special_instructions }
+      : {}),
+    ...(b.estimated_item_value != null
+      ? { estimated_item_value: b.estimated_item_value }
+      : {}),
+    ...(b.shopping_budget != null ? { shopping_budget: b.shopping_budget } : {}),
+    ...(b.pricing_mode ? { pricing_mode: b.pricing_mode } : {}),
+    ...(b.vehicle_type_rate ? { vehicle_type_rate: b.vehicle_type_rate } : {}),
+    ...(b.customer_offer != null ? { customer_offer: b.customer_offer } : {}),
+    ...(b.shopping_items && b.shopping_items.length > 0
+      ? {
+          shoppingItems: b.shopping_items.map((it) => ({
+            id: it.id,
+            name: it.name,
+            qty: it.qty,
+          })),
+        }
+      : {}),
+    // Deliberately NOT cloned: promo_code (single-use/expiry) and any payment
+    // selection — the customer re-confirms those on Review.
+  };
+}
 
 /**
  * Customer Home — radically simplified.
@@ -103,6 +173,7 @@ export default function CustomerHomeScreen() {
   const activeBooking = useBookingStore((s) => s.activeBooking);
   const setActiveBooking = useBookingStore((s) => s.setActiveBooking);
   const clearDraft = useBookingStore((s) => s.clearDraft);
+  const updateDraft = useBookingStore((s) => s.updateDraft);
   const draftBooking = useBookingStore((s) => s.draftBooking);
   const draftStep = useBookingStore((s) => s.currentStep);
   const isDraftHydrated = useBookingStore((s) => s.isDraftHydrated);
@@ -142,6 +213,42 @@ export default function CustomerHomeScreen() {
     { staleTime: 30_000, ttl: CacheTTL.SHORT, enabled: enabled && !!user?.id },
   );
 
+  // ── Rewards band sources ──────────────────────────────────────────────
+  // All three mirror the exact useQuery keys/shapes the Profile tab already
+  // prefetches (see preload.service: prefetchPromos / prefetchReferral and the
+  // ['wallet','balance'] warm), so a returning user's band paints from cache
+  // with no extra network round-trip. Each degrades to empty on a missing
+  // backend, which collapses its pill (see rewardItems) rather than erroring.
+  const promosQ = useQuery<Promo[]>(
+    ['promos', user?.id ?? 'anon'],
+    async () => {
+      const res = await configService.getPromos();
+      const p = res.data?.data;
+      return Array.isArray(p) ? p : [];
+    },
+    { staleTime: 60_000, ttl: CacheTTL.MEDIUM, enabled: enabled && !!user?.id },
+  );
+
+  const walletBalanceQ = useQuery<number>(
+    ['wallet', 'balance', user?.id ?? 'anon'],
+    async () => {
+      const res = await paymentService.getWalletBalance();
+      // Return the NUMBER (not the balance object) to match the wallet screen's
+      // shared cache entry — seeding the object poisons the key.
+      return (res.data?.data?.balance ?? res.data?.balance ?? 0) as number;
+    },
+    { staleTime: 30_000, ttl: CacheTTL.SHORT, enabled: enabled && !!user?.id },
+  );
+
+  const referralQ = useQuery<ReferralInfo | null>(
+    ['user', 'referral', user?.id ?? 'anon'],
+    async () => {
+      const res = await userService.getReferral();
+      return (res.data?.data ?? null) as ReferralInfo | null;
+    },
+    { staleTime: 30_000, ttl: CacheTTL.MEDIUM, enabled: enabled && !!user?.id },
+  );
+
   const errandTypes = (errandTypesQ.data ?? []).filter((t) => t.is_active);
   // Keep the home dashboard simple — surface only the most common
   // errand types here. The full list lives one tap deeper on the
@@ -176,9 +283,19 @@ export default function CustomerHomeScreen() {
       errandTypesQ.refresh(),
       recentBookingsQ.refresh(),
       activeBookingQ.refresh(),
+      promosQ.refresh(),
+      walletBalanceQ.refresh(),
+      referralQ.refresh(),
     ]);
     setRefreshing(false);
-  }, [errandTypesQ, recentBookingsQ, activeBookingQ]);
+  }, [
+    errandTypesQ,
+    recentBookingsQ,
+    activeBookingQ,
+    promosQ,
+    walletBalanceQ,
+    referralQ,
+  ]);
 
   const greeting = (() => {
     const hour = new Date().getHours();
@@ -206,6 +323,30 @@ export default function CustomerHomeScreen() {
       );
     },
     [clearDraft, router],
+  );
+
+  // "Repeat last" / frequently-booked → clone a prior terminal-success
+  // booking's FULL draft (type + addresses + items) straight onto Review,
+  // instead of only re-picking the errand type. When the source can't rebuild
+  // a route (no pickup coords) we degrade to the type-only start so the user
+  // just re-picks locations, never a dead-end. `fallbackTypeId` covers the
+  // case where there's no repeatable booking at all (seed the type only).
+  const repeatFrom = useCallback(
+    (source: Booking | null | undefined, fallbackTypeId?: string) => {
+      if (source) {
+        const draft = buildDraftFromBooking(source);
+        if (draft.pickup_lat != null) {
+          // Full seed → clean replacement of any half-filled draft, then Review.
+          clearDraft();
+          updateDraft(draft);
+          router.push('/(customer)/book/review');
+          return;
+        }
+      }
+      // No coords (or no source) → fall back to the type-only new-booking flow.
+      startBooking(fallbackTypeId ?? source?.errand_type_id);
+    },
+    [clearDraft, updateDraft, router, startBooking],
   );
 
   // Resumable mid-flow draft. We only surface the card once the persisted
@@ -280,11 +421,34 @@ export default function CustomerHomeScreen() {
     return best && best.count >= 3 ? best : null;
   }, [recentBookingsQ.data]);
 
+  // The most recent repeatable booking OF the frequently-booked type — lets the
+  // "Frequently booked" chip seed a full draft too (falls back to type-only).
+  const frequentSource = useMemo(() => {
+    if (!frequentType) return null;
+    return (
+      (recentBookingsQ.data ?? []).find(
+        (b) =>
+          b.errand_type_id === frequentType.id &&
+          REPEATABLE_STATUSES.includes(b.status),
+      ) ?? null
+    );
+  }, [frequentType, recentBookingsQ.data]);
+
   // Quick actions — compact pills under the destination card.
   // Contextual: "Repeat last" only when there's a recent booking. No
   // "Track" pill — when an errand is live the ActiveBookingCard renders
   // directly above these pills, so a pill would duplicate it.
   const lastBooking = recentBookings[0];
+  // The most recent booking we can fully clone (terminal-success + a type).
+  // "Repeat last" seeds from this when present; otherwise it falls back to the
+  // last booking's type only.
+  const repeatSource = useMemo(
+    () =>
+      (recentBookingsQ.data ?? []).find(
+        (b) => REPEATABLE_STATUSES.includes(b.status) && !!b.errand_type_id,
+      ) ?? null,
+    [recentBookingsQ.data],
+  );
   const quickActions: {
     key: string;
     label: string;
@@ -298,8 +462,12 @@ export default function CustomerHomeScreen() {
             key: 'repeat',
             label: 'Repeat last',
             icon: Repeat,
-            a11yLabel: `Repeat your last ${lastBooking.errand_type?.name ?? 'errand'} booking`,
-            onPress: () => startBooking(lastBooking.errand_type_id),
+            a11yLabel: `Repeat your last ${
+              repeatSource?.errand_type?.name ??
+              lastBooking.errand_type?.name ??
+              'errand'
+            } booking`,
+            onPress: () => repeatFrom(repeatSource, lastBooking.errand_type_id),
           },
         ]
       : []),
@@ -318,6 +486,74 @@ export default function CustomerHomeScreen() {
       onPress: () => router.push('/(customer)/help' as any),
     },
   ];
+
+  // Rewards band — a slim, self-collapsing strip that surfaces value the user
+  // already holds: redeemable/expiring promos, wallet credit, and an invite
+  // teaser. Each entry only materializes when it has something real to say, so
+  // an empty band renders NOTHING (see the length guard in the JSX). Amber is
+  // the reward family here (accentSoft surface) with a blue chevron as the CTA.
+  const rewardItems = useMemo(() => {
+    const items: {
+      key: string;
+      icon: LucideIcon;
+      label: string;
+      a11yLabel: string;
+      onPress: () => void;
+    }[] = [];
+
+    const promos = promosQ.data ?? [];
+    if (promos.length > 0) {
+      const now = Date.now();
+      let soonest: number | null = null;
+      for (const p of promos) {
+        if (!p.valid_until) continue;
+        const t = new Date(p.valid_until).getTime();
+        if (!Number.isFinite(t) || t < now) continue;
+        if (soonest == null || t < soonest) soonest = t;
+      }
+      const expiringSoon =
+        soonest != null && soonest - now <= PROMO_EXPIRY_SOON_MS;
+      const label = expiringSoon
+        ? 'Promo expiring soon'
+        : promos.length === 1
+          ? '1 promo to use'
+          : `${promos.length} promos to use`;
+      items.push({
+        key: 'promos',
+        icon: Ticket,
+        label,
+        a11yLabel: `${label}. Open promos and offers`,
+        onPress: () => router.push('/(customer)/promos' as any),
+      });
+    }
+
+    const balance = walletBalanceQ.data;
+    if (typeof balance === 'number' && balance > 0) {
+      const money = formatCurrency(balance);
+      items.push({
+        key: 'wallet',
+        icon: Wallet,
+        label: `${money} credit`,
+        a11yLabel: `Wallet credit ${money}. Open your wallet`,
+        onPress: () => router.push('/(customer)/wallet' as any),
+      });
+    }
+
+    // Invite teaser — only once the referral endpoint has actually returned a
+    // shareable code. No referral data ⇒ no pill, so the band stays honest and
+    // can still fully collapse when there's genuinely nothing to show.
+    if (referralQ.data?.referral_code) {
+      items.push({
+        key: 'invite',
+        icon: Gift,
+        label: 'Invite & earn',
+        a11yLabel: 'Invite friends and earn rewards',
+        onPress: () => router.push('/(customer)/referral' as any),
+      });
+    }
+
+    return items;
+  }, [promosQ.data, walletBalanceQ.data, referralQ.data, router]);
 
   // Compact hero — just enough blue for the safe-area inset, the greeting +
   // search chrome, and a slim gradient band the destination card floats over.
@@ -660,6 +896,60 @@ export default function CustomerHomeScreen() {
           })}
         </ScrollView>
 
+        {/* Rewards band — self-collapsing. Sits between the quick-action pills
+            and the service grid, surfacing promos / wallet credit / an invite
+            teaser the user already holds. Renders NOTHING when there's nothing
+            to show; amber reward pills (accentSoft) with a blue chevron CTA
+            distinguish it from the neutral quick actions above. */}
+        {rewardItems.length > 0 && (
+          <ScrollView
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            className="mt-2.5"
+            contentContainerStyle={{ paddingHorizontal: 20, gap: 8 }}
+          >
+            {rewardItems.map((item) => {
+              const RewardIcon = item.icon;
+              return (
+                <Pressable
+                  key={item.key}
+                  onPress={withLightImpact(item.onPress)}
+                  android_ripple={{ color: 'rgba(245,158,11,0.12)' }}
+                  // Layout via className (NativeWind drops flexDirection/bg from
+                  // the function-style form) — bg-accentSoft is the reward wash.
+                  className="flex-row items-center h-11 rounded-xl bg-accentSoft pl-2 pr-2.5"
+                  style={({ pressed }) => [hs.rewardShadow, pressed && hs.cardPressed]}
+                  hitSlop={{ top: 4, bottom: 4 }}
+                  accessibilityRole="button"
+                  accessibilityLabel={item.a11yLabel}
+                >
+                  {/* White chip so the amber glyph pops off the amber wash. */}
+                  <View style={hs.rewardIcon}>
+                    <RewardIcon
+                      size={15}
+                      color={LightColors.accentStrong}
+                      strokeWidth={2}
+                    />
+                  </View>
+                  <Text
+                    className="ml-2 text-[12.5px] font-montserrat-bold text-accentDark"
+                    numberOfLines={1}
+                  >
+                    {item.label}
+                  </Text>
+                  {/* Blue forward-action affordance — the CTA vocabulary. */}
+                  <ChevronRight
+                    size={16}
+                    color={LightColors.primary}
+                    strokeWidth={2.4}
+                    style={{ marginLeft: 6 }}
+                  />
+                </Pressable>
+              );
+            })}
+          </ScrollView>
+        )}
+
         {/* Service tiles — a small set of the most common errand
             types. Soft surface tiles with a tinted-blue icon chip and
             dark label — less dominant blue than full brand-fill. When
@@ -697,7 +987,9 @@ export default function CustomerHomeScreen() {
               <>
                 {frequentType && (
                   <Pressable
-                    onPress={withLightImpact(() => startBooking(frequentType.id))}
+                    onPress={withLightImpact(() =>
+                      repeatFrom(frequentSource, frequentType.id),
+                    )}
                     style={({ pressed }) => [
                       hs.frequentChip,
                       pressed && hs.cardPressed,
@@ -1035,6 +1327,21 @@ const hs = StyleSheet.create({
     // Neutral soft-grey chip (was brand-blue) so the icon reads as a quiet
     // affordance rather than a loud coloured badge.
     backgroundColor: LightColors.surfaceMuted,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  // Rewards-band pills — shadow only; bg-accentSoft / radius / layout live in
+  // className (NativeWind drops bg from the style-function form).
+  rewardShadow: {
+    ...Elevation.sm,
+  },
+  // White icon chip inside a reward pill so the amber glyph reads clearly
+  // against the accentSoft wash.
+  rewardIcon: {
+    width: 26,
+    height: 26,
+    borderRadius: 8,
+    backgroundColor: LightColors.surface,
     alignItems: 'center',
     justifyContent: 'center',
   },

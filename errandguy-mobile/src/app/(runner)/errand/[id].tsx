@@ -2,6 +2,7 @@ import React, { useState, useCallback, useRef, useEffect, useMemo } from 'react'
 import { View, Text, ScrollView, TextInput, RefreshControl, Pressable, Linking, KeyboardAvoidingView, Platform, useWindowDimensions, Animated, PanResponder } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter, useLocalSearchParams } from 'expo-router';
+import { useIsFocused } from '@react-navigation/native';
 import {
   MessageCircle,
   Phone,
@@ -79,6 +80,56 @@ const PICKUP_PHASE_STATUSES = new Set<string>([
   'heading_to_pickup',
   'arrived_at_pickup',
 ]);
+
+/** Straight-line arrival radius (metres). GPS-jitter-tolerant, deliberately
+ *  wider than a route-distance check so the prompt surfaces as the runner
+ *  pulls up rather than exactly on the pin. */
+const ARRIVAL_RADIUS_M = 120;
+
+/**
+ * Watches the hot `currentLocation` slice in a LEAF (same P14 pattern as
+ * RunnerEtaLeaf) and fires `onArrive` exactly once when the runner crosses
+ * inside ARRIVAL_RADIUS_M of the active target. Re-arms only after the
+ * runner drifts well back out (GPS jitter / re-route) or `enabled` cycles,
+ * so a status change or a lingering fix doesn't re-prompt. Renders nothing
+ * — it exists purely to keep the per-fix subscription out of the ~1100-line
+ * parent. Gracefully idle when location or target is absent. (P14)
+ */
+function RunnerArrivalWatcher({
+  targetLat,
+  targetLng,
+  enabled,
+  onArrive,
+}: {
+  targetLat?: number | null;
+  targetLng?: number | null;
+  enabled: boolean;
+  onArrive: () => void;
+}) {
+  const currentLocation = useLocationStore((s) => s.currentLocation);
+  const firedRef = useRef(false);
+  useEffect(() => {
+    if (!enabled) {
+      firedRef.current = false;
+      return;
+    }
+    if (!currentLocation || targetLat == null || targetLng == null) return;
+    const tLat = Number(targetLat);
+    const tLng = Number(targetLng);
+    if (!Number.isFinite(tLat) || !Number.isFinite(tLng)) return;
+    const dLat = (tLat - currentLocation.lat) * 111_000;
+    const dLng =
+      (tLng - currentLocation.lng) * 111_000 * Math.cos((currentLocation.lat * Math.PI) / 180);
+    const dist = Math.sqrt(dLat * dLat + dLng * dLng);
+    if (dist < ARRIVAL_RADIUS_M && !firedRef.current) {
+      firedRef.current = true;
+      onArrive();
+    } else if (dist > ARRIVAL_RADIUS_M * 2.5 && firedRef.current) {
+      firedRef.current = false;
+    }
+  }, [currentLocation, targetLat, targetLng, enabled, onArrive]);
+  return null;
+}
 
 /**
  * Subscribes to the hot `currentLocation` slice in a LEAF and computes the live
@@ -169,6 +220,18 @@ export default function ActiveErrandScreen() {
   const [showLeaveConfirm, setShowLeaveConfirm] = useState(false);
   const leaveActionRef = useRef<(() => void) | null>(null);
   const reduceMotion = useReducedMotion();
+
+  // Proactive arrival prompt. When the runner physically reaches the active
+  // pin during a travel leg we surface a one-tap "mark arrived" confirm
+  // instead of making them notice + tap the CTA. Only while THIS screen is
+  // focused — the navigate screen (pushed on top) owns its own arrival
+  // confirm, so gating on focus avoids a double prompt underneath it.
+  const isFocused = useIsFocused();
+  const [showArrivalPrompt, setShowArrivalPrompt] = useState(false);
+  const handleArrivalDetected = useCallback(() => {
+    Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
+    setShowArrivalPrompt(true);
+  }, []);
 
   // Single source of truth: the API. The runner-facing endpoint
   // (RunnerErrandController@show) is scoped by `runnerBookings()` on
@@ -962,6 +1025,21 @@ export default function ActiveErrandScreen() {
           />
         </View>
 
+        {/* Arrival detector — fires the "mark arrived" prompt once the
+            runner reaches the active pin on a travel leg. Renders null;
+            it only subscribes to the hot GPS slice in its own leaf. */}
+        <RunnerArrivalWatcher
+          targetLat={etaTargetLat}
+          targetLng={etaTargetLng}
+          enabled={
+            isFocused &&
+            !isReadOnly &&
+            isErrandActive &&
+            (booking.status === 'heading_to_pickup' || booking.status === 'in_transit')
+          }
+          onArrive={handleArrivalDetected}
+        />
+
         {/* Floating top bar \u2014 single cohesive card. Replaces the old
             three-pill arrangement. Back chevron, ride/errand label +
             booking number, then a separator and chat icon on the right. */}
@@ -1613,6 +1691,24 @@ export default function ActiveErrandScreen() {
           onSkip={handleRateSkip}
         />
       )}
+
+      {/* Proactive arrival confirm — advances directly to the arrival
+          status via the normal gated handler (arrival steps are gate-free;
+          the photo/PIN capture lives on the NEXT step). */}
+      <ConfirmModal
+        visible={showArrivalPrompt}
+        title="You've arrived — mark arrived?"
+        message={`Looks like you've reached the ${
+          inPickupPhase ? 'pickup' : 'drop-off'
+        }. Let the customer know — you can capture any required photo or PIN on the next step.`}
+        confirmLabel="Mark arrived"
+        cancelLabel="Not yet"
+        onConfirm={() => {
+          setShowArrivalPrompt(false);
+          void handleStatusUpdate();
+        }}
+        onCancel={() => setShowArrivalPrompt(false)}
+      />
 
       {/* Runner SOS confirm */}
       <ConfirmModal

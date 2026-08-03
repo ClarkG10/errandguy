@@ -16,6 +16,7 @@ import {
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Image as ExpoImage } from 'expo-image';
 import * as Haptics from 'expo-haptics';
+import * as Notifications from 'expo-notifications';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import {
   ArrowLeft,
@@ -697,22 +698,54 @@ export default function TrackingScreen() {
   // runner is within 250m of the active pin in a given phase. Resets on
   // phase change so the dropoff arrival also gets its own buzz.
   const arrivalCueRef = useRef<string | null>(null);
+  // Fire a local push so the "almost there" cue survives backgrounding —
+  // the foreground toast+haptic below are invisible once the app is
+  // suspended. We ONLY schedule when permission is ALREADY granted (the
+  // registration prompt lives in useNotifications; we must never trigger a
+  // fresh permission dialog from a passive tracking cue). Fully graceful:
+  // if the module is unavailable (web) or permission is denied, it no-ops.
+  const fireArrivalNotification = useCallback(
+    async (body: string) => {
+      try {
+        const { status } = await Notifications.getPermissionsAsync();
+        if (status !== 'granted') return;
+        await Notifications.scheduleNotificationAsync({
+          content: {
+            title: 'Your runner is almost here',
+            body,
+            // Route a tap straight back to this booking's tracking screen —
+            // mirrors the booking_update handler in useNotifications.
+            data: booking?.id
+              ? { type: 'booking_update', booking_id: booking.id }
+              : {},
+          },
+          trigger: null, // deliver immediately
+        });
+      } catch {
+        // expo-notifications unavailable / not permitted — silent no-op.
+      }
+    },
+    [booking?.id],
+  );
   useEffect(() => {
     if (eta.distanceMeters == null) return;
     const phaseKey = `${booking?.id ?? ''}:${isPickupPhase ? 'p' : 'd'}`;
     if (eta.distanceMeters < 250 && arrivalCueRef.current !== phaseKey) {
       arrivalCueRef.current = phaseKey;
       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => {});
-      toast.success(
-        isPickupPhase ? 'Runner is arriving at pickup' : 'Runner is almost at the dropoff',
-      );
+      const msg = isPickupPhase
+        ? 'Runner is arriving at pickup'
+        : 'Runner is almost at the dropoff';
+      toast.success(msg);
+      // Debounced by the same arrivalCueRef latch → fires once per arrival.
+      void fireArrivalNotification(msg);
     }
     // Clear the latch when the runner is back outside the radius (e.g.
     // re-routed) so a second approach can re-trigger.
     if (eta.distanceMeters > 600 && arrivalCueRef.current === phaseKey) {
       arrivalCueRef.current = null;
     }
-  }, [eta.distanceMeters, isPickupPhase, booking?.id]);
+  }, [eta.distanceMeters, isPickupPhase, booking?.id, fireArrivalNotification]);
 
   // Force-refresh the route polyline (bypasses the AsyncStorage cache).
   // Wired to the "Couldn't load route" retry chip below the map.

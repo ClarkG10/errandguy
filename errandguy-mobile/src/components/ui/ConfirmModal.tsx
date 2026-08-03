@@ -1,7 +1,7 @@
 import React, { useCallback } from 'react';
 import { View, Text, Modal, Pressable, ScrollView } from 'react-native';
 import { MotiView } from 'moti';
-import * as Haptics from 'expo-haptics';
+import { haptics } from '../../utils/haptics';
 import { Button } from './Button';
 import { useResponsive } from '../../constants/responsive';
 import { LightColors } from '../../constants/colors';
@@ -36,13 +36,13 @@ export function ConfirmModal({
 
   const handleConfirm = useCallback(() => {
     if (destructive) {
-      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning).catch(() => {});
+      haptics.warning();
     }
     onConfirm();
   }, [destructive, onConfirm]);
 
   const handleCancel = useCallback(() => {
-    Haptics.selectionAsync().catch(() => {});
+    haptics.selection();
     onCancel();
   }, [onCancel]);
 

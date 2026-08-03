@@ -29,9 +29,11 @@ import { useReducedMotion } from '../../../hooks/useReducedMotion';
 import { runnerService } from '../../../services/runner.service';
 import { routeService, type NavigationRoute, type NavigationStep } from '../../../services/route.service';
 import { ExpandableSheet } from '../../../components/ui/ExpandableSheet';
+import { ConfirmModal } from '../../../components/ui/ConfirmModal';
+import { getNextStatus } from '../../../components/runner/StatusActionButton';
 import { getErrandTypeRule } from '../../../constants/errandTypeRules';
 import { toast } from '../../../stores/toastStore';
-import type { Booking } from '../../../types';
+import type { Booking, BookingStatus } from '../../../types';
 import { LightColors, Elevation } from '../../../constants/colors';
 
 /**
@@ -138,6 +140,11 @@ export default function NavigateScreen() {
   const [routeLoading, setRouteLoading] = useState(false);
   const [routeError, setRouteError] = useState(false);
   const [followCamera, setFollowCamera] = useState(true);
+  // Arrival confirm — collapses the old two-step (tap "I've arrived" →
+  // land back on the errand screen → tap the CTA) into a single prompt
+  // that advances the status in place. See handleArrived below.
+  const [showArrivedPrompt, setShowArrivedPrompt] = useState(false);
+  const [arriving, setArriving] = useState(false);
 
   const mapRef = useRef<HereMapViewRef>(null);
 
@@ -353,18 +360,57 @@ export default function NavigateScreen() {
     router.back();
   }, [router, stopVoice]);
 
-  const handleArrived = useCallback(async () => {
+  const handleArrived = useCallback(() => {
     if (!booking) return;
     // Arriving is a milestone — success notification, not a mere tap.
     Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
     stopVoice();
-    // We deliberately don't push a status change from here. The
-    // arrival status (arrived_at_pickup / arrived_at_dropoff) is
-    // owned by the StatusActionButton on the errand screen so the
-    // photo-proof modals trigger correctly. Just route the runner
-    // back to act on it.
-    router.back();
-  }, [booking, router, stopVoice]);
+    // Offer a single confirm instead of silently bouncing back to the
+    // errand screen for a second tap.
+    setShowArrivedPrompt(true);
+  }, [booking, stopVoice]);
+
+  // Advance directly to the arrival status from the navigation view.
+  // ONLY the arrival transitions (arrived_at_pickup / arrived_at_dropoff)
+  // are gate-free — every later step (picked_up photo, delivered proof,
+  // ride PIN, completion signature) is owned by the errand screen's
+  // modals, so for those we fall back to routing the runner back rather
+  // than firing a bare status POST that would skip the required capture.
+  const handleConfirmArrived = useCallback(async () => {
+    if (!booking) return;
+    const next = getNextStatus(booking.status, booking.errand_type?.slug);
+    const isArrivalStep =
+      next === 'arrived_at_pickup' || next === 'arrived_at_dropoff';
+    if (!next || !isArrivalStep) {
+      setShowArrivedPrompt(false);
+      router.back();
+      return;
+    }
+    setArriving(true);
+    try {
+      await runnerService.advanceErrandStatus(booking.id, next, {
+        lat: currentLocation?.lat ?? null,
+        lng: currentLocation?.lng ?? null,
+        capturedAt: new Date().toISOString(),
+      });
+      // Mirror into the runner store so the errand screen + dashboard
+      // reflect the new status immediately on back-navigation (the
+      // service also invalidates the runner-errand query cache).
+      const store = useRunnerStore.getState();
+      if (store.currentErrand?.id === booking.id) {
+        useRunnerStore.setState({
+          currentErrand: { ...store.currentErrand, status: next as BookingStatus },
+        });
+      }
+      setBooking((b) => (b ? { ...b, status: next as BookingStatus } : b));
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
+      setShowArrivedPrompt(false);
+      router.back();
+    } catch {
+      setArriving(false);
+      toast.error('Could not mark arrived. Try again.');
+    }
+  }, [booking, currentLocation, router]);
 
   // ── Render ──
   const routeMapCoords = useMemo(() => {
@@ -906,6 +952,22 @@ export default function NavigateScreen() {
         )}
         <SafeAreaView edges={['bottom']} />
       </ExpandableSheet>
+
+      {/* Single-tap arrival confirm — advances the status in place so the
+          runner doesn't have to bounce back to the errand screen. */}
+      <ConfirmModal
+        visible={showArrivedPrompt}
+        title="You've arrived — mark arrived?"
+        message={`Let the customer know you've reached the ${
+          inPickupPhase ? 'pickup' : 'drop-off'
+        }. You can capture any required photo or PIN on the next step.`}
+        confirmLabel="Mark arrived"
+        confirmLoadingLabel="Marking…"
+        cancelLabel="Not yet"
+        loading={arriving}
+        onConfirm={handleConfirmArrived}
+        onCancel={() => setShowArrivedPrompt(false)}
+      />
     </View>
   );
 }

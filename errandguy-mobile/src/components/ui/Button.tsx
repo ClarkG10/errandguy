@@ -8,7 +8,7 @@ import {
   type ViewStyle,
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
-import * as Haptics from 'expo-haptics';
+import { haptics } from '../../utils/haptics';
 import type { LucideIcon } from 'lucide-react-native';
 import { useReducedMotion } from '../../hooks/useReducedMotion';
 import { useResponsive } from '../../constants/responsive';
@@ -170,7 +170,7 @@ export function Button({
   };
 
   const handlePress = () => {
-    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
+    haptics.light();
     onPress?.();
   };
 

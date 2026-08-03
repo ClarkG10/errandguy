@@ -12,26 +12,37 @@
  * coupling would double-fire. Keep them explicit but adjacent.
  */
 import * as Haptics from 'expo-haptics';
+import { usePreferencesStore } from '../stores/preferencesStore';
 
 // Haptics can reject on web / unsupported devices; feedback is never critical,
 // so every call is fire-and-forget with the rejection swallowed.
-const fire = (p: Promise<void>): void => {
-  void p.catch(() => {});
+//
+// The thunk (not a Promise) is deliberate: the "Reduce Haptics" accessibility
+// preference is checked BEFORE the effect is invoked, so a quieted device never
+// even asks the OS to buzz. Reading the store via `getState()` keeps this a
+// plain module (no React) — the guard is one additive line, callers unchanged.
+const fire = (make: () => Promise<void>): void => {
+  try {
+    if (usePreferencesStore.getState().reduceHaptics) return;
+  } catch {
+    // Store not ready / unavailable — fall through and buzz as before.
+  }
+  void make().catch(() => {});
 };
 
 export const haptics = {
   /** A completed action (payment confirmed, booking placed, saved). */
-  success: () => fire(Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success)),
+  success: () => fire(() => Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success)),
   /** A cautionary or destructive-intent moment (confirm delete, validation stop). */
-  warning: () => fire(Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning)),
+  warning: () => fire(() => Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning)),
   /** A failure the user should feel (payment failed, request rejected). */
-  error: () => fire(Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error)),
+  error: () => fire(() => Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error)),
   /** Discrete UI selection (toggle, picker, tab, segmented control). */
-  selection: () => fire(Haptics.selectionAsync()),
+  selection: () => fire(() => Haptics.selectionAsync()),
   /** Light physical tap (button press, small confirm). */
-  light: () => fire(Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light)),
+  light: () => fire(() => Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light)),
   /** Medium tap (sheet open, meaningful press). */
-  medium: () => fire(Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium)),
+  medium: () => fire(() => Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium)),
   /** Heavy tap (slide-to-confirm complete, strong commit). */
-  heavy: () => fire(Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy)),
+  heavy: () => fire(() => Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy)),
 };

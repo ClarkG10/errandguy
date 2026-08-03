@@ -110,29 +110,14 @@ export default function PromosScreen() {
   }, []);
 
   // Pre-apply the code into the booking draft and jump into the flow. Review
-  // reads `draft.promo_code` and shows it in the applied chip. The saving is
-  // enriched below once validated (Review reads `draft.promo_discount`).
+  // reads `draft.promo_code`, shows it in the applied chip, and validates it
+  // against the real order total there (the saving is order-dependent, so
+  // there's nothing meaningful to compute from the promo list itself).
   const handleUseOffer = useCallback(
     (promo: Promo) => {
       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => {});
       updateDraft({ promo_code: promo.code, promo_discount: undefined });
       router.push('/(customer)/book/type' as any);
-      // Fire-and-forget enrichment: populate the validated peso saving so the
-      // applied chip + PriceBreakdown reflect it. Guarded so a subsequent
-      // draft change (a different code) isn't clobbered. Graceful no-op on
-      // failure — Review still shows the code and the user can re-apply.
-      configService
-        .validatePromo(promo.code)
-        .then((res) => {
-          const discount = res.data?.data?.discount_amount;
-          if (
-            discount != null &&
-            useBookingStore.getState().draftBooking.promo_code === promo.code
-          ) {
-            updateDraft({ promo_discount: discount });
-          }
-        })
-        .catch(() => {});
     },
     [updateDraft, router],
   );

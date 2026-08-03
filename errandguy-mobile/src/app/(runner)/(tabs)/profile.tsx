@@ -16,6 +16,7 @@ import {
   FileText,
   RefreshCw,
   Info,
+  Accessibility,
   type LucideIcon,
 } from 'lucide-react-native';
 import * as Haptics from 'expo-haptics';
@@ -338,6 +339,7 @@ export default function RunnerProfileScreen() {
 
   const settingsMenu: MenuItem[] = [
     { label: 'Notification Preferences', icon: Bell, route: '/(runner)/settings/notifications' },
+    { label: 'Appearance & Accessibility', icon: Accessibility, route: '/(runner)/settings/appearance' },
     { label: 'Help & Support', icon: LifeBuoy, route: '/(runner)/settings/help' },
     { label: 'Terms & Privacy', icon: FileText, route: '/(runner)/settings/terms' },
     {

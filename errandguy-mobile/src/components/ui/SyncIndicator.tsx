@@ -7,7 +7,7 @@ import {
   type ViewStyle,
   type StyleProp,
 } from 'react-native';
-import { RotateCw } from 'lucide-react-native';
+import { RotateCw, CloudOff } from 'lucide-react-native';
 import { LightColors } from '../../constants/colors';
 import { Radius } from '../../constants/radius';
 
@@ -16,9 +16,14 @@ import { Radius } from '../../constants/radius';
  * stale-while-revalidate refresh (which is otherwise invisible) reads as
  * intentional rather than a frozen screen:
  *
+ *   • offline        → "Offline — showing saved data" (calm, neutral ink)
  *   • syncing        → animated dots + "Syncing…"
  *   • settled        → "Updated just now" / "Updated 5m ago"
  *   • error-w/-cache → "Couldn't refresh · Tap to retry" (calls onRetry)
+ *
+ * `offline` outranks both syncing and error: while the device is disconnected a
+ * failed refresh is expected, so the honest, un-alarming "showing saved data"
+ * caption is more useful than a retry prompt that can't succeed.
  *
  * Designed to sit quietly under a header — 11px, tertiary ink, pill-shaped,
  * NO elevation. It only appears on WARM loads (isStale never fires on a cold
@@ -35,6 +40,10 @@ interface SyncIndicatorProps {
   updatedAt: number | null;
   /** A refresh failed but cached data is still shown. */
   error?: boolean;
+  /** Device is offline (or last fetch failed offline) and cached data is being
+   *  shown. Renders a calm "showing saved data" caption; outranks syncing/error.
+   *  Feed from useQuery's `servedFromCacheOffline`. */
+  offline?: boolean;
   /** Tapped in the error state. */
   onRetry?: () => void;
   /** Alignment of the pill within its row (default flex-start). */
@@ -58,6 +67,7 @@ export function SyncIndicator({
   syncing,
   updatedAt,
   error = false,
+  offline = false,
   onRetry,
   align = 'flex-start',
   style,
@@ -67,15 +77,31 @@ export function SyncIndicator({
   const [nowMs, setNowMs] = useState(() => Date.now());
   useEffect(() => {
     setNowMs(Date.now());
-    if (syncing || error || updatedAt == null) return;
+    if (offline || syncing || error || updatedAt == null) return;
     const id = setInterval(() => setNowMs(Date.now()), 30_000);
     return () => clearInterval(id);
-  }, [syncing, error, updatedAt]);
+  }, [offline, syncing, error, updatedAt]);
 
   // Nothing meaningful to say yet (cold load handled by a skeleton elsewhere).
-  if (!syncing && !error && updatedAt == null) return null;
+  if (!offline && !syncing && !error && updatedAt == null) return null;
 
   const containerStyle = [styles.row, { alignSelf: align }, style];
+
+  // Offline outranks everything: a calm, neutral "saved data" note — not the
+  // amber/danger of a caution. Blue-neutral glyph, tertiary ink, no retry
+  // affordance (there's nothing to retry until connectivity returns).
+  if (offline) {
+    return (
+      <View
+        style={containerStyle}
+        accessibilityRole="text"
+        accessibilityLabel="Offline. Showing saved data."
+      >
+        <CloudOff size={12} color={LightColors.textTertiary} strokeWidth={2} />
+        <Text style={styles.text}>Offline — showing saved data</Text>
+      </View>
+    );
+  }
 
   if (error) {
     return (
