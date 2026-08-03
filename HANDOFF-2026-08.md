@@ -11,28 +11,31 @@ that live **off-repo** (server env, third-party consoles) or need a **designer**
 
 These live in the Forge Site `.env`, not the repo, so they must be set on the box.
 
-- [ ] **DB is off Supabase.** Confirm `DB_*` points at the Forge-managed Postgres,
-      not `db.jzdaqibkikflhuioptkg.supabase.co`:
+- [ ] **DB is MySQL now** (migrated off Postgres/Supabase in the code, commit
+      `a03bbbd`; verified — 63/63 migrations run clean on a real MySQL). Point the
+      Forge Site `.env` at the Forge-managed MySQL:
       ```
-      DB_CONNECTION=pgsql
-      DB_HOST=127.0.0.1        # Forge-local Postgres
-      DB_PORT=5432
-      DB_DATABASE=<forge db>
-      DB_USERNAME=forge
-      DB_PASSWORD=<forge pw>
-      DB_SSLMODE=prefer
+      DB_CONNECTION=mysql
+      DB_HOST=127.0.0.1
+      DB_PORT=3306
+      DB_DATABASE=errandguy
+      DB_USERNAME=errandguy
+      DB_PASSWORD=<forge mysql pw>
       ```
-      ⚠️ If prod data still physically sits on Supabase, this needs a real
-      `pg_dump` → restore onto the Forge Postgres **first** — an env swap alone
-      would point at an empty DB.
-- [ ] **Remove** `SUPABASE_URL` and `SUPABASE_SERVICE_KEY` from the Forge `.env`.
-- [ ] `php artisan config:cache` after editing.
+      The DB is empty, so the deploy's `migrate` builds the schema fresh — no dump/
+      restore needed. Requires MySQL **8.0.16+** (Forge's MySQL 8 satisfies this).
+- [ ] **Remove** any leftover `DB_SSLMODE`, `pgsql` `DB_*`, `SUPABASE_URL` and
+      `SUPABASE_SERVICE_KEY` from the Forge `.env`.
+- [ ] `php artisan config:cache` after editing. Deploy stays broken until this is done
+      (the old `deploy.sh --database=pgsql_direct` — now fixed — was the failing step).
 
 ## 2. Third-party consoles — rotate / decommission
 
-- [ ] **Rotate the exposed Supabase `service_role` JWT** (project ref
-      `jzdaqibkikflhuioptkg`) — it was in the local `.env`. Then **delete the
-      Supabase project** once the DB migration is confirmed done.
+- [ ] **Rotate/decommission the exposed Supabase creds, then delete the project.**
+      The local `.env` held both the `service_role` JWT and the Postgres DB
+      password — both now removed from the local `.env` (and neither was ever
+      committed). Rotate them, then **delete the Supabase project** (ref
+      `jzdaqibkikflhuioptkg`); the database is fully on MySQL now.
 - [ ] **Delete the Google + Facebook OAuth apps** (social login is removed).
 - [ ] **EAS / Forge env:** remove `EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID`,
       `EXPO_PUBLIC_GOOGLE_IOS_CLIENT_ID`, `EXPO_PUBLIC_GOOGLE_ANDROID_CLIENT_ID`,
