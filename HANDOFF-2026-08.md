@@ -57,23 +57,19 @@ server side is up (these are separate Forge processes):
 - [ ] Any multiline / numeric field: the keyboard **Done** bar appears (iOS).
 - [ ] Eyeball the **12 cleaned illustrations** at real screen size.
 
-## 5. Assets — 6 need a designer's hand-edit (~2 min each)
-
-Automated raster removal damages these (checker sits amid same-colored artwork).
-Fix in Figma/Illustrator (select the checker region, delete) or re-export clean:
+## 5. Assets — only 1 still needs a designer's hand-edit
 
 | Asset | Issue |
 |---|---|
-| `illustrations/location-off.png` | slash line crosses the checker → gapped line |
-| `illustrations/error-generic.png` | base shadow is the box's own blue → won't lift |
-| `illustrations/runner-offline.png` | gray open-ring wheels = same gray as ground checker |
-| `illustrations/runner-onboarding.png` | same |
-| `illustrations/runner-no-jobs.png` | same |
-| `food-pickup.png` | (no real checker — leave as-is) |
+| `illustrations/error-generic.png` | blue-tinted base shadow wraps the box's rounded bottom at the same level — no automated cut separates them without eating the box. Hand-edit in Figma/Illustrator (~2 min) or re-export clean. |
 
-**Cleaned & verified (12):** session-expired, empty-addresses, purchase-and-deliver,
+`food-pickup.png` has no real checker — left as its original.
+
+**Cleaned & verified (16):** session-expired, empty-addresses, purchase-and-deliver,
 maintenance, auth-forgot, empty-cart, map-cluster, map-dot-user, empty-search,
-runner-earnings-empty, onboarding-book, onboarding-safety.
+runner-earnings-empty, onboarding-book, onboarding-safety, **runner-offline,
+runner-onboarding, runner-no-jobs** (Hough-circle wheel protection), **location-off**
+(inpainted centre).
 
 ## 6. Optional
 
