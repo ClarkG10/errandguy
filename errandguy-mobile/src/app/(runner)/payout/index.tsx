@@ -30,6 +30,11 @@ import { LightColors, Elevation } from '../../../constants/colors';
 
 const MIN_PAYOUT = 100;
 
+/** Whole-peso display for the payout-progress line — "₱65 of ₱100".
+ *  Mirrors the runner home daily-goal bar's peso formatting so the two
+ *  progress surfaces read as one visual family. */
+const pesos = (v: number) => `₱${Math.round(v).toLocaleString('en-PH')}`;
+
 function fmtPayoutDate(iso: string | null | undefined): string {
   if (!iso) return '';
   const d = new Date(iso);
@@ -68,6 +73,10 @@ export default function PayoutScreen() {
   const user = useAuthStore((s) => s.user);
   const setUser = useAuthStore((s) => s.setUser);
   const balance = Number(user?.wallet_balance ?? 0);
+  // Runner has money but can't cash out yet — turn the "Min ₱100" dead-end
+  // on the balance card into forward motion toward their first payout.
+  const belowMinimum = balance > 0 && balance < MIN_PAYOUT;
+  const payoutProgress = Math.max(0, Math.min(1, balance / MIN_PAYOUT));
 
   const [refreshing, setRefreshing] = useState(false);
   const [requesting, setRequesting] = useState(false);
@@ -280,9 +289,40 @@ export default function PayoutScreen() {
             >
               {formatCurrency(balance)}
             </Text>
-            <Text className="text-[11px] font-montserrat text-white/70 mt-1">
-              Withdraw anytime · Min {formatCurrency(MIN_PAYOUT)}
-            </Text>
+            {belowMinimum ? (
+              // Progress toward the payout minimum — reuses the daily-goal
+              // bar's visual language (white fill on a translucent-white
+              // track) so the runner sees momentum instead of a locked door.
+              <View className="mt-3">
+                <Text className="text-[11px] font-inter-semi text-white/90 tabular-nums mb-1.5">
+                  {pesos(balance)} of {pesos(MIN_PAYOUT)} to your first payout
+                </Text>
+                <View
+                  className="overflow-hidden"
+                  accessibilityRole="progressbar"
+                  accessibilityLabel={`${pesos(balance)} of ${pesos(MIN_PAYOUT)} toward your first payout`}
+                  accessibilityValue={{ min: 0, max: MIN_PAYOUT, now: Math.round(balance) }}
+                  style={{
+                    height: 6,
+                    borderRadius: 999,
+                    backgroundColor: 'rgba(255,255,255,0.22)',
+                  }}
+                >
+                  <View
+                    style={{
+                      height: 6,
+                      borderRadius: 999,
+                      width: `${payoutProgress * 100}%`,
+                      backgroundColor: LightColors.textInverse,
+                    }}
+                  />
+                </View>
+              </View>
+            ) : (
+              <Text className="text-[11px] font-montserrat text-white/70 mt-1">
+                Withdraw anytime · Min {formatCurrency(MIN_PAYOUT)}
+              </Text>
+            )}
           </LinearGradient>
         </View>
 

@@ -3,6 +3,15 @@ import { View, Text, Pressable } from 'react-native';
 import type { LucideIcon } from 'lucide-react-native';
 import { LightColors } from '../../constants/colors';
 
+// Single-line label chrome (eyebrows, inline action links) lives in tight
+// slots — a section-header edge, a pill, a stat label. At large
+// accessibility text sizes an uncapped label overflows or shoves the
+// layout; cap Dynamic Type at 1.3× so it still enlarges for legibility
+// without breaking the row. Headings/body/data (SectionHeader title,
+// subtitle, Stat value, KeyValueRow) are deliberately NOT capped — that
+// is real content and should scale freely.
+const CHROME_MAX_FONT_SCALE = 1.3;
+
 /**
  * Typography primitives for the modernized design language.
  *
@@ -41,6 +50,8 @@ export function Eyebrow({ children, color = LightColors.textSecondary, className
     <Text
       className={`text-[10px] font-montserrat-bold uppercase ${className}`}
       style={{ color, letterSpacing: 1.4 }}
+      numberOfLines={1}
+      maxFontSizeMultiplier={CHROME_MAX_FONT_SCALE}
     >
       {children}
     </Text>
@@ -91,6 +102,8 @@ export function SectionHeader({ eyebrow, title, subtitle, action, tone = 'neutra
           <Text
             className="text-[12px] font-montserrat-bold"
             style={{ color: accent }}
+            numberOfLines={1}
+            maxFontSizeMultiplier={CHROME_MAX_FONT_SCALE}
           >
             {action.label}
           </Text>
@@ -215,7 +228,12 @@ export function LinkButton({
       className="flex-row items-center gap-1.5 self-start"
     >
       {Icon && iconPosition === 'leading' ? <Icon size={13} color={color} /> : null}
-      <Text className="text-[12px] font-montserrat-bold underline" style={{ color }}>
+      <Text
+        className="text-[12px] font-montserrat-bold underline"
+        style={{ color }}
+        numberOfLines={1}
+        maxFontSizeMultiplier={CHROME_MAX_FONT_SCALE}
+      >
         {label}
       </Text>
       {Icon && iconPosition === 'trailing' ? <Icon size={13} color={color} /> : null}

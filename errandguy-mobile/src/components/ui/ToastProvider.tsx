@@ -22,6 +22,13 @@ import { LightColors } from '../../constants/colors';
 
 const INVERSE = LightColors.textInverse;
 
+// The toast is fixed-height chrome (a floating capsule, max 3 lines). At
+// large accessibility text sizes an uncapped label would blow past the
+// pill; cap Dynamic Type at 1.3× so it still grows for legibility while
+// staying inside the capsule. Long-form/content text elsewhere is left
+// to scale freely.
+const CHROME_MAX_FONT_SCALE = 1.3;
+
 const VARIANT_CONFIG: Record<
   ToastVariant,
   { bg: string; icon: typeof CheckCircle; iconColor: string; textColor: string }
@@ -105,7 +112,11 @@ function ToastCard({
   return (
     <Animated.View style={[styles.card, { backgroundColor: config.bg }, style]}>
       <Icon size={20} color={config.iconColor} />
-      <Text style={[styles.message, { color: config.textColor }]} numberOfLines={3}>
+      <Text
+        style={[styles.message, { color: config.textColor }]}
+        numberOfLines={3}
+        maxFontSizeMultiplier={CHROME_MAX_FONT_SCALE}
+      >
         {message}
       </Text>
       {actionLabel && onAction ? (
@@ -115,7 +126,11 @@ function ToastCard({
           accessibilityLabel={actionLabel}
           style={styles.actionBtn}
         >
-          <Text style={[styles.actionLabel, { color: config.textColor }]}>
+          <Text
+            style={[styles.actionLabel, { color: config.textColor }]}
+            numberOfLines={1}
+            maxFontSizeMultiplier={CHROME_MAX_FONT_SCALE}
+          >
             {actionLabel}
           </Text>
         </Pressable>

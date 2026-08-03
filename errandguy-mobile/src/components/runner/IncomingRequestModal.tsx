@@ -14,6 +14,7 @@ import { MotiView } from 'moti';
 import type { LucideIcon } from 'lucide-react-native';
 import { MapPin, Navigation, Truck, ShoppingBag } from 'lucide-react-native';
 import { Button } from '../ui/Button';
+import { PickupDistanceLine } from './PickupDistanceLine';
 import { formatCurrency } from '../../utils/formatCurrency';
 import { getErrandTypeRule } from '../../constants/errandTypeRules';
 import { useReducedMotion } from '../../hooks/useReducedMotion';
@@ -374,6 +375,13 @@ export function IncomingRequestModal({
               <Text className="text-xl font-inter-semi tabular-nums text-white">
                 {formatCurrency(booking.runner_payout ?? booking.total_amount)}
               </Text>
+            </View>
+
+            {/* How far the *pickup* is from the runner right now — the key
+                accept signal, distinct from the trip distance above. Hides
+                itself when live location is unavailable. */}
+            <View className="mt-2">
+              <PickupDistanceLine booking={booking} />
             </View>
 
             {booking.is_transportation && (

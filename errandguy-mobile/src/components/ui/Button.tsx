@@ -110,6 +110,13 @@ const BASE_SIZES: Record<ButtonSize, { padV: number; padH: number; minH: number;
 // cross-platform. (On web the loaded Inter face is used directly.)
 const PLATFORM_FONT = 'Inter_600SemiBold';
 
+// Chrome is fixed-height (minH 30/40/44) and single-line — at large
+// accessibility text sizes an uncapped label would either overflow the
+// pill or truncate hard. Cap Dynamic Type scaling at 1.3× so the label
+// still grows for legibility but stays inside the button. Body/long-form
+// content elsewhere is intentionally left uncapped to scale freely.
+const CHROME_MAX_FONT_SCALE = 1.3;
+
 export function Button({
   title,
   variant = 'primary',
@@ -220,6 +227,7 @@ export function Button({
         ]}
         numberOfLines={1}
         ellipsizeMode="tail"
+        maxFontSizeMultiplier={CHROME_MAX_FONT_SCALE}
       >
         {loading ? (loadingTitle ?? title) : title}
       </Text>

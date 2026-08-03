@@ -11,18 +11,18 @@ import { Button } from '../../../components/ui/Button';
 import { BottomActionBar } from '../../../components/ui/BottomActionBar';
 import { BrandRefreshControl } from '../../../components/ui/BrandRefreshControl';
 import { ConfirmModal } from '../../../components/ui/ConfirmModal';
+import { EmptyState } from '../../../components/ui/EmptyState';
+import { ErrorState } from '../../../components/ui/ErrorState';
+import { Skeleton } from '../../../components/ui/Skeleton';
 import { useRunnerStore } from '../../../stores/runnerStore';
 import { runnerService } from '../../../services/runner.service';
+import { configService } from '../../../services/config.service';
+import { useQuery } from '../../../hooks/useQuery';
+import { CacheTTL } from '../../../services/cache.service';
 import { runOptimistic } from '../../../utils/optimistic';
 import { queueable } from '../../../services/mutationQueue';
 import { toast } from '../../../stores/toastStore';
-
-interface ErrandTypeOption {
-  id: string;
-  slug: string;
-  name: string;
-  selected: boolean;
-}
+import type { ErrandType } from '../../../types';
 
 export default function PreferredTypesScreen() {
   const router = useRouter();
@@ -30,40 +30,63 @@ export default function PreferredTypesScreen() {
   const { contentMaxWidth } = useResponsive();
   const { runnerProfile, setRunnerProfile } = useRunnerStore();
 
-  const [types, setTypes] = useState<ErrandTypeOption[]>([]);
   const [refreshing, setRefreshing] = useState(false);
   const [showDiscard, setShowDiscard] = useState(false);
 
-  // Common errand types (would normally come from API)
-  const defaultTypes = [
-    { id: '1', slug: 'delivery', name: 'Delivery' },
-    { id: '2', slug: 'purchase', name: 'Purchase & Deliver' },
-    { id: '3', slug: 'transportation', name: 'Transportation' },
-    { id: '4', slug: 'document', name: 'Document Processing' },
-    { id: '5', slug: 'queue', name: 'Queue & Wait' },
-    { id: '6', slug: 'moving', name: 'Moving Assistance' },
-  ];
+  // Errand types come from the same config source the customer booking
+  // flow uses, sharing the ['errand-types'] cache key so a single fetch
+  // warms both the runner preferences screen and the customer picker.
+  // The /errand-types endpoint already returns active-only rows.
+  const errandTypesQ = useQuery<ErrandType[]>(
+    ['errand-types'],
+    async () => {
+      const res = await configService.getErrandTypes();
+      return (res.data?.data ?? []) as ErrandType[];
+    },
+    { staleTime: 60 * 60 * 1000, ttl: CacheTTL.STATIC },
+  );
 
-  useEffect(() => {
-    const preferred = runnerProfile?.preferred_types ?? [];
-    setTypes(
-      defaultTypes.map((t) => ({
-        ...t,
-        selected: preferred.includes(t.slug),
+  // Live source list, reduced to the fields this checklist needs.
+  const sourceTypes = useMemo(
+    () =>
+      (errandTypesQ.data ?? []).map((t) => ({
+        id: t.id,
+        slug: t.slug,
+        name: t.name,
       })),
-    );
+    [errandTypesQ.data],
+  );
+
+  // Selection is tracked separately from the source list so a background
+  // revalidate (or pull-to-refresh) of the errand-type catalog never wipes
+  // the runner's in-progress edits. Seeded from the persisted profile and
+  // re-seeded whenever it changes (e.g. after an optimistic save commits).
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  useEffect(() => {
+    setSelected(new Set(runnerProfile?.preferred_types ?? []));
   }, [runnerProfile]);
+
+  // Render model: each source type carries its current checked state.
+  const options = useMemo(
+    () => sourceTypes.map((t) => ({ ...t, selected: selected.has(t.slug) })),
+    [sourceTypes, selected],
+  );
 
   const toggleType = (slug: string) => {
     Haptics.selectionAsync().catch(() => {});
-    setTypes((prev) =>
-      prev.map((t) => (t.slug === slug ? { ...t, selected: !t.selected } : t)),
-    );
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(slug)) next.delete(slug);
+      else next.add(slug);
+      return next;
+    });
   };
 
   const handleSave = async () => {
-    const selected = types.filter((t) => t.selected).map((t) => t.slug);
-    if (selected.length === 0) {
+    // Derive from the visible options so any slug for a since-deactivated
+    // type (absent from the catalog) is naturally pruned on save.
+    const selectedSlugs = options.filter((t) => t.selected).map((t) => t.slug);
+    if (selectedSlugs.length === 0) {
       toast.warning('Please select at least one errand type.');
       return;
     }
@@ -74,12 +97,12 @@ export default function PreferredTypesScreen() {
     // invalidates ['runner','profile'] on success and the tab refetches on
     // focus.
     const prev = runnerProfile;
-    const q = queueable('runner.updateProfile', { preferred_types: selected }, {
+    const q = queueable('runner.updateProfile', { preferred_types: selectedSlugs }, {
       dedupeKey: 'runner-profile-preferred-types',
     });
     await runOptimistic({
       apply: () => {
-        if (runnerProfile) setRunnerProfile({ ...runnerProfile, preferred_types: selected });
+        if (runnerProfile) setRunnerProfile({ ...runnerProfile, preferred_types: selectedSlugs });
       },
       rollback: () => setRunnerProfile(prev),
       commit: q.commit,
@@ -96,28 +119,61 @@ export default function PreferredTypesScreen() {
   const onRefresh = useCallback(async () => {
     setRefreshing(true);
     try {
-      const res = await runnerService.getRunnerProfile();
-      setRunnerProfile(res.data.data);
-    } catch {}
-    setRefreshing(false);
-  }, []);
+      // Refresh both the persisted preferences and the errand-type catalog
+      // so a newly-added type shows up here without a cold restart.
+      await Promise.all([
+        runnerService
+          .getRunnerProfile()
+          .then((res) => setRunnerProfile(res.data.data))
+          .catch(() => {}),
+        errandTypesQ.refresh().catch(() => {}),
+      ]);
+    } finally {
+      setRefreshing(false);
+    }
+  }, [errandTypesQ.refresh]);
 
-  const selectedCount = types.filter((t) => t.selected).length;
+  // While the catalog is still loading, show the persisted intent so the
+  // header doesn't flash "0 selected"; once loaded, count only the visible
+  // checked rows so a since-deactivated persisted slug doesn't inflate it.
+  const selectedCount =
+    sourceTypes.length === 0
+      ? selected.size
+      : options.filter((t) => t.selected).length;
 
   // Dirty = current selection differs from the persisted profile set, so
   // Save can be disabled on a no-op edit and backing out mid-edit prompts
-  // a discard confirm instead of silently dropping the change.
+  // a discard confirm instead of silently dropping the change. Only
+  // meaningful once the catalog has loaded — an empty options list while
+  // loading would otherwise read as "everything deselected".
   const initialSet = useMemo(
     () => new Set(runnerProfile?.preferred_types ?? []),
     [runnerProfile],
   );
   const dirty = useMemo(() => {
-    const selected = types.filter((t) => t.selected);
+    if (sourceTypes.length === 0) return false;
+    // Compare only against persisted slugs that still exist in the live
+    // catalog — a since-deactivated preferred type is absent from `options`,
+    // so counting it would make an untouched screen read as edited (spurious
+    // discard prompt). It still gets harmlessly pruned on the next real save.
+    const catalogSlugs = new Set(sourceTypes.map((t) => t.slug));
+    const initialInCatalog = [...initialSet].filter((s) => catalogSlugs.has(s));
+    const selectedNow = options.filter((t) => t.selected);
     return (
-      selected.length !== initialSet.size ||
-      selected.some((t) => !initialSet.has(t.slug))
+      selectedNow.length !== initialInCatalog.length ||
+      selectedNow.some((t) => !initialSet.has(t.slug))
     );
-  }, [types, initialSet]);
+  }, [options, sourceTypes, initialSet]);
+
+  // Loading / error surfaces mirror the customer booking picker: show
+  // skeletons on a cold load, an inline ErrorState (with retry) when the
+  // fetch fails with nothing cached, and an EmptyState if config returns
+  // no active types.
+  const loadingTypes = errandTypesQ.loading && sourceTypes.length === 0;
+  const showSkeletons = (loadingTypes || refreshing) && sourceTypes.length === 0;
+  const showError = !showSkeletons && sourceTypes.length === 0 && !!errandTypesQ.error;
+  const showEmpty =
+    !showSkeletons && !showError && !errandTypesQ.loading && sourceTypes.length === 0;
 
   // Once the user confirms leaving, the beforeRemove guard must not
   // re-intercept our own router.back().
@@ -178,28 +234,50 @@ export default function PreferredTypesScreen() {
         <Text className="text-sm font-montserrat text-textSecondary mb-3">
           Select the errand types you want to receive requests for.
         </Text>
-        {types.map((type) => (
-          <Pressable
-            key={type.slug}
-            onPress={() => toggleType(type.slug)}
-            accessibilityRole="checkbox"
-            accessibilityLabel={type.name}
-            accessibilityState={{ checked: type.selected }}
-          >
-            <Card className={`mb-2 p-4 flex-row items-center justify-between border ${type.selected ? 'border-primary bg-primaryLight' : 'border-transparent'}`}>
-              <Text className="text-[14px] font-montserrat-semi text-textPrimary">
-                {type.name}
-              </Text>
-              <View
-                className={`w-6 h-6 rounded-full items-center justify-center ${
-                  type.selected ? 'bg-primary' : 'border-2 border-dividerStrong'
-                }`}
-              >
-                {type.selected && <Check size={14} color={LightColors.textInverse} />}
-              </View>
-            </Card>
-          </Pressable>
-        ))}
+
+        {showSkeletons ? (
+          <View accessibilityLabel="Loading errand types" accessibilityState={{ busy: true }}>
+            {Array.from({ length: 6 }).map((_, i) => (
+              <Skeleton key={i} height={56} borderRadius={16} style={{ marginBottom: 8 }} />
+            ))}
+          </View>
+        ) : showError ? (
+          <ErrorState
+            title="Couldn't load errand types"
+            description="Check your connection and try again."
+            onRetry={() => {
+              errandTypesQ.refresh().catch(() => {});
+            }}
+          />
+        ) : showEmpty ? (
+          <EmptyState
+            title="No errand types available"
+            description="There are no active errand types to choose from right now."
+          />
+        ) : (
+          options.map((type) => (
+            <Pressable
+              key={type.slug}
+              onPress={() => toggleType(type.slug)}
+              accessibilityRole="checkbox"
+              accessibilityLabel={type.name}
+              accessibilityState={{ checked: type.selected }}
+            >
+              <Card className={`mb-2 p-4 flex-row items-center justify-between border ${type.selected ? 'border-primary bg-primaryLight' : 'border-transparent'}`}>
+                <Text className="text-[14px] font-montserrat-semi text-textPrimary">
+                  {type.name}
+                </Text>
+                <View
+                  className={`w-6 h-6 rounded-full items-center justify-center ${
+                    type.selected ? 'bg-primary' : 'border-2 border-dividerStrong'
+                  }`}
+                >
+                  {type.selected && <Check size={14} color={LightColors.textInverse} />}
+                </View>
+              </Card>
+            </Pressable>
+          ))
+        )}
       </ScrollView>
 
       {/* Save Button — disabled until the selection actually changes so an

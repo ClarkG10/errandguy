@@ -25,6 +25,7 @@ import { ToastProvider } from '../components/ui/ToastProvider';
 import { OtaUpdateGate } from '../components/ui/OtaUpdateGate';
 import { ApiActivityBar } from '../components/ui/ApiActivityBar';
 import { OfflineBanner } from '../components/ui/OfflineBanner';
+import { ErrorBoundary } from '../components/ui/ErrorBoundary';
 import { installErrorLogging } from '../utils/errorLogging';
 import '../../global.css';
 
@@ -269,7 +270,13 @@ export default function RootLayout() {
             band. Mounted conditionally so per-screen StatusBars (GradientHeader)
             own the bar the rest of the time; unmounting restores their style. */}
         {isOffline && <StatusBar barStyle="light-content" />}
-        <Slot />
+        {/* Catch render crashes in the navigator tree and show a recoverable
+            full-screen error instead of a white screen / bare redbox. The
+            app-chrome overlays below stay outside the boundary so a crashed
+            screen doesn't take the toast / offline banner down with it. */}
+        <ErrorBoundary>
+          <Slot />
+        </ErrorBoundary>
         <ApiActivityBar />
         <OfflineBanner />
         <ToastProvider />

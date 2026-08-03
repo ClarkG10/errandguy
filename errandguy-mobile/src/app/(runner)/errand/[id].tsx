@@ -536,8 +536,23 @@ export default function ActiveErrandScreen() {
     fetchedQ.mutate(optimistic);
     updateErrandStatus(status as BookingStatus);
 
+    // Stamp proof transitions with where + when they happened. Read the
+    // GPS fix IMPERATIVELY from the store (getState) rather than
+    // subscribing — this screen deliberately avoids a currentLocation
+    // subscription so a per-fix write doesn't re-render the whole
+    // ~1100-line cockpit (P14). Graceful: if there's no fix yet the
+    // coords stay null and the upload proceeds without them; the
+    // client capture timestamp always rides along.
+    const fix = useLocationStore.getState().currentLocation;
+    const proofOpts = {
+      ...opts,
+      lat: fix?.lat ?? null,
+      lng: fix?.lng ?? null,
+      capturedAt: nowIso,
+    };
+
     runnerService
-      .advanceErrandStatus(booking.id, status, opts)
+      .advanceErrandStatus(booking.id, status, proofOpts)
       .then(() => {
         advancingRef.current = false; // re-arm the tap guard for the next step
         // Server-confirmed transition — success tick. The `completed`

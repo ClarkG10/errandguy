@@ -34,6 +34,7 @@ import { useImagePicker } from '../../../hooks/useImagePicker';
 import { useDebounce } from '../../../hooks/useDebounce';
 import { Button } from '../../../components/ui/Button';
 import { Spinner } from '../../../components/ui/Spinner';
+import { Skeleton } from '../../../components/ui/Skeleton';
 import { Input, type InputHandle } from '../../../components/ui/Input';
 import { KeyboardDockInput } from '../../../components/ui/KeyboardDockInput';
 import { useReducedMotion } from '../../../hooks/useReducedMotion';
@@ -52,6 +53,7 @@ import { toast } from '../../../stores/toastStore';
 import { geocodingService } from '../../../services/geocoding.service';
 import { routeService } from '../../../services/route.service';
 import { bookingService } from '../../../services/booking.service';
+import { formatCurrency } from '../../../utils/formatCurrency';
 
 const DEFAULT_CENTER: [number, number] = [121.0, 14.6];
 // Step labels live in `BookingStepIndicator`; keep this file lean.
@@ -232,6 +234,13 @@ export default function TaskDetailsScreen() {
   // fare and enables Confirm on its first frame instead of firing the POST on
   // its own mount and gating the CTA on the round-trip. Fire-and-forget; the
   // signature-keyed stash + in-flight dedupe collapse any double-POST.
+  // Live fare teaser for the details footer — hydrated from the SAME warmed
+  // estimate cache Review reads. `null` until the warm POST lands; `warming`
+  // drives a small skeleton in the interim. Zero extra network: fetchEstimate
+  // coalesces with the prefetch's in-flight POST via the signature dedupe.
+  const [estimate, setEstimate] = useState<any | null>(null);
+  const [estimateWarming, setEstimateWarming] = useState(false);
+
   useEffect(() => {
     if (phase !== 'details') return;
     if (
@@ -239,15 +248,47 @@ export default function TaskDetailsScreen() {
       draftBooking.pickup_lat == null ||
       draftBooking.pickup_lng == null
     ) {
+      setEstimate(null);
+      setEstimateWarming(false);
       return;
     }
-    bookingService.prefetchEstimate({
+    const input = {
       errand_type_id: draftBooking.errand_type_id,
       pickup_lat: draftBooking.pickup_lat,
       pickup_lng: draftBooking.pickup_lng,
       dropoff_lat: draftBooking.dropoff_lat,
       dropoff_lng: draftBooking.dropoff_lng,
-    });
+    };
+    // Warm the estimate (fire-and-forget) exactly as before — Review still
+    // hydrates from this stash on its first frame.
+    bookingService.prefetchEstimate(input);
+    // Instant paint if it's already stashed & fresh (re-entry / back-nav).
+    const cached = bookingService.getCachedEstimate(input);
+    if (cached) {
+      setEstimate(cached);
+      setEstimateWarming(false);
+      return;
+    }
+    // Otherwise track the in-flight warm POST so the footer fills in when it
+    // resolves. fetchEstimate returns the SAME coalesced promise as the
+    // prefetch above, so this adds no network call. Hide gracefully on error.
+    let cancelled = false;
+    setEstimate(null);
+    setEstimateWarming(true);
+    bookingService
+      .fetchEstimate(input)
+      .then((data) => {
+        if (!cancelled) setEstimate(data ?? null);
+      })
+      .catch(() => {
+        if (!cancelled) setEstimate(null);
+      })
+      .finally(() => {
+        if (!cancelled) setEstimateWarming(false);
+      });
+    return () => {
+      cancelled = true;
+    };
   }, [
     phase,
     draftBooking.errand_type_id,
@@ -256,6 +297,33 @@ export default function TaskDetailsScreen() {
     draftBooking.dropoff_lat,
     draftBooking.dropoff_lng,
   ]);
+
+  // Compact "from ₱X · Y km · ~Z min" teaser off the warmed estimate. Price is
+  // the cheapest allowed vehicle (a genuine "from"); distance/ETA mirror
+  // review.tsx's formatting (toFixed(1) km, speed-model minutes) using the
+  // vehicle Review preselects. Returns null when there's nothing to show.
+  const estimateStrip = useMemo(() => {
+    if (!estimate) return null;
+    const speeds: Record<string, number> = { walk: 5, bicycle: 15, motorcycle: 35, car: 30 };
+    const totals = rule.allowedVehicles
+      .map((k) => estimate[k]?.total_amount)
+      .filter((n: unknown): n is number => typeof n === 'number' && n > 0);
+    const fromAmount = totals.length > 0 ? Math.min(...totals) : null;
+    const km = typeof estimate.distance_km === 'number' ? estimate.distance_km : null;
+    let eta: string | null = null;
+    if (km != null) {
+      const speed = speeds[rule.defaultVehicle] ?? 30;
+      const minutes = Math.round((km / speed) * 60);
+      eta =
+        minutes < 1
+          ? '< 1 min'
+          : minutes >= 60
+            ? `${Math.floor(minutes / 60)}h ${minutes % 60}m`
+            : `${minutes} min`;
+    }
+    if (fromAmount == null && km == null) return null;
+    return { fromAmount, km, eta };
+  }, [estimate, rule.allowedVehicles, rule.defaultVehicle]);
 
   const mapOpen = true;
   const [currentAddress, setCurrentAddress] = useState('');
@@ -1219,6 +1287,36 @@ export default function TaskDetailsScreen() {
               />
             ) : (
               <View>
+                {/* Live fare teaser — reads the warmed estimate cache (no
+                    network here). Shows a slim skeleton while the estimate is
+                    warming and renders nothing at all if none is available. */}
+                {estimateStrip ? (
+                  <View style={st.estimateStrip}>
+                    {estimateStrip.fromAmount != null && (
+                      <Text style={st.estimateLead} numberOfLines={1}>
+                        {`Est. from ${formatCurrency(estimateStrip.fromAmount)}`}
+                      </Text>
+                    )}
+                    {estimateStrip.km != null && (
+                      <>
+                        {estimateStrip.fromAmount != null && (
+                          <Text style={st.estimateSep}>·</Text>
+                        )}
+                        <Text style={st.estimateMeta}>{`${estimateStrip.km.toFixed(1)} km`}</Text>
+                      </>
+                    )}
+                    {estimateStrip.eta && (
+                      <>
+                        <Text style={st.estimateSep}>·</Text>
+                        <Text style={st.estimateMeta}>{`~${estimateStrip.eta}`}</Text>
+                      </>
+                    )}
+                  </View>
+                ) : estimateWarming ? (
+                  <View style={st.estimateStrip} accessibilityLabel="Estimating fare">
+                    <Skeleton width={168} height={13} borderRadius={7} />
+                  </View>
+                ) : null}
                 {(errors.pickup || errors.dropoff) && (
                   <Text style={st.errorText}>{errors.pickup || errors.dropoff}</Text>
                 )}
@@ -2081,6 +2179,31 @@ const st = StyleSheet.create({
     color: LightColors.primary,
     marginLeft: 6,
     marginRight: 2,
+  },
+  estimateStrip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    // Sits just above the Continue CTA — a slim informational rung, not a card.
+    minHeight: 18,
+    marginBottom: 8,
+  },
+  estimateLead: {
+    fontSize: 13,
+    fontFamily: 'Quicksand_600SemiBold',
+    color: LightColors.textPrimary,
+    fontVariant: ['tabular-nums'],
+  },
+  estimateMeta: {
+    fontSize: 12,
+    fontFamily: 'Quicksand_500Medium',
+    color: LightColors.textSecondary,
+    fontVariant: ['tabular-nums'],
+  },
+  estimateSep: {
+    fontSize: 12,
+    fontFamily: 'Quicksand_500Medium',
+    color: LightColors.textTertiary,
+    marginHorizontal: 6,
   },
   errorText: {
     fontSize: 12,

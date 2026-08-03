@@ -20,6 +20,9 @@ import {
   CalendarClock,
   LifeBuoy,
   TrendingUp,
+  Clock,
+  ChevronRight,
+  X,
 } from 'lucide-react-native';
 import type { LucideIcon } from 'lucide-react-native';
 import * as Haptics from 'expo-haptics';
@@ -51,6 +54,17 @@ import { formatRelativeTime } from '../../../utils/formatDate';
 
 const ICON_MAP: Record<string, LucideIcon> = {
   Package,
+};
+
+// Persisted `currentStep` → the book/ route the user was last on. The
+// booking screens read the (already-hydrated) draft straight from the
+// store, so deep-linking here needs no params — just the right route.
+// Keyed by the step values the flow persists (type→1, details→2,
+// schedule→3); step 0 has no resume affordance.
+const RESUME_STEP_ROUTES: Record<number, string> = {
+  1: '/(customer)/book/details',
+  2: '/(customer)/book/schedule',
+  3: '/(customer)/book/review',
 };
 
 /**
@@ -89,6 +103,9 @@ export default function CustomerHomeScreen() {
   const activeBooking = useBookingStore((s) => s.activeBooking);
   const setActiveBooking = useBookingStore((s) => s.setActiveBooking);
   const clearDraft = useBookingStore((s) => s.clearDraft);
+  const draftBooking = useBookingStore((s) => s.draftBooking);
+  const draftStep = useBookingStore((s) => s.currentStep);
+  const isDraftHydrated = useBookingStore((s) => s.isDraftHydrated);
   const unreadCount = useNotificationStore((s) => s.unreadCount);
   const hideOnScroll = useHideTabBarOnScroll();
 
@@ -148,6 +165,11 @@ export default function CustomerHomeScreen() {
   // between the two lists (tracking stays one tap deeper, via the sheet
   // or the ActiveBookingCard).
   const [selectedBooking, setSelectedBooking] = useState<Booking | null>(null);
+  // The "Continue your errand" card is dismissible for the current
+  // session only — a dismiss hides the card but leaves the persisted
+  // draft intact, so it reappears on the next launch (until the draft
+  // expires at 24h or is resumed/replaced).
+  const [resumeDismissed, setResumeDismissed] = useState(false);
   const onRefresh = useCallback(async () => {
     setRefreshing(true);
     await Promise.all([
@@ -167,6 +189,10 @@ export default function CustomerHomeScreen() {
 
   const firstName = user?.full_name?.split(' ')[0] ?? 'there';
 
+  // The explicit "new errand" path — hero, destination card, service
+  // tiles, "see all", schedule/repeat pills. This is the ONLY place that
+  // clears the draft: starting a fresh booking intentionally discards any
+  // abandoned one. Resuming (below) deliberately does NOT clear.
   const startBooking = useCallback(
     (preselectedTypeId?: string) => {
       clearDraft();
@@ -181,6 +207,42 @@ export default function CustomerHomeScreen() {
     },
     [clearDraft, router],
   );
+
+  // Resumable mid-flow draft. We only surface the card once the persisted
+  // draft has hydrated, the user got past the first step, and the draft
+  // actually holds something — otherwise there is nothing to continue.
+  const resumeInfo = useMemo(() => {
+    if (!isDraftHydrated || resumeDismissed) return null;
+    if (draftStep <= 0) return null;
+    if (Object.keys(draftBooking).length === 0) return null;
+    const route = RESUME_STEP_ROUTES[draftStep];
+    if (!route) return null;
+    const draftType = errandTypes.find(
+      (t) => t.id === draftBooking.errand_type_id,
+    );
+    const typeName =
+      draftType?.name ?? draftBooking.errand_type_slug ?? 'errand';
+    return {
+      route,
+      typeName,
+      iconName: draftType?.icon_name,
+      // Mirror BookingStepIndicator's 1-based "Step N of 4" wording.
+      stepNumber: Math.min(draftStep + 1, 4),
+    };
+  }, [
+    isDraftHydrated,
+    resumeDismissed,
+    draftStep,
+    draftBooking,
+    errandTypes,
+  ]);
+
+  // Deep-link back into the flow WITHOUT clearing the draft — the target
+  // screen pre-fills from the already-hydrated store.
+  const resumeBooking = useCallback(() => {
+    if (!resumeInfo) return;
+    router.push(resumeInfo.route as any);
+  }, [resumeInfo, router]);
 
   // Wrap a raw-Pressable handler with a light impact haptic — these
   // don't get the shared Button's press haptic. Applied to every
@@ -462,6 +524,71 @@ export default function CustomerHomeScreen() {
             </View>
           </Pressable>
         </View>
+
+        {/* Continue your errand — a resume card for an abandoned mid-flow
+            draft. Sits directly under the destination prompt so it's the
+            first thing a returning user sees. Tapping it deep-links back
+            into the correct step WITHOUT clearing the draft; the X dismisses
+            it for the session only (the draft itself survives). */}
+        {resumeInfo && (
+          <View className="px-5 mt-4">
+            <View
+              className="flex-row items-center bg-surface rounded-2xl border border-primary100 py-3 pl-3 pr-2"
+              style={hs.resumeCard}
+            >
+              <Pressable
+                onPress={withLightImpact(resumeBooking)}
+                android_ripple={{ color: 'rgba(37,99,235,0.08)' }}
+                className="flex-1 flex-row items-center"
+                accessibilityRole="button"
+                accessibilityLabel={`Continue your ${resumeInfo.typeName} errand, step ${resumeInfo.stepNumber} of 4`}
+                accessibilityHint="Returns to where you left off in the booking"
+                style={({ pressed }) => pressed && hs.cardPressed}
+              >
+                {resumeInfo.iconName ? (
+                  <ErrandTypeIcon
+                    name={resumeInfo.iconName}
+                    size="xs"
+                    variant="tinted"
+                  />
+                ) : (
+                  <View className="w-9 h-9 rounded-full bg-surfaceMuted items-center justify-center">
+                    <Clock size={17} color={LightColors.primary} strokeWidth={2} />
+                  </View>
+                )}
+                <View className="flex-1 ml-3 pr-2">
+                  <Text
+                    className="text-[13.5px] font-montserrat-bold text-textPrimary"
+                    numberOfLines={1}
+                  >
+                    Continue your errand
+                  </Text>
+                  <Text
+                    className="text-[11.5px] font-montserrat text-textSecondary mt-0.5"
+                    numberOfLines={1}
+                  >
+                    {resumeInfo.typeName} · Step {resumeInfo.stepNumber} of 4
+                  </Text>
+                </View>
+                <ChevronRight
+                  size={18}
+                  color={LightColors.textMuted}
+                  strokeWidth={2.2}
+                />
+              </Pressable>
+              <Pressable
+                onPress={withLightImpact(() => setResumeDismissed(true))}
+                hitSlop={10}
+                className="w-8 h-8 items-center justify-center ml-1"
+                accessibilityRole="button"
+                accessibilityLabel="Dismiss continue errand"
+                style={({ pressed }) => pressed && { opacity: 0.5 }}
+              >
+                <X size={16} color={LightColors.textMuted} strokeWidth={2} />
+              </Pressable>
+            </View>
+          </View>
+        )}
 
         {/* Active errand — promoted directly under the destination card
             (above the pills) so the user's live errand wins the first
@@ -934,6 +1061,12 @@ const hs = StyleSheet.create({
   // surface. Radius / bg / layout live in className; only the shadow (a
   // pass-through prop NativeWind keeps) is applied here.
   recentCard: {
+    ...Elevation.sm,
+  },
+  // "Continue your errand" resume card — subtle lift matching the recent
+  // rows. bg / radius / border / layout live in className; only the
+  // shadow (a pass-through prop NativeWind keeps) is applied here.
+  resumeCard: {
     ...Elevation.sm,
   },
 });

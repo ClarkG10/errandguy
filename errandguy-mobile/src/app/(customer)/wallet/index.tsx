@@ -19,6 +19,9 @@ import {
   Check,
   Plus,
   Download,
+  Gift,
+  Ticket,
+  ChevronRight,
 } from 'lucide-react-native';
 import { toast } from '../../../stores/toastStore';
 import type { LucideIcon } from 'lucide-react-native';
@@ -57,6 +60,37 @@ const TX_FILTERS: { key: WalletTransactionType | null; label: string }[] = [
   { key: 'top_up', label: 'Top-ups' },
   { key: 'payment', label: 'Payments' },
   { key: 'refund', label: 'Refunds' },
+];
+
+// Live "ways to earn credit" mechanics, each pointing at a real screen.
+// A mechanic is only surfaced when its target route file exists in the
+// app tree (checked at build time — see the routes below), so this list
+// never renders a row that would push into a dead route. The reward
+// surface uses the amber accent family (credit / rewards), never a
+// status colour.
+const EARN_MECHANICS: {
+  key: string;
+  icon: LucideIcon;
+  title: string;
+  description: string;
+  route: string;
+}[] = [
+  {
+    key: 'referral',
+    icon: Gift,
+    title: 'Refer a friend',
+    description: 'Earn wallet credit when they join',
+    // src/app/(customer)/referral.tsx
+    route: '/(customer)/referral',
+  },
+  {
+    key: 'promos',
+    icon: Ticket,
+    title: 'Redeem a promo',
+    description: 'Turn a promo code into credit',
+    // src/app/(customer)/promos.tsx
+    route: '/(customer)/promos',
+  },
 ];
 
 /** Placeholder rows painted while the first transactions fetch runs so
@@ -494,6 +528,52 @@ export default function WalletScreen() {
           </Pressable>
         </Card>
       </View>
+
+      {/* Ways to earn credit — a compact reward surface pointing at the
+          live earn mechanics (refer a friend, redeem a promo). The ledger
+          already renders a gold-star `bonus` row when credit lands; this
+          card closes the loop by telling the customer HOW to earn it.
+          Rendered only when at least one mechanic's screen exists, so it
+          gracefully vanishes rather than showing a dead row. Amber accent
+          chips (accentSoft) mark it as a rewards surface, not a status. */}
+      {EARN_MECHANICS.length > 0 && (
+        <View className="px-5 mb-2">
+          <Eyebrow className="mb-2">Ways to earn credit</Eyebrow>
+          <Card padding="none" className="px-4">
+            {EARN_MECHANICS.map((m, i) => {
+              const Icon = m.icon;
+              return (
+                <View key={m.key}>
+                  {i > 0 && <Hairline />}
+                  <Pressable
+                    onPress={() => {
+                      Haptics.selectionAsync().catch(() => {});
+                      router.push(m.route as any);
+                    }}
+                    className="flex-row items-center py-3.5"
+                    style={({ pressed }) => pressed && { opacity: 0.6 }}
+                    accessibilityRole="button"
+                    accessibilityLabel={`${m.title}. ${m.description}`}
+                  >
+                    <View className="w-10 h-10 rounded-full bg-accentSoft items-center justify-center mr-3">
+                      <Icon size={18} color={LightColors.accentStrong} strokeWidth={1.9} />
+                    </View>
+                    <View className="flex-1">
+                      <Text className="text-[14px] font-montserrat-semi text-textPrimary">
+                        {m.title}
+                      </Text>
+                      <Text className="text-[11px] font-montserrat text-textSecondary mt-0.5">
+                        {m.description}
+                      </Text>
+                    </View>
+                    <ChevronRight size={18} color={LightColors.textTertiary} strokeWidth={2} />
+                  </Pressable>
+                </View>
+              );
+            })}
+          </Card>
+        </View>
+      )}
 
       {/* Transactions section header — typographic eyebrow above the
           list. Section bucket headers below render as smaller eyebrows

@@ -73,3 +73,25 @@ export function installErrorLogging(): void {
     // covers synchronous crashes and most async ones.
   }
 }
+
+/**
+ * Report a caught render error to the same greppable log stream used by
+ * the global handlers above. Called by <ErrorBoundary/> from
+ * componentDidCatch — a React render error is caught by React and never
+ * reaches ErrorUtils, so we surface it here with the same tag/format so
+ * every crash path looks identical in the Metro terminal (and any
+ * attached remote logger). `componentStack` is React's own component
+ * trace, which pinpoints the failing subtree far better than the JS stack.
+ */
+export function reportError(
+  error: unknown,
+  componentStack?: string | null,
+): void {
+  const message =
+    error instanceof Error
+      ? `${error.name}: ${error.message}`
+      : String((error as { message?: string } | null)?.message ?? error);
+  console.error(`🔴 [ErrandGuy] RENDER ERROR: ${message}`);
+  if (error instanceof Error && error.stack) console.error(error.stack);
+  if (componentStack) console.error(`Component stack:${componentStack}`);
+}

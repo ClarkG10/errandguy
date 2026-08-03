@@ -136,6 +136,7 @@ export const runnerService = {
       note?: string | null;
       lat?: number | null;
       lng?: number | null;
+      capturedAt?: string | null;
       onProgress?: (frac: number) => void;
     },
   ) {
@@ -148,6 +149,10 @@ export const runnerService = {
       if (opts?.note) form.append('note', opts.note);
       if (opts?.lat != null) form.append('lat', String(opts.lat));
       if (opts?.lng != null) form.append('lng', String(opts.lng));
+      // Client capture timestamp (ISO-8601). Backend may not yet persist
+      // this key; extra multipart fields are ignored server-side, so it's
+      // safe to send and non-breaking.
+      if (opts?.capturedAt) form.append('client_captured_at', opts.capturedAt);
       if (opts?.pickupPhoto) {
         form.append('pickup_photo', {
           uri: opts.pickupPhoto,

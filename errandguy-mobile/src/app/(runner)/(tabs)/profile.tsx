@@ -27,6 +27,7 @@ import { LogoutSplash } from '../../../components/ui/LogoutSplash';
 import { InlineLogoutLink } from '../../../components/auth/InlineLogoutLink';
 import { GradientHeader } from '../../../components/ui/GradientHeader';
 import { BrandRefreshControl } from '../../../components/ui/BrandRefreshControl';
+import { BottomSheet } from '../../../components/ui/BottomSheet';
 import { Eyebrow } from '../../../components/ui/Typography';
 import { RatingStars } from '../../../components/ui/RatingStars';
 import { VerificationBanner } from '../../../components/runner/VerificationBanner';
@@ -76,11 +77,48 @@ const VERIFICATION_LABELS: Record<string, string> = {
   resubmit: 'Action needed',
 };
 
+type MetricKey = 'acceptance' | 'completion' | 'rating';
+
+/**
+ * Per-metric coaching + explainer copy. `coaching` is the single actionable
+ * line shown *only* while the metric sits in its warning tier; `why` /
+ * `target` power the tap-through explainer sheet. Rating copy mirrors the
+ * "How is my rating calculated?" FAQ in settings/help.tsx.
+ */
+const METRIC_EXPLAINERS: Record<
+  MetricKey,
+  { title: string; coaching: string; why: string; target: string }
+> = {
+  acceptance: {
+    title: 'Acceptance rate',
+    coaching: 'Accept more nearby offers to lift acceptance above 70%.',
+    why: 'This is the share of offers you accept. A higher acceptance rate signals reliability, so the matching engine sends you fresh errands ahead of runners who decline often.',
+    target: 'Aim for 70% or higher.',
+  },
+  completion: {
+    title: 'Completion rate',
+    coaching: 'Finish the errands you accept to keep completion above 80%.',
+    why: 'This is the share of accepted errands you actually complete. Cancelling after you have accepted drops this rate and can pause new offers coming your way.',
+    target: 'Aim for 80% or higher.',
+  },
+  rating: {
+    title: 'Customer rating',
+    coaching: 'Communicate clearly and deliver on time to lift your rating above 4.5.',
+    why: 'Your rating is the average of all customer reviews. Keeping it above 4.5 keeps you eligible for priority errand assignments.',
+    target: 'Aim for 4.5 stars or higher.',
+  },
+};
+
 /**
  * One runner-performance stat rendered as a full-width bar: label + value on
  * one line, a thin colour-coded fill beneath. Replaces the old three
  * side-by-side ring gauges, which crowded and clipped their inner numerals
  * on narrow widths / large font scales.
+ *
+ * Tapping the bar opens a short explainer sheet (via `onPress`). When the
+ * metric is in its warning tier the parent passes `coaching` — one actionable
+ * line rendered beneath the fill; it is absent (and the row reads as neutral)
+ * whenever the metric is healthy.
  */
 function StatBar({
   label,
@@ -88,41 +126,64 @@ function StatBar({
   fraction,
   fill,
   valueColor,
+  coaching,
+  onPress,
 }: {
   label: string;
   value: string;
   fraction: number;
   fill: string;
   valueColor: string;
+  coaching?: string;
+  onPress?: () => void;
 }) {
   const pct = Math.round(Math.max(0, Math.min(1, fraction)) * 100);
   return (
     <View>
-      <View className="flex-row items-center justify-between mb-2">
-        <Text className="text-[13px] font-montserrat-semi text-textSecondary">
-          {label}
-        </Text>
-        <Text className="text-[15px] font-inter-semi" style={{ color: valueColor }}>
-          {value}
-        </Text>
-      </View>
-      <View
-        style={{
-          height: 6,
-          borderRadius: 3,
-          backgroundColor: LightColors.surfaceMuted,
-          overflow: 'hidden',
-        }}
+      <Pressable
+        onPress={onPress}
+        accessibilityRole="button"
+        accessibilityLabel={`${label}, ${value}.${coaching ? ` ${coaching}` : ''} Tap to learn what this means.`}
+        android_ripple={{ color: `${LightColors.primary}14` }}
+        style={({ pressed }) => (pressed ? { opacity: 0.6 } : undefined)}
       >
+        <View className="flex-row items-center justify-between mb-2">
+          <View className="flex-row items-center" style={{ gap: 5 }}>
+            <Text className="text-[13px] font-montserrat-semi text-textSecondary">
+              {label}
+            </Text>
+            <Info size={13} color={LightColors.textTertiary} strokeWidth={2} />
+          </View>
+          <Text className="text-[15px] font-inter-semi" style={{ color: valueColor }}>
+            {value}
+          </Text>
+        </View>
         <View
           style={{
-            height: '100%',
-            width: `${pct}%`,
+            height: 6,
             borderRadius: 3,
-            backgroundColor: fill,
+            backgroundColor: LightColors.surfaceMuted,
+            overflow: 'hidden',
           }}
-        />
-      </View>
+        >
+          <View
+            style={{
+              height: '100%',
+              width: `${pct}%`,
+              borderRadius: 3,
+              backgroundColor: fill,
+            }}
+          />
+        </View>
+      </Pressable>
+      {coaching ? (
+        <Text
+          className="text-[12px] font-montserrat mt-2 leading-4"
+          style={{ color: LightColors.warningDark }}
+        >
+          {coaching}
+        </Text>
+      ) : null}
     </View>
   );
 }
@@ -141,6 +202,13 @@ export default function RunnerProfileScreen() {
   const [deleteConfirmText, setDeleteConfirmText] = useState('');
   const [deleting, setDeleting] = useState(false);
   const [loadFailed, setLoadFailed] = useState(false);
+  // Which performance metric's explainer sheet is open (null = closed).
+  const [explainer, setExplainer] = useState<MetricKey | null>(null);
+
+  const openExplainer = useCallback((metric: MetricKey) => {
+    haptics.selection();
+    setExplainer(metric);
+  }, []);
 
   // Pull both the runner profile (acceptance_rate, completion_rate,
   // total_errands) and the user record (wallet_balance, avg_rating)
@@ -209,6 +277,16 @@ export default function RunnerProfileScreen() {
   const avgRating = Number(user?.avg_rating ?? 0);
   const isUnrated = !avgRating;
   const ratingIsGood = avgRating >= 4.5;
+
+  // Warning-tier flags — the single source of truth for both the bar
+  // colour and whether a coaching line renders. A metric only coaches
+  // when it is actually under threshold (rating never coaches while
+  // "New"/unrated — there's nothing to lift yet).
+  const acceptanceRate = Number(runnerProfile?.acceptance_rate ?? 0);
+  const completionRate = Number(runnerProfile?.completion_rate ?? 0);
+  const acceptanceWarn = acceptanceRate < 70;
+  const completionWarn = completionRate < 80;
+  const ratingWarn = !isUnrated && !ratingIsGood;
 
   // Current-value previews sourced from the already-hydrated stores —
   // no extra fetches. Undefined previews simply render nothing.
@@ -400,55 +478,69 @@ export default function RunnerProfileScreen() {
               <View className="py-4 border-y border-divider" style={{ gap: 18 }}>
                 <StatBar
                   label="Acceptance"
-                  value={`${Math.round(runnerProfile?.acceptance_rate ?? 0)}%`}
-                  fraction={(runnerProfile?.acceptance_rate ?? 0) / 100}
-                  fill={
-                    (runnerProfile?.acceptance_rate ?? 0) < 70
-                      ? LightColors.warning
-                      : LightColors.success
-                  }
+                  value={`${Math.round(acceptanceRate)}%`}
+                  fraction={acceptanceRate / 100}
+                  fill={acceptanceWarn ? LightColors.warning : LightColors.success}
                   valueColor={
-                    (runnerProfile?.acceptance_rate ?? 0) < 70
-                      ? LightColors.warningDark
-                      : LightColors.successDark
+                    acceptanceWarn ? LightColors.warningDark : LightColors.successDark
                   }
+                  coaching={acceptanceWarn ? METRIC_EXPLAINERS.acceptance.coaching : undefined}
+                  onPress={() => openExplainer('acceptance')}
                 />
                 <StatBar
                   label="Completion"
-                  value={`${Math.round(runnerProfile?.completion_rate ?? 0)}%`}
-                  fraction={(runnerProfile?.completion_rate ?? 0) / 100}
-                  fill={
-                    (runnerProfile?.completion_rate ?? 0) < 80
-                      ? LightColors.warning
-                      : LightColors.success
-                  }
+                  value={`${Math.round(completionRate)}%`}
+                  fraction={completionRate / 100}
+                  fill={completionWarn ? LightColors.warning : LightColors.success}
                   valueColor={
-                    (runnerProfile?.completion_rate ?? 0) < 80
-                      ? LightColors.warningDark
-                      : LightColors.successDark
+                    completionWarn ? LightColors.warningDark : LightColors.successDark
                   }
+                  coaching={completionWarn ? METRIC_EXPLAINERS.completion.coaching : undefined}
+                  onPress={() => openExplainer('completion')}
                 />
-                <View className="flex-row items-center justify-between">
-                  <Text className="text-[13px] font-montserrat-semi text-textSecondary">
-                    Rating
-                  </Text>
-                  <View className="flex-row items-center" style={{ gap: 8 }}>
+                <View>
+                  <Pressable
+                    onPress={() => openExplainer('rating')}
+                    accessibilityRole="button"
+                    accessibilityLabel={`Rating, ${
+                      isUnrated ? 'New, no ratings yet' : avgRating.toFixed(1)
+                    }.${ratingWarn ? ` ${METRIC_EXPLAINERS.rating.coaching}` : ''} Tap to learn what this means.`}
+                    android_ripple={{ color: `${LightColors.primary}14` }}
+                    style={({ pressed }) => (pressed ? { opacity: 0.6 } : undefined)}
+                    className="flex-row items-center justify-between"
+                  >
+                    <View className="flex-row items-center" style={{ gap: 5 }}>
+                      <Text className="text-[13px] font-montserrat-semi text-textSecondary">
+                        Rating
+                      </Text>
+                      <Info size={13} color={LightColors.textTertiary} strokeWidth={2} />
+                    </View>
+                    <View className="flex-row items-center" style={{ gap: 8 }}>
+                      <Text
+                        className="text-[15px] font-inter-semi"
+                        style={{
+                          color: isUnrated
+                            ? LightColors.textTertiary
+                            : ratingIsGood
+                              ? LightColors.successDark
+                              : LightColors.warningDark,
+                        }}
+                      >
+                        {isUnrated ? 'New' : avgRating.toFixed(1)}
+                      </Text>
+                      {!isUnrated && (
+                        <RatingStars value={Math.round(avgRating)} size={14} readonly />
+                      )}
+                    </View>
+                  </Pressable>
+                  {ratingWarn ? (
                     <Text
-                      className="text-[15px] font-inter-semi"
-                      style={{
-                        color: isUnrated
-                          ? LightColors.textTertiary
-                          : ratingIsGood
-                            ? LightColors.successDark
-                            : LightColors.warningDark,
-                      }}
+                      className="text-[12px] font-montserrat mt-2 leading-4"
+                      style={{ color: LightColors.warningDark }}
                     >
-                      {isUnrated ? 'New' : avgRating.toFixed(1)}
+                      {METRIC_EXPLAINERS.rating.coaching}
                     </Text>
-                    {!isUnrated && (
-                      <RatingStars value={Math.round(avgRating)} size={14} readonly />
-                    )}
-                  </View>
+                  ) : null}
                 </View>
               </View>
               <View className="flex-row items-center justify-between pt-3">
@@ -581,6 +673,80 @@ export default function RunnerProfileScreen() {
           </Pressable>
         </KeyboardAvoidingView>
       </Modal>
+
+      {/* Performance explainer — short "what this is / why it matters"
+          sheet opened by tapping any metric. Current value + target keep
+          it grounded; the coaching tip repeats only while under threshold. */}
+      <BottomSheet
+        isVisible={explainer !== null}
+        onClose={() => setExplainer(null)}
+        snapPoints={[0.42]}
+      >
+        {explainer ? (
+          (() => {
+            const info = METRIC_EXPLAINERS[explainer];
+            const currentValue =
+              explainer === 'rating'
+                ? isUnrated
+                  ? 'New'
+                  : `${avgRating.toFixed(1)} ★`
+                : `${Math.round(
+                    explainer === 'acceptance' ? acceptanceRate : completionRate,
+                  )}%`;
+            const inWarning =
+              explainer === 'acceptance'
+                ? acceptanceWarn
+                : explainer === 'completion'
+                  ? completionWarn
+                  : ratingWarn;
+            return (
+              <View className="pt-1">
+                <View className="flex-row items-center justify-between mb-4">
+                  <Text className="text-[18px] font-montserrat-bold text-textPrimary">
+                    {info.title}
+                  </Text>
+                  <Text
+                    className="text-[16px] font-inter-semi"
+                    style={{
+                      color: inWarning ? LightColors.warningDark : LightColors.successDark,
+                    }}
+                  >
+                    {currentValue}
+                  </Text>
+                </View>
+
+                <Eyebrow className="mb-2">Why it matters</Eyebrow>
+                <Text className="text-[14px] font-montserrat text-textSecondary leading-5 mb-4">
+                  {info.why}
+                </Text>
+
+                <View className="flex-row items-start" style={{ gap: 8 }}>
+                  <View className="w-8 h-8 rounded-full bg-surfaceMuted items-center justify-center mt-0.5">
+                    <Star size={15} color={LightColors.primary} strokeWidth={2} />
+                  </View>
+                  <View className="flex-1">
+                    <Text className="text-[13px] font-montserrat-bold text-textPrimary">
+                      {info.target}
+                    </Text>
+                    {inWarning ? (
+                      <Text
+                        className="text-[13px] font-montserrat mt-1 leading-5"
+                        style={{ color: LightColors.warningDark }}
+                      >
+                        {info.coaching}
+                      </Text>
+                    ) : (
+                      <Text className="text-[13px] font-montserrat text-textSecondary mt-1 leading-5">
+                        You're on track — keep it up.
+                      </Text>
+                    )}
+                  </View>
+                </View>
+              </View>
+            );
+          })()
+        ) : null}
+      </BottomSheet>
 
       <LogoutSplash visible={loggingOut} />
     </View>

@@ -10,8 +10,10 @@ import {
   Animated,
   Easing,
   Share,
+  Modal,
   useWindowDimensions,
 } from 'react-native';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Image as ExpoImage } from 'expo-image';
 import * as Haptics from 'expo-haptics';
 import { useRouter, useLocalSearchParams } from 'expo-router';
@@ -28,6 +30,7 @@ import {
   Crosshair,
   MapPin,
   SearchX,
+  Flag,
   X,
 } from 'lucide-react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -59,6 +62,7 @@ import { RatingStars } from '../../../components/ui/RatingStars';
 import { StatusTimeline } from '../../../components/ui/StatusTimeline';
 import { JourneyBeads } from '../../../components/ui/JourneyBeads';
 import { Button } from '../../../components/ui/Button';
+import { SlideToConfirm } from '../../../components/ui/SlideToConfirm';
 import { Illustration } from '../../../components/ui/Illustration';
 import { ErrorState } from '../../../components/ui/ErrorState';
 import { ConfirmModal } from '../../../components/ui/ConfirmModal';
@@ -211,6 +215,11 @@ export default function TrackingScreen() {
   // to the misleading "Booking not found" dead-end with no retry.
   const [loadError, setLoadError] = useState(false);
   const [sosActive, setSosActive] = useState(false);
+  // SlideToConfirm latches after a completed slide (its completedRef never
+  // re-arms itself); bump this key on a FAILED stand-down so the slider
+  // remounts fresh and the retry the toast promises actually works — mirrors
+  // the runner errand screen's slideResetKey.
+  const [standDownResetKey, setStandDownResetKey] = useState(0);
   const [routeCoords, setRouteCoords] = useState<[number, number][]>([]);
   // null = idle, 'loading' = first fetch in flight, 'error' = last fetch
   // failed (e.g. 401/429/network). Surfaces a user-facing retry chip.
@@ -234,6 +243,51 @@ export default function TrackingScreen() {
   const [previewLoading, setPreviewLoading] = useState(false);
   const [showSOSModal, setShowSOSModal] = useState(false);
   const [sosSubmitting, setSosSubmitting] = useState(false);
+  // Cached count of the customer's trusted contacts (@trusted_contacts_cache,
+  // written by the trusted-contacts screen). null = not yet read / never
+  // visited. Only tunes the SOS modal's honesty copy, so a cache-only read
+  // with a stale value is fine — we never block the emergency flow on a fetch.
+  const [trustedCount, setTrustedCount] = useState<number | null>(null);
+  // Live-SOS stand-down state. triggeredAt drives the elapsed readout; the
+  // notified list is whatever the alert response actually reached (the SMS
+  // job is a no-op today, so we only claim contacts when the server does);
+  // sosNow ticks the elapsed clock; deactivatingSOS locks the "I'm safe" slide.
+  const [sosTriggeredAt, setSosTriggeredAt] = useState<number | null>(null);
+  const [sosContactsNotified, setSosContactsNotified] = useState<string[]>([]);
+  const [sosNow, setSosNow] = useState(() => Date.now());
+  const [deactivatingSOS, setDeactivatingSOS] = useState(false);
+
+  // Read the cached trusted-contacts count once so the SOS modal can tell the
+  // truth about who actually gets alerted. Cache-only, no network: the number
+  // only tunes copy. Unknown/malformed cache leaves trustedCount null, which
+  // the modal treats as zero — we never promise contacts we can't confirm.
+  useEffect(() => {
+    let cancelled = false;
+    AsyncStorage.getItem('@trusted_contacts_cache')
+      .then((raw) => {
+        if (cancelled || !raw) return;
+        try {
+          const parsed = JSON.parse(raw);
+          if (Array.isArray(parsed)) setTrustedCount(parsed.length);
+        } catch {
+          // Malformed cache — leave trustedCount null (treated as zero).
+        }
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  // Tick the elapsed clock once a second while an SOS is live so the
+  // stand-down card's "active for" readout stays current. Runs only while
+  // sosActive — a finished/cancelled alert holds no timer.
+  useEffect(() => {
+    if (!sosActive) return;
+    setSosNow(Date.now());
+    const t = setInterval(() => setSosNow(Date.now()), 1000);
+    return () => clearInterval(t);
+  }, [sosActive]);
   // HERE tiles are billable, so the map mounts on a phase gate instead of a
   // blanket opt-in: auto-mount during the en-route phases (MAP_PHASES),
   // ref-latched hold through the arrived_* pauses, never on terminal
@@ -892,10 +946,27 @@ export default function TrackingScreen() {
     if (!id || sosSubmitting) return;
     setSosSubmitting(true);
     try {
-      await bookingService.triggerSOS(id);
+      const res = await bookingService.triggerSOS(id);
+      // The backend SMS job is currently a no-op, so we only claim contacts
+      // were notified when the alert response actually lists them. Anything
+      // else falls back to the honest support-only messaging below.
+      const notified = (res?.data as any)?.data?.contacts_notified;
+      const contacts: string[] = Array.isArray(notified)
+        ? notified.filter(
+            (c: unknown): c is string => typeof c === 'string' && c.length > 0,
+          )
+        : [];
+      setSosContactsNotified(contacts);
+      setSosTriggeredAt(Date.now());
+      setSosNow(Date.now());
       setSosActive(true);
       setShowSOSModal(false);
-      toast.success('Emergency contacts notified');
+      haptics.warning();
+      toast.success(
+        contacts.length > 0
+          ? `SOS sent to ErrandGuy support and ${contacts.length} contact${contacts.length === 1 ? '' : 's'}`
+          : 'SOS sent to ErrandGuy support',
+      );
     } catch (err) {
       haptics.error();
       toast.error(errorMessage(err, copy.safety.sosFailed));
@@ -903,6 +974,47 @@ export default function TrackingScreen() {
       setSosSubmitting(false);
     }
   }, [id, sosSubmitting]);
+
+  // "I'm safe" stand-down — deactivateSOS is fully wired server-side. Clears
+  // the local active-SOS state on success so the footer returns to the normal
+  // SOS/cancel controls. Re-entrancy guarded so a double-slide can't fire two
+  // DELETEs.
+  const handleStandDown = useCallback(async () => {
+    if (!id || deactivatingSOS) return;
+    setDeactivatingSOS(true);
+    try {
+      await bookingService.deactivateSOS(id);
+      setSosActive(false);
+      setSosTriggeredAt(null);
+      setSosContactsNotified([]);
+      haptics.success();
+      toast.success('Alert cancelled — glad you’re safe');
+    } catch (err) {
+      haptics.error();
+      // Re-arm the (otherwise permanently latched) slider so a retry works.
+      setStandDownResetKey((k) => k + 1);
+      toast.error(errorMessage(err, 'Couldn’t cancel the alert. Please try again.'));
+    } finally {
+      setDeactivatingSOS(false);
+    }
+  }, [id, deactivatingSOS]);
+
+  // Report-a-problem deep link. Pre-seeds the support composer with this
+  // booking (category + booking_number). The composer doesn't consume these
+  // params yet (flagged in the report) — until it does the user lands on the
+  // support inbox and taps "New ticket". Passing the params now is harmless
+  // and makes the deep link light up the moment support reads them.
+  const handleReportProblem = useCallback(
+    (category: 'booking' | 'safety') => {
+      if (!booking) return;
+      haptics.selection();
+      router.push({
+        pathname: '/(customer)/support',
+        params: { category, booking_number: booking.booking_number },
+      });
+    },
+    [booking, router],
+  );
 
   const handleCall = useCallback(() => {
     const phone = booking?.runner?.phone ?? null;
@@ -1222,6 +1334,29 @@ export default function TrackingScreen() {
 
   const arrivedPinHero =
     booking.status === 'arrived_at_pickup' || booking.status === 'arrived_at_dropoff';
+
+  // ── SOS presentation ──────────────────────────────────────────────────
+  // trustedCount null (unknown/never-visited) is treated as zero so we never
+  // promise contacts we can't confirm — the modal then leads with the honest
+  // "no trusted contacts yet" copy and offers the add-a-contact link.
+  const hasTrustedContacts = (trustedCount ?? 0) > 0;
+  // Elapsed since trigger, mm ss / ss. tabular-nums on the readout keeps it
+  // from twitching as the digits change.
+  const sosElapsedLabel = (() => {
+    if (!sosTriggeredAt) return null;
+    const secs = Math.max(0, Math.floor((sosNow - sosTriggeredAt) / 1000));
+    const m = Math.floor(secs / 60);
+    const s = secs % 60;
+    return m > 0 ? `${m}m ${s}s` : `${s}s`;
+  })();
+  // Who the alert actually reached. Only names contacts when the server
+  // confirmed them (contacts_notified); support is always in the loop.
+  const sosAlertedLabel =
+    sosContactsNotified.length > 0
+      ? `ErrandGuy support and ${sosContactsNotified.length} trusted contact${
+          sosContactsNotified.length === 1 ? '' : 's'
+        }`
+      : 'ErrandGuy support';
 
   // Receipt tone — glyph + wash per terminal outcome. Shape (Check / X /
   // SearchX) distinguishes the outcomes, not color alone.
@@ -1638,6 +1773,26 @@ export default function TrackingScreen() {
         </Text>
       </View>
     ) : null;
+
+  // Quiet report-a-problem link — routes to the support composer pre-seeded
+  // with this booking. Safety category while an SOS is live, otherwise a plain
+  // booking issue. Deliberately understated (textSecondary, no card) so it
+  // never competes with the primary flow.
+  const reportProblemLink = (
+    <Pressable
+      onPress={() => handleReportProblem(sosActive ? 'safety' : 'booking')}
+      accessibilityRole="button"
+      accessibilityLabel="Report a problem with this errand"
+      hitSlop={{ top: 12, bottom: 12, left: 8, right: 8 }}
+      className="flex-row items-center justify-center mt-4 mb-1"
+      style={({ pressed }) => pressFx(pressed)}
+    >
+      <Flag size={13} color={LightColors.textTertiary} strokeWidth={2} />
+      <Text className="ml-1.5 text-[12px] font-montserrat-semi text-textSecondary">
+        Report a problem
+      </Text>
+    </Pressable>
+  );
 
   return (
     <View style={{ flex: 1, backgroundColor: LightColors.background }}>
@@ -2270,13 +2425,14 @@ export default function TrackingScreen() {
           )
         }
         footer={
-          // SOS stays through 'delivered' (post-dropoff safety window) and
-          // only drops on completed/cancelled/no_runner — isLiveBooking is
-          // exactly that set. Terminal receipts with nothing to show render
-          // no footer at all (zero dead chrome).
-          (isTransportation && !sosActive && isLiveBooking) || sosActive || canCancel ? (
+          // SOS is now available on ANY live errand (not just transportation)
+          // — safety is not vehicle-specific. It stays through 'delivered'
+          // (post-dropoff safety window) and only drops on
+          // completed/cancelled/no_runner — isLiveBooking is exactly that set.
+          // Terminal receipts with nothing to show render no footer at all.
+          (!sosActive && isLiveBooking) || sosActive || canCancel ? (
             <View style={{ gap: 8 }}>
-              {isTransportation && !sosActive && isLiveBooking && (
+              {!sosActive && isLiveBooking && (
                 <Button
                   title="Emergency SOS"
                   variant="danger"
@@ -2286,10 +2442,37 @@ export default function TrackingScreen() {
                 />
               )}
               {sosActive && (
-                <View className="bg-dangerSoft border border-danger rounded-xl p-3 items-center">
-                  <Text className="text-sm font-montserrat-bold text-dangerDark">
-                    SOS Active — Help is on the way
+                <View className="bg-dangerSoft border border-danger rounded-2xl p-4">
+                  <View className="flex-row items-center mb-1">
+                    <Shield size={18} color={LightColors.dangerDark} strokeWidth={2.4} />
+                    <Text className="ml-2 text-[15px] font-montserrat-bold text-dangerDark">
+                      SOS active
+                    </Text>
+                    {sosElapsedLabel ? (
+                      <Text
+                        className="ml-auto text-[12px] font-montserrat-semi text-dangerDark"
+                        style={{ fontVariant: ['tabular-nums'] }}
+                        maxFontSizeMultiplier={1.3}
+                      >
+                        {sosElapsedLabel}
+                      </Text>
+                    ) : null}
+                  </View>
+                  <Text
+                    className="text-[12px] font-montserrat text-dangerDark mb-3"
+                    style={{ lineHeight: 17 }}
+                    maxFontSizeMultiplier={1.3}
+                  >
+                    Alerted {sosAlertedLabel}. Stay safe — only stand down below
+                    once you&apos;re out of danger.
                   </Text>
+                  <SlideToConfirm
+                    key={`sos-standdown-${standDownResetKey}`}
+                    label="I’m safe — cancel alert"
+                    onComplete={handleStandDown}
+                    loading={deactivatingSOS}
+                    color={LightColors.dangerDark}
+                  />
                 </View>
               )}
               {canCancel && (
@@ -2378,6 +2561,7 @@ export default function TrackingScreen() {
                   surfaces on a delivered shopping receipt — same as the old
                   unconditional-in-body render. */}
               {shoppingPaidNotice}
+              {reportProblemLink}
             </>
           ) : (
             <>
@@ -2404,6 +2588,7 @@ export default function TrackingScreen() {
               {tripRouteSection}
               {detailsSection}
               {shoppingPaidNotice}
+              {reportProblemLink}
             </>
           )}
         </ScrollView>
@@ -2437,18 +2622,102 @@ export default function TrackingScreen() {
         }}
       />
 
-      {/* SOS confirmation */}
-      <ConfirmModal
+      {/* SOS confirmation — a custom dialog (not ConfirmModal) so the copy can
+          tell the truth about who actually gets alerted and, when the customer
+          has no trusted contacts, offer an inline link to add one. */}
+      <Modal
         visible={showSOSModal}
-        title="Emergency SOS"
-        message="This will alert your trusted contacts and our support team. Continue?"
-        confirmLabel="Trigger SOS"
-        cancelLabel="Cancel"
-        destructive
-        loading={sosSubmitting}
-        onConfirm={confirmSOS}
-        onCancel={() => setShowSOSModal(false)}
-      />
+        transparent
+        animationType="fade"
+        statusBarTranslucent
+        onRequestClose={sosSubmitting ? undefined : () => setShowSOSModal(false)}
+      >
+        <Pressable
+          style={{
+            flex: 1,
+            justifyContent: 'center',
+            alignItems: 'center',
+            paddingHorizontal: 24,
+            backgroundColor: `${LightColors.ink}73`,
+          }}
+          onPress={sosSubmitting ? undefined : () => setShowSOSModal(false)}
+        >
+          <Pressable
+            onPress={(e) => e.stopPropagation()}
+            style={{ width: '100%', maxWidth: 380 }}
+          >
+            <View
+              style={{
+                backgroundColor: LightColors.surface,
+                borderRadius: 20,
+                paddingHorizontal: 24,
+                paddingTop: 26,
+                paddingBottom: 22,
+              }}
+            >
+              <View className="items-center mb-3">
+                <View
+                  className="w-14 h-14 rounded-full items-center justify-center mb-3"
+                  style={{ backgroundColor: LightColors.dangerSoft }}
+                >
+                  <Shield size={26} color={LightColors.dangerDark} strokeWidth={2.2} />
+                </View>
+                <Text
+                  className="text-[17px] font-montserrat-bold text-textPrimary text-center"
+                  maxFontSizeMultiplier={1.3}
+                >
+                  Emergency SOS
+                </Text>
+              </View>
+              <Text
+                className="text-[14px] font-montserrat text-textSecondary text-center"
+                style={{ lineHeight: 21 }}
+                maxFontSizeMultiplier={1.4}
+              >
+                {hasTrustedContacts
+                  ? 'This alerts ErrandGuy support and your trusted contacts with your live location. Continue?'
+                  : 'You have no trusted contacts yet — SOS still alerts ErrandGuy support with your live location.'}
+              </Text>
+              {!hasTrustedContacts && (
+                <Pressable
+                  onPress={() => {
+                    setShowSOSModal(false);
+                    haptics.selection();
+                    router.push('/(customer)/trusted-contacts');
+                  }}
+                  accessibilityRole="button"
+                  accessibilityLabel="Add a trusted contact"
+                  hitSlop={{ top: 10, bottom: 10, left: 8, right: 8 }}
+                  className="mt-3 self-center"
+                  style={({ pressed }) => pressFx(pressed)}
+                >
+                  <Text className="text-[13px] font-montserrat-bold text-primary text-center">
+                    Add a contact
+                  </Text>
+                </Pressable>
+              )}
+              <View style={{ gap: 10, marginTop: 20 }}>
+                <Button
+                  title="Trigger SOS"
+                  loadingTitle="Sending…"
+                  variant="danger"
+                  fullWidth
+                  loading={sosSubmitting}
+                  disabled={sosSubmitting}
+                  onPress={confirmSOS}
+                />
+                <Button
+                  title="Cancel"
+                  variant="ghost"
+                  fullWidth
+                  disabled={sosSubmitting}
+                  onPress={() => setShowSOSModal(false)}
+                />
+              </View>
+            </View>
+          </Pressable>
+        </Pressable>
+      </Modal>
     </View>
   );
 }

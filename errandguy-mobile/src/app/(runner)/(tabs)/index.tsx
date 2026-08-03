@@ -74,6 +74,73 @@ import { LightColors, Elevation } from '../../../constants/colors';
 const pesos = (v: number) => `₱${Math.round(v).toLocaleString('en-PH')}`;
 
 /**
+ * Shape of GET /runner/peak-hours `data` — mirrors PeakHoursData in demand.tsx.
+ * grid[dow 0=Sun..6=Sat][hour 0..23] holds booking counts over `days`.
+ */
+interface PeakHoursData {
+  days: number;
+  grid: number[][];
+}
+
+// A slot counts as "busy" (top-tier) when its count reaches this fraction of
+// the busiest slot in the grid — matches the top of the demand heatmap's
+// density scale so the home nudge and the Busy-areas screen agree on "busy".
+const BUSY_THRESHOLD = 0.66;
+
+const DAY_FULL = [
+  'Sunday',
+  'Monday',
+  'Tuesday',
+  'Wednesday',
+  'Thursday',
+  'Friday',
+  'Saturday',
+];
+
+/** Compact readable hour, e.g. `2pm`, `12am`. Mirrors demand.tsx hourA11y. */
+function hourWords(h: number): string {
+  const suffix = h < 12 ? 'am' : 'pm';
+  const hr = h % 12 === 0 ? 12 : h % 12;
+  return `${hr}${suffix}`;
+}
+
+/** Largest booking count anywhere in the grid (0 when empty/absent). */
+function peakGridMax(grid: number[][] | null | undefined): number {
+  if (!grid) return 0;
+  let m = 0;
+  for (const row of grid) for (const c of row) if (c > m) m = c;
+  return m;
+}
+
+/**
+ * Next upcoming busy (top-tier) slot relative to `from`, scanning the coming
+ * week hour-by-hour. Returns a friendly label like "6pm today", "9am tomorrow"
+ * or "Friday 6pm", or null when the grid has no demand to speak of.
+ */
+function nextPeakLabel(
+  grid: number[][] | null | undefined,
+  max: number,
+  from: Date,
+): string | null {
+  if (!grid || max <= 0) return null;
+  const startOfToday = new Date(from);
+  startOfToday.setHours(0, 0, 0, 0);
+  for (let offset = 1; offset <= 24 * 7; offset++) {
+    const t = new Date(from.getTime() + offset * 3_600_000);
+    const count = grid[t.getDay()]?.[t.getHours()] ?? 0;
+    if (count / max < BUSY_THRESHOLD) continue;
+    const hr = hourWords(t.getHours());
+    const startOfT = new Date(t);
+    startOfT.setHours(0, 0, 0, 0);
+    const dayDiff = Math.round((startOfT.getTime() - startOfToday.getTime()) / 86_400_000);
+    if (dayDiff === 0) return `${hr} today`;
+    if (dayDiff === 1) return `${hr} tomorrow`;
+    return `${DAY_FULL[t.getDay()]} ${hr}`;
+  }
+  return null;
+}
+
+/**
  * Runner Home — radically simplified.
  *
  * Old version stacked: header → verification banner → big online button
@@ -210,6 +277,14 @@ export default function RunnerHomeScreen() {
     ['runner', 'errand', 'current', userId],
     async () => ((await runnerService.getCurrentErrand()).data.data ?? null) as Booking | null,
     { staleTime: 30_000, ttl: CacheTTL.SHORT, enabled },
+  );
+  // Live demand — SAME key/args/TTL as demand.tsx's peakQ so the two share one
+  // cache entry and one in-flight request (no extra fetch just to power the
+  // go-online nudge). grid[dow 0=Sun..6=Sat][hour 0..23] = booking counts.
+  const peakHoursQ = useQuery<PeakHoursData>(
+    ['runner', 'peak-hours', 30],
+    async () => (await runnerService.getPeakHours(30)).data.data,
+    { staleTime: CacheTTL.MEDIUM, ttl: CacheTTL.LONG, enabled },
   );
 
   const recentErrands = (historyQ.data ?? []).slice(0, 3);
@@ -532,6 +607,23 @@ export default function RunnerHomeScreen() {
       : Date.now() - lastUpdatedAt < 60_000
       ? 'Updated just now'
       : `Updated ${formatRelativeTime(new Date(lastUpdatedAt))}`;
+
+  // Live-demand nudge. Reads THIS hour against the shared peak-hours grid: the
+  // current cell is "busy" when it hits the top tier of the whole grid. Both
+  // derivations recompute each render; the minute-tick above keeps them honest
+  // as the hour rolls over while the screen stays open. Falls back to nothing
+  // (no banner, no hint) whenever the grid is absent or has no demand.
+  const peakGrid = peakHoursQ.data?.grid ?? null;
+  const demandMax = peakGridMax(peakGrid);
+  const now = new Date();
+  const currentDemand = peakGrid ? peakGrid[now.getDay()]?.[now.getHours()] ?? 0 : 0;
+  const isBusyNow = demandMax > 0 && currentDemand / demandMax >= BUSY_THRESHOLD;
+  const upcomingPeak = nextPeakLabel(peakGrid, demandMax, now);
+  // Offline + it's a busy slot right now — the opportunity nudge.
+  const showBusyNudge = canGoOnline && !activeErrand && !isOnline && isBusyNow;
+  // Online + idle + we know when the next peak is — the softer hint.
+  const showPeakHint =
+    canGoOnline && !activeErrand && isOnline && negotiateOffers.length === 0 && !!upcomingPeak;
 
   return (
     <View className="flex-1 bg-background">
@@ -908,6 +1000,37 @@ export default function RunnerHomeScreen() {
           </View>
         )}
 
+        {/* Live-demand nudge — it's a busy slot right now and the runner is
+            offline. Accent gold frames it as an EARNINGS OPPORTUNITY (not a
+            warning); the action reuses the same go-online handler as the hero
+            power toggle. Suppressed entirely when the grid is absent/quiet. */}
+        {showBusyNudge && (
+          <View className="px-5 pt-5">
+            <View className="bg-accentSoft border border-accent/40 rounded-2xl px-4 py-4 flex-row items-center">
+              <View className="w-10 h-10 rounded-full bg-accent/20 items-center justify-center mr-3">
+                <TrendingUp size={20} color={LightColors.accentDark} strokeWidth={2.2} />
+              </View>
+              <View className="flex-1 mr-3">
+                <Text className="text-[13px] font-montserrat-bold text-accentDark">
+                  It&apos;s busy right now
+                </Text>
+                <Text className="text-[11px] font-montserrat text-accentDark/80 mt-0.5">
+                  Go online to catch errands near you.
+                </Text>
+              </View>
+              <Button
+                title="Go online"
+                size="sm"
+                icon={Power}
+                loading={togglingOnline}
+                loadingTitle="Going online…"
+                disabled={togglingOnline}
+                onPress={() => handleToggleOnline(true)}
+              />
+            </View>
+          </View>
+        )}
+
         {/* Idle state — nothing in progress. A calm illustration fills the
             area under the toggle: OFFLINE nudges the runner to go online,
             ONLINE-with-no-offers reassures that we're listening. Only for
@@ -927,6 +1050,21 @@ export default function RunnerHomeScreen() {
                 ? 'Sit tight — we’ll ping you the moment a nearby errand comes in.'
                 : 'Tap the power button above to start receiving errands.'}
             </Text>
+            {/* Softer live-demand hint while online + idle: when the next busy
+                slot is known, point to it so a quiet spell still feels
+                actionable. Neutral chrome (bg-surfaceMuted, blue glyph) — this
+                is context, not the opportunity call-to-action above. */}
+            {showPeakHint && (
+              <View className="flex-row items-center mt-3 bg-surfaceMuted rounded-full pl-2.5 pr-3.5 py-1.5">
+                <TrendingUp size={13} color={LightColors.primary} strokeWidth={2} />
+                <Text
+                  className="text-[11px] font-montserrat-bold text-textSecondary ml-1.5"
+                  accessibilityLabel={`Busiest around ${upcomingPeak}`}
+                >
+                  Busiest around {upcomingPeak}
+                </Text>
+              </View>
+            )}
           </View>
         )}
 

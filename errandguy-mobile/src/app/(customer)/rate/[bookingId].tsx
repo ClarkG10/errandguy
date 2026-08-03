@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   View,
   Text,
@@ -9,7 +9,7 @@ import {
   AccessibilityInfo,
 } from 'react-native';
 import { useRouter, useLocalSearchParams } from 'expo-router';
-import { CheckCircle } from 'lucide-react-native';
+import { CheckCircle, Repeat, Gift } from 'lucide-react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import * as Haptics from 'expo-haptics';
 import { useBookingStore } from '../../../stores/bookingStore';
@@ -56,6 +56,7 @@ export default function RateScreen() {
   const reduceMotion = useReducedMotion();
   const { bookingId } = useLocalSearchParams<{ bookingId: string }>();
   const setActiveBooking = useBookingStore((s) => s.setActiveBooking);
+  const clearDraft = useBookingStore((s) => s.clearDraft);
 
   const [booking, setBooking] = useState<Booking | null>(null);
   // 'loading' → skeleton receipt; 'error' → compact retry row; 'ready' →
@@ -67,6 +68,22 @@ export default function RateScreen() {
   // Post-submit celebration overlay — shown briefly (SuccessCheck fires
   // its own success haptic), then we navigate home from onDone.
   const [showSuccess, setShowSuccess] = useState(false);
+  // Once the check animation settles we reveal a couple of calm, optional
+  // next-steps (Book again / Invite a friend) under the celebration. They
+  // never block the auto-return — a pending timer still carries the user
+  // home; tapping a step (or "Not now") just pre-empts and clears it.
+  const [showNextSteps, setShowNextSteps] = useState(false);
+  const autoReturnTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const cancelAutoReturn = useCallback(() => {
+    if (autoReturnTimer.current) {
+      clearTimeout(autoReturnTimer.current);
+      autoReturnTimer.current = null;
+    }
+  }, []);
+
+  // Never leave a timer running if the screen unmounts mid-celebration.
+  useEffect(() => cancelAutoReturn, [cancelAutoReturn]);
 
   const fetchBooking = useCallback(() => {
     if (!bookingId) return;
@@ -85,9 +102,36 @@ export default function RateScreen() {
   }, [fetchBooking]);
 
   const finishAndGoHome = useCallback(() => {
+    cancelAutoReturn();
     setActiveBooking(null);
     router.replace('/(customer)/(tabs)');
-  }, [setActiveBooking, router]);
+  }, [cancelAutoReturn, setActiveBooking, router]);
+
+  // Re-book the same errand type — clear the finished booking + any stale
+  // draft, then seed the type picker with this errand's type (the same
+  // startBooking recipe used on Home). Replace, not push: the rate screen
+  // is done, so it shouldn't linger in the back stack behind the funnel.
+  const handleBookAgain = useCallback(() => {
+    cancelAutoReturn();
+    haptics.light();
+    clearDraft();
+    setActiveBooking(null);
+    router.replace(
+      booking?.errand_type_id
+        ? {
+            pathname: '/(customer)/book/type',
+            params: { preselected: booking.errand_type_id },
+          }
+        : '/(customer)/book/type',
+    );
+  }, [cancelAutoReturn, clearDraft, setActiveBooking, router, booking?.errand_type_id]);
+
+  const handleInvite = useCallback(() => {
+    cancelAutoReturn();
+    haptics.light();
+    setActiveBooking(null);
+    router.replace('/(customer)/referral');
+  }, [cancelAutoReturn, setActiveBooking, router]);
 
   const handleSubmit = useCallback(async () => {
     if (!bookingId || rating === 0) return;
@@ -358,13 +402,56 @@ export default function RateScreen() {
           <SuccessCheck
             size={72}
             celebrate
-            // Small extra beat after the animation settles so the copy is
-            // actually readable before the screen swaps away.
-            onDone={() => setTimeout(finishAndGoHome, 450)}
+            // Once the check settles, reveal the optional next-steps and arm
+            // a gentle auto-return. The timer still carries the user home on
+            // its own — the steps are a choice, not a gate — but it runs long
+            // enough (~6s) that tapping one is realistic.
+            onDone={() => {
+              setShowNextSteps(true);
+              autoReturnTimer.current = setTimeout(finishAndGoHome, 6000);
+            }}
           />
           <Text className="text-lg font-montserrat-bold text-textPrimary mt-5">
             Thanks for the feedback!
           </Text>
+
+          {/* Re-engage at peak satisfaction — two honest next-steps.
+              Rendered graceful: Book again only appears once we know the
+              errand type; Invite always works. Both fall through to the
+              auto-return if the user does nothing. */}
+          {showNextSteps && (
+            <View className="w-full px-8 mt-8 gap-3">
+              {booking?.errand_type_id ? (
+                <Button
+                  title="Book again"
+                  icon={Repeat}
+                  onPress={handleBookAgain}
+                  accessibilityHint="Start a new booking of the same errand type"
+                  fullWidth
+                />
+              ) : null}
+              <Button
+                title="Invite a friend — you both earn credit"
+                variant="secondary"
+                icon={Gift}
+                onPress={handleInvite}
+                accessibilityHint="Share your referral code"
+                fullWidth
+              />
+              <Pressable
+                className="items-center py-2 mt-1"
+                onPress={finishAndGoHome}
+                accessibilityRole="button"
+                accessibilityLabel="Not now, go home"
+                hitSlop={8}
+                style={({ pressed }) => pressFx(pressed)}
+              >
+                <Text className="text-sm font-montserrat text-textSecondary">
+                  Not now
+                </Text>
+              </Pressable>
+            </View>
+          )}
         </View>
       )}
     </SafeAreaView>

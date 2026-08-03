@@ -123,12 +123,18 @@ export function PhotoProofModal({ type, onConfirm, onClose }: PhotoProofModalPro
                   <Camera size={40} color={LightColors.primary} />
                   <Text style={s.captureLabel}>Take Photo</Text>
                 </Pressable>
-                <Button
-                  title="Choose from Gallery"
-                  variant="outline"
-                  onPress={handleGallery}
-                  fullWidth
-                />
+                {/* Delivery proof is camera-only: a hand-off photo must be
+                    captured live at the drop-off, so the gallery picker (which
+                    would let a stale/screenshot image stand in) is hidden.
+                    Pickup proof keeps the gallery option. */}
+                {type !== 'delivery' && (
+                  <Button
+                    title="Choose from Gallery"
+                    variant="outline"
+                    onPress={handleGallery}
+                    fullWidth
+                  />
+                )}
               </View>
             ) : (
               <View>

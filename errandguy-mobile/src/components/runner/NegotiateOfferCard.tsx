@@ -4,6 +4,7 @@ import { MapPin, Clock, Navigation } from 'lucide-react-native';
 import * as Haptics from 'expo-haptics';
 import { Card } from '../ui/Card';
 import { Badge } from '../ui/Badge';
+import { PickupDistanceLine } from './PickupDistanceLine';
 import { formatCurrency } from '../../utils/formatCurrency';
 import { getErrandTypeRule } from '../../constants/errandTypeRules';
 import type { Booking } from '../../types';
@@ -74,6 +75,12 @@ export function NegotiateOfferCard({ booking, onPress }: NegotiateOfferCardProps
             </Text>
           </View>
         )}
+
+        {/* Live distance to the pickup — the key accept signal, distinct
+            from the trip distance below. Hides when location is unknown. */}
+        <View className="mb-2">
+          <PickupDistanceLine booking={booking} />
+        </View>
 
         <View className="flex-row items-center justify-between">
           <Text className="text-xs font-inter tabular-nums text-textSecondary">
