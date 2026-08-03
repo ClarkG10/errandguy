@@ -8,6 +8,7 @@ use App\Models\AdminUser;
 use App\Models\Review;
 use App\Support\AdminActivity;
 use Filament\Actions\Action;
+use Filament\Actions\BulkAction;
 use Filament\Actions\DeleteAction;
 use Filament\Actions\ViewAction;
 use Filament\Support\Icons\Heroicon;
@@ -15,6 +16,7 @@ use Filament\Tables\Columns\IconColumn;
 use Filament\Tables\Columns\TextColumn;
 use Filament\Tables\Filters\TernaryFilter;
 use Filament\Tables\Table;
+use Illuminate\Support\Collection;
 
 class ReviewsTable
 {
@@ -48,6 +50,55 @@ class ReviewsTable
                     'Flagged' => fn (Review $r): bool => (bool) $r->is_flagged,
                     'Created' => fn (Review $r) => $r->created_at,
                 ]),
+            ])
+            ->toolbarActions([
+                BulkAction::make('unflagSelected')
+                    ->label('Unflag selected')
+                    ->icon(Heroicon::OutlinedExclamationTriangle)
+                    ->color('gray')
+                    ->requiresConfirmation()
+                    ->modalDescription('Clears the flag on every selected review that is currently flagged.')
+                    ->deselectRecordsAfterCompletion()
+                    ->action(function (Collection $records): void {
+                        $unflagged = 0;
+                        foreach ($records as $record) {
+                            if (! $record->is_flagged) {
+                                continue;
+                            }
+                            $record->update(['is_flagged' => false]);
+                            AdminActivity::log('review.unflagged', $record, ['via' => 'bulk']);
+                            $unflagged++;
+                        }
+                        // Per-record audit already written in the loop above, so
+                        // this is a count-only confirmation (no audit param).
+                        AdminNotify::success(
+                            $unflagged.' review'.($unflagged === 1 ? '' : 's').' unflagged',
+                            note: $unflagged === 0 ? 'None of the selected reviews were flagged.' : null,
+                        );
+                    }),
+
+                BulkAction::make('deleteSelected')
+                    ->label('Delete selected')
+                    ->icon(Heroicon::OutlinedXCircle)
+                    ->color('danger')
+                    ->requiresConfirmation()
+                    ->modalDescription('Permanently deletes every selected review.')
+                    ->visible(fn (): bool => auth('admin')->user()?->hasAnyRole(
+                        AdminUser::ROLE_SUPER_ADMIN,
+                        AdminUser::ROLE_ADMIN,
+                    ) ?? false)
+                    ->deselectRecordsAfterCompletion()
+                    ->action(function (Collection $records): void {
+                        $deleted = 0;
+                        foreach ($records as $record) {
+                            AdminActivity::log('review.deleted', $record, ['via' => 'bulk']);
+                            $record->delete();
+                            $deleted++;
+                        }
+                        AdminNotify::success(
+                            $deleted.' review'.($deleted === 1 ? '' : 's').' deleted',
+                        );
+                    }),
             ])
             ->recordActions([
                 ViewAction::make(),

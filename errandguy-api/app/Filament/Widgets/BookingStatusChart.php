@@ -2,6 +2,7 @@
 
 namespace App\Filament\Widgets;
 
+use App\Filament\Resources\Bookings\BookingResource;
 use App\Models\Booking;
 use App\Support\AdminCache;
 use Filament\Support\RawJs;
@@ -10,14 +11,17 @@ use Filament\Widgets\ChartWidget;
 /**
  * Live pipeline: in-flight bookings broken down by their current status, so ops
  * can see where work is piling up (e.g. many "matched" but few "picked_up").
+ * Auto-refreshes and each segment deep-links into that status-filtered list.
  */
 class BookingStatusChart extends ChartWidget
 {
     protected static ?int $sort = 4;
 
+    protected ?string $pollingInterval = '30s';
+
     protected ?string $heading = 'Live pipeline';
 
-    protected ?string $description = 'In-flight bookings by current status.';
+    protected ?string $description = 'In-flight bookings by current status — click a segment to open that filtered list.';
 
     protected int|string|array $columnSpan = ['default' => 'full', 'lg' => 2];
 
@@ -83,10 +87,34 @@ class BookingStatusChart extends ChartWidget
 
     protected function getOptions(): RawJs
     {
-        return RawJs::make(<<<'JS'
+        // Map each human label to its status-filtered Bookings list, matching the
+        // tableFilters deep-link idiom used by the ActionQueue widget. Keyed by
+        // label so it stays correct regardless of which zero-count segments the
+        // dataset drops; the empty-state label simply has no entry (no-op click).
+        $urls = [];
+        foreach (self::STATUSES as $status => [$label, $hex]) {
+            $urls[$label] = BookingResource::getUrl('index', ['tableFilters' => ['status' => ['value' => $status]]]);
+        }
+
+        // Chart.js onClick is the click mechanism Filament v4's ChartWidget
+        // exposes (options are passed straight into the Chart config, same as the
+        // RawJs tooltip callbacks in PaymentMixChart). Filament has no first-class
+        // segment-click-to-navigate API in this version, so we navigate directly.
+        $urlsJson = json_encode($urls, JSON_UNESCAPED_SLASHES);
+
+        return RawJs::make(<<<JS
             {
                 maintainAspectRatio: false,
                 cutout: '62%',
+                onClick: (event, elements, chart) => {
+                    if (! elements.length) { return; }
+                    const label = chart.data.labels[elements[0].index];
+                    const urls = {$urlsJson};
+                    if (urls[label]) { window.location.href = urls[label]; }
+                },
+                onHover: (event, elements) => {
+                    event.native.target.style.cursor = elements.length ? 'pointer' : 'default';
+                },
                 plugins: {
                     legend: { display: true, position: 'right', labels: { usePointStyle: true, boxWidth: 8, padding: 10 } },
                 },

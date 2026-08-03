@@ -51,8 +51,17 @@ class RunnerProfilesTable
                 IconColumn::make('is_online')->boolean(),
                 TextColumn::make('total_errands')->sortable(),
                 TextColumn::make('total_earnings')->money('PHP')->sortable(),
-                TextColumn::make('created_at')->dateTime()->since()
-                    ->toggleable(isToggledHiddenByDefault: true),
+                TextColumn::make('created_at')
+                    ->label('Waiting')
+                    ->since()
+                    ->sortable()
+                    ->badge()
+                    ->color(fn ($state): string => match (true) {
+                        $state === null => 'gray',
+                        $state->diffInHours(now()) >= 72 => 'danger',
+                        $state->diffInHours(now()) >= 24 => 'warning',
+                        default => 'success',
+                    }),
             ])
             ->filters([
                 SelectFilter::make('verification_status')->options([

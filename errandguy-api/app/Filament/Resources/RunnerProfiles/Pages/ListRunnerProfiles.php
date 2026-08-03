@@ -21,7 +21,13 @@ class ListRunnerProfiles extends ListRecords
             'all' => Tab::make('All')->badge(array_sum($c)),
             'pending' => Tab::make('Pending')->icon('heroicon-m-clock')->badgeColor('warning')
                 ->badge(ListTabs::sum($c, 'pending'))
-                ->modifyQueryUsing(fn (Builder $query): Builder => $query->where('verification_status', 'pending')),
+                // SLA queue: oldest application on top so the longest-waiting
+                // runner is reviewed first. The asc order is applied to the base
+                // query before the table's default created_at,desc, and being the
+                // first orderBy clause on the same column it wins.
+                ->modifyQueryUsing(fn (Builder $query): Builder => $query
+                    ->where('verification_status', 'pending')
+                    ->orderBy('created_at', 'asc')),
             'approved' => Tab::make('Approved')->icon('heroicon-m-shield-check')->badgeColor('success')
                 ->badge(ListTabs::sum($c, 'approved'))
                 ->modifyQueryUsing(fn (Builder $query): Builder => $query->where('verification_status', 'approved')),

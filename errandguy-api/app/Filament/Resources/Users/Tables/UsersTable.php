@@ -7,10 +7,13 @@ use App\Filament\Support\DateRangeFilter;
 use App\Filament\Support\ExportCsv;
 use App\Models\AdminUser;
 use App\Models\User;
+use App\Support\AdminActivity;
 use Filament\Actions\Action;
+use Filament\Actions\BulkAction;
 use Filament\Actions\ViewAction;
 use Filament\Forms\Components\Textarea;
 use Filament\Support\Icons\Heroicon;
+use Illuminate\Support\Collection;
 use Filament\Tables\Columns\IconColumn;
 use Filament\Tables\Columns\ImageColumn;
 use Filament\Tables\Columns\TextColumn;
@@ -84,6 +87,46 @@ class UsersTable
                     'Wallet balance (PHP)' => fn (User $r) => $r->wallet_balance,
                     'Joined' => fn (User $r) => $r->created_at,
                 ]),
+
+                BulkAction::make('suspendSelected')
+                    ->label('Suspend selected')
+                    ->icon(Heroicon::OutlinedShieldExclamation)
+                    ->color('danger')
+                    ->requiresConfirmation()
+                    ->modalDescription('Suspends every selected user that is still active, revokes their sessions, and records your reason against each.')
+                    ->schema([
+                        Textarea::make('reason')->required()->maxLength(500),
+                    ])
+                    ->visible(fn (): bool => auth('admin')->user()?->hasAnyRole(
+                        AdminUser::ROLE_SUPER_ADMIN,
+                        AdminUser::ROLE_ADMIN,
+                        AdminUser::ROLE_OPS,
+                    ) ?? false)
+                    ->deselectRecordsAfterCompletion()
+                    ->action(function (array $data, Collection $records): void {
+                        $suspended = 0;
+                        foreach ($records as $record) {
+                            if ($record->status === 'suspended') {
+                                continue;
+                            }
+                            $record->update([
+                                'status' => 'suspended',
+                                'suspended_reason' => $data['reason'],
+                                'suspended_at' => now(),
+                            ]);
+                            $record->tokens()->delete();
+                            AdminActivity::log('user.suspended', $record, ['reason' => $data['reason'], 'via' => 'bulk']);
+                            $suspended++;
+                        }
+                        // Per-record audit already written in the loop above, so
+                        // this is a count-only confirmation (no audit param).
+                        AdminNotify::success(
+                            $suspended.' user'.($suspended === 1 ? '' : 's').' suspended',
+                            note: $suspended === 0
+                                ? 'No active users were in the selection.'
+                                : 'Their active sessions were revoked.',
+                        );
+                    }),
             ])
             ->recordActions([
                 ViewAction::make(),

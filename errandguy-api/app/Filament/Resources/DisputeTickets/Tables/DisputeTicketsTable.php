@@ -3,6 +3,7 @@
 namespace App\Filament\Resources\DisputeTickets\Tables;
 
 use App\Filament\Support\AdminNotify;
+use App\Filament\Support\DateRangeFilter;
 use App\Filament\Support\ExportCsv;
 use App\Models\DisputeTicket;
 use Filament\Actions\Action;
@@ -51,9 +52,20 @@ class DisputeTicketsTable
                         'resolved' => 'Resolved',
                         'escalated' => 'Escalated',
                     ]),
+                DateRangeFilter::make('created_at', 'Created'),
             ])
             ->headerActions([
                 ExportCsv::make('disputes', [
+                    'Booking' => fn (DisputeTicket $r): ?string => $r->booking?->booking_number,
+                    'Reporter' => fn (DisputeTicket $r): ?string => $r->reporter?->full_name,
+                    'Category' => fn (DisputeTicket $r): ?string => $r->category,
+                    'Status' => fn (DisputeTicket $r): ?string => $r->status,
+                    'Created' => fn (DisputeTicket $r) => $r->created_at,
+                    'Resolved' => fn (DisputeTicket $r) => $r->resolved_at,
+                ]),
+            ])
+            ->toolbarActions([
+                ExportCsv::bulk('disputes', [
                     'Booking' => fn (DisputeTicket $r): ?string => $r->booking?->booking_number,
                     'Reporter' => fn (DisputeTicket $r): ?string => $r->reporter?->full_name,
                     'Category' => fn (DisputeTicket $r): ?string => $r->category,
