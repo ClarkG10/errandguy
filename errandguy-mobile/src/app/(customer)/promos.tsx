@@ -3,7 +3,8 @@ import { View, Text, ScrollView, Pressable } from 'react-native';
 import * as Haptics from 'expo-haptics';
 import * as Clipboard from 'expo-clipboard';
 import dayjs from 'dayjs';
-import { Ticket, Copy, Clock } from 'lucide-react-native';
+import { Ticket, Copy, Clock, ArrowRight } from 'lucide-react-native';
+import { useRouter } from 'expo-router';
 import { GradientHeader } from '../../components/ui/GradientHeader';
 import { Card } from '../../components/ui/Card';
 import { EmptyState } from '../../components/ui/EmptyState';
@@ -16,6 +17,7 @@ import { useQuery } from '../../hooks/useQuery';
 import { CacheTTL } from '../../services/cache.service';
 import { configService, type Promo } from '../../services/config.service';
 import { useAuthStore } from '../../stores/authStore';
+import { useBookingStore } from '../../stores/bookingStore';
 import { toast } from '../../stores/toastStore';
 import { formatCurrency } from '../../utils/formatCurrency';
 import { useResponsive } from '../../constants/responsive';
@@ -77,6 +79,8 @@ function urgencyLabel(days: number): string {
 
 export default function PromosScreen() {
   const userId = useAuthStore((s) => s.user?.id ?? 'anon');
+  const updateDraft = useBookingStore((s) => s.updateDraft);
+  const router = useRouter();
   const { contentMaxWidth } = useResponsive();
   const [refreshing, setRefreshing] = useState(false);
 
@@ -104,6 +108,34 @@ export default function PromosScreen() {
     await Clipboard.setStringAsync(code);
     toast.success(`Copied ${code}`);
   }, []);
+
+  // Pre-apply the code into the booking draft and jump into the flow. Review
+  // reads `draft.promo_code` and shows it in the applied chip. The saving is
+  // enriched below once validated (Review reads `draft.promo_discount`).
+  const handleUseOffer = useCallback(
+    (promo: Promo) => {
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => {});
+      updateDraft({ promo_code: promo.code, promo_discount: undefined });
+      router.push('/(customer)/book/type' as any);
+      // Fire-and-forget enrichment: populate the validated peso saving so the
+      // applied chip + PriceBreakdown reflect it. Guarded so a subsequent
+      // draft change (a different code) isn't clobbered. Graceful no-op on
+      // failure — Review still shows the code and the user can re-apply.
+      configService
+        .validatePromo(promo.code)
+        .then((res) => {
+          const discount = res.data?.data?.discount_amount;
+          if (
+            discount != null &&
+            useBookingStore.getState().draftBooking.promo_code === promo.code
+          ) {
+            updateDraft({ promo_discount: discount });
+          }
+        })
+        .catch(() => {});
+    },
+    [updateDraft, router],
+  );
 
   return (
     <View className="flex-1 bg-background">
@@ -189,22 +221,40 @@ export default function PromosScreen() {
                         {promo.code}
                       </Text>
                     </Pressable>
-                    <Pressable
-                      onPress={() => handleCopy(promo.code)}
-                      style={({ pressed }) => [
-                        pressed && { opacity: 0.9, transform: [{ scale: 0.97 }] },
-                      ]}
-                      className="flex-row items-center gap-1.5 bg-primaryLight rounded-full px-4 py-2.5"
-                      hitSlop={8}
-                      android_ripple={{ color: `${LightColors.primary}1A`, borderless: false }}
-                      accessibilityRole="button"
-                      accessibilityLabel={`Copy promo code ${promo.code}`}
-                    >
-                      <Copy size={14} color={LightColors.primaryDark} strokeWidth={2} />
-                      <Text className="text-[12px] font-montserrat-bold text-primaryDark">
-                        Copy
-                      </Text>
-                    </Pressable>
+                    <View className="flex-row items-center gap-2">
+                      <Pressable
+                        onPress={() => handleCopy(promo.code)}
+                        style={({ pressed }) => [
+                          pressed && { opacity: 0.9, transform: [{ scale: 0.97 }] },
+                        ]}
+                        className="flex-row items-center gap-1.5 bg-primaryLight rounded-full px-4 py-2.5"
+                        hitSlop={8}
+                        android_ripple={{ color: `${LightColors.primary}1A`, borderless: false }}
+                        accessibilityRole="button"
+                        accessibilityLabel={`Copy promo code ${promo.code}`}
+                      >
+                        <Copy size={14} color={LightColors.primaryDark} strokeWidth={2} />
+                        <Text className="text-[12px] font-montserrat-bold text-primaryDark">
+                          Copy
+                        </Text>
+                      </Pressable>
+                      <Pressable
+                        onPress={() => handleUseOffer(promo)}
+                        style={({ pressed }) => [
+                          pressed && { opacity: 0.9, transform: [{ scale: 0.97 }] },
+                        ]}
+                        className="flex-row items-center gap-1.5 bg-primary rounded-full px-4 py-2.5"
+                        hitSlop={8}
+                        android_ripple={{ color: '#FFFFFF33', borderless: false }}
+                        accessibilityRole="button"
+                        accessibilityLabel={`Use offer ${promo.code} and start a booking`}
+                      >
+                        <Text className="text-[12px] font-montserrat-bold text-white">
+                          Use offer
+                        </Text>
+                        <ArrowRight size={14} color="#FFFFFF" strokeWidth={2} />
+                      </Pressable>
+                    </View>
                   </View>
 
                   {(promo.min_order != null || expiry) && (

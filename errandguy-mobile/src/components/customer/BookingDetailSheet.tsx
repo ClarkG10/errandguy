@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React from 'react';
 import { View, Text, Pressable, ScrollView } from 'react-native';
 import {
   RefreshCw,
@@ -13,10 +13,9 @@ import { BottomSheet } from '../ui/BottomSheet';
 import { Button } from '../ui/Button';
 import { Eyebrow } from '../ui/Typography';
 import { PriceBreakdown } from '../ui/PriceBreakdown';
-import { bookingService } from '../../services/booking.service';
 import { warmTracking } from '../../services/preload.service';
+import { useBookingStore, type DraftBooking } from '../../stores/bookingStore';
 import { toast } from '../../stores/toastStore';
-import { errorMessage } from '../../utils/errorCatalog';
 import { formatCurrency } from '../../utils/formatCurrency';
 import { formatFullDate, formatTime } from '../../utils/formatDate';
 import {
@@ -34,13 +33,74 @@ interface BookingDetailSheetProps {
   onClose: () => void;
 }
 
+/**
+ * Clone a terminal booking into a fresh booking draft so "Book again" can
+ * drop the customer straight onto the pre-filled Review screen — no backend
+ * round-trip, no duplicate booking form.
+ *
+ * The route can only be reconstructed when the source booking carries pickup
+ * coordinates (the estimate + submit both key off them). When it doesn't, we
+ * degrade to seeding just the errand type so the customer still lands on the
+ * right flow and re-picks their locations, rather than a dead-end draft.
+ */
+function buildDraftFromBooking(b: Booking): Partial<DraftBooking> {
+  // Slug lives on the (optional) errand_type relation; the id is always present.
+  const slug = b.errand_type?.slug;
+  const typeSeed: Partial<DraftBooking> = {
+    errand_type_id: b.errand_type_id,
+    ...(slug ? { errand_type_slug: slug } : {}),
+  };
+
+  const hasPickupCoords = b.pickup_lat != null && b.pickup_lng != null;
+  if (!hasPickupCoords) return typeSeed;
+
+  return {
+    ...typeSeed,
+    pickup_address: b.pickup_address,
+    pickup_lat: b.pickup_lat,
+    pickup_lng: b.pickup_lng,
+    ...(b.pickup_contact_name ? { pickup_contact_name: b.pickup_contact_name } : {}),
+    ...(b.pickup_contact_phone ? { pickup_contact_phone: b.pickup_contact_phone } : {}),
+    ...(b.dropoff_address != null ? { dropoff_address: b.dropoff_address } : {}),
+    ...(b.dropoff_lat != null ? { dropoff_lat: b.dropoff_lat } : {}),
+    ...(b.dropoff_lng != null ? { dropoff_lng: b.dropoff_lng } : {}),
+    ...(b.dropoff_contact_name ? { dropoff_contact_name: b.dropoff_contact_name } : {}),
+    ...(b.dropoff_contact_phone ? { dropoff_contact_phone: b.dropoff_contact_phone } : {}),
+    ...(b.description != null ? { description: b.description } : {}),
+    ...(b.special_instructions != null
+      ? { special_instructions: b.special_instructions }
+      : {}),
+    ...(b.estimated_item_value != null
+      ? { estimated_item_value: b.estimated_item_value }
+      : {}),
+    ...(b.shopping_budget != null ? { shopping_budget: b.shopping_budget } : {}),
+    ...(b.pricing_mode ? { pricing_mode: b.pricing_mode } : {}),
+    ...(b.vehicle_type_rate ? { vehicle_type_rate: b.vehicle_type_rate } : {}),
+    ...(b.customer_offer != null ? { customer_offer: b.customer_offer } : {}),
+    // Re-seed the shopping checklist with the ticks reset — the runner starts
+    // a fresh run. (No structured items column ⇒ Review re-serializes it.)
+    ...(b.shopping_items && b.shopping_items.length > 0
+      ? {
+          shoppingItems: b.shopping_items.map((it) => ({
+            id: it.id,
+            name: it.name,
+            qty: it.qty,
+          })),
+        }
+      : {}),
+    // Deliberately NOT cloned: promo_code (single-use/expiry) and any
+    // payment selection — the customer re-confirms those on Review.
+  };
+}
+
 export function BookingDetailSheet({
   booking,
   isVisible,
   onClose,
 }: BookingDetailSheetProps) {
   const router = useRouter();
-  const [rebooking, setRebooking] = useState(false);
+  const updateDraft = useBookingStore((s) => s.updateDraft);
+  const clearDraft = useBookingStore((s) => s.clearDraft);
 
   if (!booking) return null;
 
@@ -61,24 +121,26 @@ export function BookingDetailSheet({
       : []),
   ];
 
-  const handleRebook = async () => {
-    setRebooking(true);
-    try {
-      await bookingService.rebookErrand(booking.id);
-      Haptics.notificationAsync(
-        Haptics.NotificationFeedbackType.Success,
-      ).catch(() => {});
-      onClose();
-      router.push('/(customer)/book/review');
-    } catch (err: any) {
-      Haptics.notificationAsync(
-        Haptics.NotificationFeedbackType.Error,
-      ).catch(() => {});
-      toast.error(
-        errorMessage(err, "Couldn't rebook this errand. Please try again."),
-      );
-    } finally {
-      setRebooking(false);
+  const handleRebook = () => {
+    const draft = buildDraftFromBooking(booking);
+    // Route is reconstructable only when we managed to seed pickup coords;
+    // otherwise we fell back to the type-only seed and the customer needs to
+    // re-pick their locations on Review.
+    const routeSeeded = draft.pickup_lat != null;
+
+    // Replace any in-progress draft wholesale — a rebook is a clean start,
+    // not a merge onto whatever half-filled draft was lying around.
+    clearDraft();
+    updateDraft(draft);
+
+    Haptics.notificationAsync(
+      Haptics.NotificationFeedbackType.Success,
+    ).catch(() => {});
+    onClose();
+    router.push('/(customer)/book/review');
+
+    if (!routeSeeded) {
+      toast.info('Pick your pickup and drop-off to finish booking.');
     }
   };
 
@@ -209,8 +271,7 @@ export function BookingDetailSheet({
                   variant={rebookIsRecovery ? 'secondary' : 'primary'}
                   icon={RefreshCw}
                   onPress={handleRebook}
-                  loading={rebooking}
-                  loadingTitle="Rebooking…"
+                  accessibilityHint="Starts a new booking pre-filled from this one"
                   fullWidth
                 />
               )}
