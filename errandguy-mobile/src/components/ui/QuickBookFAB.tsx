@@ -14,6 +14,7 @@ import { useRouter, usePathname } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useResponsive } from '../../constants/responsive';
 import { useReducedMotion } from '../../hooks/useReducedMotion';
+import { useTabBarStore } from '../../stores/tabBarStore';
 import { Elevation, LightColors } from '../../constants/colors';
 
 /**
@@ -64,6 +65,8 @@ export function QuickBookFAB({
   const insets = useSafeAreaInsets();
   const { mScale, isTablet } = useResponsive();
   const reduceMotion = useReducedMotion();
+  // Slide/fade away in lockstep with the tab bar when the user scrolls down.
+  const hidden = useTabBarStore((s) => s.hidden);
 
   // Auto-hide on screens that already host primary actions in the
   // bottom area. Consumers can still force visibility via the prop.
@@ -77,6 +80,7 @@ export function QuickBookFAB({
   // the FAB stays still.
   const bob = useRef(new Animated.Value(0)).current;
   const press = useRef(new Animated.Value(1)).current;
+  const hide = useRef(new Animated.Value(0)).current; // 0 shown, 1 hidden
   useEffect(() => {
     if (!visible) return;
     if (reduceMotion) {
@@ -95,6 +99,20 @@ export function QuickBookFAB({
       }),
     ]).start();
   }, [reduceMotion, visible, bob]);
+
+  // Follow the tab bar's auto-hide. Snap (no tween) under Reduce Motion.
+  useEffect(() => {
+    if (reduceMotion) {
+      hide.setValue(hidden ? 1 : 0);
+      return;
+    }
+    Animated.timing(hide, {
+      toValue: hidden ? 1 : 0,
+      duration: 220,
+      easing: Easing.out(Easing.cubic),
+      useNativeDriver: true,
+    }).start();
+  }, [hidden, reduceMotion, hide]);
 
   if (!visible) return null;
 
@@ -139,6 +157,12 @@ export function QuickBookFAB({
     router.push(href as any);
   };
 
+  // When the tab bar hides, drop the FAB fully below the screen edge and fade
+  // it out. Composed with the first-appearance bob so the two never fight.
+  const hideTranslateY = hide.interpolate({
+    inputRange: [0, 1],
+    outputRange: [0, insets.bottom + tabBarHeight + SIZE],
+  });
   const containerStyle: Animated.WithAnimatedObject<ViewStyle> = {
     position: 'absolute',
     left: '50%',
@@ -148,15 +172,19 @@ export function QuickBookFAB({
       // anchor back so the disc sits exactly on the screen centreline.
       { translateX: -SIZE / 2 },
       { scale: press },
-      // Bob in from below by 10pt the first time we appear.
+      // Bob in from below by 10pt the first time we appear, plus the
+      // scroll-driven hide drop.
       {
-        translateY: bob.interpolate({
-          inputRange: [0, 1],
-          outputRange: [10, 0],
-        }),
+        translateY: Animated.add(
+          bob.interpolate({ inputRange: [0, 1], outputRange: [10, 0] }),
+          hideTranslateY,
+        ),
       },
     ],
-    opacity: bob.interpolate({ inputRange: [0, 1], outputRange: [0, 1] }),
+    opacity: Animated.multiply(
+      bob.interpolate({ inputRange: [0, 1], outputRange: [0, 1] }),
+      hide.interpolate({ inputRange: [0, 1], outputRange: [1, 0] }),
+    ),
   };
 
   return (

@@ -31,6 +31,7 @@ import { bookingService } from '../../../services/booking.service';
 import { warmTracking } from '../../../services/preload.service';
 import { configService } from '../../../services/config.service';
 import { useQuery } from '../../../hooks/useQuery';
+import { useHideTabBarOnScroll } from '../../../hooks/useHideTabBarOnScroll';
 import { CacheTTL } from '../../../services/cache.service';
 import { TAB_CONTENT_BOTTOM_INSET } from '../../../constants/tabLayout';
 import { Avatar } from '../../../components/ui/Avatar';
@@ -89,6 +90,7 @@ export default function CustomerHomeScreen() {
   const setActiveBooking = useBookingStore((s) => s.setActiveBooking);
   const clearDraft = useBookingStore((s) => s.clearDraft);
   const unreadCount = useNotificationStore((s) => s.unreadCount);
+  const hideOnScroll = useHideTabBarOnScroll();
 
   const enabled = role === 'customer';
 
@@ -280,6 +282,7 @@ export default function CustomerHomeScreen() {
           when this screen isn't frontmost. */}
       {isFocused && <StatusBar barStyle="light-content" />}
       <ScrollView
+        {...hideOnScroll}
         className="flex-1"
         showsVerticalScrollIndicator={false}
         // Reserve room at the bottom so the floating QuickBookFAB

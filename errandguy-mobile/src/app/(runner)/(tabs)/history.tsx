@@ -24,6 +24,7 @@ import { useAuthStore } from '../../../stores/authStore';
 import { useChatStore } from '../../../stores/chatStore';
 import { formatCurrency } from '../../../utils/formatCurrency';
 import { useDebounce } from '../../../hooks/useDebounce';
+import { useHideTabBarOnScroll } from '../../../hooks/useHideTabBarOnScroll';
 import { HistorySkeleton } from '../../../components/ui/Skeleton';
 import type { Booking } from '../../../types';
 import { LightColors } from '../../../constants/colors';
@@ -36,6 +37,7 @@ export default function HistoryScreen() {
   const [statusFilter, setStatusFilter] = useState<'all' | 'completed' | 'cancelled'>('all');
   const [search, setSearch] = useState('');
   const debouncedSearch = useDebounce(search, 300);
+  const hideOnScroll = useHideTabBarOnScroll();
 
   // Page 1 is cached via useQuery (cache-first); subsequent pages append.
   const page1Q = useQuery<Booking[]>(
@@ -339,6 +341,7 @@ export default function HistoryScreen() {
 
       {/* List */}
       <FlatList
+        {...hideOnScroll}
         data={filteredErrands}
         renderItem={renderItem}
         keyExtractor={(item) => item.id}

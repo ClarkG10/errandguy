@@ -41,6 +41,8 @@ import { haptics } from '../../../utils/haptics';
 import { LightColors } from '../../../constants/colors';
 import { useResponsive } from '../../../constants/responsive';
 import { checkForOtaUpdate } from '../../../hooks/useOtaUpdate';
+import { useHideTabBarOnScroll } from '../../../hooks/useHideTabBarOnScroll';
+import { TAB_CONTENT_BOTTOM_INSET_RUNNER } from '../../../constants/tabLayout';
 import { getAppVersionLabel } from '../../../utils/appVersion';
 
 interface MenuItem {
@@ -127,6 +129,7 @@ function StatBar({
 
 export default function RunnerProfileScreen() {
   const router = useRouter();
+  const hideOnScroll = useHideTabBarOnScroll();
   const { contentMaxWidth } = useResponsive();
   const user = useAuthStore((s) => s.user);
   const setUser = useAuthStore((s) => s.setUser);
@@ -323,11 +326,12 @@ export default function RunnerProfileScreen() {
       <GradientHeader title="Profile" />
 
       <ScrollView
+        {...hideOnScroll}
         className="flex-1"
         showsVerticalScrollIndicator={false}
         refreshControl={<BrandRefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
         contentContainerStyle={{
-          paddingBottom: 24,
+          paddingBottom: TAB_CONTENT_BOTTOM_INSET_RUNNER,
           width: '100%',
           maxWidth: contentMaxWidth,
           alignSelf: 'center',

@@ -11,6 +11,7 @@ import { useRouter } from 'expo-router';
 import * as Haptics from 'expo-haptics';
 import { bookingService } from '../../../services/booking.service';
 import { useQuery } from '../../../hooks/useQuery';
+import { useHideTabBarOnScroll } from '../../../hooks/useHideTabBarOnScroll';
 import { CacheTTL } from '../../../services/cache.service';
 import { useAuthStore } from '../../../stores/authStore';
 import { useChatStore } from '../../../stores/chatStore';
@@ -67,6 +68,7 @@ export default function ActivityScreen() {
   // Lightweight client-side search over the loaded bookings — matches
   // errand type name or booking number. No server roundtrip.
   const [search, setSearch] = useState('');
+  const hideOnScroll = useHideTabBarOnScroll();
 
   // CLIENT-SIDE filtering: fetch ONE unfiltered list and filter it in
   // memory per tab. Switching tabs is then instant (a pure memo recompute,
@@ -308,6 +310,7 @@ export default function ActivityScreen() {
         </View>
       ) : (
       <SectionList
+        {...hideOnScroll}
         sections={sections}
         keyExtractor={(item) => item.id}
         renderItem={({ item }) => (

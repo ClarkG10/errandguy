@@ -4,6 +4,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRunnerStore } from '../../../stores/runnerStore';
 import { useReducedMotion } from '../../../hooks/useReducedMotion';
 import { TabBarItem } from '../../../components/ui/TabBarItem';
+import { HidingTabBar } from '../../../components/ui/HidingTabBar';
 import {
   TAB_BAR_HEIGHT as BAR_HEIGHT,
 } from '../../../constants/tabLayout';
@@ -30,6 +31,9 @@ export default function RunnerTabsLayout() {
 
   return (
     <Tabs
+      // Auto-hiding bar: slides away on scroll-down, returns on scroll-up.
+      // Absolute-positioned (see HidingTabBar) so the scene fills behind it.
+      tabBar={(props) => <HidingTabBar {...props} />}
       screenOptions={{
         headerShown: false,
         // 'shift' animates the whole screen on every tab switch; snap

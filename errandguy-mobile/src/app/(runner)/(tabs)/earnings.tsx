@@ -19,12 +19,14 @@ import { useResponsive } from '../../../constants/responsive';
 import { useAuthStore } from '../../../stores/authStore';
 import { runnerService } from '../../../services/runner.service';
 import { useQuery } from '../../../hooks/useQuery';
+import { useHideTabBarOnScroll } from '../../../hooks/useHideTabBarOnScroll';
 import { CacheTTL } from '../../../services/cache.service';
 import { formatCurrency } from '../../../utils/formatCurrency';
 import { secureStorage } from '../../../utils/storage';
 import { toast } from '../../../stores/toastStore';
 import type { Booking } from '../../../types';
 import { LightColors, Elevation } from '../../../constants/colors';
+import { TAB_CONTENT_BOTTOM_INSET_RUNNER } from '../../../constants/tabLayout';
 
 type Period = 'today' | 'week' | 'month';
 
@@ -119,6 +121,7 @@ export default function EarningsScreen() {
   const router = useRouter();
   const userId = useAuthStore((s) => s.user?.id ?? 'anon');
   const { contentMaxWidth } = useResponsive();
+  const hideOnScroll = useHideTabBarOnScroll();
 
   const [period, setPeriod] = useState<Period>('week');
   const [refreshing, setRefreshing] = useState(false);
@@ -337,6 +340,7 @@ export default function EarningsScreen() {
       <GradientHeader title="Earnings" />
 
       <ScrollView
+        {...hideOnScroll}
         className="flex-1"
         showsVerticalScrollIndicator={false}
         refreshControl={<BrandRefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
@@ -344,7 +348,7 @@ export default function EarningsScreen() {
           width: '100%',
           maxWidth: contentMaxWidth,
           alignSelf: 'center',
-          paddingBottom: 24,
+          paddingBottom: TAB_CONTENT_BOTTOM_INSET_RUNNER,
         }}
       >
         {/* Hero Card — brand blue gradient balance card (same language

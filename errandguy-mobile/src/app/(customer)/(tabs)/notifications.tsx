@@ -39,6 +39,7 @@ import { queueable } from '../../../services/mutationQueue';
 import { warmTracking, prefetchPromos } from '../../../services/preload.service';
 import { useQuery } from '../../../hooks/useQuery';
 import { useReducedMotion } from '../../../hooks/useReducedMotion';
+import { useHideTabBarOnScroll } from '../../../hooks/useHideTabBarOnScroll';
 import { CacheTTL } from '../../../services/cache.service';
 import { EmptyState } from '../../../components/ui/EmptyState';
 import { Illustration } from '../../../components/ui/Illustration';
@@ -354,6 +355,7 @@ export default function NotificationsScreen() {
   const clear = useNotificationStore((s) => s.clear);
   const userId = useAuthStore((s) => s.user?.id);
   const reducedMotion = useReducedMotion();
+  const hideOnScroll = useHideTabBarOnScroll();
 
   const [refreshing, setRefreshing] = useState(false);
   const [category, setCategory] = useState<CategoryKey>('all');
@@ -847,6 +849,7 @@ export default function NotificationsScreen() {
 
       {/* Notification List */}
       <SectionList
+        {...hideOnScroll}
         sections={sections}
         keyExtractor={(item) => item.id}
         renderItem={renderNotification}

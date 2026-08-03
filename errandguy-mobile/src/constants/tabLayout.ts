@@ -63,3 +63,13 @@ export function tabBarBottomOffset(insetBottom: number): number {
  * safe-area inset is reserved by the bar itself, not by this value.
  */
 export const TAB_CONTENT_BOTTOM_INSET = 148;
+
+/**
+ * Bottom padding for RUNNER tab scrollers. The runner bar carries no
+ * QuickBook FAB, so content only has to clear the bar itself — leaner than
+ * the customer value above. Sized for the tallest safe-area inset (bar height
+ * 52 + inset + breathing room); extra space on smaller-inset devices is
+ * harmless. Required because the auto-hiding bar is absolutely positioned, so
+ * the scene now fills the full height behind it (see HidingTabBar).
+ */
+export const TAB_CONTENT_BOTTOM_INSET_RUNNER = 108;

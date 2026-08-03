@@ -3,6 +3,7 @@ import { View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useNotificationStore } from '../../../stores/notificationStore';
 import { TabBarItem } from '../../../components/ui/TabBarItem';
+import { HidingTabBar } from '../../../components/ui/HidingTabBar';
 import { QuickBookFAB } from '../../../components/ui/QuickBookFAB';
 import {
   TAB_BAR_HEIGHT as BAR_HEIGHT,
@@ -44,6 +45,9 @@ export default function CustomerTabsLayout() {
   return (
     <View style={{ flex: 1 }}>
     <Tabs
+      // Auto-hiding bar: slides away on scroll-down, returns on scroll-up.
+      // Absolute-positioned (see HidingTabBar) so the scene fills behind it.
+      tabBar={(props) => <HidingTabBar {...props} />}
       screenOptions={{
         headerShown: false,
         animation: 'shift',

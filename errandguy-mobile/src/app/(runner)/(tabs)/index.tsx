@@ -61,6 +61,8 @@ import { prefetchRunnerErrand } from '../../../services/preload.service';
 import { useIncomingRequest } from '../../../hooks/useIncomingRequest';
 import { useSmartPolling } from '../../../hooks/useSmartPolling';
 import { useReducedMotion } from '../../../hooks/useReducedMotion';
+import { useHideTabBarOnScroll } from '../../../hooks/useHideTabBarOnScroll';
+import { TAB_CONTENT_BOTTOM_INSET_RUNNER } from '../../../constants/tabLayout';
 import type { Booking } from '../../../types';
 import { toast } from '../../../stores/toastStore';
 import { errorMessage } from '../../../utils/errorCatalog';
@@ -130,6 +132,7 @@ export default function RunnerHomeScreen() {
   const startTracking = useLocationStore((s) => s.startTracking);
   const stopTracking = useLocationStore((s) => s.stopTracking);
   const unreadCount = useNotificationStore((s) => s.unreadCount);
+  const hideOnScroll = useHideTabBarOnScroll();
 
   const [togglingOnline, setTogglingOnline] = useState(false);
   const [locationGranted, setLocationGranted] = useState<boolean | null>(null);
@@ -535,6 +538,7 @@ export default function RunnerHomeScreen() {
       {Platform.OS === 'ios' && <StatusBar barStyle="dark-content" />}
 
       <ScrollView
+        {...hideOnScroll}
         className="flex-1"
         showsVerticalScrollIndicator={false}
         refreshControl={
@@ -546,7 +550,7 @@ export default function RunnerHomeScreen() {
             progressBackgroundColor={LightColors.surface}
           />
         }
-        contentContainerStyle={{ paddingBottom: 32 }}
+        contentContainerStyle={{ paddingBottom: TAB_CONTENT_BOTTOM_INSET_RUNNER }}
       >
         {/* ==========================================================
             HERO — tokenized greeting header on the canvas, then a

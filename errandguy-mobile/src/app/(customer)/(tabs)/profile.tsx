@@ -49,6 +49,7 @@ import { toast } from '../../../stores/toastStore';
 import { errorMessage } from '../../../utils/errorCatalog';
 import { haptics } from '../../../utils/haptics';
 import { checkForOtaUpdate } from '../../../hooks/useOtaUpdate';
+import { useHideTabBarOnScroll } from '../../../hooks/useHideTabBarOnScroll';
 import { getAppVersionLabel } from '../../../utils/appVersion';
 
 interface MenuItem {
@@ -69,6 +70,7 @@ export default function CustomerProfileScreen() {
   const user = useAuthStore((s) => s.user);
   const setUser = useAuthStore((s) => s.setUser);
   const { logout } = useAuth();
+  const hideOnScroll = useHideTabBarOnScroll();
 
   const [refreshing, setRefreshing] = useState(false);
   const [showEditModal, setShowEditModal] = useState(false);
@@ -272,6 +274,7 @@ export default function CustomerProfileScreen() {
     <View className="flex-1 bg-background">
       <GradientHeader title="Profile" />
       <ScrollView
+        {...hideOnScroll}
         className="flex-1"
         showsVerticalScrollIndicator={false}
         refreshControl={
