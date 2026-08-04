@@ -1478,7 +1478,7 @@ export default function ActiveErrandScreen() {
                   <Pressable
                     onPress={() => {
                       const subject = encodeURIComponent(`Issue with errand ${booking.booking_number ?? booking.id}`);
-                      Linking.openURL(`mailto:support@errandguy.app?subject=${subject}`).catch(() =>
+                      Linking.openURL(`mailto:support@errandguyph.com?subject=${subject}`).catch(() =>
                         toast.error('Could not open email app'),
                       );
                     }}

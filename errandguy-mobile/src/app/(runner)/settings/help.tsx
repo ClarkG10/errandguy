@@ -281,12 +281,12 @@ export default function HelpScreen() {
 
           <Pressable
             onPress={() =>
-              openLink('mailto:support@errandguy.app', "Couldn't open your mail app.")
+              openLink('mailto:support@errandguyph.com', "Couldn't open your mail app.")
             }
             style={rowPressed}
             android_ripple={ROW_RIPPLE}
             accessibilityRole="button"
-            accessibilityLabel="Email Support, support@errandguy.app"
+            accessibilityLabel="Email Support, support@errandguyph.com"
             className="flex-row items-center gap-3 p-4 border-b border-divider"
           >
             <View className="w-10 h-10 rounded-full bg-surfaceMuted items-center justify-center">
@@ -295,7 +295,7 @@ export default function HelpScreen() {
             <View className="flex-1">
               <Text className="text-[14px] font-montserrat-semi text-textPrimary">Email Support</Text>
               <Text className="text-sm font-montserrat text-textSecondary">
-                support@errandguy.app
+                support@errandguyph.com
               </Text>
             </View>
             <ArrowUpRight size={16} color={LightColors.textMuted} strokeWidth={1.8} />
