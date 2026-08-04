@@ -43,7 +43,10 @@ import { useHideTabBarOnScroll } from '../../../hooks/useHideTabBarOnScroll';
 import { CacheTTL } from '../../../services/cache.service';
 import { TAB_CONTENT_BOTTOM_INSET } from '../../../constants/tabLayout';
 import { Avatar } from '../../../components/ui/Avatar';
-import { ActiveBookingCard } from '../../../components/customer/ActiveBookingCard';
+import {
+  ActiveBookingCard,
+  isRenderableActiveBooking,
+} from '../../../components/customer/ActiveBookingCard';
 import { BookingDetailSheet } from '../../../components/customer/BookingDetailSheet';
 import { ErrandTypeIcon } from '../../../components/ui/ErrandTypeIcon';
 import { ErrorState } from '../../../components/ui/ErrorState';
@@ -830,7 +833,7 @@ export default function CustomerHomeScreen() {
             (above the pills) so the user's live errand wins the first
             viewport. No eyebrow needed: the card itself communicates the
             live state via its progress track and headline. */}
-        {activeBooking && (
+        {isRenderableActiveBooking(activeBooking) && (
           <View className="mx-5 mt-4" style={hs.activeZone}>
             <Eyebrow className="ml-1 mb-2" color={LightColors.primary}>
               Your errand

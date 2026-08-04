@@ -1,10 +1,32 @@
 import { create } from 'zustand';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { secureStorage } from '../utils/storage';
-import { geocodingService } from '../services/geocoding.service';
-import { CacheService } from '../services/cache.service';
-import { apiCache } from '../services/api';
+import { clearAccountScopedState } from '../utils/clearAccountScopedState';
 import type { User, UserRole } from '../types';
+
+// Id of the account whose data is currently resident on this device. Compared
+// on every sign-in: a DIFFERENT id triggers a purge of the previous user's
+// cached/persisted state so it can't bleed into the new account.
+const LAST_ACCOUNT_KEY = '@last_account_id';
+
+/**
+ * On sign-in, purge account-scoped state iff the incoming user differs from the
+ * one already resident on this device. The first sign-in on a device (no stored
+ * id) never purges. Best-effort — a bookkeeping failure must never block login.
+ */
+async function reconcileAccount(userId: string): Promise<void> {
+  try {
+    const prev = await AsyncStorage.getItem(LAST_ACCOUNT_KEY);
+    if (prev && prev !== userId) {
+      await clearAccountScopedState();
+    }
+    if (prev !== userId) {
+      await AsyncStorage.setItem(LAST_ACCOUNT_KEY, userId);
+    }
+  } catch {
+    // Bookkeeping only — must never break login.
+  }
+}
 
 /**
  * Persisted "remember me" profile. `identifier` is what pre-fills the
@@ -85,12 +107,19 @@ export const useAuthStore = create<AuthState>((set, get) => ({
   biometricEnabled: false,
   biometricLockPending: false,
 
-  setUser: (user) =>
+  setUser: (user) => {
     set({
       user,
       role: user?.role ?? null,
       isAuthenticated: !!user,
-    }),
+    });
+    // A different account signing in on this device purges the prior user's
+    // resident cache / draft / payment state (fire-and-forget; never blocks
+    // login). Same account (resume / profile refresh) is a no-op.
+    if (user?.id != null) {
+      void reconcileAccount(String(user.id));
+    }
+  },
 
   setToken: async (token) => {
     if (token) {
@@ -184,11 +213,9 @@ export const useAuthStore = create<AuthState>((set, get) => ({
     // Privacy: don't leak the previous user's recent destinations,
     // cached profile/wallet data, or in-memory request responses to
     // whoever signs in next on the same device.
-    await Promise.allSettled([
-      geocodingService.clearRecent(),
-      CacheService.clearAll(),
-    ]);
-    apiCache.clear();
+    // Clears cached responses + recent addresses AND the per-user booking /
+    // payment stores that used to survive a sign-out on this device.
+    await clearAccountScopedState();
     set({
       user: null,
       token: null,

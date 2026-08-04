@@ -47,6 +47,19 @@ const FILLED_SEGMENTS: Record<Phase, number> = {
   cancelled: 0,
 };
 
+// A stale or partially-hydrated booking — a persisted store value left over
+// from an old build, or a push payload missing fields — can carry an
+// unknown/undefined status. Rendering it yields a broken card
+// ("undefined · step undefined of 4") over empty ₱0.00/address rows. Callers
+// use this guard to hide the whole "Your errand" section rather than mount a
+// broken card; a booking is only renderable if it has an id AND a status we
+// map to a real journey phase.
+export function isRenderableActiveBooking(
+  booking: Booking | null | undefined,
+): booking is Booking {
+  return !!booking?.id && !!PHASE_BY_STATUS[booking.status as BookingStatus];
+}
+
 // Short word under the bar naming the current stage. The "step N of 4"
 // count is appended at the call site so the slim bar isn't the only
 // quantitative cue.

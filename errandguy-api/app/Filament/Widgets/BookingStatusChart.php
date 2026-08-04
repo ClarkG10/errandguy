@@ -91,17 +91,26 @@ class BookingStatusChart extends ChartWidget
         // tableFilters deep-link idiom used by the ActionQueue widget. Keyed by
         // label so it stays correct regardless of which zero-count segments the
         // dataset drops; the empty-state label simply has no entry (no-op click).
-        $urls = [];
-        foreach (self::STATUSES as $status => [$label, $hex]) {
-            $urls[$label] = BookingResource::getUrl('index', ['tableFilters' => ['status' => ['value' => $status]]]);
+        //
+        // Built as a SINGLE-QUOTED JS object literal on purpose. Filament renders
+        // getOptions() straight into a DOUBLE-quoted HTML attribute on the chart
+        // canvas — so a double quote in here (as json_encode emits) closes that
+        // attribute early and dumps the raw Chart.js config onto the page (the
+        // "Live pipeline" text-blob bug). Single quotes are safe inside it, which
+        // is why the all-single-quoted PaymentMixChart options render fine.
+        $pairs = [];
+        foreach (self::STATUSES as $status => [$label]) {
+            $url = BookingResource::getUrl('index', ['tableFilters' => ['status' => ['value' => $status]]]);
+            $key = addcslashes($label, "\\'");
+            $val = addcslashes($url, "\\'");
+            $pairs[] = "'{$key}': '{$val}'";
         }
+        $urlsJs = '{ '.implode(', ', $pairs).' }';
 
         // Chart.js onClick is the click mechanism Filament v4's ChartWidget
-        // exposes (options are passed straight into the Chart config, same as the
-        // RawJs tooltip callbacks in PaymentMixChart). Filament has no first-class
-        // segment-click-to-navigate API in this version, so we navigate directly.
-        $urlsJson = json_encode($urls, JSON_UNESCAPED_SLASHES);
-
+        // exposes (options are passed straight into the Chart config). Filament has
+        // no first-class segment-click-to-navigate API in this version, so we
+        // navigate directly.
         return RawJs::make(<<<JS
             {
                 maintainAspectRatio: false,
@@ -109,7 +118,7 @@ class BookingStatusChart extends ChartWidget
                 onClick: (event, elements, chart) => {
                     if (! elements.length) { return; }
                     const label = chart.data.labels[elements[0].index];
-                    const urls = {$urlsJson};
+                    const urls = {$urlsJs};
                     if (urls[label]) { window.location.href = urls[label]; }
                 },
                 onHover: (event, elements) => {

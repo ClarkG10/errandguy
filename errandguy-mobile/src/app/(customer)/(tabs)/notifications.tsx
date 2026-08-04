@@ -361,6 +361,9 @@ export default function NotificationsScreen() {
   const [category, setCategory] = useState<CategoryKey>('all');
   const [clearConfirmVisible, setClearConfirmVisible] = useState(false);
   const [clearing, setClearing] = useState(false);
+  // Single-row delete is gated behind a confirm dialog so a stray swipe can't
+  // silently remove a notification. Holds the row awaiting confirmation.
+  const [deleteTarget, setDeleteTarget] = useState<AppNotification | null>(null);
   // Reduce Motion fallback for the swipe teaching peek — a dismissible
   // one-liner under the chips instead of a surprise animation.
   const [swipeHintCaption, setSwipeHintCaption] = useState(false);
@@ -584,6 +587,13 @@ export default function NotificationsScreen() {
     [remove, restoreAt],
   );
 
+  // Swipe/rotor "Delete" opens a confirm dialog instead of deleting straight
+  // away; the actual removal (handleDelete, with its undo grace window) only
+  // runs once the user confirms.
+  const requestDelete = useCallback((item: AppNotification) => {
+    setDeleteTarget(item);
+  }, []);
+
   const handleClearAll = useCallback(async () => {
     // ConfirmModal fires the destructive warning haptic on confirm.
     const prev = useNotificationStore.getState().notifications;
@@ -659,7 +669,7 @@ export default function NotificationsScreen() {
         item={item}
         onPress={handleNotificationPress}
         onArchive={handleArchive}
-        onDelete={handleDelete}
+        onDelete={requestDelete}
         registerRow={registerRow}
         onRowWillOpen={handleRowWillOpen}
         onRowClose={handleRowClose}
@@ -668,7 +678,7 @@ export default function NotificationsScreen() {
     [
       handleNotificationPress,
       handleArchive,
-      handleDelete,
+      requestDelete,
       registerRow,
       handleRowWillOpen,
       handleRowClose,
@@ -921,6 +931,26 @@ export default function NotificationsScreen() {
         loading={clearing}
         onConfirm={handleClearAll}
         onCancel={() => setClearConfirmVisible(false)}
+      />
+
+      <ConfirmModal
+        visible={deleteTarget !== null}
+        title="Delete notification?"
+        message="This removes it from your inbox. You'll get a moment to undo."
+        confirmLabel="Delete"
+        cancelLabel="Cancel"
+        destructive
+        onConfirm={() => {
+          const target = deleteTarget;
+          setDeleteTarget(null);
+          if (target) handleDelete(target);
+        }}
+        onCancel={() => {
+          const target = deleteTarget;
+          setDeleteTarget(null);
+          // Snap the still-open swiped row shut when the user backs out.
+          if (target) rowRefs.current.get(target.id)?.current?.close();
+        }}
       />
     </View>
   );

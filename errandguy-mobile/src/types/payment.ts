@@ -91,10 +91,12 @@ export interface WalletTransaction {
    */
   display_description?: string | null;
   /**
-   * Lifecycle state. For top_ups / earnings / payments / refunds the
-   * money has already moved when the row is written, so they are
-   * always 'completed'. Payout requests start as 'pending' until an
-   * operator marks them completed or failed.
+   * Lifecycle state — ALWAYS check it before rendering a row as settled money.
+   * A top_up is written 'pending' BEFORE Xendit confirms and only flips to
+   * 'completed' on the paid webhook (or 'failed' when the customer abandons
+   * checkout / the invoice expires) — so a pending/failed top-up must never be
+   * shown as a completed credit. Payout requests likewise start 'pending' until
+   * an operator settles them. Payments/refunds/bonuses settle when written.
    */
   status?: 'pending' | 'completed' | 'failed';
   processed_at?: string | null;

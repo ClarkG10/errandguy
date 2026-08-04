@@ -133,9 +133,21 @@ export default function TopUpScreen() {
         toast.error('Couldn’t open checkout — you weren’t charged. Please try again.');
         return;
       }
-      // Any other outcome ('success' | 'cancelled' | 'opened') is inconclusive
-      // on its own — a dismissed sheet doesn't prove they didn't pay. VERIFY
-      // with the backend; the inline overlay shows the honest result.
+      if (outcome === 'cancelled') {
+        // The customer explicitly backed out of the checkout sheet. Don't trap
+        // them behind the "verifying" overlay — dismiss it immediately. The
+        // webhook stays the source of truth, so on the rare chance they DID
+        // complete payment the balance still settles; we refresh the wallet so
+        // it shows up. The pending row self-resolves to failed when the invoice
+        // expires.
+        resolveAttempt();
+        invalidateQuery(['wallet']);
+        toast.info('Checkout cancelled. If you completed payment, your balance updates shortly.');
+        return;
+      }
+      // 'success' (redirected back through the bridge) | 'opened' (system
+      // browser, outcome unknowable) → VERIFY with the backend; the inline
+      // overlay shows the honest result.
       setAttemptStatus('verifying');
     } catch (err: any) {
       resolveAttempt();
@@ -157,9 +169,17 @@ export default function TopUpScreen() {
     const url = usePaymentStore.getState().attempt?.checkoutUrl;
     if (!url) return;
     setAttemptStatus('awaiting_gateway');
-    await openCheckoutUrl(url, PAYMENT_RETURN_URL);
+    const outcome = await openCheckoutUrl(url, PAYMENT_RETURN_URL);
+    if (outcome === 'cancelled') {
+      // Same as the first attempt: an explicit back-out dismisses the overlay
+      // instead of stranding the user on the verifying spinner.
+      resolveAttempt();
+      invalidateQuery(['wallet']);
+      toast.info('Checkout cancelled. If you completed payment, your balance updates shortly.');
+      return;
+    }
     setAttemptStatus('verifying');
-  }, [setAttemptStatus]);
+  }, [setAttemptStatus, resolveAttempt]);
 
   const finishTopUp = useCallback(
     (opts?: { keepAttempt?: boolean }) => {

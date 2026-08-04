@@ -146,15 +146,19 @@ const csvCell = (value: string | number | null | undefined): string => {
 };
 
 /** Build a spreadsheet-friendly CSV from the loaded transactions.
- *  Columns: Date, Description, Type, Amount (signed), Balance. */
+ *  Columns: Date, Description, Type, Status, Amount (signed), Balance. */
 function buildTransactionsCsv(rows: WalletTransaction[]): string {
-  const header = ['Date', 'Description', 'Type', 'Amount', 'Balance'];
+  const header = ['Date', 'Description', 'Type', 'Status', 'Amount', 'Balance'];
   const lines = rows.map((t) => {
-    const signed = (isCreditType(t.type) ? 1 : -1) * Math.abs(t.amount);
+    // Only a settled row moved money. A pending/failed top-up exports as 0 so a
+    // cancelled top-up can't inflate the signed total in a spreadsheet.
+    const settled = t.status !== 'pending' && t.status !== 'failed';
+    const signed = settled ? (isCreditType(t.type) ? 1 : -1) * Math.abs(t.amount) : 0;
     return [
       csvCell(t.created_at),
       csvCell(t.display_description ?? t.description ?? t.type.replace('_', ' ')),
       csvCell(t.type),
+      csvCell(t.status ?? 'completed'),
       csvCell(signed.toFixed(2)),
       csvCell(Number(t.balance_after).toFixed(2)),
     ].join(',');
@@ -302,14 +306,36 @@ export default function WalletScreen() {
     ({ item }: { item: WalletTransaction }) => {
       const config = TX_ICONS[item.type] ?? TX_ICONS.payment;
       const Icon = config.icon;
-      const isPositive = item.type === 'top_up' || item.type === 'refund' || item.type === 'bonus';
+      const isCredit =
+        item.type === 'top_up' || item.type === 'refund' || item.type === 'bonus';
+      // A row only reads as settled money when its lifecycle says so. top_ups
+      // are written 'pending' BEFORE Xendit confirms, and flip to 'failed' when
+      // the customer abandons checkout / the invoice expires. A pending or
+      // failed top-up must NOT paint as a completed green credit — that's what
+      // made a cancelled top-up look "successful" in the log.
+      const isPending = item.status === 'pending';
+      const isFailed = item.status === 'failed';
+      const settled = !isPending && !isFailed;
+
+      const amountClass = !settled
+        ? 'text-textMuted'
+        : isCredit
+          ? 'text-success'
+          : 'text-textPrimary';
+      // No +/− on an unsettled row — a sign implies money moved.
+      const sign = !settled ? '' : isCredit ? '+' : '−';
 
       return (
         <View className="flex-row items-center px-5 py-3.5 border-b border-divider">
           {/* Soft muted chip keeps the type icon glanceable while the
-              amount on the right carries the visual weight. */}
+              amount on the right carries the visual weight. Unsettled rows use
+              a neutral glyph so a pending top-up doesn't flash a success green. */}
           <View className="w-9 h-9 rounded-full bg-surfaceMuted items-center justify-center">
-            <Icon size={17} color={config.color} strokeWidth={1.8} />
+            <Icon
+              size={17}
+              color={settled ? config.color : LightColors.textMuted}
+              strokeWidth={1.8}
+            />
           </View>
           <View className="flex-1 ml-3">
             <Text
@@ -318,22 +344,41 @@ export default function WalletScreen() {
             >
               {item.display_description ?? item.description ?? item.type.replace('_', ' ')}
             </Text>
-            <Text className="text-[11px] font-montserrat text-textSecondary mt-0.5">
-              {formatRelativeTime(item.created_at)}
-            </Text>
+            <View className="flex-row items-center mt-0.5">
+              <Text className="text-[11px] font-montserrat text-textSecondary">
+                {formatRelativeTime(item.created_at)}
+              </Text>
+              {isPending ? (
+                <Text
+                  className="text-[11px] font-montserrat-semi ml-1.5"
+                  style={{ color: LightColors.warning }}
+                >
+                  · Pending
+                </Text>
+              ) : isFailed ? (
+                <Text
+                  className="text-[11px] font-montserrat-semi ml-1.5"
+                  style={{ color: LightColors.danger }}
+                >
+                  · Failed
+                </Text>
+              ) : null}
+            </View>
           </View>
           <View className="items-end">
             <Text
-              className={`text-[15px] font-inter-semi tabular-nums ${
-                isPositive ? 'text-success' : 'text-textPrimary'
-              }`}
+              className={`text-[15px] font-inter-semi tabular-nums ${amountClass}`}
             >
-              {isPositive ? '+' : '−'}
+              {sign}
               {formatCurrency(Math.abs(item.amount))}
             </Text>
-            <Text className="text-[10px] font-inter tabular-nums text-textMuted mt-0.5">
-              {formatCurrency(item.balance_after)}
-            </Text>
+            {/* balance_after is only meaningful once the row settled; a pending
+                top-up carries the PRE-payment balance, so hide it there. */}
+            {settled ? (
+              <Text className="text-[10px] font-inter tabular-nums text-textMuted mt-0.5">
+                {formatCurrency(item.balance_after)}
+              </Text>
+            ) : null}
           </View>
         </View>
       );
