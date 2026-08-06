@@ -136,6 +136,7 @@ Route::prefix('v1')->group(function () {
                 ->where('id', '[0-9a-fA-F-]{36}');
             Route::post('/{id}/review', [ReviewController::class, 'store']);
             Route::post('/{id}/rebook', [BookingController::class, 'rebook']);
+            Route::post('/{id}/tip', [BookingController::class, 'tip'])->middleware('throttle:10,1');
             // Retry-match is rate-limited tighter than the broader booking
             // endpoints — a frantically tapping user shouldn't be able to
             // re-dispatch MatchRunnerJob more than once every few seconds.

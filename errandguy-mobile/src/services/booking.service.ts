@@ -150,6 +150,13 @@ export const bookingService = {
     return p;
   },
 
+  /** Tip the runner on a completed, online-paid booking (wallet-funded). */
+  tip(id: string, amount: number) {
+    const p = api.post(`/bookings/${id}/tip`, { amount });
+    p.then(() => invalidateBookingsCaches(id)).catch(() => {});
+    return p;
+  },
+
   getActiveBooking() {
     // Silent: customer Home polls this on focus/foreground; the user
     // didn't explicitly ask for it.

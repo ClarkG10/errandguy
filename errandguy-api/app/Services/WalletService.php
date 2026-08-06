@@ -277,6 +277,71 @@ class WalletService
     }
 
     /**
+     * Customer tips their completed errand's runner. Atomic + idempotent (one
+     * tip per booking, keyed on the booking id). Funded from the customer's
+     * WITHDRAWABLE wallet balance ONLY — never promo bonus, since the tip is
+     * real money paid to the runner — and credited straight to the runner's
+     * withdrawable balance. The tip is a SEPARATE 'tip' transaction from the
+     * fare, so a fare refund never touches it and it is never clawed back.
+     *
+     * @throws \RuntimeException  Insufficient balance, or the errand was already tipped.
+     */
+    public function tip(string $bookingId, string $customerId, string $runnerId, float $amount): void
+    {
+        DB::transaction(function () use ($bookingId, $customerId, $runnerId, $amount) {
+            // Lock both wallets in a deterministic (sorted) order so this never
+            // deadlocks against another two-wallet path.
+            $ids = [$customerId, $runnerId];
+            sort($ids);
+            $users = User::whereIn('id', $ids)->lockForUpdate()->get()->keyBy('id');
+            $customer = $users->get($customerId);
+            $runner = $users->get($runnerId);
+            if (! $customer || ! $runner) {
+                throw new \RuntimeException('Customer or runner not found.');
+            }
+
+            // Idempotency: one tip per booking (the customer-side 'tip' debit is
+            // the guard; the (user_id, reference_id, type) unique index backs it).
+            $already = WalletTransaction::where('user_id', $customerId)
+                ->where('reference_id', $bookingId)
+                ->where('type', 'tip')
+                ->exists();
+            if ($already) {
+                throw new \RuntimeException('This errand has already been tipped.');
+            }
+
+            // Tips come from withdrawable cash only, never promo bonus.
+            if ((float) $customer->wallet_balance < $amount) {
+                throw new \RuntimeException('Insufficient wallet balance for this tip.');
+            }
+
+            $customerNewBalance = (float) $customer->wallet_balance - $amount;
+            $customer->update(['wallet_balance' => $customerNewBalance]);
+            WalletTransaction::create([
+                'user_id' => $customerId,
+                'type' => 'tip',
+                'amount' => -$amount,
+                'balance_after' => $customerNewBalance,
+                'reference_id' => $bookingId,
+                'description' => 'Tip for your runner',
+            ]);
+
+            $runnerNewBalance = (float) $runner->wallet_balance + $amount;
+            $runner->update(['wallet_balance' => $runnerNewBalance]);
+            WalletTransaction::create([
+                'user_id' => $runnerId,
+                'type' => 'tip',
+                'amount' => $amount,
+                'balance_after' => $runnerNewBalance,
+                'reference_id' => $bookingId,
+                'description' => 'Tip from your customer',
+            ]);
+
+            Booking::whereKey($bookingId)->update(['tip_amount' => $amount]);
+        });
+    }
+
+    /**
      * Credit a refund, returning money to the SAME bucket it was spent from.
      *
      * @param  string       $referenceId     Idempotency + audit key for the refund row.

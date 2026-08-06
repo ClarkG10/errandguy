@@ -65,6 +65,11 @@ export default function RateScreen() {
   const [rating, setRating] = useState(0);
   const [comment, setComment] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
+  // Optional tip (₱), wallet-funded, only offered on online-paid errands.
+  // tipDoneRef guards against re-charging the tip on a retry after the review
+  // fails (the API rejects a second tip anyway, but this keeps retries clean).
+  const [tipAmount, setTipAmount] = useState(0);
+  const tipDoneRef = useRef(false);
   // Post-submit celebration overlay — shown briefly (SuccessCheck fires
   // its own success haptic), then we navigate home from onDone.
   const [showSuccess, setShowSuccess] = useState(false);
@@ -137,6 +142,12 @@ export default function RateScreen() {
     if (!bookingId || rating === 0) return;
     setIsSubmitting(true);
     try {
+      // Send the tip first (once) so it fully completes before we celebrate
+      // and navigate away. Only online-paid errands surface the tip UI.
+      if (tipAmount > 0 && !tipDoneRef.current) {
+        await bookingService.tip(bookingId, tipAmount);
+        tipDoneRef.current = true;
+      }
       await bookingService.reviewBooking(bookingId, {
         rating,
         comment: comment.trim() || undefined,
@@ -155,7 +166,7 @@ export default function RateScreen() {
     } finally {
       setIsSubmitting(false);
     }
-  }, [bookingId, rating, comment]);
+  }, [bookingId, rating, comment, tipAmount]);
 
   const handleSkip = useCallback(() => {
     finishAndGoHome();
@@ -364,12 +375,63 @@ export default function RateScreen() {
                 : undefined
             }
           />
+
+          {/* Optional tip — offered on any completed errand (incl. cash/COD).
+              The tip is paid online from the customer's wallet; 100% goes to the
+              runner, independent of how the fare was settled. */}
+          {booking && booking.runner && (
+            <View className="mt-4 pt-4 border-t border-divider">
+              <Text className="text-sm font-montserrat-semi text-textPrimary mb-2 text-center">
+                {booking.runner?.full_name
+                  ? `Add a tip for ${booking.runner.full_name.split(' ')[0]}?`
+                  : 'Add a tip?'}
+              </Text>
+              <View className="flex-row justify-center gap-2">
+                {[20, 50, 100].map((amt) => {
+                  const selected = tipAmount === amt;
+                  return (
+                    <Pressable
+                      key={amt}
+                      onPress={() => {
+                        Haptics.selectionAsync().catch(() => {});
+                        setTipAmount((prev) => (prev === amt ? 0 : amt));
+                      }}
+                      hitSlop={{ top: 4, bottom: 4 }}
+                      className={`px-5 py-2 rounded-full border ${
+                        selected
+                          ? 'bg-primaryLight border-primary'
+                          : 'bg-surfaceMuted border-transparent'
+                      }`}
+                      style={({ pressed }) => [
+                        { minHeight: 36, justifyContent: 'center' },
+                        pressFx(pressed),
+                      ]}
+                      accessibilityRole="button"
+                      accessibilityState={{ selected }}
+                      accessibilityLabel={`Tip ${amt} pesos`}
+                    >
+                      <Text
+                        className={`text-sm font-montserrat-semi ${
+                          selected ? 'text-primary' : 'text-textSecondary'
+                        }`}
+                      >
+                        ₱{amt}
+                      </Text>
+                    </Pressable>
+                  );
+                })}
+              </View>
+              <Text className="text-[11px] font-montserrat text-textMuted mt-2 text-center">
+                Paid from your wallet — 100% goes to your runner.
+              </Text>
+            </View>
+          )}
         </Card>
 
         {/* Submit */}
         <View className="mx-5 gap-3">
           <Button
-            title="Submit Review"
+            title={tipAmount > 0 ? `Submit + ₱${tipAmount} tip` : 'Submit Review'}
             onPress={handleSubmit}
             disabled={rating === 0}
             loading={isSubmitting}

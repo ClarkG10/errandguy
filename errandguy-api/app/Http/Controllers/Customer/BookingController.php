@@ -991,4 +991,48 @@ class BookingController extends Controller
             'message' => 'Searching again with a wider radius.',
         ]);
     }
+
+    /**
+     * Customer tips their completed errand's runner. Wallet-funded, once per
+     * booking, refund-safe (a separate 'tip' transaction from the fare).
+     */
+    public function tip(Request $request, string $id): JsonResponse
+    {
+        $data = $request->validate([
+            'amount' => ['required', 'numeric', 'min:1', 'max:5000'],
+        ]);
+        $amount = round((float) $data['amount'], 2);
+
+        $booking = Booking::where('id', $id)
+            ->where('customer_id', $request->user()->id)
+            ->firstOrFail();
+
+        if (! in_array($booking->status, ['completed', 'delivered'], true)) {
+            return $this->fail(ErrorCode::BOOKING_STATE_INVALID, 'You can only tip a completed errand.');
+        }
+        if (! $booking->runner_id) {
+            return $this->fail(ErrorCode::BOOKING_STATE_INVALID, 'This errand had no runner to tip.');
+        }
+        // Tips work for any completed errand (incl. cash/COD) — the tip itself
+        // is paid online from the customer's wallet, independent of how the fare
+        // was settled.
+        if ((float) $booking->tip_amount > 0) {
+            return $this->fail(ErrorCode::CONFLICT, 'You’ve already tipped this errand.');
+        }
+
+        try {
+            app(WalletService::class)->tip($booking->id, $booking->customer_id, $booking->runner_id, $amount);
+        } catch (\RuntimeException $e) {
+            return $this->fail(ErrorCode::INSUFFICIENT_WALLET_BALANCE, $e->getMessage());
+        }
+
+        app(\App\Services\NotificationService::class)->sendPush(
+            $booking->runner_id,
+            'You received a tip!',
+            'Your customer added a ₱'.number_format($amount, 2)." tip for errand #{$booking->booking_number}.",
+            ['type' => 'payment', 'booking_id' => $booking->id],
+        );
+
+        return $this->ok(['tip_amount' => $amount], 'Tip sent — thank you!');
+    }
 }

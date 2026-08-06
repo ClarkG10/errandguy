@@ -98,6 +98,8 @@ export interface Booking {
   recommended_min: number | null;
   recommended_max: number | null;
   runner_payout: number | null;
+  tip_amount: number | null;
+  payment_method: string | null;
   negotiate_expires_at: string | null;
   pickup_photo_url: string | null;
   delivery_photo_url: string | null;
