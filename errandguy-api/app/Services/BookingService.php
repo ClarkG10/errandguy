@@ -166,6 +166,52 @@ class BookingService
         $this->refundUnfulfilled($booking->id, 'Admin cancelled the booking');
     }
 
+    /**
+     * Admin re-runs matching for a STUCK errand (no runner assigned yet). Only
+     * valid while the booking is `no_runner` or still `pending` — a booking
+     * already matched/accepted/in-progress must never be pulled back to pending
+     * (that would strand the assigned runner mid-errand).
+     *
+     * MatchRunnerJob / BroadcastToRunnersJob only act on a `pending` booking, so
+     * reset the status to pending first, then re-dispatch in the booking's own
+     * pricing mode. An optional wider radius helps when the default search found
+     * nobody nearby.
+     */
+    public function adminRematch(string $bookingId, ?float $radiusKm = null): void
+    {
+        $booking = Booking::findOrFail($bookingId);
+
+        if (! in_array($booking->status, ['no_runner', 'pending'], true)) {
+            throw new \App\Exceptions\BookingStateException(
+                'Only an unmatched errand (no runner assigned yet) can be re-matched.'
+            );
+        }
+
+        // Back to pending so the matching jobs — which no-op on any other
+        // status — will pick it up again.
+        $booking->update(['status' => 'pending']);
+
+        BookingStatusLog::create([
+            'booking_id' => $booking->id,
+            'status' => 'pending',
+            // changed_by is a FK to users; an admin_users id would violate it, so
+            // record this as a system change (null). The acting admin is captured
+            // in the Filament audit log (AdminNotify 'booking.rematch').
+            'changed_by' => null,
+            'note' => $radiusKm
+                ? "Admin re-ran matching (radius {$radiusKm} km)"
+                : 'Admin re-ran matching',
+        ]);
+
+        // Re-dispatch in the booking's own pricing mode: fixed price auto-matches
+        // the nearest runner; negotiate broadcasts the offer to nearby runners.
+        if ($booking->pricing_mode === 'fixed') {
+            \App\Jobs\MatchRunnerJob::dispatch($booking->id, $radiusKm);
+        } else {
+            \App\Jobs\BroadcastToRunnersJob::dispatch($booking->id);
+        }
+    }
+
     public function refundUnfulfilled(string $bookingId, string $reason): void
     {
         DB::transaction(function () use ($bookingId, $reason) {

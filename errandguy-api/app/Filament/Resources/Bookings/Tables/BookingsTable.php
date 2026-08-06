@@ -10,6 +10,7 @@ use App\Models\Booking;
 use Filament\Actions\Action;
 use Filament\Actions\ViewAction;
 use Filament\Forms\Components\Textarea;
+use Filament\Forms\Components\TextInput;
 use Filament\Support\Icons\Heroicon;
 use Filament\Tables\Columns\Summarizers\Sum;
 use Filament\Tables\Columns\TextColumn;
@@ -149,6 +150,55 @@ class BookingsTable
                             ],
                             audit: 'booking.cancelled',
                             properties: ['reason' => $data['reason']],
+                        );
+                    }),
+
+                Action::make('rematch')
+                    ->label('Re-run matching')
+                    ->icon(Heroicon::OutlinedArrowPathRoundedSquare)
+                    ->color('warning')
+                    ->requiresConfirmation()
+                    ->modalDescription(fn (Booking $record): string => 'Re-runs runner matching for '
+                        .$record->booking_number.'. Sends fresh offers to nearby runners — use only on a stuck errand with no runner assigned yet.')
+                    ->schema([
+                        TextInput::make('radius_km')
+                            ->label('Search radius (km, optional)')
+                            ->helperText('Leave blank for the default. Widen it if no runner was found nearby.')
+                            ->numeric()
+                            ->minValue(1)
+                            ->maxValue(50),
+                    ])
+                    ->visible(fn ($record): bool => in_array($record->status, ['no_runner', 'pending'], true)
+                        && (auth('admin')->user()?->hasAnyRole(
+                            AdminUser::ROLE_SUPER_ADMIN,
+                            AdminUser::ROLE_ADMIN,
+                            AdminUser::ROLE_OPS,
+                        ) ?? false))
+                    ->action(function (array $data, $record): void {
+                        $radiusKm = isset($data['radius_km']) && $data['radius_km'] !== null && $data['radius_km'] !== ''
+                            ? (float) $data['radius_km']
+                            : null;
+
+                        try {
+                            app(\App\Services\BookingService::class)
+                                ->adminRematch($record->id, $radiusKm);
+                        } catch (\App\Exceptions\BookingStateException $e) {
+                            AdminNotify::error('Could not re-run matching', $e, $record, [
+                                'Booking' => $record->booking_number,
+                            ]);
+
+                            return;
+                        }
+
+                        AdminNotify::success(
+                            'Matching re-run',
+                            $record,
+                            context: [
+                                'Booking' => $record->booking_number,
+                                'Customer' => $record->customer?->full_name,
+                            ],
+                            audit: 'booking.rematch',
+                            properties: ['radius_km' => $radiusKm],
                         );
                     }),
             ]);
