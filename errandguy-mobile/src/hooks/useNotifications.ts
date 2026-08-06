@@ -190,6 +190,9 @@ function handleNotificationTapped(
     case 'referral':
       router.push((isRunner ? '/(runner)/(tabs)/earnings' : '/(customer)/wallet/') as never);
       break;
+    case 'document_update':
+      if (isRunner) router.push('/(runner)/settings/documents' as never);
+      break;
     case 'chat':
       if (data.booking_id) {
         router.push(

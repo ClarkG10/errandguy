@@ -44,6 +44,7 @@ class RunnerProfileResource extends Resource
     {
         return [
             RelationManagers\RunnerErrandsRelationManager::class,
+            RelationManagers\RunnerDocumentsRelationManager::class,
         ];
     }
 
