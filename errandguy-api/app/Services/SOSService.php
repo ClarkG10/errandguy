@@ -62,6 +62,16 @@ class SOSService
 
         $booking->update(['sos_triggered' => true]);
 
+        // Live operator alert (life-safety — critical). Best-effort; a failed
+        // alert insert must never block the panic button.
+        \App\Models\AdminAlert::raise(
+            'sos',
+            'critical',
+            'SOS triggered',
+            'Booking '.($booking->booking_number ?? $booking->id).' — '.$role.' pulled the alarm.',
+            $alert->id,
+        );
+
         // Everything above is the durable safety write. The OUTBOUND fan-out —
         // trusted-contact SMS, the Reverb realtime broadcast, and the admin
         // FCM topic — is deferred to a job so the panic button returns the alert

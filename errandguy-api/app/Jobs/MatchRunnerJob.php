@@ -167,6 +167,16 @@ class MatchRunnerJob implements ShouldQueue
                 if ($newStatus === 'no_runner') {
                     app(\App\Services\BookingService::class)
                         ->refundUnfulfilled($this->bookingId, 'No runner available — auto-refund');
+
+                    // Live operator alert — a stuck errand needs a human to
+                    // reassign / widen matching. Best-effort.
+                    \App\Models\AdminAlert::raise(
+                        'no_runner',
+                        'warning',
+                        'No runner found',
+                        'Booking '.($matchedBooking->booking_number ?? $matchedBooking->id).' could not be matched.',
+                        $matchedBooking->id,
+                    );
                 }
             }
 
