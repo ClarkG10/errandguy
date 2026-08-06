@@ -402,7 +402,7 @@ class WalletService
      */
     public function completePayout(string $txId): WalletTransaction
     {
-        return DB::transaction(function () use ($txId) {
+        $tx = DB::transaction(function () use ($txId) {
             $tx = WalletTransaction::where('type', 'payout')
                 ->lockForUpdate()
                 ->findOrFail($txId);
@@ -418,6 +418,17 @@ class WalletService
 
             return $tx->fresh();
         });
+
+        // Notify the runner AFTER commit — best-effort, never inside the lock.
+        $amount = number_format(abs((float) $tx->amount), 2);
+        app(NotificationService::class)->sendPush(
+            $tx->user_id,
+            'Payout sent',
+            "Your ₱{$amount} payout has been sent. It should arrive within 1–3 business days.",
+            ['type' => 'payment', 'status' => 'completed', 'wallet_transaction_id' => $tx->id],
+        );
+
+        return $tx;
     }
 
     /**

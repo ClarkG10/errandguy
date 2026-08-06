@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import * as Notifications from 'expo-notifications';
 import * as Device from 'expo-device';
-import { Platform } from 'react-native';
+import { Platform, AppState } from 'react-native';
 import { router } from 'expo-router';
 import { userService } from '../services/user.service';
 import { useAuthStore } from '../stores/authStore';
@@ -54,8 +54,11 @@ export function useNotifications(enabled = true) {
       });
       setExpoPushToken(tokenData.data);
       return tokenData.data;
-    } catch {
-      // Firebase not initialized in dev — push tokens only work in EAS builds
+    } catch (err) {
+      // Legitimately fails in dev / Expo Go (no FCM/APNs configured); in a
+      // standalone/EAS build it should succeed, so surface it in dev to aid
+      // diagnosis instead of swallowing silently.
+      if (__DEV__) console.warn('[push] getExpoPushTokenAsync failed', err);
       return null;
     }
   }, []);
@@ -105,16 +108,44 @@ export function useNotifications(enabled = true) {
     };
   }, [routeTap]);
 
+  // Tracks whether this device's token reached the server this session, so an
+  // AppState re-trigger doesn't re-upload once it has — but DOES keep retrying
+  // until it does.
+  const tokenSynced = useRef(false);
+
+  const syncPushToken = useCallback(async () => {
+    if (tokenSynced.current) return;
+    const token = await registerForPush();
+    if (!token) return; // no permission / simulator — nothing to sync
+    // PUT /user/fcm-token is a mutation, so it bypasses the GET-only api retry
+    // layer. Retry with backoff: a single connectivity blip right after
+    // install / OTP must not silently lose push for the whole session.
+    for (let attempt = 0; attempt < 3; attempt++) {
+      try {
+        await userService.updateFCMToken(token);
+        tokenSynced.current = true;
+        return;
+      } catch (err) {
+        if (__DEV__) console.warn(`[push] token upload failed (attempt ${attempt + 1})`, err);
+        await new Promise<void>((resolve) => {
+          setTimeout(resolve, 1000 * (attempt + 1));
+        });
+      }
+    }
+  }, [registerForPush]);
+
   // Permission prompt + token upload stay gated on `enabled` so we don't ask
-  // for notification permission mid-OTP (before a contact is verified).
+  // for notification permission mid-OTP (before a contact is verified). Re-run
+  // when the app returns to the foreground so a failed one-shot self-heals (the
+  // first attempt may have hit a gap right after install); no-op once synced.
   useEffect(() => {
     if (!enabled) return;
-    registerForPush().then((token) => {
-      if (token) {
-        userService.updateFCMToken(token).catch(() => {});
-      }
+    void syncPushToken();
+    const sub = AppState.addEventListener('change', (state) => {
+      if (state === 'active') void syncPushToken();
     });
-  }, [enabled, registerForPush]);
+    return () => sub.remove();
+  }, [enabled, syncPushToken]);
 
   return {
     expoPushToken,
@@ -154,6 +185,9 @@ function handleNotificationTapped(
       router.push('/(runner)/(tabs)/home' as never);
       break;
     case 'payment':
+      router.push((isRunner ? '/(runner)/(tabs)/earnings' : '/(customer)/wallet/') as never);
+      break;
+    case 'referral':
       router.push((isRunner ? '/(runner)/(tabs)/earnings' : '/(customer)/wallet/') as never);
       break;
     case 'chat':
