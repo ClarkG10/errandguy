@@ -16,17 +16,27 @@ class DiscoverySweep3Test extends TestCase
 {
     use RefreshDatabase;
 
-    public function test_forgot_password_does_not_reveal_whether_an_email_is_registered(): void
+    public function test_forgot_password_reveals_an_unregistered_email_by_product_decision(): void
     {
+        // PRODUCT DECISION (2026-08), deliberately REVERSING the earlier
+        // anti-enumeration posture: the reset endpoint now tells the user when
+        // an email isn't registered, so the app can show an honest inline error
+        // instead of a neutral "if an account exists…". The tradeoff — this is
+        // now an account-existence oracle — was explicitly accepted (see
+        // ForgotPasswordRequest); the route stays throttled to blunt bulk
+        // probing. If that risk is later judged unacceptable, revert
+        // ForgotPasswordRequest to the neutral 200 and restore the no-oracle
+        // assertions here.
         User::factory()->create(['email' => 'real@example.com', 'status' => 'active']);
 
         $known = $this->postJson('/api/v1/auth/forgot-password', ['email' => 'real@example.com']);
         $unknown = $this->postJson('/api/v1/auth/forgot-password', ['email' => 'nobody@example.com']);
 
-        // Both succeed with the SAME neutral message — no 422 enumeration oracle.
+        // A known email proceeds; an unknown one is rejected with an honest,
+        // registration-revealing 422.
         $known->assertOk();
-        $unknown->assertOk();
-        $this->assertEquals($known->json('message'), $unknown->json('message'));
+        $unknown->assertStatus(422);
+        $this->assertStringContainsString('registered', (string) $unknown->json('message'));
     }
 
     public function test_bookings_list_rejects_a_malformed_date_filter_with_422_not_500(): void
