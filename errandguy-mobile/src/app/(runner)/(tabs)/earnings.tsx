@@ -571,7 +571,6 @@ export default function EarningsScreen() {
             />
           ) : earningsList.length === 0 ? (
             <RunnerEmptyState
-              illustration={<Illustration name="runner-earnings-empty" size={168} />}
               eyebrow="This period"
               title="No earnings yet"
               description="Completed errands for this period will show up here."

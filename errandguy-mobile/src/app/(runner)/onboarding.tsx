@@ -111,9 +111,6 @@ export default function RunnerOnboardingScreen() {
   const setUser = useAuthStore((s) => s.setUser);
   const { setRunnerProfile } = useRunnerStore();
   const { logout } = useAuth();
-  const setRunnerOnboardingSkipped = useAuthStore(
-    (s) => s.setRunnerOnboardingSkipped,
-  );
 
   const [documents, setDocuments] = useState<RunnerDocument[]>([]);
   const [uploading, setUploading] = useState<string | null>(null);
@@ -388,16 +385,11 @@ export default function RunnerOnboardingScreen() {
     router.replace('/(auth)/welcome');
   }, [logout, router]);
 
-  const handleSkip = useCallback(async () => {
-    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
-    await setRunnerOnboardingSkipped(true);
-    router.replace('/(runner)/(tabs)');
-  }, [setRunnerOnboardingSkipped, router]);
-
   return (
     <SafeAreaView className="flex-1 bg-background">
-      {/* Top bar with logout. Skip lives only at the bottom (single,
-          clearly-labeled affordance) so it never competes with Continue. */}
+      {/* Top bar with logout. Document upload is mandatory — there is no
+          skip; the only exits are Continue (enabled once required docs are
+          uploaded) or Log out. */}
       <View className="flex-row items-center justify-end px-5 pt-2">
         <Pressable
           onPress={handleLogout}
@@ -544,18 +536,6 @@ export default function RunnerOnboardingScreen() {
                 disabled={!requiredUploaded}
                 onPress={handleContinue}
               />
-              {!requiredUploaded && (
-                <Pressable
-                  className="mt-3 py-3 items-center"
-                  onPress={handleSkip}
-                  accessibilityRole="button"
-                  accessibilityLabel="Skip for now"
-                >
-                  <Text className="text-sm font-montserrat text-textTertiary">
-                    Skip for now
-                  </Text>
-                </Pressable>
-              )}
             </View>
           </>
         )}

@@ -448,7 +448,6 @@ export default function PayoutScreen() {
           ) : recentPayouts.length === 0 ? (
             <Card className="p-0">
               <RunnerEmptyState
-                illustration={<Illustration name="runner-earnings-empty" size={168} />}
                 eyebrow="Payouts"
                 title="No payouts yet"
                 description={`Request your first payout once you've earned ${formatCurrency(MIN_PAYOUT)}.`}

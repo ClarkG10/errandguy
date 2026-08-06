@@ -45,8 +45,6 @@ const SOURCES = {
   'runner-onboarding': require('../../../assets/illustrations/runner-onboarding.png'),
   'runner-verify': require('../../../assets/illustrations/runner-verify.png'),
   'runner-offline': require('../../../assets/illustrations/runner-offline.png'),
-  'runner-no-jobs': require('../../../assets/illustrations/runner-no-jobs.png'),
-  'runner-earnings-empty': require('../../../assets/illustrations/runner-earnings-empty.png'),
   'runner-payout-success': require('../../../assets/illustrations/runner-payout-success.png'),
   'runner-rated': require('../../../assets/illustrations/runner-rated.png'),
   // 3D hero objects

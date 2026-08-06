@@ -449,16 +449,20 @@ export default function RunnerHomeScreen() {
 
     if (value) {
       const cachedProfile = profileQ.data ?? runnerProfile;
+      // Unverified runners can't go online. The power button is styled locked
+      // but kept pressable so this tap can explain WHY \u2014 a dead button explains
+      // nothing (the reported bug). Only blocks going ONLINE; offline is fine.
+      if ((cachedProfile?.verification_status ?? 'pending') !== 'approved') {
+        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning).catch(() => {});
+        toast.warning("You\u2019re not verified yet. Finish verification before going online.");
+        router.push('/(runner)/settings/documents' as any);
+        return;
+      }
       if (cachedProfile && (!cachedProfile.preferred_types || cachedProfile.preferred_types.length === 0)) {
         toast.warning(
           'Pick at least one errand type you\u2019d like to receive before going online.',
         );
         router.push('/(runner)/settings/preferred-types' as any);
-        return;
-      }
-      if (cachedProfile && cachedProfile.verification_status && cachedProfile.verification_status !== 'approved') {
-        toast.warning('Finish account verification before going online.');
-        router.push('/(runner)/settings/documents' as any);
         return;
       }
     }
@@ -803,10 +807,10 @@ export default function RunnerHomeScreen() {
                       ) : null}
                       <Pressable
                         onPress={() => handleToggleOnline(!isOnline)}
-                        disabled={togglingOnline || !canGoOnline}
+                        disabled={togglingOnline}
                         hitSlop={10}
                         accessibilityRole="button"
-                        accessibilityState={{ disabled: !canGoOnline, busy: togglingOnline }}
+                        accessibilityState={{ busy: togglingOnline }}
                         accessibilityLabel={
                           !canGoOnline
                             ? 'Verification required'
@@ -1056,7 +1060,7 @@ export default function RunnerHomeScreen() {
         {canGoOnline && !activeErrand && (!isOnline || negotiateOffers.length === 0) && (
           <View className="px-5 pt-8 items-center">
             <Illustration
-              name={isOnline ? 'runner-no-jobs' : 'runner-offline'}
+              name="runner-offline"
               size={180}
             />
             <Text className="text-[15px] font-montserrat-bold text-textPrimary mt-4">

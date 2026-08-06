@@ -374,7 +374,7 @@ export default function HistoryScreen() {
             />
           ) : (
             <RunnerEmptyState
-              illustration={<Illustration name="runner-no-jobs" size={168} />}
+              illustration={<Illustration name="runner-offline" size={168} />}
               eyebrow="No history yet"
               title={
                 statusFilter === 'completed'
