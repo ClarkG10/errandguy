@@ -200,6 +200,15 @@ class XenditWebhookController extends Controller
             return;
         }
 
+        // Gateway-funded tip ("tip-{txId}"): credits the runner + stamps
+        // booking.tip_amount, idempotently. Separate from the booking charge so
+        // a tip never touches payment_status / referral / promo.
+        if (str_starts_with($externalId, 'tip-')) {
+            $transactionId = substr($externalId, 4);
+            app(\App\Services\WalletService::class)->completeGatewayTip($transactionId, $data);
+            return;
+        }
+
         if (str_starts_with($externalId, 'booking-')) {
             $paymentId = substr($externalId, 8);
             $payment = DB::transaction(function () use ($paymentId, $data) {
@@ -243,6 +252,12 @@ class XenditWebhookController extends Controller
         if (str_starts_with($externalId, 'topup-')) {
             $transactionId = substr($externalId, 6);
             app(\App\Services\WalletService::class)->expireTopUp($transactionId, 'Invoice expired');
+            return;
+        }
+
+        if (str_starts_with($externalId, 'tip-')) {
+            $transactionId = substr($externalId, 4);
+            app(\App\Services\WalletService::class)->expireGatewayTip($transactionId, 'Invoice expired');
             return;
         }
 
@@ -330,6 +345,18 @@ class XenditWebhookController extends Controller
             ->first();
         if ($topup) {
             app(\App\Services\WalletService::class)->completeTopUp($topup->id, $data);
+            return;
+        }
+
+        // …or a DIRECT e-wallet gateway-funded tip (its payment_request id is
+        // stored on the 'tip_payment' row). completeGatewayTip is idempotent
+        // and does its own settled-in-full + runner-credit + notify.
+        $tip = \App\Models\WalletTransaction::where('type', 'tip_payment')
+            ->where('gateway_ref', $paymentRequestId)
+            ->where('status', 'pending')
+            ->first();
+        if ($tip) {
+            app(\App\Services\WalletService::class)->completeGatewayTip($tip->id, $data);
         }
     }
 
@@ -404,6 +431,17 @@ class XenditWebhookController extends Controller
             ->first();
         if ($topup) {
             app(\App\Services\WalletService::class)->expireTopUp($topup->id, 'Payment failed');
+            return;
+        }
+
+        // …or a direct e-wallet gateway tip that failed — fail its pending row
+        // too so the app stops verifying (no runner credit ever happened).
+        $tip = \App\Models\WalletTransaction::where('type', 'tip_payment')
+            ->where('gateway_ref', $paymentRequestId)
+            ->where('status', 'pending')
+            ->first();
+        if ($tip) {
+            app(\App\Services\WalletService::class)->expireGatewayTip($tip->id, 'Payment failed');
         }
     }
 

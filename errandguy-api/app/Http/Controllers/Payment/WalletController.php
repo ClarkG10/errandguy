@@ -152,6 +152,17 @@ class WalletController extends Controller
             $query->where('type', $request->input('type'));
         }
 
+        // A gateway-funded tip records a 'tip_payment' row on the CUSTOMER purely
+        // to carry the Xendit charge lifecycle — the money is paid online
+        // straight to the runner and never moves the customer's wallet balance.
+        // Showing it in the ledger would render a debit against an unchanged
+        // running balance, so it's hidden unless explicitly requested. (The
+        // runner's real 'tip' credit is a genuine wallet movement and still
+        // shows.)
+        if ($request->input('type') !== 'tip_payment') {
+            $query->where('type', '!=', 'tip_payment');
+        }
+
         if ($request->filled('date_from')) {
             $query->where('created_at', '>=', \Carbon\Carbon::parse($request->input('date_from'))->startOfDay());
         }

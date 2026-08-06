@@ -150,9 +150,23 @@ export const bookingService = {
     return p;
   },
 
-  /** Tip the runner on a completed, online-paid booking (wallet-funded). */
+  /** Tip the runner on a completed booking, funded instantly from the
+   *  customer's wallet balance. Fails with INSUFFICIENT_WALLET_BALANCE when the
+   *  balance can't cover it — callers fall back to {@link tipCheckout}. */
   tip(id: string, amount: number) {
     const p = api.post(`/bookings/${id}/tip`, { amount });
+    p.then(() => invalidateBookingsCaches(id)).catch(() => {});
+    return p;
+  },
+
+  /** Start a GATEWAY-funded tip (GCash / Maya / card) — the zero-wallet / COD
+   *  path. Returns a `checkout_url` the app opens; the runner is credited only
+   *  after Xendit confirms via webhook. `data.id` is the tip transaction id to
+   *  poll for verification (via getTopUpStatus). */
+  tipCheckout(id: string, amount: number, method: 'gcash' | 'maya' | 'card', opts?: { idempotencyKey?: string }) {
+    const p = api.post(`/bookings/${id}/tip-checkout`, { amount, method }, {
+      idempotencyKey: opts?.idempotencyKey,
+    } as any);
     p.then(() => invalidateBookingsCaches(id)).catch(() => {});
     return p;
   },

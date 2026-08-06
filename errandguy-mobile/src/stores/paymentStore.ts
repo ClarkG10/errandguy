@@ -13,7 +13,10 @@ import { newIdempotencyKey } from '../utils/idempotency';
  * Mirrors the hand-rolled AsyncStorage + `isHydrated` pattern of bookingStore
  * (no zustand persist middleware, to match the codebase).
  */
-export type PaymentKind = 'booking' | 'topup' | 'payout';
+// 'tip' is a gateway-funded runner tip. It behaves like 'topup' for
+// verification — a wallet_transaction polled via the shared transaction-status
+// endpoint — so its transaction id rides in `topupId`.
+export type PaymentKind = 'booking' | 'topup' | 'payout' | 'tip';
 
 export type AttemptStatus =
   | 'preparing' // creating the booking/top-up/payout on our server

@@ -137,6 +137,9 @@ Route::prefix('v1')->group(function () {
             Route::post('/{id}/review', [ReviewController::class, 'store']);
             Route::post('/{id}/rebook', [BookingController::class, 'rebook']);
             Route::post('/{id}/tip', [BookingController::class, 'tip'])->middleware('throttle:10,1');
+            // Gateway-funded tip (GCash/Maya/card) — the zero-wallet / COD path.
+            // Returns a checkout_url; the runner is credited on the Xendit webhook.
+            Route::post('/{id}/tip-checkout', [BookingController::class, 'tipCheckout'])->middleware('throttle:10,1');
             // Retry-match is rate-limited tighter than the broader booking
             // endpoints — a frantically tapping user shouldn't be able to
             // re-dispatch MatchRunnerJob more than once every few seconds.

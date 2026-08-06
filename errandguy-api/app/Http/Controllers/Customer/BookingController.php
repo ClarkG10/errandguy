@@ -1035,4 +1035,68 @@ class BookingController extends Controller
 
         return $this->ok(['tip_amount' => $amount], 'Tip sent — thank you!');
     }
+
+    /**
+     * Start a GATEWAY-funded tip (GCash / Maya / card) for a completed errand.
+     *
+     * This is the zero-wallet / COD path: the customer pays the tip directly via
+     * an online method — no wallet balance required — and the runner is credited
+     * only after Xendit confirms via webhook ({@see WalletService::
+     * completeGatewayTip()}). The instant wallet-funded path is {@see
+     * self::tip()}. Returns a `checkout_url` the app opens to pay.
+     */
+    public function tipCheckout(Request $request, string $id): JsonResponse
+    {
+        $data = $request->validate([
+            'amount' => ['required', 'numeric', 'min:1', 'max:5000'],
+            'method' => ['required', 'string', \Illuminate\Validation\Rule::in(['gcash', 'maya', 'card'])],
+        ]);
+        $amount = round((float) $data['amount'], 2);
+
+        $booking = Booking::where('id', $id)
+            ->where('customer_id', $request->user()->id)
+            ->firstOrFail();
+
+        if (! in_array($booking->status, ['completed', 'delivered'], true)) {
+            return $this->fail(ErrorCode::BOOKING_STATE_INVALID, 'You can only tip a completed errand.');
+        }
+        if (! $booking->runner_id) {
+            return $this->fail(ErrorCode::BOOKING_STATE_INVALID, 'This errand had no runner to tip.');
+        }
+        // One tip per errand — same guard as the wallet path. Once a tip
+        // (wallet OR gateway) has settled, tip_amount is set and this rejects a
+        // second charge before any money is collected.
+        if ((float) $booking->tip_amount > 0) {
+            return $this->fail(ErrorCode::CONFLICT, 'You’ve already tipped this errand.');
+        }
+
+        try {
+            $result = app(WalletService::class)->initiateGatewayTip(
+                $booking->id,
+                $booking->customer_id,
+                $amount,
+                $data['method'],
+                $request->user()->email,
+                // After paying, Xendit redirects here; the bridge forwards to the
+                // app deep link so the in-app checkout sheet auto-closes.
+                url('/payment/complete'),
+                url('/payment/complete?status=failed'),
+            );
+        } catch (PaymentGatewayException $e) {
+            // ApiExceptionRenderer turns this into a clean 422 with honest
+            // "you weren’t charged" copy — never a Cloudflare-masked 502.
+            throw $e;
+        } catch (\Throwable $e) {
+            return $this->fail(
+                ErrorCode::PAYMENT_GATEWAY_ERROR,
+                'Could not start the tip payment. You weren’t charged — please try again.',
+            );
+        }
+
+        return $this->created($result['transaction'], merge: [
+            // Client opens this to pay; the runner is credited only after the
+            // webhook confirms settlement.
+            'checkout_url' => $result['checkout_url'],
+        ]);
+    }
 }

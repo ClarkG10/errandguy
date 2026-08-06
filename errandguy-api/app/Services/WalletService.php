@@ -2,6 +2,7 @@
 
 namespace App\Services;
 
+use App\Models\Booking;
 use App\Models\User;
 use App\Models\WalletTransaction;
 use Illuminate\Support\Facades\DB;
@@ -338,6 +339,268 @@ class WalletService
             ]);
 
             Booking::whereKey($bookingId)->update(['tip_amount' => $amount]);
+        });
+    }
+
+    /**
+     * Start a GATEWAY-funded tip: the customer pays the tip directly via an
+     * online method (GCash/Maya/card) — no wallet balance required — and the
+     * runner is credited only after Xendit confirms via webhook. This is the
+     * zero-wallet / COD path that the wallet-funded {@see self::tip()} can't
+     * serve.
+     *
+     * Mirrors {@see self::initiateTopUp()}: a pending 'tip_payment' row holds
+     * the charge (its id keys the gateway external_id `tip-{id}`), then the
+     * webhook flips it via {@see self::completeGatewayTip()}. The row is a
+     * SINGLETON per (customer, booking) — the uq_wallet_tx_user_reference_type
+     * index guarantees it — so we reuse/reset it across retries instead of
+     * opening a second parallel charge. It is NOT a wallet movement (the money
+     * never enters the customer's ErrandGuy balance), so its amount is recorded
+     * for the receipt but balance_after stays the customer's untouched balance.
+     *
+     * @throws \App\Exceptions\PaymentGatewayException on a gateway rejection.
+     * @return array{transaction: WalletTransaction, checkout_url: ?string}
+     */
+    public function initiateGatewayTip(
+        string $bookingId,
+        string $customerId,
+        float $amount,
+        string $method,
+        ?string $payerEmail = null,
+        ?string $successRedirectUrl = null,
+        ?string $failureRedirectUrl = null,
+    ): array {
+        $customer = User::findOrFail($customerId);
+
+        // Singleton per (customer, booking): reuse the existing 'tip_payment'
+        // row (reset a terminal one back to pending) instead of inserting a
+        // second — the unique index would otherwise reject the insert, and two
+        // live charges could double-collect. balance_after mirrors the CURRENT
+        // balance because a gateway tip never moves the customer's wallet.
+        $transaction = WalletTransaction::firstOrNew([
+            'user_id' => $customerId,
+            'reference_id' => $bookingId,
+            'type' => 'tip_payment',
+        ]);
+        $transaction->fill([
+            'amount' => $amount,
+            'balance_after' => (float) $customer->wallet_balance,
+            'status' => 'pending',
+            'description' => 'Tip (awaiting payment)',
+            'gateway_ref' => null,
+            'checkout_url' => null,
+            'failure_reason' => null,
+            'processed_at' => null,
+        ]);
+        $transaction->save();
+
+        $description = 'Tip for your runner';
+        $isEwallet = in_array($method, ['gcash', 'maya'], true);
+
+        try {
+            if ($isEwallet) {
+                $pr = app(PaymentService::class)->createPaymentRequest(
+                    $amount,
+                    "tip-{$transaction->id}",
+                    $method,
+                    $description,
+                    $successRedirectUrl,
+                    $failureRedirectUrl ?? $successRedirectUrl,
+                );
+
+                $checkoutUrl = PaymentService::extractActionUrl($pr);
+                if (blank($checkoutUrl)) {
+                    throw new \RuntimeException('Gateway returned no authorization action for the e-wallet tip.');
+                }
+
+                $transaction->update([
+                    'gateway_ref' => $pr['id'] ?? null,
+                    'checkout_url' => $checkoutUrl,
+                ]);
+
+                return ['transaction' => $transaction, 'checkout_url' => $checkoutUrl];
+            }
+
+            $invoice = app(PaymentService::class)->createInvoice(
+                $amount,
+                "tip-{$transaction->id}",
+                $description,
+                $payerEmail ?? (string) ($customer->email ?? ''),
+                $successRedirectUrl,
+            );
+
+            $transaction->update([
+                'gateway_ref' => $invoice['id'] ?? null,
+                'checkout_url' => $invoice['invoice_url'] ?? null,
+            ]);
+
+            return [
+                'transaction' => $transaction,
+                'checkout_url' => $invoice['invoice_url'] ?? null,
+            ];
+        } catch (\Throwable $e) {
+            $transaction->update([
+                'status' => 'failed',
+                'failure_reason' => 'Could not start the tip payment.',
+                'processed_at' => now(),
+            ]);
+            Log::error('Gateway tip: charge creation failed', [
+                'transaction_id' => $transaction->id,
+                'booking_id' => $bookingId,
+                'method' => $method,
+                'error' => $e->getMessage(),
+            ]);
+            throw $e;
+        }
+    }
+
+    /**
+     * Settle a gateway-funded tip once Xendit confirms payment. Credits the
+     * RUNNER's wallet (never the customer's — the customer paid real money that
+     * never entered their ErrandGuy balance) and stamps booking.tip_amount.
+     *
+     * Idempotent + money-safe, mirroring {@see self::completeTopUp()}:
+     *   • the pending 'tip_payment' row is row-locked and only settled once;
+     *   • an under-settlement is left pending (never credits short);
+     *   • the runner credit is the SAME (runner, booking, 'tip') row shape the
+     *     wallet-funded tip writes — the unique index guarantees the runner is
+     *     credited at most once per booking regardless of funding source;
+     *   • a booking that is somehow already tipped is NOT double-credited — the
+     *     collected charge is flagged CRITICAL for a manual refund instead.
+     */
+    public function completeGatewayTip(string $transactionId, array $gatewayData = []): ?WalletTransaction
+    {
+        $notify = null; // [runnerId, amount, bookingNumber] set only on a real credit
+
+        $transaction = DB::transaction(function () use ($transactionId, $gatewayData, &$notify) {
+            $transaction = WalletTransaction::where('id', $transactionId)
+                ->lockForUpdate()
+                ->first();
+
+            if (! $transaction || $transaction->status !== 'pending' || $transaction->type !== 'tip_payment') {
+                return $transaction;
+            }
+
+            // Never credit a runner for LESS than the tip we recorded. A short
+            // settle is left pending for the pull-reconciler / a human.
+            $confirmed = $gatewayData['paid_amount'] ?? $gatewayData['amount'] ?? null;
+            if ($confirmed !== null && (float) $confirmed + 0.01 < (float) $transaction->amount) {
+                Log::critical('Xendit gateway-tip settlement BELOW recorded amount — left pending, NOT credited', [
+                    'transaction_id' => $transaction->id,
+                    'booking_id' => $transaction->reference_id,
+                    'expected' => (float) $transaction->amount,
+                    'gateway_confirmed' => (float) $confirmed,
+                ]);
+                return $transaction;
+            }
+
+            $amount = round((float) $transaction->amount, 2);
+            $bookingId = (string) $transaction->reference_id;
+            $booking = Booking::whereKey($bookingId)->lockForUpdate()->first();
+
+            if (! $booking || ! $booking->runner_id) {
+                $transaction->update([
+                    'status' => 'failed',
+                    'failure_reason' => 'No runner to credit for this tip.',
+                    'processed_at' => now(),
+                    'gateway_ref' => $gatewayData['id'] ?? $transaction->gateway_ref,
+                ]);
+                return $transaction;
+            }
+
+            // Duplicate guard: if this errand was somehow already tipped (a
+            // racing wallet tip, or a second gateway charge), do NOT credit the
+            // runner twice. The charge WAS collected, so the row is marked
+            // completed, but a CRITICAL alarm flags it for a manual refund.
+            $alreadyTipped = (float) $booking->tip_amount > 0
+                || WalletTransaction::where('user_id', $booking->runner_id)
+                    ->where('reference_id', $bookingId)
+                    ->where('type', 'tip')
+                    ->exists();
+            if ($alreadyTipped) {
+                Log::critical('Gateway tip collected for an already-tipped errand — MANUAL REFUND REQUIRED', [
+                    'transaction_id' => $transaction->id,
+                    'booking_id' => $bookingId,
+                    'customer_id' => $transaction->user_id,
+                    'amount' => $amount,
+                ]);
+                $transaction->update([
+                    'status' => 'completed',
+                    'processed_at' => now(),
+                    'description' => 'Tip (duplicate — refund pending)',
+                    'failure_reason' => 'Duplicate tip payment — refund required.',
+                    'gateway_ref' => $gatewayData['id'] ?? $transaction->gateway_ref,
+                ]);
+                return $transaction;
+            }
+
+            // Credit the runner — same shape as the wallet-funded tip so runner
+            // earnings see an identical 'tip' transaction whatever the funding.
+            $runner = User::lockForUpdate()->findOrFail($booking->runner_id);
+            $runnerNewBalance = (float) $runner->wallet_balance + $amount;
+            $runner->update(['wallet_balance' => $runnerNewBalance]);
+            WalletTransaction::create([
+                'user_id' => $booking->runner_id,
+                'type' => 'tip',
+                'amount' => $amount,
+                'balance_after' => $runnerNewBalance,
+                'reference_id' => $bookingId,
+                'description' => 'Tip from your customer',
+            ]);
+
+            $booking->update(['tip_amount' => $amount]);
+
+            // The customer's ErrandGuy wallet did NOT move (they paid via the
+            // gateway), so balance_after stays their current balance.
+            $transaction->update([
+                'status' => 'completed',
+                'processed_at' => now(),
+                'description' => 'Tip paid to your runner',
+                'gateway_ref' => $gatewayData['id'] ?? $transaction->gateway_ref,
+            ]);
+
+            $notify = [$booking->runner_id, $amount, $booking->booking_number];
+            return $transaction;
+        });
+
+        // Notify the runner AFTER commit (never push inside the lock), only on a
+        // real credit — a replayed webhook leaves $notify null.
+        if ($notify) {
+            [$runnerId, $amount, $bookingNumber] = $notify;
+            app(NotificationService::class)->sendPush(
+                $runnerId,
+                'You received a tip!',
+                'Your customer added a ₱'.number_format($amount, 2)." tip for errand #{$bookingNumber}.",
+                ['type' => 'payment', 'booking_id' => (string) $transaction?->reference_id],
+            );
+        }
+
+        return $transaction;
+    }
+
+    /**
+     * Mark a pending gateway tip failed because its invoice expired / the charge
+     * failed before payment. Idempotent: a non-pending tip_payment is untouched.
+     */
+    public function expireGatewayTip(string $transactionId, string $reason = 'Invoice expired'): ?WalletTransaction
+    {
+        return DB::transaction(function () use ($transactionId, $reason) {
+            $transaction = WalletTransaction::where('id', $transactionId)
+                ->lockForUpdate()
+                ->first();
+
+            if (! $transaction || $transaction->status !== 'pending' || $transaction->type !== 'tip_payment') {
+                return $transaction;
+            }
+
+            $transaction->update([
+                'status' => 'failed',
+                'failure_reason' => $reason,
+                'processed_at' => now(),
+                'description' => 'Tip (payment not completed)',
+            ]);
+
+            return $transaction;
         });
     }
 
