@@ -41,7 +41,13 @@ export type WalletTransactionType =
   | 'payment'
   | 'refund'
   | 'payout'
-  | 'bonus';
+  | 'bonus'
+  // Signed-both-ways / runner-side movements. Their `amount` sign is the source
+  // of truth for credit-vs-debit (a positive adjustment/tip/earning is a
+  // credit), unlike the fixed-direction types above.
+  | 'tip'
+  | 'earning'
+  | 'adjustment';
 
 export interface Payment {
   id: string;

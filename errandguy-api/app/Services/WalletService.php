@@ -605,6 +605,84 @@ class WalletService
     }
 
     /**
+     * Largest single manual adjustment an admin can apply, in either direction.
+     * A fat-finger guard — a genuinely larger correction is made in steps, which
+     * also leaves a clearer audit trail.
+     */
+    public const MAX_ADJUSTMENT = 10000.0;
+
+    /**
+     * Admin manual wallet adjustment — a deliberate credit (+) or debit (−) to a
+     * user's WITHDRAWABLE balance (never promo bonus). Money-safe: the user row
+     * is locked, the magnitude is capped, and a debit can never overdraw the
+     * wallet below zero. Records an audited 'adjustment' transaction carrying the
+     * admin's reason. reference_id is intentionally NULL — an admin legitimately
+     * adjusts the same user more than once, and the authoritative who/when audit
+     * lives in AdminActivity (see the Filament action) — so this must NOT reuse
+     * the (user, reference, type) idempotency key.
+     *
+     * @param  float  $signedAmount  Positive credits the user; negative debits.
+     * @throws \RuntimeException on a zero / over-cap amount, an empty reason, or
+     *                           an overdrawing debit.
+     */
+    public function adjust(string $userId, float $signedAmount, string $reason): WalletTransaction
+    {
+        $amount = round($signedAmount, 2);
+        if ($amount === 0.0) {
+            throw new \RuntimeException('Enter a non-zero amount.');
+        }
+        if (abs($amount) > self::MAX_ADJUSTMENT) {
+            throw new \RuntimeException('A single adjustment is capped at ₱'.number_format(self::MAX_ADJUSTMENT, 2).'. Apply a larger correction in steps.');
+        }
+        $reason = trim($reason);
+        if ($reason === '') {
+            throw new \RuntimeException('A reason is required for a wallet adjustment.');
+        }
+
+        $justAdjusted = null; // [userId, amount, newBalance] set on success
+
+        $transaction = DB::transaction(function () use ($userId, $amount, $reason, &$justAdjusted) {
+            $user = User::lockForUpdate()->findOrFail($userId);
+
+            $newBalance = round((float) $user->wallet_balance + $amount, 2);
+            if ($newBalance < 0) {
+                throw new \RuntimeException(
+                    'This debit would overdraw the wallet — current balance is ₱'.number_format((float) $user->wallet_balance, 2).'.'
+                );
+            }
+            $user->update(['wallet_balance' => $newBalance]);
+
+            $tx = WalletTransaction::create([
+                'user_id' => $userId,
+                'type' => 'adjustment',
+                'amount' => $amount, // signed: + credit, − debit
+                'balance_after' => $newBalance,
+                'description' => ($amount > 0 ? 'Credit adjustment' : 'Debit adjustment').': '.$reason,
+            ]);
+
+            $justAdjusted = [$userId, $amount, $newBalance];
+
+            return $tx;
+        });
+
+        // Tell the user, honestly, AFTER commit (never push inside the lock).
+        if ($justAdjusted) {
+            [$uid, $amt, $newBalance] = $justAdjusted;
+            $abs = number_format(abs($amt), 2);
+            $bal = number_format($newBalance, 2);
+            [$title, $body] = $amt > 0
+                ? ['Wallet credited', "₱{$abs} was added to your wallet. New balance: ₱{$bal}. Reason: {$reason}"]
+                : ['Wallet adjusted', "₱{$abs} was deducted from your wallet. New balance: ₱{$bal}. Reason: {$reason}"];
+            app(NotificationService::class)->sendPush($uid, $title, $body, [
+                'type' => 'payment',
+                'wallet_transaction_id' => $transaction->id,
+            ]);
+        }
+
+        return $transaction;
+    }
+
+    /**
      * Credit a refund, returning money to the SAME bucket it was spent from.
      *
      * @param  string       $referenceId     Idempotency + audit key for the refund row.

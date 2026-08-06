@@ -22,6 +22,8 @@ import {
   Gift,
   Ticket,
   ChevronRight,
+  Coins,
+  SlidersHorizontal,
 } from 'lucide-react-native';
 import { toast } from '../../../stores/toastStore';
 import type { LucideIcon } from 'lucide-react-native';
@@ -50,6 +52,9 @@ const TX_ICONS: Record<WalletTransactionType, { icon: LucideIcon; color: string 
   refund: { icon: RotateCcw, color: LightColors.primary },
   payout: { icon: ArrowDownCircle, color: LightColors.warning },
   bonus: { icon: Star, color: LightColors.accentStrong },
+  tip: { icon: Gift, color: LightColors.accentStrong },
+  earning: { icon: Coins, color: LightColors.success },
+  adjustment: { icon: SlidersHorizontal, color: LightColors.primary },
 };
 
 // Transaction type filter — maps 1:1 onto the server's `type` query param
@@ -139,6 +144,11 @@ function getFileSystem(): any | null {
 const isCreditType = (t: WalletTransactionType) =>
   t === 'top_up' || t === 'refund' || t === 'bonus';
 
+// Types whose stored `amount` is signed both ways (an admin adjustment, a tip,
+// a runner earning): the sign of the amount — not the type — decides
+// credit-vs-debit, so a positive one is a credit and a negative one a debit.
+const SIGNED_TYPES: ReadonlySet<string> = new Set(['tip', 'earning', 'adjustment']);
+
 // RFC-4180-ish escaping: quote fields containing comma / quote / newline.
 const csvCell = (value: string | number | null | undefined): string => {
   const s = String(value ?? '');
@@ -153,7 +163,13 @@ function buildTransactionsCsv(rows: WalletTransaction[]): string {
     // Only a settled row moved money. A pending/failed top-up exports as 0 so a
     // cancelled top-up can't inflate the signed total in a spreadsheet.
     const settled = t.status !== 'pending' && t.status !== 'failed';
-    const signed = settled ? (isCreditType(t.type) ? 1 : -1) * Math.abs(t.amount) : 0;
+    // Signed types already carry their direction in `amount`; fixed-direction
+    // types derive it from the type + magnitude.
+    const signed = settled
+      ? SIGNED_TYPES.has(t.type)
+        ? t.amount
+        : (isCreditType(t.type) ? 1 : -1) * Math.abs(t.amount)
+      : 0;
     return [
       csvCell(t.created_at),
       csvCell(t.display_description ?? t.description ?? t.type.replace('_', ' ')),
@@ -306,8 +322,9 @@ export default function WalletScreen() {
     ({ item }: { item: WalletTransaction }) => {
       const config = TX_ICONS[item.type] ?? TX_ICONS.payment;
       const Icon = config.icon;
-      const isCredit =
-        item.type === 'top_up' || item.type === 'refund' || item.type === 'bonus';
+      const isCredit = SIGNED_TYPES.has(item.type)
+        ? item.amount >= 0
+        : item.type === 'top_up' || item.type === 'refund' || item.type === 'bonus';
       // A row only reads as settled money when its lifecycle says so. top_ups
       // are written 'pending' BEFORE Xendit confirms, and flip to 'failed' when
       // the customer abandons checkout / the invoice expires. A pending or

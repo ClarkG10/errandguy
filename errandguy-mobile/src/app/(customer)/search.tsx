@@ -27,6 +27,9 @@ import {
   ClipboardList,
   MessageCircle,
   SearchX,
+  Gift,
+  Coins,
+  SlidersHorizontal,
 } from 'lucide-react-native';
 import type { LucideIcon } from 'lucide-react-native';
 import { bookingService } from '../../services/booking.service';
@@ -79,6 +82,9 @@ const TX_ICONS: Record<WalletTransactionType, { icon: LucideIcon; color: string 
   refund: { icon: RotateCcw, color: LightColors.primary },
   payout: { icon: ArrowDownCircle, color: LightColors.warning },
   bonus: { icon: Star, color: LightColors.accentStrong },
+  tip: { icon: Gift, color: LightColors.accentStrong },
+  earning: { icon: Coins, color: LightColors.success },
+  adjustment: { icon: SlidersHorizontal, color: LightColors.primary },
 };
 
 /** Primary result line with the matched substring emphasised, so the user

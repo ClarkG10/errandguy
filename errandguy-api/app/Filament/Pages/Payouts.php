@@ -8,8 +8,10 @@ use App\Models\User;
 use App\Models\WalletTransaction;
 use App\Services\PaymentService;
 use App\Services\WalletService;
+use App\Support\AdminActivity;
 use BackedEnum;
 use Filament\Actions\Action;
+use Filament\Actions\BulkAction;
 use Filament\Forms\Components\Hidden;
 use Filament\Forms\Components\Select;
 use Filament\Forms\Components\TextInput;
@@ -21,6 +23,8 @@ use Filament\Tables\Concerns\InteractsWithTable;
 use Filament\Tables\Contracts\HasTable;
 use Filament\Tables\Filters\SelectFilter;
 use Filament\Tables\Table;
+use Illuminate\Support\Collection;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Str;
 
 /**
@@ -284,6 +288,69 @@ class Payouts extends Page implements HasTable
                         } catch (PayoutStateException $e) {
                             AdminNotify::error('Could not mark payout failed', $e, $record);
                         }
+                    }),
+            ])
+            ->toolbarActions([
+                // Batch-disburse pending payouts to each runner's SAVED payout
+                // method. Idempotent per row (createPayout keys on po-{tx}), so a
+                // re-run never double-sends. Rows that aren't pending or lack
+                // saved details are skipped and counted — never silently dropped.
+                BulkAction::make('sendSelectedViaXendit')
+                    ->label('Send selected via Xendit')
+                    ->icon(Heroicon::OutlinedPaperAirplane)
+                    ->color('primary')
+                    ->requiresConfirmation()
+                    ->modalHeading('Send selected payouts via Xendit')
+                    ->modalDescription('Disburses every selected PENDING payout to the runner’s SAVED payout method. Rows that aren’t pending, or have no saved payout details, are skipped. Real money leaves now.')
+                    ->deselectRecordsAfterCompletion()
+                    ->action(function (Collection $records): void {
+                        $sent = 0;
+                        $skipped = 0;
+                        $failed = 0;
+
+                        foreach ($records as $record) {
+                            if ($record->status !== 'pending') {
+                                $skipped++;
+                                continue;
+                            }
+
+                            $profile = $record->user?->runnerProfile;
+                            $channel = $profile?->payout_channel_code;
+                            $account = $profile?->ewallet_number ?: $profile?->bank_account_number;
+                            $holder = $record->user?->full_name;
+
+                            if (blank($channel) || blank($account) || blank($holder)) {
+                                $skipped++;
+                                continue;
+                            }
+
+                            try {
+                                app(PaymentService::class)->createPayout($record->id, $channel, $account, $holder);
+                                AdminActivity::log('payout.sent', $record, ['channel' => $channel, 'via' => 'bulk']);
+                                $sent++;
+                            } catch (\Throwable $e) {
+                                Log::warning('Bulk payout: a row failed to send', [
+                                    'wallet_tx' => $record->id,
+                                    'error' => $e->getMessage(),
+                                ]);
+                                $failed++;
+                            }
+                        }
+
+                        $notes = [];
+                        if ($skipped) {
+                            $notes[] = "{$skipped} skipped (not pending, or no saved payout method).";
+                        }
+                        if ($failed) {
+                            $notes[] = "{$failed} failed to send — see logs.";
+                        }
+
+                        AdminNotify::success(
+                            $sent.' payout'.($sent === 1 ? '' : 's').' sent to Xendit',
+                            note: $notes === []
+                                ? 'They will show completed once Xendit confirms.'
+                                : implode(' ', $notes),
+                        );
                     }),
             ]);
     }

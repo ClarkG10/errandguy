@@ -6,6 +6,8 @@ use App\Filament\Support\AdminNotify;
 use App\Filament\Support\DateRangeFilter;
 use App\Filament\Support\ExportCsv;
 use App\Models\DisputeTicket;
+use App\Models\Payment;
+use App\Services\PaymentService;
 use Filament\Actions\Action;
 use Filament\Actions\ViewAction;
 use Filament\Forms\Components\Textarea;
@@ -99,6 +101,79 @@ class DisputeTicketsTable
                             'Ticket' => $record->id,
                             'Booking' => $record->booking?->booking_number,
                         ], audit: 'dispute.resolved');
+                    }),
+                Action::make('resolveRefund')
+                    ->label('Resolve + refund')
+                    ->icon(Heroicon::OutlinedReceiptRefund)
+                    ->color('warning')
+                    // Money surface (issues a real refund): Super Admin + Finance
+                    // only, and only while the ticket is still open.
+                    ->visible(fn ($record): bool => ! in_array($record->status, ['resolved'], true)
+                        && (auth('admin')->user()?->canManageMoney() ?? false))
+                    ->requiresConfirmation()
+                    ->modalDescription('Refunds the FULL booking payment to the customer’s wallet, then marks the dispute resolved. For a partial or goodwill amount, use “Adjust wallet” on the user instead.')
+                    ->schema([
+                        Textarea::make('resolution')
+                            ->label('Resolution note')
+                            ->required()
+                            ->maxLength(1000),
+                    ])
+                    ->action(function (array $data, $record): void {
+                        // The booking's settled charge. refundToWallet is
+                        // idempotent and rejects cash (nothing was held) + any
+                        // non-completed payment, so those surface as a clean
+                        // error rather than a bad refund.
+                        $payment = Payment::where('booking_id', $record->booking_id)
+                            ->where('status', 'completed')
+                            ->latest('created_at')
+                            ->first();
+
+                        if (! $payment) {
+                            AdminNotify::error(
+                                'Nothing to refund',
+                                'This booking has no completed online payment. If it was cash it was settled directly with the runner — resolve without a refund, or credit the wallet manually via “Adjust wallet”.',
+                                $record,
+                            );
+
+                            return;
+                        }
+
+                        try {
+                            app(PaymentService::class)->refundToWallet(
+                                $payment->id,
+                                'Dispute resolution: '.$data['resolution'],
+                            );
+
+                            $record->update([
+                                'status' => 'resolved',
+                                'resolution' => $data['resolution'],
+                                'resolved_by' => auth('admin')->id(),
+                                'resolved_at' => now(),
+                            ]);
+
+                            // Notify the person who was actually refunded (the
+                            // customer who paid) — not necessarily the reporter,
+                            // who may be the runner.
+                            \App\Jobs\SendPushJob::dispatch(
+                                $payment->customer_id,
+                                'Refund issued',
+                                '₱'.number_format((float) $payment->amount, 2).' was refunded to your ErrandGuy wallet after your dispute was resolved.',
+                            );
+
+                            AdminNotify::success('Dispute resolved + refunded', $record, [
+                                'Ticket' => $record->id,
+                                'Booking' => $record->booking?->booking_number,
+                                'Refunded' => '₱'.number_format((float) $payment->amount, 2),
+                            ], audit: 'dispute.resolved_refunded', properties: [
+                                'payment_id' => $payment->id,
+                                'amount' => (float) $payment->amount,
+                                'resolution' => $data['resolution'],
+                            ]);
+                        } catch (\Throwable $e) {
+                            // e.g. cash payment, already refunded — refundToWallet
+                            // throws a clear RuntimeException we surface verbatim.
+                            AdminNotify::error('Could not refund', $e, $record);
+                        }
                     }),
                 Action::make('escalate')
                     ->label('Escalate')
