@@ -213,25 +213,4 @@ class BookingService
         });
     }
 
-    /**
-     * Validate that a status transition is allowed.
-     */
-    public function isValidTransition(string $currentStatus, string $newStatus): bool
-    {
-        $transitions = [
-            'pending' => ['matched', 'cancelled', 'no_runner'],
-            'matched' => ['accepted', 'cancelled'],
-            'accepted' => ['heading_to_pickup', 'cancelled'],
-            'heading_to_pickup' => ['arrived_at_pickup', 'cancelled'],
-            'arrived_at_pickup' => ['picked_up'],
-            'picked_up' => ['in_transit'],
-            'in_transit' => ['arrived_at_dropoff'],
-            'arrived_at_dropoff' => ['delivered'],
-            'delivered' => ['completed'],
-        ];
-
-        $allowed = $transitions[$currentStatus] ?? [];
-
-        return in_array($newStatus, $allowed);
-    }
 }

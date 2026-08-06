@@ -45,8 +45,12 @@ class CreateBookingRequest extends FormRequest
         $isSingleLocation = $errandType && in_array($errandType->slug, $singleLocationSlugs, true);
         $dropoffRule = $isSingleLocation ? 'nullable' : 'required';
 
-        // Errand types where the runner buys items on the customer's behalf.
-        $shoppingSlugs = ['food', 'grocery', 'purchase'];
+        // Errand types where the runner spends the customer's money against a
+        // cap and captures a receipt (buys items, or pays a bill). bills_payment
+        // is included so the bill amount is required up front as the cap —
+        // matching UpdateErrandStatusRequest (receipt + actual cost required for
+        // bills at pickup) and the mobile errandTypeRules budget rule.
+        $shoppingSlugs = ['food', 'grocery', 'purchase', 'bills_payment'];
         $isShopping = $errandType && in_array($errandType->slug, $shoppingSlugs, true);
 
         return [
