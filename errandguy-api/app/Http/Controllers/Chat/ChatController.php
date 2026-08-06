@@ -149,6 +149,26 @@ class ChatController extends Controller
         // chat store dedupes by id, so the echo back to the sender is a no-op.
         ChatMessageSent::dispatch($message);
 
+        // Wake the OTHER participant with a device push — the Reverb broadcast
+        // above only reaches a foregrounded app. Queued + device-push-only (no
+        // inbox row: the message lives in the chat thread), and routed so the
+        // tap deep-links straight into this conversation.
+        $senderId = $request->user()->id;
+        $recipientId = $booking->customer_id === $senderId
+            ? $booking->runner_id
+            : $booking->customer_id;
+        if ($recipientId) {
+            \App\Jobs\SendPushJob::dispatch(
+                $recipientId,
+                $message->sender?->full_name ?: 'New message',
+                $message->content
+                    ? \Illuminate\Support\Str::limit($message->content, 120)
+                    : 'Sent a photo',
+                ['type' => 'chat', 'booking_id' => $bookingId],
+                true,
+            );
+        }
+
         return response()->json([
             'data' => new MessageResource($message),
         ], 201);

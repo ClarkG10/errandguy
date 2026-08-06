@@ -15,40 +15,103 @@ class SendBookingStatusNotification implements ShouldQueue
     public function handle(BookingStatusChanged $event): void
     {
         $booking = $event->booking;
-        $templates = self::TEMPLATES[$event->newStatus] ?? null;
+        $status = $event->newStatus;
 
-        if (!$templates) {
+        // Bookings share three flows (standard / transport / single-location),
+        // but the base TEMPLATES are written for the physical pickup→deliver
+        // flow — so copy like "Item Picked Up … on the way" is wrong for a ride,
+        // a bill payment or a queue job. Layer a per-errand-type override on top
+        // of the status template: the override wins per recipient, otherwise we
+        // fall back to the base. Keyed by errand_type slug.
+        $base = self::TEMPLATES[$status] ?? [];
+        $slug = $booking->errandType?->slug;
+        $override = $slug ? (self::TYPE_OVERRIDES[$slug][$status] ?? []) : [];
+
+        $customer = $override['customer'] ?? $base['customer'] ?? null;
+        $runner = $override['runner'] ?? $base['runner'] ?? null;
+
+        if (!$customer && !$runner) {
             return;
         }
 
         $number = $booking->booking_number ?? $booking->id;
+        $data = [
+            'type' => 'booking_update',
+            'booking_id' => $booking->id,
+            'status' => $status,
+        ];
 
-        if (isset($templates['customer']) && $booking->customer_id) {
+        if ($customer && $booking->customer_id) {
             $this->notificationService->sendPush(
                 $booking->customer_id,
-                $templates['customer']['title'],
-                str_replace('{number}', $number, $templates['customer']['body']),
-                [
-                    'type' => 'booking_update',
-                    'booking_id' => $booking->id,
-                    'status' => $event->newStatus,
-                ]
+                $customer['title'],
+                str_replace('{number}', $number, $customer['body']),
+                $data,
             );
         }
 
-        if (isset($templates['runner']) && $booking->runner_id) {
+        if ($runner && $booking->runner_id) {
             $this->notificationService->sendPush(
                 $booking->runner_id,
-                $templates['runner']['title'],
-                str_replace('{number}', $number, $templates['runner']['body']),
-                [
-                    'type' => 'booking_update',
-                    'booking_id' => $booking->id,
-                    'status' => $event->newStatus,
-                ]
+                $runner['title'],
+                str_replace('{number}', $number, $runner['body']),
+                $data,
             );
         }
     }
+
+    /**
+     * Per-errand-type copy overrides, keyed by errand_type slug → status →
+     * recipient. The base TEMPLATES below describe the physical delivery flow;
+     * these correct the wording for the flows where a status means something
+     * different (a passenger ride, a bill payment, a queue job). Any status not
+     * listed here for a type simply uses the base template.
+     */
+    private const TYPE_OVERRIDES = [
+        // Passenger ride (transport flow — skips `delivered`).
+        'transportation' => [
+            'heading_to_pickup' => [
+                'customer' => ['title' => 'Driver on the way', 'body' => 'Your driver is heading to your pickup point.'],
+            ],
+            'arrived_at_pickup' => [
+                'customer' => ['title' => 'Driver has arrived', 'body' => 'Your driver is waiting at the pickup point.'],
+            ],
+            'picked_up' => [
+                'customer' => ['title' => 'Ride started', 'body' => 'You’re on your way to your destination.'],
+            ],
+            'arrived_at_dropoff' => [
+                'customer' => ['title' => 'You’ve arrived', 'body' => 'You’ve reached your destination.'],
+            ],
+            'completed' => [
+                'customer' => ['title' => 'Trip complete', 'body' => 'Your trip #{number} is complete. Thanks for riding with ErrandGuy!'],
+                'runner' => ['title' => 'Trip complete', 'body' => 'Trip #{number} completed. Payment will be processed.'],
+            ],
+        ],
+        // Bills payment (single-location flow — accepted → … → picked_up → completed).
+        'bills_payment' => [
+            'arrived_at_pickup' => [
+                'customer' => ['title' => 'At the payment counter', 'body' => 'Your runner is paying your bill now.'],
+            ],
+            'picked_up' => [
+                'customer' => ['title' => 'Bill paid', 'body' => 'Your bill has been paid — your receipt will be shared shortly.'],
+            ],
+            'completed' => [
+                'customer' => ['title' => 'All done', 'body' => 'Your bills-payment errand #{number} is complete.'],
+            ],
+        ],
+        // Queue / fall-in-line (single-location flow).
+        'queue' => [
+            'arrived_at_pickup' => [
+                'customer' => ['title' => 'In line for you', 'body' => 'Your runner is now waiting in line.'],
+            ],
+            'picked_up' => [
+                'customer' => ['title' => 'At the front', 'body' => 'Your runner has reached the front of the line.'],
+            ],
+            'completed' => [
+                'customer' => ['title' => 'All done', 'body' => 'Your queue errand #{number} is complete.'],
+            ],
+        ],
+    ];
 
     private const TEMPLATES = [
         'matched' => [

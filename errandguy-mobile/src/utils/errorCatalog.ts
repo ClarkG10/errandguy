@@ -108,6 +108,44 @@ export const ERROR_CATALOG: Record<string, ErrorInfo> = {
     message: 'That code has expired. Request a new one to continue.',
     retryable: true,
   },
+  OTP_INVALID: {
+    title: 'Incorrect code',
+    message: "That code isn't correct. Check it and try again.",
+    retryable: true,
+  },
+  OTP_DELIVERY_FAILED: {
+    title: "Couldn't send code",
+    message: "We couldn't send your verification code right now. Try again in a moment.",
+    retryable: true,
+  },
+  PASSWORD_RESET_DELIVERY_FAILED: {
+    title: "Couldn't send email",
+    message: "We couldn't send your reset email right now. Try again in a moment.",
+    retryable: true,
+  },
+  INVALID_CREDENTIALS: {
+    title: 'Sign-in failed',
+    message: "That email or password doesn't match our records. Try again.",
+    retryable: true,
+  },
+  ACCOUNT_INACTIVE: {
+    title: 'Account not active',
+    message: "Your account isn't active yet. Contact support if this seems wrong.",
+    retryable: false,
+    action: { label: 'Contact support', kind: 'contact' },
+  },
+  EMAIL_ALREADY_REGISTERED: {
+    title: 'Email already in use',
+    message: 'This email is already registered. Try signing in instead.',
+    retryable: false,
+    action: { label: 'Sign in', kind: 'signin' },
+  },
+  PHONE_ALREADY_REGISTERED: {
+    title: 'Number already in use',
+    message: 'This phone number is already registered. Try signing in instead.',
+    retryable: false,
+    action: { label: 'Sign in', kind: 'signin' },
+  },
 };
 
 /** Copy for whole CLASSES of failure the catalog can't name individually. */

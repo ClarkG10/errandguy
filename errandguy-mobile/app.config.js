@@ -66,7 +66,17 @@ module.exports = ({ config }) => {
         },
       ],
       'expo-image',
-      'expo-notifications',
+      [
+        'expo-notifications',
+        {
+          // Android's status-bar notification icon is an alpha mask (every
+          // opaque pixel renders as `color`), so reuse the monochrome brand
+          // mark — pushes now show the ErrandGuy logo tinted brand-blue
+          // instead of a generic white square. (iOS uses the app icon itself.)
+          icon: './assets/android-monochrome.png',
+          color: '#2563EB',
+        },
+      ],
     ],
   };
 

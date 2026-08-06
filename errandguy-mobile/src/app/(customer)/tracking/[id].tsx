@@ -1220,6 +1220,8 @@ export default function TrackingScreen() {
   const steps = errandRule.statusFlow as unknown as BookingStatus[];
   const currentStatusIndex = steps.indexOf(booking.status);
   const isShopping = errandRule.requiresShoppingBudget;
+  const isSingleLocation = errandRule.singleLocation;
+  const errandSlug = booking.errand_type?.slug;
   // Once a shopping runner has picked up (paid for) the items, the customer
   // can no longer self-cancel — they would still owe the spent amount.
   const canCancel =
@@ -1268,17 +1270,31 @@ export default function TrackingScreen() {
         };
       case 'heading_to_pickup':
         return { title: 'Heading to pickup', subtitle: runnerName ? `${runnerName} is on the way.` : undefined, accent: 'brand' };
-      case 'arrived_at_pickup':
-        return { title: 'Arrived at pickup', subtitle: isShopping ? 'Shopping for your items now.' : 'Picking up your order.', accent: 'brand' };
+      case 'arrived_at_pickup': {
+        // Same status, very different meaning per errand type.
+        let subtitle = 'Picking up your order.';
+        if (isTransportation) subtitle = 'Your driver is at the pickup point.';
+        else if (errandSlug === 'bills_payment') subtitle = 'Paying your bill now.';
+        else if (errandSlug === 'queue') subtitle = 'Your runner is now in line.';
+        else if (isShopping) subtitle = 'Shopping for your items now.';
+        return { title: isTransportation ? 'Driver arrived' : 'Arrived', subtitle, accent: 'brand' };
+      }
       case 'picked_up':
+        if (isTransportation) return { title: 'Ride started', subtitle: 'On the way to your destination.', accent: 'brand' };
+        if (errandSlug === 'bills_payment') return { title: 'Bill paid', subtitle: 'Your receipt will be shared shortly.', accent: 'brand' };
+        if (errandSlug === 'queue') return { title: 'At the front', subtitle: 'Your runner reached the front of the line.', accent: 'brand' };
         return { title: 'Picked up', subtitle: 'Heading to drop-off next.', accent: 'brand' };
       case 'in_transit':
         return { title: isTransportation ? 'On the way' : 'On the way to you', accent: 'brand' };
       case 'arrived_at_dropoff':
-        return { title: 'Arrived at drop-off', accent: 'brand' };
+        return { title: isTransportation ? 'You’ve arrived' : 'Arrived at drop-off', accent: 'brand' };
       case 'delivered':
       case 'completed':
-        return { title: isTransportation ? 'Trip complete' : 'Delivered', subtitle: 'Thanks for using ErrandGuy.', accent: 'success' };
+        return {
+          title: isTransportation ? 'Trip complete' : isSingleLocation ? 'All done' : 'Delivered',
+          subtitle: 'Thanks for using ErrandGuy.',
+          accent: 'success',
+        };
       case 'cancelled':
         return { title: 'Cancelled', accent: 'danger' };
       default:

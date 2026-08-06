@@ -24,10 +24,17 @@ class SendPushJob extends BaseJob
         public string $title,
         public string $body,
         public array $data = [],
+        public bool $remoteOnly = false,
     ) {}
 
     public function handle(NotificationService $notifications): void
     {
-        $notifications->sendPush($this->userId, $this->title, $this->body, $this->data);
+        if ($this->remoteOnly) {
+            // Device push only — no in-app inbox row (e.g. chat messages, whose
+            // content lives in the chat thread, not the notifications list).
+            $notifications->sendRemotePush($this->userId, $this->title, $this->body, $this->data);
+        } else {
+            $notifications->sendPush($this->userId, $this->title, $this->body, $this->data);
+        }
     }
 }

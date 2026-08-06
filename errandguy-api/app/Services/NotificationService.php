@@ -12,16 +12,32 @@ class NotificationService
 {
     public function sendPush(string $userId, string $title, string $body, array $data = []): void
     {
-        $user = User::find($userId);
-        if (!$user) {
+        if (!User::whereKey($userId)->exists()) {
             return;
         }
 
         // ALWAYS persist + broadcast the in-app notification first (see
         // notifyInApp) — it reaches the app live over the
         // `notifications.{userId}` Reverb channel even for users who never
-        // granted push permission. The remote push below is a best-effort extra.
+        // granted push permission. The remote device push is a best-effort extra.
         $this->notifyInApp($userId, $title, $body, $data);
+        $this->sendRemotePush($userId, $title, $body, $data);
+    }
+
+    /**
+     * Send ONLY a device push (Expo/FCM) to a user's registered devices — no
+     * in-app notification row and no broadcast. Use for events that should wake
+     * the device but must NOT fill the in-app notifications inbox: either
+     * because the message belongs elsewhere (a chat message lives in the chat
+     * thread) or because its in-app surface is delivered separately (a live job
+     * offer card via notifyInApp). Fans out to every registered device.
+     */
+    public function sendRemotePush(string $userId, string $title, string $body, array $data = []): void
+    {
+        $user = User::find($userId);
+        if (!$user) {
+            return;
+        }
 
         // Fan out to EVERY registered device, not just the most recent one.
         // (The old single fcm_token column was overwritten per device, so only
@@ -132,7 +148,37 @@ class NotificationService
                 'channelId' => 'default',
             ]);
 
-            $this->pruneInvalidExpoTokens($tokens, $response->json('data') ?? []);
+            // Http::post does NOT throw on a 4xx/5xx, so a rejected batch (bad
+            // payload, auth, rate limit) would otherwise vanish silently.
+            if (! $response->successful()) {
+                Log::error('Expo push HTTP error', [
+                    'status' => $response->status(),
+                    'body' => \Illuminate\Support\Str::limit($response->body(), 500),
+                    'count' => count($tokens),
+                ]);
+
+                return;
+            }
+
+            $tickets = $response->json('data') ?? [];
+
+            // Surface per-ticket failures other than DeviceNotRegistered (which
+            // pruneInvalidExpoTokens handles) — e.g. InvalidCredentials (a broken
+            // FCM/APNs setup), MessageTooBig, MessageRateExceeded — instead of
+            // dropping them silently.
+            foreach ($tickets as $ticket) {
+                if (is_array($ticket) && ($ticket['status'] ?? null) === 'error') {
+                    $err = $ticket['details']['error'] ?? null;
+                    if ($err !== 'DeviceNotRegistered') {
+                        Log::warning('Expo push ticket error', [
+                            'error' => $err,
+                            'message' => $ticket['message'] ?? null,
+                        ]);
+                    }
+                }
+            }
+
+            $this->pruneInvalidExpoTokens($tokens, $tickets);
         } catch (\Throwable $e) {
             Log::error('Expo push notification failed', [
                 'count' => count($tokens),

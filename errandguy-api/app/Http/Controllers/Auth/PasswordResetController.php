@@ -18,9 +18,9 @@ class PasswordResetController extends Controller
 {
     public function forgotPassword(ForgotPasswordRequest $request): JsonResponse
     {
-        // Only mint a token + send the email for a REAL account, but always
-        // return the same generic 200 below regardless — otherwise the distinct
-        // registered/unregistered responses leak which emails have accounts.
+        // Send the reset only for a real account. Unknown emails never reach
+        // here — ForgotPasswordRequest rejects them with a 422 "not registered"
+        // (a deliberate product choice to reveal existence; see that request).
         if (User::where('email', $request->email)->exists()) {
             $token = Str::random(64);
 

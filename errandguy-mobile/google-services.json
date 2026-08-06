@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "825010585101",
+    "project_id": "errandguy-9f506",
+    "storage_bucket": "errandguy-9f506.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:825010585101:android:f4c486d877174847091f44",
+        "android_client_info": {
+          "package_name": "com.errandguy.app"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyDOiQySbfVoQSMYdq1bSV4kJeSfLzXbiOg"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

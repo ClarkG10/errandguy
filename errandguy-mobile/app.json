@@ -29,6 +29,7 @@
     },
     "android": {
       "package": "com.errandguy.app",
+      "googleServicesFile": "./google-services.json",
       "edgeToEdgeEnabled": true,
       "softwareKeyboardLayoutMode": "resize",
       "adaptiveIcon": {

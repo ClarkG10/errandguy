@@ -49,12 +49,11 @@ class BroadcastToRunnersJob implements ShouldQueue
             'negotiate_expires_at' => optional($booking->negotiate_expires_at)->toIso8601String(),
         ];
 
-        // Persist + broadcast an in-app offer to each nearby runner over their
-        // `notifications.{userId}` Reverb channel. This replaces the old bulk
-        // realtime table insert (whose table the app no longer subscribes
-        // to). notifyInApp is broadcast-only — no device push — preserving the
-        // prior behaviour (the "push fallback" TODO below was never wired).
-        // This job is queued/off-request, so per-runner inserts are fine.
+        // Each nearby runner gets TWO things: (1) an in-app offer card persisted
+        // + broadcast over their `notifications.{userId}` Reverb channel (live
+        // when the app is open), and (2) a device push to WAKE a backgrounded
+        // app — with no second inbox row, and a tap that opens their offers
+        // home. This job is queued/off-request, so per-runner work is fine.
         foreach ($runners as $runner) {
             $notifications->notifyInApp(
                 $runner->user_id,
@@ -62,12 +61,14 @@ class BroadcastToRunnersJob implements ShouldQueue
                 'A new errand is available near you.',
                 $payload,
             );
+            $notifications->sendRemotePush(
+                $runner->user_id,
+                'New errand nearby',
+                'A new errand is available near you. Tap to view the offer.',
+                ['type' => 'incoming_request', 'booking_id' => $booking->id],
+            );
         }
 
         Log::info("BroadcastToRunnersJob: notified {$runners->count()} runners for booking {$this->bookingId}");
-
-        // TODO (push fallback): when a runner has the app backgrounded, the
-        // WebSocket is suspended on iOS. Add an FCM/APNs send here (or switch
-        // the call above to sendPush) once we want offers to wake the device.
     }
 }
