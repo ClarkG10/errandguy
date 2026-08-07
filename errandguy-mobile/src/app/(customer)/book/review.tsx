@@ -161,6 +161,8 @@ export default function ReviewScreen() {
       pickup_lng: draftBooking.pickup_lng,
       dropoff_lat: draftBooking.dropoff_lat,
       dropoff_lng: draftBooking.dropoff_lng,
+      // Multi-stop legs change the fare, so they're part of the quote input.
+      stops: draftBooking.stops?.map((s) => ({ lat: s.lat, lng: s.lng })),
     };
     // P1: if the estimate was warmed at the details phase-flip and is still
     // fresh, hydrate synchronously so the fare paints and Confirm is tappable on
@@ -432,6 +434,11 @@ export default function ReviewScreen() {
             ? shoppingItems.map((i) => ({ name: i.name.trim(), qty: i.qty }))
             : undefined,
         special_instructions: draftBooking.special_instructions,
+        // Multi-stop extra destinations (server prices + persists them).
+        stops:
+          draftBooking.stops && draftBooking.stops.length > 0
+            ? draftBooking.stops
+            : undefined,
         estimated_item_value: draftBooking.estimated_item_value,
         shopping_budget: draftBooking.shopping_budget,
         pricing_mode: pricingMode,
@@ -670,6 +677,42 @@ export default function ReviewScreen() {
               Edit
             </Text>
           </Pressable>
+
+          {/* Extra stops (multi-stop) — continue the route after the drop-off,
+              same danger bead as the drop-off since they're all destinations. */}
+          {(draftBooking.stops ?? []).map((stop, i) => (
+            <View key={`${stop.lat},${stop.lng},${i}`}>
+              <View
+                style={{ marginLeft: 3, width: 2, height: 12, backgroundColor: LightColors.divider }}
+              />
+              <Pressable
+                className="flex-row items-center mt-2.5"
+                accessibilityRole="button"
+                accessibilityLabel={`Stop ${i + 1}: ${stop.address}. Edit`}
+                hitSlop={8}
+                style={({ pressed }) => (pressed ? { opacity: 0.7 } : null)}
+                onPress={() => editStep('/(customer)/book/details')}
+              >
+                <View
+                  style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: LightColors.danger }}
+                />
+                <View className="flex-1 ml-3">
+                  <Text
+                    className="text-[10px] font-montserrat-bold uppercase text-textSecondary"
+                    style={{ letterSpacing: 1.4 }}
+                  >
+                    Stop {i + 1}
+                  </Text>
+                  <Text className="text-[14px] font-montserrat-semi text-textPrimary" numberOfLines={1}>
+                    {stop.address}
+                  </Text>
+                </View>
+                <Text className="text-[13px] font-montserrat-semi text-primary ml-3">
+                  Edit
+                </Text>
+              </Pressable>
+            </View>
+          ))}
         </View>
 
         {/* What's being booked — type, timing, list size. */}

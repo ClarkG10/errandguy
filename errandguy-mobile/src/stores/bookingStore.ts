@@ -1,7 +1,7 @@
 import { create } from 'zustand';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import type { Booking, BookingStatus } from '../types';
-import type { ChecklistItem } from '../types/booking';
+import type { ChecklistItem, DraftStop } from '../types/booking';
 
 /**
  * Persisted draft schema. We deliberately keep `activeBooking` and
@@ -35,6 +35,9 @@ export interface DraftBooking {
   dropoff_lng?: number;
   dropoff_contact_name?: string;
   dropoff_contact_phone?: string;
+  /** Extra destinations after the primary dropoff (multi-stop). Sent verbatim
+   *  to POST /bookings as `stops`. Absent/[] for a normal single-drop booking. */
+  stops?: DraftStop[];
   description?: string;
   special_instructions?: string;
   item_photos?: string[];

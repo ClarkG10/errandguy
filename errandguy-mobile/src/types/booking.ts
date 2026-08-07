@@ -29,6 +29,32 @@ export interface ChecklistItem {
 
 export type ScheduleType = 'now' | 'scheduled';
 
+/**
+ * An extra destination on a multi-stop booking, ordered after the primary
+ * dropoff (server: booking_stops). Contacts are masked for non-participants.
+ */
+export interface BookingStop {
+  id: string;
+  sequence: number;
+  address: string;
+  lat: number;
+  lng: number;
+  contact_name?: string | null;
+  contact_phone?: string | null;
+  note?: string | null;
+  completed_at?: string | null;
+}
+
+/** A stop as collected client-side in the booking funnel (pre-submit). */
+export interface DraftStop {
+  address: string;
+  lat: number;
+  lng: number;
+  contact_name?: string;
+  contact_phone?: string;
+  note?: string;
+}
+
 export interface ErrandType {
   id: string;
   slug: string;
@@ -65,6 +91,9 @@ export interface Booking {
   dropoff_lng: number | null;
   dropoff_contact_name: string | null;
   dropoff_contact_phone: string | null;
+  /** Extra destinations after the primary dropoff (multi-stop). Present/[]
+   *  only where the server eager-loads the relation (booking detail/track). */
+  stops?: BookingStop[];
   description: string | null;
   special_instructions: string | null;
   item_photos: string[];

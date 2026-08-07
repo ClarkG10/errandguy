@@ -46,6 +46,7 @@ import { PhotoGrid } from '../../../components/customer/PhotoGrid';
 import { ImagePickerModal } from '../../../components/ui/ImagePickerModal';
 import { SavedAddressSheet } from '../../../components/customer/SavedAddressSheet';
 import { ShoppingChecklist } from '../../../components/customer/ShoppingChecklist';
+import { StopsEditor } from '../../../components/customer/StopsEditor';
 import { ExpandableSheet } from '../../../components/ui/ExpandableSheet';
 import { BookingStepIndicator } from '../../../components/customer/BookingStepIndicator';
 
@@ -266,6 +267,8 @@ export default function TaskDetailsScreen() {
       pickup_lng: draftBooking.pickup_lng,
       dropoff_lat: draftBooking.dropoff_lat,
       dropoff_lng: draftBooking.dropoff_lng,
+      // Multi-stop legs change the fare — keep the warmed quote in sync.
+      stops: draftBooking.stops?.map((s) => ({ lat: s.lat, lng: s.lng })),
     };
     // Warm the estimate (fire-and-forget) exactly as before — Review still
     // hydrates from this stash on its first frame.
@@ -304,6 +307,7 @@ export default function TaskDetailsScreen() {
     draftBooking.pickup_lng,
     draftBooking.dropoff_lat,
     draftBooking.dropoff_lng,
+    draftBooking.stops,
   ]);
 
   // Compact "from ₱X · Y km · ~Z min" teaser off the warmed estimate. Price is
@@ -467,6 +471,11 @@ export default function TaskDetailsScreen() {
       patch.dropoff_address = undefined;
       patch.dropoff_lat = undefined;
       patch.dropoff_lng = undefined;
+    }
+    // Multi-stop is meaningless without a dropoff — drop any stops carried over
+    // from a previously-chosen delivery-style type (server rejects them too).
+    if (rule.singleLocation && (draftBooking.stops?.length ?? 0) > 0) {
+      patch.stops = undefined;
     }
     if (
       !rule.showPickupContact &&
@@ -1869,6 +1878,25 @@ export default function TaskDetailsScreen() {
                   </>
                 )}
               </>
+            )}
+
+            {/* Multi-stop: extra destinations after the primary dropoff. Only
+                for delivery-style errands (single-location errands have no
+                dropoff, and the server rejects stops for them). */}
+            {!rule.singleLocation && (
+              <View style={{ marginTop: 20 }}>
+                <StopsEditor
+                  stops={draftBooking.stops ?? []}
+                  onChange={(stops) =>
+                    updateDraft({ stops: stops.length > 0 ? stops : undefined })
+                  }
+                  proximity={
+                    draftBooking.dropoff_lng != null && draftBooking.dropoff_lat != null
+                      ? { lng: draftBooking.dropoff_lng, lat: draftBooking.dropoff_lat }
+                      : undefined
+                  }
+                />
+              </View>
             )}
 
             {/* Dropoff contact */}

@@ -1453,6 +1453,47 @@ export default function ActiveErrandScreen() {
                     />
                   </View>
 
+                  {(booking.stops?.length ?? 0) > 0 && (
+                    <View className="mb-3">
+                      <Text className="text-[10px] font-montserrat-bold text-textTertiary mb-2 uppercase" style={{ letterSpacing: 1.2 }}>
+                        Extra stops
+                      </Text>
+                      {(booking.stops ?? []).map((stop) => (
+                        <View
+                          key={stop.id}
+                          className="flex-row items-start bg-surfaceMuted rounded-xl px-3 py-2.5 mb-2"
+                        >
+                          <View
+                            className="w-6 h-6 rounded-full items-center justify-center mr-2.5"
+                            style={{ backgroundColor: LightColors.primaryLight }}
+                          >
+                            <Text className="text-[11px] font-inter-semi text-primary">
+                              {stop.sequence}
+                            </Text>
+                          </View>
+                          <View className="flex-1">
+                            <Text
+                              className="text-[13px] font-montserrat-semi text-textPrimary"
+                              numberOfLines={2}
+                            >
+                              {stop.address}
+                            </Text>
+                            {stop.contact_name || stop.contact_phone ? (
+                              <Text className="text-[11px] font-montserrat text-textSecondary mt-0.5">
+                                {[stop.contact_name, stop.contact_phone].filter(Boolean).join(' · ')}
+                              </Text>
+                            ) : null}
+                            {stop.note ? (
+                              <Text className="text-[11px] font-montserrat text-textSecondary mt-0.5">
+                                “{stop.note}”
+                              </Text>
+                            ) : null}
+                          </View>
+                        </View>
+                      ))}
+                    </View>
+                  )}
+
                   <Text className="text-[10px] font-montserrat-bold text-textTertiary mb-3 uppercase" style={{ letterSpacing: 1.2 }}>
                     Progress
                   </Text>

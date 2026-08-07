@@ -20,16 +20,21 @@ export interface EstimateInput {
   pickup_lng: number;
   dropoff_lat?: number | null;
   dropoff_lng?: number | null;
+  /** Multi-stop extra destinations — only coords are needed for a quote. */
+  stops?: Array<{ lat: number; lng: number }> | null;
 }
 // Short freshness window: a long-idle draft must NOT confirm on a stale fare —
 // past this, Review refetches. The normal type→details→schedule→review flow is
 // a few seconds, well inside this.
 const ESTIMATE_FRESH_MS = 120_000;
 const qz = (n: number | null | undefined) => (n == null ? 'x' : Number(n).toFixed(5));
-// All four coords go into the signature (dropoff is null/absent for
-// single-location errands, which qz maps to 'x').
-const estimateSignature = (d: EstimateInput) =>
-  `${d.errand_type_id}|${qz(d.pickup_lat)},${qz(d.pickup_lng)}|${qz(d.dropoff_lat)},${qz(d.dropoff_lng)}`;
+// All four coords + every stop coord go into the signature (dropoff is
+// null/absent for single-location errands, which qz maps to 'x'). Stops change
+// the fare, so they MUST be part of the cache key or a stale quote would show.
+const estimateSignature = (d: EstimateInput) => {
+  const stops = (d.stops ?? []).map((s) => `${qz(s.lat)},${qz(s.lng)}`).join(';');
+  return `${d.errand_type_id}|${qz(d.pickup_lat)},${qz(d.pickup_lng)}|${qz(d.dropoff_lat)},${qz(d.dropoff_lng)}|${stops}`;
+};
 let estimateStash: { signature: string; result: any; fetchedAt: number } | null = null;
 const estimateInflight = new Map<string, Promise<any>>();
 
@@ -46,6 +51,9 @@ function runEstimate(input: EstimateInput): Promise<any> {
       pickup_lng: input.pickup_lng,
       dropoff_lat: input.dropoff_lat ?? undefined,
       dropoff_lng: input.dropoff_lng ?? undefined,
+      stops: input.stops && input.stops.length
+        ? input.stops.map((s) => ({ lat: s.lat, lng: s.lng }))
+        : undefined,
     })
     .then((res: any) => {
       const result = res.data?.data ?? null;
@@ -81,6 +89,16 @@ export const bookingService = {
     dropoff_lng?: number;
     dropoff_contact_name?: string;
     dropoff_contact_phone?: string;
+    // Multi-stop extra destinations (after the primary dropoff). Priced +
+    // persisted server-side; capped at 3 by CreateBookingRequest.
+    stops?: Array<{
+      address: string;
+      lat: number;
+      lng: number;
+      contact_name?: string;
+      contact_phone?: string;
+      note?: string;
+    }>;
     description?: string;
     special_instructions?: string;
     estimated_item_value?: number;
