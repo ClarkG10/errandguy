@@ -156,6 +156,15 @@ class Booking extends Model
         return $this->hasMany(Message::class);
     }
 
+    /**
+     * Extra destinations for a multi-stop booking, ordered after the primary
+     * dropoff. Empty for an ordinary single-dropoff booking.
+     */
+    public function stops(): HasMany
+    {
+        return $this->hasMany(BookingStop::class)->orderBy('sequence');
+    }
+
     public function runnerLocations(): HasMany
     {
         return $this->hasMany(RunnerLocation::class);

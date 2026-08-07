@@ -27,6 +27,11 @@ class EstimateRequest extends FormRequest
             // distance to 0 when dropoff is missing, so make these optional.
             'dropoff_lat' => ['nullable', 'numeric', 'between:-90,90'],
             'dropoff_lng' => ['nullable', 'numeric', 'between:-180,180'],
+            // Multi-stop quote: only coordinates are needed to price the extra
+            // legs + per-stop fee (addresses/contacts are collected at create).
+            'stops' => ['nullable', 'array', 'max:3'],
+            'stops.*.lat' => ['required_with:stops', 'numeric', 'between:-90,90'],
+            'stops.*.lng' => ['required_with:stops', 'numeric', 'between:-180,180'],
             'vehicle_type_rate' => [
                 'nullable',
                 Rule::in(['walk', 'bicycle', 'motorcycle', 'car']),

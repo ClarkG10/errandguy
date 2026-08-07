@@ -17,6 +17,7 @@ use App\Jobs\MatchRunnerJob;
 use App\Exceptions\PaymentGatewayException;
 use App\Models\Booking;
 use App\Models\BookingStatusLog;
+use App\Models\BookingStop;
 use App\Models\ErrandType;
 use App\Models\Payment;
 use App\Models\PaymentMethod;
@@ -111,6 +112,15 @@ class BookingController extends Controller
         $dropoffLng = $validated['dropoff_lng'] ?? $validated['pickup_lng'];
         $dropoffAddress = $validated['dropoff_address'] ?? $validated['pickup_address'];
 
+        // Multi-stop: extra destinations after the primary dropoff. Coordinates
+        // drive the fare (extra legs + per-stop fee); the full rows (address,
+        // contact, note) are persisted below. Validation caps this at 3 and
+        // rejects it for single-location errand types.
+        $extraStops = array_map(
+            fn ($s) => ['lat' => (float) $s['lat'], 'lng' => (float) $s['lng']],
+            $validated['stops'] ?? [],
+        );
+
         // Calculate pricing
         $vehicleType = $validated['vehicle_type_rate'] ?? 'motorcycle';
         $pricing = $this->pricingService->calculate(
@@ -120,7 +130,8 @@ class BookingController extends Controller
             $dropoffLat,
             $dropoffLng,
             $vehicleType,
-            $validated['schedule_type']
+            $validated['schedule_type'],
+            extraStops: $extraStops,
         );
 
         // Negotiate mode: the customer's offer IS the price they pay (the fixed
@@ -212,6 +223,22 @@ class BookingController extends Controller
             'ride_pin' => $ridePin,
             'is_transportation' => $isTransportation,
         ]);
+
+        // Persist multi-stop destinations (1-based order after the primary
+        // dropoff). Priced above via extraStops; stored here with their full
+        // address/contact/note so the runner has everything to complete them.
+        foreach ($validated['stops'] ?? [] as $i => $stop) {
+            BookingStop::create([
+                'booking_id' => $booking->id,
+                'sequence' => $i + 1,
+                'address' => $stop['address'],
+                'lat' => $stop['lat'],
+                'lng' => $stop['lng'],
+                'contact_name' => $stop['contact_name'] ?? null,
+                'contact_phone' => $stop['contact_phone'] ?? null,
+                'note' => $stop['note'] ?? null,
+            ]);
+        }
 
         // Handle item photos upload
         if ($request->hasFile('item_photos')) {
@@ -517,7 +544,7 @@ class BookingController extends Controller
         // Fire booking created event
         event(new BookingCreated($booking));
 
-        $booking->load(['errandType', 'statusLogs']);
+        $booking->load(['errandType', 'statusLogs', 'stops']);
 
         return response()->json([
             'data' => new BookingResource($booking),
@@ -576,6 +603,7 @@ class BookingController extends Controller
             'runner:id,phone,full_name,avatar_url,role,status,phone_verified,avg_rating,total_ratings,created_at',
             'runner.runnerProfile:user_id,vehicle_type,vehicle_plate,vehicle_photo_url,verification_status,acceptance_rate,completion_rate,is_online,total_errands,approved_at',
             'statusLogs',
+            'stops',
             'payment',
             'reviews',
         ])->findOrFail($id);
@@ -681,7 +709,7 @@ class BookingController extends Controller
 
         event(new BookingCancelled($booking));
 
-        $booking->load(['errandType', 'statusLogs']);
+        $booking->load(['errandType', 'statusLogs', 'stops']);
 
         // State what actually moved. A refund was credited to the wallet inside
         // the transaction above (L638-660) whenever the booking was paid; the
@@ -767,6 +795,7 @@ class BookingController extends Controller
             'runner:id,phone,full_name,avatar_url,role,status,phone_verified,avg_rating,total_ratings,created_at',
             'runner.runnerProfile:user_id,vehicle_type,vehicle_plate,vehicle_photo_url,verification_status,acceptance_rate,completion_rate,is_online,total_errands,approved_at',
             'statusLogs',
+            'stops',
         ])->findOrFail($id);
 
         $this->authorize('track', $booking);
@@ -802,6 +831,7 @@ class BookingController extends Controller
                 'runner:id,phone,full_name,avatar_url,role,status,phone_verified,avg_rating,total_ratings,created_at',
                 'runner.runnerProfile:user_id,vehicle_type,vehicle_plate,vehicle_photo_url,verification_status,acceptance_rate,completion_rate,is_online,total_errands,approved_at',
                 'statusLogs',
+                'stops',
             ])
             ->active()
             ->orderByDesc('created_at')
@@ -821,7 +851,8 @@ class BookingController extends Controller
             $validated['pickup_lat'],
             $validated['pickup_lng'],
             $validated['dropoff_lat'] ?? null,
-            $validated['dropoff_lng'] ?? null
+            $validated['dropoff_lng'] ?? null,
+            $validated['stops'] ?? [],
         );
 
         return response()->json([
@@ -891,7 +922,7 @@ class BookingController extends Controller
         MatchRunnerJob::dispatch($newBooking->id);
         event(new BookingCreated($newBooking));
 
-        $newBooking->load(['errandType', 'statusLogs']);
+        $newBooking->load(['errandType', 'statusLogs', 'stops']);
 
         return response()->json([
             'data' => new BookingResource($newBooking),
@@ -983,7 +1014,7 @@ class BookingController extends Controller
 
         // Refresh so the response reflects the just-run match result (the inline
         // MatchRunnerJob may have flipped the row to 'matched').
-        $booking->refresh()->load(['errandType', 'statusLogs']);
+        $booking->refresh()->load(['errandType', 'statusLogs', 'stops']);
 
         return response()->json([
             'data' => new BookingResource($booking),

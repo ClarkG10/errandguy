@@ -69,6 +69,16 @@ class CreateBookingRequest extends FormRequest
             'dropoff_lng' => [$dropoffRule, 'numeric', 'between:-180,180'],
             'dropoff_contact_name' => ['nullable', 'string', 'max:100'],
             'dropoff_contact_phone' => ['nullable', 'string', 'regex:/^(\+63|0)9\d{9}$/'],
+            // Multi-stop: up to 3 EXTRA destinations after the primary dropoff
+            // (4 stops total). Each needs an address + coordinates; contact/note
+            // are optional. Priced as extra legs + a per-stop fee (PricingService).
+            'stops' => ['nullable', 'array', 'max:3'],
+            'stops.*.address' => ['required_with:stops', 'string', 'max:500'],
+            'stops.*.lat' => ['required_with:stops', 'numeric', 'between:-90,90'],
+            'stops.*.lng' => ['required_with:stops', 'numeric', 'between:-180,180'],
+            'stops.*.contact_name' => ['nullable', 'string', 'max:100'],
+            'stops.*.contact_phone' => ['nullable', 'string', 'regex:/^(\+63|0)9\d{9}$/'],
+            'stops.*.note' => ['nullable', 'string', 'max:300'],
             'description' => ['nullable', 'string', 'max:500'],
             'special_instructions' => ['nullable', 'string', 'max:300'],
             'item_photos' => ['nullable', 'array', 'max:5'],
@@ -130,6 +140,21 @@ class CreateBookingRequest extends FormRequest
                         "Minimum offer is ₱{$errandType->min_negotiate_fee}."
                     );
                 }
+            }
+
+            // Multi-stop only applies to errands that HAVE a dropoff. A
+            // single-location errand (queue / bills_payment) is done on-site, so
+            // extra stops are meaningless — reject them rather than silently
+            // pricing phantom legs from the pickup.
+            $singleLocationSlugs = ['queue', 'bills_payment'];
+            if (
+                $errandType && in_array($errandType->slug, $singleLocationSlugs, true)
+                && ! empty($this->input('stops'))
+            ) {
+                $validator->errors()->add(
+                    'stops',
+                    'This errand type is completed at a single location and does not support extra stops.',
+                );
             }
 
             // Per-type vehicle restrictions. Mirrors mobile errandTypeRules.ts

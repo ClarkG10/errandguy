@@ -79,6 +79,7 @@ class RunnerErrandController extends Controller
                 'errandType',
                 'customer:id,phone,full_name,avatar_url,role,status,phone_verified,avg_rating,total_ratings,created_at',
                 'statusLogs',
+                'stops',
             ])
             ->whereNotIn('status', ['completed', 'cancelled'])
             ->orderByDesc('created_at')
@@ -106,6 +107,7 @@ class RunnerErrandController extends Controller
                 'errandType',
                 'customer:id,phone,full_name,avatar_url,role,status,phone_verified,avg_rating,total_ratings,created_at',
                 'statusLogs',
+                'stops',
             ])
             ->where('bookings.id', $id)
             ->first();

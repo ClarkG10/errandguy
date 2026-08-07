@@ -61,6 +61,24 @@ class BookingResource extends JsonResource
             'dropoff_lng' => $this->dropoff_lng,
             'dropoff_contact_name' => $this->when($canSeeContacts, $this->dropoff_contact_name),
             'dropoff_contact_phone' => $this->when($canSeeContacts, $this->dropoff_contact_phone),
+            // Multi-stop: extra destinations after the primary dropoff. Contacts
+            // follow the same non-participant masking as the dropoff contact.
+            // Kept as [] (not omitted) when loaded-but-empty so the mobile
+            // `stops: BookingStop[]` contract holds.
+            'stops' => $this->when(
+                $this->relationLoaded('stops'),
+                fn () => $this->stops->map(fn ($stop) => [
+                    'id' => $stop->id,
+                    'sequence' => $stop->sequence,
+                    'address' => $stop->address,
+                    'lat' => $stop->lat,
+                    'lng' => $stop->lng,
+                    'contact_name' => $canSeeContacts ? $stop->contact_name : null,
+                    'contact_phone' => $canSeeContacts ? $stop->contact_phone : null,
+                    'note' => $stop->note,
+                    'completed_at' => $stop->completed_at,
+                ])->values(),
+            ),
             'description' => $this->description,
             'special_instructions' => $this->special_instructions,
             // Customer-uploaded item photos can be documents / prescriptions /

@@ -35,6 +35,12 @@ class PricingService
      * Dropoff coordinates are optional: single-location errands (queue,
      * bills_payment) have no dropoff and the distance fee collapses to 0.
      */
+    /**
+     * @param  list<array{lat:float|int|string,lng:float|int|string}>  $extraStops
+     *   Ordered EXTRA destinations after the primary dropoff (multi-stop). Each
+     *   adds a leg to the route distance + a flat per-stop fee. Empty for an
+     *   ordinary single-dropoff booking.
+     */
     public function calculate(
         string $errandTypeId,
         float $pickupLat,
@@ -42,11 +48,13 @@ class PricingService
         ?float $dropoffLat,
         ?float $dropoffLng,
         string $vehicleType,
-        string $scheduleType = 'now'
+        string $scheduleType = 'now',
+        array $extraStops = []
     ): array {
         $errandType = ErrandType::findOrFail($errandTypeId);
+        $extraStops = $this->sanitizeStops($extraStops);
         $distanceKm = ($dropoffLat !== null && $dropoffLng !== null)
-            ? $this->haversineDistance($pickupLat, $pickupLng, $dropoffLat, $dropoffLng)
+            ? $this->routeDistanceKm($pickupLat, $pickupLng, $dropoffLat, $dropoffLng, $extraStops)
             : 0.0;
 
         $baseFee = (float) $errandType->base_fee;
@@ -58,7 +66,12 @@ class PricingService
         $subtotal = $baseFee + $vehiclePremium + $distanceFee;
         $serviceFee = round($subtotal * ($platformFeePercent / 100), 2);
 
-        $surcharge = (float) $errandType->surcharge;
+        // Each EXTRA stop (beyond the primary dropoff) adds a flat fee on top of
+        // the base surcharge. It flows into the runner's payout (payout = total −
+        // service fee), compensating the extra handling the multi-leg distance
+        // alone doesn't capture. Tunable via SystemConfig without a redeploy.
+        $stopsFee = round(count($extraStops) * (float) SystemConfig::getValue('multi_stop_fee', '15'), 2);
+        $surcharge = (float) $errandType->surcharge + $stopsFee;
 
         // Customer pays gross + platform service fee.
         $totalAmount = round($subtotal + $serviceFee + $surcharge, 2);
@@ -73,7 +86,9 @@ class PricingService
             'distance_km' => round($distanceKm, 2),
             'distance_fee' => $distanceFee,
             'service_fee' => $serviceFee,
-            'surcharge' => $surcharge,
+            'surcharge' => round($surcharge, 2),
+            'stops_fee' => $stopsFee,
+            'stops_count' => count($extraStops),
             'total_amount' => $totalAmount,
             'runner_payout' => max(0, $runnerPayout),
             'vehicle_type' => $vehicleType,
@@ -109,14 +124,20 @@ class PricingService
     /**
      * Estimate prices for all vehicle types.
      */
+    /**
+     * @param  list<array{lat:float|int|string,lng:float|int|string}>  $extraStops
+     *   Multi-stop extra destinations (see {@see self::calculate()}).
+     */
     public function estimate(
         string $errandTypeId,
         float $pickupLat,
         float $pickupLng,
         ?float $dropoffLat,
-        ?float $dropoffLng
+        ?float $dropoffLng,
+        array $extraStops = []
     ): array {
         $errandType = ErrandType::find($errandTypeId);
+        $extraStops = $this->sanitizeStops($extraStops);
 
         // Derive the supported vehicle list from the per-km rate columns
         // on the errand type itself. A vehicle is offered when its
@@ -135,7 +156,8 @@ class PricingService
                 $pickupLng,
                 $dropoffLat,
                 $dropoffLng,
-                $type
+                $type,
+                extraStops: $extraStops,
             );
         }
 
@@ -143,9 +165,10 @@ class PricingService
         // badges and seed the negotiate slider without hunting through
         // each per-vehicle entry.
         $distanceKm = ($dropoffLat !== null && $dropoffLng !== null)
-            ? round($this->haversineDistance($pickupLat, $pickupLng, $dropoffLat, $dropoffLng), 2)
+            ? round($this->routeDistanceKm($pickupLat, $pickupLng, $dropoffLat, $dropoffLng, $extraStops), 2)
             : 0.0;
         $estimates['distance_km'] = $distanceKm;
+        $estimates['stops_count'] = count($extraStops);
         if ($errandType) {
             $minNegotiate = (float) $errandType->min_negotiate_fee;
             $estimates['min_negotiate_fee'] = $minNegotiate;
@@ -241,6 +264,56 @@ class PricingService
         $c = 2 * atan2(sqrt($a), sqrt(1 - $a));
 
         return $earthRadiusKm * $c;
+    }
+
+    /**
+     * Total route distance in km for pickup → dropoff → each extra stop, summing
+     * the straight-line (Haversine) length of every consecutive leg. With no
+     * extra stops this equals the plain pickup→dropoff distance, so single-stop
+     * bookings price exactly as before.
+     *
+     * @param  list<array{lat:float,lng:float}>  $extraStops  Already sanitized.
+     */
+    private function routeDistanceKm(
+        float $pickupLat,
+        float $pickupLng,
+        float $dropoffLat,
+        float $dropoffLng,
+        array $extraStops
+    ): float {
+        $total = $this->haversineDistance($pickupLat, $pickupLng, $dropoffLat, $dropoffLng);
+
+        $prevLat = $dropoffLat;
+        $prevLng = $dropoffLng;
+        foreach ($extraStops as $stop) {
+            $total += $this->haversineDistance($prevLat, $prevLng, $stop['lat'], $stop['lng']);
+            $prevLat = $stop['lat'];
+            $prevLng = $stop['lng'];
+        }
+
+        return $total;
+    }
+
+    /**
+     * Coerce the incoming stops to a clean list of {lat, lng} floats, dropping
+     * any element without a usable coordinate pair. Defensive: pricing must
+     * never fault on a malformed stop, and a bad stop must not silently inflate
+     * the fare with a garbage leg.
+     *
+     * @param  array<mixed>  $extraStops
+     * @return list<array{lat:float,lng:float}>
+     */
+    private function sanitizeStops(array $extraStops): array
+    {
+        $clean = [];
+        foreach ($extraStops as $stop) {
+            if (! is_array($stop) || ! isset($stop['lat'], $stop['lng']) || ! is_numeric($stop['lat']) || ! is_numeric($stop['lng'])) {
+                continue;
+            }
+            $clean[] = ['lat' => (float) $stop['lat'], 'lng' => (float) $stop['lng']];
+        }
+
+        return $clean;
     }
 
     private function getPerKmRate(ErrandType $errandType, string $vehicleType): float
