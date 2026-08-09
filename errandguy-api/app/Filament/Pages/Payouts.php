@@ -172,6 +172,7 @@ class Payouts extends Page implements HasTable
                     'completed' => 'success',
                     'pending' => 'warning',
                     'failed' => 'danger',
+                    'reversed' => 'gray',
                     default => 'gray',
                 }),
                 TextColumn::make('processed_at')->dateTime()->toggleable(),
@@ -183,6 +184,7 @@ class Payouts extends Page implements HasTable
                         'pending' => 'Pending',
                         'completed' => 'Completed',
                         'failed' => 'Failed',
+                        'reversed' => 'Reversed',
                     ])
                     ->default('pending'),
             ])

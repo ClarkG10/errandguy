@@ -457,6 +457,17 @@ class RunnerErrandController extends Controller
 
             // Handle completion
             if ($newStatus === 'completed') {
+                // Re-read the row (held under the lock above) so settlement sees
+                // the CURRENT payment_status/method. $booking was loaded at the
+                // top of the request, and a gateway webhook may have marked the
+                // charge paid DURING the pre-transaction signature/photo upload
+                // window; reading that stale 'pending' here would skip both
+                // settlement branches and credit the runner nothing — with no
+                // recovery, because the webhook's settlePaidBooking already
+                // no-op'd (the booking wasn't 'completed' yet) — MC-1. refresh()
+                // re-selects the locked row inside this transaction, so it
+                // reflects the committed payment_status.
+                $booking->refresh();
                 $this->handleCompletion($booking, $user);
             }
 
@@ -649,8 +660,19 @@ class RunnerErrandController extends Controller
             $earnedForStats = $payoutAmount;
             $collected = true;
         } elseif ($booking->payment_method === 'cash') {
-            // Runner nets their payout in cash; platform is owed the service fee.
-            $commission = round((float) $booking->service_fee, 2);
+            // The runner collected total_amount in cash and keeps runner_payout,
+            // so the platform's commission is exactly what's left over:
+            //   commission = total_amount − runner_payout
+            // This is the true invariant in EVERY pricing mode. It equals
+            // service_fee − promo_discount for a standard booking (so it fixes
+            // MONEY-2: charging the full service_fee made the runner eat the
+            // platform-funded promo and overstated total_earnings), AND it stays
+            // correct in negotiate mode where runner_payout is floored to 0 and
+            // service_fee − promo would over-debit the runner. When the runner
+            // collected LESS cash than their payout (aggressive promo / low
+            // negotiate offer) commission goes negative and they are correctly
+            // CREDITED the shortfall.
+            $commission = round((float) $booking->total_amount - (float) $booking->runner_payout, 2);
             $newBalance = (float) $user->wallet_balance - $commission;
             WalletTransaction::create([
                 'user_id' => $user->id,

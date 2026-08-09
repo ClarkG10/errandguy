@@ -883,4 +883,71 @@ class WalletService
             return $tx->fresh();
         });
     }
+
+    /**
+     * Reverse a payout that had already been marked COMPLETED and then bounced
+     * back from the gateway (Xendit `payout.reversed` / a late failure).
+     *
+     * failPayout() only re-credits a *pending* payout; a reversal that arrives
+     * after the payout succeeded used to hit its pending-only guard and be
+     * silently dropped, permanently debiting the runner for money that never
+     * reached them (MONEYX-1). This re-credits the runner atomically and marks
+     * the payout `reversed`.
+     *
+     * Idempotent: the re-credit refund row is keyed on the payout tx id, and a
+     * second reversal (replayed webhook) finds it and no-ops. Throws
+     * PayoutStateException if the payout is not in a reversible (completed) state
+     * so the caller can fall back to failPayout for a still-pending payout.
+     */
+    public function reversePayout(string $txId, string $reason): WalletTransaction
+    {
+        return DB::transaction(function () use ($txId, $reason) {
+            $tx = WalletTransaction::where('type', 'payout')
+                ->lockForUpdate()
+                ->findOrFail($txId);
+
+            if ($tx->status === 'reversed') {
+                return $tx; // already reversed — idempotent no-op
+            }
+
+            if ($tx->status !== 'completed') {
+                throw new \App\Exceptions\PayoutStateException('Only a completed payout can be reversed.');
+            }
+
+            // Guard against a double re-credit if a refund row for this payout
+            // already exists (e.g. a prior failPayout for the same tx).
+            $alreadyCredited = WalletTransaction::where('user_id', $tx->user_id)
+                ->where('reference_id', $tx->id)
+                ->where('type', 'refund')
+                ->exists();
+
+            $user = User::lockForUpdate()->findOrFail($tx->user_id);
+
+            if (! $alreadyCredited) {
+                $refundAmount = abs((float) $tx->amount);
+                $newBalance = (float) $user->wallet_balance + $refundAmount;
+
+                WalletTransaction::create([
+                    'user_id' => $user->id,
+                    'type' => 'refund',
+                    'amount' => $refundAmount,
+                    'balance_after' => $newBalance,
+                    'reference_id' => $tx->id,
+                    'description' => 'Refund for reversed payout',
+                    'status' => 'completed',
+                    'processed_at' => now(),
+                ]);
+
+                $user->update(['wallet_balance' => $newBalance]);
+            }
+
+            $tx->update([
+                'status' => 'reversed',
+                'processed_at' => now(),
+                'failure_reason' => $reason,
+            ]);
+
+            return $tx->fresh();
+        });
+    }
 }

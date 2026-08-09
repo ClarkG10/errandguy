@@ -672,7 +672,7 @@ class PaymentService
         }
 
         try {
-            return DB::transaction(function () use ($payment, $pr, $gatewayStatus) {
+            $result = DB::transaction(function () use ($payment, $pr, $gatewayStatus) {
                 // Row-lock + re-read so two concurrent polls (or a poll racing
                 // the webhook) can't both advance the same charge.
                 $locked = Payment::whereKey($payment->id)->lockForUpdate()->first();
@@ -732,6 +732,24 @@ class PaymentService
 
                 return $locked;
             });
+
+            // AFTER commit: if this poll is what settled the charge, resolve the
+            // completion/cancel seams — back-fill a runner earning the errand's
+            // completion couldn't credit, or auto-refund a charge that landed on
+            // an already-cancelled booking (MONEY-1 / MONEY-3 / MONEYX-2). Never
+            // let this fail the status poll.
+            if ($result instanceof Payment && $result->status === PaymentStatus::Completed->value) {
+                try {
+                    app(\App\Services\BookingSettlementService::class)->settlePaidBooking($result);
+                } catch (\Throwable $e) {
+                    Log::warning('Post-settlement resolution failed after reconcile', [
+                        'payment_id' => $result->id,
+                        'error' => $e->getMessage(),
+                    ]);
+                }
+            }
+
+            return $result;
         } catch (\Throwable $e) {
             // A transition/DB error must never 500 the status poll — the webhook
             // is still the primary settlement path. Log and report current state.

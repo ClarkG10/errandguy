@@ -113,17 +113,29 @@ class XenditWebhookController extends Controller
     private function handlePayoutFailed(array $data): void
     {
         $tx = $this->findPayoutTransaction($data);
-        if (! $tx || $tx->status !== 'pending') {
+        if (! $tx) {
             return;
         }
 
         $reason = $data['failure_code'] ?? $data['status'] ?? 'Payout failed at gateway';
 
         try {
-            // Re-credits the runner's wallet atomically, then marks it failed.
-            app(\App\Services\WalletService::class)->failPayout($tx->id, (string) $reason);
+            $wallet = app(\App\Services\WalletService::class);
+            // Route by the payout's current state, not the event label — some
+            // gateways send `payout.reversed` for both a pre-disbursement failure
+            // and a post-success bounce:
+            //   - pending   → failPayout re-credits and marks it failed.
+            //   - completed → reversePayout re-credits and marks it reversed
+            //     (this is the money-loss MONEYX-1 was: a reversal after success
+            //     used to hit failPayout's pending-only guard and be dropped).
+            if ($tx->status === 'pending') {
+                $wallet->failPayout($tx->id, (string) $reason);
+            } elseif ($tx->status === 'completed') {
+                $wallet->reversePayout($tx->id, (string) $reason);
+            }
+            // else: already failed/reversed → no-op.
         } catch (\App\Exceptions\PayoutStateException) {
-            // Already settled — no-op.
+            // Raced to a terminal state by another delivery — no-op.
         }
     }
 
@@ -234,6 +246,18 @@ class XenditWebhookController extends Controller
                 $this->notifyPayment($payment, 'completed');
                 $this->rewardReferralIfEligible($payment);
             }
+            // Self-healing settlement (MONEY-1/3): resolve the booking seam for
+            // the Completed charge whether THIS delivery transitioned it or a
+            // prior one did. Driving it off the terminal state (not just this
+            // delivery) means a settlement a transient DB error dropped is
+            // retried on Xendit's redelivery. A throw here leaves the
+            // WebhookEvent un-'processed' (see handle()), so the redelivery
+            // re-runs it. settlePaidBooking is idempotent.
+            $settleTarget = $payment
+                ?? Payment::where('id', substr($externalId, 8))->where('status', PaymentStatus::Completed->value)->first();
+            if ($settleTarget) {
+                app(\App\Services\BookingSettlementService::class)->settlePaidBooking($settleTarget);
+            }
         }
     }
 
@@ -332,6 +356,15 @@ class XenditWebhookController extends Controller
         if ($payment) {
             $this->notifyPayment($payment, 'completed');
             $this->rewardReferralIfEligible($payment);
+        }
+        // Self-healing settlement (MONEY-1/3): run for the Completed booking
+        // charge whether THIS delivery transitioned it or a prior one did, so a
+        // settlement a transient DB error dropped is retried on redelivery (a
+        // throw leaves the WebhookEvent un-'processed'). Idempotent.
+        $settleTarget = $payment
+            ?? Payment::where('gateway_tx_id', $paymentRequestId)->where('status', PaymentStatus::Completed->value)->first();
+        if ($settleTarget) {
+            app(\App\Services\BookingSettlementService::class)->settlePaidBooking($settleTarget);
             return;
         }
 

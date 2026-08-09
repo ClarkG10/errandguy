@@ -166,6 +166,26 @@ class BookingController extends Controller
             }
         }
 
+        // PRICE-5: a promo is a PLATFORM-funded subsidy. When the discount
+        // exceeds the platform's own service fee the booking is NET-NEGATIVE —
+        // the platform pays the runner more than the customer paid. That can be
+        // a deliberate acquisition subsidy, but an UNBOUNDED one is a
+        // money-safety risk, so every net-negative booking is logged CRITICAL
+        // for ops. The correct hard ceiling is the promo's `max_discount` at
+        // creation (validate() already enforces it), which caps the subsidy
+        // without introducing a preview-vs-charge mismatch here.
+        if ($promoDiscount > 0) {
+            $platformTake = round((float) $pricing['service_fee'] - (float) $promoDiscount, 2);
+            if ($platformTake < 0) {
+                \Illuminate\Support\Facades\Log::critical('Net-negative booking: promo discount exceeds platform service fee', [
+                    'promo_code_id' => $promoCodeId,
+                    'service_fee' => (float) $pricing['service_fee'],
+                    'promo_discount' => (float) $promoDiscount,
+                    'platform_take' => $platformTake,
+                ]);
+            }
+        }
+
         // Determine if transportation
         $isTransportation = $errandType->slug === 'transportation';
 
@@ -643,12 +663,25 @@ class BookingController extends Controller
                 return;
             }
 
+            // PRICE-3 / PRICE-4: the cancellation fee we RECORD is what we can
+            // actually keep, not the abstract policy number. It is
+            //   - capped at the fare the customer paid (a flat ₱20 fee can never
+            //     swallow more than a ₱15 errand, so preview and settlement agree
+            //     and a cheap errand can't lose its whole fare), and
+            //   - ZERO when nothing was collected (cash / unpaid): there is no
+            //     channel to charge it, so recording a fee and telling the
+            //     customer one "was applied" would be a phantom charge.
+            $collected = $locked->payment_status === 'paid';
+            $effectiveFee = $collected
+                ? round(min((float) $policy['fee'], (float) $locked->total_amount), 2)
+                : 0.0;
+
             $locked->update([
                 'status' => 'cancelled',
                 'cancelled_at' => now(),
                 'cancelled_by' => $request->user()->id,
                 'cancellation_reason' => $request->validated('reason'),
-                'cancellation_fee' => $policy['fee'],
+                'cancellation_fee' => $effectiveFee,
                 // Revoke any active trip-share link so the recipient can no
                 // longer poll the public endpoint for runner GPS or addresses
                 // after the trip has been called off. The customer can re-share
@@ -667,7 +700,7 @@ class BookingController extends Controller
             // already paid; cash bookings collected nothing so there's nothing to
             // refund. The kept fee is the platform/runner compensation.
             if ($locked->payment_status === 'paid') {
-                $refundable = round(max(0, (float) $locked->total_amount - (float) $policy['fee']), 2);
+                $refundable = round(max(0, (float) $locked->total_amount - $effectiveFee), 2);
                 if ($refundable > 0) {
                     app(WalletService::class)->refund($locked->customer_id, $refundable, $locked->id);
                     Payment::where('booking_id', $locked->id)
@@ -678,7 +711,7 @@ class BookingController extends Controller
                             PaymentStatus::Refunded,
                             actor: $request->user()->id,
                             reason: 'Booking cancelled: refund to wallet minus fee',
-                            meta: ['cancellation_fee' => (float) $policy['fee'], 'refunded_to' => 'wallet'],
+                            meta: ['cancellation_fee' => $effectiveFee, 'refunded_to' => 'wallet'],
                             extra: [
                                 'refund_amount' => $refundable,
                                 'refunded_at' => now(),
@@ -716,7 +749,9 @@ class BookingController extends Controller
         // amount is total − fee. Never announce the fee without the refund —
         // the customer must never be left wondering where the rest of their
         // money went.
-        $fee = (float) $policy['fee'];
+        // Report the fee ACTUALLY recorded (capped/zeroed above), never the raw
+        // policy number, so the message can't claim a fee that wasn't charged.
+        $fee = (float) $booking->cancellation_fee;
         $refunded = $booking->payment_status === 'refunded'
             ? round(max(0, (float) $booking->total_amount - $fee), 2)
             : 0.0;
@@ -737,9 +772,9 @@ class BookingController extends Controller
 
         return response()->json([
             'data' => new BookingResource($booking),
-            // Expose the refunded amount alongside the fee so the app can show a
-            // precise breakdown, not just the fee.
-            'cancellation' => array_merge((array) $policy, ['refunded' => $refunded]),
+            // Expose the refunded amount alongside the fee ACTUALLY charged
+            // (overriding the preview fee) so the app shows a precise breakdown.
+            'cancellation' => array_merge((array) $policy, ['fee' => $fee, 'refunded' => $refunded]),
             'message' => $message,
         ]);
     }
@@ -962,13 +997,27 @@ class BookingController extends Controller
         // the pre-match state, and the unguarded UPDATE re-opened the row while
         // leaving a stale runner_id attached, producing a duplicate offer and a
         // booking matched to two runners. A racing second retry now 409s.
-        $reset = DB::transaction(function () use ($booking, $request, $step, $radius) {
+        $outcome = DB::transaction(function () use ($booking, $request, $step, $radius) {
             $locked = Booking::whereKey($booking->id)->lockForUpdate()->first();
 
             if (! $locked
                 || $locked->runner_id !== null
                 || ! in_array($locked->status, ['pending', 'no_runner', 'cancelled'], true)) {
-                return false;
+                return 'conflict';
+            }
+
+            // BOOK-1: never revive a booking whose money was already returned to
+            // the customer (refunded on cancel/auto-cancel) or was never
+            // collected for a non-cash charge (failed/expired). Reviving it would
+            // run the errand for FREE — the customer isn't charged yet the runner
+            // is paid by the platform on completion. Cash bookings hold no upfront
+            // money (collected in person on completion), so they can always retry;
+            // the customer must rebook instead, which creates a fresh charge.
+            $moneyReturned = $locked->payment_status === 'refunded'
+                || ($locked->payment_method !== 'cash'
+                    && in_array($locked->payment_status, ['failed', 'expired'], true));
+            if ($moneyReturned) {
+                return 'refunded';
             }
 
             $locked->update([
@@ -988,10 +1037,17 @@ class BookingController extends Controller
                 'note' => sprintf('Retry match (step %d, radius %.1fkm)', $step, $radius),
             ]);
 
-            return true;
+            return 'ok';
         });
 
-        if (! $reset) {
+        if ($outcome === 'refunded') {
+            return $this->fail(
+                ErrorCode::BOOKING_CONFLICT,
+                'This booking was already refunded, so it can’t be retried. Please create a new booking to try again.',
+            );
+        }
+
+        if ($outcome !== 'ok') {
             return $this->fail(
                 ErrorCode::BOOKING_CONFLICT,
                 'This booking is already in progress. Pull to refresh to see its current status.',

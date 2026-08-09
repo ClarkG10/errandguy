@@ -55,8 +55,12 @@ class StatusUpdateTest extends TestCase
             'pickup_address' => '123 Main', 'pickup_lat' => 14.60, 'pickup_lng' => 120.98,
             'dropoff_address' => '456 Oak', 'dropoff_lat' => 14.55, 'dropoff_lng' => 121.02,
             'schedule_type' => 'now', 'pricing_mode' => 'fixed', 'vehicle_type_rate' => 'motorcycle',
+            // Realistic fixture: runner_payout = total_amount − service_fee
+            // (115 − 15 = 100). The cash commission is derived as
+            // total_amount − runner_payout, so an internally-consistent booking
+            // is required for the settlement assertions to mean anything.
             'distance_km' => 5.0, 'base_fee' => 50, 'distance_fee' => 50, 'service_fee' => 15,
-            'surcharge' => 0, 'total_amount' => 115, 'runner_payout' => 85,
+            'surcharge' => 0, 'total_amount' => 115, 'runner_payout' => 100,
             'is_transportation' => false,
         ]);
     }
@@ -173,7 +177,7 @@ class StatusUpdateTest extends TestCase
             'type' => 'earning',
             'reference_id' => $this->booking->id,
         ]);
-        $this->assertEquals('85.00', $this->runner->fresh()->wallet_balance);
+        $this->assertEquals('100.00', $this->runner->fresh()->wallet_balance);
     }
 
     public function test_cash_completion_charges_commission_not_payout(): void

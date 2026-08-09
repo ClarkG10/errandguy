@@ -43,6 +43,7 @@ class WalletTransactionsTable
                         'completed' => 'success',
                         'pending' => 'warning',
                         'failed' => 'danger',
+                        'reversed' => 'gray',
                         default => 'gray',
                     }),
                 TextColumn::make('description')
@@ -69,6 +70,7 @@ class WalletTransactionsTable
                         'completed' => 'Completed',
                         'pending' => 'Pending',
                         'failed' => 'Failed',
+                        'reversed' => 'Reversed',
                     ]),
                 DateRangeFilter::make('created_at', 'Date'),
             ])
