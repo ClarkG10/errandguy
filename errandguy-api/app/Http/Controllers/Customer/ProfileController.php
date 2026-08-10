@@ -77,6 +77,16 @@ class ProfileController extends Controller
         $user = $request->user();
         $token = $request->input('fcm_token');
 
+        // A physical device maps to exactly ONE account at a time. Clear this
+        // token from any OTHER user's legacy fcm_token column first, so that a
+        // shared-device account switch can't leave the previous user still
+        // pointing at this device — NotificationService falls back to the
+        // legacy column, so a stale value there misdelivers the previous user's
+        // notifications (and their PII) to whoever logged in next (RT-1).
+        \App\Models\User::where('fcm_token', $token)
+            ->where('id', '!=', $user->id)
+            ->update(['fcm_token' => null]);
+
         // Keep the legacy single column populated for backward compatibility.
         $user->update(['fcm_token' => $token]);
 
