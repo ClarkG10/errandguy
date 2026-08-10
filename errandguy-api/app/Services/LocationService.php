@@ -175,14 +175,38 @@ class LocationService
     }
 
     /**
-     * Clean up old location records (older than 24 hours).
+     * Prune runner-location history older than the retention window.
+     *
+     * Deletes in bounded batches instead of one mass DELETE (PERF-BE-4): this
+     * table is the busiest write path AND is read by the customer tracking
+     * endpoint, so a single large delete would hold locks + a long transaction
+     * on the hot row range. Batching keeps each statement short. The prune runs
+     * off the new idx_runner_locations_created index.
+     *
+     * Select-then-delete-by-id (rather than DELETE ... LIMIT) keeps this
+     * portable: MySQL supports DELETE ... LIMIT but SQLite (test engine) does
+     * not unless specially compiled.
      */
-    public function cleanupOldLocations(): int
+    public function cleanupOldLocations(int $retentionHours = 24, int $batchSize = 1000): int
     {
-        $deleted = RunnerLocation::where('created_at', '<', now()->subHours(24))->delete();
-        Log::info("Cleaned up {$deleted} old runner location records.");
+        $cutoff = now()->subHours($retentionHours);
+        $total = 0;
 
-        return $deleted;
+        do {
+            $ids = RunnerLocation::where('created_at', '<', $cutoff)
+                ->limit($batchSize)
+                ->pluck('id');
+
+            if ($ids->isEmpty()) {
+                break;
+            }
+
+            $total += RunnerLocation::whereIn('id', $ids)->delete();
+        } while ($ids->count() === $batchSize);
+
+        Log::info("Cleaned up {$total} old runner location records.");
+
+        return $total;
     }
 
     /**

@@ -77,4 +77,54 @@ class LocationServiceTest extends TestCase
         $this->assertEquals(14.60, (float) $profile->current_lat);
         $this->assertEquals(120.98, (float) $profile->current_lng);
     }
+
+    /**
+     * created_at is guarded (not fillable) and timestamps are disabled on the
+     * model, so set it directly — the explicit value is written on INSERT and
+     * the useCurrent() column default only applies when no value is provided.
+     */
+    private function makeLocationAt(\DateTimeInterface $at): RunnerLocation
+    {
+        $loc = new RunnerLocation([
+            'runner_id' => $this->runner->id,
+            'lat' => 14.60,
+            'lng' => 120.98,
+        ]);
+        $loc->created_at = $at;
+        $loc->save();
+
+        return $loc;
+    }
+
+    public function test_cleanup_deletes_locations_older_than_retention_and_keeps_recent(): void
+    {
+        $this->makeLocationAt(now()->subHours(25));
+        $this->makeLocationAt(now()->subHours(48));
+        $this->makeLocationAt(now()->subDays(3));
+        $recentA = $this->makeLocationAt(now()->subHours(1));
+        $recentB = $this->makeLocationAt(now()->subMinutes(10));
+
+        $deleted = $this->service->cleanupOldLocations();
+
+        $this->assertSame(3, $deleted);
+        $this->assertSame(2, RunnerLocation::count());
+        $this->assertNotNull(RunnerLocation::find($recentA->id));
+        $this->assertNotNull(RunnerLocation::find($recentB->id));
+    }
+
+    public function test_cleanup_prunes_across_batch_boundaries(): void
+    {
+        // 5 stale rows with a batch size of 2 → three delete passes (2 + 2 + 1).
+        for ($i = 0; $i < 5; $i++) {
+            $this->makeLocationAt(now()->subHours(25 + $i));
+        }
+        // A recent row that must survive every pass.
+        $recent = $this->makeLocationAt(now()->subMinutes(5));
+
+        $deleted = $this->service->cleanupOldLocations(24, 2);
+
+        $this->assertSame(5, $deleted);
+        $this->assertSame(1, RunnerLocation::count());
+        $this->assertNotNull(RunnerLocation::find($recent->id));
+    }
 }
