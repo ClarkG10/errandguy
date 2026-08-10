@@ -30,6 +30,7 @@ import { geocodingService, type PlaceFeature } from '../../services/geocoding.se
 import { toast } from '../../stores/toastStore';
 import { errorMessage } from '../../utils/errorCatalog';
 import { LightColors, Elevation } from '../../constants/colors';
+import { PRIVACY_POLICY_VERSION } from '../../constants/legal';
 
 interface RegisterFormData {
   full_name: string;
@@ -194,6 +195,10 @@ export default function RegisterScreen() {
         phone: data.phone || undefined,
         email: data.email || undefined,
         password: data.password,
+        // Persist the Terms/Privacy consent the checkbox above required
+        // (PRIV-2) — the user reached here only with termsAccepted === true.
+        terms_accepted: true,
+        privacy_policy_version: PRIVACY_POLICY_VERSION,
       });
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
 

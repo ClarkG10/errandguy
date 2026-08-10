@@ -6,6 +6,9 @@ export const authService = {
     email?: string;
     password: string;
     full_name: string;
+    // Terms/Privacy consent captured at sign-up (PRIV-2).
+    terms_accepted?: boolean;
+    privacy_policy_version?: string;
   }) {
     return api.post('/auth/register', data);
   },

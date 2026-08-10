@@ -41,6 +41,10 @@ class RegisterRequest extends FormRequest
             ],
             'full_name' => ['required', 'string', 'max:100'],
             'role' => ['nullable', 'string', 'in:customer,runner'],
+            // Terms/Privacy consent (PRIV-2). Optional for backward compatibility
+            // with app builds that don't yet send it; recorded when present.
+            'terms_accepted' => ['sometimes', 'boolean'],
+            'privacy_policy_version' => ['sometimes', 'nullable', 'string', 'max:20'],
         ];
     }
 

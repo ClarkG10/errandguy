@@ -201,4 +201,30 @@ class RegisterTest extends TestCase
         $this->assertNotEquals('Password1!', $user->password_hash);
         $this->assertTrue(\Hash::check('Password1!', $user->password_hash));
     }
+
+    public function test_registration_records_terms_consent_when_sent(): void
+    {
+        // PRIV-2: the client sends the Terms/Privacy acceptance it collected;
+        // the platform records WHEN + WHICH version for DPA accountability.
+        $data = $this->validCustomerData;
+        $data['terms_accepted'] = true;
+        $data['privacy_policy_version'] = '2026-08-01';
+
+        $this->postJson('/api/v1/auth/register', $data)->assertStatus(201);
+
+        $user = User::where('email', 'juan@example.com')->firstOrFail();
+        $this->assertNotNull($user->terms_accepted_at);
+        $this->assertSame('2026-08-01', $user->privacy_policy_version);
+    }
+
+    public function test_registration_without_consent_records_none(): void
+    {
+        // Backward-compatible: an app build that doesn't send consent still
+        // registers, with no consent recorded (nullable columns).
+        $this->postJson('/api/v1/auth/register', $this->validCustomerData)->assertStatus(201);
+
+        $user = User::where('email', 'juan@example.com')->firstOrFail();
+        $this->assertNull($user->terms_accepted_at);
+        $this->assertNull($user->privacy_policy_version);
+    }
 }

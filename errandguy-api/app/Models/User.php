@@ -42,6 +42,8 @@ class User extends Authenticatable
         'last_active_at',
         'referral_code',
         'referred_by',
+        'terms_accepted_at',
+        'privacy_policy_version',
     ];
 
     protected $hidden = [
@@ -61,6 +63,7 @@ class User extends Authenticatable
             'default_lng' => 'decimal:7',
             'last_active_at' => 'datetime',
             'suspended_at' => 'datetime',
+            'terms_accepted_at' => 'datetime',
             'deleted_at' => 'datetime',
         ];
     }

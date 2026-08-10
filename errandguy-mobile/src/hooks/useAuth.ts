@@ -46,6 +46,8 @@ export function useAuth() {
       email?: string;
       password: string;
       full_name: string;
+      terms_accepted?: boolean;
+      privacy_policy_version?: string;
     }) => {
       const response = await authService.register(data);
       const { user: userData, token: authToken } = response.data;

@@ -25,6 +25,10 @@ class RegisterController extends Controller
         ]);
 
         $user = DB::transaction(function () use ($request) {
+            // PRIV-2: record the Terms/Privacy consent the client collected, so
+            // the platform can demonstrate WHEN + WHICH version was accepted.
+            $consented = $request->boolean('terms_accepted');
+
             $user = User::create([
                 'phone' => $request->phone,
                 'email' => $request->email,
@@ -32,6 +36,10 @@ class RegisterController extends Controller
                 'full_name' => $request->full_name,
                 'role' => $request->role ?? 'customer',
                 'status' => 'active',
+                'terms_accepted_at' => $consented ? now() : null,
+                'privacy_policy_version' => $consented
+                    ? ($request->input('privacy_policy_version') ?? config('app.privacy_policy_version', '1.0'))
+                    : null,
             ]);
 
             if ($request->role === 'runner') {
