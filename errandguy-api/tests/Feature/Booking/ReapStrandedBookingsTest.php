@@ -312,4 +312,68 @@ class ReapStrandedBookingsTest extends TestCase
         $this->assertEquals('pending', $fresh->status);
         $this->assertEquals('paid', $fresh->payment_status);
     }
+
+    public function test_recovers_a_refund_failure_orphan_cancelled_but_still_paid(): void
+    {
+        // The two-tx gap: a job committed the cancel (status='cancelled') but its
+        // separate refund transaction threw, leaving payment_status='paid'. The
+        // reaper completes the missed full refund.
+        $booking = $this->makeBooking('cancelled', 'paid');
+        $booking->update(['cancelled_at' => now()->subMinutes(10)]);
+
+        $this->reap();
+
+        $fresh = $booking->fresh();
+        $this->assertEquals('cancelled', $fresh->status);
+        $this->assertEquals('refunded', $fresh->payment_status);
+        $this->assertEquals(115.0, (float) $this->customer->fresh()->wallet_balance);
+        $this->assertDatabaseHas('wallet_transactions', [
+            'user_id' => $this->customer->id, 'type' => 'refund', 'reference_id' => $booking->id,
+        ]);
+    }
+
+    public function test_does_not_touch_an_already_refunded_cancelled_booking(): void
+    {
+        // Fully-settled cancel (paid→refunded) must be left alone — no double refund.
+        $booking = $this->makeBooking('cancelled', 'refunded');
+        $booking->update(['cancelled_at' => now()->subMinutes(10)]);
+
+        $this->reap();
+
+        $this->assertEquals('refunded', $booking->fresh()->payment_status);
+        $this->assertEquals(0.0, (float) $this->customer->fresh()->wallet_balance);
+        $this->assertDatabaseMissing('wallet_transactions', [
+            'user_id' => $this->customer->id, 'type' => 'refund',
+        ]);
+    }
+
+    public function test_does_not_touch_a_freshly_cancelled_paid_booking_within_grace(): void
+    {
+        // Just cancelled — the originating job's refund may still be about to run,
+        // so the grace holds the reaper off for a couple of minutes.
+        $booking = $this->makeBooking('cancelled', 'paid');
+        $booking->update(['cancelled_at' => now()->subSeconds(30)]);
+
+        $this->reap();
+
+        $this->assertEquals('paid', $booking->fresh()->payment_status);
+        $this->assertDatabaseMissing('wallet_transactions', [
+            'user_id' => $this->customer->id, 'type' => 'refund',
+        ]);
+    }
+
+    public function test_orphan_recovery_is_idempotent(): void
+    {
+        $booking = $this->makeBooking('cancelled', 'paid');
+        $booking->update(['cancelled_at' => now()->subMinutes(10)]);
+
+        $this->reap();
+        $this->reap(); // second sweep must not double-refund
+
+        $this->assertEquals(115.0, (float) $this->customer->fresh()->wallet_balance);
+        $this->assertEquals(
+            1,
+            WalletTransaction::where('reference_id', $booking->id)->where('type', 'refund')->count(),
+        );
+    }
 }

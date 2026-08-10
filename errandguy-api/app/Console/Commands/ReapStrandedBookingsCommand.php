@@ -44,12 +44,15 @@ use Illuminate\Support\Facades\Log;
  *     written falls back to the same schedule-aware created_at/scheduled_at
  *     anchor so it is still recovered.
  *
- * Known limitation (pre-existing, not introduced here): AutoCancelBookingJob /
- * ExpireNegotiateBookingJob commit the status→'cancelled' write and then refund
- * in a SEPARATE transaction. If that refund throws after the cancel commits, the
- * booking is left status='cancelled' + payment_status='paid' and is NOT
- * re-selected by this reaper (it only sweeps still-awaiting-a-runner statuses).
- * Closing that fully needs an atomic cancel+refund in those jobs.
+ * It ALSO recovers refund-failure orphans: the cancel/expire jobs (and admin
+ * cancel) commit the status→'cancelled' write and then refund in a SEPARATE
+ * transaction, so a refund that throws after the cancel commits leaves
+ * status='cancelled' + payment_status='paid'. Such a row is unambiguously a
+ * missed FULL refund — the customer-cancel-with-fee path always moves
+ * paid→'refunded', and nothing parks a live booking in cancelled+paid — so the
+ * reaper re-runs the idempotent refundUnfulfilled to complete it. (This is the
+ * safe alternative to restructuring those jobs into a single cancel+refund
+ * transaction, which would change money-path lock ordering.)
  */
 class ReapStrandedBookingsCommand extends Command
 {
@@ -140,10 +143,49 @@ class ReapStrandedBookingsCommand extends Command
             }
         }
 
+        // ── Refund-failure orphans: cancelled but still 'paid' ──
+        // The cancel/expire jobs (and admin cancel) commit status→'cancelled'
+        // and then refund in a SEPARATE transaction; if that refund throws after
+        // the cancel commits, the booking is left status='cancelled' +
+        // payment_status='paid'. That state is UNAMBIGUOUS: the customer-cancel
+        // -with-fee path always moves paid→'refunded' (BookingController::cancel),
+        // and no path parks a live booking in cancelled+paid — so this is only
+        // ever a missed FULL refund. refundUnfulfilled is idempotent + row-locked,
+        // so completing it here cannot double-refund; the small grace avoids
+        // racing a refund that is about to run in the originating job.
+        $orphanIds = Booking::where('status', 'cancelled')
+            ->where('payment_status', 'paid')
+            ->where(function ($q) {
+                $q->whereNull('cancelled_at')
+                    ->orWhere('cancelled_at', '<', now()->subMinutes(2));
+            })
+            ->orderBy('cancelled_at')
+            ->limit(self::MAX_PER_RUN)
+            ->pluck('id');
+        $checked += $orphanIds->count();
+        foreach ($orphanIds as $id) {
+            try {
+                app(\App\Services\BookingService::class)->refundUnfulfilled(
+                    $id,
+                    'Reaper: completing a refund that failed after the booking was already cancelled',
+                );
+                // refundUnfulfilled is void; it flips payment_status to 'refunded'
+                // on success, so re-read to count only genuine recoveries.
+                if (Booking::whereKey($id)->value('payment_status') === 'refunded') {
+                    $reaped++;
+                }
+            } catch (\Throwable $e) {
+                $errors++;
+                Log::error('ReapStrandedBookingsCommand: failed to recover refund-orphan booking', [
+                    'booking_id' => $id, 'error' => $e->getMessage(),
+                ]);
+            }
+        }
+
         if ($reaped > 0) {
             // WARNING, not INFO: a non-zero reap means the primary delayed-job
             // path did NOT run for these — a worker/scheduler gap worth noticing.
-            Log::warning("ReapStrandedBookingsCommand recovered {$reaped} stranded booking(s) whose delayed cancel/expire job did not run.");
+            Log::warning("ReapStrandedBookingsCommand recovered {$reaped} stranded booking(s) whose delayed cancel/expire/refund did not run.");
         }
 
         $this->info("Reaped {$reaped} stranded booking(s) (checked {$checked}, errors {$errors}).");
