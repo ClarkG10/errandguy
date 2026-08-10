@@ -5,6 +5,7 @@ import { Image } from 'expo-image';
 import { X } from 'lucide-react-native';
 import { LightColors } from '../../constants/colors';
 import { Spinner } from '../ui/Spinner';
+import { authedImageSource } from '../../utils/authedImage';
 
 interface DocumentViewerProps {
   visible: boolean;
@@ -76,7 +77,9 @@ export function DocumentViewer({ visible, uri, title, onClose }: DocumentViewerP
           {uri ? (
             <>
               <Image
-                source={{ uri }}
+                // KYC docs are private (SEC-1) — the serve route needs the
+                // bearer, so send it with the image request.
+                source={authedImageSource(uri)}
                 // Fixed inline dimensions are required — expo-image will
                 // not size itself from flex children alone.
                 style={{ width: SW - 24, height: SH * 0.72 }}

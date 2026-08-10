@@ -32,6 +32,7 @@ import { BrandRefreshControl } from '../../components/ui/BrandRefreshControl';
 import { Eyebrow } from '../../components/ui/Typography';
 import { Spinner } from '../../components/ui/Spinner';
 import { useAuthStore } from '../../stores/authStore';
+import { authedImageSource } from '../../utils/authedImage';
 import { useRunnerStore } from '../../stores/runnerStore';
 import { useAuth } from '../../hooks/useAuth';
 import * as Haptics from 'expo-haptics';
@@ -283,7 +284,7 @@ export default function RunnerOnboardingScreen() {
                    pressable Card (nested a11y buttons + doubled press feedback). */
                 <View className="w-12 h-12 rounded-xl overflow-hidden">
                   <Image
-                    source={{ uri: existing.file_url }}
+                    source={authedImageSource(existing.file_url)}
                     className="w-12 h-12"
                     resizeMode="cover"
                   />
@@ -301,7 +302,7 @@ export default function RunnerOnboardingScreen() {
                   className="w-12 h-12 rounded-xl overflow-hidden"
                 >
                   <Image
-                    source={{ uri: existing.file_url }}
+                    source={authedImageSource(existing.file_url)}
                     className="w-12 h-12"
                     resizeMode="cover"
                   />
