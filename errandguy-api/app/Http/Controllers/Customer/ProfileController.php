@@ -137,30 +137,111 @@ class ProfileController extends Controller
             ], 422);
         }
 
-        // Anonymize PII
-        $user->update([
-            'full_name' => 'Deleted User',
-            'email' => null,
-            'phone' => null,
-            'avatar_url' => null,
-            'fcm_token' => null,
-            'default_lat' => null,
-            'default_lng' => null,
-        ]);
+        // ── Right to erasure (PH Data Privacy Act) — PRIV-1 ─────────────────
+        // A soft delete leaves child PII intact (the FK cascade only fires on a
+        // HARD delete), so erase it explicitly. Financial records (bookings,
+        // wallet_transactions, payments) are RETAINED for audit/tax, but the PII
+        // embedded in or attached to them is removed/redacted.
+        //
+        // Collect files to remove AFTER the DB work commits — file deletes are
+        // not transactional, so doing them only once the rows are gone avoids
+        // orphaning a live account's files should the transaction roll back.
+        $filesToDelete = [];
+        $profile = $user->runnerProfile;
+        if ($profile) {
+            foreach ($profile->documents as $doc) {
+                if ($doc->file_url) {
+                    $filesToDelete[] = $this->publicDiskPath($doc->file_url);
+                }
+            }
+        }
+        if ($user->avatar_url) {
+            $filesToDelete[] = $this->publicDiskPath($user->avatar_url);
+        }
 
-        // Revoke all tokens
-        $user->tokens()->delete();
+        \Illuminate\Support\Facades\DB::transaction(function () use ($user, $profile) {
+            if ($profile) {
+                // KYC identity documents (gov ID / selfie / licence). Deleting
+                // the rows (files below) also clears a deleted runner's
+                // world-readable documents — mitigating SEC-1 for the account.
+                $profile->documents()->delete();
+                $profile->update([
+                    'bank_name' => null,
+                    'bank_account_number' => null,
+                    'ewallet_number' => null,
+                    'payout_channel_code' => null,
+                ]);
+            }
 
-        // Drop every registered push device (the FK cascade only fires on a
-        // HARD delete, and this is a soft delete) so a deleted account stops
-        // receiving pushes.
-        $user->deviceTokens()->delete();
+            // Pure-PII child rows — no financial value.
+            $user->savedAddresses()->delete();
+            $user->trustedContacts()->delete();
 
-        // Soft delete
-        $user->delete();
+            // Redact the contact PII the user entered on THEIR OWN (customer)
+            // bookings — keep the booking (financial record), drop the personal
+            // contact details. Scoped to their own bookings so another party's
+            // PII on a shared booking is never touched.
+            $bookingIds = \App\Models\Booking::where('customer_id', $user->id)->pluck('id');
+            if ($bookingIds->isNotEmpty()) {
+                \App\Models\Booking::whereIn('id', $bookingIds)->update([
+                    'pickup_contact_name' => null,
+                    'pickup_contact_phone' => null,
+                    'dropoff_contact_name' => null,
+                    'dropoff_contact_phone' => null,
+                ]);
+                \App\Models\BookingStop::whereIn('booking_id', $bookingIds)->update([
+                    'contact_name' => null,
+                    'contact_phone' => null,
+                ]);
+            }
+
+            // Anonymize the account row itself.
+            $user->update([
+                'full_name' => 'Deleted User',
+                'email' => null,
+                'phone' => null,
+                'avatar_url' => null,
+                'fcm_token' => null,
+                'default_lat' => null,
+                'default_lng' => null,
+            ]);
+
+            // Revoke all API tokens, and drop every registered push device (the
+            // FK cascade only fires on a HARD delete, and this is a soft delete)
+            // so a deleted account stops receiving pushes.
+            $user->tokens()->delete();
+            $user->deviceTokens()->delete();
+
+            // Soft delete the account.
+            $user->delete();
+        });
+
+        // Remove the collected PII files from disk (best-effort, post-commit).
+        foreach ($filesToDelete as $path) {
+            if ($path !== '' && $path !== null) {
+                Storage::disk('public')->delete($path);
+            }
+        }
 
         return response()->json([
             'message' => 'Account deleted successfully.',
         ]);
+    }
+
+    /**
+     * Turn a public-disk file URL into a disk-relative path, independent of the
+     * APP_URL it was generated under — public URLs are always ".../storage/{path}",
+     * so a later domain change can't leave a gov-ID / avatar file undeletable
+     * (a plain str_replace of the current base URL would silently no-op then).
+     */
+    private function publicDiskPath(string $url): ?string
+    {
+        $path = parse_url($url, PHP_URL_PATH);
+        if (! is_string($path) || $path === '') {
+            return null;
+        }
+
+        // Strip the leading "/storage/" public-disk symlink prefix.
+        return preg_replace('#^storage/#', '', ltrim($path, '/'));
     }
 }
