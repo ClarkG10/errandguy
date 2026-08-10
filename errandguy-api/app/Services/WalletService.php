@@ -191,7 +191,7 @@ class WalletService
         if ($justCompleted && $transaction) {
             $amount = number_format((float) $transaction->amount, 2);
             $balance = number_format((float) $transaction->balance_after, 2);
-            app(NotificationService::class)->sendPush(
+            \App\Jobs\SendPushJob::dispatch(
                 $transaction->user_id,
                 'Top-up complete',
                 "₱{$amount} was added to your wallet. New balance: ₱{$balance}.",
@@ -573,7 +573,7 @@ class WalletService
         // real credit — a replayed webhook leaves $notify null.
         if ($notify) {
             [$runnerId, $amount, $bookingNumber] = $notify;
-            app(NotificationService::class)->sendPush(
+            \App\Jobs\SendPushJob::dispatch(
                 $runnerId,
                 'You received a tip!',
                 'Your customer added a ₱'.number_format($amount, 2)." tip for errand #{$bookingNumber}.",
@@ -679,7 +679,7 @@ class WalletService
             [$title, $body] = $amt > 0
                 ? ['Wallet credited', "₱{$abs} was added to your wallet. New balance: ₱{$bal}. Reason: {$reason}"]
                 : ['Wallet adjusted', "₱{$abs} was deducted from your wallet. New balance: ₱{$bal}. Reason: {$reason}"];
-            app(NotificationService::class)->sendPush($uid, $title, $body, [
+            \App\Jobs\SendPushJob::dispatch($uid, $title, $body, [
                 'type' => 'payment',
                 'wallet_transaction_id' => $transaction->id,
             ]);
@@ -837,7 +837,7 @@ class WalletService
 
         // Notify the runner AFTER commit — best-effort, never inside the lock.
         $amount = number_format(abs((float) $tx->amount), 2);
-        app(NotificationService::class)->sendPush(
+        \App\Jobs\SendPushJob::dispatch(
             $tx->user_id,
             'Payout sent',
             "Your ₱{$amount} payout has been sent. It should arrive within 1–3 business days.",

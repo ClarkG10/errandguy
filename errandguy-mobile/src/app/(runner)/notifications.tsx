@@ -60,6 +60,14 @@ const TYPE_META: Record<
     textColor: LightColors.primary,
     chipClass: 'bg-surfaceMuted',
   },
+  // A job offer nearby — accent (the "Guy" gold) marks it as an opportunity,
+  // visually distinct from a plain booking status update.
+  incoming_request: {
+    icon: Package,
+    color: LightColors.accentStrong,
+    textColor: LightColors.accentDark,
+    chipClass: 'bg-accentSoft',
+  },
   payment: {
     icon: CreditCard,
     color: LightColors.success,
@@ -104,6 +112,7 @@ const TYPE_META: Record<
 // row so category is legible without relying on the glyph colour alone.
 const TYPE_LABELS: Record<NotificationType, string> = {
   booking_update: 'Booking',
+  incoming_request: 'Offer',
   payment: 'Payment',
   promo: 'Promo',
   chat: 'Message',
@@ -567,6 +576,15 @@ export default function RunnerNotificationsScreen() {
           if (data.booking_id) {
             router.push(`/(runner)/errand/${data.booking_id as string}` as any);
           }
+          break;
+        // A broadcast/negotiate offer — the booking isn't theirs yet, so route
+        // to the offers home (matches the paired device push), NOT the errand
+        // cockpit which scopes strictly to the runner and would 404. (RT-4)
+        case 'incoming_request':
+          // The offers home is the runner tab-group index (there is no
+          // /home route); '/(runner)/(tabs)/home' would hit the not-found
+          // screen. Matches every other runner-home navigation in the app.
+          router.push('/(runner)/(tabs)' as any);
           break;
         case 'payment':
           router.push('/(runner)/(tabs)/earnings');

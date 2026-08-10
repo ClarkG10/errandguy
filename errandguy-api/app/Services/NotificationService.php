@@ -138,7 +138,13 @@ class NotificationService
         try {
             // Expo accepts `to` as an array → one request delivers to every
             // device and returns a tickets array aligned to the tokens.
-            $response = Http::post('https://exp.host/--/api/v2/push/send', [
+            //
+            // Bound the call (connect 3s, total 8s). Guzzle's default is to wait
+            // INDEFINITELY, so a slow/hung exp.host would otherwise pin whatever
+            // thread this runs on — and on the webhook path that would delay the
+            // ACK to Xendit into a redelivery. This mirrors the 2s Reverb-publish
+            // timeout config/broadcasting.php already sets for the same reason.
+            $response = Http::connectTimeout(3)->timeout(8)->post('https://exp.host/--/api/v2/push/send', [
                 'to' => $tokens,
                 'title' => $title,
                 'body' => $body,

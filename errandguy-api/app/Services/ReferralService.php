@@ -10,10 +10,6 @@ use Illuminate\Support\Facades\DB;
 
 class ReferralService
 {
-    public function __construct(
-        private NotificationService $notificationService,
-    ) {}
-
     /**
      * Generate a unique, collision-safe 8-character uppercase referral code.
      * Excludes ambiguous characters (0/O, 1/I) so codes are easy to read
@@ -177,14 +173,14 @@ class ReferralService
             // Referrer is only notified when they were actually credited
             // (they may have hit the per-referrer cap).
             if ($referrerCredited) {
-                $this->notificationService->sendPush(
+                \App\Jobs\SendPushJob::dispatch(
                     $rewarded->referrer_id,
                     'Referral Reward!',
                     "You earned ₱{$amount} — your friend completed their first errand.",
                     ['type' => 'referral', 'referral_id' => $rewarded->id],
                 );
             }
-            $this->notificationService->sendPush(
+            \App\Jobs\SendPushJob::dispatch(
                 $rewarded->referee_id,
                 'Welcome Bonus!',
                 "You earned ₱{$amount} for joining ErrandGuy through a referral.",

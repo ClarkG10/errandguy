@@ -25,7 +25,43 @@ export const useLocationStore = create<LocationState>((set, get) => ({
 
   setCurrentLocation: (location) => set({ currentLocation: location }),
 
-  setRunnerLocation: (location) => set({ runnerLocation: location }),
+  // Monotonic by fix time (RT-3). The customer tracking screen writes this one
+  // slot from TWO concurrent sources: the realtime `runner.location` broadcast
+  // (~every 5s) and a /track reconcile poll that keeps running even while
+  // realtime is healthy (every 20s). The poll's in-flight response necessarily
+  // carries an OLDER fix than any realtime tick that landed during its
+  // round-trip, so an unconditional overwrite snapped the map pin backward
+  // roughly every 20s. Ignore any incoming fix that is not strictly newer than
+  // the current one (comparing the server-stamped created_at/updated_at, which
+  // both writers pass).
+  //
+  // CRITICAL: enforce monotonicity ONLY within the SAME (booking, runner)
+  // stream. This slot is global and never cleared, so when the customer
+  // switches from tracking booking A to booking B, it still holds A's fix. If
+  // B's newest fix happens to be older than A's last-seen fix (B's runner has
+  // been idle longer), a blanket timestamp compare would pin A's stale runner
+  // on B's map. A different booking/runner — and a clear (null) — always apply.
+  setRunnerLocation: (location) =>
+    set((state) => {
+      const current = state.runnerLocation;
+      const sameStream =
+        !!location &&
+        !!current &&
+        location.booking_id === current.booking_id &&
+        location.runner_id === current.runner_id;
+      if (sameStream) {
+        const incomingT = Date.parse(location!.created_at);
+        const currentT = Date.parse(current!.created_at);
+        if (
+          Number.isFinite(incomingT) &&
+          Number.isFinite(currentT) &&
+          incomingT <= currentT
+        ) {
+          return state; // stale or same-age within this stream → keep current
+        }
+      }
+      return { runnerLocation: location };
+    }),
 
   startTracking: async () => {
     // Defensive: if a previous watcher is still alive (e.g. re-mount of

@@ -6,7 +6,6 @@ use App\Enums\PaymentStatus;
 use App\Http\Controllers\Controller;
 use App\Models\Payment;
 use App\Models\WebhookEvent;
-use App\Services\NotificationService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -634,7 +633,11 @@ class XenditWebhookController extends Controller
             default => ['Payment failed', "We couldn't confirm your ₱{$amount} payment{$for}. You weren't charged — try again or use another method."],
         };
 
-        app(NotificationService::class)->sendPush($payment->customer_id, $title, $body, [
+        // Enqueue rather than send inline: this runs on the webhook thread, and a
+        // synchronous Expo/FCM call here would block the 200 ACK back to Xendit
+        // (a slow push → Xendit timeout → redelivery). SendPushJob does the
+        // in-app row + device push off-thread. (PERF-BE-1 / SCALE-REL-3)
+        \App\Jobs\SendPushJob::dispatch($payment->customer_id, $title, $body, [
             'type' => 'payment',
             'status' => $status,
             'booking_id' => $payment->booking_id,

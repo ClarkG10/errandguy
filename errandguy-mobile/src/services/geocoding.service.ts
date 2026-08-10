@@ -3,10 +3,10 @@ import { CacheService, CacheTTL } from './cache.service';
 
 const HERE_API_KEY = process.env.EXPO_PUBLIC_HERE_API_KEY ?? '';
 
-if (!HERE_API_KEY) {
+// Never log any portion of the key, even truncated (MARCH-5). Surface only a
+// missing-key diagnostic, and only in dev.
+if (!HERE_API_KEY && __DEV__) {
   console.error('[geocoding] EXPO_PUBLIC_HERE_API_KEY is EMPTY — geocoding disabled. Check your .env file.');
-} else {
-  console.log(`[geocoding] HERE API key loaded (${HERE_API_KEY.slice(0, 8)}…)`);
 }
 
 const RECENT_PLACES_KEY = '@errandguy:recent_places';
@@ -38,16 +38,16 @@ export const geocodingService = {
             `?at=${lat},${lng}` +
             `&lang=en-US` +
             `&apiKey=${HERE_API_KEY}`;
-          console.log(`[geocoding.reverse] Fetching: at=${lat},${lng}`);
+          if (__DEV__) console.log(`[geocoding.reverse] Fetching: at=${lat},${lng}`);
           const res = await fetch(url);
           if (!res.ok) throw new Error(`here_revgeocode_http_${res.status}`);
           const data = await res.json();
-          console.log(`[geocoding.reverse] items: ${data.items?.length ?? 0}`);
+          if (__DEV__) console.log(`[geocoding.reverse] items: ${data.items?.length ?? 0}`);
           const item = data.items?.[0];
           if (!item) throw new Error('here_revgeocode_empty');
           const placeName: string = item.address?.label ?? item.title ?? '';
           if (!placeName) throw new Error('here_revgeocode_no_label');
-          console.log(`[geocoding.reverse] ✓ resolved to: "${placeName}"`);
+          if (__DEV__) console.log(`[geocoding.reverse] ✓ resolved to: "${placeName}"`);
           return placeName;
         },
         CacheTTL.STATIC,
@@ -92,7 +92,7 @@ export const geocodingService = {
             `&lang=en` +
             `&limit=${limit}` +
             `&apiKey=${HERE_API_KEY}`;
-          console.log(`[geocoding.search] Query: "${trimmed}", proximity: ${proxKey}`);
+          if (__DEV__) console.log(`[geocoding.search] Query: "${trimmed}", proximity: ${proxKey}`);
           const res = await fetch(url);
           if (!res.ok) throw new Error(`here_discover_http_${res.status}`);
           const data = await res.json();
@@ -104,7 +104,7 @@ export const geocodingService = {
               place_name: String(item.address?.label ?? item.title ?? ''),
               center: [item.position.lng, item.position.lat] as [number, number],
             }));
-          console.log(`[geocoding.search] ✓ returning ${results.length} results`);
+          if (__DEV__) console.log(`[geocoding.search] ✓ returning ${results.length} results`);
           return results;
         },
         CacheTTL.MEDIUM,

@@ -623,9 +623,7 @@ export default function TaskDetailsScreen() {
       if (geocodeTimeout.current) clearTimeout(geocodeTimeout.current);
       geocodeTimeout.current = setTimeout(async () => {
         setCurrentCoord(center);
-        console.log(`[details] Reverse geocoding: [${center[1]}, ${center[0]}]`);
         const addr = await reverseGeocode(center[0], center[1]);
-        console.log(`[details] Geocode result: "${addr}"`);
         setCurrentAddress(addr);
       }, 300);
     },

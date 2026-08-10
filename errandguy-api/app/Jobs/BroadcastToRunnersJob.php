@@ -37,8 +37,14 @@ class BroadcastToRunnersJob implements ShouldQueue
             return;
         }
 
+        // 'incoming_request' (NOT 'booking_update'): this is a broadcast OFFER the
+        // runner has not accepted, so runner_id is still null. Typing it
+        // 'booking_update' made the in-app tap route to the owner-only errand
+        // cockpit, which 404s for a booking that isn't theirs. 'incoming_request'
+        // routes both the in-app row and the paired device push (below) to the
+        // runner's offers home. (RT-4)
         $payload = [
-            'type' => 'booking_update',
+            'type' => 'incoming_request',
             'booking_id' => $booking->id,
             'booking_number' => $booking->booking_number,
             'errand_type' => $booking->errandType?->slug,

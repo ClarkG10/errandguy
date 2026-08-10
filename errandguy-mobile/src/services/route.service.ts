@@ -2,10 +2,10 @@ import { CacheService, CacheTTL } from './cache.service';
 
 const HERE_API_KEY = process.env.EXPO_PUBLIC_HERE_API_KEY ?? '';
 
-if (!HERE_API_KEY) {
+// Never log any portion of the key, even truncated (MARCH-5). Surface only a
+// missing-key diagnostic, and only in dev.
+if (!HERE_API_KEY && __DEV__) {
   console.error('[route] EXPO_PUBLIC_HERE_API_KEY is EMPTY — routes will not load.');
-} else {
-  console.log(`[route] HERE API key loaded (${HERE_API_KEY.slice(0, 8)}…)`);
 }
 
 export interface RouteResult {
@@ -160,7 +160,7 @@ async function fetchHereRoute(
     `&transportMode=${mode}` +
     `&return=${returnFields}` +
     `&apiKey=${HERE_API_KEY}`;
-  console.log(`[route] Fetching: (${from.lat},${from.lng}) → (${to.lat},${to.lng}) [${mode}]`);
+  if (__DEV__) console.log(`[route] Fetching: (${from.lat},${from.lng}) → (${to.lat},${to.lng}) [${mode}]`);
   const res = await fetch(url);
   if (!res.ok) {
     console.error(`[route] HTTP error: ${res.status}`);
@@ -189,7 +189,7 @@ async function fetchHereRoute(
   const summary = section.summary ?? {};
   const distanceMeters: number = summary.length ?? 0;
   const durationSeconds: number = summary.duration ?? 0;
-  console.log(`[route] ✓ ${coords.length} points, ${distanceMeters}m, ${durationSeconds}s`);
+  if (__DEV__) console.log(`[route] ✓ ${coords.length} points, ${distanceMeters}m, ${durationSeconds}s`);
 
   if (!withSteps) {
     return { coords, distanceMeters, durationSeconds };
@@ -229,7 +229,7 @@ export const routeService = {
     const fLng = Number(from?.lng), fLat = Number(from?.lat);
     const tLng = Number(to?.lng),   tLat = Number(to?.lat);
     if (!isFiniteCoord(fLng) || !isFiniteCoord(fLat) || !isFiniteCoord(tLng) || !isFiniteCoord(tLat)) {
-      console.warn('[route.getRoute] Invalid coordinates:', { from, to });
+      if (__DEV__) console.warn('[route.getRoute] Invalid coordinates:', { from, to });
       return null;
     }
     const key = `route4:${profile}:${quantize(fLng)},${quantize(fLat)}:${quantize(tLng)},${quantize(tLat)}`;
@@ -270,7 +270,7 @@ export const routeService = {
     const fLng = Number(from?.lng), fLat = Number(from?.lat);
     const tLng = Number(to?.lng),   tLat = Number(to?.lat);
     if (!isFiniteCoord(fLng) || !isFiniteCoord(fLat) || !isFiniteCoord(tLng) || !isFiniteCoord(tLat)) {
-      console.warn('[route.getNavigationRoute] Invalid coordinates:', { from, to });
+      if (__DEV__) console.warn('[route.getNavigationRoute] Invalid coordinates:', { from, to });
       return null;
     }
     try {

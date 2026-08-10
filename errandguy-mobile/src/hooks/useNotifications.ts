@@ -182,7 +182,9 @@ function handleNotificationTapped(
       }
       break;
     case 'incoming_request':
-      router.push('/(runner)/(tabs)/home' as never);
+      // Offers home = runner tab-group index; there is no /home route, so
+      // '/(runner)/(tabs)/home' would land on the not-found screen. (RT-4)
+      router.push('/(runner)/(tabs)' as never);
       break;
     case 'payment':
       router.push((isRunner ? '/(runner)/(tabs)/earnings' : '/(customer)/wallet/') as never);
@@ -208,7 +210,9 @@ function handleNotificationTapped(
       }
       break;
     case 'promo':
-      router.push('/(customer)/(tabs)/home' as never);
+      // Customer home = tab-group index (no /home route). (drive-by: same
+      // not-found bug as the runner offers route above.)
+      router.push('/(customer)/(tabs)' as never);
       break;
   }
 }

@@ -4,6 +4,7 @@ namespace Tests\Feature\Payment;
 
 use App\Enums\PaymentStatus;
 use App\Exceptions\InvalidStatusTransitionException;
+use App\Jobs\SendPushJob;
 use App\Models\Booking;
 use App\Models\ErrandType;
 use App\Models\IdempotencyKey;
@@ -259,9 +260,15 @@ class PaymentSafetyFoundationTest extends TestCase
         $payment = Payment::findOrFail($paymentId);
         $this->assertEquals('expired', $payment->status);
         $this->assertEquals('expired', $payment->booking->fresh()->payment_status);
-        $this->assertDatabaseHas('notifications', [
-            'user_id' => $this->customer->id, 'type' => 'payment',
-        ]);
+        // The customer is notified via a queued SendPushJob — the webhook must
+        // NOT send inline (a slow push would block the ACK to Xendit). Assert
+        // the dispatch, since Bus::fake() intercepts the job here; the row it
+        // would create is covered by NotificationService's own tests.
+        Bus::assertDispatched(SendPushJob::class, function (SendPushJob $job) {
+            return $job->userId === $this->customer->id
+                && ($job->data['type'] ?? null) === 'payment'
+                && ($job->data['status'] ?? null) === 'expired';
+        });
         // Transition audited.
         $this->assertDatabaseHas('payment_status_transitions', [
             'payment_id' => $paymentId, 'to_status' => 'expired', 'actor' => 'webhook',

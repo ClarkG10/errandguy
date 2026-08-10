@@ -1113,7 +1113,7 @@ class BookingController extends Controller
             return $this->fail(ErrorCode::INSUFFICIENT_WALLET_BALANCE, $e->getMessage());
         }
 
-        app(\App\Services\NotificationService::class)->sendPush(
+        \App\Jobs\SendPushJob::dispatch(
             $booking->runner_id,
             'You received a tip!',
             'Your customer added a ₱'.number_format($amount, 2)." tip for errand #{$booking->booking_number}.",
