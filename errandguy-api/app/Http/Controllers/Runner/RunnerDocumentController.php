@@ -50,9 +50,19 @@ class RunnerDocumentController extends Controller
         // Upload file — use guessExtension() for MIME-based extension (not client-supplied)
         $timestamp = now()->format('YmdHis');
         $extension = $file->guessExtension() ?? $file->getClientOriginalExtension();
+        // Unguessable filename (SEC-1). The directory is keyed on the runner's
+        // user id — which a past customer may already know — and the document
+        // type (a tiny enum), and a bare timestamp is guessable; together that
+        // let the public-disk URL of a government ID be brute-forced. A 40-char
+        // CSPRNG token removes the enumeration vector. NOTE: the file still lives
+        // on the PUBLIC disk — fully closing SEC-1 means moving KYC docs to a
+        // private disk served via signed/authenticated URLs, which also requires
+        // switching the admin Filament + mobile display off the raw public URL
+        // (tracked separately).
+        $filename = $timestamp . '_' . \Illuminate\Support\Str::random(40) . '.' . $extension;
         $path = $file->storeAs(
             "runner-documents/{$request->user()->id}/{$documentType}",
-            "{$timestamp}.{$extension}",
+            $filename,
             'public'
         );
         $fileUrl = Storage::disk('public')->url($path);
