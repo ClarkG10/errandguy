@@ -13,6 +13,7 @@ import { Card } from '../ui/Card';
 import { UploadProgress } from '../ui/UploadProgress';
 import type { DocumentStatus } from '../../types';
 import { LightColors } from '../../constants/colors';
+import { authedImageSource } from '../../utils/authedImage';
 
 interface DocumentUploadCardProps {
   documentType: string;
@@ -155,7 +156,8 @@ export function DocumentUploadCard({
               why the preview was invisible on the runner side. Set the
               dimensions inline. */}
           <Image
-            source={{ uri: fileUrl }}
+            // Private KYC doc (SEC-1) — send the bearer with the image request.
+            source={authedImageSource(fileUrl)}
             style={{
               width: '100%',
               height: 140,
