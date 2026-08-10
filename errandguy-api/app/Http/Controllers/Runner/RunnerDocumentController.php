@@ -34,8 +34,11 @@ class RunnerDocumentController extends Controller
             ->first();
 
         if ($existing && $existing->status === 'rejected') {
-            // Delete old file
-            if ($existing->file_url) {
+            // Delete the old file from wherever it lives — the private disk (new
+            // uploads) or the legacy public disk (pre-SEC-1 rows).
+            if ($existing->file_path) {
+                Storage::disk('local')->delete($existing->file_path);
+            } elseif ($existing->file_url) {
                 Storage::disk('public')->delete(
                     str_replace(Storage::disk('public')->url(''), '', $existing->file_url)
                 );
@@ -47,30 +50,25 @@ class RunnerDocumentController extends Controller
             ], 422);
         }
 
-        // Upload file — use guessExtension() for MIME-based extension (not client-supplied)
+        // Store the KYC document on the PRIVATE 'local' disk — never the
+        // world-readable public disk (SEC-1). It is served only through the
+        // authenticated RunnerDocumentFileController route to the owning runner
+        // or an admin. The filename still carries a 40-char CSPRNG token as
+        // defence-in-depth. Use guessExtension() (MIME-based, not client-supplied).
         $timestamp = now()->format('YmdHis');
         $extension = $file->guessExtension() ?? $file->getClientOriginalExtension();
-        // Unguessable filename (SEC-1). The directory is keyed on the runner's
-        // user id — which a past customer may already know — and the document
-        // type (a tiny enum), and a bare timestamp is guessable; together that
-        // let the public-disk URL of a government ID be brute-forced. A 40-char
-        // CSPRNG token removes the enumeration vector. NOTE: the file still lives
-        // on the PUBLIC disk — fully closing SEC-1 means moving KYC docs to a
-        // private disk served via signed/authenticated URLs, which also requires
-        // switching the admin Filament + mobile display off the raw public URL
-        // (tracked separately).
         $filename = $timestamp . '_' . \Illuminate\Support\Str::random(40) . '.' . $extension;
         $path = $file->storeAs(
             "runner-documents/{$request->user()->id}/{$documentType}",
             $filename,
-            'public'
+            'local'
         );
-        $fileUrl = Storage::disk('public')->url($path);
 
         $document = RunnerDocument::create([
             'runner_id' => $profile->id,
             'document_type' => $documentType,
-            'file_url' => $fileUrl,
+            'file_path' => $path,
+            'file_url' => null,
             'status' => 'pending',
         ]);
 

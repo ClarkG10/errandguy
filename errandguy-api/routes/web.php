@@ -20,3 +20,16 @@ Route::get('/payment/complete', function () {
     return response(view('payment-complete'))
         ->header('Content-Type', 'text/html');
 });
+
+/*
+| Admin KYC-document viewer (SEC-1).
+|
+| Runner identity documents live on the PRIVATE disk. The Filament admin panel
+| (session guard `admin`) renders them via this authenticated route — an admin's
+| browser sends its session cookie, so an <img>/link pointing here loads the
+| file, while it stays unreachable to the public. Named so Filament resources
+| can reference it.
+*/
+Route::get('/admin/runner-documents/{document}/file', [
+    \App\Http\Controllers\Runner\RunnerDocumentFileController::class, 'showForAdmin',
+])->middleware(['web', 'auth:admin'])->name('admin.runner-documents.file');

@@ -57,7 +57,11 @@ class RunnerDocumentsRelationManager extends RelationManager
                     ->label('Document')
                     ->formatStateUsing(fn (string $state): string => ucwords(str_replace('_', ' ', $state)))
                     ->weight('semibold'),
-                ImageColumn::make('file_url')->label('File')->height(48)->square(),
+                // KYC files are private (SEC-1) — render via the admin-guarded
+                // serve route, which the admin browser loads with its session.
+                ImageColumn::make('file')
+                    ->getStateUsing(fn (RunnerDocument $record): string => route('admin.runner-documents.file', ['document' => $record->id]))
+                    ->label('File')->height(48)->square(),
                 TextColumn::make('status')->badge()->color(fn (string $s): string => match ($s) {
                     'approved' => 'success',
                     'rejected' => 'danger',
@@ -70,9 +74,9 @@ class RunnerDocumentsRelationManager extends RelationManager
                 Action::make('view_file')
                     ->label('View')
                     ->icon(Heroicon::OutlinedEye)
-                    ->url(fn (RunnerDocument $record): ?string => $record->file_url)
+                    ->url(fn (RunnerDocument $record): string => route('admin.runner-documents.file', ['document' => $record->id]))
                     ->openUrlInNewTab()
-                    ->visible(fn (RunnerDocument $record): bool => filled($record->file_url)),
+                    ->visible(fn (RunnerDocument $record): bool => filled($record->file_path) || filled($record->file_url)),
 
                 Action::make('approve_doc')
                     ->label('Approve')

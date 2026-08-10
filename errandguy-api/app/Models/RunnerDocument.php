@@ -17,6 +17,7 @@ class RunnerDocument extends Model
     protected $fillable = [
         'runner_id',
         'document_type',
+        'file_path',
         'file_url',
         'status',
         'rejection_reason',

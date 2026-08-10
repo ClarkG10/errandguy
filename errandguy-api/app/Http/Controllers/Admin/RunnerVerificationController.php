@@ -32,11 +32,18 @@ class RunnerVerificationController extends Controller
         // the user id — there is no user_id column, so the old query errored.
         $profile = RunnerProfile::where('user_id', $userId)->first();
 
-        $documents = $profile
+        $documents = ($profile
             ? RunnerDocument::where('runner_id', $profile->id)
                 ->orderByDesc('created_at')
                 ->get()
-            : collect();
+            : collect())
+            // KYC files are private (SEC-1) — expose the admin-guarded serve URL
+            // rather than the (now-null) public file_url column.
+            ->map(function (RunnerDocument $d) {
+                $d->file_url = route('admin.runner-documents.file', ['document' => $d->id]);
+
+                return $d;
+            });
 
         return response()->json(['data' => $documents]);
     }

@@ -158,6 +158,11 @@ Route::prefix('v1')->group(function () {
             Route::get('/profile', [RunnerProfileController::class, 'show']);
             Route::put('/profile', [RunnerProfileController::class, 'update']);
             Route::post('/documents', [RunnerDocumentController::class, 'store']);
+            // Authenticated serving of the runner's OWN KYC document (SEC-1 —
+            // the file lives on the private disk, never a public URL).
+            Route::get('/documents/{document}/file', [\App\Http\Controllers\Runner\RunnerDocumentFileController::class, 'show'])
+                ->where('document', '[0-9a-fA-F-]{36}')
+                ->name('runner.documents.file');
             Route::put('/online', [RunnerOnlineController::class, 'toggle']);
             Route::post('/location', [RunnerLocationController::class, 'store'])->middleware('throttle:120,1');
 

@@ -158,17 +158,22 @@ class ProfileController extends Controller
         // Collect files to remove AFTER the DB work commits — file deletes are
         // not transactional, so doing them only once the rows are gone avoids
         // orphaning a live account's files should the transaction roll back.
-        $filesToDelete = [];
+        // Collect files to delete keyed by disk: KYC docs live on the PRIVATE
+        // disk now (file_path), legacy docs + the avatar on the public disk.
+        $privateFiles = [];
+        $publicFiles = [];
         $profile = $user->runnerProfile;
         if ($profile) {
             foreach ($profile->documents as $doc) {
-                if ($doc->file_url) {
-                    $filesToDelete[] = $this->publicDiskPath($doc->file_url);
+                if ($doc->file_path) {
+                    $privateFiles[] = $doc->file_path;
+                } elseif ($doc->file_url) {
+                    $publicFiles[] = $this->publicDiskPath($doc->file_url);
                 }
             }
         }
         if ($user->avatar_url) {
-            $filesToDelete[] = $this->publicDiskPath($user->avatar_url);
+            $publicFiles[] = $this->publicDiskPath($user->avatar_url);
         }
 
         \Illuminate\Support\Facades\DB::transaction(function () use ($user, $profile) {
@@ -229,7 +234,12 @@ class ProfileController extends Controller
         });
 
         // Remove the collected PII files from disk (best-effort, post-commit).
-        foreach ($filesToDelete as $path) {
+        foreach ($privateFiles as $path) {
+            if ($path !== '' && $path !== null) {
+                Storage::disk('local')->delete($path);
+            }
+        }
+        foreach ($publicFiles as $path) {
             if ($path !== '' && $path !== null) {
                 Storage::disk('public')->delete($path);
             }

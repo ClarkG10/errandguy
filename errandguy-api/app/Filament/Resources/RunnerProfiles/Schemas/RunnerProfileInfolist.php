@@ -82,7 +82,8 @@ class RunnerProfileInfolist
                                     ->view('filament.entries.image-gallery', fn (RunnerProfile $record): array => [
                                         'images' => $record->documents()->get()->map(fn ($d): array => [
                                             'label' => ucwords(str_replace('_', ' ', (string) $d->document_type)).' · '.ucfirst((string) $d->status),
-                                            'url' => $d->file_url,
+                                            // Private KYC file (SEC-1) — admin-guarded serve route.
+                                            'url' => route('admin.runner-documents.file', ['document' => $d->id]),
                                         ])->all(),
                                     ]),
                             ]),

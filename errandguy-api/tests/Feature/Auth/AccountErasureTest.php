@@ -32,6 +32,7 @@ class AccountErasureTest extends TestCase
     {
         parent::setUp();
         Storage::fake('public');
+        Storage::fake('local');
         $this->errandType = ErrandType::create([
             'slug' => 'delivery', 'name' => 'Delivery', 'description' => 'Deliver', 'icon_name' => 'Package',
             'base_fee' => 50.00, 'per_km_walk' => 15.00, 'per_km_bicycle' => 12.00, 'per_km_motorcycle' => 10.00,
@@ -69,11 +70,11 @@ class AccountErasureTest extends TestCase
             'bank_name' => 'BPI', 'bank_account_number' => '1234567890', 'ewallet_number' => '09171234567',
             'payout_channel_code' => 'PH_GCASH',
         ]);
-        $docPath = 'runner-documents/'.$user->id.'/national_id/20260810.jpg';
-        Storage::disk('public')->put($docPath, 'gov-id-bytes');
+        $docPath = 'runner-documents/'.$user->id.'/national_id/20260810_x.jpg';
+        Storage::disk('local')->put($docPath, 'gov-id-bytes'); // KYC lives on the PRIVATE disk now
         $doc = RunnerDocument::create([
             'runner_id' => $profile->id, 'document_type' => 'national_id',
-            'file_url' => Storage::disk('public')->url($docPath), 'status' => 'approved',
+            'file_path' => $docPath, 'status' => 'approved',
         ]);
 
         // Saved address + trusted contact
@@ -94,7 +95,7 @@ class AccountErasureTest extends TestCase
 
         // KYC doc row + file gone.
         $this->assertDatabaseMissing('runner_documents', ['id' => $doc->id]);
-        Storage::disk('public')->assertMissing($docPath);
+        Storage::disk('local')->assertMissing($docPath);
         // Bank/payout identifiers scrubbed.
         $profile->refresh();
         $this->assertNull($profile->bank_name);
