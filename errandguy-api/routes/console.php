@@ -27,6 +27,11 @@ Schedule::command('cache:prune-stale-tags')->hourly();
 // Data retention: cleanup old locations (24h) and messages (30d post-completion)
 Schedule::command('errandguy:cleanup-locations')->daily();
 
+// Operational readiness: log a CRITICAL/WARNING if production is running with
+// unsafe/degraded config (APP_DEBUG on, broadcast off, file cache, sync queue)
+// that otherwise fails silently. Log-only — can't take the app down.
+Schedule::command('errandguy:check-prod-config')->daily();
+
 // Safety: alert when an in-transit transportation ride runs well over its
 // estimated duration. Previously defined but NEVER scheduled, so the monitor
 // never ran. withoutOverlapping guards against a slow run stacking.
