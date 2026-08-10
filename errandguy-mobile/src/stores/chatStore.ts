@@ -2,6 +2,20 @@ import { create } from 'zustand';
 import type { Message } from '../types';
 import { chatService } from '../services/chat.service';
 
+/**
+ * Chronological order key: (created_at, id) ascending — the same order the
+ * server sorts by. Messages can land out of arrival-order (a poll batch, or a
+ * realtime push that arrives after our own optimistic send), so the store
+ * re-sorts on every add/merge rather than trusting append order. Ties (equal
+ * created_at) break on id so the order is stable and deterministic. (RT-5)
+ */
+function compareMessages(a: Message, b: Message): number {
+  const ta = Date.parse(a.created_at);
+  const tb = Date.parse(b.created_at);
+  if (Number.isFinite(ta) && Number.isFinite(tb) && ta !== tb) return ta - tb;
+  return a.id < b.id ? -1 : a.id > b.id ? 1 : 0;
+}
+
 interface ChatState {
   messages: Record<string, Message[]>;
   unreadCount: number;
@@ -47,7 +61,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       return {
         messages: {
           ...state.messages,
-          [bookingId]: [...existing, message],
+          [bookingId]: [...existing, message].sort(compareMessages),
         },
       };
     }),
@@ -68,7 +82,11 @@ export const useChatStore = create<ChatState>((set, get) => ({
       const realAlready = message?.id && list.some((m) => m.id === message.id);
       const next = list
         .filter((m) => m.id !== tempId)
-        .concat(realAlready ? [] : [message]);
+        .concat(realAlready ? [] : [message])
+        // Re-sort on merge: the server copy's created_at may differ from the
+        // optimistic placeholder's client clock, so its true chronological
+        // slot can shift. (RT-5)
+        .sort(compareMessages);
       return {
         messages: { ...state.messages, [bookingId]: next },
       };

@@ -1,4 +1,4 @@
-import { useEffect, useCallback, useState, useRef } from 'react';
+import { useEffect, useCallback, useState, useRef, useMemo } from 'react';
 import { useChatStore } from '../stores/chatStore';
 import { chatService } from '../services/chat.service';
 import { useSmartPolling } from './useSmartPolling';
@@ -40,6 +40,29 @@ export function useChat(bookingId: string) {
   );
   const unreadCount = useChatStore((s) => s.unreadCount);
   const isTyping = useChatStore((s) => s.typingByBooking[bookingId] ?? false);
+  const myId = useAuthStore((s) => s.user?.id ?? '');
+
+  // Is there an unread INCOMING message loaded in THIS thread? (RT-2)
+  //
+  // Read receipts must be gated on this, NOT on the global `unreadCount`: a
+  // realtime/poll message added via chatStore.addMessage never increments the
+  // server-derived global counter, so when the user is caught up (global 0)
+  // and sitting in an open chat, the counter stays 0 and no receipt is ever
+  // sent for a message they're actively reading. This scans the loaded thread
+  // for a counterpart message that hasn't been read yet, so it flips true the
+  // instant such a message arrives and back to false once markRead() stamps
+  // read_at. tmp- optimistic bubbles and system messages are excluded.
+  const hasUnreadIncoming = useMemo(
+    () =>
+      bookingMessages.some(
+        (m) =>
+          !m.is_system &&
+          m.sender_id !== myId &&
+          !m.read_at &&
+          !m.id.startsWith('tmp-'),
+      ),
+    [bookingMessages, myId],
+  );
   const addMessage = useChatStore((s) => s.addMessage);
   const replaceMessage = useChatStore((s) => s.replaceMessage);
   const removeMessage = useChatStore((s) => s.removeMessage);
@@ -323,7 +346,17 @@ export function useChat(bookingId: string) {
     // open). Bypass the micro-cache so each tick reaches the network; errors
     // propagate so useSmartPolling's backoff engages.
     const existing = useChatStore.getState().messages[bookingId] ?? [];
-    const newestId = existing.length ? existing[existing.length - 1].id : undefined;
+    // Cursor = newest REAL (server) message. Skip trailing optimistic `tmp-`
+    // bubbles (a pending/failed send): their client-clock created_at can sort
+    // to the tail, and the server has never seen a tmp- id, so `after=tmp-…`
+    // would be an invalid cursor and force a full head-page refetch. (RT-5)
+    let newestId: string | undefined;
+    for (let i = existing.length - 1; i >= 0; i--) {
+      if (!existing[i].id.startsWith('tmp-')) {
+        newestId = existing[i].id;
+        break;
+      }
+    }
     const response = await chatService.getMessages(
       bookingId,
       newestId
@@ -371,6 +404,7 @@ export function useChat(bookingId: string) {
   return {
     messages: bookingMessages,
     unreadCount,
+    hasUnreadIncoming,
     isTyping,
     fetchMessages,
     loadOlder,

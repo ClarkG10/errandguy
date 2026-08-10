@@ -275,6 +275,7 @@ export default function ChatScreen() {
     hasMore,
     loadingOlder,
     unreadCount,
+    hasUnreadIncoming,
     isTyping,
     sendTyping,
   } = useChat(bookingId ?? '');
@@ -410,25 +411,28 @@ export default function ChatScreen() {
     }
     lastSeenLengthRef.current = messages.length;
 
-    const last = messages[messages.length - 1];
-    if (!last || last.sender_id === user?.id || last.is_system) return;
+    // Decide via hasUnreadIncoming, NOT the tail element: RT-5 keeps the thread
+    // sorted by time, so an out-of-order incoming message can sort BELOW the
+    // user's own latest send and would be missed by messages[length-1].
+    // hasUnreadIncoming scans the whole thread → order-independent, and is
+    // false for the user's own send / system messages.
+    if (!hasUnreadIncoming) return;
     if (AppState.currentState !== 'active') return;
 
     // Receipt honesty: while the user is paging through history the new
-    // message is off-screen, so don't tell the runner it was read —
+    // message is off-screen, so don't tell the counterpart it was read —
     // surface the jump chip instead. The read flushes when they return
     // to the live edge (scroll handler / chip tap).
     if (!nearBottomRef.current) {
       setShowNewMsgChip(true);
       return;
     }
-    if (unreadCount === 0) return; // nothing to clear server-side
 
     const handle = setTimeout(() => {
       markAsRead().catch(() => {});
     }, 1_200);
     return () => clearTimeout(handle);
-  }, [bookingId, messages, user?.id, markAsRead, unreadCount]);
+  }, [bookingId, messages, markAsRead, hasUnreadIncoming]);
 
   // When the user returns to the app with the chat already open, flush
   // a read receipt so the unread badge clears immediately — but only
@@ -437,12 +441,12 @@ export default function ChatScreen() {
     const sub = AppState.addEventListener('change', (state: AppStateStatus) => {
       // Same honesty gate as the debounced path: only flush the receipt
       // if the user is actually at the live edge of the conversation.
-      if (state === 'active' && bookingId && unreadCount > 0 && nearBottomRef.current) {
+      if (state === 'active' && bookingId && hasUnreadIncoming && nearBottomRef.current) {
         markAsRead().catch(() => {});
       }
     });
     return () => sub.remove();
-  }, [bookingId, markAsRead, unreadCount]);
+  }, [bookingId, markAsRead, hasUnreadIncoming]);
 
   // Track the distance from the newest message. Crossing back into the
   // live edge dismisses the chip and flushes any withheld read receipt.
@@ -452,10 +456,10 @@ export default function ChatScreen() {
       nearBottomRef.current = e.nativeEvent.contentOffset.y < NEAR_BOTTOM_PT;
       if (!wasNear && nearBottomRef.current) {
         setShowNewMsgChip(false);
-        if (unreadCount > 0) markAsRead().catch(() => {});
+        if (hasUnreadIncoming) markAsRead().catch(() => {});
       }
     },
-    [unreadCount, markAsRead],
+    [hasUnreadIncoming, markAsRead],
   );
 
   const handleJumpToNewest = useCallback(() => {
@@ -463,8 +467,8 @@ export default function ChatScreen() {
     setShowNewMsgChip(false);
     nearBottomRef.current = true;
     flatListRef.current?.scrollToOffset({ offset: 0, animated: !reducedMotion });
-    if (unreadCount > 0) markAsRead().catch(() => {});
-  }, [reducedMotion, unreadCount, markAsRead]);
+    if (hasUnreadIncoming) markAsRead().catch(() => {});
+  }, [reducedMotion, hasUnreadIncoming, markAsRead]);
 
   const handleSend = useCallback(
     async (content?: string, imageUrl?: string) => {

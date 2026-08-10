@@ -268,6 +268,7 @@ export default function RunnerChatScreen() {
     hasMore,
     loadingOlder,
     unreadCount,
+    hasUnreadIncoming,
     isTyping,
     sendTyping,
   } = useChat(bookingId ?? '');
@@ -377,8 +378,12 @@ export default function RunnerChatScreen() {
     }
     lastSeenLengthRef.current = messages.length;
 
-    const last = messages[messages.length - 1];
-    if (!last || last.sender_id === user?.id || last.is_system) return;
+    // Decide via hasUnreadIncoming, NOT the tail element: RT-5 keeps the thread
+    // sorted by time, so an out-of-order incoming message can sort BELOW the
+    // runner's own latest send and would be missed by messages[length-1].
+    // hasUnreadIncoming scans the whole thread → order-independent, and is
+    // false for the runner's own send / system messages.
+    if (!hasUnreadIncoming) return;
     if (AppState.currentState !== 'active') return;
 
     // Receipt honesty: while the runner is paging through history the
@@ -389,24 +394,23 @@ export default function RunnerChatScreen() {
       setShowNewMsgChip(true);
       return;
     }
-    if (unreadCount === 0) return; // nothing to clear server-side
 
     const handle = setTimeout(() => {
       markAsRead().catch(() => {});
     }, 1_200);
     return () => clearTimeout(handle);
-  }, [bookingId, messages, user?.id, markAsRead, unreadCount]);
+  }, [bookingId, messages, markAsRead, hasUnreadIncoming]);
 
   useEffect(() => {
     const sub = AppState.addEventListener('change', (state: AppStateStatus) => {
       // Same honesty gate as the debounced path: only flush the receipt
       // if the runner is actually at the live edge of the conversation.
-      if (state === 'active' && bookingId && unreadCount > 0 && nearBottomRef.current) {
+      if (state === 'active' && bookingId && hasUnreadIncoming && nearBottomRef.current) {
         markAsRead().catch(() => {});
       }
     });
     return () => sub.remove();
-  }, [bookingId, markAsRead, unreadCount]);
+  }, [bookingId, markAsRead, hasUnreadIncoming]);
 
   // Track the distance from the newest message. Crossing back into the
   // live edge dismisses the chip and flushes any withheld read receipt.
@@ -416,10 +420,10 @@ export default function RunnerChatScreen() {
       nearBottomRef.current = e.nativeEvent.contentOffset.y < NEAR_BOTTOM_PT;
       if (!wasNear && nearBottomRef.current) {
         setShowNewMsgChip(false);
-        if (unreadCount > 0) markAsRead().catch(() => {});
+        if (hasUnreadIncoming) markAsRead().catch(() => {});
       }
     },
-    [unreadCount, markAsRead],
+    [hasUnreadIncoming, markAsRead],
   );
 
   const handleJumpToNewest = useCallback(() => {
@@ -427,8 +431,8 @@ export default function RunnerChatScreen() {
     setShowNewMsgChip(false);
     nearBottomRef.current = true;
     flatListRef.current?.scrollToOffset({ offset: 0, animated: !reducedMotion });
-    if (unreadCount > 0) markAsRead().catch(() => {});
-  }, [reducedMotion, unreadCount, markAsRead]);
+    if (hasUnreadIncoming) markAsRead().catch(() => {});
+  }, [reducedMotion, hasUnreadIncoming, markAsRead]);
 
   const handleSend = useCallback(
     async (content?: string, imageUrl?: string) => {
