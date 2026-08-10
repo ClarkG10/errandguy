@@ -62,23 +62,45 @@ class CancellationPolicy
             ];
         }
 
-        // Flat fee: runner accepted but hasn't arrived at pickup.
+        // Fee-charging tiers — compute the RAW policy fee for the status.
         if (in_array($status, ['accepted', 'heading_to_pickup'], true)) {
+            $rawFee = self::ACCEPTED_FLAT_FEE;
+            $tier = 'flat';
+        } else {
+            // Percentage: runner arrived / picked up / in-progress.
+            $rawFee = round(((float) $booking->total_amount) * self::ARRIVED_PERCENTAGE, 2);
+            $tier = 'percentage';
+        }
+
+        // Reduce the raw fee to what settlement can ACTUALLY keep, so the fee the
+        // customer is shown (and agrees to) always matches BookingController::cancel's
+        // outcome (PRICE-3 / PRICE-4):
+        //   - a cash / unpaid booking collected nothing up front and there is no
+        //     channel to charge a fee, so it is 0 (never a phantom fee); and
+        //   - a flat fee can never exceed the fare (a ₱20 fee on a ₱15 errand is
+        //     capped to ₱15), so a cheap errand can't be quoted more than its total.
+        $total = (float) $booking->total_amount;
+        $fee = $booking->payment_status === 'paid'
+            ? round(min($rawFee, $total), 2)
+            : 0.0;
+
+        if ($fee <= 0.0) {
             return [
-                'fee' => self::ACCEPTED_FLAT_FEE,
-                'tier' => 'flat',
-                'reason' => 'A small ₱'.number_format(self::ACCEPTED_FLAT_FEE, 0).' fee applies — your runner is already on the way.',
+                'fee' => 0.0,
+                'tier' => 'free',
+                'reason' => $booking->payment_status === 'paid'
+                    ? 'No fee — there is nothing left to charge on this errand.'
+                    : 'No cancellation fee — this booking collected nothing up front.',
                 'cancellable' => true,
             ];
         }
 
-        // Percentage: runner arrived / picked up / in-progress.
-        $fee = round(((float) $booking->total_amount) * self::ARRIVED_PERCENTAGE, 2);
-
         return [
             'fee' => $fee,
-            'tier' => 'percentage',
-            'reason' => 'A '.(int) (self::ARRIVED_PERCENTAGE * 100).'% fee applies — your runner has already arrived or started the errand.',
+            'tier' => $tier,
+            'reason' => $tier === 'flat'
+                ? 'A small ₱'.number_format($fee, 2).' fee applies — your runner is already on the way.'
+                : 'A '.(int) (self::ARRIVED_PERCENTAGE * 100).'% fee (₱'.number_format($fee, 2).') applies — your runner has already arrived or started the errand.',
             'cancellable' => true,
         ];
     }
