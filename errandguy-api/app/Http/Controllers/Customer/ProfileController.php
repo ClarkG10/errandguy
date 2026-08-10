@@ -129,11 +129,23 @@ class ProfileController extends Controller
             ], 422);
         }
 
-        // Block deletion if runner has an unpaid wallet balance > 0 — they
-        // need to request a payout first or the funds become unrecoverable.
-        if ((float) $user->wallet_balance > 0) {
+        // Block deletion while the wallet balance is non-zero in EITHER
+        // direction — anonymizing the account makes the money unrecoverable.
+        $balance = (float) $user->wallet_balance;
+        if ($balance > 0) {
+            // Owed TO the runner — they must withdraw first.
             return response()->json([
-                'message' => 'Your wallet balance is ₱'.number_format((float) $user->wallet_balance, 2).'. Please withdraw it before deleting your account.',
+                'message' => 'Your wallet balance is ₱'.number_format($balance, 2).'. Please withdraw it before deleting your account.',
+            ], 422);
+        }
+        if ($balance < 0) {
+            // A negative balance is a debt owed to the platform — e.g. the
+            // service fee on a cash errand, normally netted from future earnings.
+            // Deleting would erase the identity and make the debt uncollectable,
+            // so require it settled first (a cash runner sits negative until they
+            // earn it back). Without this the debt silently escapes on deletion.
+            return response()->json([
+                'message' => 'You have an outstanding balance of ₱'.number_format(abs($balance), 2).' owed to ErrandGuy. Please settle it before deleting your account.',
             ], 422);
         }
 

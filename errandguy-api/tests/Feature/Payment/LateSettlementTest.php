@@ -134,6 +134,25 @@ class LateSettlementTest extends TestCase
         $this->assertEquals('100.00', $this->runner->fresh()->wallet_balance);
     }
 
+    public function test_charge_settling_after_cancellation_AND_account_deletion_still_refunds(): void
+    {
+        // XREG-1: the customer cancelled a still-in-flight gateway booking, then
+        // deleted their account (soft-delete). The charge later settles. The
+        // auto-refund must still record + mark the payment Refunded rather than
+        // throw ModelNotFoundException (soft-delete scope) and 500-loop the hook.
+        $booking = $this->makeBooking('cancelled', ['cancellation_fee' => 0]);
+        $this->makePayment($booking, 'pr_deleted_cancel');
+        $this->customer->delete(); // soft-delete the account
+
+        $this->postSucceeded('pr_deleted_cancel')->assertOk();
+
+        $this->assertEquals('refunded', $booking->fresh()->payment_status);
+        $this->assertDatabaseHas('payments', ['booking_id' => $booking->id, 'status' => 'refunded']);
+        $this->assertDatabaseHas('wallet_transactions', [
+            'user_id' => $this->customer->id, 'type' => 'refund', 'reference_id' => $booking->id, 'amount' => '115.00',
+        ]);
+    }
+
     public function test_backfill_is_idempotent(): void
     {
         $booking = $this->makeBooking('completed', ['payment_status' => 'paid']);

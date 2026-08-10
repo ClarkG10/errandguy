@@ -165,7 +165,11 @@ class WalletService
                 }
             }
 
-            $user = User::lockForUpdate()->findOrFail($transaction->user_id);
+            // withTrashed: a top-up can settle via webhook AFTER the user soft-
+            // deleted their account; the money must still be booked to the ledger
+            // (a plain findOrFail excludes soft-deleted rows → throws → 500-loops
+            // the webhook, since the account row uses SoftDeletes).
+            $user = User::withTrashed()->lockForUpdate()->findOrFail($transaction->user_id);
             $newBalance = (float) $user->wallet_balance + (float) $transaction->amount;
             $user->update(['wallet_balance' => $newBalance]);
 
@@ -536,7 +540,9 @@ class WalletService
 
             // Credit the runner — same shape as the wallet-funded tip so runner
             // earnings see an identical 'tip' transaction whatever the funding.
-            $runner = User::lockForUpdate()->findOrFail($booking->runner_id);
+            // withTrashed: the tip can settle after the runner soft-deleted their
+            // account; still book it to the ledger rather than 500-loop the hook.
+            $runner = User::withTrashed()->lockForUpdate()->findOrFail($booking->runner_id);
             $runnerNewBalance = (float) $runner->wallet_balance + $amount;
             $runner->update(['wallet_balance' => $runnerNewBalance]);
             WalletTransaction::create([
@@ -698,7 +704,11 @@ class WalletService
     public function refund(string $userId, float $amount, string $referenceId, ?string $debitReference = null): WalletTransaction
     {
         return DB::transaction(function () use ($userId, $amount, $referenceId, $debitReference) {
-            $user = User::lockForUpdate()->findOrFail($userId);
+            // withTrashed: a charge can settle on a cancelled booking (auto-refund
+            // via BookingSettlementService) AFTER the customer soft-deleted their
+            // account — the refund must still be recorded and the payment marked
+            // Refunded, not throw ModelNotFoundException and 500-loop the webhook.
+            $user = User::withTrashed()->lockForUpdate()->findOrFail($userId);
 
             // Idempotency: a retried/double-tapped refund for the SAME reference
             // must not credit the wallet twice. This closes the cancel()
@@ -855,7 +865,9 @@ class WalletService
                 throw new \App\Exceptions\PayoutStateException('Only pending payouts can be marked failed.');
             }
 
-            $user = User::lockForUpdate()->findOrFail($tx->user_id);
+            // withTrashed: a payout.failed can arrive after the runner soft-
+            // deleted their account; the re-credit still belongs on the ledger.
+            $user = User::withTrashed()->lockForUpdate()->findOrFail($tx->user_id);
             // Re-credit the wallet using the same absolute amount that was
             // debited when the payout was requested.
             $refundAmount = abs((float) $tx->amount);
@@ -921,7 +933,9 @@ class WalletService
                 ->where('type', 'refund')
                 ->exists();
 
-            $user = User::lockForUpdate()->findOrFail($tx->user_id);
+            // withTrashed: a payout.reversed can arrive after the runner soft-
+            // deleted their account; the re-credit still belongs on the ledger.
+            $user = User::withTrashed()->lockForUpdate()->findOrFail($tx->user_id);
 
             if (! $alreadyCredited) {
                 $refundAmount = abs((float) $tx->amount);

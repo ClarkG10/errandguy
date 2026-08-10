@@ -68,4 +68,24 @@ class SosStateResourceTest extends TestCase
             ->assertOk()
             ->assertJsonPath('data.sos_triggered', false);
     }
+
+    public function test_non_participant_does_not_see_sos_state(): void
+    {
+        // TEST-2: sos_triggered is participant/admin-gated. A non-participant
+        // (e.g. an online runner receiving this resource in the available-jobs
+        // broadcast) must NOT see it — the when() gate omits the key entirely.
+        $booking = $this->makeBooking(sos: true);
+        $stranger = User::factory()->create(['role' => 'runner', 'status' => 'active']);
+
+        $request = \Illuminate\Http\Request::create("/api/v1/bookings/{$booking->id}", 'GET');
+        $request->setUserResolver(fn () => $stranger);
+        $this->app->instance('request', $request);
+
+        // response() runs the full when()-filtering pipeline (toArray() alone
+        // would leave a MissingValue placeholder in place).
+        $data = (new \App\Http\Resources\BookingResource($booking->fresh()))
+            ->response($request)->getData(true)['data'];
+
+        $this->assertArrayNotHasKey('sos_triggered', $data, 'a non-participant must not see SOS state');
+    }
 }

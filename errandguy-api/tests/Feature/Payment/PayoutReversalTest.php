@@ -92,4 +92,25 @@ class PayoutReversalTest extends TestCase
         $this->assertEquals('reversed', $payout->fresh()->status);
         $this->assertEquals(1000.0, (float) $this->runner->fresh()->wallet_balance);
     }
+
+    public function test_payout_reversed_webhook_works_for_a_soft_deleted_runner(): void
+    {
+        // XREG-2: a payout.reversed can arrive after the runner deleted their
+        // account. The re-credit must still be booked (the money bounced back to
+        // the platform and is owed) rather than throw ModelNotFoundException
+        // (soft-delete scope) and 500-loop the webhook.
+        $payout = $this->completedPayout();
+        $this->runner->delete(); // soft-delete the account
+
+        $this->postJson('/api/v1/webhooks/xendit', [
+            'event' => 'payout.reversed',
+            'data' => ['id' => 'pyt_reverse_1', 'reference_id' => 'payout-'.$payout->id, 'status' => 'REVERSED', 'failure_code' => 'REVERSED'],
+        ], ['x-callback-token' => $this->webhookToken])->assertOk();
+
+        $this->assertEquals('reversed', $payout->fresh()->status);
+        $this->assertEquals(1000.0, (float) \App\Models\User::withTrashed()->find($this->runner->id)->wallet_balance);
+        $this->assertDatabaseHas('wallet_transactions', [
+            'user_id' => $this->runner->id, 'type' => 'refund', 'reference_id' => $payout->id, 'amount' => '500.00',
+        ]);
+    }
 }

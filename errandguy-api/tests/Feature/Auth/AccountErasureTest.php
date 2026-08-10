@@ -140,4 +140,17 @@ class AccountErasureTest extends TestCase
         $this->assertDatabaseHas('saved_addresses', ['id' => $addr->id]);
         $this->assertNull(User::withTrashed()->find($user->id)->deleted_at);
     }
+
+    public function test_deletion_blocked_with_negative_wallet_balance_debt(): void
+    {
+        // TEST-1: a cash errand leaves the runner owing the platform its service
+        // fee (a NEGATIVE balance, netted from future earnings). Deleting would
+        // anonymize the account and make that debt uncollectable, so it must be
+        // refused — the pre-existing guard only blocked positive balances.
+        $user = User::factory()->create(['role' => 'runner', 'status' => 'active', 'wallet_balance' => -15.00]);
+
+        $this->actingAs($user)->deleteJson('/api/v1/user/account')->assertStatus(422);
+
+        $this->assertNull(User::withTrashed()->find($user->id)->deleted_at);
+    }
 }
