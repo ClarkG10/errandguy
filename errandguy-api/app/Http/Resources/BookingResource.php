@@ -132,6 +132,12 @@ class BookingResource extends JsonResource
                 $this->trip_share_active && $this->isParticipant(),
                 $this->trip_share_token,
             ),
+            // Whether an SOS is currently active on this booking, so a
+            // participant's app can restore the SOS banner after a reload or a
+            // poll refresh. The mobile runner/customer screens already read
+            // this; without it in the resource, that restore was dead code
+            // (CONTRACT-1). Boolean-cast on the model; participant/admin-gated.
+            'sos_triggered' => $this->when($canSeeContacts, (bool) $this->sos_triggered),
             'status_logs' => $this->when(
                 $this->relationLoaded('statusLogs'),
                 fn () => $this->statusLogs->map(fn ($log) => [
