@@ -45,3 +45,13 @@ Schedule::job(new \App\Jobs\CheckRideDurationJob())
 Schedule::job(new \App\Jobs\ExpireStaleMatchesJob())
     ->everyMinute()
     ->withoutOverlapping();
+
+// Money-safety backstop: cancel + refund prepaid bookings stranded past the
+// auto-cancel window when the DELAYED AutoCancelBookingJob never ran (worker
+// down, or a crash before it was dispatched). Uses Schedule::command (NOT
+// Schedule::job) so it runs in the scheduler process and survives a queue-worker
+// outage — the exact failure it guards against. Idempotent + row-locked, so
+// withoutOverlapping just avoids a slow run stacking. (SCALE-REL-1/5)
+Schedule::command('errandguy:reap-stranded-bookings')
+    ->everyFiveMinutes()
+    ->withoutOverlapping();

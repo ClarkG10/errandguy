@@ -21,7 +21,15 @@ class ExpireNegotiateBookingJob implements ShouldQueue
         public string $bookingId,
     ) {}
 
-    public function handle(): void
+    /**
+     * @return bool  true iff this call actually expired + refunded the booking.
+     *               Read by ReapStrandedBookingsCommand to count recoveries
+     *               (the queue ignores a job's return value). NOTE: this method
+     *               does NOT check negotiate_expires_at — the timing gate is the
+     *               delayed dispatch, so any caller invoking it directly (the
+     *               reaper) MUST first confirm the window has elapsed.
+     */
+    public function handle(): bool
     {
         // Decide + write under a row lock so a runner who accepts the negotiate
         // broadcast in the race window wins instead of being clobbered back to
@@ -66,5 +74,7 @@ class ExpireNegotiateBookingJob implements ShouldQueue
             // runner" until a manual refetch.
             event(new BookingCancelled(Booking::find($this->bookingId)));
         }
+
+        return $didCancel;
     }
 }

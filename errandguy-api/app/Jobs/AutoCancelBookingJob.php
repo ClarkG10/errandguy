@@ -22,7 +22,13 @@ class AutoCancelBookingJob implements ShouldQueue
         public string $bookingId,
     ) {}
 
-    public function handle(): void
+    /**
+     * @return bool  true iff this call actually cancelled + refunded the booking.
+     *               (The queue ignores a job's return value; the wall-clock
+     *               reaper — ReapStrandedBookingsCommand — reads it to count
+     *               how many stranded bookings it recovered.)
+     */
+    public function handle(): bool
     {
         $timeoutMinutes = (int) SystemConfig::getValue('auto_cancel_timeout_minutes', '30');
 
@@ -83,5 +89,7 @@ class AutoCancelBookingJob implements ShouldQueue
             // now it must be explicit or the screen hangs until a manual refetch.
             event(new BookingCancelled(Booking::find($this->bookingId)));
         }
+
+        return $didCancel;
     }
 }
