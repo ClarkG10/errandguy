@@ -29,7 +29,7 @@ class CheckProductionConfig extends Command
         foreach ($issues as $issue) {
             // Only emit to the log in production (where the schedule runs and the
             // finding is real); a manual run in any env still prints for the dev.
-            if ($this->getLaravel()->isProduction()) {
+            if (app()->environment('production')) {
                 Log::log($issue['level'], '[prod-config] '.$issue['message']);
             }
             $this->line('<comment>'.strtoupper($issue['level']).'</comment>: '.$issue['message']);
@@ -65,6 +65,11 @@ class CheckProductionConfig extends Command
 
         if (config('cache.default') === 'file') {
             $issues[] = ['level' => 'warning', 'message' => "CACHE_STORE='file' — rate-limit / ETag / idempotency state is best-effort and does not hold under concurrency. Use 'redis'."];
+        }
+
+        $trustedProxies = trim((string) env('TRUSTED_PROXIES', ''));
+        if ($trustedProxies === '') {
+            $issues[] = ['level' => 'warning', 'message' => 'TRUSTED_PROXIES is empty — on a *.on-forge.com host Laravel auto-trusts ALL proxies, so ip() is X-Forwarded-For and is SPOOFABLE if the origin is reachable off-Cloudflare (bypassing every IP throttle). Set it to the specific Cloudflare/LB ranges AND firewall the origin.'];
         }
 
         $queue = config('queue.default');

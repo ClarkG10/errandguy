@@ -58,7 +58,7 @@ Route::prefix('v1')->group(function () {
     // Auth routes (public)
     Route::prefix('auth')->group(function () {
         Route::post('/register', [RegisterController::class, 'register'])->middleware('throttle:auth');
-        Route::post('/login', [LoginController::class, 'login'])->middleware('throttle:auth');
+        Route::post('/login', [LoginController::class, 'login'])->middleware('throttle:login');
         Route::post('/send-otp', [OTPController::class, 'sendOTP'])->middleware('throttle:otp');
         Route::post('/verify-otp', [OTPController::class, 'verifyOTP'])->middleware('throttle:auth');
         Route::post('/forgot-password', [PasswordResetController::class, 'forgotPassword'])->middleware('throttle:auth');

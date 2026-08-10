@@ -25,6 +25,34 @@ return Application::configure(basePath: dirname(__DIR__))
         ['middleware' => ['auth:sanctum']],
     )
     ->withMiddleware(function (Middleware $middleware): void {
+        // Let $request->ip() + the rate limiters resolve the REAL client IP
+        // behind the proxy chain, by trusting a configured proxy set from env.
+        //
+        // IMPORTANT — this is NOT "safe by default". When TRUSTED_PROXIES is
+        // empty we do NOT call trustProxies(), so Laravel's default TrustProxies
+        // applies: on a `*.on-forge.com` host it AUTO-TRUSTS ALL proxies, i.e.
+        // ip() becomes the left-most X-Forwarded-For — the real client via
+        // Cloudflare, but SPOOFABLE if the origin is reachable directly. On any
+        // other host it trusts nothing (ip() = the edge, so per-IP throttling is
+        // effectively global). Neither empty state is both correct and safe.
+        //
+        // To make it BOTH: set TRUSTED_PROXIES to the SPECIFIC Cloudflare (and
+        // any LB) IP ranges — a non-empty value disables the on-forge auto-trust
+        // and makes Symfony stop at the first untrusted hop (the real client),
+        // which closes the spoof — AND firewall the origin so `*.on-forge.com`
+        // is only reachable via Cloudflare. Never use '*' here (nginx appends
+        // X-Forwarded-For, so trusting every hop is spoofable).
+        $proxies = array_values(array_filter(array_map('trim', explode(',', (string) env('TRUSTED_PROXIES', '')))));
+        if ($proxies !== []) {
+            $middleware->trustProxies(
+                at: in_array('*', $proxies, true) ? '*' : $proxies,
+                headers: Request::HEADER_X_FORWARDED_FOR
+                    | Request::HEADER_X_FORWARDED_HOST
+                    | Request::HEADER_X_FORWARDED_PORT
+                    | Request::HEADER_X_FORWARDED_PROTO,
+            );
+        }
+
         $middleware->api(prepend: [
             // FIRST: assign a correlation id before anything logs or renders, so
             // every log line + error envelope carries request_id.
@@ -89,14 +117,36 @@ return Application::configure(basePath: dirname(__DIR__))
                 ?? $request->input('phone_or_email')
                 ?? $request->ip();
 
-            // Hard cap of 5 attempts per 15 minutes per credential
-            // (login, register, password reset, social login, OTP
-            // verify all share this bucket). The parallel IP-bucket
-            // limit catches credential-spraying from a single source
-            // even when each identifier stays under its own cap.
+            // Shared by register / forgot-password / reset-password / OTP-verify.
+            // Kept keyed on the credential ALONE (a GLOBAL per-credential cap):
+            // for forgot-password especially, this bounds reset-email bombing of
+            // a victim to 5/15min TOTAL — keying it on identifier+IP would let an
+            // attacker send 5×(number of IPs) reset emails. Login does NOT use
+            // this limiter (see the 'login' limiter below).
             return [
                 Limit::perMinutes(15, 5)->by('auth:' . $identifier),
                 Limit::perMinutes(15, 30)->by('auth-ip:' . $request->ip()),
+            ];
+        });
+
+        // Login gets its OWN limiter, keyed on credential + SOURCE IP. Keying on
+        // the credential alone (as the shared 'auth' limiter does) let anyone who
+        // knew a victim's email/phone lock that account out of every device with
+        // 5 junk attempts — a pre-auth DoS (AUTHX-3). Per-IP scoping means an
+        // attacker only locks their own IP against the account, never the
+        // legitimate user on their own device, while still capping brute-force
+        // from one source at 5/15min. Truly per-client once TRUSTED_PROXIES
+        // resolves the real client IP (see withMiddleware); until then ip() is
+        // the edge and it degrades to per-credential — no worse than before.
+        RateLimiter::for('login', function (Request $request) {
+            $identifier = $request->input('phone')
+                ?? $request->input('email')
+                ?? $request->input('phone_or_email')
+                ?? $request->ip();
+
+            return [
+                Limit::perMinutes(15, 5)->by('login:' . $identifier . '|' . $request->ip()),
+                Limit::perMinutes(15, 30)->by('login-ip:' . $request->ip()),
             ];
         });
 

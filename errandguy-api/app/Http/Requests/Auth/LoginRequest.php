@@ -23,9 +23,22 @@ class LoginRequest extends FormRequest
         ];
     }
 
+    /**
+     * Lockout key scoped to the credential AND the source IP. Keying on the
+     * credential alone let anyone who knew a victim's email/phone lock that
+     * account out of every device with 5 junk attempts (a pre-auth DoS,
+     * AUTHX-3); with the IP included an attacker only locks their own IP against
+     * the account, never the legitimate user on their own device. (Truly
+     * per-client once TRUSTED_PROXIES is configured — see bootstrap/app.php.)
+     */
+    protected function throttleKey(): string
+    {
+        return 'login_attempts:' . ($this->input('phone') ?? $this->input('email')) . '|' . $this->ip();
+    }
+
     public function ensureIsNotRateLimited(): void
     {
-        $key = 'login_attempts:' . ($this->input('phone') ?? $this->input('email'));
+        $key = $this->throttleKey();
         $attempts = (int) Cache::get($key, 0);
 
         if ($attempts >= 5) {
@@ -40,7 +53,7 @@ class LoginRequest extends FormRequest
 
     public function incrementAttempts(): void
     {
-        $key = 'login_attempts:' . ($this->input('phone') ?? $this->input('email'));
+        $key = $this->throttleKey();
         $attempts = (int) Cache::get($key, 0) + 1;
         Cache::put($key, $attempts, now()->addMinutes(15));
         Cache::put($key . ':lockout_ttl', 900, now()->addMinutes(15));
@@ -48,7 +61,7 @@ class LoginRequest extends FormRequest
 
     public function clearAttempts(): void
     {
-        $key = 'login_attempts:' . ($this->input('phone') ?? $this->input('email'));
+        $key = $this->throttleKey();
         Cache::forget($key);
         Cache::forget($key . ':lockout_ttl');
     }

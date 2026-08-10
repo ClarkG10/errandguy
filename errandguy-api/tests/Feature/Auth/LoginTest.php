@@ -171,9 +171,28 @@ class LoginTest extends TestCase
         $this->postJson('/api/v1/auth/login', $this->validData)
             ->assertStatus(200);
 
-        // Verify cache is cleared
-        $key = 'login_attempts:+639171234567';
+        // Verify cache is cleared (key is scoped to credential + source IP; the
+        // test client's IP is 127.0.0.1).
+        $key = 'login_attempts:+639171234567|127.0.0.1';
         $this->assertNull(Cache::get($key));
+    }
+
+    public function test_attacker_cannot_lock_out_a_victim_from_another_ip(): void
+    {
+        // Attacker at one IP burns the 5-attempt cap against the victim's phone.
+        $this->withServerVariables(['REMOTE_ADDR' => '9.9.9.9']);
+        for ($i = 0; $i < 6; $i++) {
+            $this->postJson('/api/v1/auth/login', [
+                'phone' => '+639171234567',
+                'password' => 'WrongPassword!',
+            ]);
+        }
+
+        // The victim, on their OWN device/IP with the correct password, can
+        // still log in — the lockout is scoped to the attacker's IP, not the
+        // account globally (AUTHX-3).
+        $this->withServerVariables(['REMOTE_ADDR' => '1.2.3.4']);
+        $this->postJson('/api/v1/auth/login', $this->validData)->assertStatus(200);
     }
 
     public function test_login_revokes_existing_device_tokens(): void
