@@ -33,7 +33,7 @@ class RideDurationMonitorTest extends TestCase
         ]);
 
         return Booking::create(array_merge([
-            'booking_number' => 'EG-RIDE-'.uniqid(),
+            'booking_number' => 'EG-R-'.uniqid(), // keep ≤ booking_number varchar(20)
             'customer_id' => $customer->id, 'runner_id' => $runner->id,
             'errand_type_id' => $type->id, 'status' => 'in_transit',
             'pickup_address' => 'A', 'pickup_lat' => 14.60, 'pickup_lng' => 120.98,

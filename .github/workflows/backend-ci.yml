@@ -65,6 +65,75 @@ jobs:
           QUEUE_CONNECTION: sync
           SESSION_DRIVER: array
 
+  test-mysql:
+    # Production runs MySQL 8; SQLite (above) is fast but silently no-ops
+    # lockForUpdate and does not enforce string lengths / unique-index
+    # semantics, so it hides real prod defects (money-safety row locks, a
+    # too-short notifications.type column, etc.). This job runs the SAME suite
+    # against the real engine so those can never regress. (audit QA-1 / DEVOPS-7)
+    name: PHPUnit Tests (MySQL 8)
+    runs-on: ubuntu-latest
+
+    services:
+      mysql:
+        image: mysql:8.0
+        env:
+          MYSQL_DATABASE: errandguy_test
+          MYSQL_ROOT_PASSWORD: root
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="mysqladmin ping -h 127.0.0.1 -proot"
+          --health-interval=10s --health-timeout=5s --health-retries=10
+      redis:
+        image: redis:7
+        ports:
+          - 6379:6379
+        options: --health-cmd "redis-cli ping" --health-interval 10s --health-timeout 5s --health-retries 5
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.3'
+          extensions: pdo_mysql, redis, mbstring, xml, ctype, json, bcmath
+          coverage: none
+
+      - name: Get Composer cache directory
+        id: composer-cache
+        run: echo "dir=$(composer config cache-files-dir)" >> $GITHUB_OUTPUT
+
+      - name: Cache Composer dependencies
+        uses: actions/cache@v4
+        with:
+          path: ${{ steps.composer-cache.outputs.dir }}
+          key: ${{ runner.os }}-composer-${{ hashFiles('errandguy-api/composer.lock') }}
+          restore-keys: ${{ runner.os }}-composer-
+
+      - name: Install dependencies
+        run: composer install --prefer-dist --no-interaction --no-progress
+
+      - name: Copy environment file
+        run: cp .env.example .env
+
+      - name: Generate application key
+        run: php artisan key:generate
+
+      - name: Run tests (MySQL)
+        run: php artisan test
+        env:
+          DB_CONNECTION: mysql
+          DB_HOST: 127.0.0.1
+          DB_PORT: 3306
+          DB_DATABASE: errandguy_test
+          DB_USERNAME: root
+          DB_PASSWORD: root
+          CACHE_STORE: array
+          QUEUE_CONNECTION: sync
+          SESSION_DRIVER: array
+
   lint:
     name: PHP Syntax Check
     runs-on: ubuntu-latest
@@ -84,7 +153,7 @@ jobs:
 
   deploy:
     name: Deploy to Forge
-    needs: [test, lint]
+    needs: [test, test-mysql, lint]
     runs-on: ubuntu-latest
     if: github.ref == 'refs/heads/main' && github.event_name == 'push'
 

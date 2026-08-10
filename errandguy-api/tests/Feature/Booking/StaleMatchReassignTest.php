@@ -31,7 +31,7 @@ class StaleMatchReassignTest extends TestCase
         ]);
 
         return Booking::create(array_merge([
-            'booking_number' => 'EG-STALE-'.uniqid(),
+            'booking_number' => 'EG-S-'.uniqid(), // keep ≤ booking_number varchar(20)
             'customer_id' => $customer->id,
             'errand_type_id' => $type->id,
             'pickup_address' => 'A', 'pickup_lat' => 14.60, 'pickup_lng' => 120.98,
