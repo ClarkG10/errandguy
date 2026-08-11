@@ -171,4 +171,25 @@ class PricingServiceTest extends TestCase
         $expectedServiceFee = round($subtotal * 0.15, 2);
         $this->assertEquals($expectedServiceFee, $result['service_fee']);
     }
+
+    public function test_estimate_does_not_crash_for_a_walk_only_zero_base_config(): void
+    {
+        // A single-location, walk-only errand with a zero base/surcharge yields a
+        // total of exactly 0.0 for its only vehicle. array_filter drops that 0.0,
+        // so pre-fix min([]) threw a ValueError (500) on the estimate endpoint.
+        // It must instead fall back to the negotiate floor.
+        $walkOnly = ErrandType::create([
+            'slug' => 'queue', 'name' => 'Queue', 'description' => 'Wait in line',
+            'icon_name' => 'Clock', 'base_fee' => 0.00, 'per_km_walk' => 15.00,
+            'per_km_bicycle' => 0.00, 'per_km_motorcycle' => 0.00, 'per_km_car' => 0.00,
+            'surcharge' => 0.00, 'min_negotiate_fee' => 30.00, 'is_active' => true, 'sort_order' => 2,
+        ]);
+
+        // No dropoff => distance 0 => walk total 0.0. This must not throw.
+        $estimates = $this->service->estimate($walkOnly->id, 14.5995, 120.9842, null, null);
+
+        $this->assertSame(['walk'], $estimates['vehicle_types']);
+        $this->assertEquals(0.0, $estimates['walk']['total_amount']);
+        $this->assertEquals(30.0, $estimates['recommended_min']);
+    }
 }

@@ -185,7 +185,14 @@ class PricingService
                 $vehicleTypes,
             );
             $maxTotal = empty($totals) ? 0 : max($totals);
-            $minTotal = empty($totals) ? 0 : (min(array_filter($totals)) ?: $minNegotiate);
+            // Filter once, then GUARD before min(): array_filter drops 0.0 totals
+            // (e.g. walk on a zero-base, single-location errand), and min([]) throws
+            // a ValueError -> 500 on the estimate endpoint BEFORE the old
+            // `?: $minNegotiate` fallback could apply. All-zero falls back to the
+            // negotiate floor. Behaviour is otherwise identical (a filtered min is
+            // always > 0, so the old `?:` branch was unreachable). (audit v5)
+            $nonZeroTotals = array_filter($totals);
+            $minTotal = $nonZeroTotals === [] ? $minNegotiate : min($nonZeroTotals);
             $estimates['recommended_min'] = max($minNegotiate, round($minTotal, 2));
             $estimates['recommended_max'] = max(1000.0, round($maxTotal * 3, 2));
         }
