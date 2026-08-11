@@ -3,6 +3,7 @@
 namespace App\Jobs;
 
 use App\Models\Booking;
+use App\Models\Notification;
 use App\Services\MatchingService;
 use App\Services\NotificationService;
 use Illuminate\Bus\Queueable;
@@ -61,12 +62,27 @@ class BroadcastToRunnersJob implements ShouldQueue
         // app — with no second inbox row, and a tap that opens their offers
         // home. This job is queued/off-request, so per-runner work is fine.
         foreach ($runners as $runner) {
-            $notifications->notifyInApp(
-                $runner->user_id,
-                'New Errand Request',
-                'A new errand is available near you.',
-                $payload,
-            );
+            // Idempotent in-app OFFER: exactly one 'incoming_request' card per
+            // (runner, booking), no matter how many times this job re-runs — a
+            // queue retry, a worker crash mid-loop, or the admin "stuck errand"
+            // re-dispatch (BookingService::adminRematch). notifyInApp() does an
+            // unconditional insert with no dedup, so guard it here. A duplicate
+            // device push is acceptable; a duplicate inbox card is not. (mirrors
+            // the fixed-match dedup in MatchRunnerJob)
+            $alreadyOffered = Notification::where('user_id', $runner->user_id)
+                ->where('type', 'incoming_request')
+                ->where('data->booking_id', $booking->id)
+                ->exists();
+
+            if (! $alreadyOffered) {
+                $notifications->notifyInApp(
+                    $runner->user_id,
+                    'New Errand Request',
+                    'A new errand is available near you.',
+                    $payload,
+                );
+            }
+
             $notifications->sendRemotePush(
                 $runner->user_id,
                 'New errand nearby',
