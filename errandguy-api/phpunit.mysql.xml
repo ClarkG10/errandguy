@@ -30,6 +30,10 @@
         </include>
     </source>
     <php>
+        <!-- The suite renders real PDFs (dompdf/Cpdf), so accumulated memory
+             crosses the PHP CLI default of 128M and fatally OOMs mid-run. Pin a
+             comfortable ceiling so the suite (and CI) stays deterministic. -->
+        <ini name="memory_limit" value="512M"/>
         <env name="APP_ENV" value="testing" force="true"/>
         <env name="APP_MAINTENANCE_DRIVER" value="file" force="true"/>
         <env name="BCRYPT_ROUNDS" value="4" force="true"/>
