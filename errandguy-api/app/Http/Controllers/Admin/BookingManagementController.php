@@ -15,6 +15,17 @@ class BookingManagementController extends Controller
 {
     public function index(Request $request): JsonResponse
     {
+        // Guard the filter inputs. Without this a malformed ?date= (e.g. 'abc',
+        // '2026-13-99') reaches Carbon::parse() below and throws an uncaught
+        // InvalidFormatException -> app-level 500 (the repo convention is 422,
+        // never 5xx). Mirrors the ['nullable','date'] guard already on every
+        // other date-filtered list endpoint. (audit v4 input)
+        $request->validate([
+            'status' => ['nullable', 'string', 'max:30'],
+            'search' => ['nullable', 'string', 'max:100'],
+            'date' => ['nullable', 'date'],
+        ]);
+
         $query = Booking::with(['customer:id,full_name,phone', 'runner:id,full_name,phone']);
 
         if ($status = $request->query('status')) {
