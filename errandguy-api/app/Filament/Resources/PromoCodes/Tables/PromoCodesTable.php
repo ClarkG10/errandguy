@@ -3,6 +3,7 @@
 namespace App\Filament\Resources\PromoCodes\Tables;
 
 use App\Filament\Support\ExportCsv;
+use App\Models\AdminUser;
 use App\Models\PromoCode;
 use Filament\Actions\BulkActionGroup;
 use Filament\Actions\DeleteBulkAction;
@@ -59,7 +60,16 @@ class PromoCodesTable
             ])
             ->toolbarActions([
                 BulkActionGroup::make([
-                    DeleteBulkAction::make(),
+                    // Promo mutation is super_admin/admin only (canMutate); finance
+                    // may only VIEW. But a LIST bulk-delete is authorized via the
+                    // 'deleteAny' policy path, which falls through the AdminUser
+                    // Gate::before to ALLOW for every admin role — letting finance
+                    // bulk-delete promo codes past the mutate gate. Gate it. (audit v5 authz)
+                    DeleteBulkAction::make()
+                        ->visible(fn (): bool => auth('admin')->user()?->hasAnyRole(
+                            AdminUser::ROLE_SUPER_ADMIN,
+                            AdminUser::ROLE_ADMIN,
+                        ) ?? false),
                 ]),
             ]);
     }
