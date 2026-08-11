@@ -347,7 +347,11 @@ Route::prefix('v1')->group(function () {
 
     // Admin routes
     Route::prefix('admin')->group(function () {
-        Route::post('/login', [AdminAuthController::class, 'login'])->middleware('throttle:auth');
+        // Credential+IP limiter (NOT the credential-only 'auth' limiter): keying
+        // admin login on the email alone let anyone who knew an admin's email lock
+        // that admin out of the ops console with 5 junk attempts — the AUTHX-3
+        // pre-auth DoS the user-login route already avoids. (audit v4 security)
+        Route::post('/login', [AdminAuthController::class, 'login'])->middleware('throttle:login');
 
         Route::middleware(['auth:sanctum', 'admin'])->group(function () {
             Route::post('/logout', [AdminAuthController::class, 'logout']);
