@@ -224,30 +224,6 @@ class PricingService
     }
 
     /**
-     * Apply a promo discount to a subtotal.
-     */
-    public function applyPromo(float $subtotal, array $promo): array
-    {
-        if ($promo['discount_type'] === 'percentage') {
-            $discount = round($subtotal * ($promo['discount_value'] / 100), 2);
-        } else {
-            $discount = (float) $promo['discount_value'];
-        }
-
-        // Enforce max discount cap
-        if (!empty($promo['max_discount']) && $discount > (float) $promo['max_discount']) {
-            $discount = (float) $promo['max_discount'];
-        }
-
-        $discount = min($discount, $subtotal); // Never discount more than subtotal
-
-        return [
-            'discount' => round($discount, 2),
-            'discounted_total' => round($subtotal - $discount, 2),
-        ];
-    }
-
-    /**
      * Calculate Haversine distance in kilometers.
      */
     private function haversineDistance(float $lat1, float $lng1, float $lat2, float $lng2): float

@@ -67,16 +67,6 @@ class CacheService
     }
 
     /**
-     * Invalidate multiple cache keys by prefix pattern.
-     */
-    public static function forgetByPrefix(string $prefix): void
-    {
-        // For database driver, we manually track tagged keys
-        // For Redis, we can use pattern matching
-        Cache::forget($prefix);
-    }
-
-    /**
      * Invalidate user-related caches when profile changes.
      */
     public static function forgetUser(string $userId): void
