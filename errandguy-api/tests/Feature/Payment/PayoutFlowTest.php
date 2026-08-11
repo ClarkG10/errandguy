@@ -138,6 +138,26 @@ class PayoutFlowTest extends TestCase
             ->where('type', 'payout')->count());
     }
 
+    public function test_admin_initiated_payout_is_created_pending_not_completed(): void
+    {
+        // A payout row MUST persist as 'pending' so it can actually be disbursed:
+        // PaymentService::createPayout throws 'Only a pending payout can be sent.'
+        // for any other status, and the complete/fail/re-credit recovery actions
+        // are all gated on 'pending'. The wallet_transactions.status column
+        // defaults to 'completed' (right for system-earned rows), so if payout()
+        // omits it the Filament "Pay a runner" flow debits the runner, fails to
+        // disburse, and strands the money with no recovery. (audit v4 money)
+        $tx = app(\App\Services\WalletService::class)->payout($this->runner->id, 300, 'admin-idem-pending');
+
+        $this->assertSame('pending', $tx->status);
+        // The load-bearing assertion: the PERSISTED row is pending, not the DB
+        // default 'completed'.
+        $this->assertSame('pending', $tx->fresh()->status);
+        $this->assertDatabaseHas('wallet_transactions', [
+            'user_id' => $this->runner->id, 'type' => 'payout', 'status' => 'pending', 'amount' => '-300.00',
+        ]);
+    }
+
     public function test_admin_can_mark_a_pending_payout_completed(): void
     {
         $payout = WalletTransaction::create([

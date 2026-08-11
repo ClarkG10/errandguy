@@ -801,6 +801,15 @@ class WalletService
             return WalletTransaction::create([
                 'user_id' => $userId,
                 'type' => 'payout',
+                // A payout is 'pending' until it is actually disbursed. The status
+                // column DEFAULTS to 'completed' (correct for system-earned rows),
+                // so it MUST be set explicitly here — otherwise createPayout()
+                // rejects the row ('Only a pending payout can be sent.') AFTER this
+                // debit is already committed in its own transaction, losing the
+                // runner's money with no recovery (complete/fail/re-send are all
+                // gated on status='pending'). Mirrors the runner-request path
+                // (RunnerPayoutController), which sets 'pending' explicitly.
+                'status' => 'pending',
                 'amount' => -$amount,
                 'balance_after' => $newBalance,
                 'reference_id' => $reference,
