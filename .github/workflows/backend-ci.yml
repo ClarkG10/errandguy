@@ -160,4 +160,9 @@ jobs:
     steps:
       - name: Trigger Forge deployment
         run: |
-          curl -s -X POST "${{ secrets.FORGE_DEPLOY_URL }}"
+          # --fail makes curl exit non-zero on an HTTP 4xx/5xx from the Forge
+          # trigger; without it, -s swallows the error and the job reports a
+          # green deploy that never actually ran. --show-error still surfaces
+          # the reason, and --retry rides out a transient network/5xx blip.
+          curl --fail --silent --show-error --retry 3 --retry-delay 5 \
+            -X POST "${{ secrets.FORGE_DEPLOY_URL }}"
