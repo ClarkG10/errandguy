@@ -22,6 +22,7 @@ use App\Models\ErrandType;
 use App\Models\Payment;
 use App\Models\PaymentMethod;
 use App\Models\RunnerLocation;
+use App\Services\BookingService;
 use App\Services\CancellationPolicy;
 use App\Support\ErrorCode;
 use App\Services\PaymentService;
@@ -33,13 +34,13 @@ use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
-use Illuminate\Support\Str;
 
 class BookingController extends Controller
 {
     public function __construct(
         private PricingService $pricingService,
         private PromoService $promoService,
+        private BookingService $bookingService,
     ) {}
 
     public function index(Request $request): JsonResponse
@@ -189,8 +190,10 @@ class BookingController extends Controller
         // Determine if transportation
         $isTransportation = $errandType->slug === 'transportation';
 
-        // Generate booking number: EG-YYYYMMDD-XXXX
-        $bookingNumber = 'EG-' . now()->format('Ymd') . '-' . strtoupper(Str::random(4));
+        // Collision-safe booking number (EG-YYYYMMDD-XXXX). The generator retries
+        // against the unique index; the old inline Str::random(4) had no such
+        // check and 500s on a same-day clash.
+        $bookingNumber = $this->bookingService->generateBookingNumber();
 
         // Generate ride PIN for transportation
         $ridePin = $isTransportation ? str_pad((string) random_int(0, 9999), 4, '0', STR_PAD_LEFT) : null;
@@ -912,7 +915,7 @@ class BookingController extends Controller
             $vehicleType
         );
 
-        $bookingNumber = 'EG-' . now()->format('Ymd') . '-' . strtoupper(Str::random(4));
+        $bookingNumber = $this->bookingService->generateBookingNumber();
         $ridePin = $original->is_transportation ? str_pad((string) random_int(0, 9999), 4, '0', STR_PAD_LEFT) : null;
 
         $newBooking = Booking::create([
