@@ -133,6 +133,22 @@ class AdminUser extends Authenticatable implements FilamentUser, HasName
     }
 
     /**
+     * May moderate accounts/errands and verify runners (user suspend/unsuspend,
+     * booking cancel, runner approve/reject). Distinct from canHandleSupport:
+     * moderation EXCLUDES support (support handles disputes/tickets/SOS but not
+     * account/booking moderation), mirroring the Filament Users/Bookings/
+     * RunnerProfiles action gates (hasAnyRole super_admin/admin/ops).
+     */
+    public function canModerate(): bool
+    {
+        return $this->hasAnyRole(
+            self::ROLE_SUPER_ADMIN,
+            self::ROLE_ADMIN,
+            self::ROLE_OPS,
+        );
+    }
+
+    /**
      * May change platform-wide system configuration.
      */
     public function canManageSystem(): bool

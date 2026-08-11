@@ -6,6 +6,7 @@ use App\Http\Controllers\Controller;
 use App\Jobs\SendPushJob;
 use App\Models\DisputeTicket;
 use App\Services\NotificationService;
+use App\Support\AdminActivity;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 
@@ -64,6 +65,8 @@ class DisputeController extends Controller
             ['type' => 'system']
         );
 
+        AdminActivity::log('dispute.resolved', $dispute, ['via' => 'api']);
+
         return $this->ok(null, 'Dispute resolved.');
     }
 
@@ -71,6 +74,8 @@ class DisputeController extends Controller
     {
         $dispute = DisputeTicket::findOrFail($id);
         $dispute->update(['status' => 'escalated']);
+
+        AdminActivity::log('dispute.escalated', $dispute, ['via' => 'api']);
 
         return $this->ok(null, 'Dispute escalated.');
     }

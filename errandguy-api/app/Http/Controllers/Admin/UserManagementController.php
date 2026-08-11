@@ -4,6 +4,7 @@ namespace App\Http\Controllers\Admin;
 
 use App\Http\Controllers\Controller;
 use App\Models\User;
+use App\Support\AdminActivity;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 
@@ -62,6 +63,8 @@ class UserManagementController extends Controller
         // expires.
         $user->tokens()->delete();
 
+        AdminActivity::log('user.suspended', $user, ['reason' => $request->input('reason'), 'via' => 'api']);
+
         return $this->ok(null, 'User suspended. Their active sessions were revoked.');
     }
 
@@ -73,6 +76,8 @@ class UserManagementController extends Controller
             'suspended_reason' => null,
             'suspended_at' => null,
         ]);
+
+        AdminActivity::log('user.unsuspended', $user, ['via' => 'api']);
 
         return $this->ok(null, 'User reactivated.');
     }

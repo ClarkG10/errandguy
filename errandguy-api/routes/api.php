@@ -357,30 +357,39 @@ Route::prefix('v1')->group(function () {
 
             Route::get('/users', [UserManagementController::class, 'index']);
             Route::get('/users/{id}', [UserManagementController::class, 'show']);
-            Route::post('/users/{id}/suspend', [UserManagementController::class, 'suspend']);
-            Route::post('/users/{id}/unsuspend', [UserManagementController::class, 'unsuspend']);
+            // Account/errand moderation + runner verification — super_admin/admin/
+            // ops only (canModerate), mirroring the Filament Users/Bookings/
+            // RunnerProfiles action gates. This EXCLUDES support and finance:
+            // support handles disputes/tickets/SOS, not account/booking moderation,
+            // and admin booking-cancel issues a full wallet refund.
+            Route::post('/users/{id}/suspend', [UserManagementController::class, 'suspend'])->middleware('admin.can:moderate');
+            Route::post('/users/{id}/unsuspend', [UserManagementController::class, 'unsuspend'])->middleware('admin.can:moderate');
 
             Route::get('/runners/pending', [RunnerVerificationController::class, 'pending']);
             Route::get('/runners/{userId}/documents', [RunnerVerificationController::class, 'showDocuments']);
-            Route::post('/runners/{userId}/approve', [RunnerVerificationController::class, 'approve']);
-            Route::post('/runners/{userId}/reject', [RunnerVerificationController::class, 'reject']);
+            Route::post('/runners/{userId}/approve', [RunnerVerificationController::class, 'approve'])->middleware('admin.can:moderate');
+            Route::post('/runners/{userId}/reject', [RunnerVerificationController::class, 'reject'])->middleware('admin.can:moderate');
 
             Route::get('/bookings', [BookingManagementController::class, 'index']);
             Route::get('/bookings/{id}', [BookingManagementController::class, 'show']);
-            Route::post('/bookings/{id}/cancel', [BookingManagementController::class, 'cancel']);
+            Route::post('/bookings/{id}/cancel', [BookingManagementController::class, 'cancel'])->middleware('admin.can:moderate');
 
+            // Disputes — super_admin/admin/support/ops (canHandleSupport), mirroring
+            // the Filament DisputeTicketResource gate (support IS permitted here).
             Route::get('/disputes', [DisputeController::class, 'index']);
             Route::get('/disputes/{id}', [DisputeController::class, 'show']);
-            Route::post('/disputes/{id}/resolve', [DisputeController::class, 'resolve']);
-            Route::post('/disputes/{id}/escalate', [DisputeController::class, 'escalate']);
+            Route::post('/disputes/{id}/resolve', [DisputeController::class, 'resolve'])->middleware('admin.can:support');
+            Route::post('/disputes/{id}/escalate', [DisputeController::class, 'escalate'])->middleware('admin.can:support');
 
             Route::get('/payouts', [AdminPayoutController::class, 'index']);
-            Route::post('/payouts/{id}/complete', [AdminPayoutController::class, 'markCompleted']);
-            Route::post('/payouts/{id}/fail', [AdminPayoutController::class, 'markFailed']);
+            // Money surfaces — finance/super_admin only, mirroring the Filament
+            // Payouts + PlatformPaymentMethods pages (canManageMoney).
+            Route::post('/payouts/{id}/complete', [AdminPayoutController::class, 'markCompleted'])->middleware('admin.can:money');
+            Route::post('/payouts/{id}/fail', [AdminPayoutController::class, 'markFailed'])->middleware('admin.can:money');
 
             // Manage which payment methods the platform offers.
             Route::get('/payment-methods', [\App\Http\Controllers\Admin\PaymentSettingController::class, 'index']);
-            Route::put('/payment-methods', [\App\Http\Controllers\Admin\PaymentSettingController::class, 'update']);
+            Route::put('/payment-methods', [\App\Http\Controllers\Admin\PaymentSettingController::class, 'update'])->middleware('admin.can:money');
         });
     });
 

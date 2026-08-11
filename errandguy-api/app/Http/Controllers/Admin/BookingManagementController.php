@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Admin;
 use App\Http\Controllers\Controller;
 use App\Models\Booking;
 use App\Http\Resources\BookingResource;
+use App\Support\AdminActivity;
 use App\Support\ErrorCode;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -71,6 +72,8 @@ class BookingManagementController extends Controller
         } catch (\App\Exceptions\BookingStateException $e) {
             return $this->fail(ErrorCode::BOOKING_STATE_INVALID, $e->getMessage());
         }
+
+        AdminActivity::log('booking.cancelled', Booking::find($id), ['reason' => $request->input('reason'), 'via' => 'api']);
 
         return $this->ok(null, 'Booking cancelled.');
     }

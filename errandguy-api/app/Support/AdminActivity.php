@@ -23,7 +23,16 @@ class AdminActivity
             ->event($event)
             ->withProperties($properties);
 
-        if ($admin = auth('admin')->user()) {
+        // Resolve the acting admin from the Filament session guard OR, in the
+        // REST admin API (sanctum) context where the 'admin' guard is empty, the
+        // authenticated request user when it is an AdminUser — so API admin
+        // actions record their causer, not an anonymous entry.
+        $admin = auth('admin')->user();
+        if (! $admin instanceof \App\Models\AdminUser) {
+            $requestUser = request()->user();
+            $admin = $requestUser instanceof \App\Models\AdminUser ? $requestUser : null;
+        }
+        if ($admin) {
             $logger->causedBy($admin);
         }
 

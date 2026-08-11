@@ -51,7 +51,9 @@ class PayoutFlowTest extends TestCase
     {
         $admin = AdminUser::create([
             'email' => 'ops@errandguy.test', 'password_hash' => Hash::make('Password1!'),
-            'full_name' => 'Ops', 'role' => 'admin', 'is_active' => true,
+            // Payout completion/failure is a MONEY action — requires
+            // canManageMoney (finance/super_admin), enforced by admin.can:money.
+            'full_name' => 'Finance', 'role' => 'finance', 'is_active' => true,
         ]);
         Sanctum::actingAs($admin);
 

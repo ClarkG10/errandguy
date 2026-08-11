@@ -6,6 +6,7 @@ use App\Http\Controllers\Controller;
 use App\Jobs\SendPushJob;
 use App\Models\RunnerDocument;
 use App\Models\RunnerProfile;
+use App\Support\AdminActivity;
 use App\Services\NotificationService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -62,6 +63,8 @@ class RunnerVerificationController extends Controller
             ['type' => 'document_update']
         );
 
+        AdminActivity::log('runner.approved', $profile, ['user_id' => $userId, 'via' => 'api']);
+
         return $this->ok(null, 'Runner approved — they can now accept errands.');
     }
 
@@ -90,6 +93,8 @@ class RunnerVerificationController extends Controller
             'Your runner verification was not approved. Please check the details and resubmit.',
             ['type' => 'document_update']
         );
+
+        AdminActivity::log('runner.rejected', $profile, ['user_id' => $userId, 'reason' => $request->input('reason'), 'via' => 'api']);
 
         return $this->ok(null, 'Runner rejected. They’ve been notified.');
     }

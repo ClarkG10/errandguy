@@ -4,6 +4,7 @@ namespace App\Http\Controllers\Admin;
 
 use App\Http\Controllers\Controller;
 use App\Services\PaymentMethodCatalog;
+use App\Support\AdminActivity;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 
@@ -34,6 +35,8 @@ class PaymentSettingController extends Controller
             $validated['methods'],
             $request->user()?->id,
         );
+
+        AdminActivity::log('payment_methods.updated', null, ['methods' => $validated['methods'], 'via' => 'api']);
 
         return response()->json([
             'data' => PaymentMethodCatalog::catalogWithState(),
