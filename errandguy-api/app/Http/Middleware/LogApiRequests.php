@@ -69,7 +69,14 @@ class LogApiRequests
 
         $logData = [
             'method' => $request->method(),
-            'url' => $request->fullUrl(),
+            // Log the ROUTE TEMPLATE (e.g. "trip/{token}", "bookings/{id}"), not
+            // the resolved fullUrl(): fullUrl would persist path params to disk —
+            // including the public SOS/trip-share token (an unauthenticated key to
+            // a victim's live location) and booking/user ids — and it logs on
+            // error responses too. The template keeps the endpoint greppable for
+            // diagnostics while never writing the secret. Falls back to the raw
+            // path only for genuinely unmatched (routeless) 404s.
+            'url' => $request->route()?->uri() ?? $request->path(),
             'status' => $status,
             'duration_ms' => $duration,
             'queries' => $queries,

@@ -47,7 +47,14 @@ class SendSafetyAlertNotification implements ShouldQueue
 
         foreach ($contacts as $contact) {
             if ($contact->phone) {
-                Log::info("Safety SMS to {$contact->phone}: [{$title}] {$body}");
+                // Do NOT log the contact's phone (third-party PII) or the alert
+                // body — emit a non-sensitive breadcrumb only, mirroring
+                // NotifySosContactsJob::notifySMSContact.
+                Log::info('Safety-alert SMS pending (no SMS provider configured)', [
+                    'customer_id' => $customerId,
+                    'contact_id' => $contact->id,
+                    'alert' => $title,
+                ]);
                 // TODO: Integrate SMS provider for trusted contact alerts
             }
         }

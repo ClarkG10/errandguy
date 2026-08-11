@@ -17,11 +17,14 @@ class RegisterController extends Controller
 {
     public function register(RegisterRequest $request): JsonResponse
     {
+        // Never log the raw phone/email — they are PII that would persist to the
+        // daily log file in every environment with no scrubbing. The request_id
+        // correlates this to the request-level access log; ip stays for abuse
+        // triage.
         Log::info('Registration attempt', [
-            'phone' => $request->phone,
-            'email' => $request->email,
             'role' => $request->role,
             'ip' => $request->ip(),
+            'request_id' => $request->attributes->get('request_id'),
         ]);
 
         $user = DB::transaction(function () use ($request) {
