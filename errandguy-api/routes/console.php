@@ -32,6 +32,12 @@ Schedule::command('errandguy:cleanup-locations')->daily();
 // that otherwise fails silently. Log-only — can't take the app down.
 Schedule::command('errandguy:check-prod-config')->daily();
 
+// Money integrity: assert every wallet_balance still equals its ledger (latest
+// balance_after) and log a CRITICAL on any out-of-band divergence — the
+// detective control for the withdrawable balance given the parallel engine on
+// the shared DB. Read-only. (MONEY-6)
+Schedule::command('errandguy:reconcile-wallets')->daily();
+
 // Safety: alert when an in-transit transportation ride runs well over its
 // estimated duration. Previously defined but NEVER scheduled, so the monitor
 // never ran. withoutOverlapping guards against a slow run stacking.
