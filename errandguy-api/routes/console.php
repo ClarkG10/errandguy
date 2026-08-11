@@ -27,6 +27,11 @@ Schedule::command('cache:prune-stale-tags')->hourly();
 // Data retention: cleanup old locations (24h) and messages (30d post-completion)
 Schedule::command('errandguy:cleanup-locations')->daily();
 
+// Data retention: bound the money-path dedup tables — expired idempotency_keys
+// (dead after their 24h window) and old webhook_events (kept 90d as an audit
+// trail). Pruned only outside the replay window, so dedup stays intact. (DATA-9)
+Schedule::command('errandguy:prune-dedup-records')->daily();
+
 // Operational readiness: log a CRITICAL/WARNING if production is running with
 // unsafe/degraded config (APP_DEBUG on, broadcast off, file cache, sync queue)
 // that otherwise fails silently. Log-only — can't take the app down.
