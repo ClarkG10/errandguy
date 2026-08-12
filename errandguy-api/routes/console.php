@@ -43,6 +43,12 @@ Schedule::command('errandguy:check-prod-config')->daily()->onOneServer();
 // the shared DB. Read-only. (MONEY-6)
 Schedule::command('errandguy:reconcile-wallets')->daily()->onOneServer();
 
+// Disaster-recovery floor: a nightly gzip'd mysqldump to the configured backup
+// disk (config/backup.php) with retention pruning. NOT point-in-time recovery —
+// it bounds data loss behind the irreversible `migrate --force` deploy until
+// managed PITR exists. onOneServer so a multi-server fleet dumps once. (audit DR)
+Schedule::command('errandguy:backup-database')->dailyAt('02:30')->onOneServer();
+
 // Safety: alert when an in-transit transportation ride runs well over its
 // estimated duration. Run INLINE in the scheduler (dispatch_sync), NOT via
 // Schedule::job — a queued job dies silently when the worker is down, and this
