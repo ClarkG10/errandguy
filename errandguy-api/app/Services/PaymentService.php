@@ -42,9 +42,15 @@ class PaymentService
      */
     private function http(?string $idempotencyKey = null): \Illuminate\Http\Client\PendingRequest
     {
+        // 25s was too generous for a SYNCHRONOUS, user-facing checkout-creation
+        // call on the booking path: a Xendit brownout at peak could pin the whole
+        // PHP-FPM pool for 25s each and cascade 502s across every endpoint.
+        // Xendit normally responds in <3s; 12s bounds the blast radius while
+        // leaving ample headroom (a timeout fails fast into the caught-error path,
+        // idempotency-key-safe to retry). (audit perf)
         $client = Http::withBasicAuth($this->secretKey, '')
-            ->connectTimeout(10)
-            ->timeout(25);
+            ->connectTimeout(8)
+            ->timeout(12);
 
         // Gateway-level idempotency: a retried charge/invoice/refund creation
         // that carries the same key collapses to the SAME Xendit object rather

@@ -45,7 +45,11 @@ class DashboardController extends Controller
                         ->where('completed_at', '<', $tomorrowStart)->count(),
                 ],
                 'disputes' => [
-                    'active' => DisputeTicket::where('status', 'active')->count(),
+                    // Disputes are created 'open' and move to 'escalated' or
+                    // 'resolved' — there is no 'active' status, so the old
+                    // where('status','active') always counted 0 and NEW disputes
+                    // never surfaced on the ops tile. Count everything unresolved.
+                    'active' => DisputeTicket::whereIn('status', ['open', 'escalated'])->count(),
                     'escalated' => DisputeTicket::where('status', 'escalated')->count(),
                 ],
             ];

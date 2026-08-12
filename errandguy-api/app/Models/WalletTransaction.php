@@ -29,6 +29,14 @@ class WalletTransaction extends Model
         'failure_reason',
     ];
 
+    // The gateway reference (Xendit internal id) is a gateway internal that the
+    // client never needs; the wallet-ledger list endpoint returns raw models, so
+    // hide it from serialization. Callers that genuinely need it read the
+    // property directly (unaffected by $hidden). (audit security)
+    protected $hidden = [
+        'gateway_ref',
+    ];
+
     protected function casts(): array
     {
         return [

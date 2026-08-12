@@ -1,11 +1,16 @@
 <?php
 
+use App\Http\Controllers\HealthController;
 use App\Http\Controllers\RunnerDocumentFileController;
 use Illuminate\Support\Facades\Route;
 
 Route::get('/', function () {
     return view('welcome');
 });
+
+// Deep health probe (DB + cache/Redis) for uptime monitoring — unlike the
+// framework default '/up', it goes RED on a real dependency outage. (audit DR)
+Route::get('/health', HealthController::class)->name('health');
 
 /*
 | KYC document viewer for the admin panel.

@@ -33,7 +33,11 @@ class AdminAuthController extends Controller
 
         $admin->update(['last_login_at' => now()]);
 
-        $token = $admin->createToken('admin-token', ['admin'])->plainTextToken;
+        // Admin tokens carry privileged abilities, so give them a short absolute
+        // expiry instead of the 30-day global Sanctum TTL — a stolen admin bearer
+        // is then valid for hours, not a month. Sanctum honours per-token
+        // expires_at. (audit security)
+        $token = $admin->createToken('admin-token', ['admin'], now()->addHours(8))->plainTextToken;
 
         return response()->json([
             'data' => [
