@@ -5,6 +5,7 @@ namespace App\Services;
 use App\Models\Booking;
 use App\Models\SOSAlert;
 use App\Models\TrustedContact;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 
 class SOSService
@@ -22,88 +23,133 @@ class SOSService
      */
     public function triggerSOS(string $bookingId, string $triggeredBy, string $role = 'customer'): SOSAlert
     {
-        $booking = Booking::with(['runner.runnerProfile'])->findOrFail($bookingId);
+        $created = false;
+        $bookingLabel = null;
 
-        $runnerProfile = $booking->runner?->runnerProfile;
+        // Serialize concurrent panic-button presses for the SAME booking on the
+        // booking row. Two triggers at once — e.g. the customer AND the runner,
+        // who are different users so the per-user throttle does NOT serialize
+        // them — would each read "no active alert" and each insert one, leaving a
+        // duplicate active alert that deactivateSOS then orphans. Locking the
+        // booking row makes the second trigger wait, re-read, and return the
+        // first's alert. On SQLite lockForUpdate is a no-op (writes serialize
+        // globally); on MySQL it is a real row lock. (audit safety)
+        $alert = DB::transaction(function () use ($bookingId, $triggeredBy, $role, &$created, &$bookingLabel) {
+            $booking = Booking::with(['runner.runnerProfile'])
+                ->lockForUpdate()
+                ->findOrFail($bookingId);
 
-        // Idempotency — if there's already an active alert for this booking,
-        // return it instead of stacking duplicates.
-        $existing = SOSAlert::where('booking_id', $bookingId)
-            ->where('status', 'active')
-            ->latest('triggered_at')
-            ->first();
-        if ($existing) {
-            return $existing;
+            $bookingLabel = $booking->booking_number ?? $booking->id;
+
+            // Idempotency — an active alert already exists for this booking.
+            $existing = SOSAlert::where('booking_id', $bookingId)
+                ->where('status', 'active')
+                ->latest('triggered_at')
+                ->first();
+            if ($existing) {
+                return $existing;
+            }
+
+            $runnerProfile = $booking->runner?->runnerProfile;
+
+            $alert = SOSAlert::create([
+                'booking_id' => $bookingId,
+                'customer_id' => $booking->customer_id,
+                'runner_id' => $booking->runner_id,
+                'triggered_by' => $triggeredBy,
+                'triggered_by_role' => $role,
+                'triggered_at' => now(),
+                'customer_lat' => $booking->dropoff_lat,
+                'customer_lng' => $booking->dropoff_lng,
+                'runner_lat' => $runnerProfile?->current_lat,
+                'runner_lng' => $runnerProfile?->current_lng,
+                'live_link_token' => Str::random(64),
+                'live_link_expires_at' => now()->addMinutes(60),
+                'status' => 'active',
+            ]);
+
+            // WHICH trusted contacts will be notified — part of the durable
+            // safety record, so it stays inside the transaction.
+            $contactIds = TrustedContact::where('user_id', $triggeredBy)
+                ->orderBy('created_at')
+                ->pluck('id')
+                ->toArray();
+            $alert->update(['contacts_notified' => $contactIds]);
+
+            $booking->update(['sos_triggered' => true]);
+
+            $created = true;
+
+            return $alert;
+        });
+
+        // Side-effects run AFTER commit and ONLY for a newly created alert (an
+        // idempotent replay must not re-alert): a best-effort operator alert or
+        // the queued fan-out can never roll back the durable safety write, and
+        // the job can't run against a not-yet-committed row. The outbound fan-out
+        // (trusted-contact SMS, the Reverb broadcast, the admin FCM topic) is
+        // deferred to a job so the panic button returns immediately. (P7)
+        if ($created) {
+            \App\Models\AdminAlert::raise(
+                'sos',
+                'critical',
+                'SOS triggered',
+                'Booking '.$bookingLabel.' — '.$role.' pulled the alarm.',
+                $alert->id,
+            );
+
+            \App\Jobs\NotifySosContactsJob::dispatch($alert->id);
         }
-
-        $alert = SOSAlert::create([
-            'booking_id' => $bookingId,
-            'customer_id' => $booking->customer_id,
-            'runner_id' => $booking->runner_id,
-            'triggered_by' => $triggeredBy,
-            'triggered_by_role' => $role,
-            'triggered_at' => now(),
-            'customer_lat' => $booking->dropoff_lat,
-            'customer_lng' => $booking->dropoff_lng,
-            'runner_lat' => $runnerProfile?->current_lat,
-            'runner_lng' => $runnerProfile?->current_lng,
-            'live_link_token' => Str::random(64),
-            'live_link_expires_at' => now()->addMinutes(60),
-            'status' => 'active',
-        ]);
-
-        // Record WHICH trusted contacts will be notified — part of the durable
-        // safety record, so it stays synchronous.
-        $contactIds = TrustedContact::where('user_id', $triggeredBy)
-            ->orderBy('created_at')
-            ->pluck('id')
-            ->toArray();
-        $alert->update(['contacts_notified' => $contactIds]);
-
-        $booking->update(['sos_triggered' => true]);
-
-        // Live operator alert (life-safety — critical). Best-effort; a failed
-        // alert insert must never block the panic button.
-        \App\Models\AdminAlert::raise(
-            'sos',
-            'critical',
-            'SOS triggered',
-            'Booking '.($booking->booking_number ?? $booking->id).' — '.$role.' pulled the alarm.',
-            $alert->id,
-        );
-
-        // Everything above is the durable safety write. The OUTBOUND fan-out —
-        // trusted-contact SMS, the Reverb realtime broadcast, and the admin
-        // FCM topic — is deferred to a job so the panic button returns the alert
-        // immediately instead of blocking on the broadcast + Firebase (and, once SMS
-        // is wired, one HTTP call per contact). (P7)
-        \App\Jobs\NotifySosContactsJob::dispatch($alert->id);
 
         return $alert;
     }
 
     public function deactivateSOS(string $bookingId): void
     {
-        $alert = SOSAlert::where('booking_id', $bookingId)
-            ->where('status', 'active')
-            ->latest('triggered_at')
-            ->first();
+        $runnerId = null;
+        $alertId = null;
 
-        if (!$alert) {
+        // Resolve EVERY active alert for the booking, not just the latest: a
+        // pre-existing duplicate active alert would otherwise be orphaned — left
+        // active in getActiveSOS() while booking.sos_triggered is cleared. Lock
+        // the booking row (as triggerSOS does) so a concurrent trigger can't
+        // interleave and leave the flag and the alerts inconsistent. (audit safety)
+        $resolved = DB::transaction(function () use ($bookingId, &$runnerId, &$alertId) {
+            $booking = Booking::whereKey($bookingId)->lockForUpdate()->first();
+            if (!$booking) {
+                return false;
+            }
+
+            $latestActive = SOSAlert::where('booking_id', $bookingId)
+                ->where('status', 'active')
+                ->latest('triggered_at')
+                ->first();
+            if (!$latestActive) {
+                return false;
+            }
+
+            $alertId = $latestActive->id;
+            $runnerId = $booking->runner_id;
+
+            SOSAlert::where('booking_id', $bookingId)
+                ->where('status', 'active')
+                ->update([
+                    'status' => 'resolved',
+                    'resolved_at' => now(),
+                ]);
+
+            $booking->update(['sos_triggered' => false]);
+
+            return true;
+        });
+
+        if (!$resolved) {
             return;
         }
 
-        $alert->update([
-            'status' => 'resolved',
-            'resolved_at' => now(),
-        ]);
-
-        Booking::where('id', $bookingId)->update(['sos_triggered' => false]);
-
         // Tell the runner the emergency was resolved, live over their
-        // `notifications.{userId}` Reverb channel (replaces the old realtime
-        // table insert). Broadcast-only — no device push.
-        $runnerId = Booking::where('id', $bookingId)->value('runner_id');
+        // `notifications.{userId}` Reverb channel. AFTER commit — a broadcast
+        // must not fire on a not-yet-committed resolve. Broadcast-only, no push.
         if ($runnerId) {
             $this->notificationService->notifyInApp(
                 $runnerId,
@@ -112,7 +158,7 @@ class SOSService
                 [
                     'type' => 'sos',
                     'booking_id' => $bookingId,
-                    'alert_id' => $alert->id,
+                    'alert_id' => $alertId,
                     'status' => 'resolved',
                 ],
             );

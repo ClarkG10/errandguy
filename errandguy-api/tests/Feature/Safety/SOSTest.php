@@ -102,6 +102,55 @@ class SOSTest extends TestCase
         $this->assertNotNull($alert->resolved_at);
     }
 
+    public function test_triggering_sos_twice_returns_the_same_alert_without_duplicating(): void
+    {
+        // The customer AND the runner both hit the panic button — different
+        // users, so the per-user throttle does not serialize them. The second
+        // trigger must return the first's active alert, never stack a duplicate.
+        $svc = app(\App\Services\SOSService::class);
+
+        $first = $svc->triggerSOS($this->booking->id, $this->customer->id, 'customer');
+        $second = $svc->triggerSOS($this->booking->id, $this->runner->id, 'runner');
+
+        $this->assertSame($first->id, $second->id);
+        $this->assertSame(
+            1,
+            SOSAlert::where('booking_id', $this->booking->id)->where('status', 'active')->count(),
+        );
+    }
+
+    public function test_deactivate_resolves_every_active_alert_not_just_the_latest(): void
+    {
+        // Simulate a race that already produced TWO active alerts for one booking
+        // (the exact state the lock now prevents). Deactivate must resolve BOTH,
+        // or the older one is orphaned — left active in getActiveSOS() while the
+        // booking's sos_triggered flag is cleared.
+        foreach (['sos-tok-1', 'sos-tok-2'] as $i => $token) {
+            SOSAlert::create([
+                'booking_id' => $this->booking->id,
+                'customer_id' => $this->customer->id,
+                'runner_id' => $this->runner->id,
+                'triggered_at' => now()->addSeconds($i),
+                'status' => 'active',
+                'live_link_token' => $token,
+                'live_link_expires_at' => now()->addHour(),
+            ]);
+        }
+        $this->booking->update(['sos_triggered' => true]);
+        $this->assertSame(2, SOSAlert::where('booking_id', $this->booking->id)->where('status', 'active')->count());
+
+        app(\App\Services\SOSService::class)->deactivateSOS($this->booking->id);
+
+        $this->assertSame(
+            0,
+            SOSAlert::where('booking_id', $this->booking->id)->where('status', 'active')->count(),
+            'every active alert for the booking must be resolved, not just the latest',
+        );
+        $this->assertFalse((bool) $this->booking->fresh()->sos_triggered);
+        // getActiveSOS() (the ops console feed) must show no orphan.
+        $this->assertCount(0, app(\App\Services\SOSService::class)->getActiveSOS());
+    }
+
     public function test_non_owner_cannot_trigger_sos(): void
     {
         $other = User::factory()->create(['role' => 'customer', 'status' => 'active']);
