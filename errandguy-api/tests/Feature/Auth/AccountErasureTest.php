@@ -129,6 +129,30 @@ class AccountErasureTest extends TestCase
         $this->assertSame(0, $deleted->tokens()->count());
     }
 
+    public function test_account_deletion_removes_private_kyc_documents_from_the_kyc_disk(): void
+    {
+        // New KYC docs live on the private 'kyc' disk (file_path, no public
+        // file_url). Erasure must delete them there too, or a deleted runner's
+        // government ID is left behind — a data-retention regression.
+        Storage::fake('kyc');
+        $user = User::factory()->create(['role' => 'runner', 'status' => 'active', 'wallet_balance' => 0]);
+        $profile = RunnerProfile::create([
+            'user_id' => $user->id, 'verification_status' => 'approved', 'preferred_types' => [],
+        ]);
+        $path = 'runner-documents/'.$user->id.'/government_id/secret.jpg';
+        Storage::disk('kyc')->put($path, 'gov-id-bytes');
+        $doc = RunnerDocument::create([
+            'runner_id' => $profile->id, 'document_type' => 'government_id',
+            'file_path' => $path, 'file_url' => null, 'status' => 'approved',
+        ]);
+        Storage::disk('kyc')->assertExists($path);
+
+        $this->actingAs($user)->deleteJson('/api/v1/user/account')->assertOk();
+
+        $this->assertDatabaseMissing('runner_documents', ['id' => $doc->id]);
+        Storage::disk('kyc')->assertMissing($path);
+    }
+
     public function test_deletion_blocked_with_unpaid_wallet_balance(): void
     {
         // Guard still holds — nothing is erased if the runner has funds.

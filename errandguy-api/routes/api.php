@@ -158,6 +158,9 @@ Route::prefix('v1')->group(function () {
             Route::get('/profile', [RunnerProfileController::class, 'show']);
             Route::put('/profile', [RunnerProfileController::class, 'update']);
             Route::post('/documents', [RunnerDocumentController::class, 'store']);
+            // A runner streams their OWN KYC document (private kyc disk, owner-gated).
+            Route::get('/documents/{document}/file', [\App\Http\Controllers\RunnerDocumentFileController::class, 'ownerShow'])
+                ->name('runner.documents.file');
             Route::put('/online', [RunnerOnlineController::class, 'toggle']);
             Route::post('/location', [RunnerLocationController::class, 'store'])->middleware('throttle:120,1');
 

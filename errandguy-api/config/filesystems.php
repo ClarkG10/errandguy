@@ -47,6 +47,19 @@ return [
             'report' => false,
         ],
 
+        // Private disk for KYC / identity documents (runner IDs). Unlike 'public'
+        // it is NOT symlinked into the webroot — files are streamed ONLY through
+        // the authenticated + authorized runner-document routes. Local on Forge
+        // today; point KYC_FILESYSTEM_DRIVER at a private S3 bucket later without
+        // touching call sites. (audit: KYC docs were on the public disk)
+        'kyc' => [
+            'driver' => env('KYC_FILESYSTEM_DRIVER', 'local'),
+            'root' => storage_path('app/kyc'),
+            'visibility' => 'private',
+            'throw' => false,
+            'report' => false,
+        ],
+
         's3' => [
             'driver' => 's3',
             'key' => env('AWS_ACCESS_KEY_ID'),

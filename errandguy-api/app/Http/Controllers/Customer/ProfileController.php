@@ -159,10 +159,16 @@ class ProfileController extends Controller
         // not transactional, so doing them only once the rows are gone avoids
         // orphaning a live account's files should the transaction roll back.
         $filesToDelete = [];
+        $kycFilesToDelete = [];
         $profile = $user->runnerProfile;
         if ($profile) {
             foreach ($profile->documents as $doc) {
-                if ($doc->file_url) {
+                // KYC docs now live on the private kyc disk (file_path); legacy
+                // rows still carry a public file_url. Erase whichever applies so
+                // a deleted account never leaves an identity document behind.
+                if ($doc->file_path) {
+                    $kycFilesToDelete[] = $doc->file_path;
+                } elseif ($doc->file_url) {
                     $filesToDelete[] = $this->publicDiskPath($doc->file_url);
                 }
             }
@@ -232,6 +238,11 @@ class ProfileController extends Controller
         foreach ($filesToDelete as $path) {
             if ($path !== '' && $path !== null) {
                 Storage::disk('public')->delete($path);
+            }
+        }
+        foreach ($kycFilesToDelete as $path) {
+            if ($path !== '' && $path !== null) {
+                Storage::disk('kyc')->delete($path);
             }
         }
 

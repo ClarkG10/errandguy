@@ -34,8 +34,11 @@ class RunnerDocumentController extends Controller
             ->first();
 
         if ($existing && $existing->status === 'rejected') {
-            // Delete old file
-            if ($existing->file_url) {
+            // Delete the old file from wherever it lives — the private kyc disk
+            // (new) or, for a legacy row, the old public disk.
+            if ($existing->file_path) {
+                Storage::disk('kyc')->delete($existing->file_path);
+            } elseif ($existing->file_url) {
                 Storage::disk('public')->delete(
                     str_replace(Storage::disk('public')->url(''), '', $existing->file_url)
                 );
@@ -50,27 +53,26 @@ class RunnerDocumentController extends Controller
         // Upload file — use guessExtension() for MIME-based extension (not client-supplied)
         $timestamp = now()->format('YmdHis');
         $extension = $file->guessExtension() ?? $file->getClientOriginalExtension();
-        // Unguessable filename (SEC-1). The directory is keyed on the runner's
-        // user id — which a past customer may already know — and the document
-        // type (a tiny enum), and a bare timestamp is guessable; together that
-        // let the public-disk URL of a government ID be brute-forced. A 40-char
-        // CSPRNG token removes the enumeration vector. NOTE: the file still lives
-        // on the PUBLIC disk — fully closing SEC-1 means moving KYC docs to a
-        // private disk served via signed/authenticated URLs, which also requires
-        // switching the admin Filament + mobile display off the raw public URL
-        // (tracked separately).
+        // Unguessable filename: the directory is keyed on the runner's user id
+        // (a past customer may know it) + the document type (a tiny enum), so a
+        // 40-char CSPRNG token removes any enumeration vector.
         $filename = $timestamp . '_' . \Illuminate\Support\Str::random(40) . '.' . $extension;
+
+        // PRIVATE 'kyc' disk — a government ID must never be a web-served public
+        // URL. The file is retrievable only through the authorized admin/owner
+        // streaming routes (RunnerDocumentFileController); we persist the disk
+        // path, not a URL. (audit: KYC docs were on the public disk)
         $path = $file->storeAs(
             "runner-documents/{$request->user()->id}/{$documentType}",
             $filename,
-            'public'
+            'kyc'
         );
-        $fileUrl = Storage::disk('public')->url($path);
 
         $document = RunnerDocument::create([
             'runner_id' => $profile->id,
             'document_type' => $documentType,
-            'file_url' => $fileUrl,
+            'file_path' => $path,
+            'file_url' => null,
             'status' => 'pending',
         ]);
 

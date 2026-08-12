@@ -37,6 +37,9 @@ class RunnerVerificationController extends Controller
             ? RunnerDocument::where('runner_id', $profile->id)
                 ->orderByDesc('created_at')
                 ->get()
+                // Attach the authorized stream URL (the private KYC file is not a
+                // public URL). file_url stays for legacy rows. (audit KYC)
+                ->each(fn (RunnerDocument $d) => $d->download_url = $d->adminFileUrl())
             : collect();
 
         return response()->json(['data' => $documents]);

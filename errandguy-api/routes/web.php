@@ -1,10 +1,24 @@
 <?php
 
+use App\Http\Controllers\RunnerDocumentFileController;
 use Illuminate\Support\Facades\Route;
 
 Route::get('/', function () {
     return view('welcome');
 });
+
+/*
+| KYC document viewer for the admin panel.
+|
+| A WEB route (session), NOT the sanctum admin API, so the Filament panel's
+| <img>/link loads authorize via the admin session cookie. The path sits OUTSIDE
+| the Filament `/admin` prefix to avoid its route catch-all; the admin-guard
+| check lives in the controller (a 403 for anon, never a login redirect on an
+| image request). Files are streamed from the private kyc disk. (audit KYC)
+*/
+Route::middleware('web')
+    ->get('/internal/runner-documents/{document}/file', [RunnerDocumentFileController::class, 'adminShow'])
+    ->name('admin.runner-documents.file');
 
 /*
 | Payment return bridge.

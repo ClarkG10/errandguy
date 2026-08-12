@@ -17,6 +17,7 @@ class RunnerDocument extends Model
     protected $fillable = [
         'runner_id',
         'document_type',
+        'file_path',
         'file_url',
         'status',
         'rejection_reason',
@@ -35,6 +36,25 @@ class RunnerDocument extends Model
     public function runnerProfile(): BelongsTo
     {
         return $this->belongsTo(RunnerProfile::class, 'runner_id');
+    }
+
+    /**
+     * Is there a retrievable file — either the private-disk path (new) or a
+     * legacy public URL (pre-migration)?
+     */
+    public function hasFile(): bool
+    {
+        return filled($this->file_path) || filled($this->file_url);
+    }
+
+    /**
+     * URL the Filament admin panel uses to view this KYC document. Points at the
+     * session-guarded streaming route (never the raw private path / public URL),
+     * so the browser's admin session cookie authorizes the load.
+     */
+    public function adminFileUrl(): ?string
+    {
+        return $this->hasFile() ? route('admin.runner-documents.file', $this) : null;
     }
 
     public function scopePending($query)

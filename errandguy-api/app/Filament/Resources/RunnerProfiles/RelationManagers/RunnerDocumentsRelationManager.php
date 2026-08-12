@@ -57,7 +57,8 @@ class RunnerDocumentsRelationManager extends RelationManager
                     ->label('Document')
                     ->formatStateUsing(fn (string $state): string => ucwords(str_replace('_', ' ', $state)))
                     ->weight('semibold'),
-                ImageColumn::make('file_url')->label('File')->height(48)->square(),
+                ImageColumn::make('file')->label('File')->height(48)->square()
+                    ->state(fn (RunnerDocument $record): ?string => $record->adminFileUrl()),
                 TextColumn::make('status')->badge()->color(fn (string $s): string => match ($s) {
                     'approved' => 'success',
                     'rejected' => 'danger',
@@ -70,9 +71,9 @@ class RunnerDocumentsRelationManager extends RelationManager
                 Action::make('view_file')
                     ->label('View')
                     ->icon(Heroicon::OutlinedEye)
-                    ->url(fn (RunnerDocument $record): ?string => $record->file_url)
+                    ->url(fn (RunnerDocument $record): ?string => $record->adminFileUrl())
                     ->openUrlInNewTab()
-                    ->visible(fn (RunnerDocument $record): bool => filled($record->file_url)),
+                    ->visible(fn (RunnerDocument $record): bool => $record->hasFile()),
 
                 Action::make('approve_doc')
                     ->label('Approve')
