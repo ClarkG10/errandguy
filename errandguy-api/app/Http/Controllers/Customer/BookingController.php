@@ -151,6 +151,7 @@ class BookingController extends Controller
         // Handle promo code
         $promoDiscount = 0;
         $promoCodeId = null;
+        $perUserLimit = null;
         if (!empty($validated['promo_code'])) {
             try {
                 $promo = $this->promoService->validate(
@@ -160,6 +161,7 @@ class BookingController extends Controller
                 );
                 $promoDiscount = $promo['discount'];
                 $promoCodeId = $promo['id'];
+                $perUserLimit = $promo['per_user_limit'] !== null ? (int) $promo['per_user_limit'] : null;
             } catch (\InvalidArgumentException $e) {
                 // PromoService throws curated, user-facing copy (invalid/expired/
                 // not-eligible) — keep it, tagged with a machine code.
@@ -198,7 +200,7 @@ class BookingController extends Controller
         // Generate ride PIN for transportation
         $ridePin = $isTransportation ? str_pad((string) random_int(0, 9999), 4, '0', STR_PAD_LEFT) : null;
 
-        $booking = Booking::create([
+        $bookingData = [
             'booking_number' => $bookingNumber,
             'customer_id' => $user->id,
             'errand_type_id' => $validated['errand_type_id'],
@@ -245,7 +247,28 @@ class BookingController extends Controller
             'promo_code_id' => $promoCodeId,
             'ride_pin' => $ridePin,
             'is_transportation' => $isTransportation,
-        ]);
+        ];
+
+        // Race-safe per-user promo limit. validate() above checked the per-user
+        // cap with a plain count (a check-then-create TOCTOU: two concurrent
+        // bookings by one user could both pass and both take the discount).
+        // Serialize the re-count + the insert under a per-(user,promo) lock so
+        // the second waits, re-counts, and is rejected. On a race loss no booking
+        // is created, so there is nothing to clean up. (audit promo TOCTOU)
+        try {
+            $booking = DB::transaction(function () use ($bookingData, $promoCodeId, $perUserLimit, $user) {
+                if ($promoCodeId !== null && $perUserLimit !== null) {
+                    $this->promoService->assertUserSlotAvailable($promoCodeId, $user->id, $perUserLimit);
+                }
+
+                return Booking::create($bookingData);
+            });
+        } catch (\App\Exceptions\PromoUserLimitReachedException $e) {
+            return $this->fail(
+                ErrorCode::PROMO_INVALID,
+                'You have already used this promo code the maximum number of times.',
+            );
+        }
 
         // Persist multi-stop destinations (1-based order after the primary
         // dropoff). Priced above via extraStops; stored here with their full

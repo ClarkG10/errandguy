@@ -2,10 +2,12 @@
 
 namespace App\Services;
 
+use App\Exceptions\PromoUserLimitReachedException;
 use App\Models\Booking;
 use App\Models\PromoCode;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Str;
 
 class PromoService
 {
@@ -65,7 +67,58 @@ class PromoService
             'discount_value' => (float) $promo->discount_value,
             'max_discount' => (float) $promo->max_discount,
             'discount' => $discount,
+            'per_user_limit' => $promo->per_user_limit,
         ];
+    }
+
+    /**
+     * Race-safe per-user limit enforcement. validate() checks the per-user cap
+     * with a plain COUNT (a check-then-create TOCTOU: two concurrent bookings by
+     * one user both read count < limit and both take the discount). This
+     * serializes concurrent redemptions of THE SAME promo by THE SAME user on a
+     * per-(user,promo) anchor row, then re-counts under that lock and throws if
+     * the user is already at their limit.
+     *
+     * MUST be called INSIDE the transaction that also creates the booking, so the
+     * FOR UPDATE lock is held until the booking is committed — that is what makes
+     * a second, concurrent caller wait, then re-count and SEE the first booking.
+     * The anchor carries no counter; the cap stays "non-cancelled bookings with
+     * this promo", which self-corrects on cancellation (no drift to maintain).
+     */
+    public function assertUserSlotAvailable(string $promoCodeId, string $userId, int $perUserLimit): void
+    {
+        // Materialise the anchor row (idempotent, race-safe via the unique index).
+        DB::table('promo_user_redemptions')->insertOrIgnore([
+            'id' => (string) Str::uuid(),
+            'user_id' => $userId,
+            'promo_code_id' => $promoCodeId,
+            'created_at' => now(),
+        ]);
+
+        // Serialize on it: a concurrent caller for the same (user, promo) blocks
+        // here until we commit.
+        DB::table('promo_user_redemptions')
+            ->where('user_id', $userId)
+            ->where('promo_code_id', $promoCodeId)
+            ->lockForUpdate()
+            ->first();
+
+        // INVARIANT (correctness depends on it): this COUNT must be the FIRST
+        // consistent read in the enclosing transaction. InnoDB (REPEATABLE READ)
+        // pins the snapshot at the first consistent read; the insertOrIgnore
+        // (write) and the FOR UPDATE (locking/current read) above do NOT pin it,
+        // so this COUNT runs only AFTER the FOR UPDATE unblocks (i.e. after a
+        // competing booking committed) and therefore SEES it. Do NOT add a plain
+        // SELECT earlier in this method OR in the caller's transaction before
+        // this point, or the snapshot pins early and the per-user race reopens.
+        $used = Booking::where('customer_id', $userId)
+            ->where('promo_code_id', $promoCodeId)
+            ->whereNotIn('status', ['cancelled'])
+            ->count();
+
+        if ($used >= $perUserLimit) {
+            throw new PromoUserLimitReachedException();
+        }
     }
 
     /**
