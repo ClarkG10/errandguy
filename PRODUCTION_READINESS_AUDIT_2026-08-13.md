@@ -100,7 +100,7 @@ Backend: clean schema (decimal money, FK/unique coverage, cast JSON), a self-mai
 ### 🔴 Critical
 | # | Gap | Root cause | Fix |
 |---|---|---|---|
-| C1 | **No observability** — no error tracking/APM; Telescope is `require-dev`, deploy `--no-dev`. A prod 500 pages no one. | Telemetry never leaves the box. | `sentry/sentry-laravel` + `@sentry/react-native`; route `critical` logs to Slack. |
+| C1 | **No observability** — no error tracking/APM; Telescope is `require-dev`, deploy `--no-dev`. A prod 500 pages no one. | Telemetry never leaves the box. | **[BACKEND WIRED — inert until DSN set (commit 77d2e23): `sentry/sentry-laravel`, PII-safe (no body/cookies/IP, before_send scrubber), exceptions via `Integration::handles()`. TO ACTIVATE: paste `SENTRY_LARAVEL_DSN` in prod .env — no deploy needed.]** REMAINING: `@sentry/react-native` (needs native rebuild); route `critical` logs to Slack. |
 | C2 | **Mobile release-blocker** — `eas.json` prod env has `EXPO_PUBLIC_REVERB_KEY:"REPLACE_..."` + possibly wrong API host. | Un-swapped production config. | Set the real Reverb key + verified API URL; CI assert no env value contains `REPLACE_`. |
 | C3 | **No backup before `migrate --force`** (deploy). | Irreversible step, no pre-migrate snapshot. | **[FIXED: `errandguy:backup-database` now runs before migrate in `deploy.sh`]**; set `DB_BACKUP_DISK=s3`. |
 | C4 | **Raw phone-number exposure** on the call button. | Masked calling unshipped. | Masked DID; interim, hide the raw number. |
@@ -133,7 +133,7 @@ No DB CHECK constraints on money · a few actor columns lack a `users` FK · sch
 
 ### Quick Wins (days) — *the starred items shipped this session*
 - ⭐ Pre-migrate backup in `deploy.sh` (C3) · ⭐ deep `/health` (H11) · ⭐ dispute-count fix (H4) · ⭐ 8h admin tokens · ⭐ wallet `gateway_ref` hidden · ⭐ 12s Xendit timeout.
-- **Wire Sentry** (backend + mobile) + route critical logs to Slack (C1) — *highest ROI remaining*.
+- **Wire Sentry** — *backend DONE (77d2e23, inert; activate by pasting the DSN)*; REMAINING: mobile `@sentry/react-native` + route critical logs to Slack (C1).
 - **Fix `eas.json` prod env** (C2) + CI `REPLACE_` assert.
 - `DB_BACKUP_DISK=s3`; make the prod-config check gate the deploy; select the `failover` cache store (H9); `queue:monitor` alert (H10); Xendit `->retry()`.
 - OTP resend 30–60s (H7); relax login validation; surface referral failure; fix the Dynamic-Type lock + copy (H5).
