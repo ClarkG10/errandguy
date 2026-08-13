@@ -95,6 +95,14 @@ return Application::configure(basePath: dirname(__DIR__))
         // dedicated class so this bootstrap file stays scannable and the mapping
         // is unit-testable. Web (Filament) responses are untouched.
         \App\Exceptions\ApiExceptionRenderer::register($exceptions);
+
+        // Ship unhandled exceptions to Sentry. This is a NO-OP until
+        // SENTRY_LARAVEL_DSN is set (no client, no network) — safe to deploy
+        // inert and switch on later. Registered after our reportable logger so
+        // both fire; Sentry still honours the framework's dontReport list, and
+        // config/sentry.php (send_default_pii=false + before_send scrubber)
+        // governs what actually leaves the process.
+        \Sentry\Laravel\Integration::handles($exceptions);
     })
     ->booting(function () {
         RateLimiter::for('api', function (Request $request) {
