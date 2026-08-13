@@ -60,6 +60,20 @@ return [
             'report' => false,
         ],
 
+        // Private disk for booking-scoped media (chat images, runner completion
+        // proofs incl. RECEIPT photos, customer item photos). Like 'kyc' it is
+        // NOT web-served — files are streamed only through the participant-gated
+        // route (BookingMediaController), since receipt photos reveal purchases
+        // and chat images are arbitrary user content. Local on Forge today; set
+        // MEDIA_FILESYSTEM_DRIVER=s3 for off-site. (audit: booking media was public)
+        'media' => [
+            'driver' => env('MEDIA_FILESYSTEM_DRIVER', 'local'),
+            'root' => storage_path('app/media'),
+            'visibility' => 'private',
+            'throw' => false,
+            'report' => false,
+        ],
+
         's3' => [
             'driver' => 's3',
             'key' => env('AWS_ACCESS_KEY_ID'),

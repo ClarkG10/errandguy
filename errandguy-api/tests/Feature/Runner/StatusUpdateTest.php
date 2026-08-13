@@ -86,7 +86,7 @@ class StatusUpdateTest extends TestCase
     public function test_valid_status_progression(): void
     {
         Event::fake();
-        Storage::fake('public');
+        Storage::fake('media'); // completion photos now land on the private media disk
 
         $statuses = [
             'heading_to_pickup' => [],
@@ -147,7 +147,7 @@ class StatusUpdateTest extends TestCase
     private function completeBooking(): void
     {
         Event::fake();
-        Storage::fake('public');
+        Storage::fake('media'); // completion photos now land on the private media disk
 
         $statuses = [
             'heading_to_pickup', 'arrived_at_pickup',

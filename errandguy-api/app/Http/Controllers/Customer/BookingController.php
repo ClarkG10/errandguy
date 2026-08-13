@@ -290,8 +290,11 @@ class BookingController extends Controller
         if ($request->hasFile('item_photos')) {
             $photos = [];
             foreach ($request->file('item_photos') as $photo) {
-                $path = $photo->store('booking-photos/' . $booking->id, 'public');
-                $photos[] = \Illuminate\Support\Facades\Storage::disk('public')->url($path);
+                // PRIVATE media disk + participant-gated URL (was public). (audit)
+                $photos[] = \App\Http\Controllers\BookingMediaController::storeAndUrl(
+                    $photo,
+                    'booking-photos/'.$booking->id,
+                );
             }
             $booking->update(['item_photos' => $photos]);
         }

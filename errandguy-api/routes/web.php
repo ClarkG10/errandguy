@@ -1,5 +1,6 @@
 <?php
 
+use App\Http\Controllers\BookingMediaController;
 use App\Http\Controllers\HealthController;
 use App\Http\Controllers\RunnerDocumentFileController;
 use Illuminate\Support\Facades\Route;
@@ -11,6 +12,15 @@ Route::get('/', function () {
 // Deep health probe (DB + cache/Redis) for uptime monitoring — unlike the
 // framework default '/up', it goes RED on a real dependency outage. (audit DR)
 Route::get('/health', HealthController::class)->name('health');
+
+// Booking media (chat images, completion/receipt photos, item photos) streamed
+// from the PRIVATE media disk, authorized to a booking participant (sanctum
+// bearer) or an admin (session). 'web' middleware gives the admin session; the
+// sanctum bearer is resolved inside the controller. (audit: booking media was public)
+Route::middleware('web')
+    ->get('/internal/media/{path}', [BookingMediaController::class, 'show'])
+    ->where('path', '.*')
+    ->name('booking.media');
 
 /*
 | KYC document viewer for the admin panel.

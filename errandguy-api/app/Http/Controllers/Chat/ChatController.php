@@ -11,7 +11,6 @@ use App\Models\Message;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
-use Illuminate\Support\Facades\Storage;
 
 class ChatController extends Controller
 {
@@ -127,11 +126,13 @@ class ChatController extends Controller
         // image_url path stays for system-issued or pre-hosted images.
         $imageUrl = $validated['image_url'] ?? null;
         if ($request->hasFile('image')) {
-            $path = $request->file('image')->store(
-                'chat-images/' . $bookingId,
-                'public'
+            // PRIVATE media disk + participant-gated URL (was the public disk):
+            // chat images are arbitrary user content and must not be fetchable by
+            // URL alone. (audit: booking media was public)
+            $imageUrl = \App\Http\Controllers\BookingMediaController::storeAndUrl(
+                $request->file('image'),
+                'chat-images/'.$bookingId,
             );
-            $imageUrl = Storage::disk('public')->url($path);
         }
 
         $message = Message::create([

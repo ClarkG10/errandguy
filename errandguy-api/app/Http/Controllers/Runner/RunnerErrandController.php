@@ -17,7 +17,6 @@ use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
-use Illuminate\Support\Facades\Storage;
 
 class RunnerErrandController extends Controller
 {
@@ -374,22 +373,23 @@ class RunnerErrandController extends Controller
 
         // Handle photo uploads per status
         if ($newStatus === 'picked_up' && $request->hasFile('pickup_photo')) {
-            $path = $request->file('pickup_photo')->store(
+            // PRIVATE media disk + participant-gated URL (was public). (audit)
+            $updateData['pickup_photo_url'] = \App\Http\Controllers\BookingMediaController::storeAndUrl(
+                $request->file('pickup_photo'),
                 "booking-photos/{$booking->id}",
-                'public'
             );
-            $updateData['pickup_photo_url'] = Storage::disk('public')->url($path);
             $updateData['picked_up_at'] = now();
         }
 
         // Receipt + actual cost reconciliation for shopping errands
         // (food / grocery / purchase / bills_payment).
         if ($newStatus === 'picked_up' && $request->hasFile('receipt_photo')) {
-            $path = $request->file('receipt_photo')->store(
+            // PRIVATE media disk — a receipt reveals what/where the customer
+            // purchased and must not be a public URL. (audit)
+            $updateData['receipt_photo_url'] = \App\Http\Controllers\BookingMediaController::storeAndUrl(
+                $request->file('receipt_photo'),
                 "booking-photos/{$booking->id}",
-                'public'
             );
-            $updateData['receipt_photo_url'] = Storage::disk('public')->url($path);
         }
         if ($newStatus === 'picked_up' && $request->filled('actual_item_cost')) {
             $updateData['actual_item_cost'] = $validated['actual_item_cost'];
@@ -407,19 +407,19 @@ class RunnerErrandController extends Controller
         }
 
         if ($newStatus === 'delivered' && $request->hasFile('delivery_photo')) {
-            $path = $request->file('delivery_photo')->store(
+            // PRIVATE media disk + participant-gated URL (was public). (audit)
+            $updateData['delivery_photo_url'] = \App\Http\Controllers\BookingMediaController::storeAndUrl(
+                $request->file('delivery_photo'),
                 "booking-photos/{$booking->id}",
-                'public'
             );
-            $updateData['delivery_photo_url'] = Storage::disk('public')->url($path);
         }
 
         if ($newStatus === 'completed' && $request->hasFile('signature')) {
-            $path = $request->file('signature')->store(
+            // PRIVATE media disk + participant-gated URL (was public). (audit)
+            $updateData['signature_url'] = \App\Http\Controllers\BookingMediaController::storeAndUrl(
+                $request->file('signature'),
                 "booking-photos/{$booking->id}",
-                'public'
             );
-            $updateData['signature_url'] = Storage::disk('public')->url($path);
         }
         // Always stamp completed_at on completion — single-location and transportation
         // errands finish without a signature, so the timestamp must not depend on the upload.
