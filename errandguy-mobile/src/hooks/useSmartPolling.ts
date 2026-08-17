@@ -58,6 +58,13 @@ export function useSmartPolling(
     if (!enabled || gatedOffline) return;
 
     let cancelled = false;
+    // Track foreground state so a reschedule can't re-arm while backgrounded.
+    // clear() alone doesn't cover the case where the app backgrounds WHILE a
+    // tick() is in-flight: at that instant there's no scheduled timer to clear,
+    // and the tick's finally would otherwise re-arm — looping in the background
+    // for the whole session (battery/cellular drain), violating this hook's
+    // "pauses while the app is backgrounded" contract.
+    let foreground = AppState.currentState === 'active';
     let timer: ReturnType<typeof setTimeout> | null = null;
     let currentDelay = interval;
     let running = false;
@@ -70,12 +77,12 @@ export function useSmartPolling(
     };
 
     const schedule = (delay: number) => {
-      if (cancelled) return;
+      if (cancelled || !foreground) return;
       timer = setTimeout(tick, delay);
     };
 
     const tick = async () => {
-      if (cancelled || running) return;
+      if (cancelled || running || !foreground) return;
       running = true;
       try {
         await cbRef.current();
@@ -100,10 +107,14 @@ export function useSmartPolling(
       if (next === 'active') {
         // Resume: reset cadence + tick immediately so the screen shows fresh
         // data the moment the user comes back.
+        foreground = true;
         clear();
         currentDelay = interval;
         tick();
       } else {
+        // Backgrounded: stop scheduling. Guards the in-flight-tick case where
+        // there's no timer to clear but the tick's finally would re-arm.
+        foreground = false;
         clear();
       }
     });
