@@ -52,7 +52,7 @@ export const supportService = {
       params,
       cacheTtlMs: 5000,
       silent: true,
-    } as any);
+    });
   },
 
   /** POST /support/tickets — open a ticket + its first message. */
@@ -85,7 +85,7 @@ export const supportService = {
         limit: opts?.limit,
       },
       silent: true,
-    } as any);
+    });
   },
 
   /** POST /support/tickets/{id}/messages — append a reply. */

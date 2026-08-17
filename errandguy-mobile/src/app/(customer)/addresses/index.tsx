@@ -235,7 +235,7 @@ export default function AddressesScreen() {
       commit: () =>
         isEdit
           ? userService.updateAddress(editId as string, fields)
-          : userService.addAddress({ ...fields, is_default: false, created_at: new Date().toISOString() } as any),
+          : userService.addAddress({ ...fields, is_default: false, created_at: new Date().toISOString() }),
       invalidate: [['user', 'addresses', userId]],
       errorMessage: copy.address.saveFailed,
       retry: true,
@@ -326,7 +326,7 @@ export default function AddressesScreen() {
         lng: removed.lng,
         is_default: false,
         created_at: new Date().toISOString(),
-      } as any);
+      });
       await addressesQ.refresh();
     } catch {
       toast.error('Couldn’t restore address');

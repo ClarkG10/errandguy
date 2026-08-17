@@ -10,12 +10,12 @@ const invalidatePaymentMethods = () => {
 
 export const paymentService = {
   getPaymentMethods() {
-    return api.get('/payments/methods', { cacheTtlMs: 30_000, silent: true } as any);
+    return api.get('/payments/methods', { cacheTtlMs: 30_000, silent: true });
   },
 
   // Platform-offered methods (operator-managed). The selector shows only these.
   getAvailableMethods() {
-    return api.get('/payments/available-methods', { cacheTtlMs: 60_000, silent: true } as any);
+    return api.get('/payments/available-methods', { cacheTtlMs: 60_000, silent: true });
   },
 
   addPaymentMethod(data: {
@@ -50,7 +50,7 @@ export const paymentService = {
   },
 
   getWalletBalance() {
-    return api.get('/wallet/balance', { cacheTtlMs: 15_000, silent: true } as any);
+    return api.get('/wallet/balance', { cacheTtlMs: 15_000, silent: true });
   },
 
   // payment_method_id is optional — the Xendit hosted invoice lets the
@@ -63,7 +63,7 @@ export const paymentService = {
     data: { amount: number; method?: 'gcash' | 'maya' | 'card'; payment_method_id?: string },
     opts?: { idempotencyKey?: string },
   ) {
-    const p = api.post('/wallet/top-up', data, { idempotencyKey: opts?.idempotencyKey } as any);
+    const p = api.post('/wallet/top-up', data, { idempotencyKey: opts?.idempotencyKey });
     p.then(invalidateWallet).catch(() => {});
     return p;
   },
@@ -77,7 +77,7 @@ export const paymentService = {
       noCache: true,
       noDedupe: true,
       silent: true,
-    } as any);
+    });
   },
 
   // Same, addressed by booking id (deep-link return may only know the booking).
@@ -86,7 +86,7 @@ export const paymentService = {
       noCache: true,
       noDedupe: true,
       silent: true,
-    } as any);
+    });
   },
 
   // Status probe for a single wallet top-up.
@@ -95,7 +95,7 @@ export const paymentService = {
       noCache: true,
       noDedupe: true,
       silent: true,
-    } as any);
+    });
   },
 
   // Server-side filters (WalletController::transactions): `type` narrows to
@@ -108,14 +108,14 @@ export const paymentService = {
     date_from?: string;
     date_to?: string;
   }) {
-    return api.get('/wallet/transactions', { params, cacheTtlMs: 15_000, silent: true } as any);
+    return api.get('/wallet/transactions', { params, cacheTtlMs: 15_000, silent: true });
   },
 
   getPaymentHistory(params?: { page?: number; per_page?: number }) {
-    return api.get('/payments/history', { params, cacheTtlMs: 15_000 } as any);
+    return api.get('/payments/history', { params, cacheTtlMs: 15_000 });
   },
 
   getReceipt(id: string) {
-    return api.get(`/payments/${id}/receipt`, { cacheTtlMs: 60_000 } as any);
+    return api.get(`/payments/${id}/receipt`, { cacheTtlMs: 60_000 });
   },
 };

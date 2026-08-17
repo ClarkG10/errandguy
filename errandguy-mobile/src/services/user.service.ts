@@ -27,7 +27,7 @@ export const userService = {
     // Callers may pass an AbortSignal via `config.signal` (e.g. the
     // session-validation effect on the root layout) to cancel pending
     // requests on unmount.
-    return api.get('/user/profile', { cacheTtlMs: 30_000, ...(config ?? {}) } as any);
+    return api.get('/user/profile', { cacheTtlMs: 30_000, ...(config ?? {}) });
   },
 
   updateProfile(data: {
@@ -67,7 +67,7 @@ export const userService = {
   },
 
   getAddresses() {
-    return api.get('/user/addresses', { cacheTtlMs: 60_000, silent: true } as any);
+    return api.get('/user/addresses', { cacheTtlMs: 60_000, silent: true });
   },
 
   addAddress(data: Omit<SavedAddress, 'id' | 'user_id'>) {
@@ -89,7 +89,7 @@ export const userService = {
   },
 
   getTrustedContacts() {
-    return api.get('/user/trusted-contacts', { cacheTtlMs: 60_000, silent: true } as any);
+    return api.get('/user/trusted-contacts', { cacheTtlMs: 60_000, silent: true });
   },
 
   addTrustedContact(data: Omit<TrustedContact, 'id' | 'user_id' | 'created_at' | 'updated_at'>) {
@@ -117,7 +117,7 @@ export const userService = {
   // GET /user/referral returns the caller's own code, a shareable link,
   // per-status counts of people they've referred, and total bonus earned.
   getReferral() {
-    return api.get('/user/referral', { cacheTtlMs: 30_000, silent: true } as any);
+    return api.get('/user/referral', { cacheTtlMs: 30_000, silent: true });
   },
 
   // POST /user/referral/apply — redeem someone else's code. Resolves 201

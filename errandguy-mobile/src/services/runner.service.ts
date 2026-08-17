@@ -12,7 +12,7 @@ const invalidateEarnings = () => invalidateQuery(['runner', 'earnings']);
 
 export const runnerService = {
   getRunnerProfile() {
-    return api.get('/runner/profile', { cacheTtlMs: 30_000, silent: true } as any);
+    return api.get('/runner/profile', { cacheTtlMs: 30_000, silent: true });
   },
 
   updateRunnerProfile(data: {
@@ -63,7 +63,7 @@ export const runnerService = {
     // so those pings never reached the tracking screen. Sending the id
     // from the client closes the race for the common case (runner
     // already on an active errand).
-    return api.post('/runner/location', coords, { silent: true } as any);
+    return api.post('/runner/location', coords, { silent: true });
   },
 
   getCurrentErrand() {
@@ -71,7 +71,7 @@ export const runnerService = {
     // dashboard's foreground interval AND by useQuery's stale-time
     // refetch on focus. The user never explicitly asked for the
     // refresh, so it shouldn't blink the global progress bar.
-    return api.get('/runner/errand/current', { cacheTtlMs: 5_000, silent: true } as any);
+    return api.get('/runner/errand/current', { cacheTtlMs: 5_000, silent: true });
   },
 
   /**
@@ -84,7 +84,7 @@ export const runnerService = {
     // fallback. Initial mount also runs through here, but the screen
     // shows a TrackingSkeleton for first-load feedback so the global
     // bar would only add noise.
-    return api.get(`/runner/errand/${id}`, { cacheTtlMs: 4_000, silent: true } as any);
+    return api.get(`/runner/errand/${id}`, { cacheTtlMs: 4_000, silent: true });
   },
 
   acceptErrand(id: string) {
@@ -106,7 +106,7 @@ export const runnerService = {
   getAvailableErrands() {
     // Silent: dashboard polls this; loader bar would otherwise flash
     // every refresh tick.
-    return api.get('/runner/errand/available', { cacheTtlMs: 5_000, silent: true } as any);
+    return api.get('/runner/errand/available', { cacheTtlMs: 5_000, silent: true });
   },
 
   updateErrandStatus(id: string, status: string) {
@@ -263,11 +263,11 @@ export const runnerService = {
       params: { period: apiPeriod },
       cacheTtlMs: 15_000,
       silent: true,
-    } as any);
+    });
   },
 
   getEarningsHistory(params?: { page?: number; per_page?: number; date_from?: string; date_to?: string }) {
-    return api.get('/runner/earnings/history', { params, cacheTtlMs: 10_000, silent: true } as any);
+    return api.get('/runner/earnings/history', { params, cacheTtlMs: 10_000, silent: true });
   },
 
   getErrandHistory(params?: {
@@ -275,11 +275,11 @@ export const runnerService = {
     per_page?: number;
     status?: string;
   }) {
-    return api.get('/runner/errands/history', { params, cacheTtlMs: 10_000 } as any);
+    return api.get('/runner/errands/history', { params, cacheTtlMs: 10_000 });
   },
 
   requestPayout(amount: number, opts?: { idempotencyKey?: string }) {
-    const p = api.post('/runner/payout/request', { amount }, { idempotencyKey: opts?.idempotencyKey } as any);
+    const p = api.post('/runner/payout/request', { amount }, { idempotencyKey: opts?.idempotencyKey });
     p.then(() => {
       invalidateEarnings();
       invalidateQuery(['wallet']);
@@ -295,7 +295,7 @@ export const runnerService = {
     return api.get('/wallet/transactions', {
       params: { ...params, type: 'payout' },
       cacheTtlMs: 10_000,
-    } as any);
+    });
   },
 
   /**
@@ -322,7 +322,7 @@ export const runnerService = {
       params: { days },
       cacheTtlMs: 60_000,
       silent: true,
-    } as any);
+    });
   },
 
   /**
@@ -334,7 +334,7 @@ export const runnerService = {
       params: { days },
       cacheTtlMs: 60_000,
       silent: true,
-    } as any);
+    });
   },
 
   triggerSOS(bookingId: string) {

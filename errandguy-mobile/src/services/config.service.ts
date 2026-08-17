@@ -17,11 +17,11 @@ export const configService = {
     // Errand types change rarely \u2014 keep them in the in-memory cache for
     // 10 minutes so navigating between Home and Book doesn't re-fetch.
     // Silent so the SWR background revalidate doesn't flash the bar.
-    return api.get('/errand-types', { cacheTtlMs: 10 * 60 * 1000, silent: true } as any);
+    return api.get('/errand-types', { cacheTtlMs: 10 * 60 * 1000, silent: true });
   },
 
   getAppConfig() {
-    return api.get('/config/app', { cacheTtlMs: 10 * 60 * 1000, silent: true } as any);
+    return api.get('/config/app', { cacheTtlMs: 10 * 60 * 1000, silent: true });
   },
 
   validatePromo(code: string) {
@@ -32,7 +32,7 @@ export const configService = {
   // still redeem. Silent so the SWR background revalidate doesn't flash
   // the network bar.
   getPromos() {
-    return api.get('/promos', { cacheTtlMs: 60_000, silent: true } as any);
+    return api.get('/promos', { cacheTtlMs: 60_000, silent: true });
   },
 
   submitReport(data: {

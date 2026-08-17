@@ -74,7 +74,7 @@ export const bookingService = {
     // Silent: lists are revalidated in the background by useQuery and
     // by pull-to-refresh; the latter has its own RefreshControl
     // spinner, so the global API activity bar would just be noise.
-    return api.get('/bookings', { params, cacheTtlMs: 5000, silent: true } as any);
+    return api.get('/bookings', { params, cacheTtlMs: 5000, silent: true });
   },
 
   createBooking(data: {
@@ -118,7 +118,7 @@ export const bookingService = {
     // `shopping_items.*.{name,qty}` rules.
     shopping_items?: Array<{ name: string; qty?: number }>;
   }, opts?: { idempotencyKey?: string }) {
-    const p = api.post('/bookings', data, { idempotencyKey: opts?.idempotencyKey } as any);
+    const p = api.post('/bookings', data, { idempotencyKey: opts?.idempotencyKey });
     p.then(() => invalidateBookingsCaches()).catch(() => {});
     return p;
   },
@@ -129,7 +129,7 @@ export const bookingService = {
     // the global progress bar permanently visible during a live
     // errand. The user-perceived loading state is conveyed by the
     // tracking UI's own status pills, not by a top-of-screen blip.
-    return api.get(`/bookings/${id}`, { cacheTtlMs: 4000, silent: true } as any);
+    return api.get(`/bookings/${id}`, { cacheTtlMs: 4000, silent: true });
   },
 
   cancelBooking(id: string, reason?: string) {
@@ -159,7 +159,7 @@ export const bookingService = {
       params: opts?.onlyLocation ? { only: 'location' } : undefined,
       cacheTtlMs: 4000,
       silent: true,
-    } as any);
+    });
   },
 
   reviewBooking(id: string, data: { rating: number; comment?: string }) {
@@ -184,7 +184,7 @@ export const bookingService = {
   tipCheckout(id: string, amount: number, method: 'gcash' | 'maya' | 'card', opts?: { idempotencyKey?: string }) {
     const p = api.post(`/bookings/${id}/tip-checkout`, { amount, method }, {
       idempotencyKey: opts?.idempotencyKey,
-    } as any);
+    });
     p.then(() => invalidateBookingsCaches(id)).catch(() => {});
     return p;
   },
@@ -192,7 +192,7 @@ export const bookingService = {
   getActiveBooking() {
     // Silent: customer Home polls this on focus/foreground; the user
     // didn't explicitly ask for it.
-    return api.get('/bookings/active', { cacheTtlMs: 5000, silent: true } as any);
+    return api.get('/bookings/active', { cacheTtlMs: 5000, silent: true });
   },
 
   getEstimate(data: {

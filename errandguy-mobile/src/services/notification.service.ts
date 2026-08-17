@@ -13,11 +13,11 @@ export const notificationService = {
       params,
       silent: true,
       ...(isHeadPage ? { cacheTtlMs: 15_000 } : {}),
-    } as any);
+    });
   },
 
   getUnreadCount() {
-    return api.get('/notifications/unread-count', { cacheTtlMs: 15_000, silent: true } as any);
+    return api.get('/notifications/unread-count', { cacheTtlMs: 15_000, silent: true });
   },
 
   markAsRead(id: string) {

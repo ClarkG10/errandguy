@@ -4,6 +4,31 @@ import { apiActivity } from '../stores/apiActivityStore';
 import { network } from '../stores/networkStore';
 import { classifyError } from '../utils/classifyError';
 
+// Teach axios's own config type about this client's per-request options so
+// callers can pass them WITHOUT `as any`. These were previously bolted on via
+// the local `ExtraConfig` intersection (below), which the axios method
+// signatures don't accept — every call site had to cast `{ … } as any`,
+// erasing type-checking of the whole config (params, headers, and the payload
+// on the mutation overloads). Augmenting the interface restores that checking.
+declare module 'axios' {
+  interface AxiosRequestConfig {
+    /** Skip in-flight dedupe + micro-cache for this request. */
+    noDedupe?: boolean;
+    /** Skip the micro-cache for this request. */
+    noCache?: boolean;
+    /** Micro-cache TTL override (ms) for this GET. */
+    cacheTtlMs?: number;
+    /** Suppress the global API-activity spinner for this request. */
+    silent?: boolean;
+    /** Max automatic retries for a failed idempotent GET (default 2). */
+    retries?: number;
+    /** Idempotency-Key header for a money mutation (reused across retries). */
+    idempotencyKey?: string;
+    /** Opt OUT of conditional-GET (ETag/If-None-Match) revalidation. */
+    noConditional?: boolean;
+  }
+}
+
 const api = axios.create({
   baseURL: process.env.EXPO_PUBLIC_API_URL,
   timeout: 30000,
@@ -30,7 +55,7 @@ const api = axios.create({
  * cache entries that share their URL prefix to keep reads fresh after writes.
  *
  * Per-request opt-out: pass `{ noDedupe: true }` or `{ noCache: true }` in
- * the axios config (e.g., `api.get(url, { noDedupe: true } as any)`).
+ * the axios config (e.g., `api.get(url, { noDedupe: true })`).
  */
 type ExtraConfig = AxiosRequestConfig & {
   noDedupe?: boolean;

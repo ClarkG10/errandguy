@@ -873,7 +873,7 @@ export default function TaskDetailsScreen() {
           // claim default (the Save chip is gated on addressesLoaded anyway).
           is_default: addressesLoaded && savedAddresses.length === 0,
           created_at: new Date().toISOString(),
-        } as any);
+        });
         setLocallySavedKeys((prev) => [...prev, coordKey(lat, lng)]);
         Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
         toast.success(`Saved as ${trimmed}`);

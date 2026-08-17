@@ -217,7 +217,7 @@ export default function RegisterScreen() {
             lng: selectedAddress.center[0],
             is_default: true,
             created_at: new Date().toISOString(),
-          } as any)
+          })
           .catch(() => {});
       }
 

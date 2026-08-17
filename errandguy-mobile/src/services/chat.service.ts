@@ -68,7 +68,7 @@ export const chatService = {
       params: query,
       ...(isHeadPage && !noCache ? { cacheTtlMs: 10_000 } : {}),
       ...(noCache ? { noCache: true } : {}),
-    } as any);
+    });
   },
 
   sendMessage(bookingId: string, data: { content?: string; image_url?: string }) {
@@ -131,7 +131,7 @@ export const chatService = {
     // never asked for it, so it shouldn't trigger the loader bar.
     return api.get<{
       data: { total: number; by_booking: Record<string, number> };
-    }>('/chat/unread-count', { cacheTtlMs: 10_000, silent: true } as any);
+    }>('/chat/unread-count', { cacheTtlMs: 10_000, silent: true });
   },
 
   getConversations() {
@@ -140,6 +140,6 @@ export const chatService = {
     return api.get<{ data: Conversation[] }>('/chat/conversations', {
       cacheTtlMs: 15_000,
       silent: true,
-    } as any);
+    });
   },
 };
