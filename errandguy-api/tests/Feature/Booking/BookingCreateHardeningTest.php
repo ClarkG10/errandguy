@@ -126,6 +126,15 @@ class BookingCreateHardeningTest extends TestCase
             ->assertJsonPath('data.status', 'matched'); // was stale 'pending' before the refresh fix
     }
 
+    public function test_absurd_estimated_item_value_is_rejected_not_500(): void
+    {
+        // Above the decimal(10,2) column ceiling would 500 under strict MySQL;
+        // the max: rule turns it into a clean 422.
+        $this->actingAs($this->customer)
+            ->postJson('/api/v1/bookings', [...$this->validData, 'estimated_item_value' => 999999999999])
+            ->assertStatus(422);
+    }
+
     public function test_cors_allows_and_exposes_the_custom_api_headers(): void
     {
         $this->assertContains('Idempotency-Key', config('cors.allowed_headers'));

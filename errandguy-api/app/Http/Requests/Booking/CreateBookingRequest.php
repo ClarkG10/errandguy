@@ -85,7 +85,10 @@ class CreateBookingRequest extends FormRequest
             // Raster-only (no SVG) — see UpdateErrandStatusRequest: an SVG proof
             // photo is a stored-XSS vector when an admin opens it in the panel.
             'item_photos.*' => ['image', 'mimes:jpeg,jpg,png,webp', 'max:5120'],
-            'estimated_item_value' => ['nullable', 'numeric', 'min:0'],
+            // max caps at a generous ₱10M — a real errand never approaches it,
+            // but without it a value above the decimal(10,2) ceiling (₱99.99M)
+            // would 500 the caller's own request under strict-mode MySQL.
+            'estimated_item_value' => ['nullable', 'numeric', 'min:0', 'max:10000000'],
             // Shopping budget is required for food/grocery/purchase so the
             // runner has a spending cap before placing the order.
             'shopping_budget' => [
@@ -109,7 +112,7 @@ class CreateBookingRequest extends FormRequest
                 'nullable',
                 Rule::in(['walk', 'bicycle', 'motorcycle', 'car']),
             ],
-            'customer_offer' => ['required_if:pricing_mode,negotiate', 'nullable', 'numeric', 'min:0'],
+            'customer_offer' => ['required_if:pricing_mode,negotiate', 'nullable', 'numeric', 'min:0', 'max:10000000'],
             // Operator-enabled one-time methods, plus any type the customer has
             // already linked (see allowedPaymentMethods()).
             'payment_method' => ['required', Rule::in($this->allowedPaymentMethods())],

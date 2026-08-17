@@ -165,7 +165,10 @@ class PaymentMethodController extends Controller
         $method->delete();
 
         if ($wasDefault) {
+            // Promote only a usable method — index() hides expired/failed ones,
+            // so promoting one would leave no VISIBLE default.
             PaymentMethod::where('user_id', $request->user()->id)
+                ->whereIn('status', ['active', 'pending'])
                 ->orderBy('created_at')
                 ->first()
                 ?->update(['is_default' => true]);
@@ -178,12 +181,15 @@ class PaymentMethodController extends Controller
     {
         $user = $request->user();
 
-        PaymentMethod::where('user_id', $user->id)
-            ->update(['is_default' => false]);
+        // Verify the target exists (and belongs to the user) BEFORE clearing the
+        // current default. Otherwise a stale client setting a since-deleted
+        // method wipes every is_default flag, matches 0 rows on the set, and
+        // still returns 200 — leaving the user with valid methods but no default.
+        // Mirrors destroy()'s findOrFail (404 on a gone method).
+        $method = PaymentMethod::where('user_id', $user->id)->findOrFail($id);
 
-        PaymentMethod::where('user_id', $user->id)
-            ->where('id', $id)
-            ->update(['is_default' => true]);
+        PaymentMethod::where('user_id', $user->id)->update(['is_default' => false]);
+        $method->update(['is_default' => true]);
 
         return $this->ok(null, 'Default payment method updated.');
     }

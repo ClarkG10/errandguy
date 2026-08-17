@@ -36,9 +36,17 @@ class UpdateLocationRequest extends FormRequest
     {
         $speed = $this->input('speed');
         $heading = $this->input('heading');
+        $accuracy = $this->input('accuracy');
         $this->merge([
             'speed' => is_numeric($speed) && $speed < 0 ? null : $speed,
             'heading' => is_numeric($heading) && $heading < 0 ? null : $heading,
+            // accuracy is stored in decimal(5,2) (ceiling 999.99 m). GPS on a
+            // weak fix (indoors/tunnels/Wi-Fi) routinely reports 1000-5000 m;
+            // inserting that OUT-OF-RANGE value 500s the ping under strict-mode
+            // MySQL, dropping the runner off the customer's live map. An accuracy
+            // worse than ~1 km carries no useful precision, so null it out — the
+            // ping (lat/lng) still succeeds — rather than overflow the column.
+            'accuracy' => is_numeric($accuracy) && $accuracy > 999.99 ? null : $accuracy,
         ]);
     }
 }
