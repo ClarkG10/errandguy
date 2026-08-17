@@ -20,9 +20,19 @@ class PromoController extends Controller
     {
         $userId = $request->user()->id;
 
+        // Mirror PromoService::validate() EXACTLY so the "available" list can't
+        // disagree with the redemption engine: (1) a cancelled booking does not
+        // consume a redemption there, so exclude 'cancelled' from the count —
+        // otherwise applying a promo then cancelling silently hides a promo the
+        // user can still redeem; (2) a NULL per_user_limit means unlimited there,
+        // so treat it as always-available here too.
         $promos = PromoCode::valid()
             ->whereRaw(
-                'per_user_limit > (select count(*) from bookings where bookings.promo_code_id = promo_codes.id and bookings.customer_id = ?)',
+                '(per_user_limit IS NULL OR per_user_limit > ('
+                .'select count(*) from bookings '
+                .'where bookings.promo_code_id = promo_codes.id '
+                .'and bookings.customer_id = ? '
+                ."and bookings.status <> 'cancelled'))",
                 [$userId]
             )
             ->orderByDesc('valid_from')

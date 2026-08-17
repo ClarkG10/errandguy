@@ -346,7 +346,10 @@ Route::prefix('v1')->group(function () {
                 'data' => $ticket,
                 'message' => 'Report submitted successfully.',
             ], 201);
-        });
+        })->middleware('throttle:15,1');
+        // ^ Match the modern /support/tickets sibling: this legacy route also
+        //   writes a DisputeTicket into the ops moderation queue, so cap it the
+        //   same way instead of leaving it on the 240/min global api limiter.
     });
 
     // Admin routes
