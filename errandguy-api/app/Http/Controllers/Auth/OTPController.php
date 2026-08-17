@@ -22,8 +22,9 @@ class OTPController extends Controller
     {
         $identifier = $request->phone ?? $request->email;
 
+        // Do not log the raw identifier (phone/email) — CWE-532. Channel + ip
+        // (+ the request_id from AssignRequestId) are enough for diagnostics.
         Log::info('OTP send requested', [
-            'identifier' => $identifier,
             'channel' => $request->phone ? 'sms' : 'email',
             'ip' => $request->ip(),
         ]);
@@ -45,7 +46,6 @@ class OTPController extends Controller
         } catch (\Throwable $e) {
             $this->otpService->invalidateOTP($identifier);
             Log::error('OTP delivery failed', [
-                'identifier' => $identifier,
                 'channel' => $request->phone ? 'sms' : 'email',
                 'error' => $e->getMessage(),
             ]);
@@ -62,7 +62,6 @@ class OTPController extends Controller
         $identifier = $request->phone ?? $request->email;
 
         Log::info('OTP verify attempt', [
-            'identifier' => $identifier,
             'ip' => $request->ip(),
         ]);
 

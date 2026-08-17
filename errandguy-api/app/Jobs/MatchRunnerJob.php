@@ -139,23 +139,31 @@ class MatchRunnerJob implements ShouldQueue
                 if ($newStatus === 'matched' && $runner) {
                     Cache::forget("runner_active_booking_id:{$runner->user_id}");
 
-                    // Deliver the offer notification OFF the request thread via a
-                    // queued job. This job is dispatchSync'd for immediate
-                    // bookings, so calling sendPush() inline here ran the Expo/FCM
-                    // push HTTP inside the customer's create request. The in-app
-                    // row lands ms later; the 201 (matched/no_runner) is unaffected. (P4)
-                    SendPushJob::dispatch(
-                        $runner->user_id,
-                        'New errand offer',
-                        'You were matched to an errand. Open the app to accept it.',
-                        ['type' => 'booking_update', 'booking_id' => $matchedBooking->id],
-                    );
-
-                    // Live "you've got an offer" popup on the runner's private
-                    // channel. Replaces the old `bookings` table UPDATE (filtered
-                    // by runner_id) the runner app used to subscribe to. Post-
-                    // commit, so the runner's fetch sees the assigned row.
-                    IncomingRequest::dispatch($matchedBooking);
+                    // Best-effort "you've been matched" notifications to the runner:
+                    //  - SendPushJob (ShouldQueue) — the Expo/FCM HTTP happens in a
+                    //    worker, off the customer's create request.
+                    //  - IncomingRequest (ShouldBroadcast) — the live offer popup on
+                    //    the runner's private channel; the Reverb publish also happens
+                    //    in a worker, so a Reverb outage never reaches here.
+                    // What we guard is the SYNCHRONOUS enqueue: this job is
+                    // dispatchSync'd on the create path and the outer catch RE-THROWS,
+                    // so a transient broadcast/queue hiccup at enqueue time must not
+                    // fail a booking whose payment + match already committed. The
+                    // runner still learns of the offer from the persisted row + a REST
+                    // fetch. (BookingStatusChanged below is intentionally NOT wrapped —
+                    // it drives real listeners incl. the referral reward, which must
+                    // not be silently swallowed.)
+                    try {
+                        SendPushJob::dispatch(
+                            $runner->user_id,
+                            'New errand offer',
+                            'You were matched to an errand. Open the app to accept it.',
+                            ['type' => 'booking_update', 'booking_id' => $matchedBooking->id],
+                        );
+                        IncomingRequest::dispatch($matchedBooking);
+                    } catch (Throwable $e) {
+                        Log::warning("Match notification enqueue failed for booking {$matchedBooking->id}: {$e->getMessage()}");
+                    }
                 }
                 event(new BookingStatusChanged($matchedBooking, 'pending', $newStatus));
 

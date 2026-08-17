@@ -15,9 +15,10 @@ class LoginController extends Controller
 {
     public function login(LoginRequest $request): JsonResponse
     {
+        // Never log the raw phone/email (CWE-532: plaintext contact PII in the
+        // daily log files, readable by anyone with log/backup access). ip +
+        // the request_id attached via AssignRequestId are enough to triage.
         Log::info('Login attempt', [
-            'phone' => $request->phone,
-            'email' => $request->email,
             'ip' => $request->ip(),
         ]);
 
@@ -29,8 +30,6 @@ class LoginController extends Controller
 
         if (!$user || !Hash::check($request->password, $user->password_hash)) {
             Log::warning('Login failed - invalid credentials', [
-                'phone' => $request->phone,
-                'email' => $request->email,
                 'user_found' => (bool) $user,
                 'ip' => $request->ip(),
             ]);

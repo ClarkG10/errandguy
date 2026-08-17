@@ -41,8 +41,9 @@ class PasswordResetController extends Controller
                     }
                 );
             } catch (\Throwable $e) {
+                // No raw email in logs (CWE-532); error + request_id suffice.
                 Log::error('Failed to send password reset email', [
-                    'email' => $request->email,
+                    'ip' => $request->ip(),
                     'error' => $e->getMessage(),
                 ]);
 

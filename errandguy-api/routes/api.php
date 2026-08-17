@@ -234,7 +234,8 @@ Route::prefix('v1')->group(function () {
             Route::get('/{id}/status', [PaymentStatusController::class, 'show'])
                 ->where('id', '[0-9a-fA-F-]{36}');
             Route::get('/{id}/receipt', [PaymentHistoryController::class, 'receipt']);
-            Route::get('/{id}/receipt/pdf', [ExportController::class, 'receiptPdf']);
+            Route::get('/{id}/receipt/pdf', [ExportController::class, 'receiptPdf'])
+                ->middleware('throttle:6,1');
         });
 
         // Wallet routes
