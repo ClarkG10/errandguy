@@ -87,15 +87,17 @@ class WalletTransaction extends Model
     {
         $brand = 'ErrandGuy';
 
-        // Booking-linked types: enrich with errand type + booking #.
-        if (in_array($this->type, ['payment', 'earning', 'refund'], true) && $this->reference_id) {
-            // Avoid an N+1 here: callers are expected to eager-load
-            // booking.errandType when they care about display labels.
-            // If the relation isn't loaded, we issue at most one cheap
-            // single-row lookup rather than crash.
-            $booking = $this->relationLoaded('booking')
-                ? $this->getRelation('booking')
-                : Booking::with('errandType')->find($this->reference_id);
+        // Booking-linked types: enrich with errand type + booking #, but ONLY
+        // when the caller eager-loaded booking.errandType. Since this accessor is
+        // $appended, it serializes on EVERY WalletTransaction that goes out — a
+        // per-row lazy lookup here was a latent N+1 waiting for any endpoint that
+        // forgot to eager-load. Never query per row: the one client endpoint that
+        // shows the enriched label eager-loads (WalletController::transactions),
+        // and everything else falls through to the generic label below.
+        if (in_array($this->type, ['payment', 'earning', 'refund'], true)
+            && $this->reference_id
+            && $this->relationLoaded('booking')) {
+            $booking = $this->getRelation('booking');
 
             if ($booking) {
                 $typeName = optional($booking->errandType)->name ?? 'Errand';
