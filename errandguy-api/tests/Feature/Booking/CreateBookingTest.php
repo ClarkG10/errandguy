@@ -153,7 +153,7 @@ class CreateBookingTest extends TestCase
 
         $bookingNumber = $response->json('data.booking_number');
         $this->assertStringStartsWith('EG-', $bookingNumber);
-        $this->assertMatchesRegularExpression('/^EG-\d{8}-[A-Z0-9]{4}$/', $bookingNumber);
+        $this->assertMatchesRegularExpression('/^EG-\d{8}-[A-Z0-9]{6}$/', $bookingNumber);
     }
 
     public function test_pricing_is_calculated_correctly(): void

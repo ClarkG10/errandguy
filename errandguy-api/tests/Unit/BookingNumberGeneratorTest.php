@@ -12,10 +12,11 @@ use Tests\TestCase;
 
 /**
  * Every booking_number must come from the single collision-safe generator.
- * The column is UNIQUE (bookings table), so a same-day Str::random(4) clash —
- * which the old inline generation in BookingController produced with no guard —
- * is a hard 500 on booking creation. generateBookingNumber() must retry past an
- * already-taken number instead. (audit v3 reliability)
+ * The column is UNIQUE (bookings table), so a same-day suffix clash — which the
+ * old inline generation in BookingController produced with no guard — is a hard
+ * 500 on booking creation. generateBookingNumber() must retry past an
+ * already-taken number, and now uses a 6-char suffix to shrink the residual
+ * check-then-insert window. (audit v3 reliability + Low race)
  */
 class BookingNumberGeneratorTest extends TestCase
 {
@@ -36,7 +37,7 @@ class BookingNumberGeneratorTest extends TestCase
     public function test_generated_number_matches_the_documented_format(): void
     {
         $this->assertMatchesRegularExpression(
-            '/^EG-\d{8}-[A-Z0-9]{4}$/',
+            '/^EG-\d{8}-[A-Z0-9]{6}$/',
             $this->service()->generateBookingNumber(),
         );
     }

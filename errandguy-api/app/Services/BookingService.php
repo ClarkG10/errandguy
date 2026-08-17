@@ -20,12 +20,20 @@ class BookingService
     ) {}
 
     /**
-     * Generate a unique booking number in format EG-YYYYMMDD-XXXX.
+     * Generate a booking number in format EG-YYYYMMDD-XXXXXX.
+     *
+     * The exists()-check loop is not a hard guarantee — there is still a
+     * check-then-insert window where two same-millisecond creates could pick the
+     * same suffix and the second insert would hit the unique index. Widening the
+     * suffix from 4 to 6 chars takes the same-day collision space from ~1.7M to
+     * ~2.2B, so that residual race is now ~1300x rarer (effectively never for
+     * this app's volume). The value is an opaque display string (the clients do
+     * not parse its structure), so the extra length is safe.
      */
     public function generateBookingNumber(): string
     {
         do {
-            $number = 'EG-' . now()->format('Ymd') . '-' . strtoupper(Str::random(4));
+            $number = 'EG-' . now()->format('Ymd') . '-' . strtoupper(Str::random(6));
         } while (Booking::where('booking_number', $number)->exists());
 
         return $number;

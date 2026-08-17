@@ -192,9 +192,10 @@ class BookingController extends Controller
         // Determine if transportation
         $isTransportation = $errandType->slug === 'transportation';
 
-        // Collision-safe booking number (EG-YYYYMMDD-XXXX). The generator retries
-        // against the unique index; the old inline Str::random(4) had no such
-        // check and 500s on a same-day clash.
+        // Booking number (EG-YYYYMMDD-XXXXXX). The generator loops on an
+        // exists() check and uses a 6-char suffix (~2.2B/day space), so a
+        // same-day clash is effectively impossible; a residual check-then-insert
+        // race is backstopped by the unique index on booking_number.
         $bookingNumber = $this->bookingService->generateBookingNumber();
 
         // Generate ride PIN for transportation
