@@ -38,13 +38,16 @@ class PromoCodeForm
                             ->required(),
                         TextInput::make('discount_value')
                             ->numeric()
+                            ->minValue(0)
                             ->required(),
                         TextInput::make('max_discount')
                             ->numeric()
+                            ->minValue(0)
                             ->prefix('₱')
                             ->helperText('Caps a percentage discount. Leave blank for none.'),
                         TextInput::make('min_order')
                             ->numeric()
+                            ->minValue(0)
                             ->prefix('₱')
                             ->helperText('Minimum order value to qualify.'),
                     ]),
@@ -53,9 +56,11 @@ class PromoCodeForm
                     ->schema([
                         TextInput::make('usage_limit')
                             ->numeric()
+                            ->minValue(0)
                             ->helperText('blank = unlimited'),
                         TextInput::make('per_user_limit')
                             ->numeric()
+                            ->minValue(0)
                             ->default(1),
                         DateTimePicker::make('valid_from'),
                         DateTimePicker::make('valid_until'),
