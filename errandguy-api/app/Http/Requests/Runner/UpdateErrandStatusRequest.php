@@ -58,18 +58,33 @@ class UpdateErrandStatusRequest extends FormRequest
                 $skipPickupPhoto ? 'nullable' : 'required_if:status,picked_up',
                 'nullable',
                 'image',
+                // Raster-only (no SVG): the bare `image` rule accepts SVG, which
+                // is served inline as image/svg+xml and can carry <script> that
+                // runs same-origin when an admin opens the proof in the panel.
+                // Mirrors the chat-image / avatar rules.
+                'mimes:jpeg,jpg,png,webp',
                 'max:5120',
             ],
             'delivery_photo' => [
                 $skipDeliveryProof ? 'nullable' : 'required_if:status,delivered',
                 'nullable',
                 'image',
+                // Raster-only (no SVG): the bare `image` rule accepts SVG, which
+                // is served inline as image/svg+xml and can carry <script> that
+                // runs same-origin when an admin opens the proof in the panel.
+                // Mirrors the chat-image / avatar rules.
+                'mimes:jpeg,jpg,png,webp',
                 'max:5120',
             ],
             'signature' => [
                 $skipDeliveryProof ? 'nullable' : 'required_if:status,completed',
                 'nullable',
                 'image',
+                // Raster-only (no SVG): the bare `image` rule accepts SVG, which
+                // is served inline as image/svg+xml and can carry <script> that
+                // runs same-origin when an admin opens the proof in the panel.
+                // Mirrors the chat-image / avatar rules.
+                'mimes:jpeg,jpg,png,webp',
                 'max:5120',
             ],
             // Shopping reconciliation — required at picked_up for shopping errands.
@@ -84,6 +99,11 @@ class UpdateErrandStatusRequest extends FormRequest
                 $isShopping ? 'required_if:status,picked_up' : 'nullable',
                 'nullable',
                 'image',
+                // Raster-only (no SVG): the bare `image` rule accepts SVG, which
+                // is served inline as image/svg+xml and can carry <script> that
+                // runs same-origin when an admin opens the proof in the panel.
+                // Mirrors the chat-image / avatar rules.
+                'mimes:jpeg,jpg,png,webp',
                 'max:5120',
             ],
         ];

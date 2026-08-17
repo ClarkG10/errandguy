@@ -59,12 +59,13 @@ class ProfileController extends Controller
         $user = $request->user();
         $file = $request->file('avatar');
 
-        // Delete old avatar if it exists in storage
-        if ($user->avatar_url) {
-            $oldPath = parse_url($user->avatar_url, PHP_URL_PATH);
-            if ($oldPath) {
-                Storage::disk('public')->delete(ltrim($oldPath, '/'));
-            }
+        // Delete old avatar if it exists. Use the canonical publicDiskPath()
+        // helper (same as deleteAccount) — it strips the "/storage/" symlink
+        // prefix to the true relative path ('avatars/…'). The previous inline
+        // ltrim left 'storage/avatars/…', which resolved to nothing and (with the
+        // disk's throw=>false) silently no-op'd, orphaning every prior avatar.
+        if ($user->avatar_url && $oldPath = $this->publicDiskPath($user->avatar_url)) {
+            Storage::disk('public')->delete($oldPath);
         }
 
         // Store new avatar with unique name — use guessExtension() for MIME-based extension

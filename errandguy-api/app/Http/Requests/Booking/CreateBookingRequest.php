@@ -82,7 +82,9 @@ class CreateBookingRequest extends FormRequest
             'description' => ['nullable', 'string', 'max:500'],
             'special_instructions' => ['nullable', 'string', 'max:300'],
             'item_photos' => ['nullable', 'array', 'max:5'],
-            'item_photos.*' => ['image', 'max:5120'],
+            // Raster-only (no SVG) — see UpdateErrandStatusRequest: an SVG proof
+            // photo is a stored-XSS vector when an admin opens it in the panel.
+            'item_photos.*' => ['image', 'mimes:jpeg,jpg,png,webp', 'max:5120'],
             'estimated_item_value' => ['nullable', 'numeric', 'min:0'],
             // Shopping budget is required for food/grocery/purchase so the
             // runner has a spending cap before placing the order.

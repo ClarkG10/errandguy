@@ -114,6 +114,35 @@ class StatusUpdateTest extends TestCase
         $this->assertNotNull($this->booking->completed_at);
     }
 
+    public function test_svg_proof_photo_is_rejected_but_raster_is_accepted(): void
+    {
+        Event::fake();
+        Storage::fake('media');
+
+        foreach (['heading_to_pickup', 'arrived_at_pickup'] as $s) {
+            $this->actingAs($this->runner)
+                ->postJson("/api/v1/runner/errand/{$this->booking->id}/status", ['status' => $s])
+                ->assertOk();
+        }
+
+        // An SVG can carry <script> that runs same-origin when an admin opens the
+        // proof in the panel — it must be rejected.
+        $this->actingAs($this->runner)
+            ->postJson("/api/v1/runner/errand/{$this->booking->id}/status", [
+                'status' => 'picked_up',
+                'pickup_photo' => UploadedFile::fake()->create('proof.svg', 10, 'image/svg+xml'),
+            ])
+            ->assertStatus(422);
+
+        // A raster photo still works.
+        $this->actingAs($this->runner)
+            ->postJson("/api/v1/runner/errand/{$this->booking->id}/status", [
+                'status' => 'picked_up',
+                'pickup_photo' => UploadedFile::fake()->image('proof.png'),
+            ])
+            ->assertOk();
+    }
+
     public function test_invalid_status_transition_rejected(): void
     {
         $response = $this->actingAs($this->runner)
