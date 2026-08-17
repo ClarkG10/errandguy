@@ -930,7 +930,19 @@ class BookingController extends Controller
 
         $this->authorize('view', $original);
 
-        // Recalculate pricing with current rates
+        // Rebook must NOT create a live booking here. It previously created a
+        // status='pending' booking and dispatched MatchRunnerJob WITHOUT
+        // collecting any payment — no payment_method, no Payment row, so
+        // payment_status defaulted to 'unpaid'. A runner would then be matched
+        // and complete the errand for FREE: handleCompletion credits nothing
+        // for a booking that is neither paid nor cash, leaving a permanent
+        // completed+unpaid row, zero revenue, and an unpaid runner. Payment is
+        // only ever collected inside store(); there is no pay-for-an-existing-
+        // booking path. So rebook now returns a PREFILL that the client
+        // re-submits through POST /bookings (store) — the single audited
+        // charge+match path — instead of a divergent, payment-less clone of it.
+        // (The mobile app already rebooks by re-seeding a draft and running the
+        // normal paid flow, so this endpoint no longer duplicates/undercuts it.)
         $vehicleType = $original->vehicle_type_rate ?? 'motorcycle';
         $pricing = $this->pricingService->calculate(
             $original->errand_type_id,
@@ -941,57 +953,31 @@ class BookingController extends Controller
             $vehicleType
         );
 
-        $bookingNumber = $this->bookingService->generateBookingNumber();
-        $ridePin = $original->is_transportation ? str_pad((string) random_int(0, 9999), 4, '0', STR_PAD_LEFT) : null;
-
-        $newBooking = Booking::create([
-            'booking_number' => $bookingNumber,
-            'customer_id' => $request->user()->id,
-            'errand_type_id' => $original->errand_type_id,
-            'status' => 'pending',
-            'pickup_address' => $original->pickup_address,
-            'pickup_lat' => $original->pickup_lat,
-            'pickup_lng' => $original->pickup_lng,
-            'pickup_contact_name' => $original->pickup_contact_name,
-            'pickup_contact_phone' => $original->pickup_contact_phone,
-            'dropoff_address' => $original->dropoff_address,
-            'dropoff_lat' => $original->dropoff_lat,
-            'dropoff_lng' => $original->dropoff_lng,
-            'dropoff_contact_name' => $original->dropoff_contact_name,
-            'dropoff_contact_phone' => $original->dropoff_contact_phone,
-            'description' => $original->description,
-            'special_instructions' => $original->special_instructions,
-            'estimated_item_value' => $original->estimated_item_value,
-            'schedule_type' => 'now',
-            'pricing_mode' => $original->pricing_mode,
-            'vehicle_type_rate' => $vehicleType,
-            'distance_km' => $pricing['distance_km'],
-            'base_fee' => $pricing['base_fee'],
-            'distance_fee' => $pricing['distance_fee'],
-            'service_fee' => $pricing['service_fee'],
-            'surcharge' => $pricing['surcharge'],
-            'total_amount' => $pricing['total_amount'],
-            'runner_payout' => $pricing['runner_payout'],
-            'ride_pin' => $ridePin,
-            'is_transportation' => $original->is_transportation,
-        ]);
-
-        BookingStatusLog::create([
-            'booking_id' => $newBooking->id,
-            'status' => 'pending',
-            'changed_by' => $request->user()->id,
-            'note' => 'Rebooked from ' . $original->booking_number,
-        ]);
-
-        MatchRunnerJob::dispatch($newBooking->id);
-        event(new BookingCreated($newBooking));
-
-        $newBooking->load(['errandType', 'statusLogs', 'stops']);
-
         return response()->json([
-            'data' => new BookingResource($newBooking),
-            'message' => 'Booking rebooked successfully.',
-        ], 201);
+            'data' => [
+                'prefill' => [
+                    'errand_type_id' => $original->errand_type_id,
+                    'pickup_address' => $original->pickup_address,
+                    'pickup_lat' => $original->pickup_lat,
+                    'pickup_lng' => $original->pickup_lng,
+                    'pickup_contact_name' => $original->pickup_contact_name,
+                    'pickup_contact_phone' => $original->pickup_contact_phone,
+                    'dropoff_address' => $original->dropoff_address,
+                    'dropoff_lat' => $original->dropoff_lat,
+                    'dropoff_lng' => $original->dropoff_lng,
+                    'dropoff_contact_name' => $original->dropoff_contact_name,
+                    'dropoff_contact_phone' => $original->dropoff_contact_phone,
+                    'description' => $original->description,
+                    'special_instructions' => $original->special_instructions,
+                    'estimated_item_value' => $original->estimated_item_value,
+                    'pricing_mode' => $original->pricing_mode,
+                    'vehicle_type_rate' => $vehicleType,
+                    'is_transportation' => $original->is_transportation,
+                ],
+                'pricing' => $pricing,
+            ],
+            'message' => 'Submit this prefill through booking creation to rebook.',
+        ]);
     }
 
     /**

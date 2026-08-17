@@ -195,7 +195,7 @@ class BookingLifecycleTest extends TestCase
 
     // ───── Rebook ─────
 
-    public function test_customer_can_rebook_completed_booking(): void
+    public function test_rebook_returns_prefill_without_creating_an_unpaid_booking(): void
     {
         Bus::fake();
         Event::fake();
@@ -205,14 +205,19 @@ class BookingLifecycleTest extends TestCase
         $response = $this->actingAs($this->customer)
             ->postJson("/api/v1/bookings/{$this->booking->id}/rebook");
 
-        $response->assertStatus(201)
-            ->assertJsonPath('data.status', 'pending');
+        $response->assertOk()
+            ->assertJsonStructure(['data' => ['prefill', 'pricing'], 'message'])
+            ->assertJsonPath('data.prefill.pickup_address', $this->booking->pickup_address)
+            ->assertJsonPath('data.prefill.errand_type_id', $this->booking->errand_type_id);
 
-        // New booking created
-        $this->assertEquals(2, Booking::count());
-        $newBooking = Booking::where('id', '!=', $this->booking->id)->first();
-        $this->assertEquals($this->booking->pickup_address, $newBooking->pickup_address);
-        $this->assertNotEquals($this->booking->booking_number, $newBooking->booking_number);
+        // Money-safety regression guard. rebook USED TO create a status=pending,
+        // payment_status=unpaid booking and dispatch a runner without collecting
+        // any payment — the runner then completed it for free (handleCompletion
+        // credits nothing for a non-paid/non-cash booking). It must now create
+        // NO booking and dispatch NO runner; the client re-books through the
+        // normal paid store() flow using this prefill.
+        $this->assertEquals(1, Booking::count());
+        Bus::assertNotDispatched(\App\Jobs\MatchRunnerJob::class);
     }
 
     // ───── Booking List ─────
