@@ -32,6 +32,7 @@ class MatchingService
             $radiusKm,
             $booking->errand_type_id,
             $excludeUserId,
+            excludeCustomerId: $booking->customer_id,
         );
 
         if ($runners->isEmpty()) {
@@ -61,6 +62,7 @@ class MatchingService
             $radiusKm,
             $booking->errand_type_id,
             limit: 200,
+            excludeCustomerId: $booking->customer_id,
         );
 
         // NOTE: negotiate_expires_at is deliberately NOT set here. The create
@@ -92,13 +94,20 @@ class MatchingService
         float $radiusKm,
         string $errandTypeId,
         ?string $excludeUserId = null,
-        int $limit = 50
+        int $limit = 50,
+        ?string $excludeCustomerId = null
     ): Collection {
         $runners = RunnerProfile::where('is_online', true)
             ->where('verification_status', 'approved')
             // Skip a specific runner (e.g. the one who just let a matched
             // offer time out) so a re-match tries someone else first.
             ->when($excludeUserId, fn ($q) => $q->where('user_id', '!=', $excludeUserId))
+            // Never match a booking to its OWN customer. A user who is both the
+            // customer here and an online, approved runner could otherwise be
+            // matched/offered their own errand (reachable via the re-match paths
+            // after a role switch) and settle it — paying as customer, collecting
+            // the runner payout.
+            ->when($excludeCustomerId, fn ($q) => $q->where('user_id', '!=', $excludeCustomerId))
             ->whereNotNull('current_lat')
             ->whereNotNull('current_lng')
             // Cheap bounding-box prefilter so we don't haversine every

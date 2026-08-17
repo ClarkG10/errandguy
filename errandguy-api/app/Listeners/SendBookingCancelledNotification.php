@@ -31,12 +31,16 @@ class SendBookingCancelledNotification implements ShouldQueue
             );
         }
 
-        // Notify runner if one was assigned
+        // Notify runner if one was assigned. Keep the cause NEUTRAL: this same
+        // event fires for admin/platform cancellations (BookingService::adminCancel)
+        // of in-progress bookings, where "by the customer" is false and would make
+        // a mid-errand runner wrongly blame the customer for an ops/fraud/dispute
+        // cancel. The customer gets their own (already cause-neutral) notice above.
         if ($booking->runner_id) {
             $this->notificationService->sendPush(
                 $booking->runner_id,
                 'Booking Cancelled',
-                "Errand #{$number} has been cancelled by the customer.",
+                "Errand #{$number} has been cancelled.",
                 [
                     'type' => 'booking_update',
                     'booking_id' => $booking->id,

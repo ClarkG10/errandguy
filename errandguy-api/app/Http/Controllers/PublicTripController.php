@@ -51,9 +51,17 @@ class PublicTripController extends Controller
 
         abort_if(! $booking, 404);
 
-        $latestLocation = \App\Models\RunnerLocation::where('booking_id', $booking->id)
-            ->latest('created_at')
-            ->first();
+        // Scope to the booking's CURRENT runner (mirrors BookingController::track).
+        // After a re-match (runner A never accepts → reassigned to B), a
+        // booking_id-only query would return A's last GPS pinned under B's
+        // identity on this public / SOS trip link — a safety-adjacent surface.
+        // Until the new runner pings, correctly return no location.
+        $latestLocation = $booking->runner_id
+            ? \App\Models\RunnerLocation::where('booking_id', $booking->id)
+                ->where('runner_id', $booking->runner_id)
+                ->latest('created_at')
+                ->first()
+            : null;
 
         $runner = $booking->runner;
         $profile = $runner?->runnerProfile;

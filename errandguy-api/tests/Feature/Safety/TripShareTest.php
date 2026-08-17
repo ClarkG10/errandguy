@@ -4,6 +4,7 @@ namespace Tests\Feature\Safety;
 
 use App\Models\Booking;
 use App\Models\ErrandType;
+use App\Models\RunnerLocation;
 use App\Models\RunnerProfile;
 use App\Models\User;
 use Illuminate\Foundation\Testing\RefreshDatabase;
@@ -97,6 +98,38 @@ class TripShareTest extends TestCase
                 'data' => ['booking_id', 'status', 'pickup_address', 'dropoff_address', 'runner'],
             ])
             ->assertJsonPath('data.status', 'in_transit');
+    }
+
+    public function test_public_trip_link_ignores_a_previous_runners_stale_location(): void
+    {
+        $token = 'stale-loc-token';
+        $this->booking->update(['trip_share_token' => $token, 'trip_share_active' => true]);
+
+        // Before a re-match, a PREVIOUS runner left GPS rows on this booking; the
+        // booking's CURRENT runner ($this->runner) hasn't pinged yet.
+        $oldRunner = User::factory()->create(['role' => 'runner', 'status' => 'active']);
+        RunnerLocation::create([
+            'booking_id' => $this->booking->id, 'runner_id' => $oldRunner->id,
+            'lat' => 14.61, 'lng' => 120.99,
+        ]);
+
+        $data = $this->getJson("/api/v1/trip/{$token}")->assertOk()->json('data');
+        $this->assertNull($data['runner_location'], 'must not pin the previous runner\'s stale GPS');
+    }
+
+    public function test_public_trip_link_returns_the_current_runners_location(): void
+    {
+        $token = 'current-loc-token';
+        $this->booking->update(['trip_share_token' => $token, 'trip_share_active' => true]);
+
+        RunnerLocation::create([
+            'booking_id' => $this->booking->id, 'runner_id' => $this->runner->id,
+            'lat' => 14.60, 'lng' => 120.98,
+        ]);
+
+        $loc = $this->getJson("/api/v1/trip/{$token}")->assertOk()->json('data.runner_location');
+        $this->assertNotNull($loc);
+        $this->assertEqualsWithDelta(14.60, (float) $loc['lat'], 0.0001);
     }
 
     public function test_revoked_trip_link_returns_404(): void

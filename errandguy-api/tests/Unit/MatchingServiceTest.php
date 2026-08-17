@@ -102,6 +102,40 @@ class MatchingServiceTest extends TestCase
         $this->assertNull($result);
     }
 
+    public function test_does_not_match_a_booking_to_its_own_customer(): void
+    {
+        // The booking's customer is ALSO an online, approved runner right at the
+        // pickup. They must never be matched to their own errand (self-match).
+        RunnerProfile::create([
+            'user_id' => $this->booking->customer_id,
+            'verification_status' => 'approved', 'is_online' => true,
+            'current_lat' => 14.6000, 'current_lng' => 120.9850, 'preferred_types' => [],
+        ]);
+
+        $this->assertNull($this->service->findRunner($this->booking->id));
+    }
+
+    public function test_self_customer_runner_is_skipped_for_a_real_runner_even_if_closer(): void
+    {
+        // Customer-as-runner sits closer than the real runner...
+        RunnerProfile::create([
+            'user_id' => $this->booking->customer_id,
+            'verification_status' => 'approved', 'is_online' => true,
+            'current_lat' => 14.5996, 'current_lng' => 120.9843, 'preferred_types' => [],
+        ]);
+        $other = User::factory()->create(['role' => 'runner', 'status' => 'active']);
+        RunnerProfile::create([
+            'user_id' => $other->id,
+            'verification_status' => 'approved', 'is_online' => true,
+            'current_lat' => 14.6000, 'current_lng' => 120.9850, 'preferred_types' => [],
+        ]);
+
+        // ...yet the real runner is chosen; the customer is excluded, not merely deprioritized.
+        $result = $this->service->findRunner($this->booking->id);
+        $this->assertNotNull($result);
+        $this->assertEquals($other->id, $result->user_id);
+    }
+
     public function test_does_not_find_runner_too_far_away(): void
     {
         $runner = User::factory()->create(['role' => 'runner', 'status' => 'active']);
