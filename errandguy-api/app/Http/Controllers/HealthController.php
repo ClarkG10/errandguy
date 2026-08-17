@@ -32,12 +32,39 @@ class HealthController extends Controller
             }),
         ];
 
+        // Only DB + cache decide the 200/503 (the LB pulls the box on these).
         $healthy = ! in_array('down', $checks, true);
 
+        // Scheduler liveness is INFORMATIONAL, never part of the 503 decision: a
+        // stopped cron is worth alerting on, but must not pull a serving box out
+        // of the load balancer. A monitor watches this field (ok | stale |
+        // unknown); see the scheduler-heartbeat task in routes/console.php.
         return response()->json([
             'status' => $healthy ? 'ok' : 'degraded',
             'checks' => $checks,
+            'scheduler' => $this->schedulerStatus(),
         ], $healthy ? 200 : 503);
+    }
+
+    /**
+     * 'ok'      — heartbeat within the freshness window,
+     * 'stale'   — heartbeat present but older than the window (cron stopped),
+     * 'unknown' — no heartbeat / cache unavailable (can't tell).
+     */
+    private function schedulerStatus(): string
+    {
+        try {
+            $ts = Cache::get('scheduler:heartbeat');
+
+            if ($ts === null) {
+                return 'unknown';
+            }
+
+            // Heartbeat fires every minute; 180s = 3 missed beats.
+            return (now()->timestamp - (int) $ts) > 180 ? 'stale' : 'ok';
+        } catch (\Throwable $e) {
+            return 'unknown';
+        }
     }
 
     private function probe(callable $check): string

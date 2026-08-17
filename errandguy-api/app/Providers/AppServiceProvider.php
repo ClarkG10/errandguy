@@ -4,13 +4,16 @@ namespace App\Providers;
 
 use App\Mail\Transport\GmailApiTransport;
 use App\Models\AdminUser;
+use App\Support\JobFailureReporter;
 use App\Support\RequestMetrics;
 use Google\Auth\Credentials\ServiceAccountCredentials;
 use Google\Auth\Credentials\UserRefreshCredentials;
 use Illuminate\Http\Request;
+use Illuminate\Queue\Events\JobFailed;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Gate;
 use Illuminate\Support\Facades\Mail;
+use Illuminate\Support\Facades\Queue;
 use Illuminate\Support\ServiceProvider;
 
 class AppServiceProvider extends ServiceProvider
@@ -58,6 +61,18 @@ class AppServiceProvider extends ServiceProvider
         // never invoked; regular User authorization (mobile API) is untouched
         // (returns null → normal policy evaluation).
         Gate::before(fn ($user, string $ability) => $user instanceof AdminUser ? true : null);
+
+        // Make a permanently-failed queue job visible to a human. Fires once per
+        // job after retries are exhausted; logs CRITICAL + raises an admin
+        // dashboard alert. Without it, a failed settlement / SOS-fan-out / push
+        // job vanishes into failed_jobs (pruned after 7 days) with no signal.
+        Queue::failing(function (JobFailed $event): void {
+            JobFailureReporter::report(
+                $event->job->resolveName(),
+                $event->exception->getMessage(),
+                $event->connectionName,
+            );
+        });
 
         // Custom "gmail" mail transport: sends via the Gmail REST API as a fixed
         // Workspace mailbox (support@errandguyph.com). Auth is an OAuth2 refresh

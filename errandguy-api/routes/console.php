@@ -2,6 +2,7 @@
 
 use Illuminate\Foundation\Inspiring;
 use Illuminate\Support\Facades\Artisan;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Schedule;
 
 Artisan::command('inspire', function () {
@@ -14,6 +15,16 @@ Artisan::command('inspire', function () {
 |--------------------------------------------------------------------------
 | Queue maintenance and cleanup tasks.
 */
+
+// Liveness dead-man's-switch: stamp a heartbeat every minute so GET /health can
+// report `scheduler: stale` when the Forge cron stops. The scheduler backstops
+// SOS fan-out, the money/safety reapers, and the nightly backup — if it dies
+// silently, all of those stop with no signal. It can't detect its own death, so
+// an external monitor polling /health catches it via this heartbeat. Cheap,
+// idempotent cache write; 15-min TTL so a dead scheduler's stamp expires.
+Schedule::call(fn () => Cache::put('scheduler:heartbeat', now()->timestamp, 900))
+    ->everyMinute()
+    ->name('scheduler-heartbeat');
 
 // Prune failed jobs older than 7 days
 Schedule::command('queue:prune-failed --hours=168')->daily();
