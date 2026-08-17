@@ -57,6 +57,13 @@ class BookingMediaController extends Controller
         abort_unless($isAdmin || $isParticipant, 403);
         abort_unless(Storage::disk('media')->exists($path), 404);
 
-        return Storage::disk('media')->response($path);
+        // Harden the private-media response: nosniff stops a crafted upload from
+        // being MIME-sniffed into executable content, and no-store keeps a
+        // participant's receipt/chat image out of any intermediary cache. These
+        // routes are on the `web` group, so they don't get the api SecurityHeaders.
+        return Storage::disk('media')->response($path, null, [
+            'X-Content-Type-Options' => 'nosniff',
+            'Cache-Control' => 'private, no-store, max-age=0',
+        ]);
     }
 }

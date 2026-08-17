@@ -40,9 +40,15 @@ class RunnerDocumentFileController extends Controller
 
     private function stream(RunnerDocument $document)
     {
-        // New docs: private kyc disk.
+        // New docs: private kyc disk. Harden the response — nosniff (a
+        // government ID must never be MIME-sniffed into executable content) and
+        // no-store (keep it out of any intermediary cache). This route is on the
+        // `web` group and so doesn't inherit the api SecurityHeaders middleware.
         if (filled($document->file_path) && Storage::disk('kyc')->exists($document->file_path)) {
-            return Storage::disk('kyc')->response($document->file_path);
+            return Storage::disk('kyc')->response($document->file_path, null, [
+                'X-Content-Type-Options' => 'nosniff',
+                'Cache-Control' => 'private, no-store, max-age=0',
+            ]);
         }
 
         // Legacy docs still on the old public disk (pre-migration). Redirect to

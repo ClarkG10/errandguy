@@ -95,6 +95,22 @@ class BookingMediaTest extends TestCase
         $this->get($url)->assertOk();
     }
 
+    public function test_streamed_media_carries_hardening_headers(): void
+    {
+        Storage::fake('media');
+        $booking = $this->booking();
+        Storage::disk('media')->put($path = "booking-photos/{$booking->id}/proof.jpg", 'IMG');
+
+        Sanctum::actingAs($booking->customer);
+        $response = $this->get(route('booking.media', ['path' => $path]));
+
+        $response->assertOk();
+        // These routes are on the `web` group (no api SecurityHeaders), so the
+        // private-media response must set its own no-sniff + no-store.
+        $this->assertSame('nosniff', $response->headers->get('X-Content-Type-Options'));
+        $this->assertStringContainsString('no-store', (string) $response->headers->get('Cache-Control'));
+    }
+
     public function test_malformed_or_traversal_paths_are_rejected(): void
     {
         $this->actingAs($this->admin(), 'admin');
