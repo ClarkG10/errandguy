@@ -24,7 +24,21 @@ class ProfileController extends Controller
     public function update(UpdateProfileRequest $request): JsonResponse
     {
         $user = $request->user();
-        $user->update($request->validated());
+        $data = $request->validated();
+
+        // A changed contact must lose its verified badge until re-confirmed via
+        // OTP. Otherwise editing your email/phone keeps the "verified" checkmark
+        // on an unconfirmed value. Server-controlled (added here, not from input),
+        // both flags are $fillable, nothing hard-gates on them, and the OTP
+        // re-verify path restores them — so this is a safe trust correction.
+        if (array_key_exists('email', $data) && $data['email'] !== $user->email) {
+            $data['email_verified'] = false;
+        }
+        if (array_key_exists('phone', $data) && $data['phone'] !== $user->phone) {
+            $data['phone_verified'] = false;
+        }
+
+        $user->update($data);
 
         // Auto-create runner profile when role is changed to runner
         if ($request->validated('role') === 'runner' && !$user->runnerProfile) {
