@@ -328,8 +328,12 @@ class BookingController extends Controller
         $booking->update(['payment_method' => $paymentMethod]);
 
         // A previously-linked reusable method (e.g. Maya/GrabPay) chosen for a
-        // one-tap charge — usually needs no redirect.
-        $savedMethod = ! empty($validated['payment_method_id'])
+        // one-tap charge — usually needs no redirect. Only honour it when the
+        // DECLARED method is online: a client sending payment_method:'cash'/'wallet'
+        // WITH a linked method id would otherwise get a real gateway charge while
+        // the booking + payment both record 'cash' — a contradictory state the COD
+        // completion path then mis-settles (debits commission on money already paid).
+        $savedMethod = (! empty($validated['payment_method_id']) && ! in_array($paymentMethod, ['cash', 'wallet'], true))
             ? PaymentMethod::where('id', $validated['payment_method_id'])
                 ->where('user_id', $user->id)
                 ->where('status', 'active')
@@ -553,6 +557,18 @@ class BookingController extends Controller
             : null;
 
         if ($validated['pricing_mode'] === 'fixed') {
+            // Arm the auto-cancel/refund safety net FIRST. The immediate match
+            // below runs synchronously and its job re-throws on a transient
+            // failure (deadlock under load), which would 500 out of store() —
+            // if that dispatch came first, a paid booking would be stranded
+            // 'pending' with no auto-cancel armed. This job is idempotent and
+            // no-ops once the booking leaves 'pending', so arming it early is
+            // harmless when matching succeeds.
+            $autoCancelMinutes = (int) \App\Models\SystemConfig::getValue('auto_cancel_timeout_minutes', '30');
+            $autoCancelAt = ($matchAt && $matchAt->isFuture() ? $matchAt : now())
+                ->copy()->addMinutes($autoCancelMinutes);
+            AutoCancelBookingJob::dispatch($booking->id)->delay($autoCancelAt);
+
             if ($matchAt && $matchAt->isFuture()) {
                 // Scheduled bookings: defer to the queue at $matchAt.
                 MatchRunnerJob::dispatch($booking->id)->delay($matchAt);
@@ -564,11 +580,6 @@ class BookingController extends Controller
                 // row is updated in the same DB transaction the job uses.
                 MatchRunnerJob::dispatchSync($booking->id);
             }
-            // Auto-cancel if no runner accepts within the system timeout.
-            $autoCancelMinutes = (int) \App\Models\SystemConfig::getValue('auto_cancel_timeout_minutes', '30');
-            $autoCancelAt = ($matchAt && $matchAt->isFuture() ? $matchAt : now())
-                ->copy()->addMinutes($autoCancelMinutes);
-            AutoCancelBookingJob::dispatch($booking->id)->delay($autoCancelAt);
         } else {
             // Negotiate mode: broadcast offer + set expiry per spec (5 minutes).
             $negotiateMinutes = (int) \App\Models\SystemConfig::getValue('negotiate_timeout_minutes', '5');
@@ -594,7 +605,13 @@ class BookingController extends Controller
         // Fire booking created event
         event(new BookingCreated($booking));
 
-        $booking->load(['errandType', 'statusLogs', 'stops']);
+        // Reload columns too, not just relations: for an immediate booking the
+        // synchronous MatchRunnerJob above already mutated status/runner_id on its
+        // OWN model instance, so this in-memory $booking is stale. Without the
+        // refresh the 201 reports status='pending'/runner_id=null while the
+        // included statusLogs already show 'matched'/'no_runner' — a
+        // self-contradictory response. (mirrors retryMatch.)
+        $booking->refresh()->load(['errandType', 'statusLogs', 'stops']);
 
         return response()->json([
             'data' => new BookingResource($booking),

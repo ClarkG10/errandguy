@@ -72,10 +72,20 @@ class EnsureIdempotency
                 return response()->json($existing->response_body ?? [], $existing->response_code ?? 200);
             }
 
-            // Still in flight — the original request hasn't finished.
-            return response()->json([
-                'message' => 'A payment with this reference is still being processed. Please wait a moment.',
-            ], 409);
+            // Still in flight — UNLESS the claim has expired. A hard crash /
+            // timeout / OOM that never returns to PHP fires neither release()
+            // path, leaving the row stuck 'in_progress'. Past expires_at
+            // (now()+1 day) nothing legitimate is still running, so reclaim the
+            // dead claim instead of wedging a genuine retry at 409 for ~8 days
+            // (until PruneDedupRecords finally deletes it). If it's NOT expired,
+            // it's a real concurrent in-flight request → tell the caller to wait.
+            if ($existing->expires_at !== null && $existing->expires_at->isPast()) {
+                $existing->delete();
+            } else {
+                return response()->json([
+                    'message' => 'A payment with this reference is still being processed. Please wait a moment.',
+                ], 409);
+            }
         }
 
         // First time we've seen this key. Claim it; a concurrent duplicate that

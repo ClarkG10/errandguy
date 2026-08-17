@@ -30,9 +30,19 @@ return [
         'X-CSRF-TOKEN',
         'X-XSRF-TOKEN',
         'X-Socket-Id',
+        // The API's own middleware reads these custom request headers. Without
+        // them here, a browser client (the Expo web build) has its CORS preflight
+        // rejected before it can even reach the idempotency / conditional-GET
+        // logic — silently breaking booking-create / top-up / payout on the web.
+        'Idempotency-Key',
+        'If-None-Match',
     ],
 
-    'exposed_headers' => [],
+    // Let browser JS actually READ the correlation + caching headers the API sets.
+    'exposed_headers' => [
+        'ETag',
+        'X-Request-Id',
+    ],
 
     'max_age' => 600,
 
