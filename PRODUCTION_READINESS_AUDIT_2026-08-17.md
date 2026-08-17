@@ -99,10 +99,10 @@ Severity: 🔴 Critical · 🟠 High · 🟡 Medium · 🟢 Low. Items marked **
 | C-money | **`rebook()` created an uncharged, un-payable booking that dispatched a runner → errand done for free** | `rebook()` was a partial copy of `store()` that never got the payment block; no pay-for-existing-booking path exists. | **[FIXED 2026-08-17]** rebook now returns a prefill for the client to re-submit through `store()` (the single audited charge+match path); creates/dispatches nothing. |
 | C-eas | **`eas.json` production build ships placeholder `EXPO_PUBLIC_REVERB_KEY` + unverified `api.errandguy.app`** → realtime (chat, tracking, offers, notifications) dead on 100% of installs | Prod env block scaffolded, never filled. | Set the real prod Reverb key (EAS secret) + confirm DNS/cert; add a build assert that fails on any `REPLACE_WITH`. **(mobile — needs a device build)** |
 | C-mobcrash | **No mobile crash/error telemetry** — every crash/rejection ends in `console.error`, invisible in prod | No remote sink ever installed. | Add `@sentry/react-native`, init before `installErrorLogging`, upload Hermes source maps per EAS build, tag releases. **(mobile — needs native rebuild)** |
-| C-alert | **No alerting reaches a human anywhere** — even with a Sentry DSN, no rule pages anyone; nothing watches `failed_jobs` | Observability built as detective controls with no notification layer. | Sentry alert rules → Slack/email; `Queue::failing` → Sentry; uptime monitor → paging; route CRITICAL log lines to Sentry. **(ops + small code)** |
-| C-redis | **Redis correlated SPOF** — throttle + `EnsureUserActive` touch cache every request; Redis down = whole authed API 500s | cache+queue+session-throttle+limiter+presence all on one Redis, no degradation. | Compose a real `failover` store (redis→database→array) + point `CACHE_STORE` at it, or fail-open the limiter/presence; managed Redis HA. |
+| C-alert | **No alerting reaches a human anywhere** — even with a Sentry DSN, no rule pages anyone; nothing watches `failed_jobs` | Observability built as detective controls with no notification layer. | **[PARTIALLY FIXED 2026-08-17]** `Queue::failing` now raises an admin alert + CRITICAL log on failed jobs; `/health` exposes scheduler staleness. REMAINING (ops): Sentry alert rules → Slack/email; uptime monitor → paging; route the CRITICAL logs to Sentry once the DSN is set. |
+| C-redis | **Redis correlated SPOF** — throttle + `EnsureUserActive` touch cache every request; Redis down = whole authed API 500s | cache+queue+session-throttle+limiter+presence all on one Redis, no degradation. | **[PARTIALLY FIXED 2026-08-17]** `EnsureUserActive` presence write now fails open; the `failover` cache store recomposed redis→database→array. REMAINING: set `CACHE_STORE=failover` in prod (env) so the rate limiter also degrades; managed Redis HA. |
 | C-backup | **Single-server SPOF; backups default on-box (`DB_BACKUP_DISK=local`), no PITR** | Off-site is opt-in via an off-repo env var; no binlog. | Set `DB_BACKUP_DISK=s3` + `AWS_*` (now in the prod template), enable MySQL binlog/PITR, monthly restore drill. **(ops)** |
-| C-worker | **Queue worker + scheduler cron unverified/unmonitored** → silent loss of push, realtime, SOS fan-out, money/safety reapers | Liveness assumed, not enforced or observed. | Confirm the Forge daemons; add a scheduler heartbeat + `failed_jobs`/queue-depth probe with a dead-man's-switch to paging. **(ops + small code)** |
+| C-worker | **Queue worker + scheduler cron unverified/unmonitored** → silent loss of push, realtime, SOS fan-out, money/safety reapers | Liveness assumed, not enforced or observed. | **[PARTIALLY FIXED 2026-08-17]** `Queue::failing` now logs CRITICAL + raises an admin alert on any permanently-failed job; a scheduler heartbeat surfaces `scheduler: stale` in `GET /health` (dead-man's-switch). REMAINING: confirm the Forge daemons + point an uptime monitor at `/health` with a paging destination. **(ops)** |
 
 ### 🟠 High
 | # | Gap | Fix |
@@ -111,7 +111,7 @@ Severity: 🔴 Critical · 🟠 High · 🟡 Medium · 🟢 Low. Items marked **
 | H-B | **Online bookings dispatch runners *before* payment capture**, with no never-paid guard | Defer `MatchRunnerJob` for non-wallet/non-cash until `payment.succeeded`, or block runner status progression past `accepted` while `payment_status IN (pending,processing)`. |
 | H-C | **Broadcast on the sync create path could 500 a committed booking** (`IncomingRequest::dispatch`, re-thrown by the outer catch) | **[FIXED 2026-08-17]** wrapped in try/catch (log + swallow), mirroring the guarded location broadcast. |
 | H-D | **Deploy is non-atomic, no maintenance window, no rollback** (in-place `git pull`) | `php artisan down/up` around migrate; move to atomic releases (Envoyer/Deployer); keep the pre-migrate backup. **(ops)** |
-| H-E | **`Gate::before` blanket-allows every AdminUser** — new Filament resources default to full access; concrete leaks: Reviews flag actions ungated, revenue widgets show GMV to support/ops, `ExportCsv` lets any admin export the full user PII directory | Default-deny base Resource / ability→capability map; add cap gates to the flagged surfaces. |
+| H-E | **`Gate::before` blanket-allows every AdminUser** — new Filament resources default to full access | **[PARTIALLY FIXED 2026-08-17]** revenue widgets (RevenueChart/PaymentMixChart/overview stats) now `canManageMoney`-gated; review flag/unflag now `canModerate`-gated (7 tests). **POLICY-DECIDED (owner): GMV stays visible to ops, and the full-user CSV export stays open to all admins — both accepted, not gated.** Systemic pattern remains: new resources still need self-gating. |
 | H-F | **Booking create fans out blocking work synchronously** (Xendit ≤12s + inline matching) → FPM pool exhaustion under create concurrency | Create → return checkout intent → confirm via webhook/poll; keep matching sync if needed. |
 | H-G | **Reverb single-process, scaling disabled, no Octane** — websocket ceiling + horizontal blocker | `REVERB_SCALING_ENABLED=true` (Redis) before horizontal scale; dedicated core. **(ops/config)** |
 | H-H | **Inline DomPDF pins FPM workers** (≤500-item statements; receipt route was unthrottled) | Queue → signed download URL; **receipt route now throttled 6/min [FIXED 2026-08-17]**. |
@@ -162,12 +162,22 @@ Severity: 🔴 Critical · 🟠 High · 🟡 Medium · 🟢 Low. Items marked **
 
 ## 14. Implemented this pass (2026-08-17)
 
-All backend, triple-checked (php -l + full suite **584 green on SQLite + MySQL 8**) and adversarially reviewed:
+All backend, triple-checked (php -l + full suite **595 green on SQLite + MySQL 8**) and adversarially reviewed. Commits `f34852f`, `9c6d4c9`, `1dc23c2`, `f7ad515`, `fff27fb`.
 
+*Batch 1 — money + hardening*
 1. **🔴 `rebook()` money-loss — CLOSED.** No longer creates an unpaid booking or dispatches a runner; returns a prefill for the normal paid `store()` flow. Regression test asserts *no* booking created and *no* `MatchRunnerJob` dispatched.
 2. **🟠 PII out of logs.** Removed raw phone/email/identifier from Login/OTP/PasswordReset log contexts (CWE-532).
-3. **🟠 Create-path broadcast guarded.** `IncomingRequest::dispatch` wrapped so a Reverb outage can't 500 a committed booking.
+3. **🟠 Create-path broadcast guarded.** The synchronous match notifications (`SendPushJob` + `IncomingRequest`) are wrapped so a Reverb/queue hiccup can't 500 a committed booking (the referral-driving `BookingStatusChanged` is intentionally left unguarded).
 4. **🟠 Receipt-PDF route throttled** (6/min); **🟡 `payments.status` index** added (verified the auditor's other three indexes were already covered or unused).
-5. **🟡 Prod env template synced** — added the missing security/DR/observability vars (`TRUSTED_PROXIES`, `DB_BACKUP_DISK`+`AWS_*`, `SENTRY_*`, Sanctum/CORS/body-cap) so a prod provision no longer defaults to insecure/on-box/inert.
+5. **🟡 Prod env template synced** — added the missing security/DR/observability vars (`TRUSTED_PROXIES`, `DB_BACKUP_DISK`+`AWS_*`, `SENTRY_*`, Sanctum/CORS/body-cap).
 
-The remaining criticals are, by design, the ones that need **you**: the mobile `eas.json` key + crash SDK (device build), and the ops activations (DSN, alerting, off-site backups, atomic deploy) — none of which can be done or verified from the repo alone.
+*Batch 2 — admin authz + Redis degradation (H-E / C-redis)*
+6. **Revenue widgets gated** — RevenueChart / PaymentMixChart / the dashboard GMV+revenue stats now `canManageMoney`-only.
+7. **Review moderation gated** — flag/unflag (bulk + record) now `canModerate`-only.
+8. **`EnsureUserActive` fails open** on a cache error, and the `failover` cache store recomposed redis→database→array.
+
+*Batch 3 — failure visibility (C2 / C3)*
+9. **Failed jobs alert** — `Queue::failing` → CRITICAL log + a `job_failed` admin alert.
+10. **Scheduler liveness** — an every-minute heartbeat surfaces `scheduler: ok|stale|unknown` in `GET /health` (informational; never 503s the box).
+
+The remaining criticals are, by design, the ones that need **you**: the mobile `eas.json` key + crash SDK (device build), and the ops activations (Sentry DSN + alert rules, uptime monitor → paging, off-site backups/PITR, atomic deploy, `CACHE_STORE=failover`) — none of which can be done or verified from the repo alone.
