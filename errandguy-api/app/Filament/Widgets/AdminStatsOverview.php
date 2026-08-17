@@ -65,7 +65,12 @@ class AdminStatsOverview extends StatsOverviewWidget
             ];
         });
 
-        return [
+        // GMV + platform revenue are money data — show them only to money roles
+        // (super_admin / finance), matching RevenueChart/PaymentMixChart. The
+        // non-money operational stats stay visible to every admin. (audit H-E)
+        $canSeeMoney = auth('admin')->user()?->canManageMoney() ?? false;
+
+        $stats = [
             Stat::make('Customers', number_format($d['customers']))
                 ->description($d['customers_new_today'] > 0 ? '+'.number_format($d['customers_new_today']).' today' : 'No new signups today')
                 ->descriptionIcon('heroicon-m-user-plus')
@@ -80,19 +85,25 @@ class AdminStatsOverview extends StatsOverviewWidget
                 ->description('In flight right now')
                 ->descriptionIcon('heroicon-m-bolt')
                 ->color('info'),
+        ];
 
-            $this->trendStat('GMV today', '₱'.number_format($d['gmv_today'], 2), $d['gmv_today'], $d['gmv_yesterday'])
+        if ($canSeeMoney) {
+            $stats[] = $this->trendStat('GMV today', '₱'.number_format($d['gmv_today'], 2), $d['gmv_today'], $d['gmv_yesterday'])
                 ->chart($d['gmv_spark'])
-                ->extraAttributes(['class' => 'eg-stat--money']),
+                ->extraAttributes(['class' => 'eg-stat--money']);
+        }
 
-            $this->trendStat('Completed today', number_format($d['completed_today']), $d['completed_today'], $d['completed_yesterday']),
+        $stats[] = $this->trendStat('Completed today', number_format($d['completed_today']), $d['completed_today'], $d['completed_yesterday']);
 
-            Stat::make('Platform revenue today', '₱'.number_format($d['revenue_today'], 2))
+        if ($canSeeMoney) {
+            $stats[] = Stat::make('Platform revenue today', '₱'.number_format($d['revenue_today'], 2))
                 ->description('Service fees on completed errands')
                 ->descriptionIcon('heroicon-m-building-library')
                 ->color('success')
-                ->extraAttributes(['class' => 'eg-stat--money']),
-        ];
+                ->extraAttributes(['class' => 'eg-stat--money']);
+        }
+
+        return $stats;
     }
 
     /**

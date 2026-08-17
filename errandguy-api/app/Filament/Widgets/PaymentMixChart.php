@@ -14,6 +14,13 @@ use Filament\Widgets\ChartWidget;
  */
 class PaymentMixChart extends ChartWidget
 {
+    // Completed-booking GMV by payment method is money data — restrict to money
+    // roles (super_admin / finance), matching PaymentResource::canViewAny.
+    public static function canView(): bool
+    {
+        return auth('admin')->user()?->canManageMoney() ?? false;
+    }
+
     protected static ?int $sort = 6;
 
     protected ?string $heading = 'Payment mix';

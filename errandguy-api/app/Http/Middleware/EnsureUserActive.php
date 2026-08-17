@@ -56,12 +56,22 @@ class EnsureUserActive
         // 60 s is granular enough for "online" presence + admin "last
         // seen" UI, while collapsing thousands of background pings
         // into a single write.
-        if (Cache::add("user_active_throttle:{$user->id}", 1, 60)) {
-            // Use a targeted UPDATE (no model save) to avoid firing
-            // observers / touching updated_at / refreshing the model.
-            $user->newQuery()
-                ->whereKey($user->id)
-                ->update(['last_active_at' => now()]);
+        // Fail OPEN if the cache backend is unavailable. This middleware runs on
+        // every authenticated request and the cache store (Redis in prod) is a
+        // correlated dependency of the whole authed API — an un-guarded
+        // Cache::add would turn a Redis blip into a 500 on every request. Presence
+        // ("last seen") is a best-effort convenience, so on a cache error we skip
+        // the throttled write and still serve the request.
+        try {
+            if (Cache::add("user_active_throttle:{$user->id}", 1, 60)) {
+                // Use a targeted UPDATE (no model save) to avoid firing
+                // observers / touching updated_at / refreshing the model.
+                $user->newQuery()
+                    ->whereKey($user->id)
+                    ->update(['last_active_at' => now()]);
+            }
+        } catch (\Throwable $e) {
+            // Cache (Redis) unavailable — skip the presence write, don't 500.
         }
 
         return $next($request);

@@ -96,9 +96,18 @@ return [
             'driver' => 'octane',
         ],
 
+        // Graceful-degradation store: tries each backing store in order and
+        // only throws if ALL fail. Set CACHE_STORE=failover in prod to stop a
+        // Redis outage from 500ing the whole authed API (the rate limiter +
+        // presence check hit the cache on every request): it falls back to the
+        // `database` cache table, then to per-request `array` as a last resort
+        // (no cross-request limiting, but no crash). Redis MUST be listed first
+        // so normal operation stays on Redis — the previous [database, array]
+        // composition skipped Redis entirely and was never usable as the default.
         'failover' => [
             'driver' => 'failover',
             'stores' => [
+                'redis',
                 'database',
                 'array',
             ],

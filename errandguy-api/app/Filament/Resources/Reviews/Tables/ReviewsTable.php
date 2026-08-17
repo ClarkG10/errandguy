@@ -56,6 +56,12 @@ class ReviewsTable
                     ->label('Unflag selected')
                     ->icon(Heroicon::OutlinedExclamationTriangle)
                     ->color('gray')
+                    // Moderation surface — gate to moderators (super/admin/ops)
+                    // via canModerate(). Filament actions have no policy
+                    // fall-through, so without this the Gate::before blanket-allow
+                    // let finance/support moderate review flags. (The permanent
+                    // delete gates below are stricter still — super/admin only.)
+                    ->visible(fn (): bool => auth('admin')->user()?->canModerate() ?? false)
                     ->requiresConfirmation()
                     ->modalDescription('Clears the flag on every selected review that is currently flagged.')
                     ->deselectRecordsAfterCompletion()
@@ -107,6 +113,8 @@ class ReviewsTable
                     ->label(fn ($record): string => $record->is_flagged ? 'Unflag' : 'Flag')
                     ->icon(Heroicon::OutlinedExclamationTriangle)
                     ->color(fn ($record): string => $record->is_flagged ? 'gray' : 'warning')
+                    // Moderation surface — gate to moderators (super/admin/ops).
+                    ->visible(fn (): bool => auth('admin')->user()?->canModerate() ?? false)
                     ->requiresConfirmation()
                     ->action(function ($record): void {
                         $record->update(['is_flagged' => ! $record->is_flagged]);

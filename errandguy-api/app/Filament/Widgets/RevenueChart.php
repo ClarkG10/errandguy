@@ -13,6 +13,15 @@ use Filament\Widgets\ChartWidget;
  */
 class RevenueChart extends ChartWidget
 {
+    // GMV + platform revenue is money data — restrict to money roles
+    // (super_admin / finance), matching PaymentResource::canViewAny. Without
+    // this, the dashboard rendered revenue to support/ops. Widgets have no
+    // policy fall-through, so the gate lives here.
+    public static function canView(): bool
+    {
+        return auth('admin')->user()?->canManageMoney() ?? false;
+    }
+
     protected static ?int $sort = 3;
 
     protected ?string $heading = 'Revenue';
