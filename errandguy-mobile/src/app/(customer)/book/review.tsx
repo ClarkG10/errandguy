@@ -953,6 +953,11 @@ export default function ReviewScreen() {
         <PromoCodeInput
           appliedCode={draftBooking.promo_code}
           appliedDiscount={promoDiscount}
+          amount={
+            pricingMode === 'fixed'
+              ? currentVehicleEstimate?.total_amount ?? 0
+              : offerPrice
+          }
           onApply={(code, discount) => {
             updateDraft({ promo_code: code, promo_discount: discount });
           }}

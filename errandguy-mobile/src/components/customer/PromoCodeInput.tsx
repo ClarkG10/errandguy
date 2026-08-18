@@ -16,6 +16,11 @@ interface PromoCodeInputProps {
    *  so the discount stays visible even where no breakdown line exists
    *  (negotiate mode, rehydrated drafts). */
   appliedDiscount?: number;
+  /** Current booking fare (pre-discount). Sent to the validate endpoint so the
+   *  server can enforce min_order and compute percentage discounts against the
+   *  real amount — without it, min-order promos are rejected and percentage
+   *  promos preview ₱0. */
+  amount?: number;
   onApply: (code: string, discount: number) => void;
   onRemove: () => void;
 }
@@ -23,6 +28,7 @@ interface PromoCodeInputProps {
 export function PromoCodeInput({
   appliedCode,
   appliedDiscount = 0,
+  amount,
   onApply,
   onRemove,
 }: PromoCodeInputProps) {
@@ -36,7 +42,7 @@ export function PromoCodeInput({
     setLoading(true);
     setError('');
     try {
-      const res = await configService.validatePromo(code.trim());
+      const res = await configService.validatePromo(code.trim(), amount);
       const data = res.data.data;
       // Outcome haptic — promo validated and applied.
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(
@@ -58,7 +64,7 @@ export function PromoCodeInput({
     } finally {
       setLoading(false);
     }
-  }, [code, onApply]);
+  }, [code, amount, onApply]);
 
   if (appliedCode) {
     return (

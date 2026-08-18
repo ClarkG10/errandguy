@@ -24,8 +24,14 @@ export const configService = {
     return api.get('/config/app', { cacheTtlMs: 10 * 60 * 1000, silent: true });
   },
 
-  validatePromo(code: string) {
-    return api.get(`/promos/validate/${encodeURIComponent(code)}`);
+  validatePromo(code: string, amount?: number) {
+    // Thread the booking fare as `?amount=N`. Without it the backend defaults
+    // to 0, which (a) rejects ANY promo that has a min_order (0 < min_order)
+    // and (b) makes percentage promos compute a ₱0 discount. See PromoService.
+    return api.get(
+      `/promos/validate/${encodeURIComponent(code)}`,
+      amount != null ? { params: { amount } } : undefined,
+    );
   },
 
   // Browse currently-valid, publicly-listable promo codes the caller can
