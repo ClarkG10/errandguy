@@ -1772,11 +1772,7 @@ export default function TrackingScreen() {
                     return (
                       <Pressable
                         className="flex-1"
-                        onPress={() =>
-                          Linking.openURL(uri).catch(() =>
-                            toast.error('Could not open signature'),
-                          )
-                        }
+                        onPress={() => setProofPhotoUri(uri)}
                         accessibilityRole="imagebutton"
                         accessibilityLabel="Open customer signature"
                       >

@@ -1,10 +1,12 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { View, Text, Pressable, ScrollView, Linking } from 'react-native';
+import { View, Text, Pressable, ScrollView } from 'react-native';
 import { Image } from 'expo-image';
 import * as Haptics from 'expo-haptics';
 import { ChevronDown, ChevronUp, Check } from 'lucide-react-native';
 import { Card } from '../ui/Card';
 import { resolveImageUrl } from '../../utils/resolveImageUrl';
+import { mediaSource } from '../../utils/mediaSource';
+import { ImageLightbox } from '../ui/ImageLightbox';
 import { storage } from '../../utils/storage';
 import { parseChecklist } from '../../utils/shoppingChecklist';
 import { runnerService } from '../../services/runner.service';
@@ -71,6 +73,9 @@ export function ErrandDetailsCard({
   // Optimistic local mirror of the server list so ticks feel instant. Kept in
   // sync with the incoming prop (a background refetch or realtime push wins).
   const [serverItems, setServerItems] = useState<ShoppingItem[]>(shoppingItems ?? []);
+  // Full-size item-photo preview — opened in the bearer-aware in-app lightbox
+  // (these are gated /internal/media URLs; the OS browser can't auth them).
+  const [photoUri, setPhotoUri] = useState<string | null>(null);
   const serverItemsKey = useMemo(
     () =>
       (shoppingItems ?? [])
@@ -173,6 +178,7 @@ export function ErrandDetailsCard({
   if (!hasContent) return null;
 
   return (
+    <>
     <Card className="p-4 mb-3">
       <Pressable
         onPress={() => setExpanded(!expanded)}
@@ -373,13 +379,13 @@ export function ErrandDetailsCard({
                   return (
                     <Pressable
                       key={i}
-                      onPress={() => Linking.openURL(uri).catch(() => {})}
+                      onPress={() => setPhotoUri(uri)}
                       accessibilityRole="imagebutton"
                       accessibilityLabel={`Open item photo ${i + 1}`}
                       style={{ marginRight: 8 }}
                     >
                       <Image
-                        source={{ uri }}
+                        source={mediaSource(photo)}
                         style={{ width: 96, height: 96, borderRadius: 16, backgroundColor: LightColors.surfaceMuted }}
                         contentFit="cover"
                         transition={150}
@@ -394,5 +400,11 @@ export function ErrandDetailsCard({
         </View>
       )}
     </Card>
+      <ImageLightbox
+        uri={photoUri}
+        visible={!!photoUri}
+        onClose={() => setPhotoUri(null)}
+      />
+    </>
   );
 }
