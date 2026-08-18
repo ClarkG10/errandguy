@@ -13,6 +13,7 @@ import { Card } from '../ui/Card';
 import { UploadProgress } from '../ui/UploadProgress';
 import type { DocumentStatus } from '../../types';
 import { LightColors } from '../../constants/colors';
+import { mediaSource } from '../../utils/mediaSource';
 
 interface DocumentUploadCardProps {
   documentType: string;
@@ -155,7 +156,7 @@ export function DocumentUploadCard({
               why the preview was invisible on the runner side. Set the
               dimensions inline. */}
           <Image
-            source={{ uri: fileUrl }}
+            source={mediaSource(fileUrl)}
             style={{
               width: '100%',
               height: 140,

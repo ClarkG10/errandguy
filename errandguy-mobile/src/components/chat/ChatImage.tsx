@@ -1,6 +1,7 @@
 import React, { memo, useState } from 'react';
 import { Image, type ImageLoadEventData } from 'expo-image';
 import { LightColors } from '../../constants/colors';
+import { mediaSource } from '../../utils/mediaSource';
 
 interface ChatImageProps {
   /** Already-resolved absolute image URL. */
@@ -44,7 +45,7 @@ export const ChatImage = memo(function ChatImage({
 
   return (
     <Image
-      source={{ uri }}
+      source={mediaSource(uri)}
       style={{ width, height, borderRadius, marginBottom, backgroundColor: LightColors.divider }}
       contentFit="cover"
       transition={150}

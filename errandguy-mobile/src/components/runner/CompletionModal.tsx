@@ -10,6 +10,7 @@ import { SignaturePad, type SignaturePadHandle } from './SignaturePad';
 import { LightColors } from '../../constants/colors';
 import { useResponsive } from '../../constants/responsive';
 import { toast } from '../../stores/toastStore';
+import { mediaSource } from '../../utils/mediaSource';
 
 interface CompletionModalProps {
   bookingId: string;
@@ -150,7 +151,7 @@ export function CompletionModal({
                   {requiresSignature ? 'Delivery Photo' : 'Proof Photo'}
                 </Text>
                 <Image
-                  source={{ uri: deliveryPhotoUrl }}
+                  source={mediaSource(deliveryPhotoUrl)}
                   className="w-full h-28 rounded-lg"
                   contentFit="cover"
                 />

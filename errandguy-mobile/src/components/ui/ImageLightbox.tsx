@@ -13,6 +13,7 @@ import { Download, X } from 'lucide-react-native';
 import { toast } from '../../stores/toastStore';
 import { LightColors } from '../../constants/colors';
 import { Spinner } from './Spinner';
+import { mediaSource } from '../../utils/mediaSource';
 
 /**
  * Both `expo-media-library` and `expo-file-system` are native modules.
@@ -124,7 +125,7 @@ export function ImageLightbox({ uri, visible, onClose }: ImageLightboxProps) {
         <Pressable className="flex-1 items-center justify-center" onPress={onClose}>
           {uri ? (
             <Image
-              source={{ uri }}
+              source={mediaSource(uri)}
               style={{ width, height: height * 0.8 }}
               contentFit="contain"
               transition={200}

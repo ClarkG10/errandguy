@@ -70,6 +70,7 @@ import { ConfirmModal } from '../../../components/ui/ConfirmModal';
 import { ExpandableSheet } from '../../../components/ui/ExpandableSheet';
 import { formatTime } from '../../../utils/formatDate';
 import { formatCurrency } from '../../../utils/formatCurrency';
+import { mediaSource } from '../../../utils/mediaSource';
 import { resolveImageUrl } from '../../../utils/resolveImageUrl';
 import { errorMessage } from '../../../utils/errorCatalog';
 import { haptics } from '../../../utils/haptics';
@@ -1680,7 +1681,7 @@ export default function TrackingScreen() {
                         style={({ pressed }) => pressFx(pressed)}
                       >
                         <Image
-                          source={{ uri: booking.receipt_photo_url }}
+                          source={mediaSource(booking.receipt_photo_url)}
                           className="w-12 h-12 rounded-lg mr-2 bg-divider"
                         />
                         <Text className="text-xs font-montserrat-semi text-primary">
