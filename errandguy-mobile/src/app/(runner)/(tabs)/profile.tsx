@@ -296,7 +296,7 @@ export default function RunnerProfileScreen() {
     : undefined;
   const radiusPreview =
     runnerProfile?.working_area_radius != null
-      ? `${Number(runnerProfile.working_area_radius)} km`
+      ? `${(Number(runnerProfile.working_area_radius) / 1000).toFixed(1)} km`
       : undefined;
   const documentsPreview = runnerProfile?.verification_status
     ? VERIFICATION_LABELS[runnerProfile.verification_status]

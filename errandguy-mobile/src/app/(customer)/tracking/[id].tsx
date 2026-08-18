@@ -1664,13 +1664,13 @@ export default function TrackingScreen() {
                     <View className="h-px bg-divider my-2" />
                     <View className="flex-row items-center justify-between">
                       <Text className="text-sm font-montserrat-semi text-textPrimary">
-                        {booking.actual_item_cost <= booking.shopping_budget
+                        {Number(booking.actual_item_cost) <= Number(booking.shopping_budget)
                           ? 'Refund to wallet'
                           : 'Additional due'}
                       </Text>
                       <Text
                         className={`text-base font-montserrat-bold ${
-                          booking.actual_item_cost <= booking.shopping_budget
+                          Number(booking.actual_item_cost) <= Number(booking.shopping_budget)
                             ? 'text-successDark'
                             : 'text-warningDark'
                         }`}
