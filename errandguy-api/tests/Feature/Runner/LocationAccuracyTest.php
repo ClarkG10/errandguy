@@ -56,4 +56,35 @@ class LocationAccuracyTest extends TestCase
         $this->assertNotNull($row);
         $this->assertEqualsWithDelta(12.5, (float) $row->accuracy, 0.001);
     }
+
+    public function test_out_of_range_speed_and_heading_are_nulled_and_the_ping_succeeds(): void
+    {
+        $runner = $this->runner();
+
+        // speed + heading are also decimal(5,2). A garbage/spoofed reading above
+        // the ceiling (heading > 360) must be nulled — not overflow + 500 the ping.
+        $this->postJson('/api/v1/runner/location', [
+            'lat' => 14.60, 'lng' => 120.98, 'speed' => 99999, 'heading' => 99999,
+        ])->assertSuccessful();
+
+        $this->assertDatabaseHas('runner_locations', [
+            'runner_id' => $runner->id,
+            'speed' => null,
+            'heading' => null,
+        ]);
+    }
+
+    public function test_normal_speed_and_heading_are_preserved(): void
+    {
+        $runner = $this->runner();
+
+        $this->postJson('/api/v1/runner/location', [
+            'lat' => 14.60, 'lng' => 120.98, 'speed' => 12.5, 'heading' => 270,
+        ])->assertSuccessful();
+
+        $row = \App\Models\RunnerLocation::where('runner_id', $runner->id)->first();
+        $this->assertNotNull($row);
+        $this->assertEqualsWithDelta(12.5, (float) $row->speed, 0.001);
+        $this->assertEqualsWithDelta(270, (float) $row->heading, 0.001);
+    }
 }

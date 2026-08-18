@@ -38,8 +38,15 @@ class UpdateLocationRequest extends FormRequest
         $heading = $this->input('heading');
         $accuracy = $this->input('accuracy');
         $this->merge([
-            'speed' => is_numeric($speed) && $speed < 0 ? null : $speed,
-            'heading' => is_numeric($heading) && $heading < 0 ? null : $heading,
+            // speed + heading share accuracy's decimal(5,2) ceiling (999.99).
+            // Negatives are the iOS/Android "unknown" sentinel; a value ABOVE the
+            // ceiling (a garbage/spoofed reading, or heading > 360) would overflow
+            // the column and 500 the ping under strict MySQL — dropping the runner
+            // off the live map, exactly like the accuracy case below. Null both
+            // out-of-range ends so the lat/lng ping still lands. (heading is a
+            // 0-360 compass bearing, so anything past 360 is invalid regardless.)
+            'speed' => is_numeric($speed) && ($speed < 0 || $speed > 999.99) ? null : $speed,
+            'heading' => is_numeric($heading) && ($heading < 0 || $heading > 360) ? null : $heading,
             // accuracy is stored in decimal(5,2) (ceiling 999.99 m). GPS on a
             // weak fix (indoors/tunnels/Wi-Fi) routinely reports 1000-5000 m;
             // inserting that OUT-OF-RANGE value 500s the ping under strict-mode
