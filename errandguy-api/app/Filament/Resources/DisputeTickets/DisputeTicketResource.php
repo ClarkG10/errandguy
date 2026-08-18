@@ -57,7 +57,7 @@ class DisputeTicketResource extends Resource
     {
         $n = \App\Support\AdminCache::remember(
             \App\Support\AdminCache::BADGE_DISPUTES,
-            fn () => DisputeTicket::whereIn('status', ['open', 'reviewing'])->count(),
+            fn () => DisputeTicket::unresolved()->count(),
         );
 
         return $n ? (string) $n : null;

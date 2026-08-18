@@ -52,4 +52,17 @@ class DisputeTicket extends Model
     {
         return $query->where('status', 'reviewing');
     }
+
+    /**
+     * Disputes still needing admin attention — every non-terminal status
+     * (resolved is the only terminal one). Single source of truth for the
+     * "active"/needs-attention count so the API dashboard, the ops ActionQueue,
+     * and the nav badge agree. Previously each used a different, incomplete set
+     * ([open,escalated] vs [open,reviewing]), so escalated disputes — the urgent,
+     * explicitly-escalated ones — were invisible in the ops queue and badge.
+     */
+    public function scopeUnresolved($query)
+    {
+        return $query->whereIn('status', ['open', 'reviewing', 'escalated']);
+    }
 }

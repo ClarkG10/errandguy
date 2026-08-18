@@ -49,7 +49,7 @@ class DashboardController extends Controller
                     // 'resolved' — there is no 'active' status, so the old
                     // where('status','active') always counted 0 and NEW disputes
                     // never surfaced on the ops tile. Count everything unresolved.
-                    'active' => DisputeTicket::whereIn('status', ['open', 'escalated'])->count(),
+                    'active' => DisputeTicket::unresolved()->count(),
                     'escalated' => DisputeTicket::where('status', 'escalated')->count(),
                 ],
             ];
