@@ -39,15 +39,18 @@ class PromoCodeForm
                         TextInput::make('discount_value')
                             ->numeric()
                             ->minValue(0)
+                            ->maxValue(100000)
                             ->required(),
                         TextInput::make('max_discount')
                             ->numeric()
                             ->minValue(0)
+                            ->maxValue(100000)
                             ->prefix('₱')
                             ->helperText('Caps a percentage discount. Leave blank for none.'),
                         TextInput::make('min_order')
                             ->numeric()
                             ->minValue(0)
+                            ->maxValue(100000)
                             ->prefix('₱')
                             ->helperText('Minimum order value to qualify.'),
                     ]),

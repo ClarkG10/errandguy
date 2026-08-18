@@ -43,14 +43,14 @@ class ErrandTypeForm
                     ->description('Drives PricingService. Fees are in ₱.')
                     ->columns(3)
                     ->schema([
-                        TextInput::make('base_fee')->numeric()->minValue(0)->prefix('₱')->default(0)->required(),
-                        TextInput::make('surcharge')->numeric()->minValue(0)->prefix('₱')->default(0),
-                        TextInput::make('min_negotiate_fee')->numeric()->minValue(0)->prefix('₱')->default(0)
+                        TextInput::make('base_fee')->numeric()->minValue(0)->maxValue(20000)->prefix('₱')->default(0)->required(),
+                        TextInput::make('surcharge')->numeric()->minValue(0)->maxValue(5000)->prefix('₱')->default(0),
+                        TextInput::make('min_negotiate_fee')->numeric()->minValue(0)->maxValue(20000)->prefix('₱')->default(0)
                             ->helperText('Floor for negotiate-mode offers.'),
-                        TextInput::make('per_km_walk')->label('Per km — walk')->numeric()->minValue(0)->prefix('₱')->default(0),
-                        TextInput::make('per_km_bicycle')->label('Per km — bicycle')->numeric()->minValue(0)->prefix('₱')->default(0),
-                        TextInput::make('per_km_motorcycle')->label('Per km — motorcycle')->numeric()->minValue(0)->prefix('₱')->default(0),
-                        TextInput::make('per_km_car')->label('Per km — car')->numeric()->minValue(0)->prefix('₱')->default(0),
+                        TextInput::make('per_km_walk')->label('Per km — walk')->numeric()->minValue(0)->maxValue(1000)->prefix('₱')->default(0),
+                        TextInput::make('per_km_bicycle')->label('Per km — bicycle')->numeric()->minValue(0)->maxValue(1000)->prefix('₱')->default(0),
+                        TextInput::make('per_km_motorcycle')->label('Per km — motorcycle')->numeric()->minValue(0)->maxValue(1000)->prefix('₱')->default(0),
+                        TextInput::make('per_km_car')->label('Per km — car')->numeric()->minValue(0)->maxValue(1000)->prefix('₱')->default(0),
                     ]),
             ]);
     }
