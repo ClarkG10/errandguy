@@ -140,6 +140,20 @@ class RunnerErrandController extends Controller
             $booking = DB::transaction(function () use ($id, $user, &$oldStatus) {
                 $booking = Booking::whereKey($id)->lockForUpdate()->firstOrFail();
 
+                // Self-deal guard: a user who is BOTH a customer and an approved
+                // runner (roles are freely toggleable via the profile) must never
+                // accept the errand they themselves booked. Without this, one
+                // account can pay as the customer and collect the runner payout,
+                // self-review to inflate its rating, and farm completion stats —
+                // and with a platform-funded promo the cash commission can even go
+                // negative (net money OUT). This mirrors the excludeCustomerId
+                // contract the AUTOMATED dispatch already enforces
+                // (MatchingService::findRunner / broadcastToRunners); accept() is
+                // the MANUAL path that omitted it. (ids are UUIDs → compare as strings.)
+                if ((string) $booking->customer_id === (string) $user->id) {
+                    throw new \RuntimeException('self_deal');
+                }
+
                 if (!in_array($booking->status, ['pending', 'matched'])) {
                     throw new \RuntimeException('unavailable');
                 }
@@ -189,6 +203,13 @@ class RunnerErrandController extends Controller
                 return $booking;
             });
         } catch (\RuntimeException $e) {
+            if ($e->getMessage() === 'self_deal') {
+                return $this->fail(
+                    ErrorCode::BOOKING_CONFLICT,
+                    "You can't accept your own errand.",
+                );
+            }
+
             if ($e->getMessage() === 'has_active') {
                 return $this->fail(
                     ErrorCode::BOOKING_CONFLICT,
@@ -306,7 +327,12 @@ class RunnerErrandController extends Controller
             ->where('status', 'pending')
             ->where('pricing_mode', 'negotiate')
             ->where('negotiate_expires_at', '>', now())
-            ->whereNull('runner_id');
+            ->whereNull('runner_id')
+            // Never surface a user's OWN booking in their runner offer feed —
+            // defense-in-depth with the accept() self-deal guard so a
+            // customer-and-runner account can neither see nor claim the errand
+            // it booked.
+            ->where('customer_id', '!=', $user->id);
 
         // Bounding-box prefilter (same 25%-margin box as MatchingService) so we
         // don't load every open negotiate booking in the country and haversine
@@ -637,6 +663,18 @@ class RunnerErrandController extends Controller
     {
         $profile = $user->runnerProfile;
         if (!$profile) {
+            return;
+        }
+
+        // Self-deal backstop (legacy rows only — accept() now blocks new ones):
+        // a booking whose customer and runner are the SAME user must never
+        // settle, or the platform moves money within a single wallet and lets the
+        // user farm earnings/stats. Skip settlement and flag for reconciliation.
+        if ((string) $booking->customer_id === (string) $booking->runner_id) {
+            \Illuminate\Support\Facades\Log::critical('Self-dealt booking reached completion; settlement skipped', [
+                'booking_id' => $booking->id,
+                'user_id' => $booking->customer_id,
+            ]);
             return;
         }
 

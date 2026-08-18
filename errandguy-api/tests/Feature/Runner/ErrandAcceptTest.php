@@ -221,4 +221,75 @@ class ErrandAcceptTest extends TestCase
 
         $response->assertStatus(403);
     }
+
+    public function test_runner_cannot_accept_their_own_booking_self_deal(): void
+    {
+        Event::fake();
+
+        // The acting runner is ALSO the customer who booked this errand — the
+        // exact self-deal a customer↔runner role-toggler could attempt: pay as
+        // customer, collect the runner payout, self-review, farm stats. accept()
+        // must refuse and leave the booking unclaimed.
+        $selfBooking = Booking::create([
+            'booking_number' => 'EG-20260331-SELF',
+            'customer_id' => $this->runner->id, // same user as the acting runner
+            'errand_type_id' => $this->errandType->id,
+            'status' => 'pending',
+            'pickup_address' => '1 A', 'pickup_lat' => 14.60, 'pickup_lng' => 120.98,
+            'dropoff_address' => '2 B', 'dropoff_lat' => 14.55, 'dropoff_lng' => 121.02,
+            'schedule_type' => 'now', 'pricing_mode' => 'negotiate', 'vehicle_type_rate' => 'motorcycle',
+            'distance_km' => 5.0, 'base_fee' => 50, 'distance_fee' => 50, 'service_fee' => 15,
+            'surcharge' => 0, 'total_amount' => 115, 'runner_payout' => 85,
+            'is_transportation' => false,
+        ]);
+
+        $response = $this->actingAs($this->runner)
+            ->postJson("/api/v1/runner/errand/{$selfBooking->id}/accept");
+
+        $response->assertStatus(409)
+            ->assertJsonPath('code', 'BOOKING_CONFLICT');
+        $this->assertStringContainsString('your own errand', (string) $response->json('message'));
+
+        // The booking stays unclaimed — no runner assigned, still pending.
+        $selfBooking->refresh();
+        $this->assertNull($selfBooking->runner_id);
+        $this->assertSame('pending', $selfBooking->status);
+    }
+
+    public function test_available_offers_exclude_the_runners_own_booking(): void
+    {
+        // Two open negotiate bookings near the runner: one they booked
+        // themselves, one from a real customer. The offer feed must show the
+        // other customer's booking but NEVER the runner's own (defense-in-depth
+        // for the self-deal guard).
+        $mine = Booking::create([
+            'booking_number' => 'EG-20260331-MINE',
+            'customer_id' => $this->runner->id,
+            'errand_type_id' => $this->errandType->id, 'status' => 'pending',
+            'pickup_address' => '1 A', 'pickup_lat' => 14.60, 'pickup_lng' => 120.98,
+            'dropoff_address' => '2 B', 'dropoff_lat' => 14.55, 'dropoff_lng' => 121.02,
+            'schedule_type' => 'now', 'pricing_mode' => 'negotiate', 'vehicle_type_rate' => 'motorcycle',
+            'negotiate_expires_at' => now()->addHour(),
+            'distance_km' => 5.0, 'base_fee' => 50, 'distance_fee' => 50, 'service_fee' => 15,
+            'surcharge' => 0, 'total_amount' => 115, 'runner_payout' => 85, 'is_transportation' => false,
+        ]);
+        $theirs = Booking::create([
+            'booking_number' => 'EG-20260331-THRS',
+            'customer_id' => $this->customer->id,
+            'errand_type_id' => $this->errandType->id, 'status' => 'pending',
+            'pickup_address' => '1 A', 'pickup_lat' => 14.60, 'pickup_lng' => 120.98,
+            'dropoff_address' => '2 B', 'dropoff_lat' => 14.55, 'dropoff_lng' => 121.02,
+            'schedule_type' => 'now', 'pricing_mode' => 'negotiate', 'vehicle_type_rate' => 'motorcycle',
+            'negotiate_expires_at' => now()->addHour(),
+            'distance_km' => 5.0, 'base_fee' => 50, 'distance_fee' => 50, 'service_fee' => 15,
+            'surcharge' => 0, 'total_amount' => 115, 'runner_payout' => 85, 'is_transportation' => false,
+        ]);
+
+        $response = $this->actingAs($this->runner)->getJson('/api/v1/runner/errand/available');
+        $response->assertOk();
+
+        $ids = collect($response->json('data'))->pluck('id')->all();
+        $this->assertContains($theirs->id, $ids, 'a real customer offer should appear');
+        $this->assertNotContains($mine->id, $ids, 'the runner\'s own booking must never appear');
+    }
 }
