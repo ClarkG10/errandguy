@@ -42,7 +42,11 @@ export function PromoCodeInput({
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(
         () => {},
       );
-      onApply(code.trim(), data?.discount_amount ?? 0);
+      // Backend /promos/validate returns the peso saving under `discount`
+      // (PromoService.php), not `discount_amount`. Reading the wrong key made
+      // the applied-promo chip + review breakdown show a ₱0 saving even for a
+      // valid code (the real discount still applied server-side at booking).
+      onApply(code.trim(), data?.discount ?? 0);
       setCode('');
     } catch (err: any) {
       // Outcome haptic — invalid/rejected code, paired with the inline
