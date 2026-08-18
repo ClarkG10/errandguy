@@ -16,6 +16,7 @@ import { MapPin, Navigation, Truck, ShoppingBag } from 'lucide-react-native';
 import { Button } from '../ui/Button';
 import { PickupDistanceLine } from './PickupDistanceLine';
 import { formatCurrency } from '../../utils/formatCurrency';
+import { formatDistanceKm } from '../../utils/formatDistance';
 import { getErrandTypeRule } from '../../constants/errandTypeRules';
 import { useReducedMotion } from '../../hooks/useReducedMotion';
 import { toast } from '../../stores/toastStore';
@@ -367,9 +368,7 @@ export function IncomingRequestModal({
               <View className="flex-row items-center gap-1.5">
                 <Truck size={14} color={LightColors.textInverse} />
                 <Text className="text-xs font-inter tabular-nums text-white/80">
-                  {booking.distance_km != null && booking.distance_km > 0
-                    ? `${booking.distance_km} km`
-                    : 'On-site'}
+                  {formatDistanceKm(booking.distance_km) ?? 'On-site'}
                 </Text>
               </View>
               <Text className="text-xl font-inter-semi tabular-nums text-white">

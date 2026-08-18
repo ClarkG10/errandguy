@@ -204,6 +204,24 @@ export default function ActivityScreen() {
     }
   }, [hasMore, loadingMore, page]);
 
+  // The list is paginated over the UNFILTERED history and filtered client-side,
+  // so a tab whose matches all live beyond page 1 would render an empty list —
+  // and an empty list can't scroll, so onEndReached never fires and those
+  // errands stay unreachable behind a false "none" state. Proactively page while
+  // the active filter has zero matches but more history exists (onEndReached's
+  // own hasMore/loadingMore guards prevent overlap/over-fetch).
+  useEffect(() => {
+    if (
+      !trimmedSearch &&
+      !loading &&
+      hasMore &&
+      !loadingMore &&
+      statusFiltered.length === 0
+    ) {
+      void onEndReached();
+    }
+  }, [trimmedSearch, loading, hasMore, loadingMore, statusFiltered.length, onEndReached]);
+
   return (
     <View className="flex-1 bg-background">
       <GradientHeader
@@ -375,10 +393,11 @@ export default function ActivityScreen() {
               actionLabel="Clear search"
               onAction={() => setSearch('')}
             />
-          ) : !loading ? (
-            // Genuine empty — copy follows the active filter. A "Book an
-            // Errand" CTA under Cancelled would read as a non-sequitur,
-            // so that tab describes what lands here instead.
+          ) : !loading && !hasMore ? (
+            // Genuine empty — only once ALL history is loaded (!hasMore).
+            // Copy follows the active filter. A "Book an Errand" CTA under
+            // Cancelled would read as a non-sequitur, so that tab describes
+            // what lands here instead.
             filter === 'cancelled' ? (
               <EmptyState
                 illustration={<Illustration name="empty-bookings" size={168} />}
@@ -402,7 +421,12 @@ export default function ActivityScreen() {
                 onAction={() => router.push('/(customer)/book/type' as any)}
               />
             )
-          ) : null
+          ) : (
+            // Still loading page 1, or paging through history to surface this
+            // filter's matches — show the skeleton, never the genuine-empty
+            // state (which would falsely claim none exist while pages remain).
+            <ActivityListSkeleton />
+          )
         }
         contentContainerStyle={{
           paddingBottom: TAB_CONTENT_BOTTOM_INSET,

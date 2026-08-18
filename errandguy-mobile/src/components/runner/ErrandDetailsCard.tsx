@@ -182,6 +182,8 @@ export function ErrandDetailsCard({
     <Card className="p-4 mb-3">
       <Pressable
         onPress={() => setExpanded(!expanded)}
+        accessibilityRole="button"
+        accessibilityState={{ expanded }}
         className="flex-row items-center justify-between"
       >
         <Text className="text-sm font-montserrat-bold text-textPrimary">

@@ -285,6 +285,9 @@ export default function TopUpScreen() {
                   Haptics.selectionAsync().catch(() => {});
                   setMethod(m.key);
                 }}
+                accessibilityRole="radio"
+                accessibilityState={{ selected }}
+                accessibilityLabel={`${m.label}, ${m.hint}`}
                 className={`flex-row items-center px-4 py-3.5 ${i > 0 ? 'border-t border-divider' : ''}`}
               >
                 <View className="flex-1">

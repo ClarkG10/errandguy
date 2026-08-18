@@ -245,7 +245,7 @@ export default function HistoryScreen() {
             icon: MessageCircle,
             onPress: () => router.push('/(runner)/chat' as any),
             badge: chatUnread,
-            accessibilityLabel: 'Messages',
+            accessibilityLabel: chatUnread > 0 ? `${chatUnread} unread messages` : 'Messages',
           }}
         />
         <HistorySkeleton />

@@ -6,6 +6,7 @@ import { Card } from '../ui/Card';
 import { Badge } from '../ui/Badge';
 import { PickupDistanceLine } from './PickupDistanceLine';
 import { formatCurrency } from '../../utils/formatCurrency';
+import { formatDistanceKm } from '../../utils/formatDistance';
 import { getErrandTypeRule } from '../../constants/errandTypeRules';
 import type { Booking } from '../../types';
 import { LightColors } from '../../constants/colors';
@@ -84,7 +85,7 @@ export function NegotiateOfferCard({ booking, onPress }: NegotiateOfferCardProps
 
         <View className="flex-row items-center justify-between">
           <Text className="text-xs font-inter tabular-nums text-textSecondary">
-            {booking.distance_km ? `${booking.distance_km} km` : '--'}
+            {formatDistanceKm(booking.distance_km) ?? '--'}
           </Text>
           <Text className="text-lg font-inter-semi tabular-nums text-primary">
             {formatCurrency(booking.customer_offer ?? booking.total_amount)}

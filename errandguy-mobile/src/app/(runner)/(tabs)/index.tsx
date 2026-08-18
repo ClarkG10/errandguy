@@ -54,6 +54,7 @@ import { useNotificationStore } from '../../../stores/notificationStore';
 import { runnerService } from '../../../services/runner.service';
 import { formatCurrency } from '../../../utils/formatCurrency';
 import { formatRelativeTime } from '../../../utils/formatDate';
+import { formatDistanceKm } from '../../../utils/formatDistance';
 import { storage } from '../../../utils/storage';
 import { RunnerHomeSkeleton } from '../../../components/ui/Skeleton';
 import { useQuery } from '../../../hooks/useQuery';
@@ -583,10 +584,14 @@ export default function RunnerHomeScreen() {
   const canGoOnline = verificationStatus === 'approved';
 
   // Distinguish "failed with nothing cached" from a healthy ₱0.00 —
-  // showing zeros over a network error misreads as a bad day.
+  // showing zeros over a network error misreads as a bad day. Gate the card on
+  // the TODAY query only: today's figure + the goal are what matter, and a
+  // week-only failure (the heavier aggregation) must NOT blank the runner's real
+  // today earnings. The This-week line handles its own failure separately.
   const earningsFailed =
-    (earningsTodayQ.error != null && earningsTodayQ.data == null) ||
-    (earningsWeekQ.error != null && earningsWeekQ.data == null);
+    earningsTodayQ.error != null && earningsTodayQ.data == null;
+  const weekFailed =
+    earningsWeekQ.error != null && earningsWeekQ.data == null;
   const lifetimeFailed =
     profileQ.error != null && profileQ.data == null && !runnerProfile;
 
@@ -770,7 +775,7 @@ export default function RunnerHomeScreen() {
                           <Text className="text-[12px] font-montserrat text-white/90 ml-1.5">
                             This week ·{' '}
                             <Text className="font-montserrat-bold tabular-nums text-white">
-                              {formatCurrency(weekEarnings)}
+                              {weekFailed ? '—' : formatCurrency(weekEarnings)}
                             </Text>
                           </Text>
                         </View>
@@ -1278,9 +1283,9 @@ export default function RunnerHomeScreen() {
                   >
                     {errand.errand_type?.name ?? 'Errand'}
                   </Text>
-                  {errand.distance_km ? (
+                  {formatDistanceKm(errand.distance_km) ? (
                     <Text className="text-[11px] font-inter tabular-nums text-textSecondary mt-0.5">
-                      {errand.distance_km} km
+                      {formatDistanceKm(errand.distance_km)}
                     </Text>
                   ) : null}
                 </View>
