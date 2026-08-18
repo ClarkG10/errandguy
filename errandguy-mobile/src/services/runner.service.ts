@@ -266,8 +266,34 @@ export const runnerService = {
     });
   },
 
-  getEarningsHistory(params?: { page?: number; per_page?: number; date_from?: string; date_to?: string }) {
-    return api.get('/runner/earnings/history', { params, cacheTtlMs: 10_000, silent: true });
+  getEarningsHistory(params?: {
+    page?: number;
+    per_page?: number;
+    period?: 'today' | 'week' | 'month';
+    date_from?: string;
+    date_to?: string;
+  }) {
+    // Pass `period` (not a client-local date_from) so the per-errand list uses
+    // the SAME server-side UTC window as the hero summary. Map the app-form
+    // period to the backend's labels, exactly as getEarnings does — otherwise a
+    // PH (UTC+8) runner's list drifts a day and stops summing to the hero.
+    const apiPeriod =
+      params?.period === 'week'
+        ? 'this_week'
+        : params?.period === 'month'
+          ? 'this_month'
+          : params?.period;
+    return api.get('/runner/earnings/history', {
+      params: {
+        page: params?.page,
+        per_page: params?.per_page,
+        period: apiPeriod,
+        date_from: params?.date_from,
+        date_to: params?.date_to,
+      },
+      cacheTtlMs: 10_000,
+      silent: true,
+    });
   },
 
   getErrandHistory(params?: {

@@ -91,6 +91,7 @@ class RunnerEarningsController extends Controller
         // Guard the date filters against a Carbon::parse 500 on bad input.
         $request->validate([
             'errand_type_id' => ['nullable'],
+            'period' => ['nullable', 'string', 'max:30'],
             'date_from' => ['nullable', 'date'],
             'date_to' => ['nullable', 'date'],
         ]);
@@ -108,12 +109,33 @@ class RunnerEarningsController extends Controller
             $query->where('errand_type_id', $request->input('errand_type_id'));
         }
 
-        if ($request->filled('date_from')) {
-            $query->where('completed_at', '>=', \Carbon\Carbon::parse($request->input('date_from'))->startOfDay());
-        }
-
-        if ($request->filled('date_to')) {
-            $query->where('completed_at', '<=', \Carbon\Carbon::parse($request->input('date_to'))->endOfDay());
+        // Period window — UTC, IDENTICAL to summary() so the per-errand list
+        // matches the hero total exactly. A client-local date_from would drift
+        // by the runner's UTC offset (e.g. PH = +8) and pull in a whole extra
+        // day of rows that don't sum to the hero. A known period wins; otherwise
+        // the explicit date_from/date_to bounds are honored (custom ranges /
+        // any other caller), unchanged from before.
+        switch ($request->input('period')) {
+            case 'today':
+                $query->where('completed_at', '>=', now()->startOfDay())
+                      ->where('completed_at', '<', now()->copy()->addDay()->startOfDay());
+                break;
+            case 'this_week':
+                $query->where('completed_at', '>=', now()->startOfWeek())
+                      ->where('completed_at', '<=', now()->endOfWeek());
+                break;
+            case 'this_month':
+                $query->where('completed_at', '>=', now()->startOfMonth())
+                      ->where('completed_at', '<', now()->copy()->startOfMonth()->addMonth());
+                break;
+            default:
+                if ($request->filled('date_from')) {
+                    $query->where('completed_at', '>=', \Carbon\Carbon::parse($request->input('date_from'))->startOfDay());
+                }
+                if ($request->filled('date_to')) {
+                    $query->where('completed_at', '<=', \Carbon\Carbon::parse($request->input('date_to'))->endOfDay());
+                }
+                break;
         }
 
         $bookings = $query->paginate($request->perPage(15));

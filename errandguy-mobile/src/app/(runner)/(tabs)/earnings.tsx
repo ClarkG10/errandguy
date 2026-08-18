@@ -131,25 +131,11 @@ export default function EarningsScreen() {
     async () => (await runnerService.getEarnings(period)).data.data,
     { staleTime: 60_000, ttl: CacheTTL.MEDIUM },
   );
-  // Compute the date range that matches the selected period so the per-
-  // errand list reflects the same window as the hero card. Previously
-  // the list ignored `period` entirely and showed the latest 10 across
-  // all time — customers/runners reported the row totals not adding
-  // up to the hero amount.
-  const dateFrom = useMemo(() => {
-    const now = new Date();
-    if (period === 'today') {
-      return new Date(now.getFullYear(), now.getMonth(), now.getDate()).toISOString();
-    }
-    if (period === 'week') {
-      const monday = new Date(now);
-      const day = monday.getDay() || 7; // Sunday → 7
-      monday.setHours(0, 0, 0, 0);
-      monday.setDate(monday.getDate() - (day - 1));
-      return monday.toISOString();
-    }
-    return new Date(now.getFullYear(), now.getMonth(), 1).toISOString();
-  }, [period]);
+  // The per-errand list must reflect the SAME window as the hero card. We pass
+  // `period` to the server (which computes the window in UTC, identical to the
+  // summary hero) rather than a client-LOCAL date_from — the latter drifted by
+  // the runner's UTC offset (PH = +8), so the list showed a day's worth of
+  // extra rows that didn't sum to the hero total.
 
   // per_page must comfortably cover the whole window: a busy runner can
   // clear 30 errands in a couple of days, and a truncated page-1 both
@@ -160,7 +146,7 @@ export default function EarningsScreen() {
   const historyQ = useQuery<Booking[]>(
     ['runner', 'earnings', 'history', period, userId],
     async () =>
-      ((await runnerService.getEarningsHistory({ page: 1, per_page: perPage, date_from: dateFrom })).data.data ?? []) as Booking[],
+      ((await runnerService.getEarningsHistory({ page: 1, per_page: perPage, period })).data.data ?? []) as Booking[],
     { staleTime: 60_000, ttl: CacheTTL.MEDIUM },
   );
 
