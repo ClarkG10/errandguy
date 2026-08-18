@@ -71,6 +71,7 @@ import { ExpandableSheet } from '../../../components/ui/ExpandableSheet';
 import { formatTime } from '../../../utils/formatDate';
 import { formatCurrency } from '../../../utils/formatCurrency';
 import { mediaSource } from '../../../utils/mediaSource';
+import { ImageLightbox } from '../../../components/ui/ImageLightbox';
 import { resolveImageUrl } from '../../../utils/resolveImageUrl';
 import { errorMessage } from '../../../utils/errorCatalog';
 import { haptics } from '../../../utils/haptics';
@@ -256,6 +257,10 @@ export default function TrackingScreen() {
   // sosNow ticks the elapsed clock; deactivatingSOS locks the "I'm safe" slide.
   const [sosTriggeredAt, setSosTriggeredAt] = useState<number | null>(null);
   const [sosContactsNotified, setSosContactsNotified] = useState<string[]>([]);
+  // Full-size proof-photo preview. Opened IN-APP (bearer-aware ImageLightbox)
+  // rather than Linking.openURL, which hands a gated /internal/media URL to the
+  // OS browser with no auth header → guaranteed 403.
+  const [proofPhotoUri, setProofPhotoUri] = useState<string | null>(null);
   const [sosNow, setSosNow] = useState(() => Date.now());
   const [deactivatingSOS, setDeactivatingSOS] = useState(false);
 
@@ -1671,12 +1676,7 @@ export default function TrackingScreen() {
                     </View>
                     {booking.receipt_photo_url && (
                       <Pressable
-                        onPress={() =>
-                          booking.receipt_photo_url &&
-                          Linking.openURL(booking.receipt_photo_url).catch(() =>
-                            toast.error('Could not open receipt'),
-                          )
-                        }
+                        onPress={() => setProofPhotoUri(booking.receipt_photo_url)}
                         className="mt-3 flex-row items-center"
                         style={({ pressed }) => pressFx(pressed)}
                       >
@@ -1722,11 +1722,7 @@ export default function TrackingScreen() {
                     return (
                       <Pressable
                         className="flex-1"
-                        onPress={() =>
-                          Linking.openURL(uri).catch(() =>
-                            toast.error('Could not open photo'),
-                          )
-                        }
+                        onPress={() => setProofPhotoUri(uri)}
                         accessibilityRole="imagebutton"
                         accessibilityLabel="Open pickup proof photo"
                       >
@@ -1749,11 +1745,7 @@ export default function TrackingScreen() {
                     return (
                       <Pressable
                         className="flex-1"
-                        onPress={() =>
-                          Linking.openURL(uri).catch(() =>
-                            toast.error('Could not open photo'),
-                          )
-                        }
+                        onPress={() => setProofPhotoUri(uri)}
                         accessibilityRole="imagebutton"
                         accessibilityLabel="Open delivery proof photo"
                       >
@@ -2768,6 +2760,13 @@ export default function TrackingScreen() {
           </Pressable>
         </Pressable>
       </Modal>
+
+      {/* Full-size proof-photo preview (bearer-aware; handles gated media). */}
+      <ImageLightbox
+        uri={proofPhotoUri}
+        visible={!!proofPhotoUri}
+        onClose={() => setProofPhotoUri(null)}
+      />
     </View>
   );
 }
