@@ -744,12 +744,24 @@ class BookingController extends Controller
         // wallet refund — a double credit. Locking the booking and re-checking
         // inside the transaction (plus the now-idempotent WalletService::refund)
         // makes a repeat cancel a no-op.
-        DB::transaction(function () use ($booking, $request, $policy) {
+        $outcome = DB::transaction(function () use ($booking, $request) {
             $locked = Booking::whereKey($booking->id)->lockForUpdate()->firstOrFail();
 
             // Already cancelled by a racing/earlier request — nothing to do.
             if ($locked->status === 'cancelled') {
-                return;
+                return null;
+            }
+
+            // Authoritative re-evaluation against the LOCKED row. The booking may
+            // have advanced (e.g. heading_to_pickup → arrived_at_pickup) between
+            // the unlocked preview above and this lock, which changes BOTH whether
+            // it is still cancellable AND the fee tier. Trusting the stale pre-lock
+            // policy let a customer cancel a booking that had moved past the
+            // cancellable window and be refunded at the lower flat tier instead of
+            // the percentage tier the committed status requires — a money leak.
+            $fresh = CancellationPolicy::preview($locked);
+            if (! $fresh['cancellable']) {
+                return ['error' => $fresh['reason']];
             }
 
             // PRICE-3 / PRICE-4: the cancellation fee we RECORD is what we can
@@ -762,7 +774,7 @@ class BookingController extends Controller
             //     customer one "was applied" would be a phantom charge.
             $collected = $locked->payment_status === 'paid';
             $effectiveFee = $collected
-                ? round(min((float) $policy['fee'], (float) $locked->total_amount), 2)
+                ? round(min((float) $fresh['fee'], (float) $locked->total_amount), 2)
                 : 0.0;
 
             $locked->update([
@@ -811,7 +823,15 @@ class BookingController extends Controller
                 }
                 $locked->update(['payment_status' => 'refunded']);
             }
+
+            return null;
         });
+
+        // The booking advanced out of the cancellable window between the unlocked
+        // pre-check and the lock — reject rather than refund at a stale tier.
+        if (is_array($outcome) && isset($outcome['error'])) {
+            return response()->json(['message' => $outcome['error']], 422);
+        }
 
         $booking->refresh();
 

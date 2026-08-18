@@ -147,6 +147,21 @@ class RunnerErrandController extends Controller
                     throw new \RuntimeException('unavailable');
                 }
 
+                // Serialize concurrent accepts by THIS runner on their User row
+                // BEFORE the one-active-errand check below. Two accepts on two
+                // different bookings each lock only their own booking row (no
+                // mutual contention), so without this both would pass the
+                // non-locking hasActive exists() — each blind to the other's
+                // still-uncommitted 'accepted' write — and the runner would end
+                // up holding two active errands. The booking locks above are
+                // locking reads (they bypass the REPEATABLE READ snapshot), so
+                // the exists() below is the transaction's first consistent read;
+                // taking the User lock first makes the loser block until the
+                // winner commits, then read its committed 'accepted' booking.
+                // Lock order is Booking→User, matching MatchRunnerJob and
+                // handleCompletion, so no new deadlock cycle is introduced.
+                \App\Models\User::whereKey($user->id)->lockForUpdate()->first();
+
                 // Only OTHER active errands should block acceptance — the
                 // booking being accepted may already be assigned to this
                 // runner in `matched` status (via MatchRunnerJob), in which
