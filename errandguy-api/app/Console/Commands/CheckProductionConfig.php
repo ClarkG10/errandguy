@@ -79,6 +79,34 @@ class CheckProductionConfig extends Command
             $issues[] = ['level' => 'warning', 'message' => "QUEUE_CONNECTION='database' — workable, but 'redis' is recommended for the throughput the matching/push jobs need."];
         }
 
+        // Error monitoring: the Sentry wiring is inert until a DSN is pasted, so
+        // an empty DSN in prod means every crash is invisible — exactly the
+        // "operational blindness" this command exists to break. (audit C1)
+        if (blank(config('sentry.dsn'))) {
+            $issues[] = ['level' => 'warning', 'message' => 'SENTRY_LARAVEL_DSN is empty — error monitoring is inert, so production crashes/500s are reported nowhere and no alert fires. Paste the project DSN to activate it (no code change needed).'];
+        }
+
+        // Realtime is CONFIGURED but not CREDENTIALED: broadcasting.default is
+        // 'reverb' yet the app key/secret/id are unset, so every broadcast
+        // publish 500s server-side and no client can authenticate — chat, live
+        // tracking and in-app notifications are silently dead.
+        if ($broadcast === 'reverb') {
+            $reverbKey = config('broadcasting.connections.reverb.key');
+            $reverbSecret = config('broadcasting.connections.reverb.secret');
+            $reverbAppId = config('broadcasting.connections.reverb.app_id');
+            if (blank($reverbKey) || blank($reverbSecret) || blank($reverbAppId)) {
+                $issues[] = ['level' => 'critical', 'message' => "BROADCAST_CONNECTION='reverb' but REVERB_APP_KEY/SECRET/ID are not all set — realtime (chat, live tracking, notifications) will fail to publish and no client can connect. Set the three Reverb credentials."];
+            }
+        }
+
+        // Canonical URL: signed URLs, deep links and absolute asset/media URLs
+        // are built from APP_URL. A localhost / non-HTTPS value in prod yields
+        // broken links and invalid signatures.
+        $appUrl = (string) config('app.url');
+        if ($appUrl === '' || str_contains($appUrl, 'localhost') || str_contains($appUrl, '127.0.0.1') || str_starts_with($appUrl, 'http://')) {
+            $issues[] = ['level' => 'warning', 'message' => "APP_URL='".($appUrl ?: '(empty)')."' — signed URLs, deep links and absolute media URLs are built from this; a localhost/non-HTTPS value breaks them in production. Set it to the public https:// origin."];
+        }
+
         return $issues;
     }
 }
