@@ -791,7 +791,13 @@ export default function TrackingScreen() {
       const prev = lastSyncedStatusRef.current;
       lastSyncedStatusRef.current = activeBooking.status;
       bookingService.trackBooking(id).then((trackRes) => {
-        setStatusLogs(trackRes.data.data?.status_logs ?? []);
+        // The FULL /track payload nests the booking under `booking`
+        // (data.data.booking) — status_logs lives on that BookingResource, not
+        // at data.data. Reading it one level too shallow returned undefined, so
+        // this wiped the mount-seeded timeline to [] on every status change and
+        // the per-stage timestamps vanished until remount. (Cf. the correct
+        // `full.data?.data?.booking` read ~200 lines above.)
+        setStatusLogs(trackRes.data.data?.booking?.status_logs ?? []);
       }).catch(() => {});
 
       // User-visible confirmation that something happened. Without this
