@@ -379,6 +379,25 @@ export default function ReviewScreen() {
       toast.warning('Please set an offer amount.');
       return;
     }
+    // A scheduled time can drift out of the server's [now+30min, now+30d] window
+    // between the schedule step and Confirm — the earliest slot is only ~30 min
+    // out, and a day-30 slot can exceed +30d by its time-of-day. Re-validate here,
+    // BEFORE the latch / idempotency key / payment attempt, and send the user back
+    // to the picker to choose a fresh time instead of burning an attempt on a
+    // guaranteed 422.
+    if (draftBooking.schedule_type === 'scheduled') {
+      const when = draftBooking.scheduled_at ? dayjs(draftBooking.scheduled_at) : null;
+      if (
+        !when ||
+        when.isBefore(dayjs().add(30, 'minute')) ||
+        when.isAfter(dayjs().add(30, 'day'))
+      ) {
+        updateDraft({ scheduled_at: undefined });
+        toast.error('Your scheduled time is no longer valid — please pick a new one.');
+        router.push('/(customer)/book/schedule');
+        return;
+      }
+    }
     // Don't start a new payment while a previous one is still being verified.
     if (isAttemptActive(usePaymentStore.getState().attempt)) {
       toast.info("We're still confirming your last payment — hang tight.");

@@ -307,7 +307,12 @@ function MonthCalendar({
 
 // How far ahead scheduling is offered. The quick day-strip and the month
 // calendar share this window so a date picked in either stays consistent.
-const BOOKABLE_DAYS = 90;
+// The server caps scheduled bookings at 30 days out (CreateBookingRequest:
+// scheduled_at must be <= now+30d). Offering 90 here made 31-90-day-out dates
+// look fully bookable, then hard-422'd at Confirm — a two-month dead-end in the
+// funnel. Match the server window. (The review-step Confirm guard is the final
+// safety net for the residual time-of-day edge on day 30.)
+const BOOKABLE_DAYS = 30;
 
 export function DateTimePicker({ value, onChange }: DateTimePickerProps) {
   // Today + the next ~90 days. Today is allowed only if some time today is
