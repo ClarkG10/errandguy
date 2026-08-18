@@ -40,6 +40,10 @@ class RunnerProfileResource extends JsonResource
             'bank_name' => $this->when($isSelf, $this->bank_name),
             'ewallet_number' => $this->when($isSelf, $this->ewallet_number),
             'approved_at' => $this->approved_at,
+            // Drives the runner's "Member since" on the profile tab (and is a
+            // harmless trust signal for customers). Without it the mobile read
+            // was always undefined → every runner showed "New member".
+            'created_at' => $this->created_at,
             'documents' => $this->when(
                 $isSelf && $this->relationLoaded('documents'),
                 fn () => RunnerDocumentResource::collection($this->documents),
