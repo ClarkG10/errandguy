@@ -49,6 +49,21 @@ class SupportTicketTest extends TestCase
         $this->assertNotNull(SupportTicket::find($ticketId)->last_message_at);
     }
 
+    public function test_ticket_list_includes_latest_message_preview(): void
+    {
+        $this->actingAs($this->user)->postJson('/api/v1/support/tickets', [
+            'subject' => 'Refund question',
+            'category' => 'general',
+            'message' => 'the first and latest message',
+        ])->assertCreated();
+
+        // The list row's preview + unread indicator read latest_message; it must
+        // be present (previously omitted because the relation was never loaded).
+        $this->actingAs($this->user)->getJson('/api/v1/support/tickets')
+            ->assertOk()
+            ->assertJsonPath('data.0.latest_message.content', 'the first and latest message');
+    }
+
     public function test_open_ticket_requires_subject_and_message(): void
     {
         $this->actingAs($this->user)

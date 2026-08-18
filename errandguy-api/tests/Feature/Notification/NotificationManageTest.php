@@ -98,6 +98,22 @@ class NotificationManageTest extends TestCase
         $this->assertContains($notification->id, $ids);
     }
 
+    public function test_unread_count_excludes_archived_notifications(): void
+    {
+        $n = $this->makeNotification($this->user, ['is_read' => false]);
+
+        $this->actingAs($this->user)->getJson('/api/v1/notifications/unread-count')
+            ->assertOk()->assertJsonPath('data.unread_count', 1);
+
+        // Archiving makes it unreachable in every list the user can open, so it
+        // must also leave the badge — otherwise a phantom unread that can never
+        // be cleared by tapping.
+        $this->actingAs($this->user)->putJson("/api/v1/notifications/{$n->id}/archive")->assertOk();
+
+        $this->actingAs($this->user)->getJson('/api/v1/notifications/unread-count')
+            ->assertOk()->assertJsonPath('data.unread_count', 0);
+    }
+
     public function test_clear_all_empties_users_notifications(): void
     {
         $this->makeNotification($this->user);

@@ -33,7 +33,12 @@ class NotificationController extends Controller
 
     public function unreadCount(Request $request): JsonResponse
     {
+        // ->active() (archived_at IS NULL) to match the inbox default — an
+        // archived-but-unread notification is unreachable in every list the user
+        // can open, so counting it left a phantom badge that could never be
+        // cleared by tapping (only by "mark all read").
         $count = Notification::where('user_id', $request->user()->id)
+            ->active()
             ->unread()
             ->count();
 

@@ -19,9 +19,16 @@ class SupportTicketResource extends JsonResource
             'last_message_at' => $this->last_message_at?->toIso8601String(),
             'created_at' => $this->created_at?->toIso8601String(),
             'messages' => SupportMessageResource::collection($this->whenLoaded('messages')),
+            // Prefer the dedicated latestMessage relation (list rows eager-load
+            // it); fall back to the last of a fully-loaded thread (ticket detail).
             'latest_message' => $this->when(
-                $this->relationLoaded('messages') && $this->messages->isNotEmpty(),
-                fn () => new SupportMessageResource($this->messages->last())
+                ($this->relationLoaded('latestMessage') && $this->latestMessage)
+                    || ($this->relationLoaded('messages') && $this->messages->isNotEmpty()),
+                fn () => new SupportMessageResource(
+                    $this->relationLoaded('latestMessage') && $this->latestMessage
+                        ? $this->latestMessage
+                        : $this->messages->last()
+                )
             ),
         ];
     }

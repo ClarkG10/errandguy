@@ -22,6 +22,10 @@ class SupportController extends Controller
     {
         $tickets = SupportTicket::query()
             ->forUser($request->user()->id)
+            // Eager-load the newest message so each list row can render its
+            // preview + unread indicator (the resource omits latest_message when
+            // the relation isn't loaded, so without this it was always blank).
+            ->with('latestMessage')
             ->orderByRaw('COALESCE(last_message_at, created_at) DESC')
             ->paginate($request->perPage(20));
 
