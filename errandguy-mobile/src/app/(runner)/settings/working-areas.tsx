@@ -152,16 +152,18 @@ export default function WorkingAreasScreen() {
       toast.warning('Please enable location services to set your working area.');
       return;
     }
-    // Optimistic: reflect the new area in the profile immediately (the map +
-    // radius already render live). IMPORTANT — apply the three SEPARATE
-    // working_area_lat/lng/radius fields the profile tab reads, not the
-    // `working_area` JSON string (that's only the server's wire format).
-    // Rolls back profile + radius on failure. The old post-save refetch was
-    // redundant — the service invalidates ['runner','profile'].
+    // Both the wire payload AND the optimistic apply use the three SEPARATE
+    // working_area_lat/lng/radius fields. The backend FormRequest
+    // (UpdateRunnerProfileRequest) accepts ONLY those three — there is no
+    // `working_area` rule/accessor, so `->update($request->validated())` would
+    // silently DROP a `working_area` JSON key (the old payload here), persisting
+    // nothing while the optimistic UI + success toast claimed it saved.
+    // Rolls back profile + radius on failure; the service invalidates
+    // ['runner','profile'], so no post-save refetch is needed.
     const prev = runnerProfile;
     const q = queueable(
       'runner.updateProfile',
-      { working_area: JSON.stringify({ lat, lng, radius }) },
+      { working_area_lat: lat, working_area_lng: lng, working_area_radius: radius },
       { dedupeKey: 'runner-profile-working-area' },
     );
     await runOptimistic({

@@ -184,7 +184,7 @@ export default function DocumentsScreen() {
         tip={doc.tip}
         required={doc.required}
         status={existing?.status}
-        fileUrl={existing?.file_url}
+        fileUrl={existing?.download_url ?? existing?.file_url}
         rejectionReason={existing?.rejection_reason}
         onUpload={() => handleUpload(doc.type)}
         onView={(uri) => setViewer({ uri, title: doc.label })}

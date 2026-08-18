@@ -127,7 +127,12 @@ export default function PayoutScreen() {
   useEffect(() => {
     if (runnerProfile) {
       setBankName(runnerProfile.bank_name ?? '');
-      setBankAccount(runnerProfile.bank_account_number ?? '');
+      // Do NOT reset the account number from the profile: it's write-only —
+      // encrypted at rest + $hidden, so the API never returns it. Prefilling
+      // from the (always-undefined) field cleared what the runner typed and,
+      // after a save+refetch, reset it to '' as if only the account number
+      // failed. Leave it under the user's control (bank_name / ewallet_number
+      // ARE returned, so they still sync).
       setEwalletNumber(runnerProfile.ewallet_number ?? '');
     }
   }, [runnerProfile]);

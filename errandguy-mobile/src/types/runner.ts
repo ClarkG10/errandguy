@@ -43,7 +43,11 @@ export interface RunnerDocument {
   id: string;
   runner_id: string;
   document_type: DocumentType;
-  file_url: string;
+  /** Legacy public URL; NULL for new private-disk docs — prefer download_url. */
+  file_url: string | null;
+  /** Auth-gated stream route for the private doc; load it with the bearer
+   *  (see mediaSource). Always present from the API. */
+  download_url: string;
   status: DocumentStatus;
   rejection_reason: string | null;
   reviewed_by: string | null;

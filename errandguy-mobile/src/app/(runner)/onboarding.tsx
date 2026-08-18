@@ -42,6 +42,7 @@ import { toast } from '../../stores/toastStore';
 import { errorMessage } from '../../utils/errorCatalog';
 import { copy } from '../../constants/copy';
 import { haptics } from '../../utils/haptics';
+import { mediaSource } from '../../utils/mediaSource';
 import { LightColors, Elevation } from '../../constants/colors';
 import { useResponsive } from '../../constants/responsive';
 
@@ -275,15 +276,16 @@ export default function RunnerOnboardingScreen() {
         accessibilityHint={interactive ? 'Opens camera or gallery to upload' : undefined}
       >
         <View className="flex-row items-center gap-3">
-            {/* Thumbnail or icon */}
-            {existing?.file_url ? (
+            {/* Thumbnail or icon. Prefer download_url (the auth-gated route);
+                file_url is null for new private-disk docs. */}
+            {(existing?.download_url ?? existing?.file_url) ? (
               interactive ? (
                 /* The whole Card re-uploads in this state (rejected) — keep the
                    thumbnail a plain image so a Pressable isn't nested inside the
                    pressable Card (nested a11y buttons + doubled press feedback). */
                 <View className="w-12 h-12 rounded-xl overflow-hidden">
                   <Image
-                    source={{ uri: existing.file_url }}
+                    source={mediaSource(existing?.download_url ?? existing?.file_url)}
                     className="w-12 h-12"
                     resizeMode="cover"
                   />
@@ -293,7 +295,7 @@ export default function RunnerOnboardingScreen() {
                    only tap target and opens the full-screen preview. */
                 <Pressable
                   onPress={() => {
-                    setPreviewUri(existing.file_url!);
+                    setPreviewUri((existing.download_url ?? existing.file_url)!);
                     setPreviewVisible(true);
                   }}
                   accessibilityRole="button"
@@ -301,7 +303,7 @@ export default function RunnerOnboardingScreen() {
                   className="w-12 h-12 rounded-xl overflow-hidden"
                 >
                   <Image
-                    source={{ uri: existing.file_url }}
+                    source={mediaSource(existing?.download_url ?? existing?.file_url)}
                     className="w-12 h-12"
                     resizeMode="cover"
                   />
@@ -571,7 +573,7 @@ export default function RunnerOnboardingScreen() {
         >
           {previewUri && (
             <Image
-              source={{ uri: previewUri }}
+              source={mediaSource(previewUri)}
               className="w-full h-96"
               resizeMode="contain"
             />
