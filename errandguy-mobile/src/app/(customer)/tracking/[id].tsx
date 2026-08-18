@@ -1727,7 +1727,7 @@ export default function TrackingScreen() {
                         accessibilityLabel="Open pickup proof photo"
                       >
                         <ExpoImage
-                          source={{ uri }}
+                          source={mediaSource(uri)}
                           style={{ width: '100%', height: 120, borderRadius: 16, backgroundColor: LightColors.divider }}
                           contentFit="cover"
                           transition={150}
@@ -1750,7 +1750,7 @@ export default function TrackingScreen() {
                         accessibilityLabel="Open delivery proof photo"
                       >
                         <ExpoImage
-                          source={{ uri }}
+                          source={mediaSource(uri)}
                           style={{ width: '100%', height: 120, borderRadius: 16, backgroundColor: LightColors.divider }}
                           contentFit="cover"
                           transition={150}
@@ -1777,7 +1777,7 @@ export default function TrackingScreen() {
                         accessibilityLabel="Open customer signature"
                       >
                         <ExpoImage
-                          source={{ uri }}
+                          source={mediaSource(uri)}
                           style={{ width: '100%', height: 120, borderRadius: 16, backgroundColor: LightColors.surface, borderWidth: 1, borderColor: LightColors.divider }}
                           contentFit="contain"
                           transition={150}
