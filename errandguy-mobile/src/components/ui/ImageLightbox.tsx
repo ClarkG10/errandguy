@@ -85,13 +85,25 @@ export function ImageLightbox({ uri, visible, onClose }: ImageLightboxProps) {
         return;
       }
 
-      let localUri = uri;
+      // Resolve the URL and, for gated /internal/ media (chat images, proof
+      // photos, KYC docs), attach the bearer. FileSystem.downloadAsync does NOT
+      // inherit axios's Authorization header, so without this a private image
+      // 403s and the save silently fails — same reason RN <Image> needs
+      // mediaSource to render it.
+      const src = mediaSource(uri);
+      const remoteUri = src?.uri ?? uri;
+      let localUri = remoteUri;
       // Remote URLs must be downloaded into the app sandbox first; the
       // MediaLibrary API only accepts local file URIs.
-      if (uri.startsWith('http')) {
-        const filename = uri.split('/').pop()?.split('?')[0] || `chat-${Date.now()}.jpg`;
+      if (remoteUri.startsWith('http')) {
+        const filename =
+          remoteUri.split('/').pop()?.split('?')[0] || `photo-${Date.now()}.jpg`;
         const target = `${FileSystem.cacheDirectory}${filename}`;
-        const result = await FileSystem.downloadAsync(uri, target);
+        const result = await FileSystem.downloadAsync(
+          remoteUri,
+          target,
+          src?.headers ? { headers: src.headers } : undefined,
+        );
         localUri = result.uri;
       }
 
