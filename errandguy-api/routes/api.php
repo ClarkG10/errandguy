@@ -100,6 +100,13 @@ Route::prefix('v1')->group(function () {
     // Authenticated routes
     Route::middleware(['auth:sanctum', 'active'])->group(function () {
 
+        // Client (mobile) crash ingest — best-effort observability so release-
+        // build crashes (where console.* goes nowhere) become a visible,
+        // alertable server-side signal. Throttled so a crash-looping client
+        // cannot flood the log.
+        Route::post('/client-errors', [\App\Http\Controllers\ClientErrorController::class, 'store'])
+            ->middleware('throttle:30,1');
+
         // User profile routes
         Route::prefix('user')->group(function () {
             Route::get('/profile', [ProfileController::class, 'show']);

@@ -12,6 +12,48 @@
  * Native's dev redbox and default crash reporting still work. Nothing is
  * swallowed.
  */
+import { Platform } from 'react-native';
+import api from '../services/api';
+
+/**
+ * Best-effort forward of a CRASH (a fatal JS error or a React render error) to
+ * the server, so a production crash on a release build — where console.* goes
+ * nowhere — becomes a visible, alertable server-side signal instead of
+ * vanishing. Fire-and-forget: it must never throw, never block the crash path,
+ * and never recurse. A failed POST rejects a promise we have ALREADY caught, so
+ * it can't re-enter through the unhandled-rejection tracker; the `forwarding`
+ * flag is a second guard against re-entrancy. Only crashes are forwarded (not
+ * every logged warning / unhandled rejection) to keep volume — and cost — low.
+ */
+let forwarding = false;
+function forwardCrash(payload: {
+  message: string;
+  stack?: string;
+  component_stack?: string;
+  fatal: boolean;
+}): void {
+  if (forwarding) return;
+  forwarding = true;
+  try {
+    api
+      .post(
+        '/client-errors',
+        { ...payload, platform: Platform.OS },
+        // Never spin the global activity indicator or hit the read cache for a
+        // crash report, and don't dedupe (each crash is its own event).
+        { silent: true, noCache: true, noDedupe: true },
+      )
+      .catch(() => {})
+      .finally(() => {
+        forwarding = false;
+      });
+  } catch {
+    // Synchronous failure (e.g. api not ready) — swallow; the console logs above
+    // still captured it. Reset so a later crash can still try.
+    forwarding = false;
+  }
+}
+
 export function installErrorLogging(): void {
   const g = global as unknown as {
     ErrorUtils?: {
@@ -45,6 +87,8 @@ export function installErrorLogging(): void {
       // stream of Metro logs.
       console.error(`${isFatal ? '🔴 [ErrandGuy] FATAL' : '🟠 [ErrandGuy] ERROR'}: ${message}`);
       if (stack) console.error(stack);
+      // Forward FATAL crashes to the server (release builds have no console).
+      if (isFatal) forwardCrash({ message, stack, fatal: true });
       // Keep the platform's default behaviour (dev redbox / crash report).
       previous?.(error, isFatal);
     });
@@ -94,4 +138,12 @@ export function reportError(
   console.error(`🔴 [ErrandGuy] RENDER ERROR: ${message}`);
   if (error instanceof Error && error.stack) console.error(error.stack);
   if (componentStack) console.error(`Component stack:${componentStack}`);
+
+  // A render error is a crash of the subtree — forward it too.
+  forwardCrash({
+    message,
+    stack: error instanceof Error ? error.stack : undefined,
+    component_stack: componentStack ?? undefined,
+    fatal: true,
+  });
 }
