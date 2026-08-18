@@ -74,6 +74,10 @@ class RunnerProfileInfolist
                             ]),
 
                         Tab::make('Documents')
+                            // KYC IDs/selfies are moderation-only (the stream
+                            // route enforces this too); don't surface the tab to
+                            // finance/support who have no verification duty.
+                            ->visible(fn (): bool => auth('admin')->user()?->canModerate() ?? false)
                             ->icon('heroicon-m-identification')
                             ->badge(fn (RunnerProfile $record): ?string => ($n = $record->documents()->count()) ? (string) $n : null)
                             ->schema([

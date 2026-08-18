@@ -85,6 +85,27 @@ class DocumentUploadTest extends TestCase
         $this->actingAs($this->admin(), 'admin')->get($url)->assertOk();
     }
 
+    public function test_kyc_stream_is_moderation_only_finance_and_support_forbidden(): void
+    {
+        Storage::fake('kyc');
+        $runner = $this->runner();
+        $profile = RunnerProfile::create(['user_id' => $runner->id, 'verification_status' => 'pending']);
+        Storage::disk('kyc')->put($path = "runner-documents/{$runner->id}/government_id/x.jpg", 'IMG');
+        $doc = RunnerDocument::create([
+            'runner_id' => $profile->id, 'document_type' => 'government_id',
+            'file_path' => $path, 'file_url' => null, 'status' => 'pending',
+        ]);
+        $url = route('admin.runner-documents.file', $doc);
+
+        // finance + support have no verification duty and must NOT be served a
+        // runner's government ID / selfie, even by direct URL.
+        $this->actingAs($this->admin('finance'), 'admin')->get($url)->assertForbidden();
+        $this->actingAs($this->admin('support'), 'admin')->get($url)->assertForbidden();
+
+        // Moderation roles (ops here; admin/super covered above) may view it.
+        $this->actingAs($this->admin('ops'), 'admin')->get($url)->assertOk();
+    }
+
     public function test_owner_streams_own_document_but_another_runner_is_forbidden(): void
     {
         Storage::fake('kyc');

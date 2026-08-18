@@ -13,6 +13,7 @@ use Filament\Support\Icons\Heroicon;
 use Filament\Tables\Columns\ImageColumn;
 use Filament\Tables\Columns\TextColumn;
 use Filament\Tables\Table;
+use Illuminate\Database\Eloquent\Model;
 
 /**
  * Per-document review for a runner's KYC uploads. Lets an operator approve or
@@ -42,6 +43,17 @@ class RunnerDocumentsRelationManager extends RelationManager
             AdminUser::ROLE_ADMIN,
             AdminUser::ROLE_OPS,
         ) ?? false;
+    }
+
+    /**
+     * The tab renders KYC document thumbnails + a view-file action, so it is
+     * moderation-only — finance/support can open a runner profile but must not
+     * see ID/selfie images. Without this gate the relation manager is visible to
+     * any admin (Gate::before blanket-allows). Mirrors the stream route's gate.
+     */
+    public static function canViewForRecord(Model $ownerRecord, string $pageClass): bool
+    {
+        return static::canModerate();
     }
 
     private static function label(RunnerDocument $record): string

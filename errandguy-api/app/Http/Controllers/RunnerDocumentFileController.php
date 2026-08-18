@@ -20,7 +20,12 @@ class RunnerDocumentFileController extends Controller
      */
     public function adminShow(RunnerDocument $document)
     {
-        abort_unless(auth('admin')->check(), 403);
+        // Only moderation roles (super_admin/admin/ops) may view KYC documents —
+        // finance/support have no verification duty and must not see runners'
+        // government IDs / selfies. This is the AUTHORITATIVE gate: the Filament
+        // Documents tab + relation-manager visibility are cosmetic; this stream
+        // route is what actually serves the file bytes, reachable by direct URL.
+        abort_unless(auth('admin')->user()?->canModerate() ?? false, 403);
 
         return $this->stream($document);
     }

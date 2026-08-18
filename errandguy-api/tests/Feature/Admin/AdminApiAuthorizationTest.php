@@ -94,6 +94,20 @@ class AdminApiAuthorizationTest extends TestCase
             ->assertStatus(403);
     }
 
+    public function test_support_admin_is_forbidden_from_the_payout_ledger(): void
+    {
+        // GET /payouts returns the full payout ledger + runner PII (name/phone);
+        // it's money data, so support/ops must be barred like the mutating routes.
+        $this->actingAsAdmin('support');
+        $this->getJson('/api/v1/admin/payouts')->assertStatus(403);
+    }
+
+    public function test_finance_admin_can_read_the_payout_ledger(): void
+    {
+        $this->actingAsAdmin('finance');
+        $this->getJson('/api/v1/admin/payouts')->assertOk();
+    }
+
     public function test_finance_admin_is_forbidden_from_the_dispute_read_routes(): void
     {
         // Finance can manage money but NOT handle support; the disputes surface

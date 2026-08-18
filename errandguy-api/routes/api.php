@@ -401,9 +401,11 @@ Route::prefix('v1')->group(function () {
             Route::post('/disputes/{id}/resolve', [DisputeController::class, 'resolve'])->middleware('admin.can:support');
             Route::post('/disputes/{id}/escalate', [DisputeController::class, 'escalate'])->middleware('admin.can:support');
 
-            Route::get('/payouts', [AdminPayoutController::class, 'index']);
             // Money surfaces — finance/super_admin only, mirroring the Filament
-            // Payouts + PlatformPaymentMethods pages (canManageMoney).
+            // Payouts + PlatformPaymentMethods pages (canManageMoney). The list
+            // read is money-gated too: it returns the full payout ledger +
+            // runner PII (name/phone) that support/ops must not see over the API.
+            Route::get('/payouts', [AdminPayoutController::class, 'index'])->middleware('admin.can:money');
             Route::post('/payouts/{id}/complete', [AdminPayoutController::class, 'markCompleted'])->middleware('admin.can:money');
             Route::post('/payouts/{id}/fail', [AdminPayoutController::class, 'markFailed'])->middleware('admin.can:money');
 
