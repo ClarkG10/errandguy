@@ -86,6 +86,12 @@ const TYPE_META: Record<
     textColor: LightColors.accentDark,
     chipClass: 'bg-accentSoft',
   },
+  referral: {
+    icon: Gift,
+    color: LightColors.accentStrong,
+    textColor: LightColors.accentDark,
+    chipClass: 'bg-accentSoft',
+  },
   chat: {
     icon: MessageCircle,
     color: LightColors.primary,
@@ -123,6 +129,7 @@ const TYPE_LABELS: Record<NotificationType, string> = {
   sos: 'Safety',
   system: 'System',
   document_update: 'Document',
+  referral: 'Referral',
 };
 
 // Category filter chips — a coarser grouping over the TYPE_META types
@@ -142,7 +149,7 @@ const CATEGORIES: { key: CategoryKey; label: string }[] = [
 const CATEGORY_TYPES: Record<Exclude<CategoryKey, 'all'>, NotificationType[]> =
   {
     bookings: ['booking_update'],
-    payments: ['payment'],
+    payments: ['payment', 'referral'],
     promos: ['promo'],
     more: ['chat', 'sos', 'system', 'document_update'],
   };
@@ -664,6 +671,17 @@ export default function NotificationsScreen() {
           // never mounts Profile), so warm the promos list on the tap too. (P32)
           if (userId) prefetchPromos(userId);
           router.push('/(customer)/promos');
+          break;
+        // referral + sos were missing here, so tapping those rows in the list
+        // did nothing while tapping the SAME push navigated. Mirror the push-tap
+        // routing (useNotifications) so the in-app list and push agree.
+        case 'referral':
+          router.push('/(customer)/wallet');
+          break;
+        case 'sos':
+          if (data.booking_id) {
+            router.push(`/(customer)/tracking/${data.booking_id as string}`);
+          }
           break;
         default:
           break;

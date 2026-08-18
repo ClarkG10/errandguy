@@ -80,6 +80,12 @@ const TYPE_META: Record<
     textColor: LightColors.accentDark,
     chipClass: 'bg-accentSoft',
   },
+  referral: {
+    icon: Tag,
+    color: LightColors.accentStrong,
+    textColor: LightColors.accentDark,
+    chipClass: 'bg-accentSoft',
+  },
   chat: {
     icon: MessageCircle,
     color: LightColors.primary,
@@ -119,6 +125,7 @@ const TYPE_LABELS: Record<NotificationType, string> = {
   sos: 'Safety',
   system: 'System',
   document_update: 'Document',
+  referral: 'Referral',
 };
 
 // One-time swipe-teaching flag (peek animation, or a caption above the
@@ -596,6 +603,12 @@ export default function RunnerNotificationsScreen() {
           break;
         case 'document_update':
           router.push('/(runner)/settings/documents' as any);
+          break;
+        // Mirror the push-tap routing (useNotifications): a runner's referral
+        // reward shows in earnings. Tapping this row in the list previously
+        // did nothing while the push navigated.
+        case 'referral':
+          router.push('/(runner)/(tabs)/earnings');
           break;
         default:
           break;
