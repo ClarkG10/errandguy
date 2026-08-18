@@ -136,6 +136,13 @@
                     <td class="num">&#8369;{{ number_format($total_earnings, 2) }}</td>
                 </tr>
             @endif
+            @if($line_items_truncated ?? false)
+                <tr>
+                    <td colspan="4" style="font-size: 11px; color: #64748B; padding-top: 8px;">
+                        Showing the most recent {{ $line_item_cap }} of {{ $total_errands }} errands. The total above reflects all {{ $total_errands }}.
+                    </td>
+                </tr>
+            @endif
         </tbody>
     </table>
 

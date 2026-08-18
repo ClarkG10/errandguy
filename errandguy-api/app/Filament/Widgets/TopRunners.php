@@ -26,17 +26,22 @@ class TopRunners extends TableWidget
         return $table
             ->query(fn (): Builder => RunnerProfile::query()
                 ->where('verification_status', 'approved')
+                // Precompute the rank in the single list query via a window
+                // function. The old per-row ->state() ran one COUNT(*) over
+                // runner_profiles per rendered row (11 queries for a 10-row page);
+                // this makes it 0.
+                ->select('runner_profiles.*')
+                // Alias is `earnings_rank`, NOT `rank`: RANK is a reserved word in
+                // MySQL 8 (window functions), so `as rank` is a syntax error there
+                // (SQLite tolerates it — MySQL CI caught this).
+                ->selectRaw('row_number() over (order by total_earnings desc) as earnings_rank')
                 ->with('user:id,full_name,avatar_url,avg_rating')
                 ->orderByDesc('total_earnings'))
             ->paginated([10])
             ->defaultSort('total_earnings', 'desc')
             ->columns([
-                TextColumn::make('rank')
+                TextColumn::make('earnings_rank')
                     ->label('#')
-                    ->state(fn (RunnerProfile $record): int => RunnerProfile::query()
-                        ->where('verification_status', 'approved')
-                        ->where('total_earnings', '>', $record->total_earnings)
-                        ->count() + 1)
                     ->badge()
                     ->color(fn (int $state): string => $state <= 3 ? 'accent' : 'gray')
                     ->alignCenter(),

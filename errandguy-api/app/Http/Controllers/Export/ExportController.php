@@ -82,6 +82,13 @@ class ExportController extends Controller
             'total_errands' => $totalErrands,
             'avg_per_errand' => $avgPerErrand,
             'line_items' => $lineItems,
+            // Header totals are the full-period aggregate, but the itemised table
+            // is capped at 500 rows (DomPDF OOMs/times-out on thousands). When the
+            // period has more errands than that, disclose it so the rows-vs-total
+            // gap reads as "showing recent 500", not a statement that fails to
+            // reconcile.
+            'line_item_cap' => 500,
+            'line_items_truncated' => $totalErrands > $lineItems->count(),
             'generated_at' => now(),
         ];
 

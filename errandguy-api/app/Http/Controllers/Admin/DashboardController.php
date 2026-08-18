@@ -39,7 +39,13 @@ class DashboardController extends Controller
                     'total' => Booking::count(),
                     'today' => Booking::where('created_at', '>=', $todayStart)
                         ->where('created_at', '<', $tomorrowStart)->count(),
-                    'active' => Booking::whereNotIn('status', ['completed', 'cancelled'])->count(),
+                    // Exclude no_runner (a terminal, already-refunded/awaiting-
+                    // auto-cancel state) to match the canonical "active bookings"
+                    // definition used everywhere else (AdminStatsOverview, the
+                    // Filament dashboard's own card, BookingListStats, ActionQueue
+                    // which classes no_runner as "stuck"). Without this the API
+                    // dashboard's active count disagreed with the panel's.
+                    'active' => Booking::whereNotIn('status', ['completed', 'cancelled', 'no_runner'])->count(),
                     'completed_today' => Booking::where('status', 'completed')
                         ->where('completed_at', '>=', $todayStart)
                         ->where('completed_at', '<', $tomorrowStart)->count(),
