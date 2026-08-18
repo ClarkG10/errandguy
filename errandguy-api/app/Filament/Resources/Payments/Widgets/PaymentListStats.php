@@ -24,7 +24,12 @@ class PaymentListStats extends StatsOverviewWidget
             return [
                 'completed_today' => (float) Payment::where('status', 'completed')->where('paid_at', '>=', $today)->where('paid_at', '<', $tomorrow)->sum('amount'),
                 'pending' => Payment::whereIn('status', ['pending', 'processing'])->count(),
-                'refunded_30d' => (float) Payment::where('status', 'refunded')->where('created_at', '>=', $since)->sum('refund_amount'),
+                // Window on refunded_at (stamped by PaymentService::recordRefund
+                // at refund time), NOT created_at — otherwise "Refunded (30d)"
+                // measured payments CREATED in the last 30 days that happen to be
+                // refunded, silently dropping recent refunds of older payments
+                // (usually the largest, oldest orders) and understating exposure.
+                'refunded_30d' => (float) Payment::where('status', 'refunded')->where('refunded_at', '>=', $since)->sum('refund_amount'),
                 'failed_today' => Payment::whereIn('status', ['failed', 'expired'])->where('created_at', '>=', $today)->count(),
             ];
         });

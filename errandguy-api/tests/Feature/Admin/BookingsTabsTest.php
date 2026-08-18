@@ -71,6 +71,16 @@ class BookingsTabsTest extends TestCase
         $this->get(self::URL)->assertOk();
     }
 
+    public function test_total_gmv_summary_counts_only_completed_bookings(): void
+    {
+        // setUp seeded completed(115) + cancelled(115) + accepted(115). GMV is
+        // completed-only (matching every other GMV surface), so the footer must
+        // be 115 — not 345, which would count the cancelled + in-flight money
+        // that was never transacted.
+        \Livewire\Livewire::test(\App\Filament\Resources\Bookings\Pages\ListBookings::class)
+            ->assertTableColumnSummarySet('total_amount', 'gmv', 115);
+    }
+
     public function test_every_triage_tab_renders_without_error(): void
     {
         // The exact URL from the bug report, plus the other tabs.

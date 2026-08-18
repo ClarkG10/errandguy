@@ -48,7 +48,18 @@ class BookingsTable
                 TextColumn::make('payment_method')->badge()->color('gray')
                     ->toggleable(isToggledHiddenByDefault: true),
                 TextColumn::make('total_amount')->money('PHP')->sortable()
-                    ->summarize(Sum::make()->money('PHP')->label('Total GMV')),
+                    // GMV is completed-only everywhere else (AdminStatsOverview,
+                    // RevenueChart, OperationsKpis). This footer summed ALL rows
+                    // in the filtered set — and the table has no default status
+                    // filter — so the first view an operator sees counted
+                    // cancelled / no_runner / in-flight money (never transacted)
+                    // as GMV. Scope the summarizer to completed to match the label.
+                    ->summarize(
+                        Sum::make('gmv')
+                            ->money('PHP')
+                            ->label('Total GMV')
+                            ->query(fn (\Illuminate\Database\Query\Builder $query) => $query->where('status', 'completed'))
+                    ),
                 TextColumn::make('schedule_type')->badge()->color('gray')
                     ->toggleable(isToggledHiddenByDefault: true),
                 TextColumn::make('created_at')->dateTime()->sortable(),
