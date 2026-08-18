@@ -52,7 +52,14 @@ class DisputeController extends Controller
         $dispute = DisputeTicket::findOrFail($id);
         $dispute->update([
             'status' => 'resolved',
-            'resolution_note' => $request->input('resolution_note'),
+            // The column is `resolution` (resolution_note is not a
+            // dispute_tickets column nor fillable, so mass-assignment silently
+            // dropped it — the note was lost). Also stamp the resolver from the
+            // sanctum-authenticated admin ($request->user() is the AdminUser
+            // here; the session `auth('admin')` guard is empty on this API
+            // route). Mirrors the Filament resolve action.
+            'resolution' => $request->input('resolution_note'),
+            'resolved_by' => $request->user()->id,
             'resolved_at' => now(),
         ]);
 

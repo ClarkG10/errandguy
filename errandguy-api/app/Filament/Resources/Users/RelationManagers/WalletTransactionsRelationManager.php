@@ -6,6 +6,7 @@ use Filament\Resources\RelationManagers\RelationManager;
 use Filament\Tables\Columns\TextColumn;
 use Filament\Tables\Filters\SelectFilter;
 use Filament\Tables\Table;
+use Illuminate\Database\Eloquent\Model;
 
 class WalletTransactionsRelationManager extends RelationManager
 {
@@ -14,6 +15,20 @@ class WalletTransactionsRelationManager extends RelationManager
     protected static ?string $title = 'Wallet history';
 
     protected static string|\BackedEnum|null $icon = 'heroicon-m-wallet';
+
+    /**
+     * Money gate. Without this the wallet ledger (amounts, running balance,
+     * payout/payment/refund descriptions) leaked to any admin who can open a
+     * user's detail page — including support/ops roles that are 403'd from the
+     * money-gated WalletTransactionResource. Mirror that resource's
+     * canManageMoney() gate so the relation-manager tab enforces the same
+     * boundary (Gate::before blanket-allows every ability, so the default
+     * policy check would otherwise pass for any admin).
+     */
+    public static function canViewForRecord(Model $ownerRecord, string $pageClass): bool
+    {
+        return auth('admin')->user()?->canManageMoney() ?? false;
+    }
 
     public function table(Table $table): Table
     {

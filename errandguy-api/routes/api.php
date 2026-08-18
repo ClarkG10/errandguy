@@ -392,8 +392,12 @@ Route::prefix('v1')->group(function () {
 
             // Disputes — super_admin/admin/support/ops (canHandleSupport), mirroring
             // the Filament DisputeTicketResource gate (support IS permitted here).
-            Route::get('/disputes', [DisputeController::class, 'index']);
-            Route::get('/disputes/{id}', [DisputeController::class, 'show']);
+            // The READ routes were previously ungated, so a finance-role admin
+            // (canManageMoney but NOT canHandleSupport) — blocked from disputes in
+            // the panel — could still list/read dispute PII (both parties' phone +
+            // email) over the API. Gate the reads to match the mutating routes.
+            Route::get('/disputes', [DisputeController::class, 'index'])->middleware('admin.can:support');
+            Route::get('/disputes/{id}', [DisputeController::class, 'show'])->middleware('admin.can:support');
             Route::post('/disputes/{id}/resolve', [DisputeController::class, 'resolve'])->middleware('admin.can:support');
             Route::post('/disputes/{id}/escalate', [DisputeController::class, 'escalate'])->middleware('admin.can:support');
 
