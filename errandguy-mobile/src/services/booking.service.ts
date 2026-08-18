@@ -77,6 +77,25 @@ export const bookingService = {
     return api.get('/bookings', { params, cacheTtlMs: 5000, silent: true });
   },
 
+  /**
+   * Attach item photos to a just-created booking. The create request is JSON
+   * (no file parts), so the customer's staged item photos are uploaded here
+   * right after. Best-effort: the booking already exists if this fails.
+   */
+  uploadItemPhotos(id: string, uris: string[]) {
+    const form = new FormData();
+    uris.forEach((uri, i) => {
+      form.append('item_photos[]', {
+        uri,
+        type: 'image/jpeg',
+        name: `item-${i}.jpg`,
+      } as any);
+    });
+    return api.post(`/bookings/${id}/item-photos`, form, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+    });
+  },
+
   createBooking(data: {
     errand_type_id: string;
     pickup_address: string;

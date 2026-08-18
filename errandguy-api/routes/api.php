@@ -125,6 +125,11 @@ Route::prefix('v1')->group(function () {
             // double-tap / network retry with the same Idempotency-Key return
             // the original booking+checkout instead of creating a second one.
             Route::post('/', [BookingController::class, 'store'])->middleware(['throttle:15,1', 'idempotent']);
+            // Attach item photos to a just-created booking. The create body is
+            // JSON (no file parts), so the customer's staged photos are uploaded
+            // here immediately after. Owner-gated, pre-pickup only.
+            Route::post('/{id}/item-photos', [BookingController::class, 'uploadItemPhotos'])
+                ->middleware('throttle:10,1');
             Route::get('/active', [BookingController::class, 'active']);
             Route::post('/estimate', [BookingController::class, 'estimate']);
             Route::get('/{id}', [BookingController::class, 'show']);

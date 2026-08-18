@@ -663,6 +663,48 @@ class BookingController extends Controller
         ]);
     }
 
+    /**
+     * Attach item photos to a booking. The create request is JSON (no file
+     * parts), so the customer's staged item photos are uploaded here right
+     * after the booking is created. Owner-only, and only before the runner has
+     * picked up — item photos exist to guide the shopping / pickup.
+     */
+    public function uploadItemPhotos(Request $request, string $id): JsonResponse
+    {
+        $booking = Booking::findOrFail($id);
+
+        if ($booking->customer_id !== $request->user()->id) {
+            abort(403);
+        }
+
+        if (! in_array($booking->status, [
+            'pending', 'matched', 'accepted', 'heading_to_pickup', 'arrived_at_pickup',
+        ], true)) {
+            return response()->json([
+                'message' => 'Item photos can only be added before the runner picks up.',
+            ], 422);
+        }
+
+        $request->validate([
+            'item_photos' => ['required', 'array', 'max:5'],
+            // Raster-only (no SVG) — mirrors the create rule; an SVG is a
+            // stored-XSS vector when an admin opens the proof in the panel.
+            'item_photos.*' => ['image', 'mimes:jpeg,jpg,png,webp', 'max:5120'],
+        ]);
+
+        $photos = $booking->item_photos ?? [];
+        foreach ($request->file('item_photos') as $photo) {
+            $photos[] = \App\Http\Controllers\BookingMediaController::storeAndUrl(
+                $photo,
+                'booking-photos/'.$booking->id,
+            );
+        }
+        // Cap the total at 5 to mirror the create-time limit.
+        $booking->update(['item_photos' => array_slice($photos, 0, 5)]);
+
+        return response()->json(['data' => new BookingResource($booking->fresh())]);
+    }
+
     public function show(Request $request, string $id): JsonResponse
     {
         $booking = Booking::with([

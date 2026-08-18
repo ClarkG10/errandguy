@@ -461,6 +461,14 @@ export default function ReviewScreen() {
         idempotencyKey: payAttempt.idempotencyKey,
       });
       const booking = res.data.data;
+      // The create body is JSON (no file parts), so the customer's staged item
+      // photos are uploaded here right after — best-effort, since the booking
+      // already exists. Without this the attached photos were silently dropped.
+      if (draftBooking.item_photos?.length && booking?.id) {
+        bookingService
+          .uploadItemPhotos(booking.id, draftBooking.item_photos)
+          .catch(() => {});
+      }
       const checkoutUrl: string | undefined = res.data?.checkout_url;
       const paymentId: string | undefined = res.data?.payment_id;
       // Outcome haptic — the booking was accepted by the server.
