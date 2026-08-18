@@ -143,6 +143,71 @@ class StatusUpdateTest extends TestCase
             ->assertOk();
     }
 
+    public function test_shopping_errand_picked_up_needs_receipt_not_pickup_photo(): void
+    {
+        Event::fake();
+        Storage::fake('media');
+
+        // Grocery (shopping) errand: the runner proves pickup with the RECEIPT
+        // + actual cost, never a separate pickup_photo (the mobile app sends
+        // receipt_photo + actual_item_cost only). The backend must NOT 422 for
+        // a missing pickup_photo here — regression: it did, permanently
+        // stranding the runner at pickup on food/grocery/purchase errands.
+        $grocery = ErrandType::create([
+            'slug' => 'grocery', 'name' => 'Grocery', 'description' => 'Shop',
+            'icon_name' => 'ShoppingCart', 'base_fee' => 50.00, 'per_km_walk' => 15.00,
+            'per_km_bicycle' => 12.00, 'per_km_motorcycle' => 10.00, 'per_km_car' => 18.00,
+            'min_negotiate_fee' => 30.00, 'is_active' => true, 'sort_order' => 2,
+        ]);
+
+        $booking = Booking::create([
+            'booking_number' => 'EG-20260331-SHOP',
+            'customer_id' => $this->customer->id, 'runner_id' => $this->runner->id,
+            'errand_type_id' => $grocery->id, 'status' => 'accepted',
+            'pickup_address' => '123 Main', 'pickup_lat' => 14.60, 'pickup_lng' => 120.98,
+            'dropoff_address' => '456 Oak', 'dropoff_lat' => 14.55, 'dropoff_lng' => 121.02,
+            'schedule_type' => 'now', 'pricing_mode' => 'fixed', 'vehicle_type_rate' => 'motorcycle',
+            'distance_km' => 5.0, 'base_fee' => 50, 'distance_fee' => 50, 'service_fee' => 15,
+            'surcharge' => 0, 'total_amount' => 115, 'runner_payout' => 100,
+            'is_transportation' => false, 'shopping_budget' => 1000,
+        ]);
+
+        foreach (['heading_to_pickup', 'arrived_at_pickup'] as $s) {
+            $this->actingAs($this->runner)
+                ->postJson("/api/v1/runner/errand/{$booking->id}/status", ['status' => $s])
+                ->assertOk();
+        }
+
+        $this->actingAs($this->runner)
+            ->postJson("/api/v1/runner/errand/{$booking->id}/status", [
+                'status' => 'picked_up',
+                'actual_item_cost' => 950,
+                'receipt_photo' => UploadedFile::fake()->image('receipt.jpg'),
+            ])
+            ->assertOk()
+            ->assertJsonPath('data.status', 'picked_up');
+    }
+
+    public function test_non_shopping_errand_still_requires_pickup_photo(): void
+    {
+        Event::fake();
+        Storage::fake('media');
+
+        foreach (['heading_to_pickup', 'arrived_at_pickup'] as $s) {
+            $this->actingAs($this->runner)
+                ->postJson("/api/v1/runner/errand/{$this->booking->id}/status", ['status' => $s])
+                ->assertOk();
+        }
+
+        // The default delivery errand still requires a pickup_photo at picked_up
+        // (the skip applies only to shopping/transportation/queue).
+        $this->actingAs($this->runner)
+            ->postJson("/api/v1/runner/errand/{$this->booking->id}/status", [
+                'status' => 'picked_up',
+            ])
+            ->assertStatus(422);
+    }
+
     public function test_invalid_status_transition_rejected(): void
     {
         $response = $this->actingAs($this->runner)
