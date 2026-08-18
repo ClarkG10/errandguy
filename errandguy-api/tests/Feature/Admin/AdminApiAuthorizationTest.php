@@ -108,6 +108,29 @@ class AdminApiAuthorizationTest extends TestCase
         $this->getJson('/api/v1/admin/payouts')->assertOk();
     }
 
+    // ── Runner KYC reads: moderation-only (super_admin/admin/ops), EXCLUDES
+    //    finance + support — matching the byte-stream + approve/reject gates. ──
+
+    public function test_support_and_finance_are_forbidden_from_runner_kyc_reads(): void
+    {
+        // GET /runners/pending and /runners/{id}/documents expose government-ID /
+        // selfie metadata (and legacy file_url links). They were ungated while
+        // their approve/reject siblings required canModerate, so finance/support
+        // — who by design never see runner KYC — could read them over the API.
+        foreach (['support', 'finance'] as $role) {
+            $this->actingAsAdmin($role);
+            $this->getJson('/api/v1/admin/runners/pending')->assertStatus(403);
+            $this->getJson('/api/v1/admin/runners/'.Str::uuid().'/documents')->assertStatus(403);
+        }
+    }
+
+    public function test_ops_admin_can_read_the_runner_verification_queue(): void
+    {
+        // ops IS moderation-capable, so the reads must pass the gate for it.
+        $this->actingAsAdmin('ops');
+        $this->getJson('/api/v1/admin/runners/pending')->assertOk();
+    }
+
     public function test_finance_admin_is_forbidden_from_the_dispute_read_routes(): void
     {
         // Finance can manage money but NOT handle support; the disputes surface

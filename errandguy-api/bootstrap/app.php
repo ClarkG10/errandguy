@@ -159,9 +159,42 @@ return Application::configure(basePath: dirname(__DIR__))
             ];
         });
 
+        // Recovery / verify COMPLETION paths (reset-password, verify-otp). Keyed
+        // on credential + SOURCE IP like 'login': an attacker who spams a
+        // victim's credential only fills their OWN IP bucket, so the legitimate
+        // user can always complete recovery from their own device. The shared
+        // 'auth' limiter (credential-only) locked these paths for the whole
+        // window once an attacker sent 5 junk requests for the victim's
+        // credential (AUTHX-3 class). forgot-password intentionally STAYS on
+        // 'auth' so outbound reset-email bombing remains globally capped per
+        // credential (keying it on +IP would let an attacker send 5×#IPs emails).
+        RateLimiter::for('auth-verify', function (Request $request) {
+            $identifier = $request->input('phone')
+                ?? $request->input('email')
+                ?? $request->input('phone_or_email')
+                ?? $request->ip();
+
+            return [
+                Limit::perMinutes(15, 5)->by('authverify:' . $identifier . '|' . $request->ip()),
+                Limit::perMinutes(15, 30)->by('authverify-ip:' . $request->ip()),
+            ];
+        });
+
         RateLimiter::for('otp', function (Request $request) {
             $key = $request->input('phone', $request->input('email', $request->ip()));
-            return Limit::perHour(3)->by($key);
+
+            // Two buckets: a per-RECIPIENT 3/hr cap AND a per-IP aggregate cap.
+            // Without the second, one source could rotate through unlimited
+            // distinct recipient addresses (each its own fresh 3/hr bucket) to
+            // fan out real verification emails — only the global 'api' 20/min
+            // anon cap applied (~1200 emails/hr to attacker-chosen inboxes). The
+            // per-IP cap mirrors the secondary limit the 'auth'/'login' limiters
+            // already carry. Tuned to accommodate NAT/shared-IP legitimate use
+            // while cutting the abuse ceiling ~40×.
+            return [
+                Limit::perHour(3)->by('otp:' . $key),
+                Limit::perHour(30)->by('otp-ip:' . $request->ip()),
+            ];
         });
     })
     ->create();

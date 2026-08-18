@@ -60,9 +60,15 @@ Route::prefix('v1')->group(function () {
         Route::post('/register', [RegisterController::class, 'register'])->middleware('throttle:auth');
         Route::post('/login', [LoginController::class, 'login'])->middleware('throttle:login');
         Route::post('/send-otp', [OTPController::class, 'sendOTP'])->middleware('throttle:otp');
-        Route::post('/verify-otp', [OTPController::class, 'verifyOTP'])->middleware('throttle:auth');
+        // verify-otp and reset-password are recovery/verify COMPLETION paths: use
+        // the credential+IP 'auth-verify' limiter (like 'login'), not the
+        // credential-only 'auth' limiter, so an attacker spamming a victim's
+        // phone/email can't lock the legitimate user out of completing recovery
+        // on their own device (AUTHX-3 class). forgot-password stays on 'auth'
+        // (credential-only) to preserve its per-credential reset-email anti-bombing.
+        Route::post('/verify-otp', [OTPController::class, 'verifyOTP'])->middleware('throttle:auth-verify');
         Route::post('/forgot-password', [PasswordResetController::class, 'forgotPassword'])->middleware('throttle:auth');
-        Route::post('/reset-password', [PasswordResetController::class, 'resetPassword'])->middleware('throttle:auth');
+        Route::post('/reset-password', [PasswordResetController::class, 'resetPassword'])->middleware('throttle:auth-verify');
 
         Route::post('/logout', [LogoutController::class, 'logout'])->middleware('auth:sanctum');
     });
@@ -381,8 +387,14 @@ Route::prefix('v1')->group(function () {
             Route::post('/users/{id}/suspend', [UserManagementController::class, 'suspend'])->middleware('admin.can:moderate');
             Route::post('/users/{id}/unsuspend', [UserManagementController::class, 'unsuspend'])->middleware('admin.can:moderate');
 
-            Route::get('/runners/pending', [RunnerVerificationController::class, 'pending']);
-            Route::get('/runners/{userId}/documents', [RunnerVerificationController::class, 'showDocuments']);
+            // Runner KYC reads expose government-ID / selfie metadata (and, for
+            // any un-migrated legacy row, a raw file_url). Gate the READS to
+            // moderation roles (super_admin/admin/ops) to match their approve/
+            // reject siblings and the byte-stream gate in
+            // RunnerDocumentFileController::adminShow — finance/support must never
+            // see runner KYC.
+            Route::get('/runners/pending', [RunnerVerificationController::class, 'pending'])->middleware('admin.can:moderate');
+            Route::get('/runners/{userId}/documents', [RunnerVerificationController::class, 'showDocuments'])->middleware('admin.can:moderate');
             Route::post('/runners/{userId}/approve', [RunnerVerificationController::class, 'approve'])->middleware('admin.can:moderate');
             Route::post('/runners/{userId}/reject', [RunnerVerificationController::class, 'reject'])->middleware('admin.can:moderate');
 
