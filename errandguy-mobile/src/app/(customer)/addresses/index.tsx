@@ -70,7 +70,17 @@ export default function AddressesScreen() {
     ['user', 'addresses', userId],
     async () => {
       const r = await userService.getAddresses();
-      return (r.data.data ?? []) as SavedAddress[];
+      // The API serializes lat/lng from decimal columns as JSON STRINGS. Coerce
+      // to numbers at the boundary so every consumer gets real numbers — the
+      // edit-coordinate guard (Number.isFinite), booking pre-center, fare
+      // estimate, and undo-delete all assume numeric lat/lng. Without this,
+      // editing a saved address without panning the map was rejected as
+      // "please pin a location".
+      return (r.data.data ?? []).map((a: any) => ({
+        ...a,
+        lat: Number(a.lat),
+        lng: Number(a.lng),
+      })) as SavedAddress[];
     },
     { staleTime: 60_000, ttl: CacheTTL.LONG },
   );
@@ -607,6 +617,7 @@ export default function AddressesScreen() {
                       onChangeText={setCustomLabel}
                       autoCapitalize="words"
                       returnKeyType="done"
+                      maxLength={50}
                       onSubmitEditing={handleAdd}
                     />
                   </View>

@@ -219,9 +219,12 @@ export default function RunnerOnboardingScreen() {
       return;
     }
 
-    // Refresh user profile to ensure runner_profile is synced
+    // Refresh user profile to ensure runner_profile is synced. noCache: the root
+    // layout seeded a 30s micro-cache of /user/profile holding the OLD (rejected)
+    // doc; without bypassing it, a just-re-uploaded doc still reads 'rejected'
+    // and the KYC nav gate bounces the runner straight back to onboarding.
     try {
-      const response = await userService.getProfile();
+      const response = await userService.getProfile({ noCache: true });
       setUser(response.data.data ?? response.data);
     } catch {}
 

@@ -103,12 +103,21 @@ export function useChat(bookingId: string) {
     const response = await chatService.getMessages(bookingId, { limit: 50 });
     const data = response.data?.data ?? [];
     const meta = response.data?.meta ?? {};
+    // Merge, don't replace: a realtime '.message.created' arrival (or a pending
+    // optimistic tmp- send) that landed WHILE this fetch was in flight isn't in
+    // the server snapshot; a plain setMessages would drop it (visible vanish
+    // until the next poll). Carry those extras over via addMessage (dedupes +
+    // sorts) after seeding the snapshot.
+    const existing = useChatStore.getState().messages[bookingId] ?? [];
+    const dataIds = new Set(data.map((m: Message) => m.id));
+    const extras = existing.filter((m) => !dataIds.has(m.id));
     setMessages(bookingId, data);
+    for (const m of extras) addMessage(bookingId, m);
     setHasMore(!!meta.has_more);
     cursorRef.current = meta.next_before ?? null;
     // Persist the latest page so the next mount can hydrate instantly.
     CacheService.set(cacheKey(bookingId), data, CacheTTL.LONG);
-  }, [bookingId, setMessages]);
+  }, [bookingId, setMessages, addMessage]);
 
   /**
    * Load the previous page of older messages and PREPEND them to the
@@ -254,9 +263,9 @@ export function useChat(bookingId: string) {
     // then fire the (idempotent) receipt in the background. It's auto-retried
     // on every chat open / foreground / scroll-to-live-edge, so a dropped
     // request self-heals — no rollback needed.
-    markRead(bookingId);
+    markRead(bookingId, myId);
     chatService.markAsRead(bookingId).catch(() => {});
-  }, [bookingId, markRead]);
+  }, [bookingId, markRead, myId]);
 
   // Live channel ref so sendTyping() can whisper on whatever channel
   // is currently subscribed without re-creating callbacks per effect run.

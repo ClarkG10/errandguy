@@ -36,7 +36,7 @@ interface ChatState {
    *  an optimistic send when the network call fails. */
   removeMessage: (bookingId: string, messageId: string) => void;
   setMessages: (bookingId: string, messages: Message[]) => void;
-  markRead: (bookingId: string) => void;
+  markRead: (bookingId: string, myId?: string) => void;
   clearChat: (bookingId: string) => void;
   setUnreadCount: (count: number) => void;
   setIsTyping: (bookingId: string, typing: boolean) => void;
@@ -103,16 +103,21 @@ export const useChatStore = create<ChatState>((set, get) => ({
       };
     }),
 
-  markRead: (bookingId) => {
+  markRead: (bookingId, myId) => {
     const msgs = get().messages[bookingId];
     if (msgs) {
       set((state) => ({
         messages: {
           ...state.messages,
-          [bookingId]: msgs.map((m) => ({
-            ...m,
-            read_at: m.read_at || new Date().toISOString(),
-          })),
+          // Only stamp INCOMING messages as read — never the user's OWN outgoing
+          // bubbles (that would fabricate a "Read" receipt for a message the
+          // counterpart never opened). Incoming still gets stamped, so the unread
+          // indicator clears correctly.
+          [bookingId]: msgs.map((m) =>
+            myId && m.sender_id === myId
+              ? m
+              : { ...m, read_at: m.read_at || new Date().toISOString() },
+          ),
         },
       }));
     }
