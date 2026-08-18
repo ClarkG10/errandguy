@@ -71,14 +71,17 @@ export function EditProfileModal({ visible, onClose }: EditProfileModalProps) {
     // does NOT re-fire the tab's focus-refresh on close, so there's no
     // server-read race to clobber the optimistic value).
     const prev = user;
-    const q = queueable(
-      'user.updateProfile',
-      { full_name: nextName, email: nextEmail || undefined },
-      { dedupeKey: 'user-profile' },
-    );
+    // Emptying the email field is a no-op on BOTH sides: the backend email rule
+    // is not nullable, so an empty email is stripped from the PUT body and the
+    // server keeps the old value. Omit it from the optimistic patch too (rather
+    // than setting email:null) so the UI never shows a removal the server will
+    // silently revert on the next focus-refresh. A single shared patch keeps
+    // apply and commit consistent.
+    const patch = { full_name: nextName, ...(nextEmail ? { email: nextEmail } : {}) };
+    const q = queueable('user.updateProfile', patch, { dedupeKey: 'user-profile' });
     await runOptimistic({
       apply: () => {
-        updateProfile({ full_name: nextName, email: nextEmail || null });
+        updateProfile(patch);
         onClose(); // instant — the profile reflects the change immediately
       },
       rollback: () => {

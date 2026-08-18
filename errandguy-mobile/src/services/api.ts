@@ -347,6 +347,11 @@ api.interceptors.response.use(
           errors: data.errors || {},
           code: backendCode,
           kind,
+          // OTP_INVALID resolves to 422 (ErrorCode::httpStatus default) and
+          // carries a top-level attempts_remaining the Verify-OTP screen reads
+          // to show "N attempts left" and gate the button. Preserve it here as
+          // the generic branch below already does.
+          ...('attempts_remaining' in (data || {}) && { attempts_remaining: data.attempts_remaining }),
         });
       }
 

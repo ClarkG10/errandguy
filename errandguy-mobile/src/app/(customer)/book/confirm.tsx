@@ -457,6 +457,19 @@ export default function ConfirmScreen() {
             qty: it.qty ?? 1,
           }))
         : undefined,
+      // Multi-stop extra destinations — without re-seeding these, rebooking a
+      // multi-stop errand silently dropped every extra stop (pickup→dropoff
+      // only), so the customer re-paid for a cheaper single-drop errand.
+      stops: b.stops?.length
+        ? b.stops.map((s) => ({
+            address: s.address,
+            lat: Number(s.lat),
+            lng: Number(s.lng),
+            contact_name: s.contact_name ?? undefined,
+            contact_phone: s.contact_phone ?? undefined,
+            note: s.note ?? undefined,
+          }))
+        : undefined,
       pricing_mode: b.pricing_mode,
       vehicle_type_rate: b.vehicle_type_rate ?? undefined,
       customer_offer: b.customer_offer != null ? Number(b.customer_offer) : undefined,
