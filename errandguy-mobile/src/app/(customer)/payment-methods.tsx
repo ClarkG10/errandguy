@@ -355,6 +355,7 @@ export default function PaymentMethodsScreen() {
                     ]}
                     accessibilityRole="button"
                     accessibilityLabel={`${actionLabel} linking ${m.label}`}
+                    accessibilityState={{ disabled: actionDisabled, busy: actionBusy }}
                   >
                     {actionBusy ? (
                       <Spinner size="small" color={LightColors.primary} />
@@ -378,6 +379,7 @@ export default function PaymentMethodsScreen() {
                     ]}
                     accessibilityRole="button"
                     accessibilityLabel={`Set ${m.label} as default`}
+                    accessibilityState={{ disabled: settingDefault != null, busy: settingThis }}
                   >
                     {settingThis ? (
                       <Spinner size="small" color={LightColors.primary} />

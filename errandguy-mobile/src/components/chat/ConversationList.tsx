@@ -169,7 +169,11 @@ export function ConversationList({ chatHrefPrefix, fallbackHref }: Props) {
             <View className="flex-1 ml-3">
               <View className="flex-row items-center justify-between">
                 <Text
-                  className={`text-sm ${
+                  // flex-1 bounds the name so numberOfLines={1} can actually
+                  // ellipsize; without a width constraint RN's flexShrink:0
+                  // default lets a long name take full width and shove the
+                  // timestamp off the row.
+                  className={`text-sm flex-1 ${
                     unread
                       ? 'font-montserrat-bold text-textPrimary'
                       : 'font-montserrat-semi text-textPrimary'
@@ -179,7 +183,8 @@ export function ConversationList({ chatHrefPrefix, fallbackHref }: Props) {
                   {item.counterparty?.full_name ?? 'Errand partner'}
                 </Text>
                 <Text
-                  className={`text-[11px] ml-2 ${
+                  // shrink-0 keeps the timestamp always fully visible.
+                  className={`text-[11px] ml-2 shrink-0 ${
                     unread
                       ? 'font-montserrat-bold text-primary'
                       : 'font-montserrat text-textMuted'

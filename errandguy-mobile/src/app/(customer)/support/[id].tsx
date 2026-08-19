@@ -21,6 +21,7 @@ import {
 import { useKeyboard } from '../../../hooks/useKeyboard';
 import { GradientHeader } from '../../../components/ui/GradientHeader';
 import { Spinner } from '../../../components/ui/Spinner';
+import { ChatThreadSkeleton } from '../../../components/ui/Skeleton';
 import { Badge } from '../../../components/ui/Badge';
 import { ErrorState } from '../../../components/ui/ErrorState';
 import { LightColors } from '../../../constants/colors';
@@ -307,18 +308,25 @@ export default function SupportThreadScreen() {
             ) : null
           }
           ListEmptyComponent={
-            <View
-              className="items-center justify-center py-20 px-8"
-              style={{ transform: [{ scaleY: -1 }] }}
-            >
-              {initialLoading ? (
-                <Spinner size="small" color={LightColors.primary} />
-              ) : loadError ? null : (
-                <Text className="text-sm font-montserrat text-textSecondary text-center">
-                  No messages yet.
-                </Text>
-              )}
-            </View>
+            initialLoading ? (
+              // Counter-flip the skeleton (the list is inverted) and let it fill
+              // the thread — matches the ordinary chat screens' first-load shimmer
+              // instead of a lone spinner.
+              <View style={{ transform: [{ scaleY: -1 }] }}>
+                <ChatThreadSkeleton />
+              </View>
+            ) : (
+              <View
+                className="items-center justify-center py-20 px-8"
+                style={{ transform: [{ scaleY: -1 }] }}
+              >
+                {loadError ? null : (
+                  <Text className="text-sm font-montserrat text-textSecondary text-center">
+                    No messages yet.
+                  </Text>
+                )}
+              </View>
+            )
           }
         />
 

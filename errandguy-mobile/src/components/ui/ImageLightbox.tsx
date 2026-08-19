@@ -66,6 +66,10 @@ interface ImageLightboxProps {
  */
 export function ImageLightbox({ uri, visible, onClose }: ImageLightboxProps) {
   const [downloading, setDownloading] = useState(false);
+  // Track the remote image fetch so the viewer shows a spinner instead of a
+  // silent black screen while a bearer-gated /internal/ photo downloads
+  // (mirrors DocumentViewer). Reset whenever the source changes.
+  const [loading, setLoading] = useState(false);
 
   const handleDownload = async () => {
     if (!uri || downloading) return;
@@ -141,7 +145,16 @@ export function ImageLightbox({ uri, visible, onClose }: ImageLightboxProps) {
               style={{ width, height: height * 0.8 }}
               contentFit="contain"
               transition={200}
+              cachePolicy="memory-disk"
+              onLoadStart={() => setLoading(true)}
+              onLoadEnd={() => setLoading(false)}
+              onError={() => setLoading(false)}
             />
+          ) : null}
+          {loading ? (
+            <View className="absolute" pointerEvents="none">
+              <Spinner size="large" color={LightColors.textInverse} />
+            </View>
           ) : null}
         </Pressable>
 

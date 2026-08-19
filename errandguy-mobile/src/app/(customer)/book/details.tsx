@@ -196,6 +196,9 @@ function CenterPin({ color, isMoving }: { color: string; isMoving: boolean }) {
 
 export default function TaskDetailsScreen() {
   const router = useRouter();
+  // Self-resetting guard so a fast double-tap on Continue can't push the next
+  // step twice (router.push is non-idempotent; the CTA stays mounted mid-push).
+  const navLatch = useRef(false);
   const { draftBooking, updateDraft, setStep } = useBookingStore();
   const { pickImage, takePhoto } = useImagePicker();
   // Listen to window dimensions so the map pane re-flows on rotation
@@ -1039,7 +1042,12 @@ export default function TaskDetailsScreen() {
       return;
     }
     setStep(2);
+    if (navLatch.current) return;
+    navLatch.current = true;
     router.push('/(customer)/book/schedule');
+    setTimeout(() => {
+      navLatch.current = false;
+    }, 700);
   }, [draftBooking, rule, setStep, router]);
 
   /* ── Initial camera center ── */

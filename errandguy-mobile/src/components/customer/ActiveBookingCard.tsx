@@ -340,6 +340,10 @@ const styles = StyleSheet.create({
   statusBadgeRow: {
     flexDirection: 'row',
     alignItems: 'center',
+    // Bound the left column so the category label can ellipsize instead of
+    // shoving the fare off the row (mirrors the footerMeta flex:1 guard).
+    flex: 1,
+    minWidth: 0,
   },
   dot: {
     width: 8,
@@ -355,6 +359,7 @@ const styles = StyleSheet.create({
     color: TEXT_SECONDARY,
     letterSpacing: 0.4,
     textTransform: 'uppercase',
+    flexShrink: 1,
   },
   amountText: {
     fontSize: 15,
@@ -363,6 +368,9 @@ const styles = StyleSheet.create({
     fontFamily: 'Inter_700Bold',
     fontVariant: ['tabular-nums'],
     color: TEXT_PRIMARY,
+    // Never shrink the fare; keep a gap from a long category label.
+    flexShrink: 0,
+    marginLeft: 8,
   },
   headline: {
     fontSize: 17,

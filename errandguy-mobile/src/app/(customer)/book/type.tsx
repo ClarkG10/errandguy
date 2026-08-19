@@ -41,6 +41,10 @@ export default function TypeSelectionScreen() {
   // Set once the user has confirmed leaving so the beforeRemove guard
   // doesn't re-intercept leaveFlow's own router.back().
   const leavingRef = useRef(false);
+  // Guards against a fast double-tap on Continue pushing the next step twice
+  // (router.push is non-idempotent and the CTA stays mounted during the push
+  // animation). Self-resetting so it can never brick the button.
+  const navLatch = useRef(false);
   // `preselected` should only seed the initial selection — once the user
   // taps another tile the prop must not yank them back. Track whether
   // we've already consumed it.
@@ -186,7 +190,12 @@ export default function TypeSelectionScreen() {
       errand_type_slug: selectedType?.slug,
     });
     setStep(1);
+    if (navLatch.current) return;
+    navLatch.current = true;
     router.push('/(customer)/book/details');
+    setTimeout(() => {
+      navLatch.current = false;
+    }, 700);
   }, [selectedId, selectionValid, errandTypes, draftBooking.errand_type_id, updateDraft, setStep, router]);
 
   return (

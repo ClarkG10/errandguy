@@ -100,11 +100,24 @@ export default function ActivityScreen() {
     if (page1Q.data) setHasMore((page1Q.data.length ?? 0) >= PER_PAGE);
   }, [page1Q.data]);
 
-  // The full loaded list (page 1 + any paged-in extras), unfiltered.
-  const allBookings = useMemo(
-    () => [...(page1Q.data ?? []), ...extraPages],
-    [page1Q.data, extraPages],
-  );
+  // The full loaded list (page 1 + any paged-in extras), unfiltered and
+  // DEDUPED by id with page-1 (freshly-revalidated) entries winning. Without
+  // the dedup, a mutation that re-sorts a paged-in booking onto page 1 renders
+  // it twice (duplicate React key + conflicting status). (The remaining
+  // stale/vanish case for page 2+ needs extraPages to reset on mutation
+  // invalidation — deferred: needs a useQuery invalidation hook + RN testing.)
+  const allBookings = useMemo(() => {
+    const seen = new Set<string>();
+    const merged: typeof extraPages = [];
+    for (const b of [...(page1Q.data ?? []), ...extraPages]) {
+      if (b?.id != null) {
+        if (seen.has(b.id)) continue;
+        seen.add(b.id);
+      }
+      merged.push(b);
+    }
+    return merged;
+  }, [page1Q.data, extraPages]);
   const loading = page1Q.loading && !page1Q.data;
 
   // Client-side status filter — instant tab switching, memoised per

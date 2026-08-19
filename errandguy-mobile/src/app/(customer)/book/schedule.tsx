@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { View, Text, ScrollView, Pressable, AppState } from 'react-native';
 import { useRouter } from 'expo-router';
 import * as Haptics from 'expo-haptics';
@@ -68,6 +68,9 @@ function buildQuickPicks(raw: dayjs.Dayjs) {
 
 export default function ScheduleScreen() {
   const router = useRouter();
+  // Self-resetting guard so a fast double-tap on Continue can't push review
+  // twice (router.push is non-idempotent; the CTA stays mounted mid-push).
+  const navLatch = useRef(false);
   const insets = useSafeAreaInsets();
   const { contentMaxWidth } = useResponsive();
   const { draftBooking, updateDraft, setStep } = useBookingStore();
@@ -134,7 +137,12 @@ export default function ScheduleScreen() {
         scheduleType === 'now' ? undefined : draftBooking.scheduled_at,
     });
     setStep(3);
+    if (navLatch.current) return;
+    navLatch.current = true;
     router.push('/(customer)/book/review');
+    setTimeout(() => {
+      navLatch.current = false;
+    }, 700);
   }, [scheduleType, draftBooking.scheduled_at, updateDraft, setStep, router]);
 
   return (

@@ -2647,13 +2647,13 @@ export default function TrackingScreen() {
             ? 'Checking cancellation policy…'
             : cancelPreview
               ? cancelPreview.fee > 0
-                ? `${cancelPreview.reason}\n\nCancellation fee: ₱${cancelPreview.fee.toFixed(2)}`
+                ? `${cancelPreview.reason}\n\nCancellation fee: ${formatCurrency(cancelPreview.fee)}`
                 : cancelPreview.reason
               : "The runner will be notified. This action can't be undone."
         }
         confirmLabel={
           cancelPreview && cancelPreview.fee > 0
-            ? `Cancel & pay ₱${cancelPreview.fee.toFixed(2)}`
+            ? `Cancel & pay ${formatCurrency(cancelPreview.fee)}`
             : 'Yes, cancel'
         }
         cancelLabel="Keep booking"
