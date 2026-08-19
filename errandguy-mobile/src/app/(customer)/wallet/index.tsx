@@ -167,7 +167,10 @@ function buildTransactionsCsv(rows: WalletTransaction[]): string {
     // types derive it from the type + magnitude.
     const signed = settled
       ? SIGNED_TYPES.has(t.type)
-        ? t.amount
+        // `amount` is a Laravel decimal → JSON string; Number() it so the
+        // `.toFixed(2)` below doesn't throw on tip/earning/adjustment rows
+        // (the other branch already coerces via Math.abs). (CSV export crash)
+        ? Number(t.amount)
         : (isCreditType(t.type) ? 1 : -1) * Math.abs(t.amount)
       : 0;
     return [

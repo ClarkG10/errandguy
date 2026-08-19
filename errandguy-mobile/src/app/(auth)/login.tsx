@@ -412,9 +412,7 @@ export default function LoginScreen() {
               validate: (val) => isPhone(val) || isEmail(val) || 'Enter a valid phone or email',
             }}
             render={({ field: { onChange, onBlur, value } }) => {
-              // Only switch to the phone keyboard on an unambiguous PH
-              // mobile prefix — a single leading digit could still be a
-              // digit-leading email, and phone-pad has no "@" key.
+              // Autofill/content hints can track the likely identifier type…
               const looksLikePhone = /^(\+63|09)\d/.test(value.trim());
               return (
                 <Input
@@ -423,7 +421,14 @@ export default function LoginScreen() {
                   onChangeText={onChange}
                   onBlur={onBlur}
                   placeholder="09XXXXXXXXX or you@email.com"
-                  keyboardType={looksLikePhone ? 'phone-pad' : 'email-address'}
+                  // …but the KEYBOARD stays 'email-address' (static). A digit-
+                  // leading email (e.g. 09171234567@gmail.com) previously flipped
+                  // to phone-pad after 3 chars — which has no "@" key — hard-
+                  // blocking that login; the per-keystroke switch also flickered
+                  // the Android keyboard. email-address exposes digits via the
+                  // 123 toggle so phone entry still works, and keeps "@"/letters
+                  // reachable so any email is typable.
+                  keyboardType="email-address"
                   autoCapitalize="none"
                   autoComplete={looksLikePhone ? 'tel' : 'email'}
                   textContentType={looksLikePhone ? 'telephoneNumber' : 'emailAddress'}

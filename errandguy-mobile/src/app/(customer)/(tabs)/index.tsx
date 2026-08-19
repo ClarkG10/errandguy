@@ -668,7 +668,11 @@ export default function CustomerHomeScreen() {
                 hitSlop={6}
                 accessibilityRole="button"
                 accessibilityLabel="Open profile"
-                style={({ pressed }) => [hs.floatingChip, pressed && hs.chipPressed]}
+                // Box on className (NativeWind drops the fill/round/centering from
+                // a function-only style with no className) + shadow-only style —
+                // mirrors the sibling search chip below, which was already fixed.
+                className="w-10 h-10 rounded-full bg-surface items-center justify-center"
+                style={({ pressed }) => [hs.floatingChipShadow, pressed && hs.chipPressed]}
               >
                 <Avatar uri={user?.avatar_url} name={user?.full_name} size="sm" />
               </Pressable>

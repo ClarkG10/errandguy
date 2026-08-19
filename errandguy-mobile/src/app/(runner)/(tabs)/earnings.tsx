@@ -174,7 +174,10 @@ export default function EarningsScreen() {
       if (dayStart === startOfToday) label = 'Today';
       else if (dayStart === startOfYesterday) label = 'Yesterday';
       else label = ts.toLocaleDateString([], { weekday: 'long', month: 'short', day: 'numeric' });
-      const amount = errand.runner_payout ?? errand.total_amount ?? 0;
+      // runner_payout / total_amount are Laravel decimal casts → JSON STRINGS
+      // ("14.60"). Without Number() the `+=` below STRING-concatenates, so any
+      // day with 2+ errands collapses to ₱0.00 (NaN) and the weekly chart breaks.
+      const amount = Number(errand.runner_payout ?? errand.total_amount ?? 0);
       const existing = groups.get(dayKey);
       if (existing) {
         existing.total += amount;
@@ -202,7 +205,7 @@ export default function EarningsScreen() {
       const dayStart = new Date(ts.getFullYear(), ts.getMonth(), ts.getDate());
       const idx = Math.round((dayStart.getTime() - monday.getTime()) / 86_400_000);
       if (idx >= 0 && idx < 7) {
-        totals[idx] += errand.runner_payout ?? errand.total_amount ?? 0;
+        totals[idx] += Number(errand.runner_payout ?? errand.total_amount ?? 0);
       }
     }
     const max = Math.max(...totals);

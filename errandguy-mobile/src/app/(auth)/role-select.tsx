@@ -121,10 +121,16 @@ export default function RoleSelectScreen() {
             return (
               <Pressable
                 key={item.role}
+                // The card box/fill/border MUST live on className: NativeWind's
+                // cssInterop drops backgroundColor/border/radius from a Pressable
+                // styled ONLY via a function `style` with no className, so the
+                // surface fill and the selected primaryLight tint never rendered.
+                // Keep only the pressed transitions in the style fn (className +
+                // function apply BOTH once a className is present).
+                className={`relative rounded-[20px] border-2 p-5 ${
+                  isSelected ? 'bg-primaryLight border-primary' : 'bg-surface border-divider'
+                }`}
                 style={({ pressed }) => [
-                  s.card,
-                  isSelected && s.cardSelected,
-                  // Scale-only when selected so the primaryLight tint isn't lost.
                   pressed && !isSelected && s.cardPressedBg,
                   pressed && s.cardPressed,
                 ]}
