@@ -39,7 +39,12 @@ export function SavedAddressSheet({
 
   const addressesQ = useQuery<SavedAddress[]>(
     ['user', 'addresses', userId],
-    async () => ((await userService.getAddresses()).data.data ?? []) as SavedAddress[],
+    async () =>
+      (((await userService.getAddresses()).data.data ?? []) as SavedAddress[]).map(
+        // Coerce decimal-string lat/lng to numbers so a selected address never
+        // feeds a string into the caller's coordKey().toFixed() (render crash).
+        (a) => ({ ...a, lat: Number(a.lat), lng: Number(a.lng) }),
+      ),
     { staleTime: 60_000, ttl: CacheTTL.LONG, enabled: hasOpened },
   );
 

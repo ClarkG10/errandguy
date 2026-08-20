@@ -226,13 +226,19 @@ export default function TrustedContactsScreen() {
 
     setSaving(true);
     try {
+      // Derive a new contact's priority from the MAX existing value, not
+      // contacts.length + 1: after a delete, a length-based counter re-uses a
+      // value a surviving contact still holds, producing duplicate priorities
+      // that make the priority-swap "Make primary" a silent no-op.
+      const nextPriority =
+        contacts.reduce((m, c) => Math.max(m, c.priority ?? 0), 0) + 1;
       const payload = {
         name: formName.trim(),
         phone,
         relationship: formRelationship,
         priority: editingId
-          ? contacts.find((c) => c.id === editingId)?.priority ?? contacts.length + 1
-          : contacts.length + 1,
+          ? contacts.find((c) => c.id === editingId)?.priority ?? nextPriority
+          : nextPriority,
         is_active: true,
       };
 
@@ -259,26 +265,22 @@ export default function TrustedContactsScreen() {
 
   // Primary contact is the one with the lowest `priority`. The API has no
   // dedicated "set primary" route, but the update endpoint accepts `priority`,
-  // so we make a contact primary by swapping its priority with the current
-  // primary's. (No drag-reorder — see banner copy.)
+  // so promoting a contact renumbers the whole list to a canonical 1..n with
+  // the promoted contact at 1. A two-value priority SWAP used to no-op whenever
+  // two contacts shared a priority (possible with legacy length-based values),
+  // leaving "who is called first during SOS" indeterminate; a full reindex
+  // heals any duplicate/degenerate priorities. (No drag-reorder — see banner.)
   const handleMakePrimary = async (contact: TrustedContact) => {
     const current = contacts[0];
     if (!current || current.id === contact.id) return;
     Haptics.selectionAsync().catch(() => {});
-    // Optimistic: swap the star to this contact instantly (reorder locally by
-    // swapping priorities), confirm in the background, roll the list back on
-    // failure. The API has no atomic "set primary" route, so the commit is a
-    // two-write priority swap — if the second write fails the first is undone
-    // server-side too, so priorities can never be left corrupted (which would
-    // make "who is called first during SOS" indeterminate).
     const prev = contacts;
-    const reordered = contacts
-      .map((c) => {
-        if (c.id === contact.id) return { ...c, priority: current.priority };
-        if (c.id === current.id) return { ...c, priority: contact.priority };
-        return c;
-      })
-      .sort((a, b) => a.priority - b.priority);
+    // Promoted contact first (priority 1), the rest keep their relative order
+    // at 2..n. Writing the promoted row FIRST means even a partial commit
+    // failure still leaves it uniquely primary.
+    const reordered = [contact, ...contacts.filter((c) => c.id !== contact.id)].map(
+      (c, i) => ({ ...c, priority: i + 1 }),
+    );
     await runOptimistic({
       apply: () => {
         setContacts(reordered);
@@ -289,34 +291,18 @@ export default function TrustedContactsScreen() {
         void saveCache(prev);
       },
       commit: async () => {
-        await userService.updateTrustedContact(contact.id, {
-          name: contact.name,
-          phone: contact.phone,
-          relationship: contact.relationship,
-          priority: current.priority,
-          is_active: contact.is_active,
-        });
-        try {
-          await userService.updateTrustedContact(current.id, {
-            name: current.name,
-            phone: current.phone,
-            relationship: current.relationship,
-            priority: contact.priority,
-            is_active: current.is_active,
+        // Only write rows whose priority actually changed. `reordered[0]` (the
+        // promoted contact) is written first so the primary is never ambiguous.
+        for (const c of reordered) {
+          const before = contacts.find((x) => x.id === c.id);
+          if (before && before.priority === c.priority) continue;
+          await userService.updateTrustedContact(c.id, {
+            name: c.name,
+            phone: c.phone,
+            relationship: c.relationship,
+            priority: c.priority,
+            is_active: c.is_active,
           });
-        } catch (e) {
-          // Undo the first write so the two contacts can't be left sharing
-          // the lowest priority, then rethrow so the UI rolls back + retries.
-          await userService
-            .updateTrustedContact(contact.id, {
-              name: contact.name,
-              phone: contact.phone,
-              relationship: contact.relationship,
-              priority: contact.priority,
-              is_active: contact.is_active,
-            })
-            .catch(() => {});
-          throw e;
         }
       },
       errorMessage: 'Could not update primary contact',

@@ -67,8 +67,12 @@ export default function ReviewScreen() {
   const router = useRouter();
   const { contentMaxWidth } = useResponsive();
   const insets = useSafeAreaInsets();
-  const { draftBooking, updateDraft, setStep, clearDraft, setActiveBooking } =
-    useBookingStore();
+  // Per-field selectors avoid re-rendering on unrelated bookingStore writes.
+  const draftBooking = useBookingStore((s) => s.draftBooking);
+  const updateDraft = useBookingStore((s) => s.updateDraft);
+  const setStep = useBookingStore((s) => s.setStep);
+  const clearDraft = useBookingStore((s) => s.clearDraft);
+  const setActiveBooking = useBookingStore((s) => s.setActiveBooking);
 
   const [estimate, setEstimate] = useState<EstimateResult | null>(null);
   const [pricingMode, setPricingMode] = useState<PricingMode>(

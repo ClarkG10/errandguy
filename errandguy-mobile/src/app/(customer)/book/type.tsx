@@ -28,7 +28,11 @@ export default function TypeSelectionScreen() {
   const router = useRouter();
   const navigation = useNavigation();
   const params = useLocalSearchParams<{ preselected?: string }>();
-  const { draftBooking, updateDraft, clearDraft, setStep } = useBookingStore();
+  // Per-field selectors avoid re-rendering on unrelated bookingStore writes.
+  const draftBooking = useBookingStore((s) => s.draftBooking);
+  const updateDraft = useBookingStore((s) => s.updateDraft);
+  const clearDraft = useBookingStore((s) => s.clearDraft);
+  const setStep = useBookingStore((s) => s.setStep);
   const { contentMaxWidth } = useResponsive();
   const insets = useSafeAreaInsets();
 

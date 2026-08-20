@@ -92,7 +92,6 @@ export function ErrandDetailsCard({
     if (!bookingId) return;
     Haptics.selectionAsync().catch(() => {});
     const nextChecked = !item.checked;
-    const previous = serverItems;
     // Optimistic flip via the shared helper — instant tick, rollback + one-tap
     // Retry on failure.
     void runOptimistic({
@@ -104,7 +103,18 @@ export function ErrandDetailsCard({
               : it,
           ),
         ),
-      rollback: () => setServerItems(previous),
+      // Item-scoped rollback (NOT a whole-list snapshot restore): revert only
+      // THIS item so a failed tick can't wipe a concurrent tick that was applied
+      // after this one's snapshot — the apply is per-item, so the rollback must
+      // be too. Uses a functional updater against the live list.
+      rollback: () =>
+        setServerItems((cur) =>
+          cur.map((it) =>
+            it.id === item.id
+              ? { ...it, checked: item.checked, checked_at: item.checked_at }
+              : it,
+          ),
+        ),
       commit: () =>
         runnerService.updateChecklistTicks(bookingId, [{ id: item.id, checked: nextChecked }]),
       errorMessage: "Couldn't update the checklist. Please try again.",

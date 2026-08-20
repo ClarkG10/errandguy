@@ -73,7 +73,10 @@ export default function ScheduleScreen() {
   const navLatch = useRef(false);
   const insets = useSafeAreaInsets();
   const { contentMaxWidth } = useResponsive();
-  const { draftBooking, updateDraft, setStep } = useBookingStore();
+  // Per-field selectors avoid re-rendering on unrelated bookingStore writes.
+  const draftBooking = useBookingStore((s) => s.draftBooking);
+  const updateDraft = useBookingStore((s) => s.updateDraft);
+  const setStep = useBookingStore((s) => s.setStep);
 
   const [scheduleType, setScheduleType] = useState<ScheduleType>(
     draftBooking.schedule_type ?? 'now',

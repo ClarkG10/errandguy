@@ -486,22 +486,12 @@ export default function AddressesScreen() {
                   }}
                   accessibilityRole="button"
                   accessibilityLabel="Center map on my current location"
-                  style={({ pressed }) => [
-                    {
-                      position: 'absolute',
-                      bottom: 10,
-                      right: 10,
-                      width: 38,
-                      height: 38,
-                      borderRadius: 12,
-                      backgroundColor: LightColors.surface,
-                      alignItems: 'center',
-                      justifyContent: 'center',
-                      zIndex: 20,
-                    },
-                    Elevation.md,
-                    pressed && { opacity: 0.8 },
-                  ]}
+                  // Box MUST live in className: a Pressable styled only via a
+                  // function style={()=>[...]} with no className has its box
+                  // (bg/radius/size/position/centering) dropped by NativeWind's
+                  // cssInterop. Keep only the shadow + pressed state in style.
+                  className="absolute bottom-2.5 right-2.5 w-[38px] h-[38px] rounded-lg bg-surface items-center justify-center z-20"
+                  style={({ pressed }) => [Elevation.md, pressed && { opacity: 0.8 }]}
                 >
                   <LocateFixed size={19} color={LightColors.primary} strokeWidth={2.2} />
                 </Pressable>

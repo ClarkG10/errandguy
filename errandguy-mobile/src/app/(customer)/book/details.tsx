@@ -199,7 +199,13 @@ export default function TaskDetailsScreen() {
   // Self-resetting guard so a fast double-tap on Continue can't push the next
   // step twice (router.push is non-idempotent; the CTA stays mounted mid-push).
   const navLatch = useRef(false);
-  const { draftBooking, updateDraft, setStep } = useBookingStore();
+  // Per-field selectors, not a whole-store subscription: destructuring
+  // useBookingStore() subscribes this heavy ~2,500-line map screen to EVERY
+  // store write (e.g. setActiveBooking from a booking_update push), re-rendering
+  // it on data it doesn't consume. Action refs are stable.
+  const draftBooking = useBookingStore((s) => s.draftBooking);
+  const updateDraft = useBookingStore((s) => s.updateDraft);
+  const setStep = useBookingStore((s) => s.setStep);
   const { pickImage, takePhoto } = useImagePicker();
   // Listen to window dimensions so the map pane re-flows on rotation
   // and iPad split-view resizes (was a static module-level read).
@@ -787,7 +793,10 @@ export default function TaskDetailsScreen() {
 
   /* ── Saved address ── */
   const handleSavedAddressSelect = useCallback((address: SavedAddress) => {
-    const coords: [number, number] = [address.lng, address.lat];
+    // SavedAddress lat/lng are decimal columns → JSON strings on the wire.
+    // Coerce so the region math and the coordKey().toFixed() dedupe (and the
+    // coords written into the persisted draft) never hit a string.
+    const coords: [number, number] = [Number(address.lng), Number(address.lat)];
     skipNextGeocode.current = true;
     setCurrentCoord(coords);
     setCurrentAddress(address.address);
@@ -802,12 +811,22 @@ export default function TaskDetailsScreen() {
      chip can appear. Shares the SavedAddressSheet cache key. */
   const savedAddressesQ = useQuery<SavedAddress[]>(
     ['user', 'addresses', savedAddrUserId],
-    async () => ((await userService.getAddresses()).data.data ?? []) as SavedAddress[],
+    async () =>
+      (((await userService.getAddresses()).data.data ?? []) as SavedAddress[]).map(
+        // Coerce decimal-string lat/lng so coordIsSaved's Math.abs() compares
+        // numbers (a string subtraction yields NaN → false, silently breaking
+        // the "already saved" check).
+        (a) => ({ ...a, lat: Number(a.lat), lng: Number(a.lng) }),
+      ),
     { staleTime: 60_000, ttl: CacheTTL.LONG, enabled: phase === 'details' },
   );
   const savedAddresses = savedAddressesQ.data ?? [];
 
-  const coordKey = (lat: number, lng: number) => `${lat.toFixed(5)},${lng.toFixed(5)}`;
+  // Number() the inputs defensively: coords can reach here as decimal STRINGS
+  // (a saved address, or a draft rehydrated from storage), and a raw
+  // string.toFixed() throws "toFixed is not a function", crashing the render.
+  const coordKey = (lat: number, lng: number) =>
+    `${Number(lat).toFixed(5)},${Number(lng).toFixed(5)}`;
 
   // A pin counts as "already saved" when a stored address sits within ~11m
   // (1e-4°) of it, or it was saved earlier this session.
