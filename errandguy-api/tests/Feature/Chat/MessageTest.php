@@ -106,11 +106,31 @@ class MessageTest extends TestCase
             ->assertJsonValidationErrors(['content']);
     }
 
-    public function test_can_send_image_message(): void
+    public function test_external_image_url_is_rejected(): void
     {
+        // Security: image_url is server-issued only. An off-platform URL
+        // persisted here and rendered by the counterparty's <Image> would
+        // beacon their IP/UA/view-time to an attacker host and bypass the
+        // private, participant-gated media disk — so a client-supplied
+        // external host is rejected.
         $response = $this->actingAs($this->customer)
             ->postJson("/api/v1/chat/{$this->booking->id}/messages", [
-                'image_url' => 'https://example.com/photo.jpg',
+                'image_url' => 'https://attacker.example/beacon.png',
+            ]);
+
+        $response->assertStatus(422)
+            ->assertJsonValidationErrors(['image_url']);
+    }
+
+    public function test_app_host_image_url_is_accepted(): void
+    {
+        // A server-issued URL on our own host still works (the documented
+        // system-message / server-issued image form).
+        $url = rtrim((string) config('app.url'), '/').'/internal/media/photo.jpg';
+
+        $response = $this->actingAs($this->customer)
+            ->postJson("/api/v1/chat/{$this->booking->id}/messages", [
+                'image_url' => $url,
             ]);
 
         $response->assertStatus(201);

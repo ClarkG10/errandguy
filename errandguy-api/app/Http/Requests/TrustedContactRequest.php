@@ -17,7 +17,13 @@ class TrustedContactRequest extends FormRequest
             'name' => ['required', 'string', 'max:100'],
             'phone' => ['required', 'string', 'regex:/^(\+63|0)9\d{9}$/'],
             'relationship' => ['required', 'string', 'max:30'],
-            'priority' => ['sometimes', 'integer', 'min:1'],
+            // Bound to the signed SMALLINT column (priority column max 32767).
+            // Without an upper bound, a value above 32767 passed validation and
+            // then raised SQLSTATE 22003 "Out of range value" on the user's own
+            // create/update under MySQL strict mode — an uncaught 500.
+            // Semantically priority is 1..5 (max 5 trusted contacts), but the
+            // column bound is the hard guard against the overflow.
+            'priority' => ['sometimes', 'integer', 'min:1', 'max:32767'],
             'is_active' => ['sometimes', 'boolean'],
         ];
     }
