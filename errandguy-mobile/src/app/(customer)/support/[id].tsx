@@ -26,7 +26,7 @@ import { Badge } from '../../../components/ui/Badge';
 import { ErrorState } from '../../../components/ui/ErrorState';
 import { LightColors } from '../../../constants/colors';
 import { useResponsive } from '../../../constants/responsive';
-import { formatTime, formatChatDayLabel } from '../../../utils/formatDate';
+import { formatTime, formatChatDayLabel, localDayKey } from '../../../utils/formatDate';
 import { errorMessage } from '../../../utils/errorCatalog';
 import { copy } from '../../../constants/copy';
 import { toast } from '../../../stores/toastStore';
@@ -60,8 +60,10 @@ function buildRows(messages: ThreadMessage[]): Row[] {
     const m = reversed[i];
     rows.push({ kind: 'msg', message: m });
     const next = reversed[i + 1]; // the older message in inverted order
-    const currentDay = m.created_at?.slice(0, 10);
-    const nextDay = next?.created_at?.slice(0, 10);
+    // Group by LOCAL calendar day (matches formatChatDayLabel) rather than the
+    // raw UTC slice, which drifts up to 8h from the local day near midnight.
+    const currentDay = m.created_at ? localDayKey(m.created_at) : undefined;
+    const nextDay = next?.created_at ? localDayKey(next.created_at) : undefined;
     if (!next || currentDay !== nextDay) {
       // The separator is pushed right after message `m` and, because the
       // list is inverted, renders directly ABOVE it — so it must announce

@@ -76,4 +76,41 @@ describe('chatStore.replaceMessage ordering (RT-5)', () => {
     expect(ids()).toEqual(['a', 'real-1']);
     expect(ids()).not.toContain('tmp-1');
   });
+
+  it('keeps a failed placeholder (id === tempId) so the retry bubble renders', () => {
+    // Send-failure path: useChat re-uses the tempId as the message id and flags
+    // it failed. The dedupe guard must NOT treat that as an already-arrived
+    // canonical message, else the bubble is filtered out and the send vanishes.
+    act(() => {
+      useChatStore
+        .getState()
+        .addMessage(B, msg('tmp-1', '2026-08-11T10:00:05Z', { sender_id: 'me', pending: true }));
+      useChatStore.getState().replaceMessage(B, 'tmp-1', {
+        ...msg('tmp-1', '2026-08-11T10:00:05Z', { sender_id: 'me' }),
+        pending: false,
+        failed: true,
+      });
+    });
+    expect(ids()).toEqual(['tmp-1']);
+    const failed = useChatStore.getState().messages[B]?.[0];
+    expect(failed?.failed).toBe(true);
+    expect(failed?.pending).toBe(false);
+  });
+
+  it('still dedupes when the real message arrived before the HTTP response', () => {
+    // Realtime pushed the canonical copy first; the optimistic replace must
+    // drop the temp and NOT duplicate the already-present real message.
+    act(() => {
+      useChatStore
+        .getState()
+        .addMessage(B, msg('tmp-2', '2026-08-11T10:00:05Z', { sender_id: 'me' }));
+      useChatStore
+        .getState()
+        .addMessage(B, msg('real-2', '2026-08-11T10:00:05Z', { sender_id: 'me' }));
+      useChatStore
+        .getState()
+        .replaceMessage(B, 'tmp-2', msg('real-2', '2026-08-11T10:00:05Z', { sender_id: 'me' }));
+    });
+    expect(ids()).toEqual(['real-2']);
+  });
 });

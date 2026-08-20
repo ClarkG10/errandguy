@@ -1,5 +1,5 @@
 import type { Message } from '../types';
-import { formatChatDayLabel } from './formatDate';
+import { formatChatDayLabel, localDayKey } from './formatDate';
 
 /**
  * One row in an inverted chat FlatList.
@@ -37,8 +37,11 @@ export function buildChatRows(messages: Message[]): ChatRow[] {
     rows.push({ kind: 'msg', message: m });
 
     const next = reversed[i + 1]; // the OLDER message in inverted order
-    const currentDay = m.created_at?.slice(0, 10);
-    const nextDay = next?.created_at?.slice(0, 10);
+    // Group by LOCAL calendar day (matches formatChatDayLabel). Slicing the
+    // raw UTC timestamp grouped by the UTC day, which drifts up to 8h from
+    // the local day the label shows for PH users near midnight.
+    const currentDay = m.created_at ? localDayKey(m.created_at) : undefined;
+    const nextDay = next?.created_at ? localDayKey(next.created_at) : undefined;
 
     // Insert a separator at the boundary between two different calendar
     // days (or at the very top of the conversation when we've walked past

@@ -28,6 +28,19 @@ export function formatDateForAPI(date: Date): string {
 }
 
 /**
+ * Local-timezone calendar-day key ("YYYY-MM-DD") for grouping rows by day.
+ *
+ * Day separators must group by the SAME local day that formatChatDayLabel
+ * renders — NOT by a raw UTC slice of the server timestamp. Slicing the
+ * first 10 chars of "2026-08-20T23:00:00Z" yields the UTC date, which for
+ * UTC+8 (PH) users is off by up to 8h from the local day the label shows,
+ * so messages straddling local midnight get split or merged incorrectly.
+ */
+export function localDayKey(date: string | Date): string {
+  return dayjs(date).format('YYYY-MM-DD');
+}
+
+/**
  * Friendly day-separator label used in chat lists.
  *  - "Today"     for the current calendar day
  *  - "Yesterday" for the previous calendar day

@@ -44,7 +44,7 @@ export default function WorkingAreasScreen() {
   // tick (cheap). `mapRadius` is a throttled copy that feeds the map (circle
   // polygon rebuild + camera fit) so the 64-vertex HereCircle + native source
   // push don't run on every drag frame — keeps the slide smooth on low Android.
-  const initialRadius = runnerProfile?.working_area_radius ?? 5000;
+  const initialRadius = Number(runnerProfile?.working_area_radius ?? 5000);
   const [radius, setRadius] = useState(initialRadius);
   const [mapRadius, setMapRadius] = useState(initialRadius);
   const [refreshing, setRefreshing] = useState(false);
@@ -71,17 +71,28 @@ export default function WorkingAreasScreen() {
   const mapThrottleAtRef = useRef(0);
   const mapThrottleTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  const lat = runnerProfile?.working_area_lat ?? currentLocation?.lat ?? 0;
-  const lng = runnerProfile?.working_area_lng ?? currentLocation?.lng ?? 0;
+  // working_area_lat/lng are decimal columns → they arrive as JSON STRINGS
+  // ("14.5995000") on a server fetch (not cast on the backend). Coerce to
+  // Number so the map region math and the `lat.toFixed(4)` center label below
+  // don't crash ("...".toFixed is not a function). 0 stays falsy so the
+  // `lat && lng` guards still hold.
+  const savedLat = runnerProfile?.working_area_lat;
+  const savedLng = runnerProfile?.working_area_lng;
+  const lat = Number(savedLat ?? currentLocation?.lat ?? 0);
+  const lng = Number(savedLng ?? currentLocation?.lng ?? 0);
 
   // Dirty = the runner has actually moved the center or the radius off the
   // saved profile. A no-op Save is gated so it can't fire an optimistic write
   // + network call for an identical value. A first-time set (saved lat/lng
-  // undefined, current location seeded) reads as dirty — that's a real change.
+  // null, current location seeded) reads as dirty — that's a real change.
+  // Compare numbers on BOTH sides: savedLat may be a string (server fetch) or
+  // a number (after an optimistic save); an un-coerced compare read always-dirty.
   const isDirty =
     radius !== initialRadius ||
-    lat !== runnerProfile?.working_area_lat ||
-    lng !== runnerProfile?.working_area_lng;
+    savedLat == null ||
+    savedLng == null ||
+    lat !== Number(savedLat) ||
+    lng !== Number(savedLng);
 
   // Unsaved-edit guard: only prompt to discard when the runner has actually
   // touched a control AND there's a real diff. Stops the false "Discard
@@ -94,7 +105,7 @@ export default function WorkingAreasScreen() {
     try {
       const res = await runnerService.getRunnerProfile();
       setRunnerProfile(res.data.data);
-      const r = res.data.data?.working_area_radius ?? 5000;
+      const r = Number(res.data.data?.working_area_radius ?? 5000);
       setRadius(r);
       setMapRadius(r);
     } catch {}

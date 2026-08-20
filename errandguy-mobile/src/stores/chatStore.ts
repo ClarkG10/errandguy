@@ -79,7 +79,13 @@ export const useChatStore = create<ChatState>((set, get) => ({
       const list = state.messages[bookingId] || [];
       // If the real message already arrived (e.g. via Realtime push
       // before our HTTP response), drop the temp instead of duplicating.
-      const realAlready = message?.id && list.some((m) => m.id === message.id);
+      // Exclude tempId itself: the send-failure path calls replaceMessage
+      // with a placeholder whose id IS the tempId (to convert it into a
+      // "failed · tap to retry" bubble). Without this guard that placeholder
+      // matched itself in the list, realAlready became true, and the failed
+      // bubble was filtered out and never re-added — the message vanished.
+      const realAlready =
+        message?.id && message.id !== tempId && list.some((m) => m.id === message.id);
       const next = list
         .filter((m) => m.id !== tempId)
         .concat(realAlready ? [] : [message])
