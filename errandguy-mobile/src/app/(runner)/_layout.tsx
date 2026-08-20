@@ -20,6 +20,14 @@ export default function RunnerLayout() {
   const router = useRouter();
   const segments = useSegments();
   const [ready, setReady] = useState(false);
+  // Grace fallback for the null-user hold in the gate below — never spin on the
+  // loader forever if an offline / failed cold-start profile fetch never
+  // resolves `user` (mirrors the branded-splash grace in app/index.tsx).
+  const [graceElapsed, setGraceElapsed] = useState(false);
+  useEffect(() => {
+    const t = setTimeout(() => setGraceElapsed(true), 3000);
+    return () => clearTimeout(t);
+  }, []);
 
   // Subscribe to realtime notifications for the current user
   useRealtimeNotifications(user?.id ?? null);
@@ -52,7 +60,19 @@ export default function RunnerLayout() {
     // if still incomplete.
     const isOnboarding = segments.includes('onboarding' as never);
     if (!isOnboarding) {
-      const profile = user?.runner_profile;
+      // On a killed-state push (e.g. incoming_request) this layout can mount
+      // before validateSession resolves, with `user` still null (loadFromStorage
+      // restores token/isAuthenticated but never `user`). Treating null-user as
+      // "no runner_profile" used to redirect an already-approved runner to the
+      // document-upload onboarding screen and strand them there — once user
+      // loaded, segments already showed 'onboarding', so the gate was skipped
+      // and never redirected back. Hold on the loader until user hydrates; the
+      // grace fallback lets the tabs render if the fetch never resolves.
+      if (!user) {
+        if (graceElapsed) setReady(true);
+        return;
+      }
+      const profile = user.runner_profile;
       if (!profile) {
         router.replace('/(runner)/onboarding');
         return;
@@ -70,7 +90,7 @@ export default function RunnerLayout() {
     }
 
     setReady(true);
-  }, [isAuthenticated, role, user, router, segments]);
+  }, [isAuthenticated, role, user, router, segments, graceElapsed]);
 
   if (!isAuthenticated || role === 'customer') {
     return null;
