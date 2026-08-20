@@ -164,7 +164,10 @@ export default function RateScreen() {
   }, [cancelAutoReturn, setActiveBooking, router]);
 
   const handleSubmit = useCallback(async () => {
-    if (!bookingId || rating === 0) return;
+    // In-flight guard (defense-in-depth beyond the Button's disabled state): a
+    // same-frame double-tap can fire two onPress calls before the re-render
+    // commits, and reviewBooking is a plain non-idempotent POST.
+    if (!bookingId || rating === 0 || isSubmitting) return;
     setIsSubmitting(true);
     try {
       await bookingService.reviewBooking(bookingId, {
@@ -180,12 +183,23 @@ export default function RateScreen() {
       // success haptic and calls onDone once the animation settles.
       setShowSuccess(true);
     } catch (err: any) {
+      // A 422 is the backend's "already reviewed" no-op — the review IS
+      // recorded (a double-tap or a retry after a client-perceived timeout can
+      // trigger it). Treat it as success, matching the runner review handler,
+      // instead of the misleading "couldn't submit your review" error.
+      if (err?.response?.status === 422) {
+        AccessibilityInfo.announceForAccessibility(
+          'Review already submitted. Thanks for the feedback!'
+        );
+        setShowSuccess(true);
+        return;
+      }
       haptics.error();
       toast.error(errorMessage(err, copy.booking.rateFailed));
     } finally {
       setIsSubmitting(false);
     }
-  }, [bookingId, rating, comment]);
+  }, [bookingId, rating, comment, isSubmitting]);
 
   const handleSkip = useCallback(() => {
     finishAndGoHome();

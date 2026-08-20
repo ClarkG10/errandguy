@@ -41,6 +41,7 @@ import {
 } from '../../../components/customer/BookingProgress';
 import { usePaymentStore, isAttemptActive } from '../../../stores/paymentStore';
 import { usePaymentVerification } from '../../../hooks/usePaymentVerification';
+import { invalidateQuery } from '../../../hooks/useQuery';
 import { mapFailureReason } from '../../../utils/paymentErrors';
 import { getErrandTypeRule, type VehicleKey } from '../../../constants/errandTypeRules';
 import { useResponsive } from '../../../constants/responsive';
@@ -548,6 +549,13 @@ export default function ReviewScreen() {
       } else {
         // Wallet/cash settle server-side already — nothing to verify.
         resolveAttempt();
+        // A wallet-funded booking is debited server-side at create time, so
+        // refresh the wallet cache — otherwise the balance hero and the
+        // PaymentMethodSelector keep a stale (too-high) balance for the
+        // staleTime window and offer Wallet for a follow-up booking it can no
+        // longer cover (server then rejects with INSUFFICIENT_WALLET_BALANCE).
+        // Harmless for cash. Mirrors top-up's finishTopUp invalidation.
+        invalidateQuery(['wallet']);
         // Drop the create overlay before the confirm screen replaces us.
         setBookingStage(null);
         router.replace(`/(customer)/book/confirm?bookingId=${booking.id}`);
