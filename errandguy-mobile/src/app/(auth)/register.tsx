@@ -426,6 +426,7 @@ export default function RegisterScreen() {
                   placeholder="Juan Dela Cruz"
                   autoComplete="name"
                   textContentType="name"
+                  autoCapitalize="words"
                   returnKeyType="next"
                   blurOnSubmit={false}
                   onSubmitEditing={() => phoneRef.current?.focus()}

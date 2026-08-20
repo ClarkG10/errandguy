@@ -22,7 +22,7 @@ import { useQuery } from '../../../hooks/useQuery';
 import { CacheTTL } from '../../../services/cache.service';
 import { useAuthStore } from '../../../stores/authStore';
 import { useChatStore } from '../../../stores/chatStore';
-import { formatCurrency } from '../../../utils/formatCurrency';
+import { formatRunnerPayout } from '../../../utils/runnerPayout';
 import { useDebounce } from '../../../hooks/useDebounce';
 import { useHideTabBarOnScroll } from '../../../hooks/useHideTabBarOnScroll';
 import { HistorySkeleton } from '../../../components/ui/Skeleton';
@@ -149,7 +149,7 @@ export default function HistoryScreen() {
             prefetchRunnerErrand(item.id);
             router.push(`/(runner)/errand/${item.id}` as any);
           }}
-          accessibilityLabel={`${item.errand_type?.name ?? 'Errand'}, ${isCompleted ? 'Completed' : 'Cancelled'}, ${dateStr}, ${formatCurrency(item.runner_payout ?? item.total_amount)}`}
+          accessibilityLabel={`${item.errand_type?.name ?? 'Errand'}, ${isCompleted ? 'Completed' : 'Cancelled'}, ${dateStr}, ${formatRunnerPayout(item.runner_payout, isCompleted ? 'Payout pending' : 'No payout')}`}
           accessibilityHint="Opens errand details"
         >
           {/* Top row — type + status chip left, date + fare right */}
@@ -187,7 +187,7 @@ export default function HistoryScreen() {
                   isCompleted ? 'text-textPrimary' : 'text-textTertiary'
                 }`}
               >
-                {formatCurrency(item.runner_payout ?? item.total_amount)}
+                {formatRunnerPayout(item.runner_payout, isCompleted ? 'Payout pending' : '—')}
               </Text>
             </View>
           </View>

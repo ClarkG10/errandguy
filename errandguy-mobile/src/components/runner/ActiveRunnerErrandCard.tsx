@@ -10,7 +10,7 @@ import {
 import { ArrowRight, MapPin, Navigation, Package } from 'lucide-react-native';
 import * as Haptics from 'expo-haptics';
 import { Avatar } from '../ui/Avatar';
-import { formatCurrency } from '../../utils/formatCurrency';
+import { formatRunnerPayout } from '../../utils/runnerPayout';
 import { useReducedMotion } from '../../hooks/useReducedMotion';
 import { LightColors, Elevation } from '../../constants/colors';
 import type { Booking, BookingStatus } from '../../types';
@@ -132,6 +132,12 @@ export function ActiveRunnerErrandCard({
       accessibilityLabel={`Active errand for ${customerName}: ${copy.title}`}
       accessibilityHint="Open the errand to update status or navigate"
       android_ripple={{ color: `${LightColors.primary}0F` }}
+      // Box appearance MUST live in className: a Pressable styled only via a
+      // function `style={() => [...]}` with no className drops the StyleSheet's
+      // backgroundColor/border/radius under NativeWind's cssInterop (documented
+      // recurring gotcha). With a className present, both className and the
+      // style function apply, so padding/elevation/pressed in styles.card work.
+      className="bg-surface rounded-3xl border border-divider overflow-hidden"
       style={({ pressed }) => [
         styles.card,
         pressed && { opacity: 0.96, transform: [{ scale: 0.995 }] },
@@ -142,7 +148,7 @@ export function ActiveRunnerErrandCard({
         <Text style={styles.headerLabel}>Current Errand</Text>
         <View style={styles.amountChip}>
           <Text style={styles.amountChipText}>
-            {formatCurrency(errand.runner_payout ?? errand.total_amount)}
+            {formatRunnerPayout(errand.runner_payout)}
           </Text>
         </View>
       </View>

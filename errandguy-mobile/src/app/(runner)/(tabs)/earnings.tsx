@@ -22,6 +22,7 @@ import { useQuery } from '../../../hooks/useQuery';
 import { useHideTabBarOnScroll } from '../../../hooks/useHideTabBarOnScroll';
 import { CacheTTL } from '../../../services/cache.service';
 import { formatCurrency } from '../../../utils/formatCurrency';
+import { formatRunnerPayout } from '../../../utils/runnerPayout';
 import { secureStorage } from '../../../utils/storage';
 import { toast } from '../../../stores/toastStore';
 import type { Booking } from '../../../types';
@@ -50,7 +51,8 @@ function buildEarningsCsv(rows: Booking[]): string {
   for (const r of rows) {
     const date = new Date(r.completed_at ?? r.created_at).toISOString();
     const type = r.errand_type?.name ?? 'Errand';
-    const payout = r.runner_payout ?? r.total_amount ?? 0;
+    // Payout only — never the customer's total_amount (see utils/runnerPayout).
+    const payout = r.runner_payout ?? 0;
     lines.push([csvCell(date), csvCell(type), csvCell(payout)].join(','));
   }
   return lines.join('\n');
@@ -174,10 +176,11 @@ export default function EarningsScreen() {
       if (dayStart === startOfToday) label = 'Today';
       else if (dayStart === startOfYesterday) label = 'Yesterday';
       else label = ts.toLocaleDateString([], { weekday: 'long', month: 'short', day: 'numeric' });
-      // runner_payout / total_amount are Laravel decimal casts → JSON STRINGS
-      // ("14.60"). Without Number() the `+=` below STRING-concatenates, so any
-      // day with 2+ errands collapses to ₱0.00 (NaN) and the weekly chart breaks.
-      const amount = Number(errand.runner_payout ?? errand.total_amount ?? 0);
+      // runner_payout is a Laravel decimal cast → JSON STRING ("14.60").
+      // Without Number() the `+=` below STRING-concatenates, so any day with
+      // 2+ errands collapses to ₱0.00 (NaN) and the weekly chart breaks.
+      // Payout only — never the customer's total_amount (see utils/runnerPayout).
+      const amount = Number(errand.runner_payout ?? 0);
       const existing = groups.get(dayKey);
       if (existing) {
         existing.total += amount;
@@ -205,7 +208,7 @@ export default function EarningsScreen() {
       const dayStart = new Date(ts.getFullYear(), ts.getMonth(), ts.getDate());
       const idx = Math.round((dayStart.getTime() - monday.getTime()) / 86_400_000);
       if (idx >= 0 && idx < 7) {
-        totals[idx] += Number(errand.runner_payout ?? errand.total_amount ?? 0);
+        totals[idx] += Number(errand.runner_payout ?? 0);
       }
     }
     const max = Math.max(...totals);
@@ -592,7 +595,7 @@ export default function EarningsScreen() {
                         </Text>
                       </View>
                       <Text className="text-[14px] font-inter-semi tabular-nums text-textPrimary">
-                        {formatCurrency(errand.runner_payout ?? errand.total_amount)}
+                        {formatRunnerPayout(errand.runner_payout)}
                       </Text>
                     </View>
                     {idx < group.errands.length - 1 && <Hairline />}

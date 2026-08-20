@@ -567,6 +567,10 @@ export default function ActiveErrandScreen() {
   // delivered/delivery_photo, completed/signature) we pass the local
   // file URI through as part of the SAME request — sending the status
   // and uploading the photo separately fails the backend validator.
+  // Resolves to `true` once the server confirms the transition, `false` if it
+  // failed (in which case the optimistic state is reverted and a toast shown
+  // here — callers never see a rejection). Sequencing steps (e.g. only open the
+  // completion sheet after `delivered` is confirmed) can await this boolean.
   const advanceStatus = async (
     status: string,
     opts?: {
@@ -574,8 +578,8 @@ export default function ActiveErrandScreen() {
       deliveryPhoto?: string | null;
       signature?: string | null;
     },
-  ) => {
-    if (!booking) return;
+  ): Promise<boolean> => {
+    if (!booking) return false;
     const prev = booking;
     const nowIso = new Date().toISOString();
     const optimistic: Booking = {
@@ -614,7 +618,7 @@ export default function ActiveErrandScreen() {
       capturedAt: nowIso,
     };
 
-    runnerService
+    return runnerService
       .advanceErrandStatus(booking.id, status, proofOpts)
       .then(() => {
         advancingRef.current = false; // re-arm the tap guard for the next step
@@ -634,6 +638,7 @@ export default function ActiveErrandScreen() {
         if (status === 'completed') {
           setShowRate(true);
         }
+        return true;
       })
       .catch((err: any) => {
         advancingRef.current = false; // re-arm on failure so the runner can retry
@@ -644,6 +649,7 @@ export default function ActiveErrandScreen() {
         fetchedQ.mutate(prev);
         updateErrandStatus(prev.status as BookingStatus);
         toast.error(errorMessage(err, copy.runner.statusUpdateFailed));
+        return false;
       });
   };
 
@@ -658,8 +664,15 @@ export default function ActiveErrandScreen() {
       // photo on the floor; the picked_up case suffered the same
       // bug (status sent without the captured photo → 422).
       setDeliveryPhotoUrl(uri);
-      await advanceStatus('delivered', { deliveryPhoto: uri });
-      setShowCompletion(true);
+      // Wait for the server to CONFIRM `delivered` (with its photo upload)
+      // before opening the signature/completion sheet. Otherwise a failed
+      // upload on flaky LTE reverted the status yet still advanced to the
+      // sheet, leading to a second failure on `completed`, a lost delivery
+      // photo, and an errand stuck at arrived_at_dropoff. On failure
+      // advanceStatus has already reverted + toasted; the runner stays put
+      // and can retry with a fresh photo.
+      const delivered = await advanceStatus('delivered', { deliveryPhoto: uri });
+      if (delivered) setShowCompletion(true);
       return;
     }
     // Pickup phase: pass the captured photo through to the backend.
@@ -711,10 +724,14 @@ export default function ActiveErrandScreen() {
       toast.success('Thanks for your feedback');
     } catch (err: any) {
       // Don't block the runner from leaving the screen on failure — their
-      // shift continues. Most common 422 here is "already reviewed".
-      const msg = err?.response?.data?.message;
-      if (msg && err?.response?.status !== 422) {
-        toast.error(msg);
+      // shift continues. A 422 here is the intentional "already reviewed"
+      // no-op and stays silent; everything else (including offline/timeout,
+      // which carries NO err.response) surfaces a toast so the review isn't
+      // lost without the runner ever knowing.
+      if (err?.response?.status !== 422) {
+        toast.error(
+          errorMessage(err, "Couldn't submit your review. Please try again."),
+        );
       }
     } finally {
       router.replace('/(runner)/(tabs)' as any);

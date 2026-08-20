@@ -16,6 +16,7 @@ import { MapPin, Navigation, Truck, ShoppingBag } from 'lucide-react-native';
 import { Button } from '../ui/Button';
 import { PickupDistanceLine } from './PickupDistanceLine';
 import { formatCurrency } from '../../utils/formatCurrency';
+import { formatRunnerPayout } from '../../utils/runnerPayout';
 import { formatDistanceKm } from '../../utils/formatDistance';
 import { getErrandTypeRule } from '../../constants/errandTypeRules';
 import { useReducedMotion } from '../../hooks/useReducedMotion';
@@ -216,9 +217,16 @@ export function IncomingRequestModal({
         accessibilityViewIsModal
       >
         <MotiView
-          from={{ opacity: 0, scale: 0.92, translateY: 12 }}
-          animate={{ opacity: 1, scale: 1, translateY: 0 }}
-          transition={{ type: 'spring', damping: 22, stiffness: 240, mass: 0.8 }}
+          // Reduce-Motion: swap the scale+translate spring for a plain
+          // opacity fade so the offer card doesn't bounce in on every
+          // incoming request (mirrors the heartbeat pulse already gated below).
+          from={reduceMotion ? { opacity: 0 } : { opacity: 0, scale: 0.92, translateY: 12 }}
+          animate={reduceMotion ? { opacity: 1 } : { opacity: 1, scale: 1, translateY: 0 }}
+          transition={
+            reduceMotion
+              ? { type: 'timing', duration: 120 }
+              : { type: 'spring', damping: 22, stiffness: 240, mass: 0.8 }
+          }
           className="bg-background w-full max-w-sm overflow-hidden"
           style={{ borderRadius: 24, maxHeight: '88%' }}
         >
@@ -372,7 +380,7 @@ export function IncomingRequestModal({
                 </Text>
               </View>
               <Text className="text-xl font-inter-semi tabular-nums text-white">
-                {formatCurrency(booking.runner_payout ?? booking.total_amount)}
+                {formatRunnerPayout(booking.runner_payout)}
               </Text>
             </View>
 

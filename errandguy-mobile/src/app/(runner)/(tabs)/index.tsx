@@ -53,6 +53,7 @@ import { useAuthStore } from '../../../stores/authStore';
 import { useNotificationStore } from '../../../stores/notificationStore';
 import { runnerService } from '../../../services/runner.service';
 import { formatCurrency } from '../../../utils/formatCurrency';
+import { formatRunnerPayout } from '../../../utils/runnerPayout';
 import { formatRelativeTime } from '../../../utils/formatDate';
 import { formatDistanceKm } from '../../../utils/formatDistance';
 import { storage } from '../../../utils/storage';
@@ -1274,7 +1275,7 @@ export default function RunnerHomeScreen() {
                   router.push(`/(runner)/errand/${errand.id}` as any);
                 }}
                 accessibilityRole="button"
-                accessibilityLabel={`${errand.errand_type?.name ?? 'Errand'}, ${formatCurrency(errand.runner_payout ?? errand.total_amount)}`}
+                accessibilityLabel={`${errand.errand_type?.name ?? 'Errand'}, ${formatRunnerPayout(errand.runner_payout)}`}
               >
                 <View className="flex-1 mr-3">
                   <Text
@@ -1290,7 +1291,7 @@ export default function RunnerHomeScreen() {
                   ) : null}
                 </View>
                 <Text className="text-[14px] font-inter-semi tabular-nums text-textPrimary">
-                  {formatCurrency(errand.runner_payout ?? errand.total_amount)}
+                  {formatRunnerPayout(errand.runner_payout)}
                 </Text>
                 <ChevronRight size={16} color={LightColors.textMuted} style={{ marginLeft: 8 }} />
               </Pressable>

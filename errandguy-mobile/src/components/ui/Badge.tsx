@@ -40,8 +40,11 @@ interface BadgeProps {
 const variantClasses: Record<BadgeVariant, { bg: string; text: string }> = {
   primary: { bg: 'bg-primary', text: 'text-white' },
   soft: { bg: 'bg-primary50', text: 'text-primary700' },
-  success: { bg: 'bg-successSoft', text: 'text-success' },
-  warning: { bg: 'bg-warningSoft', text: 'text-warning' },
+  // Status text below ~17px needs the *Dark rung to clear WCAG AA on its
+  // own soft wash — base `success`/`warning` sit at ~3.0:1 / ~1.9:1 there
+  // (see constants/colors.ts). Mirror the `accent` variant's text-accentDark.
+  success: { bg: 'bg-successSoft', text: 'text-successDark' },
+  warning: { bg: 'bg-warningSoft', text: 'text-warningDark' },
   accent: { bg: 'bg-accentSoft', text: 'text-accentDark' },
   danger: { bg: 'bg-danger', text: 'text-white' },
   neutral: { bg: 'bg-divider', text: 'text-textSecondary' },

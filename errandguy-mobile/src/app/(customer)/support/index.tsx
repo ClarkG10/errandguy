@@ -363,7 +363,12 @@ export default function SupportTicketsScreen() {
             accessibilityLabel="Close"
           />
           <KeyboardAvoidingView
-            behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+            // An Android <Modal> renders in its own window and does NOT inherit
+            // the activity's adjustResize, so behavior=undefined leaves the
+            // message field + submit button under the keyboard. 'height' lifts
+            // the bottom-anchored sheet — matches every other input-bearing
+            // Modal in the app (trusted-contacts, EditProfileModal, ReceiptCapture).
+            behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
           >
             <View
               className="bg-background rounded-t-3xl"

@@ -1235,6 +1235,11 @@ export default function TaskDetailsScreen() {
                   }}
                   onFocus={() => setShowSearch(true)}
                   returnKeyType="search"
+                  // Place-name queries ("mcdo bgc", "7 eleven") must not be
+                  // auto-capitalized or autocorrected into dictionary words —
+                  // matches every other search field in the app.
+                  autoCapitalize="none"
+                  autoCorrect={false}
                 />
                 {searchQuery.length > 0 && (
                   <Pressable
@@ -1865,6 +1870,7 @@ export default function TaskDetailsScreen() {
                       placeholder={`Person at ${rule.pickupLabel.toLowerCase()}`}
                       autoComplete="name"
                       textContentType="name"
+                      autoCapitalize="words"
                       returnKeyType="next"
                       blurOnSubmit={false}
                       onSubmitEditing={() => pickupPhoneRef.current?.focus()}
@@ -1937,6 +1943,7 @@ export default function TaskDetailsScreen() {
                       placeholder={`Person at ${rule.dropoffLabel.toLowerCase()}`}
                       autoComplete="name"
                       textContentType="name"
+                      autoCapitalize="words"
                       returnKeyType="next"
                       blurOnSubmit={false}
                       onSubmitEditing={() => dropoffPhoneRef.current?.focus()}

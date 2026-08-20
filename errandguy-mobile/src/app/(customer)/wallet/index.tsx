@@ -371,14 +371,18 @@ export default function WalletScreen() {
               {isPending ? (
                 <Text
                   className="text-[11px] font-montserrat-semi ml-1.5"
-                  style={{ color: LightColors.warning }}
+                  // *Dark rung: base `warning` is ~2.1:1 on this canvas at 11px,
+                  // under the 4.5:1 AA floor for small status text (colors.ts).
+                  style={{ color: LightColors.warningDark }}
                 >
                   · Pending
                 </Text>
               ) : isFailed ? (
                 <Text
                   className="text-[11px] font-montserrat-semi ml-1.5"
-                  style={{ color: LightColors.danger }}
+                  // *Dark rung: base `danger` is ~3.8:1 on this canvas at 11px,
+                  // under the 4.5:1 AA floor for small status text (colors.ts).
+                  style={{ color: LightColors.dangerDark }}
                 >
                   · Failed
                 </Text>

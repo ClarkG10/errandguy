@@ -523,6 +523,10 @@ export default function AddressesScreen() {
                       value={searchQuery}
                       onChangeText={setSearchQuery}
                       returnKeyType="search"
+                      // Place-name queries must not be auto-capitalized or
+                      // autocorrected — matches the app's other search fields.
+                      autoCapitalize="none"
+                      autoCorrect={false}
                     />
                     {searchQuery.length > 0 && (
                       <Pressable

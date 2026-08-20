@@ -9,6 +9,7 @@ import Animated, {
   withDelay,
   Easing,
 } from 'react-native-reanimated';
+import { useReducedMotion } from '../../hooks/useReducedMotion';
 import { LightColors } from '../../constants/colors';
 
 interface ErrandLoaderProps {
@@ -21,10 +22,26 @@ interface ErrandLoaderProps {
 const DURATION = 400; // ms per half-cycle
 const DOT_GAP = 6;
 
-function Dot({ size, color, delay }: { size: number; color: string; delay: number }) {
-  const scale = useSharedValue(0.4);
+function Dot({
+  size,
+  color,
+  delay,
+  reduceMotion,
+}: {
+  size: number;
+  color: string;
+  delay: number;
+  reduceMotion: boolean;
+}) {
+  const scale = useSharedValue(reduceMotion ? 1 : 0.4);
 
   useEffect(() => {
+    if (reduceMotion) {
+      // Reduce-Motion: freeze the pulse to a static row of dots (same
+      // accessibility stance as <Skeleton> / <ProgressBar>).
+      scale.value = 1;
+      return;
+    }
     scale.value = withDelay(
       delay,
       withRepeat(
@@ -36,7 +53,7 @@ function Dot({ size, color, delay }: { size: number; color: string; delay: numbe
         false,
       ),
     );
-  }, [delay, scale]);
+  }, [delay, scale, reduceMotion]);
 
   const style = useAnimatedStyle(() => ({
     transform: [{ scale: scale.value }],
@@ -60,11 +77,12 @@ function Dot({ size, color, delay }: { size: number; color: string; delay: numbe
 
 export function ErrandLoader({ size = 8, color = LightColors.textInverse }: ErrandLoaderProps) {
   const stagger = DURATION * 0.4;
+  const reduceMotion = useReducedMotion();
   return (
     <View style={[styles.container, { gap: DOT_GAP }]}>
-      <Dot size={size} color={color} delay={0} />
-      <Dot size={size} color={color} delay={stagger} />
-      <Dot size={size} color={color} delay={stagger * 2} />
+      <Dot size={size} color={color} delay={0} reduceMotion={reduceMotion} />
+      <Dot size={size} color={color} delay={stagger} reduceMotion={reduceMotion} />
+      <Dot size={size} color={color} delay={stagger * 2} reduceMotion={reduceMotion} />
     </View>
   );
 }

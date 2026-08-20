@@ -486,7 +486,14 @@ export default function ReviewScreen() {
       if (draftBooking.item_photos?.length && booking?.id) {
         bookingService
           .uploadItemPhotos(booking.id, draftBooking.item_photos)
-          .catch(() => {});
+          // Best-effort (the booking already exists), but don't fail silently:
+          // if the attachments don't make it, tell the customer so they can
+          // resend from the errand chat instead of assuming the runner has them.
+          .catch(() => {
+            toast.warning(
+              "Some item photos couldn't upload — reopen the errand chat to resend them.",
+            );
+          });
       }
       const checkoutUrl: string | undefined = res.data?.checkout_url;
       const paymentId: string | undefined = res.data?.payment_id;

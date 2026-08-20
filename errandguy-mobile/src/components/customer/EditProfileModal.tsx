@@ -211,6 +211,7 @@ export function EditProfileModal({ visible, onClose }: EditProfileModalProps) {
                 error={nameError}
                 autoComplete="name"
                 textContentType="name"
+                autoCapitalize="words"
               />
               <Input
                 label="Email"
