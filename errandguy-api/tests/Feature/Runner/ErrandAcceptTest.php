@@ -292,4 +292,45 @@ class ErrandAcceptTest extends TestCase
         $this->assertContains($theirs->id, $ids, 'a real customer offer should appear');
         $this->assertNotContains($mine->id, $ids, 'the runner\'s own booking must never appear');
     }
+
+    public function test_available_offers_gate_scheduled_negotiate_bookings_until_their_window(): void
+    {
+        // A scheduled negotiate booking is broadcast only at matchAt =
+        // scheduled_at - 15min. The PULL feed must NOT surface one whose
+        // scheduled time is still days out (else a runner could accept/lock a
+        // prepaid booking early), but MUST surface one whose window has arrived
+        // and an ordinary immediate booking.
+        $base = [
+            'customer_id' => $this->customer->id,
+            'errand_type_id' => $this->errandType->id, 'status' => 'pending',
+            'pickup_address' => '1 A', 'pickup_lat' => 14.60, 'pickup_lng' => 120.98,
+            'dropoff_address' => '2 B', 'dropoff_lat' => 14.55, 'dropoff_lng' => 121.02,
+            'pricing_mode' => 'negotiate', 'vehicle_type_rate' => 'motorcycle',
+            'negotiate_expires_at' => now()->addDays(3),
+            'distance_km' => 5.0, 'base_fee' => 50, 'distance_fee' => 50, 'service_fee' => 15,
+            'surcharge' => 0, 'total_amount' => 115, 'runner_payout' => 85, 'is_transportation' => false,
+        ];
+
+        $farFuture = Booking::create($base + [
+            'booking_number' => 'EG-20260331-SCHF',
+            'schedule_type' => 'scheduled', 'scheduled_at' => now()->addDays(3),
+        ]);
+        $windowOpen = Booking::create($base + [
+            'booking_number' => 'EG-20260331-SCHN',
+            'schedule_type' => 'scheduled', 'scheduled_at' => now()->addMinutes(5),
+        ]);
+        $immediate = Booking::create($base + [
+            'booking_number' => 'EG-20260331-IMMD',
+            'schedule_type' => 'now', 'scheduled_at' => null,
+            'negotiate_expires_at' => now()->addHour(),
+        ]);
+
+        $response = $this->actingAs($this->runner)->getJson('/api/v1/runner/errand/available');
+        $response->assertOk();
+
+        $ids = collect($response->json('data'))->pluck('id')->all();
+        $this->assertNotContains($farFuture->id, $ids, 'a scheduled booking days out must not be offered yet');
+        $this->assertContains($windowOpen->id, $ids, 'a scheduled booking within 15min of its time should be offered');
+        $this->assertContains($immediate->id, $ids, 'an immediate negotiate booking should be offered');
+    }
 }

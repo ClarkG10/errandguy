@@ -332,7 +332,27 @@ class RunnerErrandController extends Controller
             // defense-in-depth with the accept() self-deal guard so a
             // customer-and-runner account can neither see nor claim the errand
             // it booked.
-            ->where('customer_id', '!=', $user->id);
+            ->where('customer_id', '!=', $user->id)
+            // Schedule-aware gate: a SCHEDULED negotiate booking is broadcast to
+            // runners only at matchAt = scheduled_at - 15min (see
+            // BookingController::store, which defers BroadcastToRunnersJob to
+            // that moment). Without this the PULL feed surfaced — and let a
+            // runner accept/lock — a prepaid scheduled booking the instant it
+            // was created, days before its time, subverting the deferred
+            // dispatch. Immediate bookings (schedule_type 'now', or a stray
+            // scheduled_at on a 'now' row) stay always-eligible; keying on
+            // schedule_type (not scheduled_at nullness) mirrors
+            // ReapStrandedBookingsCommand::scheduleAwareWindow.
+            ->where(function ($q) {
+                $q->where(function ($immediate) {
+                    $immediate->where('schedule_type', '!=', 'scheduled')
+                        ->orWhereNull('scheduled_at');
+                })->orWhere(function ($scheduled) {
+                    $scheduled->where('schedule_type', 'scheduled')
+                        ->whereNotNull('scheduled_at')
+                        ->where('scheduled_at', '<=', now()->addMinutes(15));
+                });
+            });
 
         // Bounding-box prefilter (same 25%-margin box as MatchingService) so we
         // don't load every open negotiate booking in the country and haversine
