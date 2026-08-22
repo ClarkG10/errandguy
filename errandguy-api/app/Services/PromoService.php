@@ -201,7 +201,12 @@ class PromoService
     private function calculateDiscount(PromoCode $promo, float $amount): float
     {
         if ($promo->discount_type === 'percentage') {
-            $discount = round($amount * ((float) $promo->discount_value / 100), 2);
+            // Clamp the percentage to 0..100 as a defense-in-depth backstop to
+            // the admin form's cap: a stored discount_value > 100 (a legacy row
+            // or a value entered before the form was bounded) must never be
+            // treated as more than a full discount.
+            $pct = max(0.0, min(100.0, (float) $promo->discount_value));
+            $discount = round($amount * ($pct / 100), 2);
         } else {
             $discount = (float) $promo->discount_value;
         }

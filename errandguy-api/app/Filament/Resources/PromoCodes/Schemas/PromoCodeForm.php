@@ -8,6 +8,7 @@ use Filament\Forms\Components\Textarea;
 use Filament\Forms\Components\TextInput;
 use Filament\Forms\Components\Toggle;
 use Filament\Schemas\Components\Section;
+use Filament\Schemas\Components\Utilities\Get;
 use Filament\Schemas\Schema;
 
 class PromoCodeForm
@@ -35,11 +36,20 @@ class PromoCodeForm
                                 'percentage' => 'Percentage',
                                 'fixed' => 'Fixed amount',
                             ])
+                            // live() so discount_value's max re-evaluates when
+                            // the type changes.
+                            ->live()
                             ->required(),
                         TextInput::make('discount_value')
                             ->numeric()
                             ->minValue(0)
-                            ->maxValue(100000)
+                            // A percentage can't exceed 100 — without this an
+                            // operator fat-fingering "200" (meant as ₱200 but
+                            // with type=percentage) persisted a promo that
+                            // zeroes every qualifying order (PromoService then
+                            // clamps redemption to the order total = free). A
+                            // fixed amount keeps the generous peso bound.
+                            ->maxValue(fn (Get $get): int => $get('discount_type') === 'percentage' ? 100 : 100000)
                             ->required(),
                         TextInput::make('max_discount')
                             ->numeric()

@@ -73,4 +73,17 @@ class AdminPricingFormValidationTest extends TestCase
             ->call('create')
             ->assertHasFormErrors(['discount_value']);
     }
+
+    public function test_promo_form_rejects_a_percentage_over_100(): void
+    {
+        $this->actAsCatalogAdmin();
+
+        // A percentage > 100 is nonsensical: a fat-fingered "200" (meant as
+        // ₱200 but with type=percentage) would persist a 100%-off-every-order
+        // promo (PromoService clamps redemption to the order total = free).
+        Livewire::test(CreatePromoCode::class)
+            ->fillForm(['code' => 'FREEALL', 'discount_type' => 'percentage', 'discount_value' => 200])
+            ->call('create')
+            ->assertHasFormErrors(['discount_value']);
+    }
 }

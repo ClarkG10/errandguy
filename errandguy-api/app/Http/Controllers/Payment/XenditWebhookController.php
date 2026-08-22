@@ -545,8 +545,23 @@ class XenditWebhookController extends Controller
                 return;
             }
 
+            // Clamp the recorded refund to the original charge. The gateway
+            // figure is caller-declared; persisting it unbounded would let a
+            // malformed/tampered payload write a refund_amount larger than was
+            // ever charged, corrupting the refunded-total reporting stat and the
+            // transition audit row. Legitimate refunds are inherently <= charge.
+            $chargeAmount = (float) $payment->amount;
+            $refundAmount = min((float) ($data['amount'] ?? $chargeAmount), $chargeAmount);
+            if (isset($data['amount']) && (float) $data['amount'] > $chargeAmount) {
+                Log::critical('Xendit refund.succeeded amount EXCEEDS charge — clamped to charge', [
+                    'payment_id' => $payment->id,
+                    'booking_id' => $payment->booking_id,
+                    'charge' => $chargeAmount,
+                    'gateway_refund' => (float) $data['amount'],
+                ]);
+            }
             $payment->transitionTo(PaymentStatus::Refunded, 'webhook', 'refund.succeeded', extra: [
-                'refund_amount' => ($data['amount'] ?? $payment->amount),
+                'refund_amount' => $refundAmount,
                 'refunded_at' => now(),
                 'gateway_response' => $data,
             ]);
@@ -587,6 +602,14 @@ class XenditWebhookController extends Controller
     {
         $confirmed = $data['paid_amount'] ?? $data['amount'] ?? null;
         if ($confirmed === null) {
+            // NOTE: invoice.paid events legitimately reach here WITHOUT a
+            // paid_amount/amount in `data` (the invoice path carries the figure
+            // elsewhere), and are expected to settle — so this MUST stay
+            // fail-open. A prior attempt to fail-closed here broke real invoice
+            // completions (see PaymentSafetyFoundationTest::webhook_records...).
+            // Hardening the missing-amount case safely requires first confirming
+            // the real Xendit invoice.paid payload shape and cross-checking the
+            // amount from wherever the invoice actually carries it.
             return true;
         }
 

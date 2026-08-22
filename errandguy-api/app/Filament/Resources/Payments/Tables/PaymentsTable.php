@@ -30,7 +30,19 @@ class PaymentsTable
                 TextColumn::make('amount')
                     ->money('PHP')
                     ->sortable()
-                    ->summarize(Sum::make()->money('PHP')->label('Total')),
+                    // Scope the footer to COLLECTED (completed) payments — the
+                    // table has no default status filter, so an unscoped Sum
+                    // added pending/failed/expired/cancelled (never transacted)
+                    // and refunded (paid back) amounts into the "Total", ~3x
+                    // overstating collected money on the default reconciliation
+                    // view. Mirrors the BookingsTable GMV fix and the
+                    // PaymentListStats "Collected" definition (status=completed).
+                    ->summarize(
+                        Sum::make('collected')
+                            ->money('PHP')
+                            ->label('Total collected')
+                            ->query(fn (\Illuminate\Database\Query\Builder $query) => $query->where('status', 'completed'))
+                    ),
                 TextColumn::make('method')
                     ->badge()
                     ->toggleable(),

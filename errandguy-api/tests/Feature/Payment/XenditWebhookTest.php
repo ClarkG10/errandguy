@@ -167,6 +167,28 @@ class XenditWebhookTest extends TestCase
         $response->assertOk();
     }
 
+    public function test_refund_amount_is_clamped_to_the_charge(): void
+    {
+        $this->payment->update(['status' => 'completed', 'paid_at' => now()->subHour()]);
+
+        // A refund event declaring an amount larger than the ₱115 charge must
+        // not persist that inflated figure (it would corrupt the refunded-total
+        // reporting stat + the audit row). It is clamped to the charge.
+        $payload = [
+            'event' => 'refund.succeeded',
+            'data' => [
+                'reference_id' => 'refund-' . $this->payment->id,
+                'amount' => 999999,
+            ],
+        ];
+
+        $this->postWebhook($payload)->assertOk();
+
+        $this->payment->refresh();
+        $this->assertEquals('refunded', $this->payment->status);
+        $this->assertEquals(115.00, (float) $this->payment->refund_amount);
+    }
+
     public function test_idempotent_payment_succeeded_skips_already_completed(): void
     {
         $this->payment->update(['status' => 'completed', 'paid_at' => now()->subHour()]);
