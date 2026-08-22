@@ -35,7 +35,10 @@ export function useImagePicker(options?: UseImagePickerOptions) {
       mediaTypes: ['images'],
       allowsEditing: true,
       quality: 0.8,
-      base64: true,
+      // base64 intentionally NOT requested: no caller reads .base64, and
+      // asking for it makes the picker decode + allocate a multi-MB string
+      // per capture that is immediately discarded — pure heap pressure /
+      // OOM risk on low-end Android for the proof/receipt capture path.
     });
 
     if (!result.canceled && result.assets[0]) {
@@ -59,7 +62,8 @@ export function useImagePicker(options?: UseImagePickerOptions) {
     const result = await ImagePicker.launchCameraAsync({
       allowsEditing: true,
       quality: 0.8,
-      base64: true,
+      // base64 intentionally NOT requested (see pickImage) — unused by every
+      // caller and a needless multi-MB allocation per captured photo.
     });
 
     if (!result.canceled && result.assets[0]) {

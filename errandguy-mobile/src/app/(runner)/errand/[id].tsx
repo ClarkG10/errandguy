@@ -681,16 +681,19 @@ export default function ActiveErrandScreen() {
 
   const handleCompletionConfirm = async (signatureUri: string) => {
     setShowCompletion(false);
-    // Celebrate the finish — SuccessCheck fires its own success haptic
-    // and auto-dismisses via onDone. Reverted by advanceStatus's catch
-    // if the server rejects the transition.
-    setShowSuccessMoment(true);
     // Only forward signature when it looks like a real file URI; the
     // CompletionModal currently emits 'signature_placeholder' which
     // would 422 on the backend's `image` rule. Pre-existing limitation
     // — leaves transport/single-location flows working untouched.
     const sig = signatureUri && signatureUri.startsWith('file') ? signatureUri : null;
-    await advanceStatus('completed', { signature: sig });
+    // Celebrate ONLY once the server confirms completion. SuccessCheck fires a
+    // success haptic and auto-dismisses on its own ~1s timer, so showing it
+    // before the (multipart signature) upload resolved made a failed/slow
+    // completion feel done — the runner pocketed the phone while the errand was
+    // still stuck at 'delivered'. advanceStatus reverts + toasts on failure and
+    // fires setShowRate(true) on success, so the rate sheet still follows.
+    const ok = await advanceStatus('completed', { signature: sig });
+    if (ok) setShowSuccessMoment(true);
   };
 
   const handleVerifyPin = async () => {

@@ -59,11 +59,21 @@ export default function PreferredTypesScreen() {
 
   // Selection is tracked separately from the source list so a background
   // revalidate (or pull-to-refresh) of the errand-type catalog never wipes
-  // the runner's in-progress edits. Seeded from the persisted profile and
-  // re-seeded whenever it changes (e.g. after an optimistic save commits).
+  // the runner's in-progress edits.
   const [selected, setSelected] = useState<Set<string>>(new Set());
+  // Seed from the persisted profile ONCE (the first time it's available) and
+  // never re-seed on later runnerProfile reference changes. Previously this
+  // re-seeded on EVERY change, so a pull-to-refresh mid-edit (onRefresh
+  // replaces runnerProfile) — or the dashboard tab landing a profileQ result —
+  // silently discarded the runner's in-progress toggles, defeating the
+  // screen's own dirty/discard guards. After a save `selected` already matches
+  // the persisted set (no re-seed needed); a genuinely new server value is
+  // picked up on the next mount.
+  const didSeedRef = useRef(false);
   useEffect(() => {
-    setSelected(new Set(runnerProfile?.preferred_types ?? []));
+    if (didSeedRef.current || !runnerProfile) return;
+    setSelected(new Set(runnerProfile.preferred_types ?? []));
+    didSeedRef.current = true;
   }, [runnerProfile]);
 
   // Render model: each source type carries its current checked state.
@@ -264,7 +274,10 @@ export default function PreferredTypesScreen() {
               accessibilityState={{ checked: type.selected }}
             >
               <Card className={`mb-2 p-4 flex-row items-center justify-between border ${type.selected ? 'border-primary bg-primaryLight' : 'border-transparent'}`}>
-                <Text className="text-[14px] font-montserrat-semi text-textPrimary">
+                <Text
+                  className="text-[14px] font-montserrat-semi text-textPrimary flex-1 mr-3"
+                  numberOfLines={2}
+                >
                   {type.name}
                 </Text>
                 <View
