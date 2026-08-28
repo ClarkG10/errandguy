@@ -5,9 +5,12 @@ namespace App\Http\Controllers\Runner;
 use App\Http\Controllers\Controller;
 use App\Http\Requests\Runner\UploadDocumentRequest;
 use App\Http\Resources\RunnerDocumentResource;
+use App\Models\AdminAlert;
 use App\Models\Notification;
 use App\Models\RunnerDocument;
 use App\Models\RunnerProfile;
+use App\Services\CacheService;
+use App\Support\AdminCache;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Support\Facades\Storage;
 
@@ -75,6 +78,39 @@ class RunnerDocumentController extends Controller
             'file_url' => null,
             'status' => 'pending',
         ]);
+
+        // Re-enter the review queue after a rejection.
+        //
+        // A rejected runner is routed straight back to re-upload the fixed
+        // document, but the profile's verification_status stayed 'rejected'
+        // forever — and EVERY admin surface that queues KYC work (the
+        // ActionQueue "Pending verifications" card, the RunnerProfiles sidebar
+        // badge, the pending-filter deep-link those two link to) counts only
+        // verification_status = 'pending'. So the resubmission was invisible and
+        // the runner waited indefinitely unless an operator happened to browse
+        // rejected profiles. Flipping the flag back to 'pending' is the whole
+        // fix: the document itself is created 'pending' just above, and the
+        // admin re-reviews the files either way.
+        if ($profile->verification_status === 'rejected') {
+            $profile->update(['verification_status' => 'pending']);
+
+            // Those two admin aggregates are 60s-cached, so drop them here or
+            // the resubmission stays hidden for up to a minute after the flip.
+            CacheService::forget(AdminCache::BADGE_VERIFICATIONS);
+            CacheService::forget(AdminCache::QUEUE);
+
+            // Surface it in the live alerts feed too — a resubmission is
+            // otherwise indistinguishable from a first-time pending runner.
+            // Best-effort by design (AdminAlert::raise swallows failures).
+            AdminAlert::raise(
+                'kyc_resubmitted',
+                'info',
+                'KYC document re-submitted',
+                trim(($request->user()->full_name ?? 'A runner')
+                    .' re-uploaded their '.str_replace('_', ' ', $documentType).' after a rejection.'),
+                $profile->id,
+            );
+        }
 
         // Notify admins of new submission
         Notification::create([

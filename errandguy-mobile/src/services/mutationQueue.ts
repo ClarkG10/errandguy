@@ -7,6 +7,7 @@ import { notificationService } from './notification.service';
 import { userService } from './user.service';
 import { paymentService } from './payment.service';
 import { runnerService } from './runner.service';
+import { bookingService } from './booking.service';
 
 /**
  * ── Scoped durable offline mutation queue ──────────────────────────────────
@@ -23,6 +24,11 @@ import { runnerService } from './runner.service';
  * an irreversible side effect are NEVER queued (they reject → rollback → retry
  * toast, the existing behaviour). The allowlist below is the whole contract:
  * a `kind` with no handler here simply can't be queued.
+ *
+ * A write that isn't naturally last-write-wins may still be queued when the
+ * SERVER makes a duplicate a no-op (see `booking.review`, where a second submit
+ * 422s as "already reviewed"). The bar is the same: replaying it can never
+ * produce an outcome the user didn't already ask for.
  *
  * Correctness guards:
  *   • Coalescing — enqueueing a `dedupeKey` drops any earlier pending entry
@@ -90,6 +96,31 @@ const HANDLERS: Record<string, (payload: any) => Promise<unknown>> = {
 
   // Runner settings — preferred types, working area, profile fields.
   'runner.updateProfile': (data) => runnerService.updateRunnerProfile(data),
+
+  // Shopping-checklist ticks. Item-scoped and last-write-wins by construction:
+  // the endpoint flips ONLY the items it's handed, so replaying an item's newest
+  // value is exactly what the runner meant — and the dead-signal grocery aisle is
+  // precisely where this list gets used. NOT a booking-state transition: ticks are
+  // informational, the status machine is untouched. A replay that lands after the
+  // errand closed 422s and is dropped as permanent (below), which is correct.
+  'runner.updateChecklistTicks': ({ bookingId, items }) =>
+    runnerService.updateChecklistTicks(bookingId, items),
+
+  // Errand review (rating + comment). Content, never money — the tip is a
+  // separate action and is NEVER queued. Replay is provably safe because the
+  // server makes a second submit a no-op: it 422s with "already reviewed", which
+  // IS the end state the user asked for, so we resolve on it exactly as the rate
+  // screen does. Any other 4xx still rejects and the queue drops it.
+  'booking.review': ({ bookingId, rating, comment }) =>
+    bookingService
+      .reviewBooking(bookingId, { rating, comment })
+      .catch((err: any) => {
+        // The api interceptor normalises to a flat `{ status }`; the axios shape
+        // is checked too so this stays honest if a caller passes a raw error.
+        const status = err?.status ?? err?.response?.status;
+        if (status === 422) return null;
+        throw err;
+      }),
 };
 
 /** Is `kind` a registered, queueable action? */

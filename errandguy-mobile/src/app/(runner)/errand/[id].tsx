@@ -16,6 +16,8 @@ import {
   ChevronDown,
   ChevronUp,
   AlertTriangle,
+  Banknote,
+  ChevronRight,
 } from 'lucide-react-native';
 import * as Haptics from 'expo-haptics';
 import { JourneyBeads } from '../../../components/ui/JourneyBeads';
@@ -35,6 +37,8 @@ import { RunnerActiveMap } from '../../../components/runner/RunnerActiveMap';
 import { Skeleton, SkeletonCircle } from '../../../components/ui/Skeleton';
 import { ErrorState } from '../../../components/ui/ErrorState';
 import { SuccessCheck } from '../../../components/ui/SuccessCheck';
+import { UploadProgress } from '../../../components/ui/UploadProgress';
+import { FloatingModal } from '../../../components/ui/FloatingModal';
 import { useRunnerStore } from '../../../stores/runnerStore';
 import { useAuthStore } from '../../../stores/authStore';
 import { useChatStore } from '../../../stores/chatStore';
@@ -44,8 +48,10 @@ import { useBackGuard } from '../../../hooks/useBackGuard';
 import { useReducedMotion } from '../../../hooks/useReducedMotion';
 import { useQuery } from '../../../hooks/useQuery';
 import { useEta } from '../../../hooks/useEta';
+import { useEchoChannel } from '../../../hooks/useEchoChannel';
 import { CacheTTL } from '../../../services/cache.service';
 import { runnerService } from '../../../services/runner.service';
+import { supportService } from '../../../services/support.service';
 import type { Booking } from '../../../types';
 import { STATUS_LABELS } from '../../../constants/statusLabels';
 import { Elevation, LightColors } from '../../../constants/colors';
@@ -57,6 +63,14 @@ import { toast } from '../../../stores/toastStore';
 import { errorMessage } from '../../../utils/errorCatalog';
 import { copy } from '../../../constants/copy';
 import { haptics } from '../../../utils/haptics';
+import { compressProofImage } from '../../../utils/proofImage';
+import {
+  getPreferredNavApp,
+  normalizeCoords,
+  openExternalNav,
+  setPreferredNavApp,
+  type ExternalNavApp,
+} from '../../../utils/externalNav';
 
 const TIMELINE_STEPS: BookingStatus[] = [
   'accepted',
@@ -85,6 +99,67 @@ const PICKUP_PHASE_STATUSES = new Set<string>([
  *  wider than a route-distance check so the prompt surfaces as the runner
  *  pulls up rather than exactly on the pin. */
 const ARRIVAL_RADIUS_M = 120;
+
+/** Terminal statuses — no further runner action is possible. */
+const TERMINAL_STATUSES = ['completed', 'cancelled', 'no_runner'];
+
+/**
+ * Monotonic rank of every status the runner can observe. Used ONLY to reject a
+ * realtime broadcast that would move the cockpit BACKWARDS — a late-delivered
+ * event for a transition the runner has already advanced past would otherwise
+ * flicker the CTA back to the previous step. Terminal statuses bypass the
+ * check entirely: a cancellation must always win, whatever it arrives after.
+ */
+const STATUS_RANK: Record<string, number> = {
+  pending: 0,
+  matched: 1,
+  accepted: 2,
+  heading_to_pickup: 3,
+  arrived_at_pickup: 4,
+  picked_up: 5,
+  in_transit: 6,
+  arrived_at_dropoff: 7,
+  delivered: 8,
+  completed: 9,
+};
+
+/**
+ * Canned mid-errand issues. Each opens a real, booking-linked support ticket
+ * (the same threaded system the help screen uses) so a runner stuck at the
+ * curb can report in one tap instead of composing an email one-handed.
+ */
+const ISSUE_REASONS: { key: string; label: string; message: string }[] = [
+  {
+    key: 'customer_unreachable',
+    label: 'Customer is unreachable',
+    message:
+      "I can't reach the customer for this errand — calls and chat are going unanswered.",
+  },
+  {
+    key: 'wrong_address',
+    label: 'Wrong or unreachable address',
+    message:
+      "The address on this errand looks wrong or I can't reach it. I need help sorting out the location.",
+  },
+  {
+    key: 'store_closed',
+    label: 'Store / biller is closed',
+    message:
+      'The store or biller for this errand is closed or cannot serve the request right now.',
+  },
+  {
+    key: 'item_unavailable',
+    label: 'Item is unavailable',
+    message:
+      "An item on this errand isn't available and I need instructions on how to proceed.",
+  },
+  {
+    key: 'other',
+    label: 'Something else',
+    message:
+      'I ran into a problem on this errand and need help from the ErrandGuy team.',
+  },
+];
 
 /**
  * Watches the hot `currentLocation` slice in a LEAF (same P14 pattern as
@@ -209,6 +284,22 @@ export default function ActiveErrandScreen() {
   const [slideResetKey, setSlideResetKey] = useState(0);
   // Brief SuccessCheck overlay after the completion submit.
   const [showSuccessMoment, setShowSuccessMoment] = useState(false);
+  // Extra hold on the success overlay so the earnings line is actually
+  // readable — SuccessCheck's own onDone fires at ~900ms, which is enough for
+  // a checkmark but not for a peso figure. Cleared on unmount.
+  const successHoldRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(
+    () => () => {
+      if (successHoldRef.current) clearTimeout(successHoldRef.current);
+    },
+    [],
+  );
+  // ── Proof-upload feedback ──────────────────────────────────────────────
+  // `uploadPreparing` covers the on-device downscale (indeterminate — there is
+  // no progress to report), `uploadProgress` the 0–1 bytes-sent fraction from
+  // axios. null = nothing in flight, so the pill disappears entirely.
+  const [uploadPreparing, setUploadPreparing] = useState(false);
+  const [uploadProgress, setUploadProgress] = useState<number | null>(null);
   const [sheetRefreshing, setSheetRefreshing] = useState(false);
   // Trip details (payout, errand description, status timeline) collapse
   // by default. The runner's brain only needs the current step + the
@@ -264,6 +355,17 @@ export default function ActiveErrandScreen() {
   const booking: Booking | null =
     fetchedQ.data ?? (storeMatchesUrl ? currentErrand : null);
 
+  // Latest-booking ref for callbacks that must NOT re-subscribe on every
+  // render (the realtime channel handler below). Assigned during render so
+  // the handler always sees the booking the screen is currently showing.
+  const bookingRef = useRef<Booking | null>(booking);
+  bookingRef.current = booking;
+  // Same reason for the cache writer: useQuery's `mutate` is re-created on
+  // every data change, so a handler holding the first render's copy would be
+  // writing through a stale closure. Ref it instead of depending on it.
+  const mutateRef = useRef(fetchedQ.mutate);
+  mutateRef.current = fetchedQ.mutate;
+
   // Mirror the latest fetched booking into the runner store so the
   // home dashboard, location store, and chat screen see the same
   // status. Strictly a downstream sync \u2014 the source of truth is
@@ -309,15 +411,78 @@ export default function ActiveErrandScreen() {
     !!id &&
     !!_bookingForPollGuard &&
     !['completed', 'cancelled', 'no_runner'].includes(_bookingForPollGuard.status);
-  // Status reconcile poll while the errand is non-terminal. NOTE: unlike the
-  // customer tracking screen, this screen wires NO realtime status channel yet
-  // (no useBookingStatus / realtime channel wired here — see audit P6/P15), so
-  // despite the previous "fallback" framing this poll is the ONLY status path.
-  // Kept at 30s (was a flat 15s) to halve idle GET load across the whole errand;
-  // once realtime actually delivers (P6) this can adapt like tracking's
-  // realtimeHealthy → interval mapping. useSmartPolling adds offline-pause +
-  // immediate reconnect/foreground tick + backoff (errors propagate — no
-  // swallow-catch — so a failing reconcile backs off). (P15)
+  // ── Realtime status channel ────────────────────────────────────────────
+  // The runner is already authorized on the booking's private channel (the
+  // same one the customer's tracking screen listens to), and every server-side
+  // transition fires BookingStatusChanged. Without this subscription a
+  // customer cancellation took up to a full 30s poll to reach the cockpit —
+  // the runner kept driving, and the CTA could still fire a doomed transition.
+  //
+  // The handler mirrors the poll's merge semantics exactly (SWR cache + runner
+  // store), with one extra guard: a late event that would move the cockpit
+  // BACKWARDS is ignored, because the runner's own optimistic advance is
+  // already ahead of it. Terminal statuses always win.
+  const applyRealtimeStatus = useCallback((payload: unknown) => {
+    const incoming = payload as Partial<Booking> | null;
+    if (!incoming?.status) return;
+    const cur = bookingRef.current;
+    if (!cur) return;
+    if (incoming.id && incoming.id !== cur.id) return;
+    if (incoming.status === cur.status) return;
+
+    const isTerminal = TERMINAL_STATUSES.includes(incoming.status);
+    if (!isTerminal) {
+      const incomingRank = STATUS_RANK[incoming.status];
+      const currentRank = STATUS_RANK[cur.status];
+      if (
+        incomingRank != null &&
+        currentRank != null &&
+        incomingRank < currentRank
+      ) {
+        return;
+      }
+    }
+
+    const merged = { ...cur, ...incoming } as Booking;
+    void mutateRef.current(merged);
+
+    // Same store-sync side effect the poll performs — home/location/chat
+    // consumers read `currentErrand`.
+    const store = useRunnerStore.getState();
+    if (store.currentErrand?.id === merged.id && merged.status !== store.currentErrand.status) {
+      if (merged.status === 'completed' || merged.status === 'cancelled') {
+        store.updateErrandStatus(merged.status);
+      } else {
+        useRunnerStore.setState({ currentErrand: merged });
+      }
+    }
+
+    // The one transition the runner cannot see coming: tell them out loud so
+    // they stop driving instead of noticing a greyed-out CTA later.
+    if (incoming.status === 'cancelled') {
+      haptics.warning();
+      toast.warning('This errand was cancelled. You can stop heading there.');
+    }
+    // Everything above reads through refs or store getState, so this callback
+    // is created once and the channel is never re-subscribed. (useEchoChannel
+    // ref-pins onEvent too, but keeping it stable makes that a belt AND braces.)
+  }, []);
+
+  const { isConnected: statusRealtimeConnected } = useEchoChannel({
+    channel: `booking.${id ?? 'none'}`,
+    event: 'booking.status',
+    enabled: !!id,
+    onEvent: applyRealtimeStatus,
+  });
+
+  // Status reconcile poll while the errand is non-terminal. It is now a
+  // FALLBACK behind the realtime channel above, so the cadence adapts the same
+  // way the customer tracking screen's does: relax to 60s while the channel is
+  // genuinely subscribed, drop back to 30s the moment it isn't (socket down,
+  // auth rejected, Reverb unreachable) so a cancellation still lands quickly.
+  // useSmartPolling adds offline-pause + immediate reconnect/foreground tick +
+  // backoff (errors propagate — no swallow-catch — so a failing reconcile
+  // backs off). (P15)
   useSmartPolling(
     async () => {
       if (!id) return;
@@ -337,7 +502,11 @@ export default function ActiveErrandScreen() {
         }
       }
     },
-    { interval: 30_000, enabled: _pollEnabled, runOnMount: false },
+    {
+      interval: statusRealtimeConnected ? 60_000 : 30_000,
+      enabled: _pollEnabled,
+      runOnMount: false,
+    },
   );
 
   // ── Hooks below MUST stay above the early-return so that the hook
@@ -474,6 +643,69 @@ export default function ActiveErrandScreen() {
     );
   }, [customerPhone]);
 
+  // ── External navigation handoff (Waze / system maps) ───────────────────
+  // Waze is what most PH riders actually drive with, so the "Maps" button now
+  // offers both and remembers the choice — after the first pick it's a single
+  // tap straight into the runner's own app (long-press re-opens the chooser).
+  const [showNavPicker, setShowNavPicker] = useState(false);
+  const [preferredNavApp, setPreferredNavAppState] =
+    useState<ExternalNavApp | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    getPreferredNavApp()
+      .then((app) => {
+        if (!cancelled) setPreferredNavAppState(app);
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  // Active destination for an external handoff. Follows the same phase rule
+  // the in-app map and ETA use, so all three always point at the same pin.
+  const navTarget = useMemo(
+    () =>
+      normalizeCoords(
+        inPickupPhase ? booking?.pickup_lat : booking?.dropoff_lat,
+        inPickupPhase ? booking?.pickup_lng : booking?.dropoff_lng,
+      ),
+    [inPickupPhase, booking?.pickup_lat, booking?.pickup_lng, booking?.dropoff_lat, booking?.dropoff_lng],
+  );
+
+  const launchExternalNav = useCallback(
+    async (app: ExternalNavApp, remember: boolean) => {
+      if (!navTarget) {
+        toast.error('Address coordinates are missing');
+        return;
+      }
+      if (remember) {
+        setPreferredNavAppState(app);
+        void setPreferredNavApp(app);
+      }
+      const opened = await openExternalNav(app, navTarget.lat, navTarget.lng);
+      if (!opened) {
+        toast.error(
+          app === 'waze' ? 'Could not open Waze' : 'Could not open maps',
+        );
+      }
+    },
+    [navTarget],
+  );
+
+  const handleExternalNavPress = useCallback(() => {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
+    if (!navTarget) {
+      toast.error('Address coordinates are missing');
+      return;
+    }
+    if (preferredNavApp) {
+      void launchExternalNav(preferredNavApp, false);
+      return;
+    }
+    setShowNavPicker(true);
+  }, [navTarget, preferredNavApp, launchExternalNav]);
+
   // Runner-side SOS — tap once to open confirm, again to broadcast.
   // Idempotent on the backend, so a double-tap won't stack alerts.
   const [showSOSConfirm, setShowSOSConfirm] = useState(false);
@@ -499,6 +731,50 @@ export default function ActiveErrandScreen() {
     }
   }, [booking, sosLoading]);
 
+  // ── Mid-errand issue reporting ─────────────────────────────────────────
+  // Replaces a `mailto:` that dropped the runner into the OS mail composer
+  // with the threaded, booking-linked support ticket the app already ships.
+  // One tap per canned reason: nothing to type one-handed at the curb, and
+  // support sees the booking the ticket belongs to.
+  const [showIssueSheet, setShowIssueSheet] = useState(false);
+  const [issueSubmitting, setIssueSubmitting] = useState<string | null>(null);
+
+  const handleReportIssue = useCallback(
+    async (reason: (typeof ISSUE_REASONS)[number]) => {
+      const cur = bookingRef.current;
+      if (!cur || issueSubmitting) return;
+      setIssueSubmitting(reason.key);
+      const ref = cur.booking_number ?? cur.id;
+      try {
+        const r = await supportService.createTicket({
+          subject: `${reason.label} — ${ref}`,
+          category: 'booking',
+          message: `${reason.message}\n\nErrand: ${ref}`,
+          booking_id: cur.id,
+        });
+        const ticket = r.data?.data;
+        haptics.success();
+        setShowIssueSheet(false);
+        // Toast first so the runner knows the report landed even if they never
+        // look at the thread (or navigation is interrupted).
+        toast.success('Support has your report');
+        if (ticket?.id) {
+          // Support tickets live in the shared (customer) stack — the runner
+          // help screen already routes there and the customer layout lets
+          // runners through for `support/*` specifically, so the cross-group
+          // push is a proven path. Back returns to the cockpit.
+          router.push(`/(customer)/support/${ticket.id}`);
+        }
+      } catch (err: any) {
+        haptics.error();
+        toast.error(errorMessage(err, copy.support.createFailed));
+      } finally {
+        setIssueSubmitting(null);
+      }
+    },
+    [issueSubmitting, router],
+  );
+
   // Re-entrancy latch for the TAP-driven status advance only. advanceStatus
   // is optimistic + fire-and-forget with no loading state, and the CTA isn't a
   // latching SlideToConfirm for the tap transitions, so a rapid double-tap
@@ -509,6 +785,44 @@ export default function ActiveErrandScreen() {
 
   const handleStatusUpdate = async () => {
     if (!booking) return;
+
+    // A booking still in `matched` has been OFFERED to this runner but not yet
+    // claimed. Tapping a "New errand offer" push lands straight here, skipping
+    // the offer modal that normally calls accept — so the CTA used to fire
+    // updateStatus('heading_to_pickup') against a server whose status ladder
+    // starts at 'accepted', and every single tap came back 422 "Invalid status
+    // transition" with no way forward. Claim the errand first; the ladder then
+    // proceeds exactly as it does for a modal-accepted job.
+    if (booking.status === 'matched') {
+      if (advancingRef.current) return;
+      advancingRef.current = true;
+      setLoading(true);
+      try {
+        await runnerService.acceptErrand(booking.id);
+        await fetchedQ.revalidate();
+        haptics.success();
+      } catch (e) {
+        // The offer modal's own accept may already have landed, leaving this
+        // screen a beat behind on a stale 'matched'. Re-read the row and only
+        // complain if the errand really is still unclaimed — otherwise the
+        // runner gets an error toast for a job they successfully took.
+        const fresh = await runnerService
+          .getErrand(booking.id)
+          .then((r) => (r.data?.data ?? null) as Booking | null)
+          .catch(() => null);
+
+        if (fresh) fetchedQ.mutate(fresh);
+
+        if (!fresh || fresh.status === 'matched' || fresh.status === 'pending') {
+          toast.error(errorMessage(e, 'We couldn’t claim this errand. Please try again.'));
+        }
+      } finally {
+        advancingRef.current = false;
+        setLoading(false);
+      }
+      return;
+    }
+
     const nextStatus = getNextStatus(booking.status, errandSlug);
     if (!nextStatus) return;
 
@@ -577,10 +891,14 @@ export default function ActiveErrandScreen() {
       pickupPhoto?: string | null;
       deliveryPhoto?: string | null;
       signature?: string | null;
+      /** Surface a determinate "Uploading proof… NN%" pill over the CTA. */
+      showUploadProgress?: boolean;
     },
   ): Promise<boolean> => {
-    if (!booking) return false;
-    const prev = booking;
+    // Read the CURRENT booking (not the render-time closure) so a call made
+    // after an awaited earlier advance still reverts to the right state.
+    const prev = bookingRef.current;
+    if (!prev) return false;
     const nowIso = new Date().toISOString();
     const optimistic: Booking = {
       ...prev,
@@ -611,16 +929,27 @@ export default function ActiveErrandScreen() {
     // coords stay null and the upload proceeds without them; the
     // client capture timestamp always rides along.
     const fix = useLocationStore.getState().currentLocation;
+    const { showUploadProgress, ...fileOpts } = opts ?? {};
+    // Honest upload feedback. The proof upload is deliberately awaited before
+    // the next sheet opens (money-safe: the photo must be on the server before
+    // we call the handover done), which used to read as dead air on LTE — the
+    // modal closed and nothing moved for 10-30s. onUploadProgress was already
+    // plumbed through runnerService and simply had no caller.
+    if (showUploadProgress) setUploadProgress(0);
     const proofOpts = {
-      ...opts,
+      ...fileOpts,
       lat: fix?.lat ?? null,
       lng: fix?.lng ?? null,
       capturedAt: nowIso,
+      onProgress: showUploadProgress
+        ? (frac: number) => setUploadProgress(frac)
+        : undefined,
     };
 
     return runnerService
-      .advanceErrandStatus(booking.id, status, proofOpts)
+      .advanceErrandStatus(prev.id, status, proofOpts)
       .then(() => {
+        if (showUploadProgress) setUploadProgress(null);
         advancingRef.current = false; // re-arm the tap guard for the next step
         // Server-confirmed transition — success tick. The `completed`
         // flip is skipped because the SuccessCheck overlay fires its own
@@ -641,6 +970,7 @@ export default function ActiveErrandScreen() {
         return true;
       })
       .catch((err: any) => {
+        if (showUploadProgress) setUploadProgress(null);
         advancingRef.current = false; // re-arm on failure so the runner can retry
         // Revert optimistic state and surface the error.
         haptics.error();
@@ -653,9 +983,15 @@ export default function ActiveErrandScreen() {
       });
   };
 
-  const handlePhotoConfirm = async (uri: string) => {
+  const handlePhotoConfirm = async (rawUri: string) => {
     const phase = showPhotoProof;
     setShowPhotoProof(null);
+    // Shrink the camera's native frame (often ~4000px / several MB) to a
+    // 1600px proof shot before it goes up the wire — the same photo, a
+    // fraction of the LTE wait. Falls back to the original on any failure.
+    setUploadPreparing(true);
+    const uri = (await compressProofImage(rawUri)) ?? rawUri;
+    setUploadPreparing(false);
     if (phase === 'delivery') {
       // Flow: mark `delivered` (uploads delivery_photo) → open the
       // completion sheet so the runner can capture the signature and
@@ -671,12 +1007,18 @@ export default function ActiveErrandScreen() {
       // photo, and an errand stuck at arrived_at_dropoff. On failure
       // advanceStatus has already reverted + toasted; the runner stays put
       // and can retry with a fresh photo.
-      const delivered = await advanceStatus('delivered', { deliveryPhoto: uri });
+      const delivered = await advanceStatus('delivered', {
+        deliveryPhoto: uri,
+        showUploadProgress: true,
+      });
       if (delivered) setShowCompletion(true);
       return;
     }
     // Pickup phase: pass the captured photo through to the backend.
-    await advanceStatus('picked_up', { pickupPhoto: uri });
+    await advanceStatus('picked_up', {
+      pickupPhoto: uri,
+      showUploadProgress: true,
+    });
   };
 
   const handleCompletionConfirm = async (signatureUri: string) => {
@@ -692,7 +1034,12 @@ export default function ActiveErrandScreen() {
     // completion feel done — the runner pocketed the phone while the errand was
     // still stuck at 'delivered'. advanceStatus reverts + toasts on failure and
     // fires setShowRate(true) on success, so the rate sheet still follows.
-    const ok = await advanceStatus('completed', { signature: sig });
+    const ok = await advanceStatus('completed', {
+      signature: sig,
+      // Only a signature makes this a multipart upload; without one there are
+      // no bytes to report and the pill would flash for nothing.
+      showUploadProgress: !!sig,
+    });
     if (ok) setShowSuccessMoment(true);
   };
 
@@ -706,7 +1053,30 @@ export default function ActiveErrandScreen() {
       await runnerService.verifyRidePin(booking.id, pinInput);
       setPinVerified(true);
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
-      toast.success('PIN verified — ride may begin');
+
+      // Verifying the PIN and starting the ride are ONE real-world moment —
+      // the passenger is already in the vehicle. Splitting them made the
+      // runner hunt for a newly-enabled CTA behind the keyboard-expanded
+      // sheet. The transport picked_up transition carries no proof gate (no
+      // photo, no receipt), so nothing is skipped by chaining it here; it goes
+      // through the SAME optimistic advance the CTA uses, which reverts and
+      // toasts on failure — leaving the runner exactly where they'd be today,
+      // verified with the CTA armed as the fallback.
+      const cur = bookingRef.current;
+      const next = cur ? getNextStatus(cur.status, errandSlug) : null;
+      const canChain =
+        !!cur &&
+        cur.status === 'arrived_at_pickup' &&
+        next === 'picked_up' &&
+        !advancingRef.current;
+
+      if (canChain) {
+        toast.success('PIN verified — starting the ride');
+        advancingRef.current = true;
+        await advanceStatus('picked_up');
+      } else {
+        toast.success('PIN verified — ride may begin');
+      }
     } catch (err: any) {
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error).catch(() => {});
       toast.error(err?.message ?? err?.response?.data?.message ?? 'Incorrect PIN. Please try again.');
@@ -992,6 +1362,44 @@ export default function ActiveErrandScreen() {
   const ctaIsSlide =
     nextStatusForCta === 'delivered' || nextStatusForCta === 'completed';
 
+  // The runner reached the pin while their status still says they haven't
+  // left. Drives the arrival prompt's copy (see the ConfirmModal below).
+  const isPreDepartureStatus =
+    booking.status === 'accepted' || booking.status === 'picked_up';
+
+  // ── Runner-facing settlement metadata (DISPLAY ONLY) ───────────────────
+  // `amount_to_collect` / `payment_method_type` are runner-gated fields on
+  // BookingResource. Read through a tolerant cast rather than widening the
+  // shared Booking type here: a booking served from an older SWR cache entry
+  // (or an endpoint that hasn't been re-fetched yet) simply won't carry them,
+  // and the strip must degrade to "not shown" rather than render a wrong
+  // number. NOTHING about settlement changes — this is a read-out of what the
+  // server already decided.
+  const runnerOps = booking as Booking & {
+    amount_to_collect?: number | string | null;
+    payment_method_type?: string | null;
+  };
+  const amountToCollect: number | null = (() => {
+    const raw = runnerOps.amount_to_collect;
+    if (raw == null) return null;
+    const n = Number(raw);
+    return Number.isFinite(n) && n > 0 ? n : null;
+  })();
+  const paymentMethodType = runnerOps.payment_method_type ?? null;
+  const isCashJob = paymentMethodType === 'cash';
+  // The server's `amount_to_collect` is fare-due + fronted-item-cost. Split it
+  // back out for the strip's subline so the copy never calls a reimbursement a
+  // "platform fee". Both parts come from fields already on the payload; the
+  // TOTAL shown is always the server's figure, never a client sum.
+  const itemsFronted: number = (() => {
+    const n = Number(booking.actual_item_cost ?? 0);
+    return Number.isFinite(n) && n > 0 ? n : 0;
+  })();
+  const cashFareDue: number =
+    amountToCollect != null
+      ? Math.max(0, Math.round((amountToCollect - itemsFronted) * 100) / 100)
+      : 0;
+
   // Pre-completion checklist: read-only recap of what proof has been
   // captured so the runner sees what's missing BEFORE sliding to
   // complete. Derived entirely from existing booking fields.
@@ -1047,15 +1455,38 @@ export default function ActiveErrandScreen() {
 
         {/* Arrival detector — fires the "mark arrived" prompt once the
             runner reaches the active pin on a travel leg. Renders null;
-            it only subscribes to the hot GPS slice in its own leaf. */}
+            it only subscribes to the hot GPS slice in its own leaf.
+
+            Armed across the WHOLE travel window, including the two
+            pre-departure statuses (`accepted`, `picked_up`): a runner who just
+            starts driving without tapping "Head to pickup" / "Start delivery"
+            used to arrive with the assist completely disarmed — stale status
+            for the customer, and two blind CTA taps at the curb. The prompt
+            adapts its copy in that case (it advances the travel leg, never
+            skipping a step — the backend rejects any skip).
+
+            Excluded at `picked_up` for single-location errands: there is no
+            second leg there, the runner is already on site, and the next step
+            is COMPLETION — which must never be geofence-prompted.
+
+            `key` on the status remounts the watcher on every transition so its
+            once-only latch re-arms per leg. Previously `enabled` cycled
+            false→true between legs and did that implicitly; now that the
+            pre-departure statuses are also enabled, the flag stays true across
+            accepted→heading_to_pickup and the explicit remount is what lets
+            the arrival prompt follow the departure one. */}
         <RunnerArrivalWatcher
+          key={booking.status}
           targetLat={etaTargetLat}
           targetLng={etaTargetLng}
           enabled={
             isFocused &&
             !isReadOnly &&
             isErrandActive &&
-            (booking.status === 'heading_to_pickup' || booking.status === 'in_transit')
+            (booking.status === 'heading_to_pickup' ||
+              booking.status === 'in_transit' ||
+              booking.status === 'accepted' ||
+              (booking.status === 'picked_up' && !isSingleLocation))
           }
           onArrive={handleArrivalDetected}
         />
@@ -1255,21 +1686,16 @@ export default function ActiveErrandScreen() {
                       </Text>
                     </Pressable>
                     <Pressable
-                      onPress={() => {
-                        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
-                        const lat = inPickupPhase ? booking.pickup_lat : booking.dropoff_lat;
-                        const lng = inPickupPhase ? booking.pickup_lng : booking.dropoff_lng;
-                        if (lat == null || lng == null) {
-                          toast.error('Address coordinates are missing');
-                          return;
-                        }
-                        const url = Platform.OS === 'ios'
-                          ? `http://maps.apple.com/?daddr=${lat},${lng}&dirflg=d`
-                          : `https://www.google.com/maps/dir/?api=1&destination=${lat},${lng}&travelmode=driving`;
-                        Linking.openURL(url).catch(() => toast.error('Could not open maps'));
+                      onPress={handleExternalNavPress}
+                      onLongPress={() => {
+                        // Long-press always re-opens the chooser, so a
+                        // remembered preference is never a one-way door.
+                        Haptics.selectionAsync().catch(() => {});
+                        setShowNavPicker(true);
                       }}
                       accessibilityRole="button"
-                      accessibilityLabel="Open in system maps"
+                      accessibilityLabel="Open in another navigation app"
+                      accessibilityHint="Long press to choose between Waze and Maps"
                       className="h-11 px-4 rounded-xl border border-dividerStrong bg-surfaceMuted flex-row items-center justify-center"
                     >
                       <MapPin size={15} color={LightColors.textPrimary} strokeWidth={1.8} />
@@ -1277,6 +1703,51 @@ export default function ActiveErrandScreen() {
                         Maps
                       </Text>
                     </Pressable>
+                  </View>
+                )}
+
+                {/* ── Cash-collection strip ─────────────────────────────
+                    The single fact a runner cannot afford to learn at the
+                    door. Sits in the ALWAYS-VISIBLE header block (not the
+                    scrollable details) because the collapsed sheet is sized
+                    from this block — so it can never be scrolled out of
+                    sight on a job where money changes hands in person.
+                    Display-only; the figure is the server's. */}
+                {amountToCollect != null && isErrandActive && (
+                  <View
+                    // Brand gold (`accent` family = money/earnings, never a
+                    // status) at the SOFT chip rung, not the faint tint: on a
+                    // transport ride the amber-washed PIN card sits just below
+                    // in the scroll region, and a paler wash would blur into it.
+                    className="mt-3 flex-row items-center rounded-xl px-3 py-2.5 bg-accentSoft border border-accentStrong"
+                    accessible
+                    accessibilityLabel={`Collect ${formatCurrency(
+                      amountToCollect,
+                    )} in cash from the customer`}
+                  >
+                    <Banknote size={17} color={LightColors.accentDark} strokeWidth={2} />
+                    <View className="flex-1 ml-2.5">
+                      <Text className="text-[13px] font-montserrat-bold text-textPrimary">
+                        Collect {formatCurrency(amountToCollect)} in cash
+                      </Text>
+                      <Text className="text-[11px] font-montserrat text-textSecondary mt-0.5">
+                        {!isCashJob
+                          ? `Reimbursement for the ${formatCurrency(
+                              itemsFronted,
+                            )} you fronted — the fare is already paid online`
+                          : itemsFronted > 0
+                          ? `${formatCurrency(
+                              cashFareDue,
+                            )} fare + ${formatCurrency(
+                              itemsFronted,
+                            )} you fronted · the platform fee is deducted from your balance`
+                          : booking.runner_payout != null
+                          ? `Cash fare · you keep ${formatCurrency(
+                              booking.runner_payout,
+                            )}, the platform fee is deducted from your balance`
+                          : 'Cash fare · collect it from the customer'}
+                      </Text>
+                    </View>
                   </View>
                 )}
               </View>
@@ -1536,14 +2007,14 @@ export default function ActiveErrandScreen() {
                       it is no longer nested inside this collapsed
                       disclosure. */}
 
+                  {/* Opens the in-app, booking-linked support thread instead
+                      of the OS mail composer — see the issue sheet below. */}
                   <Pressable
                     onPress={() => {
-                      const subject = encodeURIComponent(`Issue with errand ${booking.booking_number ?? booking.id}`);
-                      Linking.openURL(`mailto:support@errandguyph.com?subject=${subject}`).catch(() =>
-                        toast.error('Could not open email app'),
-                      );
+                      haptics.light();
+                      setShowIssueSheet(true);
                     }}
-                    accessibilityRole="link"
+                    accessibilityRole="button"
                     accessibilityLabel="Report an issue with this errand"
                     hitSlop={8}
                     className="flex-row items-center self-start gap-1.5 py-2"
@@ -1612,10 +2083,25 @@ export default function ActiveErrandScreen() {
                     ))}
                   </View>
                 )}
+                {/* Honest proof-upload feedback. The handover deliberately
+                    waits for the server to confirm the photo before the next
+                    sheet opens (money-safe), which used to read as dead air on
+                    LTE — the capture modal closed and nothing moved for 10-30s.
+                    Two phases: the on-device downscale (indeterminate) and the
+                    real bytes-sent fraction. */}
+                {(uploadPreparing || uploadProgress !== null) && (
+                  <UploadProgress
+                    progress={uploadPreparing ? null : uploadProgress}
+                    label={uploadPreparing ? 'Preparing photo' : 'Uploading proof'}
+                    style={{ marginBottom: 10 }}
+                  />
+                )}
                 <Text className="text-[10px] font-montserrat-bold text-textTertiary uppercase tracking-wider mb-1.5 text-center">
-                  {ctaIsSlide
-                    ? 'Slide to confirm — customer is notified instantly'
-                    : 'Tap to advance — customer is notified instantly'}
+                  {booking.status === 'matched'
+                    ? 'This errand is offered to you — tap to claim it'
+                    : ctaIsSlide
+                      ? 'Slide to confirm — customer is notified instantly'
+                      : 'Tap to advance — customer is notified instantly'}
                 </Text>
                 <StatusActionButton
                   // Remount when the status changes OR a downstream modal
@@ -1683,8 +2169,17 @@ export default function ActiveErrandScreen() {
           setShowReceipt(false);
 
           setSubmittingReceipt(true);
-          runnerService
-            .submitPickedUpWithReceipt(booking.id, { actualCost, receiptUri })
+          // Downscale before the wire, not before the optimistic flip: the
+          // runner is already moving on and the local preview uses the
+          // original file. A receipt at 1600px stays legible for disputes
+          // while costing a fraction of the LTE upload.
+          compressProofImage(receiptUri)
+            .then((compressed) =>
+              runnerService.submitPickedUpWithReceipt(booking.id, {
+                actualCost,
+                receiptUri: compressed ?? receiptUri,
+              }),
+            )
             .then(() => {
               Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
             })
@@ -1729,23 +2224,58 @@ export default function ActiveErrandScreen() {
       )}
 
       {/* Success moment — brief celebratory check after the completion
-          submit. SuccessCheck fires its own success haptic; onDone
-          dismisses the overlay (~1s, instantly under Reduce Motion). */}
+          submit, now naming the one number the runner actually cares about.
+          SuccessCheck fires its own success haptic; onDone starts a short
+          extra hold so the figure is readable (skipped under Reduce Motion).
+
+          The amount is NOT computed here — `runner_payout` is the server's own
+          figure, already in the SWR cache; when it's absent we simply show the
+          checkmark as before rather than invent a number. The subline never
+          claims a wallet credit on a cash job (there the runner keeps the cash
+          and the platform fee is debited instead). */}
       {showSuccessMoment && (
         <View
-          className="absolute inset-0 items-center justify-center"
+          className="absolute inset-0 items-center justify-center px-10"
           style={{ backgroundColor: `${LightColors.ink}59`, zIndex: 60 }}
           pointerEvents="auto"
         >
           <SuccessCheck
             celebrate
-            onDone={() => setShowSuccessMoment(false)}
+            onDone={() => {
+              if (reduceMotion) {
+                setShowSuccessMoment(false);
+                return;
+              }
+              if (successHoldRef.current) clearTimeout(successHoldRef.current);
+              successHoldRef.current = setTimeout(
+                () => setShowSuccessMoment(false),
+                1600,
+              );
+            }}
           />
+          {booking.runner_payout != null && (
+            <View className="items-center mt-5">
+              <Text className="text-[13px] font-montserrat-semi text-white/80">
+                You earned
+              </Text>
+              <Text className="text-[30px] font-inter-semi tabular-nums text-white mt-0.5">
+                {formatCurrency(booking.runner_payout)}
+              </Text>
+              <Text className="text-[12px] font-montserrat text-white/75 mt-1.5 text-center leading-[17px]">
+                {isCashJob
+                  ? 'You keep the cash you collected — the platform fee comes out of your balance.'
+                  : 'It lands in your balance once the payment settles.'}
+              </Text>
+            </View>
+          )}
         </View>
       )}
 
-      {/* Rate Customer Modal */}
-      {showRate && (
+      {/* Rate Customer Modal. Held back while the success overlay is up: a
+          real RN Modal renders in its own window ABOVE the in-tree overlay, so
+          without this gate the earnings moment would be covered the instant it
+          appeared. */}
+      {showRate && !showSuccessMoment && (
         <RateCustomerModal
           customerName={booking.dropoff_contact_name ?? 'Customer'}
           onSubmit={handleRateSubmit}
@@ -1753,16 +2283,31 @@ export default function ActiveErrandScreen() {
         />
       )}
 
-      {/* Proactive arrival confirm — advances directly to the arrival
-          status via the normal gated handler (arrival steps are gate-free;
-          the photo/PIN capture lives on the NEXT step). */}
+      {/* Proactive arrival confirm — advances ONE step via the normal gated
+          handler (arrival steps are gate-free; the photo/PIN capture lives on
+          the NEXT step). Nothing is ever advanced without this tap.
+
+          When the runner never announced the travel leg the copy says so
+          plainly: this tap updates the leg, and the watcher (remounted on the
+          status change) surfaces the real arrival confirm straight after. We
+          deliberately do NOT chain the two transitions behind one tap. */}
       <ConfirmModal
         visible={showArrivalPrompt}
-        title="You've arrived — mark arrived?"
-        message={`Looks like you've reached the ${
-          inPickupPhase ? 'pickup' : 'drop-off'
-        }. Let the customer know — you can capture any required photo or PIN on the next step.`}
-        confirmLabel="Mark arrived"
+        title={
+          isPreDepartureStatus
+            ? `You're at the ${inPickupPhase ? 'pickup' : 'drop-off'}`
+            : "You've arrived — mark arrived?"
+        }
+        message={
+          isPreDepartureStatus
+            ? `Your status still says “${
+                STATUS_LABELS[booking.status] ?? booking.status
+              }”, so the customer can't see you moving. Update it now — we'll ask you to confirm arrival right after.`
+            : `Looks like you've reached the ${
+                inPickupPhase ? 'pickup' : 'drop-off'
+              }. Let the customer know — you can capture any required photo or PIN on the next step.`
+        }
+        confirmLabel={isPreDepartureStatus ? 'Update status' : 'Mark arrived'}
         cancelLabel="Not yet"
         onConfirm={() => {
           setShowArrivalPrompt(false);
@@ -1803,6 +2348,104 @@ export default function ActiveErrandScreen() {
         }}
         onCancel={() => setShowLeaveConfirm(false)}
       />
+
+      {/* ── External navigation chooser ─────────────────────────────────
+          Shown the first time the runner taps "Maps" (and on any long-press
+          afterwards). The pick is remembered, so every later tap goes straight
+          into their own app. Waze is listed first: it is what most PH riders
+          actually drive with. */}
+      <FloatingModal
+        isVisible={showNavPicker}
+        onClose={() => setShowNavPicker(false)}
+        title="Navigate with"
+      >
+        {(
+          [
+            {
+              app: 'waze' as ExternalNavApp,
+              label: 'Waze',
+              hint: 'Live traffic + hazard reports',
+            },
+            {
+              app: 'maps' as ExternalNavApp,
+              label: Platform.OS === 'ios' ? 'Apple Maps' : 'Google Maps',
+              hint: 'Your phone’s built-in maps',
+            },
+          ]
+        ).map((opt) => (
+          <Pressable
+            key={opt.app}
+            onPress={() => {
+              haptics.selection();
+              setShowNavPicker(false);
+              void launchExternalNav(opt.app, true);
+            }}
+            accessibilityRole="button"
+            accessibilityLabel={`Navigate with ${opt.label}`}
+            className="flex-row items-center rounded-xl border border-divider bg-surfaceMuted px-4 py-3 mb-2.5"
+          >
+            <Navigation size={17} color={LightColors.primary} strokeWidth={2} />
+            <View className="flex-1 ml-3">
+              <Text className="text-[14px] font-montserrat-bold text-textPrimary">
+                {opt.label}
+              </Text>
+              <Text className="text-[11px] font-montserrat text-textSecondary mt-0.5">
+                {opt.hint}
+              </Text>
+            </View>
+            <ChevronRight size={16} color={LightColors.textTertiary} />
+          </Pressable>
+        ))}
+        <Text className="text-[11px] font-montserrat text-textTertiary mt-1 leading-[15px]">
+          We’ll remember your choice. Live tracking pauses while you’re outside
+          ErrandGuy — come back here to update your status.
+        </Text>
+      </FloatingModal>
+
+      {/* ── Mid-errand issue sheet ──────────────────────────────────────
+          One tap per canned reason opens a real, booking-linked support
+          thread and drops the runner straight into it. Replaces the old
+          `mailto:` hand-off. */}
+      <FloatingModal
+        isVisible={showIssueSheet}
+        onClose={() => {
+          if (issueSubmitting) return;
+          setShowIssueSheet(false);
+        }}
+        title="What went wrong?"
+      >
+        {ISSUE_REASONS.map((reason) => {
+          const busy = issueSubmitting === reason.key;
+          return (
+            <Pressable
+              key={reason.key}
+              onPress={() => void handleReportIssue(reason)}
+              disabled={!!issueSubmitting}
+              accessibilityRole="button"
+              accessibilityLabel={reason.label}
+              accessibilityState={{ disabled: !!issueSubmitting, busy }}
+              className={`flex-row items-center rounded-xl border border-divider bg-surfaceMuted px-4 py-3 mb-2.5 ${
+                issueSubmitting && !busy ? 'opacity-50' : ''
+              }`}
+            >
+              <Text className="flex-1 text-[13px] font-montserrat-semi text-textPrimary">
+                {reason.label}
+              </Text>
+              {busy ? (
+                <Text className="text-[11px] font-montserrat text-textTertiary">
+                  Sending…
+                </Text>
+              ) : (
+                <ChevronRight size={16} color={LightColors.textTertiary} />
+              )}
+            </Pressable>
+          );
+        })}
+        <Text className="text-[11px] font-montserrat text-textTertiary mt-1 leading-[15px]">
+          Opens a support thread linked to{' '}
+          {booking.booking_number ?? 'this errand'} — you can add details there.
+        </Text>
+      </FloatingModal>
     </SafeAreaView>
   );
 }

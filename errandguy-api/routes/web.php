@@ -2,6 +2,7 @@
 
 use App\Http\Controllers\BookingMediaController;
 use App\Http\Controllers\HealthController;
+use App\Http\Controllers\PublicTripController;
 use App\Http\Controllers\RunnerDocumentFileController;
 use Illuminate\Support\Facades\Route;
 
@@ -45,6 +46,20 @@ Route::middleware('web')
 | which the in-app sheet intercepts and closes. Must match PAYMENT_RETURN_URL
 | in the mobile app (src/utils/browser.ts).
 */
+/*
+| Public trip page (the link behind "share my trip" and the SOS live link).
+|
+| TripShareController::share and NotifySosContactsJob both hand out
+| config('app.url')."/trip/{token}", but the only handler was the JSON API route
+| at /api/v1/trip/{token} — so every recipient of a shared or emergency link
+| landed on a 404. This serves a self-contained HTML page (no auth) built from
+| the SAME sanitized PublicTripController payload; the page then polls the JSON
+| endpoint for live updates. No auth, no session need: throttled per IP.
+*/
+Route::get('/trip/{token}', [PublicTripController::class, 'page'])
+    ->middleware('throttle:60,1')
+    ->name('trip.public');
+
 Route::get('/payment/complete', function () {
     return response(view('payment-complete'))
         ->header('Content-Type', 'text/html');

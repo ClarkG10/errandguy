@@ -24,6 +24,7 @@ use Filament\Tables\Contracts\HasTable;
 use Filament\Tables\Filters\SelectFilter;
 use Filament\Tables\Table;
 use Illuminate\Support\Collection;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Str;
 
@@ -90,6 +91,61 @@ class Payouts extends Page implements HasTable
     public static function getNavigationBadgeColor(): ?string
     {
         return 'warning';
+    }
+
+    /**
+     * Tell the runner their payout bounced, and that the money is back.
+     *
+     * completePayout() pushes "Payout sent"; the failure/reversal paths only
+     * re-credited the wallet and wrote failure_reason, so the runner kept
+     * believing a transfer was in flight for 1–3 business days and then found
+     * their balance mysteriously higher — the reason discoverable only by
+     * scrolling the payout history card. Symmetric events deserve symmetric
+     * notification: in-app row + device push via SendPushJob (which routes to
+     * NotificationService::sendPush, exactly like the success push), and the
+     * `payment` type + wallet_transaction_id payload mirror it too.
+     *
+     * MUST be called after the money transaction has committed (never inside
+     * the lock), and is latched per payout in the cache so a re-run of the
+     * admin action — or a later gateway callback for the same payout — can
+     * never send the runner a second "your payout bounced".
+     *
+     * Public on purpose: the OTHER two paths that settle a payout into
+     * failed/reversed (the Xendit payout.failed / payout.reversed webhook and
+     * the AdminPayoutController::markFailed API) should route through this same
+     * latch instead of growing their own copy. Handles both states.
+     */
+    public static function notifyRunnerOfBouncedPayout(WalletTransaction $tx, ?string $reason = null): void
+    {
+        // Cache::add is atomic: the first caller wins, everyone else no-ops.
+        if (! Cache::add("payout_bounced_notified:{$tx->id}", true, now()->addDay())) {
+            return;
+        }
+
+        $amount = number_format(abs((float) $tx->amount), 2);
+        $reversed = $tx->status === 'reversed';
+        $reason = Str::limit(trim((string) ($reason ?? $tx->failure_reason ?? '')), 140);
+
+        $body = $reversed
+            ? "Your ₱{$amount} payout was returned, so the money is back in your wallet."
+            : "Your ₱{$amount} payout couldn’t be sent, so the money is back in your wallet.";
+
+        if ($reason !== '') {
+            $body .= " Reason: {$reason}.";
+        }
+
+        $body .= ' Check your payout details, then request it again.';
+
+        \App\Jobs\SendPushJob::dispatch(
+            $tx->user_id,
+            $reversed ? 'Payout returned' : 'Payout couldn’t be sent',
+            $body,
+            [
+                'type' => 'payment',
+                'status' => $reversed ? 'reversed' : 'failed',
+                'wallet_transaction_id' => $tx->id,
+            ],
+        );
     }
 
     protected function getHeaderActions(): array
@@ -277,6 +333,10 @@ class Payouts extends Page implements HasTable
                     ->action(function (array $data, WalletTransaction $record): void {
                         try {
                             $tx = app(WalletService::class)->failPayout($record->id, $data['reason']);
+                            // Tell the runner — the money just reappeared in
+                            // their wallet and they were still expecting a
+                            // transfer. Dispatched AFTER failPayout committed.
+                            self::notifyRunnerOfBouncedPayout($tx, $data['reason']);
                             AdminNotify::success(
                                 'Payout failed — wallet re-credited',
                                 $tx,
@@ -286,6 +346,7 @@ class Payouts extends Page implements HasTable
                                 ],
                                 audit: 'payout.failed',
                                 properties: ['reason' => $data['reason']],
+                                note: 'The runner has been told the money is back in their wallet, with your reason.',
                             );
                         } catch (PayoutStateException $e) {
                             AdminNotify::error('Could not mark payout failed', $e, $record);

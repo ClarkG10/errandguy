@@ -29,6 +29,7 @@ import {
 } from 'lucide-react-native';
 import type { LucideIcon } from 'lucide-react-native';
 import * as Haptics from 'expo-haptics';
+import dayjs from 'dayjs';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useAuthStore } from '../../../stores/authStore';
 import { useBookingStore, type DraftBooking } from '../../../stores/bookingStore';
@@ -83,6 +84,26 @@ const REPEATABLE_STATUSES = ['completed', 'delivered'];
 // Promos within this window read as "expiring" — worth nudging before they
 // lapse. Anything past it is just a standard available promo.
 const PROMO_EXPIRY_SOON_MS = 7 * 24 * 60 * 60 * 1000;
+
+// Mirrors the server's scheduled-booking deferral: BookingController delays
+// MatchRunnerJob until `scheduled_at − 15 min`, so a scheduled errand sits in
+// `pending` (no search running) until then. Used to decide whether the home
+// card may honestly claim we're looking for a runner.
+const SCHEDULED_MATCH_LEAD_MINUTES = 15;
+
+/**
+ * Calendar-style label for a scheduled errand ("Tomorrow, 9:00 AM").
+ * Same day-bucketing idiom as formatChatDayLabel, with the time appended —
+ * a bare "Aug 30, 9:00 AM" makes the reader do the date maths.
+ */
+function formatScheduledLabel(at: dayjs.Dayjs): string {
+  const diffDays = at.startOf('day').diff(dayjs().startOf('day'), 'day');
+  const time = at.format('h:mm A');
+  if (diffDays <= 0) return `Today, ${time}`;
+  if (diffDays === 1) return `Tomorrow, ${time}`;
+  if (diffDays < 7) return `${at.format('dddd')}, ${time}`;
+  return `${at.format('MMM D')}, ${time}`;
+}
 
 /**
  * Clone a terminal booking into a fresh booking draft so "Repeat last" can
@@ -179,6 +200,7 @@ export default function CustomerHomeScreen() {
   const updateDraft = useBookingStore((s) => s.updateDraft);
   const draftBooking = useBookingStore((s) => s.draftBooking);
   const draftStep = useBookingStore((s) => s.currentStep);
+  const setDraftStep = useBookingStore((s) => s.setStep);
   const isDraftHydrated = useBookingStore((s) => s.isDraftHydrated);
   const unreadCount = useNotificationStore((s) => s.unreadCount);
   const hideOnScroll = useHideTabBarOnScroll();
@@ -316,6 +338,38 @@ export default function CustomerHomeScreen() {
   const startBooking = useCallback(
     (preselectedTypeId?: string) => {
       clearDraft();
+      // A tile/chip tap has ALREADY answered "What do you need?" — replaying
+      // the type screen just to have the user re-confirm and tap Continue
+      // costs a whole screen at the highest-frequency entry point. When the
+      // tapped id resolves against the loaded catalogue (home and type.tsx
+      // share the ['errand-types'] cache key, so it almost always does) we do
+      // exactly what type.tsx's Continue does — seed id + slug, mark step 1 —
+      // and land on details. The type-change field cleanup there is a no-op
+      // for us because clearDraft() just emptied the draft.
+      //
+      // The type screen stays the entry for undecided users ("See all", the
+      // FAB, the rate-screen rebook deep link) and is still one back-press
+      // from details for switching. If the catalogue hasn't loaded (cold
+      // start, offline) we fall back to the old preselect route rather than
+      // seed a slug-less draft, which would give details.tsx the wrong
+      // errand-type rule.
+      // Read the query's own data (state-stable across renders) rather than
+      // the per-render `errandTypes` filter result, so this callback keeps a
+      // stable identity.
+      const preselectedType = preselectedTypeId
+        ? errandTypesQ.data?.find(
+            (t) => t.id === preselectedTypeId && t.is_active,
+          )
+        : undefined;
+      if (preselectedType?.slug) {
+        updateDraft({
+          errand_type_id: preselectedType.id,
+          errand_type_slug: preselectedType.slug,
+        });
+        setDraftStep(1);
+        router.push('/(customer)/book/details');
+        return;
+      }
       router.push(
         preselectedTypeId
           ? {
@@ -325,7 +379,7 @@ export default function CustomerHomeScreen() {
           : '/(customer)/book/type',
       );
     },
-    [clearDraft, router],
+    [clearDraft, updateDraft, setDraftStep, errandTypesQ.data, router],
   );
 
   // "Repeat last" / frequently-booked → clone a prior terminal-success
@@ -387,6 +441,33 @@ export default function CustomerHomeScreen() {
     if (!resumeInfo) return;
     router.push(resumeInfo.route as any);
   }, [resumeInfo, router]);
+
+  // A SCHEDULED errand stays `pending` until the server starts matching
+  // (~15 min before its window), so ActiveBookingCard — which maps `pending`
+  // straight to the searching phase — would show "Looking for a runner
+  // nearby…" under a pulsing dot for hours or days on an errand nobody is
+  // even looking at yet. That reads as a stuck search and drives cancellations
+  // and support chats. While we're still outside the match window we swap in
+  // a calm, static card that simply states WHEN it runs; once the window opens
+  // (or a runner is on it) the normal live card takes back over.
+  //
+  // Recomputed per render off the device clock — no timer. A few minutes of
+  // clock skew at the boundary is cosmetic, and the next poll/focus render
+  // corrects it.
+  const scheduledPending = useMemo(() => {
+    if (!isRenderableActiveBooking(activeBooking)) return null;
+    if (activeBooking.status !== 'pending') return null;
+    if (activeBooking.schedule_type !== 'scheduled') return null;
+    if (!activeBooking.scheduled_at) return null;
+    const at = dayjs(activeBooking.scheduled_at);
+    if (!at.isValid()) return null;
+    if (
+      at.subtract(SCHEDULED_MATCH_LEAD_MINUTES, 'minute').isBefore(dayjs())
+    ) {
+      return null;
+    }
+    return { label: formatScheduledLabel(at) };
+  }, [activeBooking]);
 
   // Wrap a raw-Pressable handler with a light impact haptic — these
   // don't get the shared Button's press haptic. Applied to every
@@ -479,7 +560,17 @@ export default function CustomerHomeScreen() {
       label: 'Schedule',
       icon: CalendarClock,
       a11yLabel: 'Schedule an errand for later',
-      onPress: () => startBooking(),
+      // Carry the intent instead of dropping it: the pill used to be a plain
+      // "new errand" start, so the user had to re-declare "later" on step 3.
+      // Seeding schedule_type makes the schedule step open already on
+      // "Scheduled" with the quick-pick chips ready — zero new UI. The write
+      // has to land AFTER startBooking()'s clearDraft() (both are synchronous
+      // zustand sets, so this ordering holds); Continue on that step still
+      // blocks until a time is picked, and the user can toggle back to Now.
+      onPress: () => {
+        startBooking();
+        updateDraft({ schedule_type: 'scheduled' });
+      },
     },
     {
       key: 'help',
@@ -840,18 +931,86 @@ export default function CustomerHomeScreen() {
         {isRenderableActiveBooking(activeBooking) && (
           <View className="mx-5 mt-4" style={hs.activeZone}>
             <Eyebrow className="ml-1 mb-2" color={LightColors.primary}>
-              Your errand
+              {scheduledPending ? 'Scheduled errand' : 'Your errand'}
             </Eyebrow>
-            <ActiveBookingCard
-              booking={activeBooking}
-              onPress={() => {
-                // Warm the tracking fetch on the same tap so the screen's mount
-                // GET coalesces (activeBooking is already the store value, so
-                // the paint is instant regardless). (P2)
-                warmTracking(activeBooking);
-                router.push(`/(customer)/tracking/${activeBooking.id}`);
-              }}
-            />
+            {scheduledPending ? (
+              // Booked for later, not yet being matched — a static calendar
+              // card. No pulsing dot and no journey bar: nothing is moving
+              // yet, and pretending otherwise is what made this confusing.
+              // Same destination as the live card so the tap target is
+              // consistent (tracking owns cancel / details).
+              <Pressable
+                onPress={withLightImpact(() => {
+                  warmTracking(activeBooking);
+                  router.push(`/(customer)/tracking/${activeBooking.id}`);
+                })}
+                accessibilityRole="button"
+                accessibilityLabel={`Scheduled errand: ${
+                  activeBooking.errand_type?.name ?? 'Errand'
+                } on ${scheduledPending.label}. Tap to view details.`}
+                android_ripple={{ color: 'rgba(37,99,235,0.08)' }}
+                // Layout / fill / radius via className — NativeWind drops
+                // those from the style-function form.
+                className="bg-surface rounded-2xl p-4"
+                style={({ pressed }) => [
+                  hs.recentCard,
+                  pressed && hs.cardPressed,
+                ]}
+              >
+                <View className="flex-row items-center">
+                  <View style={hs.scheduledIcon}>
+                    <CalendarClock
+                      size={15}
+                      color={LightColors.primary}
+                      strokeWidth={2}
+                    />
+                  </View>
+                  <Text
+                    className="flex-1 ml-2.5 text-[12px] font-montserrat-bold text-textSecondary"
+                    numberOfLines={1}
+                  >
+                    {activeBooking.errand_type?.name ?? 'Errand'}
+                  </Text>
+                  <Text className="text-[14px] font-inter-semi text-textPrimary">
+                    {formatCurrency(activeBooking.total_amount)}
+                  </Text>
+                </View>
+                <Text
+                  className="text-[16px] font-montserrat-bold text-textPrimary mt-2.5"
+                  numberOfLines={2}
+                >
+                  {scheduledPending.label}
+                </Text>
+                <Text className="text-[12px] font-montserrat text-textSecondary mt-1 leading-[17px]">
+                  We&apos;ll start looking for a runner about{' '}
+                  {SCHEDULED_MATCH_LEAD_MINUTES} minutes before.
+                </Text>
+                <View
+                  className="flex-row items-center mt-3 pt-3"
+                  style={hs.scheduledFooter}
+                >
+                  <Text className="flex-1 text-[12px] font-montserrat-semi text-primary">
+                    View details
+                  </Text>
+                  <ChevronRight
+                    size={16}
+                    color={LightColors.primary}
+                    strokeWidth={2.2}
+                  />
+                </View>
+              </Pressable>
+            ) : (
+              <ActiveBookingCard
+                booking={activeBooking}
+                onPress={() => {
+                  // Warm the tracking fetch on the same tap so the screen's mount
+                  // GET coalesces (activeBooking is already the store value, so
+                  // the paint is instant regardless). (P2)
+                  warmTracking(activeBooking);
+                  router.push(`/(customer)/tracking/${activeBooking.id}`);
+                }}
+              />
+            )}
           </View>
         )}
 
@@ -1376,6 +1535,20 @@ const hs = StyleSheet.create({
   // pass-through prop NativeWind keeps) is applied here.
   recentCard: {
     ...Elevation.sm,
+  },
+  // Calendar glyph chip on the "booked for later" card.
+  scheduledIcon: {
+    width: 28,
+    height: 28,
+    borderRadius: 9,
+    backgroundColor: LightColors.primary50,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  // Hairline above the card's "View details" row.
+  scheduledFooter: {
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: LightColors.divider,
   },
   // "Continue your errand" resume card — subtle lift matching the recent
   // rows. bg / radius / border / layout live in className; only the

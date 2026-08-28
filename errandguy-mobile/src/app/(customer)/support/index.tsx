@@ -1,4 +1,4 @@
-import React, { useCallback, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   View,
   Text,
@@ -37,6 +37,7 @@ import { formatRelativeTime } from '../../../utils/formatDate';
 import { errorMessage } from '../../../utils/errorCatalog';
 import { copy } from '../../../constants/copy';
 import { toast } from '../../../stores/toastStore';
+import { storage } from '../../../utils/storage';
 
 // Ticket status → Badge variant + human label. Mirrors the server's
 // SupportTicket status machine (open → pending → resolved/closed).
@@ -60,6 +61,78 @@ const CATEGORIES: { key: string; label: string }[] = [
   { key: 'safety', label: 'Safety' },
   { key: 'other', label: 'Other' },
 ];
+
+/**
+ * ── Compose draft ──────────────────────────────────────────────────────────
+ * A support ticket is the one thing a user writes when they're already upset,
+ * often long, often interrupted (they leave to screenshot something, check a
+ * booking number, take a call). Losing it to a backgrounded app that Android
+ * reclaimed is the worst possible moment to make someone retype.
+ *
+ * Same idiom as the booking draft (bookingStore): a debounced write of a
+ * {savedAt} envelope, the row REMOVED rather than written empty, and a stale
+ * envelope dropped on hydration. Kept local to this screen because it's the
+ * only compose surface — no store is warranted for three strings.
+ *
+ * Account scoping: the envelope stamps the author's user id and hydration
+ * refuses (and deletes) an envelope belonging to anyone else, so a draft can't
+ * bleed into the next account signed in on the same device.
+ */
+const DRAFT_STORAGE_KEY = '@support_draft_v1';
+/** Coalesce keystrokes so a long message doesn't write on every character. */
+const DRAFT_PERSIST_DEBOUNCE_MS = 250;
+/** Older than this and the context is gone — drop it rather than resurrect it.
+ *  Longer than the booking draft's 24h: an unsent complaint is still valid next
+ *  week, whereas a half-built booking usually isn't. */
+const DRAFT_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
+
+interface PersistedSupportDraft {
+  /** Author — hydration ignores (and deletes) another account's draft. */
+  userId: string;
+  subject: string;
+  category: string;
+  message: string;
+  /** epoch ms */
+  savedAt: number;
+}
+
+let draftPersistTimer: ReturnType<typeof setTimeout> | null = null;
+
+const cancelDraftPersist = () => {
+  if (draftPersistTimer) {
+    clearTimeout(draftPersistTimer);
+    draftPersistTimer = null;
+  }
+};
+
+/** Write (or delete, when the draft is empty) — never throws. */
+const writeDraft = (draft: PersistedSupportDraft) => {
+  if (!draft.subject.trim() && !draft.message.trim()) {
+    void storage.remove(DRAFT_STORAGE_KEY).catch(() => {});
+    return;
+  }
+  void storage.set(DRAFT_STORAGE_KEY, JSON.stringify(draft)).catch(() => {});
+};
+
+const scheduleDraftPersist = (draft: PersistedSupportDraft) => {
+  cancelDraftPersist();
+  draftPersistTimer = setTimeout(() => {
+    draftPersistTimer = null;
+    writeDraft(draft);
+  }, DRAFT_PERSIST_DEBOUNCE_MS);
+};
+
+/** Write the pending draft NOW — used on dismiss, so a kill immediately after
+ *  closing the sheet can't land inside the debounce window. */
+const flushDraftPersist = (draft: PersistedSupportDraft) => {
+  cancelDraftPersist();
+  writeDraft(draft);
+};
+
+const discardDraft = () => {
+  cancelDraftPersist();
+  void storage.remove(DRAFT_STORAGE_KEY).catch(() => {});
+};
 
 function TicketsSkeleton() {
   return (
@@ -93,8 +166,15 @@ export default function SupportTicketsScreen() {
   const [category, setCategory] = useState<string>('general');
   const [message, setMessage] = useState('');
   const [submitting, setSubmitting] = useState(false);
-  // Guards an accidental dismiss of a half-typed ticket.
+  // Guards the EXPLICIT discard of a saved draft (dismissing the sheet keeps it).
   const [discardOpen, setDiscardOpen] = useState(false);
+  // False from the moment the sheet opens until the persisted draft has been
+  // read back — the auto-save effect stays parked until then so an empty
+  // initial render can't delete the very draft we're about to restore.
+  const [draftHydrated, setDraftHydrated] = useState(false);
+  // True when this compose session started from a restored draft — the one
+  // thing worth telling the user, so the pre-filled fields aren't a surprise.
+  const [draftRestored, setDraftRestored] = useState(false);
 
   const ticketsQ = useQuery<SupportTicket[]>(
     ['support', 'tickets', userId],
@@ -119,27 +199,82 @@ export default function SupportTicketsScreen() {
     setSubject('');
     setCategory('general');
     setMessage('');
+    setDraftRestored(false);
   }, []);
 
-  // Tear the sheet down and clear any half-typed draft.
+  // Open the sheet, then restore whatever was left half-typed. Restoring
+  // AFTER the modal is visible keeps opening instant; the functional setters
+  // mean a keystroke that beat the read (practically impossible, but free to
+  // guard) always wins over the stored value.
+  const openCompose = useCallback(() => {
+    setDraftHydrated(false);
+    setDraftRestored(false);
+    setComposeOpen(true);
+    void (async () => {
+      let restored = false;
+      try {
+        const raw = await storage.get(DRAFT_STORAGE_KEY);
+        if (raw) {
+          const d = (JSON.parse(raw) ?? {}) as Partial<PersistedSupportDraft>;
+          const mine = d.userId === userId;
+          const fresh =
+            typeof d.savedAt === 'number' && Date.now() - d.savedAt < DRAFT_MAX_AGE_MS;
+          const hasContent = !!(d.subject?.trim() || d.message?.trim());
+          if (mine && fresh && hasContent) {
+            setSubject((cur) => (cur ? cur : d.subject ?? ''));
+            setMessage((cur) => (cur ? cur : d.message ?? ''));
+            setCategory((cur) => (cur !== 'general' ? cur : d.category || 'general'));
+            restored = true;
+          } else {
+            // Stale, empty, or another account's — drop it rather than leave a
+            // row that can never be restored.
+            void storage.remove(DRAFT_STORAGE_KEY).catch(() => {});
+          }
+        }
+      } catch {
+        // Unreadable / corrupt envelope — compose from scratch, never crash.
+      }
+      setDraftRestored(restored);
+      setDraftHydrated(true);
+    })();
+  }, [userId]);
+
+  // Auto-save while composing. Parked until hydration so the first (empty)
+  // render can't clear the stored draft, and only while the sheet is open so
+  // a submitted/discarded reset never writes a fresh empty envelope.
+  useEffect(() => {
+    if (!composeOpen || !draftHydrated) return;
+    scheduleDraftPersist({
+      userId,
+      subject,
+      category,
+      message,
+      savedAt: Date.now(),
+    });
+  }, [composeOpen, draftHydrated, userId, subject, category, message]);
+
+  // Explicit discard (confirmed): wipe the draft everywhere and close.
   const dismissCompose = useCallback(() => {
+    discardDraft();
     setDiscardOpen(false);
     setComposeOpen(false);
     resetCompose();
   }, [resetCompose]);
 
-  // Attempted dismiss (X, Android back, scrim tap): confirm first when a
-  // draft would be lost, otherwise close straight away.
+  // Attempted dismiss (X, Android back, scrim tap). Nothing is lost any more —
+  // the draft is saved and restored next time — so this closes straight away
+  // instead of interrogating the user. Flush first so a kill in the next
+  // 250ms still keeps what they typed.
   const closeCompose = useCallback(() => {
     if (submitting) return;
-    if (subject.trim() || message.trim()) {
-      setDiscardOpen(true);
-      return;
+    if (draftHydrated) {
+      flushDraftPersist({ userId, subject, category, message, savedAt: Date.now() });
     }
     setComposeOpen(false);
-  }, [submitting, subject, message]);
+  }, [submitting, draftHydrated, userId, subject, category, message]);
 
   const canSubmit = subject.trim().length > 0 && message.trim().length > 0;
+  const hasDraftContent = subject.trim().length > 0 || message.trim().length > 0;
 
   const handleSubmit = useCallback(async () => {
     if (!canSubmit || submitting) return;
@@ -154,6 +289,9 @@ export default function SupportTicketsScreen() {
       Haptics.notificationAsync(
         Haptics.NotificationFeedbackType.Success,
       ).catch(() => {});
+      // Sent — the draft has served its purpose. Clear it before the reset so
+      // a debounced write from the last keystroke can't resurrect it.
+      discardDraft();
       setComposeOpen(false);
       resetCompose();
       ticketsQ.refresh().catch(() => {});
@@ -311,7 +449,7 @@ export default function SupportTicketsScreen() {
               actionLabel="New ticket"
               onAction={() => {
                 Haptics.selectionAsync().catch(() => {});
-                setComposeOpen(true);
+                openCompose();
               }}
             />
           )
@@ -324,7 +462,7 @@ export default function SupportTicketsScreen() {
         <Pressable
           onPress={() => {
             Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
-            setComposeOpen(true);
+            openCompose();
           }}
           accessibilityRole="button"
           accessibilityLabel="New support ticket"
@@ -400,6 +538,16 @@ export default function SupportTicketsScreen() {
                 showsVerticalScrollIndicator={false}
                 contentContainerStyle={{ paddingHorizontal: 20, paddingBottom: 16 }}
               >
+                {/* Restored draft — say so, so pre-filled fields read as
+                    "we kept this for you", not as a stale bug. */}
+                {draftRestored ? (
+                  <View className="bg-surfaceMuted rounded-xl px-3 py-2 mb-3">
+                    <Text className="text-[12px] font-montserrat text-textSecondary">
+                      We kept the draft you started earlier.
+                    </Text>
+                  </View>
+                ) : null}
+
                 <Input
                   label="Subject"
                   value={subject}
@@ -450,6 +598,32 @@ export default function SupportTicketsScreen() {
                       Add a subject and a message to continue.
                     </Text>
                   ) : null}
+                  {/* Closing the sheet no longer throws the text away, so the
+                      only way to lose it is to ask — explicitly, and confirmed. */}
+                  {hasDraftContent ? (
+                    <>
+                      <Text className="text-[11px] font-montserrat text-textTertiary text-center mt-3">
+                        Saved as a draft on this device.
+                      </Text>
+                      <Pressable
+                        onPress={() => {
+                          Haptics.selectionAsync().catch(() => {});
+                          setDiscardOpen(true);
+                        }}
+                        disabled={submitting}
+                        hitSlop={8}
+                        accessibilityRole="button"
+                        accessibilityLabel="Discard draft"
+                        className="items-center py-2 mt-1"
+                      >
+                        {/* dangerDark, not danger: 13px destructive text needs
+                            the dark rung to clear 4.5:1 on the sheet. */}
+                        <Text className="text-[13px] font-montserrat-semi text-dangerDark">
+                          Discard draft
+                        </Text>
+                      </Pressable>
+                    </>
+                  ) : null}
                 </View>
               </ScrollView>
             </View>
@@ -459,8 +633,8 @@ export default function SupportTicketsScreen() {
 
       <ConfirmModal
         visible={discardOpen}
-        title="Discard this ticket?"
-        message="Your subject and message won't be saved."
+        title="Discard this draft?"
+        message="Your subject and message will be deleted from this device."
         confirmLabel="Discard"
         cancelLabel="Keep editing"
         destructive

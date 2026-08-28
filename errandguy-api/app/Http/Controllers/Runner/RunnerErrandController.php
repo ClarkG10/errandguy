@@ -84,9 +84,43 @@ class RunnerErrandController extends Controller
             ->orderByDesc('created_at')
             ->first();
 
+        if ($booking) {
+            $this->attachPickupDistance($booking, $request->user());
+        }
+
         return response()->json([
             'data' => $booking ? new BookingResource($booking) : null,
         ]);
+    }
+
+    /**
+     * Stamp `distance_to_pickup_km` on a matched OFFER so the runner's offer
+     * modal can show how far the pickup is on its very first frame — before any
+     * live GPS fix exists (the app's client-side line renders nothing until
+     * then). Only for `matched`: once the errand is accepted the app has a live
+     * fix and its own number is the authoritative one, and skipping the lookup
+     * keeps the 30s active-errand poll at its current query count.
+     *
+     * Measured from the runner profile's last ping, so it can be a few minutes
+     * stale — treat it as approximate in the UI.
+     */
+    private function attachPickupDistance(Booking $booking, $user): void
+    {
+        if ($booking->status !== 'matched' || ! $booking->pickup_lat || ! $booking->pickup_lng) {
+            return;
+        }
+
+        $profile = $user->runnerProfile;
+        if (! $profile || ! $profile->current_lat || ! $profile->current_lng) {
+            return;
+        }
+
+        $booking->setAttribute('distance_to_pickup_km', round($this->haversineDistance(
+            (float) $profile->current_lat,
+            (float) $profile->current_lng,
+            (float) $booking->pickup_lat,
+            (float) $booking->pickup_lng,
+        ), 1));
     }
 
     /**
@@ -116,6 +150,10 @@ class RunnerErrandController extends Controller
                 'message' => 'Errand not found',
             ], 404);
         }
+
+        // Deep links from the offer push land here, so the same approximate
+        // pickup distance the feed shows must be available on this payload too.
+        $this->attachPickupDistance($booking, $request->user());
 
         return response()->json([
             'data' => new BookingResource($booking),
@@ -323,6 +361,13 @@ class RunnerErrandController extends Controller
         $query = Booking::with([
                 'errandType',
                 'customer:id,full_name,avatar_url,role,avg_rating,total_ratings,created_at',
+                // BookingResource emits `stops` only when the relation is
+                // loaded, so without this a multi-stop errand looked like a
+                // single drop in the offer feed and the runner discovered the
+                // extra destinations only after accepting. show()/current()
+                // already load it — this exposes nothing a matched runner
+                // cannot already see.
+                'stops',
             ])
             ->where('status', 'pending')
             ->where('pricing_mode', 'negotiate')
@@ -397,11 +442,30 @@ class RunnerErrandController extends Controller
                     ? (float) $profile->working_area_radius / 1000
                     : 10.0;
 
-                return $distance <= $maxRadius;
+                if ($distance > $maxRadius) {
+                    return false;
+                }
+
+                // Keep the distance we just paid to compute — it used to be
+                // discarded, forcing the app to recompute it client-side (and
+                // render nothing at all until a live GPS fix landed). Surfaced
+                // as `distance_to_pickup_km` and used as the feed's sort key.
+                // Mirrors MatchingService's setAttribute('distance_km') idiom.
+                $booking->setAttribute('distance_to_pickup_km', round($distance, 1));
+
+                return true;
             }
 
             return true;
-        })->values();
+        })
+            // Nearest-first: the offer feed was ordered by recency, so the
+            // closest (and usually best) job could sit at the bottom of the
+            // list while the runner manually compared cards. Bookings with no
+            // computable distance (runner has no GPS fix on file) sort last;
+            // PHP's sort is stable, so ties keep the newest-first order from
+            // the query above.
+            ->sortBy(fn (Booking $booking) => $booking->distance_to_pickup_km ?? INF)
+            ->values();
 
         return response()->json([
             'data' => BookingResource::collection($filtered),

@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { View, Text, Pressable, StyleSheet, Animated, ScrollView, useWindowDimensions } from 'react-native';
+import { View, Text, Pressable, StyleSheet, Animated, ScrollView, useWindowDimensions, Platform } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import {
@@ -7,13 +7,16 @@ import {
   ArrowUpRight,
   ArrowUp,
   ArrowUpLeft,
+  ChevronRight,
   CornerUpRight,
   CornerUpLeft,
+  ExternalLink,
   Flag,
   Locate,
   AlertTriangle,
   MapPin,
   Gauge,
+  Navigation,
   Volume2,
   VolumeX,
 } from 'lucide-react-native';
@@ -30,11 +33,19 @@ import { runnerService } from '../../../services/runner.service';
 import { routeService, type NavigationRoute, type NavigationStep } from '../../../services/route.service';
 import { ExpandableSheet } from '../../../components/ui/ExpandableSheet';
 import { ConfirmModal } from '../../../components/ui/ConfirmModal';
+import { FloatingModal } from '../../../components/ui/FloatingModal';
 import { getNextStatus } from '../../../components/runner/StatusActionButton';
 import { getErrandTypeRule } from '../../../constants/errandTypeRules';
+import { STATUS_LABELS } from '../../../constants/statusLabels';
 import { toast } from '../../../stores/toastStore';
 import type { Booking, BookingStatus } from '../../../types';
 import { LightColors, Elevation } from '../../../constants/colors';
+import {
+  getPreferredNavApp,
+  openExternalNav,
+  setPreferredNavApp,
+  type ExternalNavApp,
+} from '../../../utils/externalNav';
 
 /**
  * Statuses where the runner is travelling toward the pickup pin.
@@ -215,6 +226,57 @@ export default function NavigateScreen() {
     ? booking?.pickup_address ?? 'Pickup'
     : booking?.dropoff_address ?? 'Dropoff';
 
+  // ── External navigation handoff ────────────────────────────────────────
+  // In-app turn-by-turn is the primary experience, but it can struggle (route
+  // unavailable, a road it doesn't know) and plenty of PH riders simply drive
+  // with Waze. Same helper + remembered preference the errand screen uses, so
+  // a runner who picked once never sees the chooser again (long-press reopens).
+  const [showNavPicker, setShowNavPicker] = useState(false);
+  const [preferredNavApp, setPreferredNavAppState] =
+    useState<ExternalNavApp | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    getPreferredNavApp()
+      .then((app) => {
+        if (!cancelled) setPreferredNavAppState(app);
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const launchExternalNav = useCallback(
+    async (app: ExternalNavApp, remember: boolean) => {
+      if (!destination) {
+        toast.error('Address coordinates are missing');
+        return;
+      }
+      if (remember) {
+        setPreferredNavAppState(app);
+        void setPreferredNavApp(app);
+      }
+      const opened = await openExternalNav(app, destination.lat, destination.lng);
+      if (!opened) {
+        toast.error(app === 'waze' ? 'Could not open Waze' : 'Could not open maps');
+      }
+    },
+    [destination],
+  );
+
+  const handleExternalNavPress = useCallback(() => {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
+    if (!destination) {
+      toast.error('Address coordinates are missing');
+      return;
+    }
+    if (preferredNavApp) {
+      void launchExternalNav(preferredNavApp, false);
+      return;
+    }
+    setShowNavPicker(true);
+  }, [destination, preferredNavApp, launchExternalNav]);
+
   const origin = useMemo(() => {
     if (!currentLocation) return null;
     return { lat: currentLocation.lat, lng: currentLocation.lng };
@@ -381,7 +443,14 @@ export default function NavigateScreen() {
     const next = getNextStatus(booking.status, booking.errand_type?.slug);
     const isArrivalStep =
       next === 'arrived_at_pickup' || next === 'arrived_at_dropoff';
-    if (!next || !isArrivalStep) {
+    // A runner who never tapped "Head to pickup" / "Start delivery" reaches the
+    // pin with the travel leg still un-announced — the customer sees a stale
+    // status and this confirm used to do nothing but bounce back. Advancing the
+    // TRAVEL leg is the same one-step, runner-confirmed transition (the backend
+    // rejects skips outright); the arrival confirm then follows on the next tap.
+    // Nothing is ever auto-advanced.
+    const isTravelStep = next === 'heading_to_pickup' || next === 'in_transit';
+    if (!next || (!isArrivalStep && !isTravelStep)) {
       setShowArrivedPrompt(false);
       router.back();
       return;
@@ -405,6 +474,13 @@ export default function NavigateScreen() {
       setBooking((b) => (b ? { ...b, status: next as BookingStatus } : b));
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
       setShowArrivedPrompt(false);
+      if (isTravelStep) {
+        // Stay on the navigation view — the "I've Arrived" button is still
+        // right there for the runner's own arrival confirm.
+        setArriving(false);
+        toast.success('Status updated — tap “I’ve Arrived” to confirm.');
+        return;
+      }
       router.back();
     } catch {
       setArriving(false);
@@ -469,6 +545,15 @@ export default function NavigateScreen() {
   // Approaching destination cue.
   const arrivedSoon =
     remainingDistance != null && remainingDistance < 80;
+
+  // The runner reached the pin without ever announcing the travel leg, so the
+  // arrival confirm has to update that leg first (one step, still their tap).
+  const nextStatusOnArrival = booking
+    ? getNextStatus(booking.status, booking.errand_type?.slug)
+    : null;
+  const arrivalNeedsDeparture =
+    nextStatusOnArrival === 'heading_to_pickup' ||
+    nextStatusOnArrival === 'in_transit';
 
   // Greeting/intro overlay \u2014 a brief contextual welcome that fades
   // in when the route resolves and auto-dismisses after ~3.5s. Gives
@@ -713,14 +798,45 @@ export default function NavigateScreen() {
           </Pressable>
         </View>
 
-        {/* Destination subtitle \u2014 keeps the runner aware of where they're heading. */}
-        <View className="mx-3 mt-1.5 rounded-xl bg-black/80 px-3 py-1.5 self-start">
-          <Text
-            className="text-white text-[12px] font-montserrat"
-            numberOfLines={1}
+        {/* Destination subtitle \u2014 keeps the runner aware of where they're
+            heading \u2014 plus a one-tap handoff to the runner's own nav app for
+            when this screen's route is unavailable or they simply prefer Waze. */}
+        <View
+          className="mx-3 mt-1.5 flex-row items-center"
+          pointerEvents="box-none"
+        >
+          <View className="rounded-xl bg-black/80 px-3 py-1.5 flex-shrink">
+            <Text
+              className="text-white text-[12px] font-montserrat"
+              numberOfLines={1}
+            >
+              {inPickupPhase ? 'Pickup' : 'Dropoff'}: {destLabel}
+            </Text>
+          </View>
+          <Pressable
+            onPress={handleExternalNavPress}
+            onLongPress={() => {
+              // Long-press always reopens the chooser, so a remembered
+              // preference is never a one-way door.
+              Haptics.selectionAsync().catch(() => {});
+              setShowNavPicker(true);
+            }}
+            hitSlop={8}
+            accessibilityRole="button"
+            accessibilityLabel="Open in another navigation app"
+            accessibilityHint="Long press to choose between Waze and Maps"
+            className="ml-2 rounded-xl bg-black/80 px-3 py-1.5 flex-row items-center"
+            style={({ pressed }) => ({ opacity: pressed ? 0.75 : 1 })}
           >
-            {inPickupPhase ? 'Pickup' : 'Dropoff'}: {destLabel}
-          </Text>
+            <ExternalLink size={13} color={LightColors.textInverse} strokeWidth={2} />
+            <Text className="text-white text-[12px] font-montserrat-semi ml-1.5">
+              {preferredNavApp === 'waze'
+                ? 'Waze'
+                : preferredNavApp === 'maps'
+                ? 'Maps'
+                : 'Other app'}
+            </Text>
+          </Pressable>
         </View>
       </SafeAreaView>
 
@@ -954,20 +1070,81 @@ export default function NavigateScreen() {
       </ExpandableSheet>
 
       {/* Single-tap arrival confirm — advances the status in place so the
-          runner doesn't have to bounce back to the errand screen. */}
+          runner doesn't have to bounce back to the errand screen. When the
+          travel leg was never announced the copy says so plainly and this tap
+          updates THAT leg; arrival stays a separate, deliberate confirm. */}
       <ConfirmModal
         visible={showArrivedPrompt}
-        title="You've arrived — mark arrived?"
-        message={`Let the customer know you've reached the ${
-          inPickupPhase ? 'pickup' : 'drop-off'
-        }. You can capture any required photo or PIN on the next step.`}
-        confirmLabel="Mark arrived"
-        confirmLoadingLabel="Marking…"
+        title={
+          arrivalNeedsDeparture
+            ? `You're at the ${inPickupPhase ? 'pickup' : 'drop-off'}`
+            : "You've arrived — mark arrived?"
+        }
+        message={
+          arrivalNeedsDeparture
+            ? `Your status still says “${
+                (booking && STATUS_LABELS[booking.status]) ?? booking?.status ?? ''
+              }”, so the customer can't see you moving. Update it now — then confirm your arrival.`
+            : `Let the customer know you've reached the ${
+                inPickupPhase ? 'pickup' : 'drop-off'
+              }. You can capture any required photo or PIN on the next step.`
+        }
+        confirmLabel={arrivalNeedsDeparture ? 'Update status' : 'Mark arrived'}
+        confirmLoadingLabel={arrivalNeedsDeparture ? 'Updating…' : 'Marking…'}
         cancelLabel="Not yet"
         loading={arriving}
         onConfirm={handleConfirmArrived}
         onCancel={() => setShowArrivedPrompt(false)}
       />
+
+      {/* External navigation chooser — mirrors the errand screen's sheet. */}
+      <FloatingModal
+        isVisible={showNavPicker}
+        onClose={() => setShowNavPicker(false)}
+        title="Navigate with"
+      >
+        {(
+          [
+            {
+              app: 'waze' as ExternalNavApp,
+              label: 'Waze',
+              hint: 'Live traffic + hazard reports',
+            },
+            {
+              app: 'maps' as ExternalNavApp,
+              label: Platform.OS === 'ios' ? 'Apple Maps' : 'Google Maps',
+              hint: 'Your phone’s built-in maps',
+            },
+          ]
+        ).map((opt) => (
+          <Pressable
+            key={opt.app}
+            onPress={() => {
+              Haptics.selectionAsync().catch(() => {});
+              setShowNavPicker(false);
+              void launchExternalNav(opt.app, true);
+            }}
+            accessibilityRole="button"
+            accessibilityLabel={`Navigate with ${opt.label}`}
+            className="flex-row items-center rounded-xl border border-divider bg-surfaceMuted px-4 py-3 mb-2.5"
+          >
+            <Navigation size={17} color={LightColors.primary} strokeWidth={2} />
+            <View className="flex-1 ml-3">
+              <Text className="text-[14px] font-montserrat-bold text-textPrimary">
+                {opt.label}
+              </Text>
+              <Text className="text-[11px] font-montserrat text-textSecondary mt-0.5">
+                {opt.hint}
+              </Text>
+            </View>
+            <ChevronRight size={16} color={LightColors.textTertiary} />
+          </Pressable>
+        ))}
+        <Text className="text-[11px] font-montserrat text-textTertiary mt-1 leading-[15px]">
+          We’ll remember your choice. Live tracking pauses while you’re outside
+          ErrandGuy — come back here to update your status.
+        </Text>
+      </FloatingModal>
     </View>
   );
 }

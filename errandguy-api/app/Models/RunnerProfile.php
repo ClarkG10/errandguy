@@ -69,6 +69,40 @@ class RunnerProfile extends Model
         return $value ? Crypt::decryptString($value) : null;
     }
 
+    /**
+     * Last 4 digits of the saved bank account — computed at read, never stored.
+     *
+     * The full number is encrypted at rest and $hidden, so the payout screen's
+     * account field renders empty forever and runners cannot tell whether an
+     * account is already on file (they re-type it "just in case" every visit,
+     * and can't spot a typo in the one they saved). This is the smallest honest
+     * confirmation: "•••• 1234 on file". NOTHING wider than the last 4 digits
+     * is ever exposed, and this is not $appends'd — RunnerProfileResource emits
+     * it only for the owning runner.
+     */
+    public function getBankAccountLast4Attribute(): ?string
+    {
+        try {
+            $number = $this->bank_account_number;
+        } catch (\Throwable) {
+            // A legacy row written before the Crypt setter holds plaintext and
+            // throws on decrypt. Read as "nothing on file" rather than a 500.
+            return null;
+        }
+
+        $digits = preg_replace('/\D/', '', (string) $number) ?? '';
+
+        return strlen($digits) >= 4 ? substr($digits, -4) : null;
+    }
+
+    /** True when a payout could actually be sent to the saved bank details. */
+    public function hasStoredBankAccountNumber(): bool
+    {
+        // Read the RAW column so a legacy/undecryptable value still counts as
+        // "on file" (the accessor would throw / mask it as absent).
+        return filled($this->getRawOriginal('bank_account_number'));
+    }
+
     public function user(): BelongsTo
     {
         return $this->belongsTo(User::class);

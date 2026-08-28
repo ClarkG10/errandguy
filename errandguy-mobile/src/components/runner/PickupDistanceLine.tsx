@@ -10,6 +10,15 @@ interface PickupDistanceLineProps {
   booking: Booking;
   /** Optional tone override for on-dark surfaces (e.g. the slate payout box). */
   variant?: 'default' | 'onDark';
+  /**
+   * Server-measured km from the runner's last GPS ping to this pickup
+   * (`distance_to_pickup_km`, attached by RunnerErrandController to the offer
+   * feed and the matched offer). Used ONLY when there is no live fix yet —
+   * cold start, GPS still warming — so an offer card always states how far
+   * away the job is instead of showing nothing at the exact moment the runner
+   * is deciding. Labelled "approx." because the ping can be minutes old.
+   */
+  fallbackKm?: number | null;
 }
 
 /**
@@ -24,7 +33,11 @@ interface PickupDistanceLineProps {
  * Renders nothing when the runner's location is unknown or the pickup has
  * no coordinate — a graceful hide, never a "0 m" or "-- away" placeholder.
  */
-export function PickupDistanceLine({ booking, variant = 'default' }: PickupDistanceLineProps) {
+export function PickupDistanceLine({
+  booking,
+  variant = 'default',
+  fallbackKm = null,
+}: PickupDistanceLineProps) {
   const currentLocation = useLocationStore((s) => s.currentLocation);
 
   const destination =
@@ -34,16 +47,24 @@ export function PickupDistanceLine({ booking, variant = 'default' }: PickupDista
 
   const { distanceMeters, minutes } = useEta(currentLocation, destination);
 
-  // No live location (or no pickup coord) → hide entirely.
-  if (distanceMeters == null) return null;
+  const hasLiveFix = distanceMeters != null;
+  const hasFallback = fallbackKm != null && Number.isFinite(fallbackKm) && fallbackKm > 0;
 
-  const distanceLabel =
-    distanceMeters < 950
-      ? `${Math.max(1, Math.round(distanceMeters / 10) * 10)} m`
-      : `${(distanceMeters / 1000).toFixed(1)} km`;
+  // No live location (or no pickup coord) AND no server figure → hide
+  // entirely, never a "0 m" / "-- away" placeholder.
+  if (!hasLiveFix && !hasFallback) return null;
 
-  const etaLabel = minutes != null ? ` · ~${minutes} min away` : '';
-  const label = `Pickup ${distanceLabel}${etaLabel}`;
+  const distanceLabel = hasLiveFix
+    ? distanceMeters! < 950
+      ? `${Math.max(1, Math.round(distanceMeters! / 10) * 10)} m`
+      : `${(distanceMeters! / 1000).toFixed(1)} km`
+    : `${(fallbackKm as number).toFixed(1)} km`;
+
+  const etaLabel = hasLiveFix && minutes != null ? ` · ~${minutes} min away` : '';
+  // Only the SERVER figure is hedged — the live client fix is exact.
+  const label = hasLiveFix
+    ? `Pickup ${distanceLabel}${etaLabel}`
+    : `Pickup approx. ${distanceLabel} away`;
 
   const onDark = variant === 'onDark';
   const iconColor = onDark ? LightColors.textInverse : LightColors.primary;
@@ -55,9 +76,11 @@ export function PickupDistanceLine({ booking, variant = 'default' }: PickupDista
       accessible
       accessibilityRole="text"
       accessibilityLabel={
-        minutes != null
-          ? `Pickup is ${distanceLabel} away, about ${minutes} minutes`
-          : `Pickup is ${distanceLabel} away`
+        !hasLiveFix
+          ? `Pickup is about ${distanceLabel} away`
+          : minutes != null
+            ? `Pickup is ${distanceLabel} away, about ${minutes} minutes`
+            : `Pickup is ${distanceLabel} away`
       }
     >
       <LocateFixed size={13} color={iconColor} strokeWidth={2} />

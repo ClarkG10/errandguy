@@ -48,6 +48,56 @@ class BookingService
     }
 
     /**
+     * The instant the server stops honouring a matched runner's accept:
+     * matched_at + `matched_acceptance_timeout_seconds`. This is the exact
+     * cutoff {@see \App\Jobs\ExpireStaleMatchesJob} enforces (it re-matches a
+     * `matched` fixed booking whose matched_at is older than that window), so
+     * the runner's offer countdown must be anchored here rather than guessed
+     * client-side. Shared by BookingResource (`accept_deadline`) and
+     * MatchRunnerJob's offer push so the two can never drift.
+     *
+     * Returns an ISO8601 string, or null when the booking was never matched.
+     */
+    public static function matchAcceptDeadline(mixed $matchedAt): ?string
+    {
+        if (! $matchedAt) {
+            return null;
+        }
+
+        $seconds = (int) \App\Models\SystemConfig::getValue('matched_acceptance_timeout_seconds', '90');
+
+        return \Illuminate\Support\Carbon::parse($matchedAt)
+            ->addSeconds(max(1, $seconds))
+            ->toIso8601String();
+    }
+
+    /**
+     * Why a customer-initiated retry-match would be refused for this booking,
+     * or null when it is eligible. Single source of truth shared by
+     * BookingController::retryMatch (which re-evaluates it under a row lock)
+     * and BookingResource's advisory `can_retry_match` flag, so the app never
+     * offers a "Try again" button that is guaranteed to 409.
+     *
+     *  - 'conflict' : already matched / assigned / not in a retryable state
+     *  - 'refunded' : money was already returned (or never collected for a
+     *                 non-cash charge) — reviving it would run the errand for
+     *                 free. The customer must rebook instead (BOOK-1).
+     */
+    public static function retryBlockReason(Booking $booking): ?string
+    {
+        if ($booking->runner_id !== null
+            || ! in_array($booking->status, ['pending', 'no_runner', 'cancelled'], true)) {
+            return 'conflict';
+        }
+
+        $moneyReturned = $booking->payment_status === 'refunded'
+            || ($booking->payment_method !== 'cash'
+                && in_array($booking->payment_status, ['failed', 'expired'], true));
+
+        return $moneyReturned ? 'refunded' : null;
+    }
+
+    /**
      * Log a booking status change.
      */
     public function logStatusChange(

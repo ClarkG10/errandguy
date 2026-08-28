@@ -87,6 +87,10 @@ class DisputeTicketsTable
                     ->schema([
                         Textarea::make('resolution')
                             ->required()
+                            // The reporter now SEES this text (truncated) in their
+                            // resolution push — write it for them, not for the
+                            // audit log. Mirrors the KYC rejection-reason pattern.
+                            ->helperText('Shown to the reporter in their notification — write it for them.')
                             ->maxLength(1000),
                     ])
                     ->action(function (array $data, $record): void {
@@ -96,7 +100,16 @@ class DisputeTicketsTable
                             'resolved_by' => auth('admin')->id(),
                             'resolved_at' => now(),
                         ]);
-                        \App\Jobs\SendPushJob::dispatch($record->reported_by, 'Dispute Resolved', 'Your dispute has been resolved.');
+                        // The old push said only "Your dispute has been resolved."
+                        // — a dead end, since no customer/runner endpoint can read
+                        // a dispute back. Carry the outcome IN the notification:
+                        // truncated into the body, full text in the data payload.
+                        \App\Jobs\SendPushJob::dispatch(
+                            $record->reported_by,
+                            'Dispute Resolved',
+                            self::resolutionBody($data['resolution']),
+                            self::resolutionData($record, $data['resolution']),
+                        );
                         AdminNotify::success('Dispute resolved', $record, [
                             'Ticket' => $record->id,
                             'Booking' => $record->booking?->booking_number,
@@ -158,7 +171,38 @@ class DisputeTicketsTable
                                 $payment->customer_id,
                                 'Refund issued',
                                 '₱'.number_format((float) $payment->amount, 2).' was refunded to your ErrandGuy wallet after your dispute was resolved.',
+                                array_merge(
+                                    // The resolution note is written FOR the
+                                    // reporter ("write it for them", per the
+                                    // field's helper text). Attach it only when
+                                    // the refunded customer IS the reporter —
+                                    // otherwise a note addressed to the runner
+                                    // who complained would be delivered verbatim
+                                    // to the customer they complained about.
+                                    $record->reported_by === $payment->customer_id
+                                        ? self::resolutionData($record, $data['resolution'])
+                                        : ['dispute_id' => $record->id, 'booking_id' => $record->booking_id],
+                                    [
+                                        'type' => 'payment',
+                                        'refund_amount' => round((float) $payment->amount, 2),
+                                        'refunded_to' => 'wallet',
+                                    ],
+                                ),
                             );
+
+                            // When the REPORTER is not the refunded customer (a
+                            // runner reported it), they previously received
+                            // nothing at all — their case just went quiet. Give
+                            // them the same resolution notice the plain resolve
+                            // action sends.
+                            if ($record->reported_by && $record->reported_by !== $payment->customer_id) {
+                                \App\Jobs\SendPushJob::dispatch(
+                                    $record->reported_by,
+                                    'Dispute Resolved',
+                                    self::resolutionBody($data['resolution']),
+                                    self::resolutionData($record, $data['resolution']),
+                                );
+                            }
 
                             AdminNotify::success('Dispute resolved + refunded', $record, [
                                 'Ticket' => $record->id,
@@ -184,11 +228,63 @@ class DisputeTicketsTable
                         && (auth('admin')->user()?->canHandleSupport() ?? false))
                     ->action(function ($record): void {
                         $record->update(['status' => 'escalated']);
+                        // Escalation used to be silent to the reporter, so a case
+                        // that was in fact still moving looked abandoned. Tell
+                        // them it's alive. Fires only on a real transition (the
+                        // action is hidden once already escalated).
+                        if ($record->reported_by) {
+                            \App\Jobs\SendPushJob::dispatch(
+                                $record->reported_by,
+                                'Dispute Escalated',
+                                'Your report is being reviewed by a senior specialist. We’ll notify you as soon as it’s resolved.',
+                                [
+                                    'type' => 'system',
+                                    'dispute_id' => $record->id,
+                                    'booking_id' => $record->booking_id,
+                                    'dispute_status' => 'escalated',
+                                ],
+                            );
+                        }
                         AdminNotify::success('Dispute escalated', $record, [
                             'Ticket' => $record->id,
                             'Booking' => $record->booking?->booking_number,
                         ], audit: 'dispute.escalated', note: 'It has been flagged for senior review.');
                     }),
             ]);
+    }
+
+    /**
+     * User-facing body for a dispute resolution: the admin's own words, capped so
+     * a 1000-char note doesn't get silently clipped by the OS notification
+     * shade. The FULL text travels in the data payload (see resolutionData).
+     */
+    private static function resolutionBody(string $resolution): string
+    {
+        $resolution = trim(preg_replace('/\s+/', ' ', $resolution) ?? '');
+
+        if ($resolution === '') {
+            return 'Your dispute has been resolved.';
+        }
+
+        return 'Your dispute has been resolved: '.\Illuminate\Support\Str::limit($resolution, 150);
+    }
+
+    /**
+     * Data payload for a dispute-resolution notification. Additive only: the
+     * full resolution text plus the ids the app needs to open the related
+     * errand. `type: 'system'` matches how the dispute pushes are already
+     * classified in the app's notification inbox.
+     *
+     * @return array<string, mixed>
+     */
+    private static function resolutionData(DisputeTicket $ticket, string $resolution): array
+    {
+        return [
+            'type' => 'system',
+            'dispute_id' => $ticket->id,
+            'booking_id' => $ticket->booking_id,
+            'dispute_status' => 'resolved',
+            'resolution' => $resolution,
+        ];
     }
 }

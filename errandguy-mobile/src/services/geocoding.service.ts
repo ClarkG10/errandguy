@@ -22,6 +22,16 @@ function quantize(n: number): string {
   return n.toFixed(4);
 }
 
+/**
+ * True for the bare "14.123456, 121.123456" label `reverse()` falls back to
+ * when HERE is unreachable or has no address for the point. Confirmed pins now
+ * feed the recents list, so this keeps an unresolved coordinate pair out of it —
+ * "Recent: 14.123456, 121.123456" is a shortcut nobody can read.
+ */
+export function isCoordinateLabel(placeName: string): boolean {
+  return /^\s*-?\d+(\.\d+)?\s*,\s*-?\d+(\.\d+)?\s*$/.test(placeName ?? '');
+}
+
 export const geocodingService = {
   /** Reverse a coordinate to a human-readable place name. */
   async reverse(lng: number, lat: number): Promise<string> {
@@ -139,6 +149,9 @@ export const geocodingService = {
 
   async addRecent(place: PlaceFeature): Promise<void> {
     if (!place?.place_name || !Array.isArray(place.center)) return;
+    if (place.center.length !== 2) return;
+    if (!Number.isFinite(place.center[0]) || !Number.isFinite(place.center[1])) return;
+    if (isCoordinateLabel(place.place_name)) return;
     try {
       const existing = await this.getRecent(RECENT_PLACES_CAP);
       const key = `${quantize(place.center[0])},${quantize(place.center[1])}`;

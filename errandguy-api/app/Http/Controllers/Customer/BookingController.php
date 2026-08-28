@@ -1095,12 +1095,16 @@ class BookingController extends Controller
         $outcome = DB::transaction(function () use ($booking, $request, $step, $radius) {
             $locked = Booking::whereKey($booking->id)->lockForUpdate()->first();
 
-            if (! $locked
-                || $locked->runner_id !== null
-                || ! in_array($locked->status, ['pending', 'no_runner', 'cancelled'], true)) {
+            if (! $locked) {
                 return 'conflict';
             }
 
+            // Eligibility (state + BOOK-1 money guard) is evaluated by the shared
+            // BookingService::retryBlockReason so the advisory `can_retry_match`
+            // flag on BookingResource can never disagree with what this endpoint
+            // actually allows. Re-evaluated HERE, under the row lock, so a racing
+            // retry / a match that just landed still loses.
+            //
             // BOOK-1: never revive a booking whose money was already returned to
             // the customer (refunded on cancel/auto-cancel) or was never
             // collected for a non-cash charge (failed/expired). Reviving it would
@@ -1108,11 +1112,9 @@ class BookingController extends Controller
             // is paid by the platform on completion. Cash bookings hold no upfront
             // money (collected in person on completion), so they can always retry;
             // the customer must rebook instead, which creates a fresh charge.
-            $moneyReturned = $locked->payment_status === 'refunded'
-                || ($locked->payment_method !== 'cash'
-                    && in_array($locked->payment_status, ['failed', 'expired'], true));
-            if ($moneyReturned) {
-                return 'refunded';
+            $blocked = \App\Services\BookingService::retryBlockReason($locked);
+            if ($blocked !== null) {
+                return $blocked;
             }
 
             $locked->update([

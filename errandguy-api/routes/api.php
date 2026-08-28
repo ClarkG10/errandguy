@@ -130,6 +130,13 @@ Route::prefix('v1')->group(function () {
             Route::post('/referral/apply', [ReferralController::class, 'apply'])->middleware('throttle:10,1');
         });
 
+        // Customer Home in ONE round trip (errand types + active booking +
+        // recent bookings + wallet balance + promos + referral). Each section
+        // is byte-identical to the individual endpoint that still serves it,
+        // so the app seeds its existing caches from this and keeps the
+        // per-resource routes as revalidation paths. (A7)
+        Route::middleware(['role:customer'])->get('/customer/home', [\App\Http\Controllers\Customer\HomeController::class, 'show']);
+
         // Customer booking routes
         Route::middleware(['role:customer'])->prefix('bookings')->group(function () {
             Route::get('/', [BookingController::class, 'index']);

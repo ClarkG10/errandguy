@@ -1,7 +1,8 @@
 import api from './api';
 import type { AxiosRequestConfig } from 'axios';
 import { invalidateQuery } from '../hooks/useQuery';
-import type { SavedAddress, TrustedContact } from '../types';
+import type { Promo } from './config.service';
+import type { Booking, ErrandType, SavedAddress, TrustedContact } from '../types';
 
 /** Shape of GET /user/referral → `data` (ReferralController::show). */
 export interface ReferralInfo {
@@ -13,6 +14,40 @@ export interface ReferralInfo {
     rewarded: number;
   };
   total_earned: number;
+}
+
+/**
+ * Shape of GET /customer/home → `data` (Customer\HomeController::show).
+ *
+ * The customer Home dashboard in ONE authenticated round trip. Each section is
+ * produced server-side by invoking the very controller method that serves the
+ * individual route and unwrapping its `data` key, so every section is
+ * byte-identical to what the endpoint it stands in for returns today:
+ *
+ *   errand_types    ← GET /errand-types          (shares the same SWR entry)
+ *   active_booking  ← GET /bookings/active
+ *   recent_bookings ← GET /bookings?per_page=5   (the data ARRAY, no paginator meta)
+ *   wallet_balance  ← GET /wallet/balance → data.balance
+ *   promos          ← GET /promos
+ *   referral        ← GET /user/referral
+ *
+ * That parity is the whole point: `preload.service` seeds the existing
+ * per-section useQuery cache keys straight from this payload, so any drift
+ * would silently poison them. The individual endpoints stay as each screen's
+ * revalidation path.
+ */
+export interface CustomerHomeAggregate {
+  errand_types: ErrandType[];
+  active_booking: Booking | null;
+  recent_bookings: Booking[];
+  /**
+   * The bare NUMBER, not the `{ balance }` object — the app's
+   * ['wallet','balance',userId] cache key holds a plain number, and seeding
+   * the object there once rendered "₱[object Object]" on cold start.
+   */
+  wallet_balance: number;
+  promos: Promo[];
+  referral: ReferralInfo | null;
 }
 
 const invalidateProfile = () => invalidateQuery(['user', 'profile']);
@@ -111,6 +146,17 @@ export const userService = {
     const p = api.delete(`/user/trusted-contacts/${id}`);
     p.then(invalidateContacts).catch(() => {});
     return p;
+  },
+
+  // ── Home aggregate ────────────────────────────────────────────────
+  // GET /customer/home — all six above-the-fold Home sections in one
+  // authenticated round trip instead of six (see CustomerHomeAggregate).
+  // Takes no parameters; the server ignores/strips any that are sent.
+  // Silent so the cold-start warm-up never flashes the top progress bar,
+  // and micro-cached briefly so a warm-up + an in-race screen fetch
+  // coalesce rather than paying the round trip twice.
+  getCustomerHome() {
+    return api.get('/customer/home', { cacheTtlMs: 30_000, silent: true });
   },
 
   // ── Referral program ──────────────────────────────────────────────

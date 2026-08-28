@@ -14,6 +14,8 @@ import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context'
 import * as Haptics from 'expo-haptics';
 import { useBookingStore } from '../../../stores/bookingStore';
 import { bookingService } from '../../../services/booking.service';
+import { queueable } from '../../../services/mutationQueue';
+import { runOptimistic } from '../../../utils/optimistic';
 import { Avatar } from '../../../components/ui/Avatar';
 import { Card } from '../../../components/ui/Card';
 import { RatingStars } from '../../../components/ui/RatingStars';
@@ -169,36 +171,45 @@ export default function RateScreen() {
     // commits, and reviewBooking is a plain non-idempotent POST.
     if (!bookingId || rating === 0 || isSubmitting) return;
     setIsSubmitting(true);
-    try {
-      await bookingService.reviewBooking(bookingId, {
-        rating,
-        comment: comment.trim() || undefined,
-      });
-      // The overlay is purely visual — announce the outcome so screen
-      // readers get a confirmation before the route swaps home.
-      AccessibilityInfo.announceForAccessibility(
-        'Review submitted. Thanks for the feedback!'
-      );
-      // Brief celebratory beat before leaving — SuccessCheck handles the
-      // success haptic and calls onDone once the animation settles.
-      setShowSuccess(true);
-    } catch (err: any) {
-      // A 422 is the backend's "already reviewed" no-op — the review IS
-      // recorded (a double-tap or a retry after a client-perceived timeout can
-      // trigger it). Treat it as success, matching the runner review handler,
-      // instead of the misleading "couldn't submit your review" error.
-      if (err?.response?.status === 422) {
+    // Declared once so an online submit and an offline replay are the SAME
+    // call. A review is CONTENT, never money — the tip above is a separate
+    // action and is never queued. Replay is safe because a second submit is a
+    // server-side no-op (422 "You have already reviewed this booking"), which
+    // the handler resolves as success; the queue drops any other 4xx outright.
+    //
+    // dedupeKey is per booking: a re-rate before the queue drains replaces the
+    // pending entry, so only the last thing the customer chose is ever sent.
+    const q = queueable(
+      'booking.review',
+      { bookingId, rating, comment: comment.trim() || undefined },
+      {
+        invalidate: [['bookings'], ['booking', bookingId]],
+        dedupeKey: `review-${bookingId}`,
+      },
+    );
+    // No local state to flip — the celebration IS the applied state, and it
+    // runs from onSuccess so a queued-while-offline review celebrates exactly
+    // like a committed one (the offline toast says when it'll actually post).
+    // Nothing to undo, so rollback is a no-op.
+    await runOptimistic({
+      apply: () => {},
+      rollback: () => {},
+      ...q,
+      onSuccess: () => {
+        // The overlay is purely visual — announce the outcome so screen
+        // readers get a confirmation before the route swaps home.
         AccessibilityInfo.announceForAccessibility(
-          'Review already submitted. Thanks for the feedback!'
+          'Review submitted. Thanks for the feedback!'
         );
+        // Brief celebratory beat before leaving — SuccessCheck handles the
+        // success haptic and calls onDone once the animation settles.
         setShowSuccess(true);
-        return;
-      }
-      haptics.error();
-      toast.error(errorMessage(err, copy.booking.rateFailed));
-    } finally {
-      setIsSubmitting(false);
-    }
+      },
+      onError: () => haptics.error(),
+      errorMessage: copy.booking.rateFailed,
+      offlineMessage: "Saved — we'll post your review when you're back online.",
+    });
+    setIsSubmitting(false);
   }, [bookingId, rating, comment, isSubmitting]);
 
   const handleSkip = useCallback(() => {

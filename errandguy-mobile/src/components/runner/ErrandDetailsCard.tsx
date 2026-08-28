@@ -9,7 +9,7 @@ import { mediaSource } from '../../utils/mediaSource';
 import { ImageLightbox } from '../ui/ImageLightbox';
 import { storage } from '../../utils/storage';
 import { parseChecklist } from '../../utils/shoppingChecklist';
-import { runnerService } from '../../services/runner.service';
+import { queueable } from '../../services/mutationQueue';
 import { runOptimistic } from '../../utils/optimistic';
 import { LightColors } from '../../constants/colors';
 import { formatCurrency } from '../../utils/formatCurrency';
@@ -92,8 +92,26 @@ export function ErrandDetailsCard({
     if (!bookingId) return;
     Haptics.selectionAsync().catch(() => {});
     const nextChecked = !item.checked;
+    // Declared once so the online commit and an offline replay are the SAME
+    // call. Ticks are the one thing a runner does inside a mall basement or a
+    // grocery interior, so a dead signal must not un-tick their list: the tick
+    // stays, the intent is persisted, and it replays on reconnect.
+    //
+    // dedupeKey is per ITEM: toggling one line three times offline coalesces to
+    // its final state, and can never supersede a sibling item's queued tick.
+    const q = queueable(
+      'runner.updateChecklistTicks',
+      { bookingId, items: [{ id: item.id, checked: nextChecked }] },
+      {
+        // Refetch the errand after the queued tick lands — and also when the
+        // queue gives up on it (a 4xx because the errand closed), so the list
+        // reconciles to server truth either way.
+        invalidate: [['runner', 'errand', 'byId', bookingId]],
+        dedupeKey: `checklist-${bookingId}-${item.id}`,
+      },
+    );
     // Optimistic flip via the shared helper — instant tick, rollback + one-tap
-    // Retry on failure.
+    // Retry on a real failure; queued (no rollback) when we're simply offline.
     void runOptimistic({
       apply: () =>
         setServerItems((cur) =>
@@ -115,10 +133,13 @@ export function ErrandDetailsCard({
               : it,
           ),
         ),
-      commit: () =>
-        runnerService.updateChecklistTicks(bookingId, [{ id: item.id, checked: nextChecked }]),
+      ...q,
       errorMessage: "Couldn't update the checklist. Please try again.",
       retry: true,
+      // Silent while offline: a shopper ticks a dozen lines in a row and the
+      // global OfflineBanner already says why. The tick staying ticked IS the
+      // confirmation — a toast per item would be noise, not information.
+      offlineMessage: null,
     });
   };
 

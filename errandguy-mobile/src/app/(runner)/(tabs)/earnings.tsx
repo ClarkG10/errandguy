@@ -1,8 +1,8 @@
-import React, { useMemo, useState, useCallback } from 'react';
+import React, { useMemo, useState, useCallback, useEffect } from 'react';
 import { View, Text, ScrollView, Pressable, Share } from 'react-native';
-import { useRouter } from 'expo-router';
+import { useRouter, useFocusEffect } from 'expo-router';
 import { LinearGradient } from 'expo-linear-gradient';
-import { Wallet, Download, FileText } from 'lucide-react-native';
+import { Wallet, Download, FileText, Clock, ChevronDown, ChevronUp } from 'lucide-react-native';
 import * as Haptics from 'expo-haptics';
 import * as FileSystem from 'expo-file-system/legacy';
 import { Card } from '../../../components/ui/Card';
@@ -15,9 +15,13 @@ import { BrandRefreshControl } from '../../../components/ui/BrandRefreshControl'
 import { Eyebrow, Hairline } from '../../../components/ui/Typography';
 import { GradientHeader } from '../../../components/ui/GradientHeader';
 import { SyncIndicator } from '../../../components/ui/SyncIndicator';
+import { EarningsBreakdown } from '../../../components/runner/EarningsBreakdown';
+import { payoutMinimum, type SelfRunnerProfile } from '../../../components/runner/payoutMethod';
 import { useResponsive } from '../../../constants/responsive';
 import { useAuthStore } from '../../../stores/authStore';
+import { useRunnerStore } from '../../../stores/runnerStore';
 import { runnerService } from '../../../services/runner.service';
+import { userService } from '../../../services/user.service';
 import { useQuery } from '../../../hooks/useQuery';
 import { useHideTabBarOnScroll } from '../../../hooks/useHideTabBarOnScroll';
 import { CacheTTL } from '../../../services/cache.service';
@@ -25,7 +29,7 @@ import { formatCurrency } from '../../../utils/formatCurrency';
 import { formatRunnerPayout } from '../../../utils/runnerPayout';
 import { secureStorage } from '../../../utils/storage';
 import { toast } from '../../../stores/toastStore';
-import type { Booking } from '../../../types';
+import type { Booking, WalletTransaction } from '../../../types';
 import { LightColors, Elevation } from '../../../constants/colors';
 import { TAB_CONTENT_BOTTOM_INSET_RUNNER } from '../../../constants/tabLayout';
 
@@ -108,8 +112,10 @@ function EarningsSkeleton() {
           <Skeleton width={64} height={14} />
         </View>
       ))}
-      {/* Payout CTA + export block — reserve the below-the-fold space */}
-      <Skeleton width="100%" height={52} borderRadius={14} style={{ marginTop: 12, marginBottom: 16 }} />
+      {/* Cash-out strip + payout CTA + export block — reserve the
+          below-the-fold space so nothing jumps when data lands */}
+      <Skeleton width="100%" height={86} borderRadius={16} style={{ marginTop: 12, marginBottom: 12 }} />
+      <Skeleton width="100%" height={52} borderRadius={14} style={{ marginBottom: 16 }} />
       <Skeleton width="25%" height={12} style={{ marginBottom: 8 }} />
       <View className="flex-row" style={{ gap: 12 }}>
         <Skeleton width="48%" height={48} borderRadius={14} />
@@ -122,11 +128,19 @@ function EarningsSkeleton() {
 export default function EarningsScreen() {
   const router = useRouter();
   const userId = useAuthStore((s) => s.user?.id ?? 'anon');
+  const setUser = useAuthStore((s) => s.setUser);
+  const balance = Number(useAuthStore((s) => s.user?.wallet_balance) ?? 0);
+  const runnerProfile = useRunnerStore((s) => s.runnerProfile) as SelfRunnerProfile | null;
+  const setRunnerProfile = useRunnerStore((s) => s.setRunnerProfile);
+  const minPayout = payoutMinimum(runnerProfile);
   const { contentMaxWidth } = useResponsive();
   const hideOnScroll = useHideTabBarOnScroll();
 
   const [period, setPeriod] = useState<Period>('week');
   const [refreshing, setRefreshing] = useState(false);
+  // Which per-errand row has its fee breakdown open. One at a time — the rows
+  // are dense and two open panels lose the day grouping.
+  const [openBreakdown, setOpenBreakdown] = useState<string | null>(null);
 
   const summaryQ = useQuery<EarningsData>(
     ['runner', 'earnings', period, userId],
@@ -152,8 +166,61 @@ export default function EarningsScreen() {
     { staleTime: 60_000, ttl: CacheTTL.MEDIUM },
   );
 
+  // The two figures a runner actually ACTS on — what they can cash out right
+  // now, and whether a payout is already in flight — used to live only on the
+  // payout screen, three taps from where they naturally look. Same query key
+  // the payout screen uses, so the two surfaces share one cached fetch.
+  const payoutsQ = useQuery<WalletTransaction[]>(
+    ['runner', 'payouts', userId],
+    async () => {
+      const res = await runnerService.getPayoutHistory({ page: 1, per_page: 5 });
+      return (res.data?.data ?? []) as WalletTransaction[];
+    },
+    { staleTime: 30_000, ttl: CacheTTL.MEDIUM },
+  );
+  const pendingPayout = useMemo(
+    () => (payoutsQ.data ?? []).find((p) => String(p.status ?? 'pending') === 'pending') ?? null,
+    [payoutsQ.data],
+  );
+  const pendingPayoutAmount = pendingPayout
+    ? Math.abs(Number(pendingPayout.amount ?? 0))
+    : 0;
+
+  // wallet_balance / payout_minimum can both go stale while the tab stays
+  // mounted (a completed errand credits elsewhere, an admin retunes the
+  // config). Refresh on focus — the payout screen's own mount pattern, moved
+  // to focus because a tab screen isn't remounted per visit.
+  const refreshMoneyPicture = useCallback(async () => {
+    try {
+      const [me, prof] = await Promise.allSettled([
+        userService.getProfile(),
+        runnerService.getRunnerProfile(),
+      ]);
+      if (me.status === 'fulfilled' && me.value.data?.data) setUser(me.value.data.data);
+      if (prof.status === 'fulfilled' && prof.value.data?.data) {
+        setRunnerProfile(prof.value.data.data);
+      }
+    } catch {}
+  }, [setUser, setRunnerProfile]);
+
+  // `revalidate` is memoized on the cache key inside useQuery, so it's a
+  // stable dep (unlike the result object, which is new every render).
+  const revalidatePayouts = payoutsQ.revalidate;
+  useFocusEffect(
+    useCallback(() => {
+      refreshMoneyPicture();
+      revalidatePayouts();
+    }, [refreshMoneyPicture, revalidatePayouts]),
+  );
+
   const earningsData = summaryQ.data ?? null;
   const earningsList = historyQ.data ?? [];
+
+  // Collapse an open breakdown when the period switches — the row it belonged
+  // to is gone.
+  useEffect(() => {
+    setOpenBreakdown(null);
+  }, [period]);
 
   const initialLoading =
     (summaryQ.loading && !summaryQ.data) || (historyQ.loading && !historyQ.data);
@@ -220,9 +287,14 @@ export default function EarningsScreen() {
 
   const onRefresh = useCallback(async () => {
     setRefreshing(true);
-    await Promise.all([summaryQ.refresh(), historyQ.refresh()]);
+    await Promise.all([
+      summaryQ.refresh(),
+      historyQ.refresh(),
+      payoutsQ.refresh(),
+      refreshMoneyPicture(),
+    ]);
     setRefreshing(false);
-  }, [summaryQ, historyQ]);
+  }, [summaryQ, historyQ, payoutsQ, refreshMoneyPicture]);
 
   const retryAll = useCallback(() => {
     summaryQ.refresh();
@@ -580,36 +652,121 @@ export default function EarningsScreen() {
                     {formatCurrency(group.total)}
                   </Text>
                 </View>
-                {group.errands.map((errand, idx) => (
-                  <View key={errand.id}>
-                    <View className="flex-row items-center justify-between py-3">
-                      <View className="flex-1 mr-2">
-                        <Text className="text-[14px] font-montserrat-bold text-textPrimary" numberOfLines={1}>
-                          {errand.errand_type?.name ?? 'Errand'}
+                {group.errands.map((errand, idx) => {
+                  const expanded = openBreakdown === errand.id;
+                  return (
+                    <View key={errand.id}>
+                      {/* Rows used to be plain Views: a runner asking why one
+                          delivery paid ₱85 and another ₱140 had nowhere to
+                          look. The fee fields were already in this payload. */}
+                      <Pressable
+                        onPress={() => {
+                          Haptics.selectionAsync().catch(() => {});
+                          setOpenBreakdown(expanded ? null : errand.id);
+                        }}
+                        accessibilityRole="button"
+                        accessibilityState={{ expanded }}
+                        accessibilityLabel={`${errand.errand_type?.name ?? 'Errand'}, ${formatRunnerPayout(errand.runner_payout)}`}
+                        accessibilityHint={
+                          expanded ? 'Hide the fee breakdown' : 'Show the fee breakdown'
+                        }
+                        // Layout stays in className — a Pressable styled only
+                        // through style={() => [obj]} loses flexDirection.
+                        className="flex-row items-center justify-between py-3"
+                        style={({ pressed }) => (pressed ? { opacity: 0.6 } : null)}
+                      >
+                        <View className="flex-1 mr-2">
+                          <Text className="text-[14px] font-montserrat-bold text-textPrimary" numberOfLines={1}>
+                            {errand.errand_type?.name ?? 'Errand'}
+                          </Text>
+                          <Text className="text-[11px] font-inter tabular-nums text-textMuted mt-0.5">
+                            {new Date(errand.completed_at ?? errand.created_at).toLocaleTimeString([], {
+                              hour: '2-digit',
+                              minute: '2-digit',
+                            })}
+                          </Text>
+                        </View>
+                        <Text className="text-[14px] font-inter-semi tabular-nums text-textPrimary">
+                          {formatRunnerPayout(errand.runner_payout)}
                         </Text>
-                        <Text className="text-[11px] font-inter tabular-nums text-textMuted mt-0.5">
-                          {new Date(errand.completed_at ?? errand.created_at).toLocaleTimeString([], {
-                            hour: '2-digit',
-                            minute: '2-digit',
-                          })}
-                        </Text>
-                      </View>
-                      <Text className="text-[14px] font-inter-semi tabular-nums text-textPrimary">
-                        {formatRunnerPayout(errand.runner_payout)}
-                      </Text>
+                        {expanded ? (
+                          <ChevronUp size={16} color={LightColors.textTertiary} style={{ marginLeft: 6 }} />
+                        ) : (
+                          <ChevronDown size={16} color={LightColors.textMuted} style={{ marginLeft: 6 }} />
+                        )}
+                      </Pressable>
+                      {expanded && <EarningsBreakdown booking={errand} />}
+                      {idx < group.errands.length - 1 && <Hairline />}
                     </View>
-                    {idx < group.errands.length - 1 && <Hairline />}
-                  </View>
-                ))}
+                  );
+                })}
               </View>
             ))
           )}
         </View>
 
+        {/* Cash-out strip — "how much can I withdraw right now, and is a
+            payout already on its way?" used to be answerable only after
+            navigating to the payout screen. Both figures live here now, next
+            to the button that acts on them. */}
+        <View className="px-5 mb-3">
+          <Card padding="md">
+            <View className="flex-row items-start">
+              <View className="flex-1 pr-3">
+                <Eyebrow>{balance < 0 ? 'Platform fees owed' : 'Available now'}</Eyebrow>
+                <Text
+                  className="text-[22px] font-inter-semi tabular-nums text-textPrimary mt-1"
+                  numberOfLines={1}
+                  adjustsFontSizeToFit
+                  minimumFontScale={0.7}
+                >
+                  {balance < 0 ? '−' : ''}
+                  {formatCurrency(Math.abs(balance))}
+                </Text>
+                <Text className="text-[11px] font-montserrat text-textTertiary mt-0.5">
+                  {balance < 0
+                    ? 'From cash errands · settles from your next earnings'
+                    : balance < minPayout
+                      ? `Min ${formatCurrency(minPayout)} to cash out`
+                      : 'Ready to withdraw'}
+                </Text>
+              </View>
+              <View
+                className="flex-1 pl-3"
+                style={{ borderLeftWidth: 1, borderLeftColor: LightColors.divider }}
+              >
+                <Eyebrow>Payout in flight</Eyebrow>
+                <Text
+                  className="text-[22px] font-inter-semi tabular-nums text-textPrimary mt-1"
+                  numberOfLines={1}
+                  adjustsFontSizeToFit
+                  minimumFontScale={0.7}
+                >
+                  {pendingPayout ? formatCurrency(pendingPayoutAmount) : '—'}
+                </Text>
+                <View className="flex-row items-center mt-0.5">
+                  {pendingPayout && (
+                    <Clock size={11} color={LightColors.warningDark} style={{ marginRight: 3 }} />
+                  )}
+                  <Text
+                    className="text-[11px] font-montserrat flex-1"
+                    style={{
+                      color: pendingPayout ? LightColors.warningDark : LightColors.textTertiary,
+                    }}
+                    numberOfLines={2}
+                  >
+                    {pendingPayout ? 'Processing — 1–3 business days' : 'Nothing pending'}
+                  </Text>
+                </View>
+              </View>
+            </View>
+          </Card>
+        </View>
+
         {/* Payout Button */}
         <View className="px-5 mb-4">
           <Button
-            title="Request Payout"
+            title={pendingPayout ? 'View payout status' : 'Request Payout'}
             variant="primary"
             onPress={() => router.push('/(runner)/payout' as any)}
             fullWidth

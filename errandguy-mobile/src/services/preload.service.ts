@@ -6,7 +6,7 @@ import { bookingService } from './booking.service';
 import { paymentService } from './payment.service';
 import { runnerService } from './runner.service';
 import { notificationService } from './notification.service';
-import { userService } from './user.service';
+import { userService, type CustomerHomeAggregate } from './user.service';
 import { chatService } from './chat.service';
 import { useChatStore } from '../stores/chatStore';
 import { useBookingStore } from '../stores/bookingStore';
@@ -214,6 +214,131 @@ const preloadConversationsList = async (userId: string) => {
 };
 
 /**
+ * The ORIGINAL per-endpoint above-the-fold Home seeds — one request each.
+ *
+ * These are no longer the first choice (the /customer/home aggregate below
+ * gets the same data in a single round trip), but they are kept EXACTLY as
+ * they were as the fallback path: if the aggregate is unavailable — an older
+ * server, a 403/404, a partial payload — warm-up degrades to precisely the
+ * behaviour that shipped before it existed. Thunks, so the pool decides when
+ * each fires.
+ */
+const customerAboveFoldSeeds = (userId: string): Array<() => Promise<unknown>> => [
+  () =>
+    seed(
+      ['errand-types'],
+      async () => {
+        const r = await configService.getErrandTypes();
+        return r.data?.data ?? [];
+      },
+      CacheTTL.STATIC,
+    ),
+  () =>
+    seed(
+      ['booking', 'active', userId],
+      async () => {
+        const r = await bookingService.getActiveBooking();
+        return r.data?.data ?? r.data ?? null;
+      },
+      CacheTTL.SHORT,
+    ),
+  () =>
+    seed(
+      ['bookings', 'recent', userId],
+      async () => {
+        const r = await bookingService.getBookings({ per_page: 5 });
+        return r.data?.data ?? r.data ?? [];
+      },
+      CacheTTL.LONG,
+    ),
+  () =>
+    seed(
+      ['wallet', 'balance', userId],
+      async () => {
+        const r = await paymentService.getWalletBalance();
+        // Must match the wallet screen's useQuery fetcher, which returns the
+        // NUMBER (`data.balance`) — not the whole balance object. Seeding the
+        // object here poisoned the shared cache key, so the hero briefly
+        // rendered "₱[object Object]" on cold start until the live fetch ran.
+        return r.data?.data?.balance ?? r.data?.balance ?? 0;
+      },
+      CacheTTL.MEDIUM,
+    ),
+];
+
+/**
+ * Structural guard on the aggregate payload.
+ *
+ * Seeding is a WRITE into caches the screens read on their first frame, so a
+ * half-formed payload is worse than no payload: `active_booking` missing would
+ * pin "no active errand" over a live one for the whole freshness window. We
+ * therefore require every section to be present and of the right kind, and
+ * fall back to the individual endpoints if anything is off. `active_booking`
+ * and `referral` are nullable, so they're checked for PRESENCE, not truth.
+ */
+const isUsableHomeAggregate = (payload: unknown): payload is CustomerHomeAggregate => {
+  if (!payload || typeof payload !== 'object') return false;
+  const h = payload as Partial<CustomerHomeAggregate>;
+  return (
+    Array.isArray(h.errand_types) &&
+    Array.isArray(h.recent_bookings) &&
+    Array.isArray(h.promos) &&
+    typeof h.wallet_balance === 'number' &&
+    Number.isFinite(h.wallet_balance) &&
+    'active_booking' in payload &&
+    'referral' in payload
+  );
+};
+
+/**
+ * Seed every above-the-fold Home cache from ONE request (P-M10).
+ *
+ * Home used to cost five separate authenticated GETs at warm-up (and six more
+ * on the screen itself), each paying a full framework boot + Sanctum auth on
+ * Forge — two sequential waves through the 4-wide pool on PH mobile RTTs.
+ * GET /customer/home returns all six sections at once, so warm-up is a single
+ * round trip and the rewards band (promos / referral / wallet), which was
+ * never warmed above the fold at all, now paints from cache for free.
+ *
+ * The cache keys, value shapes and TTLs written here are IDENTICAL to the
+ * per-endpoint seeds above — the screens' useQuery keys are untouched and the
+ * individual endpoints remain their revalidation paths. Any failure (network,
+ * unavailable endpoint, unusable payload) transparently falls back to those
+ * per-endpoint seeds, so this can only ever be faster, never less warm.
+ */
+async function seedCustomerHome(userId: string): Promise<void> {
+  try {
+    const response = await userService.getCustomerHome();
+    const home = response.data?.data;
+    if (!isUsableHomeAggregate(home)) throw new Error('unusable home aggregate');
+
+    // One timestamp for the whole snapshot — it IS one read.
+    const fetchedAt = Date.now();
+    const write = <T,>(keyParts: (string | number)[], value: T, ttl: number) =>
+      CacheService.set<CachedEntry<T>>(buildKey(keyParts), { value, fetchedAt }, ttl);
+
+    await Promise.all([
+      write(['errand-types'], home.errand_types, CacheTTL.STATIC),
+      write(['booking', 'active', userId], home.active_booking ?? null, CacheTTL.SHORT),
+      write(['bookings', 'recent', userId], home.recent_bookings, CacheTTL.LONG),
+      // The NUMBER, matching the wallet screen's fetcher (see the seed above).
+      write(['wallet', 'balance', userId], home.wallet_balance, CacheTTL.MEDIUM),
+      write(['promos', userId], home.promos, CacheTTL.MEDIUM),
+      // Referral is nullable on the wire but the screen caches an object; a
+      // null would pin an empty referral card, so leave the key a miss and let
+      // the screen fetch it normally (same reasoning as prefetchReferral).
+      ...(home.referral
+        ? [write(['user', 'referral', userId], home.referral, CacheTTL.MEDIUM)]
+        : []),
+    ]);
+  } catch {
+    // Best-effort, exactly like every other warm-up path: degrade to the
+    // pre-aggregate per-endpoint seeds rather than leaving Home cold.
+    await runPool(customerAboveFoldSeeds(userId));
+  }
+}
+
+/**
  * Preload critical queries the user is about to need.
  *
  * Called once after a successful login / register,
@@ -234,48 +359,14 @@ export async function preloadCustomerEssentials(userId: string) {
   // on the ENTIRE warm-up pool below (wallet history, notifications, chat
   // threads, activity, addresses, payment methods, trusted contacts). Entries
   // are thunks so the pool — not JS — decides when each fires. (P3)
+  //
+  // What used to be five separate requests here is now ONE — seedCustomerHome
+  // fans GET /customer/home out into the same five cache keys (plus promos and
+  // referral, free in the same payload) and falls back to those five requests
+  // if the aggregate is unavailable. (P-M10)
   const aboveFold: Array<() => Promise<unknown>> = [
     () => preloadCoreImages(),
-    () =>
-      seed(
-        ['errand-types'],
-        async () => {
-          const r = await configService.getErrandTypes();
-          return r.data?.data ?? [];
-        },
-        CacheTTL.STATIC,
-      ),
-    () =>
-      seed(
-        ['booking', 'active', userId],
-        async () => {
-          const r = await bookingService.getActiveBooking();
-          return r.data?.data ?? r.data ?? null;
-        },
-        CacheTTL.SHORT,
-      ),
-    () =>
-      seed(
-        ['bookings', 'recent', userId],
-        async () => {
-          const r = await bookingService.getBookings({ per_page: 5 });
-          return r.data?.data ?? r.data ?? [];
-        },
-        CacheTTL.LONG,
-      ),
-    () =>
-      seed(
-        ['wallet', 'balance', userId],
-        async () => {
-          const r = await paymentService.getWalletBalance();
-          // Must match the wallet screen's useQuery fetcher, which returns the
-          // NUMBER (`data.balance`) — not the whole balance object. Seeding the
-          // object here poisoned the shared cache key, so the hero briefly
-          // rendered "₱[object Object]" on cold start until the live fetch ran.
-          return r.data?.data?.balance ?? r.data?.balance ?? 0;
-        },
-        CacheTTL.MEDIUM,
-      ),
+    () => seedCustomerHome(userId),
   ];
 
   // Below-the-fold — warmed in the BACKGROUND once Home is already interactive.

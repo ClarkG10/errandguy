@@ -17,6 +17,11 @@ export default function RunnerLayout() {
   const isAuthenticated = useAuthStore((s) => s.isAuthenticated);
   const role = useAuthStore((s) => s.role);
   const user = useAuthStore((s) => s.user);
+  // The cold-start boot snapshot carries only {id, role, full_name, avatar_url}
+  // — never runner_profile. Reading that absent field would look exactly like
+  // the server saying "this runner has no profile", so the gate below waits for
+  // the real profile instead of acting on a provisional one.
+  const userIsProvisional = useAuthStore((s) => s.userIsProvisional);
   const router = useRouter();
   const segments = useSegments();
   const [ready, setReady] = useState(false);
@@ -68,7 +73,7 @@ export default function RunnerLayout() {
       // loaded, segments already showed 'onboarding', so the gate was skipped
       // and never redirected back. Hold on the loader until user hydrates; the
       // grace fallback lets the tabs render if the fetch never resolves.
-      if (!user) {
+      if (!user || userIsProvisional) {
         if (graceElapsed) setReady(true);
         return;
       }
@@ -90,7 +95,7 @@ export default function RunnerLayout() {
     }
 
     setReady(true);
-  }, [isAuthenticated, role, user, router, segments, graceElapsed]);
+  }, [isAuthenticated, role, user, userIsProvisional, router, segments, graceElapsed]);
 
   if (!isAuthenticated || role === 'customer') {
     return null;

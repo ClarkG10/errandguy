@@ -47,11 +47,13 @@ export function StatusActionButton({
   loading,
 }: StatusActionButtonProps) {
   const rule = getErrandTypeRule(errandSlug);
-  // Treat 'matched' as 'accepted' for the action label so the runner
-  // sees the same "Head to pickup" CTA even if the optimistic store
-  // update from acceptErrand hasn't reached this screen yet.
+  // `matched` means the errand has been OFFERED to this runner and is not
+  // theirs yet — the state a "New errand offer" push tap lands in. It used to
+  // borrow the 'accepted' label ("Head to pickup"), which both misdescribed
+  // the job and fired a status advance the server rejects before an accept.
+  // Name the actual next action; the cockpit's handler claims the errand.
   const labelKey = (status === 'matched' ? 'accepted' : status) as BookingStatusKey;
-  const label = rule.statusActions[labelKey];
+  const label = status === 'matched' ? 'Accept errand' : rule.statusActions[labelKey];
 
   if (!label) return null;
 

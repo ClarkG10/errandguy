@@ -1,7 +1,9 @@
 import { useEffect } from 'react';
 import { Stack, useRouter, useSegments } from 'expo-router';
 import { useAuthStore } from '../../stores/authStore';
+import { useBookingStore } from '../../stores/bookingStore';
 import { useRealtimeNotifications } from '../../hooks/useRealtimeNotifications';
+import { useBookingStatus } from '../../hooks/useBookingStatus';
 import { STACK_ANIMATION } from '../../constants/navigation';
 
 export default function CustomerLayout() {
@@ -22,6 +24,19 @@ export default function CustomerLayout() {
 
   // Subscribe to realtime notifications for the current user
   useRealtimeNotifications(user?.id ?? null);
+
+  // Keep the live errand fresh for the WHOLE customer group, not just the
+  // tracking screen. The home card renders bookingStore.activeBooking, which
+  // useBookingStatus merges the `booking.{id}` payload into — so a status move
+  // heals the card in place instead of freezing on "Finding you a runner"
+  // until the user backgrounds the app or taps through.
+  //
+  // Mounted here (the group layout) so it survives tab switches. Passing null
+  // when there is no live errand disables the subscription entirely, and while
+  // the tracking screen is open its own subscription simply shares the same
+  // refcounted channel — the merge is idempotent.
+  const activeBookingId = useBookingStore((s) => s.activeBooking?.id ?? null);
+  useBookingStatus(activeBookingId);
 
   useEffect(() => {
     if (!isAuthenticated) {

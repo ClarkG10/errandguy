@@ -10,7 +10,7 @@ import {
 import * as Haptics from 'expo-haptics';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
-import { Clock, Route } from 'lucide-react-native';
+import { Clock, Route, Tag, WifiOff } from 'lucide-react-native';
 import dayjs from 'dayjs';
 import { GradientHeader } from '../../../components/ui/GradientHeader';
 import { useBookingStore } from '../../../stores/bookingStore';
@@ -20,6 +20,8 @@ import { Button } from '../../../components/ui/Button';
 import { BottomActionBar } from '../../../components/ui/BottomActionBar';
 import { PriceBreakdown } from '../../../components/ui/PriceBreakdown';
 import { ErrorState } from '../../../components/ui/ErrorState';
+import { Eyebrow } from '../../../components/ui/Typography';
+import { Spinner } from '../../../components/ui/Spinner';
 import {
   VehicleTypeSelector,
   type VehicleOption,
@@ -41,7 +43,11 @@ import {
 } from '../../../components/customer/BookingProgress';
 import { usePaymentStore, isAttemptActive } from '../../../stores/paymentStore';
 import { usePaymentVerification } from '../../../hooks/usePaymentVerification';
-import { invalidateQuery } from '../../../hooks/useQuery';
+import { invalidateQuery, useQuery } from '../../../hooks/useQuery';
+import { CacheTTL } from '../../../services/cache.service';
+import { configService, type Promo } from '../../../services/config.service';
+import { useAuthStore } from '../../../stores/authStore';
+import { usePreferencesStore } from '../../../stores/preferencesStore';
 import { mapFailureReason } from '../../../utils/paymentErrors';
 import { getErrandTypeRule, type VehicleKey } from '../../../constants/errandTypeRules';
 import { useResponsive } from '../../../constants/responsive';
@@ -52,6 +58,46 @@ import { errorMessage } from '../../../utils/errorCatalog';
 import { copy } from '../../../constants/copy';
 import { haptics } from '../../../utils/haptics';
 
+
+/** Back-off between item-photo upload attempts. Two extra tries ≈ 8.5s — short
+ *  enough that the staged local camera URIs are still readable (they live in
+ *  the app's own cache dir and are only reclaimed much later), so there is no
+ *  expiry window to guard against the way a persisted retry queue would have. */
+const PHOTO_RETRY_DELAYS_MS = [2500, 6000];
+
+/**
+ * Attach the customer's staged item photos to a just-created booking.
+ *
+ * Best-effort by design (the booking already exists), but a single transport
+ * blip used to end in "reopen the errand chat to resend them" — asking the
+ * customer to redo work the app can simply repeat. Retries the transport-class
+ * failures only, then falls back to the same honest message.
+ *
+ * Deliberately module-level and un-awaited: it must outlive this screen, which
+ * navigates away to the confirm screen the moment create succeeds.
+ */
+async function attachItemPhotos(bookingId: string, uris: string[]): Promise<void> {
+  for (let attempt = 0; ; attempt++) {
+    try {
+      await bookingService.uploadItemPhotos(bookingId, uris);
+      return;
+    } catch (err: any) {
+      // Only repeat failures that a repeat can actually fix. A 422 (unsupported
+      // file, too large, runner already picked up) fails identically forever,
+      // and a 'timeout' may well have landed server-side — re-sending that one
+      // would duplicate the photos rather than rescue them.
+      const transient = err?.kind === 'offline' || err?.kind === 'server';
+      const delay = PHOTO_RETRY_DELAYS_MS[attempt];
+      if (!transient || delay === undefined) {
+        toast.warning(
+          "Some item photos couldn't upload — reopen the errand chat to resend them.",
+        );
+        return;
+      }
+      await new Promise((resolve) => setTimeout(resolve, delay));
+    }
+  }
+}
 
 interface EstimateResult {
   walk?: { total_amount: number; distance_fee: number; base_fee: number; service_fee: number; surcharge: number };
@@ -68,6 +114,8 @@ export default function ReviewScreen() {
   const router = useRouter();
   const { contentMaxWidth } = useResponsive();
   const insets = useSafeAreaInsets();
+  const userId = useAuthStore((s) => s.user?.id);
+  const setLastPaymentMethod = usePreferencesStore((s) => s.setLastPaymentMethod);
   // Per-field selectors avoid re-rendering on unrelated bookingStore writes.
   const draftBooking = useBookingStore((s) => s.draftBooking);
   const updateDraft = useBookingStore((s) => s.updateDraft);
@@ -137,6 +185,11 @@ export default function ReviewScreen() {
   // Synchronous re-entrancy latch — closes the double-tap window before the
   // Button's `loading` disable lands a render later.
   const submitLatch = useRef(false);
+  // Pre-empt the create ceremony while the app knows it has no connection.
+  // Never while a submit is already in flight: the POST that dropped the
+  // connection is what SET this flag, and swapping the button out from under
+  // an in-flight attempt would hide the honest loading state.
+  const showOfflineGate = isOffline && !isSubmitting;
   const [isEstimateLoading, setIsEstimateLoading] = useState(false);
   // True when the estimate request failed — drives the inline retry UI.
   // Without it a failed fetch left the screen on "Calculating fare…"
@@ -228,6 +281,22 @@ export default function ReviewScreen() {
     estimateAttempt,
   ]);
 
+  // Promos the customer can actually redeem. SAME useQuery key/shape/ttl as
+  // Home's rewards band (['promos', userId]), so on the common path this
+  // paints from cache with zero extra network — the codes were already
+  // fetched to render "N promos to use" on the home screen.
+  const promosQ = useQuery<Promo[]>(
+    ['promos', userId ?? 'anon'],
+    async () => {
+      const res = await configService.getPromos();
+      const p = res.data?.data;
+      return Array.isArray(p) ? p : [];
+    },
+    { staleTime: 60_000, ttl: CacheTTL.MEDIUM, enabled: !!userId },
+  );
+  // Code currently being validated by a chip tap (chip-level spinner).
+  const [applyingPromo, setApplyingPromo] = useState<string | null>(null);
+
   // Distance-based ETA per vehicle so the selector cards can preview
   // travel time alongside fare. Returns undefined for single-location
   // errands where distance isn't applicable.
@@ -303,6 +372,75 @@ export default function ReviewScreen() {
   const totalAmount = currentVehicleEstimate
     ? Math.max(0, (currentVehicleEstimate.total_amount ?? 0) - promoDiscount)
     : 0;
+
+  // Fare a promo is measured against — the same value handed to
+  // PromoCodeInput, so a chip's preview and a typed code agree.
+  const promoBaseAmount =
+    pricingMode === 'fixed' ? currentVehicleEstimate?.total_amount ?? 0 : offerPrice;
+
+  // Local preview of the peso saving, mirroring PromoService::calculateDiscount
+  // (percentage clamped 0..100, then capped by max_discount). Preview ONLY —
+  // the number stored on the draft always comes from the server's validate
+  // response, and the server re-validates again at create.
+  const previewDiscount = useCallback(
+    (promo: Promo, amount: number): number => {
+      const raw =
+        promo.discount_type === 'percentage'
+          ? (amount * Math.max(0, Math.min(100, promo.discount_value))) / 100
+          : promo.discount_value;
+      const capped =
+        promo.max_discount != null && promo.max_discount > 0
+          ? Math.min(raw, promo.max_discount)
+          : raw;
+      return Math.max(0, Math.min(capped, amount));
+    },
+    [],
+  );
+
+  // Redeemable promos this fare actually qualifies for. We drop the ones the
+  // payload already marks ineligible (min_order above the fare, window
+  // expired) rather than offering a tap that can only fail.
+  const applicablePromos = useMemo(() => {
+    if (draftBooking.promo_code) return [];
+    if (promoBaseAmount <= 0) return [];
+    const now = Date.now();
+    return (promosQ.data ?? [])
+      .filter((p) => {
+        if (!p?.code) return false;
+        if (p.min_order != null && promoBaseAmount < p.min_order) return false;
+        if (p.valid_until && new Date(p.valid_until).getTime() < now) return false;
+        return previewDiscount(p, promoBaseAmount) > 0;
+      })
+      // Biggest saving first — the chip a customer would pick anyway.
+      .sort(
+        (a, b) =>
+          previewDiscount(b, promoBaseAmount) - previewDiscount(a, promoBaseAmount),
+      )
+      .slice(0, 4);
+  }, [promosQ.data, promoBaseAmount, draftBooking.promo_code, previewDiscount]);
+
+  // A chip tap goes through the EXACT path a typed code does:
+  // configService.validatePromo → `discount` from the response → the same
+  // onApply write PromoCodeInput performs. No client-side shortcut, so
+  // min-order/limit rejections surface identically.
+  const handleApplyPromoChip = useCallback(
+    async (code: string) => {
+      if (applyingPromo) return;
+      setApplyingPromo(code);
+      try {
+        const res = await configService.validatePromo(code, promoBaseAmount);
+        const discount = res.data?.data?.discount ?? 0;
+        haptics.success();
+        updateDraft({ promo_code: code, promo_discount: discount });
+      } catch (err: any) {
+        haptics.error();
+        toast.error(errorMessage(err, copy.promo.applyFailed));
+      } finally {
+        setApplyingPromo(null);
+      }
+    },
+    [applyingPromo, promoBaseAmount, updateDraft],
+  );
 
   // Approximate travel time based on vehicle type and distance
   const getEstimatedTime = () => {
@@ -489,16 +627,10 @@ export default function ReviewScreen() {
       // photos are uploaded here right after — best-effort, since the booking
       // already exists. Without this the attached photos were silently dropped.
       if (draftBooking.item_photos?.length && booking?.id) {
-        bookingService
-          .uploadItemPhotos(booking.id, draftBooking.item_photos)
-          // Best-effort (the booking already exists), but don't fail silently:
-          // if the attachments don't make it, tell the customer so they can
-          // resend from the errand chat instead of assuming the runner has them.
-          .catch(() => {
-            toast.warning(
-              "Some item photos couldn't upload — reopen the errand chat to resend them.",
-            );
-          });
+        // Retries the transport-class failures before asking the customer to
+        // resend anything by hand (see attachItemPhotos). Un-awaited: this
+        // screen is about to be replaced by the confirm screen.
+        void attachItemPhotos(booking.id, draftBooking.item_photos);
       }
       const checkoutUrl: string | undefined = res.data?.checkout_url;
       const paymentId: string | undefined = res.data?.payment_id;
@@ -523,6 +655,20 @@ export default function ReviewScreen() {
           { lat: draftBooking.pickup_lat, lng: draftBooking.pickup_lng },
           { lat: draftBooking.dropoff_lat, lng: draftBooking.dropoff_lng },
         );
+      }
+      // Remember HOW they paid so the next booking pre-selects it instead of
+      // resetting to saved-default-or-Cash (a GCash regular re-picked GCash on
+      // every single errand — sentinel options can never be a server default).
+      // Pre-selection only: the selector still shows it on Review and the
+      // Confirm button still carries the amount, and nothing here touches what
+      // the server charges. Recorded on create success, which is the point the
+      // customer's choice actually produced a booking. Read from the draft
+      // BEFORE clearDraft() wipes it.
+      if (userId && draftBooking.payment_method_id && paymentMethodType) {
+        setLastPaymentMethod(userId, {
+          id: draftBooking.payment_method_id,
+          type: paymentMethodType,
+        });
       }
       setActiveBooking(booking);
       clearDraft();
@@ -567,7 +713,24 @@ export default function ReviewScreen() {
       resolveAttempt();
       setBookingStage(null);
       haptics.error();
-      toast.error(errorMessage(err, copy.booking.createFailed));
+      // A promo can die between "apply" and "Confirm" — expired, usage cap
+      // reached, or the fare changed and no longer meets min_order. The draft
+      // kept the dead code, so the very next Confirm tap re-sent it and hit
+      // the identical 422: a loop the customer could only escape by working
+      // out that the promo chip was the culprit and removing it by hand.
+      // Drop it for them and quote the honest, undiscounted total. The server
+      // already rejected the code — nothing about settlement changes here.
+      const backendCode = typeof err?.code === 'string' ? err.code : undefined;
+      if (backendCode?.startsWith('PROMO_') && draftBooking.promo_code) {
+        updateDraft({ promo_code: undefined, promo_discount: undefined });
+        toast.warning(
+          `That promo no longer applies — removed. New total ${formatCurrency(
+            promoBaseAmount,
+          )}. Tap Confirm to book.`,
+        );
+      } else {
+        toast.error(errorMessage(err, copy.booking.createFailed));
+      }
     } finally {
       setIsSubmitting(false);
       submitLatch.current = false;
@@ -583,6 +746,11 @@ export default function ReviewScreen() {
     clearDraft,
     router,
     totalAmount,
+    // Quoted in the "promo removed" recovery toast — must not go stale.
+    promoBaseAmount,
+    updateDraft,
+    userId,
+    setLastPaymentMethod,
     beginAttempt,
     linkPayment,
     setAttemptStatus,
@@ -995,6 +1163,61 @@ export default function ReviewScreen() {
           </View>
         )}
 
+        {/* Redeemable promos — one tap instead of remembering a code.
+            Home already advertises "N promos to use"; this is the screen
+            where they can actually be spent, and until now the only way in
+            was recalling the code string. A chip tap runs the SAME server
+            validate a typed code does (see handleApplyPromoChip), so the
+            backend still decides eligibility and the peso saving. Hidden
+            once a code is applied — PromoCodeInput owns that state. */}
+        {applicablePromos.length > 0 && (
+          <View className="mb-3">
+            <Eyebrow className="mb-2">Your promos · tap to apply</Eyebrow>
+            <View className="flex-row flex-wrap" style={{ gap: 8 }}>
+              {applicablePromos.map((promo) => {
+                const saving = previewDiscount(promo, promoBaseAmount);
+                const busy = applyingPromo === promo.code;
+                return (
+                  <Pressable
+                    key={promo.id ?? promo.code}
+                    // Layout lives in className (a Pressable styled only via
+                    // the style callback loses flexDirection/background).
+                    className="flex-row items-center rounded-2xl bg-accentSoft px-3 py-2"
+                    accessibilityRole="button"
+                    accessibilityLabel={`Apply promo ${promo.code}, saves ${formatCurrency(saving)}`}
+                    accessibilityState={{ disabled: applyingPromo !== null, busy }}
+                    disabled={applyingPromo !== null}
+                    hitSlop={6}
+                    onPress={() => handleApplyPromoChip(promo.code)}
+                    style={({ pressed }) =>
+                      pressed
+                        ? { opacity: 0.7 }
+                        : applyingPromo !== null && !busy
+                          ? { opacity: 0.45 }
+                          : null
+                    }
+                  >
+                    {busy ? (
+                      <Spinner size={13} color={LightColors.accentDark} />
+                    ) : (
+                      <Tag size={13} color={LightColors.accentStrong} strokeWidth={2} />
+                    )}
+                    <Text className="text-[12px] font-montserrat-bold text-accentDark ml-1.5">
+                      {promo.code}
+                    </Text>
+                    <Text
+                      className="text-[12px] font-montserrat-semi text-accentDark ml-1.5"
+                      style={{ fontVariant: ['tabular-nums'] }}
+                    >
+                      −{formatCurrency(saving)}
+                    </Text>
+                  </Pressable>
+                );
+              })}
+            </View>
+          </View>
+        )}
+
         {/* Promo Code */}
         <PromoCodeInput
           appliedCode={draftBooking.promo_code}
@@ -1032,15 +1255,45 @@ export default function ReviewScreen() {
       {/* Bottom CTA — clamped to the content column on tablets. */}
       <BottomActionBar>
         <View style={{ maxWidth: contentMaxWidth, width: '100%', alignSelf: 'center' }}>
+          {/* Offline pre-empt. Tapping Confirm with no connection used to
+              begin a payment attempt, mount the full-screen "Creating your
+              errand" ceremony, fire a doomed POST and collapse into an error
+              toast. We already know we're offline, so say so instead — the
+              global OfflineBanner probes /health every ~10s and re-enables
+              this by itself. The flag is INFERRED from traffic and can
+              false-positive, so "Try anyway" stays as the escape hatch: it
+              runs the exact same handleSubmit. */}
+          {showOfflineGate && (
+            <View className="flex-row items-center mb-2.5">
+              <WifiOff size={13} color={LightColors.textTertiary} strokeWidth={2} />
+              <Text className="text-[11px] font-montserrat text-textSecondary ml-1.5 flex-1">
+                You’re offline — Confirm turns back on the moment you reconnect.
+              </Text>
+              <Pressable
+                onPress={handleSubmit}
+                hitSlop={12}
+                accessibilityRole="button"
+                accessibilityLabel="Try booking anyway"
+                accessibilityHint="Sends the booking now even though the app thinks you're offline"
+                style={({ pressed }) => (pressed ? { opacity: 0.6 } : null)}
+              >
+                <Text className="text-[12px] font-montserrat-bold text-primary ml-3">
+                  Try anyway
+                </Text>
+              </Pressable>
+            </View>
+          )}
           <Button
             title={
-              pricingMode === 'fixed'
-                ? currentVehicleEstimate && !isEstimateLoading
-                  ? `Confirm ${formatCurrency(totalAmount)}`
-                  : estimateError
-                    ? 'Fare unavailable'
-                    : 'Calculating fare…'
-                : `Send Offer ${formatCurrency(offerPrice)}`
+              showOfflineGate
+                ? 'Waiting for connection…'
+                : pricingMode === 'fixed'
+                  ? currentVehicleEstimate && !isEstimateLoading
+                    ? `Confirm ${formatCurrency(totalAmount)}`
+                    : estimateError
+                      ? 'Fare unavailable'
+                      : 'Calculating fare…'
+                  : `Send Offer ${formatCurrency(offerPrice)}`
             }
             onPress={handleSubmit}
             loading={isSubmitting}
@@ -1049,10 +1302,11 @@ export default function ReviewScreen() {
             // estimate has resolved — without it we'd be sending a
             // payload with an indeterminate price expectation, and the
             // server would 422 on `vehicle_type_rate` validation
-            // mismatch.
+            // mismatch. Offline adds the second pre-empt (above).
             disabled={
-              pricingMode === 'fixed' &&
-              (isEstimateLoading || !currentVehicleEstimate)
+              showOfflineGate ||
+              (pricingMode === 'fixed' &&
+                (isEstimateLoading || !currentVehicleEstimate))
             }
             fullWidth
           />

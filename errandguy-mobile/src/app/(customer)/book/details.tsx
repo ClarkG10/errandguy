@@ -27,12 +27,15 @@ import {
   BookmarkPlus,
   Home,
   Briefcase,
+  Clock,
+  UserRound,
+  BookUser,
 } from 'lucide-react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { BottomSheet } from '../../../components/ui/BottomSheet';
 import { HereMapView, HereMarker, HerePolyline, type HereMapViewRef, type Region } from '../../../components/map';
 import * as Location from 'expo-location';
-import { ensureLocationPermission, getCurrentCoords } from '../../../utils/locationPermission';
+import { getCurrentCoords } from '../../../utils/locationPermission';
 import { useBookingStore } from '../../../stores/bookingStore';
 import { useImagePicker } from '../../../hooks/useImagePicker';
 import { useDebounce } from '../../../hooks/useDebounce';
@@ -53,7 +56,7 @@ import { BookingStepIndicator } from '../../../components/customer/BookingStepIn
 import { getErrandTypeRule } from '../../../constants/errandTypeRules';
 import { LightColors, Elevation } from '../../../constants/colors';
 import { useResponsive } from '../../../constants/responsive';
-import type { SavedAddress } from '../../../types';
+import type { Booking, SavedAddress } from '../../../types';
 import { toast } from '../../../stores/toastStore';
 import { geocodingService } from '../../../services/geocoding.service';
 import { routeService } from '../../../services/route.service';
@@ -63,9 +66,43 @@ import { useQuery } from '../../../hooks/useQuery';
 import { CacheTTL } from '../../../services/cache.service';
 import { useAuthStore } from '../../../stores/authStore';
 import { formatCurrency } from '../../../utils/formatCurrency';
+import {
+  addRecentRecipient,
+  getRecentRecipients,
+  normalizePhPhone,
+  type RecentRecipient,
+} from '../../../utils/recentRecipients';
 
 const DEFAULT_CENTER: [number, number] = [121.0, 14.6];
 // Step labels live in `BookingStepIndicator`; keep this file lean.
+
+// expo-contacts needs a native build and is absent in Expo Go — the same
+// guarded require the trusted-contacts screen uses. When it's null the
+// "Contacts" chip simply doesn't render.
+let Contacts: typeof import('expo-contacts') | null = null;
+try {
+  Contacts = require('expo-contacts');
+} catch {
+  // Native module unavailable.
+}
+
+/** ~11 m — the same tolerance the saved-address "already saved" check uses. */
+function samePlace(aLng: number, aLat: number, bLng: number, bLat: number): boolean {
+  return Math.abs(aLng - bLng) < 1e-4 && Math.abs(aLat - bLat) < 1e-4;
+}
+
+/** A one-tap shortcut in the pickup/dropoff card: a saved address or a recent pin. */
+type QuickPlace = {
+  key: string;
+  /** Short chip caption — the saved label ("Home") or the head of the address. */
+  label: string;
+  address: string;
+  lat: number;
+  lng: number;
+} & (
+  | { kind: 'saved'; saved: SavedAddress }
+  | { kind: 'recent'; saved?: undefined }
+);
 
 /* ─── Animated Pulse Marker (frozen pins) ─── */
 
@@ -221,14 +258,9 @@ export default function TaskDetailsScreen() {
   //    covers the only back affordance (59pt Dynamic Island insets made
   //    a fixed 0.93 swallow it entirely).
   const footerHeight = 58 + Math.max(insets.bottom, 12);
-  const sheetSnapPoints = useMemo(
-    () => ({
-      peek: Math.min(0.5, (184 + footerHeight) / SCREEN_HEIGHT),
-      half: 0.6,
-      full: Math.min(0.93, 1 - (insets.top + 56) / SCREEN_HEIGHT),
-    }),
-    [SCREEN_HEIGHT, footerHeight, insets.top],
-  );
+  // `sheetSnapPoints` is defined further down — its peek height has to grow by
+  // the one-tap places row when there is one, and that row depends on the
+  // saved-addresses query declared later in this component.
 
   // Per-errand-type UX rules (which fields to show, labels, etc.)
   const rule = useMemo(
@@ -358,6 +390,10 @@ export default function TaskDetailsScreen() {
   // Reuses the SAME query key SavedAddressSheet reads, so saving here feeds
   // that sheet on its next open (addAddress invalidates the key).
   const savedAddrUserId = useAuthStore((s) => s.user?.id ?? 'anon');
+  // Per-field selectors (see the note above draftBooking) — the contact
+  // "Me" chip needs only these two strings, not the whole user object.
+  const myName = useAuthStore((s) => s.user?.full_name ?? '');
+  const myPhone = useAuthStore((s) => s.user?.phone ?? '');
   const [savePromptFor, setSavePromptFor] = useState<'pickup' | 'dropoff' | null>(null);
   const [savingAddress, setSavingAddress] = useState(false);
   const [customLabelMode, setCustomLabelMode] = useState(false);
@@ -394,6 +430,20 @@ export default function TaskDetailsScreen() {
       cancelled = true;
     };
   }, []);
+
+  // Last-used pickup/drop-off recipients (device-local, scoped to this
+  // account) so a weekly delivery to the same person is one tap, not a
+  // retyped name plus an 11-digit number.
+  const [recentRecipients, setRecentRecipients] = useState<RecentRecipient[]>([]);
+  useEffect(() => {
+    let cancelled = false;
+    getRecentRecipients(savedAddrUserId).then((items) => {
+      if (!cancelled) setRecentRecipients(items);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [savedAddrUserId]);
 
   // Details form
   const [photos, setPhotos] = useState<string[]>(draftBooking.item_photos ?? []);
@@ -639,28 +689,85 @@ export default function TaskDetailsScreen() {
     [phase, reverseGeocode],
   );
 
+  /* ── Recents ──
+     Every CONFIRMED point feeds the recents list, not just the ones picked
+     out of the search dropdown — panning to the same office twice a week used
+     to build zero shortcuts. Fire-and-forget; addRecent never throws and
+     drops unresolved "14.12, 121.09" labels itself. */
+  const rememberPlace = useCallback((placeName: string, lng: number, lat: number) => {
+    if (!placeName) return;
+    geocodingService
+      .addRecent({ place_name: placeName, center: [lng, lat] })
+      .then(() => geocodingService.getRecent(6))
+      .then(setRecentPlaces)
+      .catch(() => {});
+  }, []);
+
+  /* ── Commit a point to the draft and advance ──
+     Shared by the map "Confirm" CTA and the one-tap saved-address chips, so
+     both write exactly the same draft fields and phase transitions. */
+  const commitLocation = useCallback(
+    (target: 'pickup' | 'dropoff', address: string, lat: number, lng: number) => {
+      rememberPlace(address, lng, lat);
+      if (target === 'pickup') {
+        updateDraft({ pickup_address: address, pickup_lat: lat, pickup_lng: lng });
+        // Single-location errands have no separate dropoff — skip to details.
+        // Likewise when the dropoff is already confirmed (user came back via
+        // "Change" on the pickup): jump straight back to the form instead of
+        // making them re-confirm the untouched dropoff.
+        if (rule.singleLocation || draftBooking.dropoff_lat != null) {
+          setPhase('details');
+        } else {
+          setPhase('dropoff');
+          setCurrentAddress('');
+          setCurrentCoord(null);
+        }
+      } else {
+        updateDraft({ dropoff_address: address, dropoff_lat: lat, dropoff_lng: lng });
+        setPhase('details');
+      }
+    },
+    [rememberPlace, updateDraft, rule.singleLocation, draftBooking.dropoff_lat],
+  );
+
   /* ── Confirm pickup / dropoff ── */
   const handleConfirmLocation = useCallback(() => {
+    if (phase === 'details') return;
     if (!currentCoord || !currentAddress) return;
     const [lng, lat] = currentCoord;
-    if (phase === 'pickup') {
-      updateDraft({ pickup_address: currentAddress, pickup_lat: lat, pickup_lng: lng });
-      // Single-location errands have no separate dropoff — skip to details.
-      // Likewise when the dropoff is already confirmed (user came back via
-      // "Change" on the pickup): jump straight back to the form instead of
-      // making them re-confirm the untouched dropoff.
-      if (rule.singleLocation || draftBooking.dropoff_lat != null) {
-        setPhase('details');
-      } else {
-        setPhase('dropoff');
-        setCurrentAddress('');
-        setCurrentCoord(null);
-      }
-    } else if (phase === 'dropoff') {
-      updateDraft({ dropoff_address: currentAddress, dropoff_lat: lat, dropoff_lng: lng });
-      setPhase('details');
+    commitLocation(phase, currentAddress, lat, lng);
+  }, [phase, currentCoord, currentAddress, commitLocation]);
+
+  /* ── Adjust an already-committed pin ──
+     The escape hatch behind the one-tap saved-address fill: re-opens the map
+     on that leg with the committed point already under the crosshair, so the
+     user can nudge it and re-confirm. Unlike "Change" it does NOT wipe the
+     draft — a stale saved pin stays usable if they change their mind.
+     Reads the draft from the store because the toast action that calls this
+     can fire seconds after its closure was created. */
+  const handleAdjustPin = useCallback((target: 'pickup' | 'dropoff') => {
+    const draft = useBookingStore.getState().draftBooking;
+    const lat = target === 'pickup' ? draft.pickup_lat : draft.dropoff_lat;
+    const lng = target === 'pickup' ? draft.pickup_lng : draft.dropoff_lng;
+    const address = target === 'pickup' ? draft.pickup_address : draft.dropoff_address;
+    setRouteCoords([]);
+    setPhase(target);
+    if (lat != null && lng != null) {
+      const coord: [number, number] = [Number(lng), Number(lat)];
+      skipNextGeocode.current = true;
+      setCurrentCoord(coord);
+      setCurrentAddress(address ?? '');
+      setTimeout(() => {
+        mapRef.current?.animateToRegion(
+          { latitude: coord[1], longitude: coord[0], latitudeDelta: 0.008, longitudeDelta: 0.008 },
+          500,
+        );
+      }, 100);
+    } else {
+      setCurrentAddress('');
+      setCurrentCoord(null);
     }
-  }, [phase, currentCoord, currentAddress, updateDraft, rule.singleLocation, draftBooking.dropoff_lat]);
+  }, []);
 
   /* ── Back ── */
   const handleBack = useCallback(() => {
@@ -791,24 +898,49 @@ export default function TaskDetailsScreen() {
     }
   }, [reverseGeocode]);
 
-  /* ── Saved address ── */
-  const handleSavedAddressSelect = useCallback((address: SavedAddress) => {
-    // SavedAddress lat/lng are decimal columns → JSON strings on the wire.
-    // Coerce so the region math and the coordKey().toFixed() dedupe (and the
-    // coords written into the persisted draft) never hit a string.
-    const coords: [number, number] = [Number(address.lng), Number(address.lat)];
-    skipNextGeocode.current = true;
-    setCurrentCoord(coords);
-    setCurrentAddress(address.address);
-    mapRef.current?.animateToRegion({
-              latitude: coords[1], longitude: coords[0],
-              latitudeDelta: 0.008, longitudeDelta: 0.008,
-            }, 800);
-  }, []);
+  /* ── Saved address ──
+     A saved address already carries validated coordinates the user chose
+     themselves, so re-confirming it on the map was pure ceremony: this now
+     writes the draft and advances the step in ONE tap. The camera still flies
+     to the point (visual check) and the toast offers "Adjust pin" for the
+     stale-saved-pin case; the details step's "Change" links remain. */
+  const handleSavedAddressSelect = useCallback(
+    (address: SavedAddress) => {
+      if (phase === 'details') return;
+      // SavedAddress lat/lng are decimal columns → JSON strings on the wire.
+      // Coerce so the region math and the coordKey().toFixed() dedupe (and the
+      // coords written into the persisted draft) never hit a string.
+      const lat = Number(address.lat);
+      const lng = Number(address.lng);
+      if (!Number.isFinite(lat) || !Number.isFinite(lng)) return;
+      const coords: [number, number] = [lng, lat];
+      const target = phase;
+      skipNextGeocode.current = true;
+      setCurrentCoord(coords);
+      setCurrentAddress(address.address);
+      mapRef.current?.animateToRegion({
+                latitude: coords[1], longitude: coords[0],
+                latitudeDelta: 0.008, longitudeDelta: 0.008,
+              }, 800);
+      commitLocation(target, address.address, lat, lng);
+      Haptics.selectionAsync().catch(() => {});
+      const legLabel = (
+        target === 'pickup' ? rule.pickupLabel : rule.dropoffLabel
+      ).toLowerCase();
+      toast.success(`${address.label} set as ${legLabel}`, {
+        actionLabel: 'Adjust pin',
+        onAction: () => handleAdjustPin(target),
+      });
+    },
+    [phase, commitLocation, handleAdjustPin, rule.pickupLabel, rule.dropoffLabel],
+  );
 
-  /* ── Saved addresses (to detect already-saved pins) ──
-     Cache-first, and only fetched once we reach the details phase where the
-     chip can appear. Shares the SavedAddressSheet cache key. */
+  /* ── Saved addresses ──
+     Feeds BOTH the "already saved?" check on the details step and the one-tap
+     Home/Work chips in the pickup/dropoff card, so it can no longer wait for
+     the details phase. Cache-first on the SavedAddressSheet's key, which
+     login already warms (preload.service seeds ['user','addresses',userId]) —
+     in practice this paints from cache with no request. */
   const savedAddressesQ = useQuery<SavedAddress[]>(
     ['user', 'addresses', savedAddrUserId],
     async () =>
@@ -818,7 +950,7 @@ export default function TaskDetailsScreen() {
         // the "already saved" check).
         (a) => ({ ...a, lat: Number(a.lat), lng: Number(a.lng) }),
       ),
-    { staleTime: 60_000, ttl: CacheTTL.LONG, enabled: phase === 'details' },
+    { staleTime: 60_000, ttl: CacheTTL.LONG },
   );
   const savedAddresses = savedAddressesQ.data ?? [];
 
@@ -845,6 +977,123 @@ export default function TaskDetailsScreen() {
   // already-saved pin briefly reads as unsaved (data is [] mid-load) and the
   // chip flashes, and `is_default` below can't be trusted.
   const addressesLoaded = savedAddressesQ.data != null;
+
+  /* ── Places from past bookings ──
+     A fresh install has an empty recents list even for a customer with fifty
+     errands behind them. This reads the SAME ['bookings','recent'] key Home
+     already renders (and login already warms), so it is a cache hit in the
+     normal flow — no extra round trip, and nothing is written back into the
+     stored recents. */
+  const recentBookingsQ = useQuery<Booking[]>(
+    ['bookings', 'recent', savedAddrUserId],
+    async () => {
+      const res = await bookingService.getBookings({ per_page: 10 });
+      const b = res.data?.data;
+      return Array.isArray(b) ? b : [];
+    },
+    { staleTime: 60_000, ttl: CacheTTL.LONG, enabled: savedAddrUserId !== 'anon' },
+  );
+
+  /* ── One-tap places row (pickup / dropoff card) ──
+     Before this, the default saved address sat a sheet deep (chip → sheet →
+     row → map → Confirm) and recents only appeared after focusing the search
+     box — so the default, map-first path offered no shortcut at all. Saved
+     entries commit in one tap; recents just move the map, leaving the normal
+     Confirm as the visual check. */
+  const quickPlaces = useMemo<QuickPlace[]>(() => {
+    if (phase === 'details') return [];
+    const out: QuickPlace[] = [];
+    const taken: Array<[number, number]> = [];
+    // During the dropoff step the confirmed pickup is a useless (and harmful)
+    // suggestion — a dropoff on top of the pickup.
+    if (
+      phase === 'dropoff' &&
+      draftBooking.pickup_lng != null &&
+      draftBooking.pickup_lat != null
+    ) {
+      taken.push([Number(draftBooking.pickup_lng), Number(draftBooking.pickup_lat)]);
+    }
+    const isTaken = (lng: number, lat: number) =>
+      taken.some(([l, t]) => samePlace(l, t, lng, lat));
+
+    [...savedAddresses]
+      .sort((a, b) => {
+        if (a.is_default !== b.is_default) return a.is_default ? -1 : 1;
+        return (a.label ?? '').localeCompare(b.label ?? '');
+      })
+      .forEach((a) => {
+        if (out.length >= 3) return;
+        const lat = Number(a.lat);
+        const lng = Number(a.lng);
+        if (!Number.isFinite(lat) || !Number.isFinite(lng) || !a.address) return;
+        if (isTaken(lng, lat)) return;
+        taken.push([lng, lat]);
+        out.push({
+          kind: 'saved',
+          key: `saved-${a.id}`,
+          label: a.label || a.address,
+          address: a.address,
+          lat,
+          lng,
+          saved: { ...a, lat, lng },
+        });
+      });
+
+    const pushRecent = (key: string, placeName: string, lng: number, lat: number) => {
+      if (out.length >= 6) return;
+      if (!Number.isFinite(lng) || !Number.isFinite(lat) || !placeName) return;
+      if (isTaken(lng, lat)) return;
+      taken.push([lng, lat]);
+      out.push({
+        kind: 'recent',
+        key,
+        // Chips are one line — the head of a HERE label ("SM Aura, Taguig,
+        // …") is the recognisable part.
+        label: placeName.split(',')[0]?.trim() || placeName,
+        address: placeName,
+        lat,
+        lng,
+      });
+    };
+
+    recentPlaces.forEach((p, idx) => {
+      pushRecent(`recent-${idx}`, p.place_name, p.center[0], p.center[1]);
+    });
+
+    // Then this leg's address on the customer's own past bookings, newest
+    // first — the shortcut that exists before they've ever used search here.
+    (recentBookingsQ.data ?? []).forEach((b) => {
+      const address = phase === 'pickup' ? b.pickup_address : b.dropoff_address;
+      const lat = phase === 'pickup' ? b.pickup_lat : b.dropoff_lat;
+      const lng = phase === 'pickup' ? b.pickup_lng : b.dropoff_lng;
+      if (!address || lat == null || lng == null) return;
+      pushRecent(`booking-${b.id}`, address, Number(lng), Number(lat));
+    });
+
+    return out;
+  }, [
+    phase,
+    savedAddresses,
+    recentPlaces,
+    recentBookingsQ.data,
+    draftBooking.pickup_lat,
+    draftBooking.pickup_lng,
+  ]);
+
+  const handleQuickPlacePress = useCallback(
+    (place: QuickPlace) => {
+      if (phase === 'details') return;
+      if (place.kind === 'saved') {
+        handleSavedAddressSelect(place.saved);
+        return;
+      }
+      // Recent pins go through the same path as a search pick: move the map,
+      // fill the address, let the user confirm.
+      handleSearchSelect({ place_name: place.address, center: [place.lng, place.lat] });
+      Haptics.selectionAsync().catch(() => {});
+    },
+    [phase, handleSavedAddressSelect, handleSearchSelect],
+  );
 
   const canSavePickup =
     addressesLoaded &&
@@ -1060,6 +1309,17 @@ export default function TaskDetailsScreen() {
       }
       return;
     }
+    // Remember whoever the contacts are so the next booking to the same
+    // person is one tap. Device-local + account-scoped, fire-and-forget, and
+    // never part of the booking payload.
+    ([
+      [draftBooking.pickup_contact_name, draftBooking.pickup_contact_phone],
+      [draftBooking.dropoff_contact_name, draftBooking.dropoff_contact_phone],
+    ] as Array<[string | undefined, string | undefined]>).forEach(([name, phone]) => {
+      if (name?.trim() && phone?.trim()) {
+        addRecentRecipient(savedAddrUserId, { name: name.trim(), phone: phone.trim() });
+      }
+    });
     setStep(2);
     if (navLatch.current) return;
     navLatch.current = true;
@@ -1067,7 +1327,7 @@ export default function TaskDetailsScreen() {
     setTimeout(() => {
       navLatch.current = false;
     }, 700);
-  }, [draftBooking, rule, setStep, router]);
+  }, [draftBooking, rule, setStep, router, savedAddrUserId]);
 
   /* ── Initial camera center ── */
   const [userLocation, setUserLocation] = useState<[number, number] | null>(null);
@@ -1094,8 +1354,14 @@ export default function TaskDetailsScreen() {
         // timeout, which is why current location often appeared "stuck".
         // If permission isn't granted we keep the default center; the
         // "Current" button prompts on demand.
+        //
+        // requirePermission MUST stay false here: `true` runs
+        // ensureLocationPermission, which pops the OS dialog on first entry
+        // and — for a permanently-denied user — an interrupting "Open
+        // Settings" alert on EVERY entry into this step, which is exactly
+        // what the paragraph above says this effect must never do.
         const pos = await getCurrentCoords({
-          requirePermission: true,
+          requirePermission: false,
           accuracy: Location.Accuracy.Balanced,
         });
         if (cancelled || !pos) return;
@@ -1112,6 +1378,137 @@ export default function TaskDetailsScreen() {
     })();
     return () => { cancelled = true; };
   }, [phase]);
+
+  /* ── Contact quick-fill ──
+     Pickup/drop-off contacts used to be two empty boxes retyped every single
+     booking. Three sources, all one tap: the signed-in profile, the last few
+     recipients this account actually used (device-local), and the OS contact
+     picker. Fields stay fully editable afterwards. */
+  const fillContact = useCallback(
+    (target: 'pickup' | 'dropoff', name: string, phone: string) => {
+      const cleanName = (name ?? '').trim();
+      const cleanPhone = normalizePhPhone(phone ?? '');
+      if (!cleanName && !cleanPhone) return;
+      // Only write the halves we actually have — "Me" on an account with no
+      // phone on file must not blank out a number the user just typed.
+      updateDraft(
+        target === 'pickup'
+          ? {
+              ...(cleanName ? { pickup_contact_name: cleanName } : {}),
+              ...(cleanPhone ? { pickup_contact_phone: cleanPhone } : {}),
+            }
+          : {
+              ...(cleanName ? { dropoff_contact_name: cleanName } : {}),
+              ...(cleanPhone ? { dropoff_contact_phone: cleanPhone } : {}),
+            },
+      );
+      Haptics.selectionAsync().catch(() => {});
+    },
+    [updateDraft],
+  );
+
+  const handlePickFromContacts = useCallback(
+    async (target: 'pickup' | 'dropoff') => {
+      if (!Contacts) {
+        toast.info('Contact picker is not available on this device.');
+        return;
+      }
+      try {
+        const { status } = await Contacts.requestPermissionsAsync();
+        if (status !== 'granted') {
+          toast.info('Allow contacts access to pick a contact.');
+          return;
+        }
+        const picked = await Contacts.presentContactPickerAsync();
+        if (!picked) return;
+        const number = picked.phoneNumbers?.find((p) => p.number)?.number ?? '';
+        if (!picked.name && !number) {
+          toast.info('That contact has no phone number saved.');
+          return;
+        }
+        fillContact(target, picked.name ?? '', number);
+      } catch {
+        toast.error('Could not open contacts.');
+      }
+    },
+    [fillContact],
+  );
+
+  const meCanFill = !!(myName.trim() || myPhone.trim());
+
+  /** Chip row above a contact pair — "Me", last-used recipients, Contacts. */
+  const renderContactFill = (target: 'pickup' | 'dropoff') => {
+    if (!meCanFill && recentRecipients.length === 0 && !Contacts) return null;
+    return (
+      <View style={st.contactFillRow}>
+        {/* Layout lives in className on every chip — a Pressable styled only
+            through a style() callback loses flexDirection/background here. */}
+        {meCanFill && (
+          <Pressable
+            className="flex-row items-center bg-primary50 rounded-full px-3 py-1.5"
+            style={({ pressed }) => (pressed ? st.saveChipPressed : null)}
+            hitSlop={6}
+            onPress={() => fillContact(target, myName, myPhone)}
+            accessibilityRole="button"
+            accessibilityLabel="Use my own name and phone number"
+          >
+            <UserRound size={13} color={LightColors.primary} />
+            <Text style={st.saveChipText} numberOfLines={1}>Me</Text>
+          </Pressable>
+        )}
+        {recentRecipients.map((r) => (
+          <Pressable
+            key={`${target}-recipient-${r.phone}`}
+            className="flex-row items-center bg-primary50 rounded-full px-3 py-1.5"
+            style={({ pressed }) => (pressed ? st.saveChipPressed : null)}
+            hitSlop={6}
+            onPress={() => fillContact(target, r.name, r.phone)}
+            accessibilityRole="button"
+            accessibilityLabel={`Use ${r.name}, ${r.phone}`}
+          >
+            <Clock size={13} color={LightColors.primary} />
+            <Text style={[st.saveChipText, { maxWidth: 120 }]} numberOfLines={1}>
+              {r.name.split(' ')[0] || r.name}
+            </Text>
+          </Pressable>
+        ))}
+        {!!Contacts && (
+          <Pressable
+            className="flex-row items-center bg-primary50 rounded-full px-3 py-1.5"
+            style={({ pressed }) => (pressed ? st.saveChipPressed : null)}
+            hitSlop={6}
+            onPress={() => handlePickFromContacts(target)}
+            accessibilityRole="button"
+            accessibilityLabel="Pick from your phone contacts"
+          >
+            <BookUser size={13} color={LightColors.primary} />
+            <Text style={st.saveChipText} numberOfLines={1}>Contacts</Text>
+          </Pressable>
+        )}
+      </View>
+    );
+  };
+
+  /* ── Sheet snap points ──
+     Real device terms rather than blind fractions:
+      • peek must fit the location card PLUS the sticky footer — a fixed
+        0.35 clipped the quick-action chips behind the footer on 640dp
+        Androids and the SE — and grow by the one-tap places row when
+        there is one, or those chips hide under the fold;
+      • full must stop just below the floating back row, or the sheet
+        covers the only back affordance (59pt Dynamic Island insets made
+        a fixed 0.93 swallow it entirely). */
+  const sheetSnapPoints = useMemo(
+    () => ({
+      peek: Math.min(
+        0.5,
+        (184 + (quickPlaces.length > 0 ? 46 : 0) + footerHeight) / SCREEN_HEIGHT,
+      ),
+      half: 0.6,
+      full: Math.min(0.93, 1 - (insets.top + 56) / SCREEN_HEIGHT),
+    }),
+    [SCREEN_HEIGHT, footerHeight, insets.top, quickPlaces.length],
+  );
 
   /* ── Render ── */
   return (
@@ -1507,6 +1904,52 @@ export default function TaskDetailsScreen() {
             </Text>
           </View>
 
+          {/* One-tap places — saved addresses (commit immediately) then
+              recent pins (move the map, normal Confirm). Horizontal so a
+              long "Mom's house" label never wraps the card taller. */}
+          {quickPlaces.length > 0 && (
+            <ScrollView
+              horizontal
+              showsHorizontalScrollIndicator={false}
+              keyboardShouldPersistTaps="handled"
+              style={st.quickPlaceRow}
+              contentContainerStyle={st.quickPlaceRowContent}
+            >
+              {quickPlaces.map((place) => (
+                <Pressable
+                  key={place.key}
+                  // Layout in className — a Pressable styled only through a
+                  // style() callback loses flexDirection/background here.
+                  className="flex-row items-center bg-primary50 rounded-full px-3 py-1.5"
+                  style={({ pressed }) => (pressed ? st.saveChipPressed : null)}
+                  hitSlop={6}
+                  onPress={() => handleQuickPlacePress(place)}
+                  accessibilityRole="button"
+                  accessibilityLabel={
+                    place.kind === 'saved'
+                      ? `Use saved address ${place.label} as ${(phase === 'pickup' ? rule.pickupLabel : rule.dropoffLabel).toLowerCase()}`
+                      : `Recent place ${place.address}`
+                  }
+                >
+                  {place.kind === 'saved' ? (
+                    /^home$/i.test(place.label) ? (
+                      <Home size={13} color={LightColors.primary} />
+                    ) : /^(work|office)$/i.test(place.label) ? (
+                      <Briefcase size={13} color={LightColors.primary} />
+                    ) : (
+                      <Bookmark size={13} color={LightColors.primary} />
+                    )
+                  ) : (
+                    <Clock size={13} color={LightColors.primary} />
+                  )}
+                  <Text style={[st.saveChipText, { maxWidth: 150 }]} numberOfLines={1}>
+                    {place.label}
+                  </Text>
+                </Pressable>
+              ))}
+            </ScrollView>
+          )}
+
           {/* Quick actions */}
           <View style={st.quickActions}>
             <Pressable
@@ -1882,6 +2325,7 @@ export default function TaskDetailsScreen() {
                 </Pressable>
                 {showPickupContact && (
                   <>
+                    {renderContactFill('pickup')}
                     <Input
                       label="Contact Name"
                       value={draftBooking.pickup_contact_name ?? ''}
@@ -1955,6 +2399,7 @@ export default function TaskDetailsScreen() {
                 </Pressable>
                 {showDropoffContact && (
                   <>
+                    {renderContactFill('dropoff')}
                     <Input
                       label="Contact Name"
                       value={draftBooking.dropoff_contact_name ?? ''}
@@ -2393,6 +2838,25 @@ const st = StyleSheet.create({
     flexDirection: 'row',
     gap: 10,
     marginBottom: 18,
+  },
+  // One-tap saved/recent places. `flexGrow: 0` keeps the horizontal
+  // ScrollView from claiming the card's remaining height.
+  quickPlaceRow: {
+    flexGrow: 0,
+    marginBottom: 12,
+  },
+  quickPlaceRowContent: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    paddingRight: 4,
+  },
+  // Contact quick-fill chips ("Me" / last-used / Contacts) above each pair.
+  contactFillRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+    marginBottom: 10,
   },
   quickBtn: {
     // Equal-width pills that share the row and shrink together, so the

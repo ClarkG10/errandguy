@@ -19,6 +19,9 @@ import {
   type SupportTicketStatus,
 } from '../../../services/support.service';
 import { useKeyboard } from '../../../hooks/useKeyboard';
+import { useSmartPolling } from '../../../hooks/useSmartPolling';
+import { useEchoChannel } from '../../../hooks/useEchoChannel';
+import { useAuthStore } from '../../../stores/authStore';
 import { GradientHeader } from '../../../components/ui/GradientHeader';
 import { Spinner } from '../../../components/ui/Spinner';
 import { ChatThreadSkeleton } from '../../../components/ui/Skeleton';
@@ -37,6 +40,30 @@ type ThreadMessage = SupportMessage & { pending?: boolean };
 type Row =
   | { kind: 'msg'; message: ThreadMessage }
   | { kind: 'day'; id: string; label: string };
+
+/**
+ * How many of the newest messages an open-thread refresh pulls. Small on
+ * purpose: a support thread is short, and the refresh only needs to catch the
+ * agent replies that landed since the last tick. If a whole page comes back
+ * unknown we could be straddling a gap, so the screen resyncs from scratch
+ * instead of stitching a possibly-out-of-order tail.
+ */
+const REFRESH_PAGE = 20;
+
+/** Cadence of the open-thread refresh. Paused while backgrounded/offline and
+ *  ticked immediately on foreground + reconnect by useSmartPolling. */
+const REFRESH_INTERVAL_MS = 25_000;
+
+/** Notification `data.type` values SupportTicketNotifier sends to the owner. */
+const SUPPORT_NOTIFICATION_TYPES = ['support_reply', 'support_status'];
+
+/**
+ * The api layer serves GETs from an 8s micro-cache, so a realtime kick that
+ * lands right after a poll tick can read a pre-reply page. When that happens
+ * we retry once just past the window instead of making the user wait out the
+ * whole poll interval.
+ */
+const MICRO_CACHE_GRACE_MS = 8_500;
 
 const STATUS_META: Record<
   SupportTicketStatus,
@@ -119,6 +146,115 @@ export default function SupportThreadScreen() {
   useEffect(() => {
     loadInitial();
   }, [loadInitial]);
+
+  // Live mirrors so the refresh callback can diff against the current thread
+  // without being re-created (and re-arming the poll) on every keystroke-driven
+  // render, and without impure comparisons inside a state updater.
+  const messagesRef = useRef<ThreadMessage[]>(messages);
+  messagesRef.current = messages;
+  const ticketRef = useRef<SupportTicket | null>(ticket);
+  ticketRef.current = ticket;
+
+  /**
+   * Pull the newest slice of the thread and splice in anything we don't have.
+   * Resolves to whether anything actually changed.
+   *
+   * Before this the screen fetched exactly once on mount: an agent replying
+   * from /admin was invisible until the user backed out and re-opened the
+   * ticket (paying the cold-fetch skeleton each time). The ticket object comes
+   * back on every call, so a status change (resolved / closed / re-opened)
+   * lands here too.
+   *
+   * Errors propagate so useSmartPolling's backoff engages.
+   */
+  const refreshThread = useCallback(async (): Promise<boolean> => {
+    if (!id) return false;
+    const r = await supportService.getTicket(id, { limit: REFRESH_PAGE });
+    const head = r.data.data.messages ?? [];
+
+    // Only re-set the ticket when something the UI shows actually moved —
+    // otherwise every idle tick would re-render the screen for nothing.
+    const nextTicket = r.data.data.ticket;
+    const prevTicket = ticketRef.current;
+    const ticketChanged =
+      !prevTicket ||
+      prevTicket.status !== nextTicket.status ||
+      prevTicket.subject !== nextTicket.subject ||
+      prevTicket.last_message_at !== nextTicket.last_message_at;
+    if (ticketChanged) setTicket(nextTicket);
+
+    const known = new Set(messagesRef.current.map((m) => m.id));
+    const additions = head.filter((m) => !known.has(m.id));
+    if (additions.length === 0) return ticketChanged;
+    // A fully-unknown page means more arrived than we asked for — there could
+    // be a hole between what we hold and this tail. Resync rather than guess.
+    if (additions.length >= REFRESH_PAGE) {
+      await loadInitial();
+      return true;
+    }
+    setMessages((prev) => {
+      const seen = new Set(prev.map((m) => m.id));
+      const fresh = additions.filter((m) => !seen.has(m.id));
+      if (fresh.length === 0) return prev;
+      // Keep any in-flight optimistic bubble pinned to the very bottom so a
+      // refresh landing mid-send doesn't jump the user's own message upwards.
+      const settled = prev.filter((m) => !m.pending);
+      const pending = prev.filter((m) => m.pending);
+      return [...settled, ...fresh, ...pending];
+    });
+    return true;
+  }, [id, loadInitial]);
+
+  useSmartPolling(refreshThread, {
+    interval: REFRESH_INTERVAL_MS,
+    enabled: !!id,
+    // The mount fetch (loadInitial) already covers the first paint; an extra
+    // immediate tick would just duplicate it.
+    runOnMount: false,
+    pauseWhenOffline: true,
+    backoffOnError: true,
+  });
+
+  // Realtime shortcut: the server pushes + broadcasts `support_reply` /
+  // `support_status` (SupportTicketNotifier) on the owner's notification
+  // channel. When one names THIS ticket, refresh now instead of waiting out
+  // the poll — so an agent's answer appears while the user is still looking
+  // at the thread. The channel is ref-counted, so co-subscribing alongside the
+  // app-wide notifications hook is safe.
+  const userId = useAuthStore((s) => s.user?.id ?? null);
+  const graceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(
+    () => () => {
+      if (graceTimerRef.current) clearTimeout(graceTimerRef.current);
+    },
+    [],
+  );
+  useEchoChannel({
+    channel: `notifications.${userId}`,
+    event: 'notification.created',
+    enabled: !!userId && !!id,
+    onEvent: (payload) => {
+      const data = (payload?.data ?? {}) as Record<string, unknown>;
+      const type = typeof payload?.type === 'string' ? payload.type : data.type;
+      if (typeof type !== 'string' || !SUPPORT_NOTIFICATION_TYPES.includes(type)) return;
+      const ticketId = data.ticket_id;
+      if (ticketId != null && String(ticketId) !== String(id)) return;
+      void (async () => {
+        try {
+          if (await refreshThread()) return;
+          // Nothing new came back — almost certainly the micro-cache. Try once
+          // more past its window; the poll stays the backstop either way.
+          if (graceTimerRef.current) clearTimeout(graceTimerRef.current);
+          graceTimerRef.current = setTimeout(() => {
+            graceTimerRef.current = null;
+            void refreshThread().catch(() => {});
+          }, MICRO_CACHE_GRACE_MS);
+        } catch {
+          /* the poll remains the fallback */
+        }
+      })();
+    },
+  });
 
   const loadOlder = useCallback(async () => {
     if (!id || !hasMore || loadingOlderRef.current || !nextBefore) return;

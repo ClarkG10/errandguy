@@ -2,6 +2,7 @@
 
 namespace App\Filament\Resources\SupportTickets\Tables;
 
+use App\Filament\Resources\SupportTickets\SupportTicketNotifier;
 use App\Filament\Support\AdminNotify;
 use App\Filament\Support\DateRangeFilter;
 use App\Filament\Support\ExportCsv;
@@ -92,7 +93,17 @@ class SupportTicketsTable
                     ])
                     ->fillForm(fn ($record): array => ['status' => $record->status])
                     ->action(function (array $data, $record): void {
+                        $previous = $record->status;
                         $record->update(['status' => $data['status']]);
+
+                        // Tell the owner their ticket moved (resolved/closed/
+                        // re-opened) — previously silent, so a user waiting on a
+                        // resolution never learned it landed. Only on a REAL
+                        // change; latched + best-effort inside the notifier.
+                        if ($data['status'] !== $previous) {
+                            SupportTicketNotifier::statusChanged($record, $data['status']);
+                        }
+
                         AdminNotify::success(
                             'Ticket status updated',
                             $record,

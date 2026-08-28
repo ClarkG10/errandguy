@@ -134,6 +134,98 @@ const HERE_TRANSPORT_MODE: Record<DirectionsProfile, string> = {
 };
 
 // ---------------------------------------------------------------------------
+// ETA model — FALLBACK ONLY, and the single source of truth for it
+// ---------------------------------------------------------------------------
+
+/**
+ * Average effective city speeds (km/h) per booking vehicle key.
+ *
+ * IMPORTANT: this table is a FALLBACK. Whenever a real route has been
+ * fetched (`getRoute().durationSeconds`), that duration wins — it carries
+ * actual road geometry and HERE's traffic model, while this table divides a
+ * straight-line/server Haversine distance by a guess. The table exists only
+ * for the moments a route isn't available: no HERE key, a failed/absent
+ * routing call, or a fare estimate rendered before any route is fetched.
+ *
+ * It lived duplicated in three places (book/details.tsx, two copies in
+ * book/review.tsx) with identical numbers; keeping one copy here means an
+ * adjustment can't drift between screens. Never feed these minutes into
+ * pricing — `distance_km` stays the only pricing input.
+ */
+export const VEHICLE_SPEED_KMH: Record<string, number> = {
+  walk: 5,
+  bicycle: 15,
+  motorcycle: 35,
+  car: 30,
+};
+
+/** Speed used when the vehicle key is unknown (matches the old `?? 30`). */
+export const DEFAULT_SPEED_KMH = 30;
+
+/** Same table expressed over routing profiles, for `useEta`'s fallback. */
+const PROFILE_SPEED_KMH: Record<DirectionsProfile, number> = {
+  walking: VEHICLE_SPEED_KMH.walk,
+  cycling: VEHICLE_SPEED_KMH.bicycle,
+  driving: DEFAULT_SPEED_KMH,
+};
+
+/** Booking vehicle key → the routing profile HERE should be asked for. */
+export function profileForVehicle(vehicleType?: string | null): DirectionsProfile {
+  switch (vehicleType) {
+    case 'walk':
+      return 'walking';
+    case 'bicycle':
+      return 'cycling';
+    default:
+      return 'driving';
+  }
+}
+
+/**
+ * Fallback ETA in whole minutes from a distance in km. Returns null when the
+ * distance isn't a usable number, so callers can hide the ETA rather than
+ * print a fabricated "0 min". May return 0 — `formatEtaMinutes` renders that
+ * as "< 1 min".
+ */
+export function etaMinutesFromDistanceKm(
+  distanceKm: number | null | undefined,
+  vehicleType?: string | null,
+): number | null {
+  // Guard null/undefined BEFORE coercing: Number(null) is 0, which is finite,
+  // so a missing distance would otherwise render a confident "< 1 min".
+  if (distanceKm == null) return null;
+  const km = typeof distanceKm === 'number' ? distanceKm : Number(distanceKm);
+  if (!Number.isFinite(km) || km < 0) return null;
+  const speed =
+    (vehicleType ? VEHICLE_SPEED_KMH[vehicleType] : undefined) ?? DEFAULT_SPEED_KMH;
+  return Math.round((km / speed) * 60);
+}
+
+/** Fallback ETA in whole minutes from a distance in metres + routing profile. */
+export function etaMinutesFromDistanceMeters(
+  distanceMeters: number | null | undefined,
+  profile: DirectionsProfile = 'driving',
+): number | null {
+  // Same null-before-coerce guard as above (Number(null) === 0).
+  if (distanceMeters == null) return null;
+  const m = typeof distanceMeters === 'number' ? distanceMeters : Number(distanceMeters);
+  if (!Number.isFinite(m) || m < 0) return null;
+  const speed = PROFILE_SPEED_KMH[profile] ?? DEFAULT_SPEED_KMH;
+  return Math.round((m / 1000 / speed) * 60);
+}
+
+/**
+ * Shared "~Z min" rendering so every surface phrases an ETA identically.
+ * Null in → null out (nothing to show).
+ */
+export function formatEtaMinutes(minutes: number | null | undefined): string | null {
+  if (typeof minutes !== 'number' || !Number.isFinite(minutes)) return null;
+  if (minutes < 1) return '< 1 min';
+  if (minutes >= 60) return `${Math.floor(minutes / 60)}h ${minutes % 60}m`;
+  return `${minutes} min`;
+}
+
+// ---------------------------------------------------------------------------
 // HERE Routing API v8
 // ---------------------------------------------------------------------------
 
@@ -247,6 +339,30 @@ export const routeService = {
       console.error('[route.getRoute] Failed:', err);
       return null;
     }
+  },
+
+  /**
+   * Travel time for a leg in whole minutes, preferring the REAL fetched route
+   * duration (road geometry + HERE's traffic model) and only falling back to
+   * the straight-line speed table when routing is unavailable.
+   *
+   * `fallbackDistanceKm` is the straight-line distance the caller already has
+   * (e.g. the fare estimate's `distance_km`); pass it so a routing outage
+   * degrades to today's approximation instead of showing nothing.
+   *
+   * Display-only — never feed the result into pricing.
+   */
+  async getEtaMinutes(
+    from: { lng: number; lat: number },
+    to: { lng: number; lat: number },
+    vehicleType?: string | null,
+    fallbackDistanceKm?: number | null,
+  ): Promise<number | null> {
+    const route = await this.getRoute(from, to, profileForVehicle(vehicleType));
+    if (route && Number.isFinite(route.durationSeconds) && route.durationSeconds > 0) {
+      return Math.round(route.durationSeconds / 60);
+    }
+    return etaMinutesFromDistanceKm(fallbackDistanceKm, vehicleType);
   },
 
   async refreshRoute(

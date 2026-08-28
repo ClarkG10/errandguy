@@ -66,11 +66,15 @@ export default function Index() {
     return <Redirect href="/(customer)/(tabs)" />;
   }
 
-  // Authenticated but the role isn't known yet. `role` is never restored by
-  // loadFromStorage — it hydrates asynchronously once the cold-start profile
-  // fetch resolves. Redirecting on the null role would drop a runner into the
-  // CUSTOMER navigator for a beat (wrong tabs + stray customer fetches) before
-  // it bounced back, so branch on what we actually know:
+  // Authenticated but the role STILL isn't known. loadFromStorage now
+  // rehydrates the persisted boot snapshot ({id, role, …}) before `isLoading`
+  // flips, so a returning user normally hits one of the two redirects above on
+  // frame one and never reaches here. This path is what's left: a first launch
+  // after sign-up, an install upgraded from a build that predates the snapshot,
+  // or a purged one — the role only arrives with the /user/profile fetch.
+  // Redirecting on the null role would drop a runner into the CUSTOMER
+  // navigator for a beat (wrong tabs + stray customer fetches) before it
+  // bounced back, so branch on what we actually know:
   if (user) {
     // Profile loaded but still role-less — the account finished OTP without
     // choosing a role. Continue registration instead of stranding the splash.

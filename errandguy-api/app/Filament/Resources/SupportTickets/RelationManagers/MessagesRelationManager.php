@@ -2,6 +2,7 @@
 
 namespace App\Filament\Resources\SupportTickets\RelationManagers;
 
+use App\Filament\Resources\SupportTickets\SupportTicketNotifier;
 use App\Filament\Support\AdminNotify;
 use Filament\Actions\Action;
 use Filament\Forms\Components\Textarea;
@@ -32,13 +33,21 @@ class MessagesRelationManager extends RelationManager
                     ])
                     ->action(function (array $data): void {
                         $ticket = $this->getOwnerRecord();
-                        \App\Models\SupportMessage::create([
+                        $message = \App\Models\SupportMessage::create([
                             'ticket_id' => $ticket->id,
                             'sender_id' => auth('admin')->id(),
                             'sender_type' => 'agent',
                             'content' => $data['content'],
                         ]);
                         $ticket->update(['last_message_at' => now(), 'status' => 'pending']);
+
+                        // Tell the OWNER something arrived. Without this the reply
+                        // was invisible until the user happened to re-open the
+                        // thread — in-app row + Reverb broadcast + device push,
+                        // deliberately generic copy. Best-effort + latched, so it
+                        // can neither fail nor double-send this reply.
+                        SupportTicketNotifier::replied($ticket, $message);
+
                         AdminNotify::success('Reply sent', $ticket, ['Ticket' => $ticket->id], audit: 'support.replied');
                     }),
             ])

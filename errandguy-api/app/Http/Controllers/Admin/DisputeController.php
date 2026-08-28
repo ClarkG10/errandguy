@@ -11,6 +11,7 @@ use App\Support\ErrorCode;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Str;
 
 class DisputeController extends Controller
 {
@@ -84,11 +85,25 @@ class DisputeController extends Controller
         // Only on a REAL transition: notify the reporter (queued so the admin
         // response isn't blocked on Expo/FCM latency, P33) and record the audit
         // entry — so a repeat never double-notifies or double-logs.
+        //
+        // The old body said "Check the details for more info" while pointing
+        // NOWHERE — no customer/runner endpoint can read a dispute back, so the
+        // reporter never learned what was decided. Carry the outcome in the
+        // notification itself: the admin's resolution truncated into the body,
+        // the full text + ids in the data payload. Mirrors the Filament resolve
+        // action's copy (DisputeTicketsTable).
+        $resolution = (string) $request->input('resolution_note');
         SendPushJob::dispatch(
             $result['dispute']->reported_by,
             'Dispute Resolved',
-            'Your dispute has been reviewed and resolved. Check the details for more info.',
-            ['type' => 'system']
+            $this->resolutionBody($resolution),
+            [
+                'type' => 'system',
+                'dispute_id' => $result['dispute']->id,
+                'booking_id' => $result['dispute']->booking_id,
+                'dispute_status' => 'resolved',
+                'resolution' => $resolution,
+            ]
         );
 
         AdminActivity::log('dispute.resolved', $result['dispute'], ['via' => 'api']);
@@ -121,9 +136,43 @@ class DisputeController extends Controller
         }
 
         if ($result['transitioned']) {
+            // Escalation was silent to the reporter, so a case that was in fact
+            // still moving looked abandoned. Only on a real transition, so a
+            // repeat can't re-notify. Mirrors the Filament escalate action.
+            if ($result['dispute']->reported_by) {
+                SendPushJob::dispatch(
+                    $result['dispute']->reported_by,
+                    'Dispute Escalated',
+                    'Your report is being reviewed by a senior specialist. We’ll notify you as soon as it’s resolved.',
+                    [
+                        'type' => 'system',
+                        'dispute_id' => $result['dispute']->id,
+                        'booking_id' => $result['dispute']->booking_id,
+                        'dispute_status' => 'escalated',
+                    ]
+                );
+            }
+
             AdminActivity::log('dispute.escalated', $result['dispute'], ['via' => 'api']);
         }
 
         return $this->ok(null, 'Dispute escalated.');
+    }
+
+    /**
+     * User-facing body for a dispute resolution: the admin's own words, capped so
+     * a 1000-char note isn't silently clipped by the OS notification shade. The
+     * FULL text travels in the data payload. (Kept in step with
+     * DisputeTicketsTable::resolutionBody — the Filament twin of this action.)
+     */
+    private function resolutionBody(string $resolution): string
+    {
+        $resolution = trim(preg_replace('/\s+/', ' ', $resolution) ?? '');
+
+        if ($resolution === '') {
+            return 'Your dispute has been reviewed and resolved.';
+        }
+
+        return 'Your dispute has been resolved: '.Str::limit($resolution, 150);
     }
 }

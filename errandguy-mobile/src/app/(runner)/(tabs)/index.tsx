@@ -39,6 +39,12 @@ import {
 import { NegotiateOfferCard } from '../../../components/runner/NegotiateOfferCard';
 import { VerificationBanner } from '../../../components/runner/VerificationBanner';
 import { IncomingRequestModal } from '../../../components/runner/IncomingRequestModal';
+import { OfferDetailsSheet } from '../../../components/runner/OfferDetailsSheet';
+import {
+  offerExpiresAt,
+  offerTimeoutSeconds,
+  readAcceptDeadline,
+} from '../../../components/runner/offerMeta';
 import { ActiveRunnerErrandCard } from '../../../components/runner/ActiveRunnerErrandCard';
 import { Avatar } from '../../../components/ui/Avatar';
 import { Button } from '../../../components/ui/Button';
@@ -206,6 +212,10 @@ export default function RunnerHomeScreen() {
 
   const [togglingOnline, setTogglingOnline] = useState(false);
   const [locationGranted, setLocationGranted] = useState<boolean | null>(null);
+  /** Open offer being previewed in the details sheet (null = sheet closed). */
+  const [previewOffer, setPreviewOffer] = useState<Booking | null>(null);
+  /** Id of the offer whose accept is in flight — locks every other claim. */
+  const [acceptingOfferId, setAcceptingOfferId] = useState<string | null>(null);
 
   // Pulse ring around the power button while online — a quiet "live"
   // signal. Frozen for users with the OS Reduce Motion preference.
@@ -241,8 +251,6 @@ export default function RunnerHomeScreen() {
   useEffect(() => {
     checkLocationPermission();
   }, [checkLocationPermission]);
-
-  useIncomingRequest(isOnline && user?.id ? user.id : null);
 
   const userId = user?.id ?? 'anon';
   const role = useAuthStore((s) => s.role);
@@ -290,6 +298,21 @@ export default function RunnerHomeScreen() {
     { staleTime: CacheTTL.MEDIUM, ttl: CacheTTL.LONG, enabled },
   );
 
+  // Realtime offer stream. Declared AFTER the queries so a broadcast can also
+  // freshen the open-offers list: the fixed-match popup is only half the
+  // story — dispatch running at all is a strong signal this runner's feed
+  // just changed.
+  useIncomingRequest(isOnline && user?.id ? user.id : null, {
+    onOffer: (offer) => {
+      void offersQ.revalidate();
+      // The broadcast projection is deliberately thin (no accept_deadline, no
+      // payment metadata, no shopping budget / stops). Pull the full
+      // BookingResource straight away so the modal upgrades itself in seconds
+      // rather than waiting out the 30s reconcile poll.
+      if (offer.status === 'matched') void currentErrandQ.revalidate();
+    },
+  });
+
   const recentErrands = (historyQ.data ?? []).slice(0, 3);
   const negotiateOffers = offersQ.data ?? [];
   const activeErrand = currentErrand ?? currentErrandQ.data ?? null;
@@ -310,24 +333,127 @@ export default function RunnerHomeScreen() {
     runOnMount: false,
   });
 
+  // Keep the open-offers list live while the runner sits here waiting. The
+  // screen literally says "we'll ping you the moment a nearby errand comes
+  // in", but the list had no poller and no realtime invalidation — a new
+  // broadcast only ticked the bell badge, so the runner had to pull-to-refresh
+  // to see first-come-first-served work. Same idiom as the current-errand poll
+  // above: foreground + online only, `revalidate()` (not `refresh()`) so it
+  // doesn't wipe the app-wide GET micro-cache, and off entirely once the
+  // runner has an errand in hand. The endpoint's own 5s response cache and the
+  // ETag conditional-GET keep the cost near zero.
+  useSmartPolling(() => offersQ.revalidate(), {
+    interval: 20_000,
+    enabled: enabled && isOnline && !activeErrand,
+    runOnMount: false,
+  });
+
   const lastSeenMatchIdRef = React.useRef<string | null>(null);
+  /** Offers the runner explicitly declined — never re-raise these, even if a
+   *  fire-and-forget decline POST failed and the booking is still `matched`. */
+  const declinedOfferIdsRef = React.useRef<Set<string>>(new Set());
   useEffect(() => {
     const fresh = currentErrandQ.data;
     if (!fresh) return;
     if (fresh.status !== 'matched') return;
     if (currentErrand?.id === fresh.id) return;
-    if (incomingRequest?.booking?.id === fresh.id) return;
-    if (lastSeenMatchIdRef.current === fresh.id) return;
+    if (declinedOfferIdsRef.current.has(fresh.id)) return;
+
+    // The REST payload is richer than the Reverb offer projection (which
+    // carries no accept_deadline / payment_method_type / amount_to_collect).
+    const deadline = readAcceptDeadline(fresh);
+    const deadlineMs = deadline ? Date.parse(deadline) : NaN;
+    const serverWindowOpen = Number.isFinite(deadlineMs) && deadlineMs > Date.now();
+
+    const shown = incomingRequest?.booking;
+    if (shown?.id === fresh.id) {
+      // Already on screen — upgrade it in place the first time the fuller
+      // payload lands, so the runner stops deciding against a guessed window
+      // and an unknown payment method.
+      if (!readAcceptDeadline(shown) && deadline) {
+        useRunnerStore.getState().setIncomingRequest({
+          booking: fresh,
+          expiresAt: offerExpiresAt(deadline),
+        });
+      }
+      return;
+    }
+
+    // Already raised once and the server window is provably shut → let it go.
+    // But when the app's own (fallback) countdown closed EARLY and the server
+    // is still honouring the accept, give the offer back with the real window
+    // instead of silently losing the runner a job they never turned down.
+    if (lastSeenMatchIdRef.current === fresh.id && !serverWindowOpen) return;
+
     lastSeenMatchIdRef.current = fresh.id;
     useRunnerStore.getState().setIncomingRequest({
       booking: fresh,
-      expiresAt: Date.now() + 30_000,
+      // Server's real acceptance cutoff when it sent one; the old hardcoded
+      // 30s only as a fallback.
+      expiresAt: offerExpiresAt(deadline),
     });
-  }, [currentErrandQ.data, currentErrand?.id, incomingRequest?.booking?.id]);
+  }, [currentErrandQ.data, currentErrand?.id, incomingRequest?.booking]);
 
   useEffect(() => {
     if (profileQ.data) setRunnerProfile(profileQ.data);
   }, [profileQ.data, setRunnerProfile]);
+
+  // ── Reconcile the online flag from the SERVER ──────────────────────────
+  // `runnerStore.isOnline` starts false and was only ever written by the
+  // toggle handler, so after a restart / crash mid-shift the server still had
+  // is_online = true while the app said "offline": the offer channel was not
+  // subscribed, the feed and the matched-booking poll were disabled, and GPS
+  // wasn't running — matches expired against a deaf app and the runner had to
+  // remember to re-toggle. The profile response has always carried the truth;
+  // nothing read it. Runs once per mount, from a value that is actually fresh
+  // (never a stale-offline cache read), and stands down while a toggle is in
+  // flight so it can't fight the runner's own tap.
+  const onlineReconciledRef = React.useRef(false);
+  useEffect(() => {
+    if (!enabled || onlineReconciledRef.current) return;
+    if (togglingOnline) return;
+    const profile = profileQ.data;
+    if (!profile || typeof profile.is_online !== 'boolean') return;
+    if (profileQ.servedFromCacheOffline || profileQ.isStale) return;
+    onlineReconciledRef.current = true;
+
+    const serverOnline = profile.is_online === true;
+    if (serverOnline === isOnline) return;
+
+    toggleOnline(serverOnline);
+    if (!serverOnline) {
+      stopTracking();
+      return;
+    }
+    // Resume GPS so the customer's pin isn't frozen and matching keeps seeing
+    // a live position — but only when permission is ALREADY granted.
+    // startTracking() would otherwise pop the OS dialog (or the Settings
+    // alert) on a plain screen mount, which the app deliberately never does.
+    void (async () => {
+      try {
+        if (useLocationStore.getState().isTracking) return;
+        const { status } = await Location.getForegroundPermissionsAsync();
+        if (status !== 'granted') {
+          setLocationGranted(false);
+          toast.warning(
+            'You’re still online, but location is off — turn it on to keep getting errands.',
+          );
+          return;
+        }
+        setLocationGranted(true);
+        await startTracking();
+      } catch {
+        /* best-effort resume — the power toggle is always the manual path */
+      }
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [
+    enabled,
+    togglingOnline,
+    profileQ.data,
+    profileQ.servedFromCacheOffline,
+    profileQ.isStale,
+  ]);
   useEffect(() => {
     if (earningsTodayQ.data != null) {
       setEarnings({ ...earnings, today: earningsTodayQ.data.total_earnings ?? 0 });
@@ -539,35 +665,74 @@ export default function RunnerHomeScreen() {
     }
   };
 
-  const handleAcceptErrand = async () => {
-    if (!incomingRequest) return;
-    const bookingId = incomingRequest.booking.id;
-    try {
-      const res = await runnerService.acceptErrand(bookingId);
-      // Server-confirmed accept — the success moment for this flow.
-      haptics.success();
-      const updated = (res?.data?.data ?? incomingRequest.booking) as Booking;
-      acceptErrand(updated);
-      router.push(`/(runner)/errand/${bookingId}` as any);
-    } catch (err: any) {
-      // Honest copy per backend code: BOOKING_STALE ("someone got there first")
-      // or BOOKING_CONFLICT ("finish your active errand first").
-      haptics.error();
-      toast.error(errorMessage(err, copy.runner.acceptFailed));
-      clearIncomingRequest();
-    }
-  };
+  /**
+   * The ONE claim path, shared by the fixed-match modal and the open-offer
+   * surfaces. Accept was previously wired only to the modal, so a negotiate
+   * offer had no accept call site anywhere in the app — the runner could see
+   * a job, tap it, land on a 404 "Errand unavailable" screen, and watch it
+   * expire. Errors reuse the backend's honest codes (BOOKING_STALE = "someone
+   * got there first", BOOKING_CONFLICT = "finish your active errand first").
+   *
+   * Deliberately NOT optimistic: accept is a money-bearing claim the server
+   * serialises with a row lock, so the UI waits for its answer.
+   */
+  const claimOffer = useCallback(
+    async (offer: Booking) => {
+      if (acceptingOfferId) return;
+      setAcceptingOfferId(offer.id);
+      try {
+        const res = await runnerService.acceptErrand(offer.id);
+        // Server-confirmed accept — the success moment for this flow.
+        haptics.success();
+        const updated = (res?.data?.data ?? offer) as Booking;
+        acceptErrand(updated);
+        setPreviewOffer(null);
+        // Claimed — drop it from the open list right away rather than leaving
+        // a ghost card until the next revalidation.
+        void offersQ.mutate((prev) => (prev ?? []).filter((b) => b.id !== offer.id));
+        router.push(`/(runner)/errand/${offer.id}` as any);
+      } catch (err: any) {
+        haptics.error();
+        toast.error(errorMessage(err, copy.runner.acceptFailed));
+        setPreviewOffer(null);
+        clearIncomingRequest();
+        // Someone else claimed it, or it was cancelled — get the list honest.
+        void offersQ.revalidate();
+      } finally {
+        setAcceptingOfferId(null);
+      }
+    },
+    [acceptingOfferId, acceptErrand, clearIncomingRequest, offersQ, router],
+  );
 
-  const handleDeclineErrand = () => {
+  const handleAcceptErrand = useCallback(() => {
+    if (!incomingRequest) return;
+    return claimOffer(incomingRequest.booking);
+  }, [incomingRequest, claimOffer]);
+
+  const handleDeclineErrand = useCallback(() => {
     if (!incomingRequest) return;
     // Dismiss the offer INSTANTLY, then fire the decline in the background.
     // Capture the id before clearing — declineErrand() nulls incomingRequest.
     // No rollback: re-showing a declined offer is worse than a silent miss,
-    // and the server auto-expires the 30s offer window regardless.
+    // and the server auto-expires the offer window regardless.
     const id = incomingRequest.booking.id;
+    declinedOfferIdsRef.current.add(id);
     declineErrand();
     runnerService.declineErrand(id).catch(() => {});
-  };
+  }, [incomingRequest, declineErrand]);
+
+  /**
+   * The countdown ran out on THIS device. That is not a decision, so it must
+   * not touch POST /decline: the decline endpoint recomputes acceptance_rate
+   * on every call, and that stat also ranks the runner inside MatchingService
+   * — a phone in a pocket was permanently costing them standing. Just dismiss;
+   * the server's own ExpireStaleMatchesJob re-matches the booking on time.
+   */
+  const handleExpireOffer = useCallback(() => {
+    clearIncomingRequest();
+    void currentErrandQ.revalidate();
+  }, [clearIncomingRequest, currentErrandQ]);
 
   const verificationStatus = runnerProfile?.verification_status ?? 'pending';
   const firstName = user?.full_name?.split(' ')[0] ?? 'Runner';
@@ -1181,16 +1346,27 @@ export default function RunnerHomeScreen() {
                 {negotiateOffers.length} WAITING
               </Text>
             </View>
+            {/* The feed arrives nearest-first from the server (it sorts by the
+                pickup distance it already computes), so say so — otherwise the
+                order reads as arbitrary and the runner re-scans every card. */}
+            <Text className="text-[11px] font-montserrat text-textTertiary mb-2">
+              Nearest pickup first
+            </Text>
             {negotiateOffers.map((offer) => (
               <NegotiateOfferCard
                 key={offer.id}
                 booking={offer}
-                onPress={() => {
-                  // Warm the errand detail before navigating so the screen
-                  // paints from cache instead of a skeleton.
-                  prefetchRunnerErrand(offer.id);
-                  router.push(`/(runner)/errand/${offer.id}` as any);
-                }}
+                // Open the details SHEET, not the errand cockpit. That route
+                // fetches GET /runner/errand/{id}, which is scoped to the
+                // runner's own bookings — an open negotiate offer has
+                // runner_id = NULL, so it 404'd into "Errand unavailable ·
+                // Go Back" and the runner had no way to take the job at all.
+                // The sheet renders from the feed payload we already hold and
+                // can accept, so nothing is fetched and nothing new is exposed.
+                onPress={() => setPreviewOffer(offer)}
+                onAccept={() => claimOffer(offer)}
+                accepting={acceptingOfferId === offer.id}
+                busy={acceptingOfferId != null && acceptingOfferId !== offer.id}
               />
             ))}
           </View>
@@ -1302,12 +1478,28 @@ export default function RunnerHomeScreen() {
 
       {incomingRequest && (
         <IncomingRequestModal
+          // Keyed per offer so a second match remounts the countdown with its
+          // own deadline instead of inheriting the first one's.
+          key={incomingRequest.booking.id}
           booking={incomingRequest.booking}
           onAccept={handleAcceptErrand}
           onDecline={handleDeclineErrand}
-          timeoutSeconds={30}
+          onExpire={handleExpireOffer}
+          // The SERVER's acceptance window (accept_deadline), not a 30s guess.
+          timeoutSeconds={offerTimeoutSeconds(
+            readAcceptDeadline(incomingRequest.booking),
+          )}
+          expiresAt={incomingRequest.expiresAt}
         />
       )}
+
+      {/* Full detail + Accept for an OPEN (negotiate) offer. */}
+      <OfferDetailsSheet
+        booking={previewOffer}
+        onClose={() => setPreviewOffer(null)}
+        onAccept={() => (previewOffer ? claimOffer(previewOffer) : undefined)}
+        accepting={previewOffer != null && acceptingOfferId === previewOffer.id}
+      />
 
       {/* Daily goal editor — bottom sheet, mirrors the delete-account
           modal language elsewhere in the app. */}

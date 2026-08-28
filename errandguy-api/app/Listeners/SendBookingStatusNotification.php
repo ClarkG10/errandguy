@@ -3,6 +3,7 @@
 namespace App\Listeners;
 
 use App\Events\BookingStatusChanged;
+use App\Models\Booking;
 use App\Services\NotificationService;
 use Illuminate\Contracts\Queue\ShouldQueue;
 
@@ -41,23 +42,98 @@ class SendBookingStatusNotification implements ShouldQueue
             'status' => $status,
         ];
 
+        // Body placeholders. `{refund}` is only ever non-empty on a status that
+        // auto-refunds (no_runner) AND where money was actually collected — see
+        // refundClause. Anything else resolves to '' so the surrounding copy
+        // reads correctly with the sentence simply absent.
+        $placeholders = [
+            '{number}' => (string) $number,
+            '{refund}' => $this->refundClause($booking, $status),
+        ];
+
+        // Quiet stages get the in-app row + live Reverb update, but no device
+        // buzz. See SILENT_STATUSES — nothing is lost from the inbox or the
+        // tracking screen, only the interruption.
+        $deliver = in_array($status, self::SILENT_STATUSES, true)
+            ? fn (string $userId, string $title, string $body) => $this->notificationService
+                ->notifyInApp($userId, $title, $body, $data)
+            : fn (string $userId, string $title, string $body) => $this->notificationService
+                ->sendPush($userId, $title, $body, $data);
+
         if ($customer && $booking->customer_id) {
-            $this->notificationService->sendPush(
+            $deliver(
                 $booking->customer_id,
                 $customer['title'],
-                str_replace('{number}', $number, $customer['body']),
-                $data,
+                strtr($customer['body'], $placeholders),
             );
         }
 
         if ($runner && $booking->runner_id) {
-            $this->notificationService->sendPush(
+            $deliver(
                 $booking->runner_id,
                 $runner['title'],
-                str_replace('{number}', $number, $runner['body']),
-                $data,
+                strtr($runner['body'], $placeholders),
             );
         }
+    }
+
+    /**
+     * Stages that notify IN-APP ONLY (persisted row + `notifications.{userId}`
+     * Reverb broadcast) instead of also waking the device.
+     *
+     * A standard delivery walks nine templated stages, and the runner advances
+     * each one with its own tap — so the customer's phone buzzed nine times for
+     * one errand, several of them saying the same thing seconds apart:
+     *
+     *   - 'matched' is an internal assignment; 'accepted' follows within
+     *     seconds with the message that actually matters. (If the runner never
+     *     accepts, ExpireStaleMatchesJob quietly re-matches — the customer
+     *     should never have been buzzed for a runner who evaporates.)
+     *   - 'heading_to_pickup' repeats 'accepted' almost verbatim ("your runner
+     *     is heading to the pickup location").
+     *   - 'in_transit' repeats 'picked_up' ("…and is on the way").
+     *   - 'delivered' is immediately followed by 'completed'.
+     *
+     * What still buzzes is what the customer must act on or genuinely wants to
+     * be interrupted for: accepted, arrived_at_pickup, picked_up,
+     * arrived_at_dropoff, completed, no_runner, cancelled — plus the separate
+     * server-side "your runner is nearby" approach push. Nine buzzes become
+     * five, and the arrival alerts stop drowning in their own noise.
+     */
+    private const SILENT_STATUSES = [
+        'matched',
+        'heading_to_pickup',
+        'in_transit',
+        'delivered',
+    ];
+
+    /**
+     * The refund sentence for a matching failure — empty unless money really was
+     * (or is being) returned.
+     *
+     * MatchRunnerJob fires BookingStatusChanged('no_runner') and THEN calls
+     * BookingService::refundUnfulfilled (post-commit, idempotent, own lock), and
+     * this listener is queued — so it can run either side of that refund. We
+     * therefore re-read the CURRENT payment_status and only claim what is true
+     * for it: 'refunded' = done, 'paid' = in flight. A cash / unpaid errand
+     * collected nothing (refundUnfulfilled no-ops there), so it gets no refund
+     * promise at all. (A2 lifecycle gap)
+     */
+    private function refundClause(Booking $booking, string $status): string
+    {
+        if ($status !== 'no_runner') {
+            return '';
+        }
+
+        $paymentStatus = Booking::whereKey($booking->id)->value('payment_status')
+            ?? $booking->payment_status;
+        $amount = '₱'.number_format((float) $booking->total_amount, 2);
+
+        return match ($paymentStatus) {
+            'refunded' => " {$amount} has been refunded to your ErrandGuy wallet.",
+            'paid' => " Your {$amount} payment is being refunded to your ErrandGuy wallet.",
+            default => '',
+        };
     }
 
     /**
@@ -70,6 +146,9 @@ class SendBookingStatusNotification implements ShouldQueue
     private const TYPE_OVERRIDES = [
         // Passenger ride (transport flow — skips `delivered`).
         'transportation' => [
+            'no_runner' => [
+                'customer' => ['title' => 'No driver available', 'body' => 'We couldn’t find a driver for trip #{number}.{refund} Tap to try booking again.'],
+            ],
             'heading_to_pickup' => [
                 'customer' => ['title' => 'Driver on the way', 'body' => 'Your driver is heading to your pickup point.'],
             ],
@@ -89,6 +168,9 @@ class SendBookingStatusNotification implements ShouldQueue
         ],
         // Bills payment (single-location flow — accepted → … → picked_up → completed).
         'bills_payment' => [
+            'no_runner' => [
+                'customer' => ['title' => 'No runner available', 'body' => 'We couldn’t find a runner to pay your bill for #{number}.{refund} Tap to try again.'],
+            ],
             'arrived_at_pickup' => [
                 'customer' => ['title' => 'At the payment counter', 'body' => 'Your runner is paying your bill now.'],
             ],
@@ -101,6 +183,9 @@ class SendBookingStatusNotification implements ShouldQueue
         ],
         // Queue / fall-in-line (single-location flow).
         'queue' => [
+            'no_runner' => [
+                'customer' => ['title' => 'No runner available', 'body' => 'We couldn’t find a runner to line up for #{number}.{refund} Tap to try again.'],
+            ],
             'arrived_at_pickup' => [
                 'customer' => ['title' => 'In line for you', 'body' => 'Your runner is now waiting in line.'],
             ],
@@ -174,6 +259,19 @@ class SendBookingStatusNotification implements ShouldQueue
             'runner' => [
                 'title' => 'Errand Completed',
                 'body' => 'Errand #{number} completed. Payment will be processed.',
+            ],
+        ],
+        // Matching exhausted every candidate. MatchRunnerJob already sets the
+        // status, auto-refunds any money collected and raises an admin alert —
+        // but with no template here the customer was told NOTHING and kept
+        // staring at "Finding you a runner" (worse for a SCHEDULED booking,
+        // matched minutes before its window with the customer out of the app).
+        // The push's booking_update deep link lands on the tracking screen whose
+        // no_runner receipt carries the one-tap "Book again". (A2 lifecycle gap)
+        'no_runner' => [
+            'customer' => [
+                'title' => 'No runner available',
+                'body' => 'We couldn’t find a runner for errand #{number}.{refund} Tap to try again.',
             ],
         ],
         'cancelled' => [

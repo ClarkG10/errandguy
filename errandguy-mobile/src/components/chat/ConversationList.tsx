@@ -12,6 +12,7 @@ import { SyncIndicator } from '../ui/SyncIndicator';
 import { useQuery } from '../../hooks/useQuery';
 import { CacheTTL } from '../../services/cache.service';
 import { chatService } from '../../services/chat.service';
+import { prefetchChatMessages } from '../../services/preload.service';
 import { useAuthStore } from '../../stores/authStore';
 import { LightColors } from '../../constants/colors';
 import type { Conversation } from '../../types';
@@ -105,6 +106,33 @@ export function ConversationList({ chatHrefPrefix, fallbackHref }: Props) {
     await conversationsQ.refresh();
   }, [conversationsQ]);
 
+  /**
+   * Row tap = the strongest possible intent signal for a thread. Warm the
+   * messages BEFORE navigating (fire-and-forget) so the screen usually paints
+   * the conversation instead of ChatThreadSkeleton — the helper already
+   * self-guards against clobbering a thread the store holds, and coalesces
+   * with the screen's own mount fetch at the api layer.
+   *
+   * The row also hands the counterparty's name and the booking status to the
+   * thread as route params: the inbox already knows both, and without them a
+   * thread opened from here rendered a generic "Runner"/"Customer" title and
+   * a live composer on an errand that has ended.
+   */
+  const openConversation = useCallback(
+    (item: Conversation) => {
+      void prefetchChatMessages(item.booking_id);
+      router.push({
+        pathname: `${chatHrefPrefix}/[bookingId]`,
+        params: {
+          bookingId: item.booking_id,
+          name: item.counterparty?.full_name ?? '',
+          status: item.status ?? '',
+        },
+      } as never);
+    },
+    [chatHrefPrefix, router],
+  );
+
   const renderRow = useCallback(
     ({ item }: { item: Conversation }) => {
       const unread = item.unread_count > 0;
@@ -125,9 +153,7 @@ export function ConversationList({ chatHrefPrefix, fallbackHref }: Props) {
 
       return (
         <Card
-          onPress={() =>
-            router.push(`${chatHrefPrefix}/${item.booking_id}` as any)
-          }
+          onPress={() => openConversation(item)}
           padding="sm"
           className="mx-5 mb-2.5"
           accessibilityLabel={`Open chat with ${item.counterparty?.full_name ?? 'participant'}`}
@@ -232,7 +258,7 @@ export function ConversationList({ chatHrefPrefix, fallbackHref }: Props) {
         </Card>
       );
     },
-    [chatHrefPrefix, router],
+    [openConversation],
   );
 
   return (

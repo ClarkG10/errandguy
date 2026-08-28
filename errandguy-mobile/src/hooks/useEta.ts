@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { routeService } from '../services/route.service';
+import { etaMinutesFromDistanceMeters, routeService } from '../services/route.service';
 
 export interface EtaResult {
   /** Estimated travel time in minutes (rounded up to ≥1). `null` until first fetch resolves. */
@@ -50,8 +50,9 @@ function coercePoint(p: Point | null | undefined): Point | null {
 
 /**
  * Live ETA from a moving origin (typically the runner) to a fixed
- * destination, backed by the cached `routeService` and gracefully
- * degrading to a straight-line/30-km/h fallback when Directions is
+ * destination, backed by the cached `routeService`. The fetched route's own
+ * duration is always preferred; it degrades to the shared straight-line
+ * speed table (profile-aware — see route.service) only when Directions is
  * unavailable.
  *
  * Re-fetches the actual route only when:
@@ -112,15 +113,21 @@ export function useEta(
       )
       .then((res) => {
         if (cancelled) return;
-        if (res) {
+        // The REAL fetched route duration always wins — it carries road
+        // geometry and HERE's traffic model. The speed table below is a
+        // strict fallback for when routing is unavailable.
+        if (res && Number.isFinite(res.durationSeconds) && res.durationSeconds > 0) {
           // Round up — "0 min" feels broken to a customer staring at a
           // pin two streets over.
           setMinutes(Math.max(1, Math.round(res.durationSeconds / 60)));
-        } else if (distanceMeters != null) {
-          // Fallback: assume ~30 km/h average effective speed in city
-          // traffic. Better than showing nothing while we wait for
-          // Mapbox to come back.
-          setMinutes(Math.max(1, Math.round(distanceMeters / 1000 / 30 * 60)));
+          return;
+        }
+        if (distanceMeters != null) {
+          // Fallback: the shared straight-line speed table, keyed to THIS
+          // leg's profile. It used to be a hardcoded 30 km/h regardless of
+          // profile, so a walking ETA came back ~6x too optimistic.
+          const fallback = etaMinutesFromDistanceMeters(distanceMeters, profile);
+          if (fallback != null) setMinutes(Math.max(1, fallback));
         }
       })
       .finally(() => {

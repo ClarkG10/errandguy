@@ -10,6 +10,86 @@ import type { User, UserRole } from '../types';
 const LAST_ACCOUNT_KEY = '@last_account_id';
 
 /**
+ * Boot snapshot of the signed-in user. NON-SECRET fields only — the id + role
+ * the router needs on frame one, plus the two display fields the app chrome
+ * paints before anything else. Deliberately NOT the whole User: phone / email
+ * are PII and AsyncStorage is unencrypted, and wallet / rating figures are
+ * money-adjacent values that must always come from the server.
+ *
+ * @see loadFromStorage — hydrated BEFORE `isLoading` flips so app/index.tsx can
+ *      route to the right navigator without waiting on /user/profile, and the
+ *      home queries (gated on `!!user?.id`) can paint from their own cache.
+ */
+const USER_SNAPSHOT_KEY = '@user_snapshot_v1';
+
+interface PersistedUserSnapshot {
+  id: string;
+  role: UserRole;
+  full_name: string;
+  avatar_url: string | null;
+}
+
+/** Best-effort write — a storage failure must never break sign-in. */
+async function persistUserSnapshot(user: User | null): Promise<void> {
+  try {
+    if (!user?.id || (user.role !== 'customer' && user.role !== 'runner')) {
+      await AsyncStorage.removeItem(USER_SNAPSHOT_KEY);
+      return;
+    }
+    const snapshot: PersistedUserSnapshot = {
+      id: String(user.id),
+      role: user.role,
+      full_name: typeof user.full_name === 'string' ? user.full_name : '',
+      avatar_url: typeof user.avatar_url === 'string' ? user.avatar_url : null,
+    };
+    await AsyncStorage.setItem(USER_SNAPSHOT_KEY, JSON.stringify(snapshot));
+  } catch {
+    // Cache only — the real profile still arrives from validateSession.
+  }
+}
+
+/**
+ * Rebuild a `User` from the persisted snapshot. Every field that is NOT
+ * persisted gets the same neutral value the app already renders while `user`
+ * is null (empty strings / nulls / zeroes), so this placeholder can only ever
+ * be as thin as "not loaded yet" — never wrong-looking. It survives for the
+ * ~1s until validateSession replaces the object wholesale via setUser.
+ * Returns null on any malformed / unrecognised payload.
+ */
+export function parseUserSnapshot(raw: string | null): User | null {
+  if (!raw) return null;
+  try {
+    const parsed = JSON.parse(raw) as Partial<PersistedUserSnapshot> | null;
+    const id = parsed?.id != null ? String(parsed.id) : '';
+    const role = parsed?.role;
+    if (!id || (role !== 'customer' && role !== 'runner')) return null;
+    return {
+      id,
+      role,
+      full_name: typeof parsed?.full_name === 'string' ? parsed.full_name : '',
+      avatar_url: typeof parsed?.avatar_url === 'string' ? parsed.avatar_url : null,
+      phone: null,
+      email: null,
+      status: 'active',
+      email_verified: false,
+      phone_verified: false,
+      default_lat: null,
+      default_lng: null,
+      fcm_token: null,
+      wallet_balance: 0,
+      avg_rating: 0,
+      total_ratings: 0,
+      last_active_at: null,
+      deleted_at: null,
+      created_at: '',
+      updated_at: '',
+    };
+  } catch {
+    return null;
+  }
+}
+
+/**
  * On sign-in, purge account-scoped state iff the incoming user differs from the
  * one already resident on this device. The first sign-in on a device (no stored
  * id) never purges. Best-effort — a bookkeeping failure must never block login.
@@ -18,6 +98,12 @@ async function reconcileAccount(userId: string): Promise<void> {
   try {
     const prev = await AsyncStorage.getItem(LAST_ACCOUNT_KEY);
     if (prev && prev !== userId) {
+      // The previous account's boot snapshot must not survive the switch —
+      // otherwise the next cold start would route by THEIR role. Dropped here
+      // (rather than inside clearAccountScopedState) because the snapshot is
+      // owned by this store; setUser re-writes the incoming user's snapshot
+      // immediately after this resolves.
+      await AsyncStorage.removeItem(USER_SNAPSHOT_KEY).catch(() => {});
       await clearAccountScopedState();
     }
     if (prev !== userId) {
@@ -62,6 +148,20 @@ interface AuthState {
    * screen and shows the "Unlock with Face ID" affordance.
    */
   biometricLockPending: boolean;
+  /**
+   * `user` came from the cached boot snapshot, not the server. The snapshot
+   * deliberately holds only {id, role, full_name, avatar_url} — enough to pick
+   * the right navigator on frame one, but NOT enough to answer questions about
+   * the account's shape.
+   *
+   * Gates that branch on data the snapshot omits (notably the runner KYC gate,
+   * which reads `user.runner_profile`) MUST treat a provisional user the same
+   * way they treat `user === null`: wait. Reading an absent field off a
+   * provisional user looks exactly like a definitive "no" from the server, and
+   * sent every approved runner to the document-upload screen on cold start.
+   * Cleared the moment validateSession's real profile lands via setUser.
+   */
+  userIsProvisional: boolean;
 
   setUser: (user: User | null) => void;
   setToken: (token: string | null) => Promise<void>;
@@ -106,18 +206,28 @@ export const useAuthStore = create<AuthState>((set, get) => ({
   rememberedCredentials: null,
   biometricEnabled: false,
   biometricLockPending: false,
+  userIsProvisional: false,
 
   setUser: (user) => {
     set({
       user,
       role: user?.role ?? null,
       isAuthenticated: !!user,
+      // A real server payload — every gate may now trust the fields it reads.
+      userIsProvisional: false,
     });
     // A different account signing in on this device purges the prior user's
     // resident cache / draft / payment state (fire-and-forget; never blocks
     // login). Same account (resume / profile refresh) is a no-op.
+    //
+    // The boot snapshot is written AFTER the reconcile resolves, never
+    // alongside it: both are async, and a concurrent purge could otherwise
+    // delete the snapshot this call just wrote.
     if (user?.id != null) {
-      void reconcileAccount(String(user.id));
+      void (async () => {
+        await reconcileAccount(String(user.id));
+        await persistUserSnapshot(user);
+      })();
     }
   },
 
@@ -186,6 +296,8 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       token,
       isAuthenticated: !!token && !!user,
       biometricLockPending: false,
+      // Caller validated this user against GET /user/profile.
+      userIsProvisional: false,
     });
   },
 
@@ -210,6 +322,9 @@ export const useAuthStore = create<AuthState>((set, get) => ({
     await secureStorage.remove('biometric_enabled');
     await secureStorage.remove('session_persistent');
     await AsyncStorage.removeItem('@runner_onboarding_skipped');
+    // The boot snapshot routes the next cold start — it must not outlive the
+    // session it describes.
+    await AsyncStorage.removeItem(USER_SNAPSHOT_KEY);
     // Privacy: don't leak the previous user's recent destinations,
     // cached profile/wallet data, or in-memory request responses to
     // whoever signs in next on the same device.
@@ -228,13 +343,26 @@ export const useAuthStore = create<AuthState>((set, get) => ({
 
   loadFromStorage: async () => {
     set({ isLoading: true });
-    const [rawToken, onboardingSeen, runnerSkipped, rememberedRaw, biometricRaw, sessionRaw] = await Promise.all([
+    const [
+      rawToken,
+      onboardingSeen,
+      runnerSkipped,
+      rememberedRaw,
+      biometricRaw,
+      sessionRaw,
+      snapshotRaw,
+      lastAccountId,
+    ] = await Promise.all([
       secureStorage.get('auth_token'),
       AsyncStorage.getItem('@onboarding_seen'),
       AsyncStorage.getItem('@runner_onboarding_skipped'),
       secureStorage.get('remembered_credentials'),
       secureStorage.get('biometric_enabled'),
       secureStorage.get('session_persistent'),
+      // Read in the SAME parallel batch as everything else, so hydrating the
+      // user costs no extra boot latency.
+      AsyncStorage.getItem(USER_SNAPSHOT_KEY).catch(() => null),
+      AsyncStorage.getItem(LAST_ACCOUNT_KEY).catch(() => null),
     ]);
 
     // "Remember me" gate. `session_persistent === 'false'` means the last
@@ -271,7 +399,24 @@ export const useAuthStore = create<AuthState>((set, get) => ({
     // is false, the unlock button is hidden, and password login applies.
     const biometricEnabled = biometricRaw === 'true';
     const biometricLockPending = biometricEnabled && !!token;
+    // Hydrate the boot snapshot ONLY for a session we're actually restoring —
+    // never behind a withheld biometric lock, and never for a "remember me =
+    // off" start whose token we just dropped. Cross-checked against the
+    // resident-account marker so a snapshot can't outlive its account.
+    // Without this, `role` stayed null until /user/profile answered and
+    // app/index.tsx held the branded splash on EVERY cold start.
+    const restoringSession = !!token && !biometricLockPending;
+    const snapshotUser = restoringSession ? parseUserSnapshot(snapshotRaw) : null;
+    const hydratedUser =
+      snapshotUser && (!lastAccountId || lastAccountId === snapshotUser.id)
+        ? snapshotUser
+        : null;
     set({
+      // Only ever ADD the cached identity — never null out a user that a
+      // concurrent sign-in may already have set.
+      ...(hydratedUser
+        ? { user: hydratedUser, role: hydratedUser.role, userIsProvisional: true }
+        : {}),
       token: biometricLockPending ? null : token,
       isAuthenticated: biometricLockPending ? false : !!token,
       onboardingSeen: onboardingSeen === 'true',
@@ -286,7 +431,11 @@ export const useAuthStore = create<AuthState>((set, get) => ({
   updateProfile: (data) => {
     const currentUser = get().user;
     if (currentUser) {
-      set({ user: { ...currentUser, ...data } });
+      const merged = { ...currentUser, ...data };
+      set({ user: merged });
+      // Keep the boot snapshot in step with an in-app name / avatar edit so the
+      // next cold start doesn't paint the old one for a beat.
+      void persistUserSnapshot(merged);
     }
   },
 }));

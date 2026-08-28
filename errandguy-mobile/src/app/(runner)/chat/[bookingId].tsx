@@ -16,12 +16,13 @@ import {
   type NativeSyntheticEvent,
 } from 'react-native';
 import { ChatImage } from '../../../components/chat/ChatImage';
+import { ClosedThreadNotice } from '../../../components/chat/ClosedThreadNotice';
+import { useChatPeer } from '../../../components/chat/useChatPeer';
 import { useLocalSearchParams } from 'expo-router';
 import { Send, Camera, Phone, Check, CheckCheck, Clock, AlertCircle, RotateCw, ArrowDown } from 'lucide-react-native';
 import * as Haptics from 'expo-haptics';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useAuthStore } from '../../../stores/authStore';
-import { useRunnerStore } from '../../../stores/runnerStore';
 import { useChat } from '../../../hooks/useChat';
 import { useReducedMotion } from '../../../hooks/useReducedMotion';
 import { useKeyboard } from '../../../hooks/useKeyboard';
@@ -251,7 +252,6 @@ function TypingIndicator() {
 export default function RunnerChatScreen() {
   const { bookingId } = useLocalSearchParams<{ bookingId: string }>();
   const user = useAuthStore((s) => s.user);
-  const currentErrand = useRunnerStore((s) => s.currentErrand);
   const insets = useSafeAreaInsets();
   const { width, mScale } = useResponsive();
   const { isVisible: keyboardVisible } = useKeyboard();
@@ -292,20 +292,17 @@ export default function RunnerChatScreen() {
   const nearBottomRef = useRef(true);
   const [showNewMsgChip, setShowNewMsgChip] = useState(false);
 
-  // Customer contact — populated on the runner-facing booking payload.
-  // Name titles the header; phone falls back through the contact fields
-  // to the customer's account phone.
-  const customerName =
-    currentErrand?.id === bookingId
-      ? currentErrand?.customer?.full_name ?? 'Customer'
-      : 'Customer';
-  const customerPhone =
-    currentErrand?.id === bookingId
-      ? currentErrand?.dropoff_contact_phone ??
-        currentErrand?.pickup_contact_phone ??
-        currentErrand?.customer?.phone ??
-        null
-      : null;
+  // Customer identity + thread liveness. Resolved from the runner store, the
+  // inbox row's route params, or a one-shot errand fetch — so a thread opened
+  // from the inbox (a finished job, a second booking, a cold start) keeps the
+  // customer's name AND a working call button instead of a dead "Customer"
+  // header, and an ended errand stops offering a composer the server 422s.
+  const {
+    name: customerName,
+    phone: customerPhone,
+    status: bookingStatus,
+    isClosed: threadClosed,
+  } = useChatPeer(bookingId ?? '', 'runner');
 
   const handleCallCustomer = useCallback(() => {
     if (!customerPhone) {
@@ -755,119 +752,125 @@ export default function RunnerChatScreen() {
         {/* Live "typing…" indicator from the customer. */}
         {isTyping ? <TypingIndicator /> : null}
 
-        {/* Quick Messages */}
-        <ScrollView
-          horizontal
-          showsHorizontalScrollIndicator={false}
-          // Explicit fixed height + flexShrink/flexGrow=0 so the strip
-          // never stretches to fill leftover vertical space (an Android
-          // flex quirk would otherwise turn each pill into a tall capsule).
-          style={{ height: 46, flexGrow: 0, flexShrink: 0 }}
-          className="border-t border-divider"
-          contentContainerStyle={{ paddingHorizontal: 12, paddingVertical: 6, gap: 8, alignItems: 'center' }}
-        >
-          {RUNNER_QUICK_MESSAGES.map((msg) => (
-            <Pressable
-              key={msg}
-              // Explicit height keeps the pill from stretching to fill
-              // the ScrollView's cross-axis when a parent flex bounds it.
-              // hitSlop lifts the 32pt pill to a >=44pt effective target.
-              style={{ height: 32 }}
-              hitSlop={{ top: 6, bottom: 6 }}
-              className={`px-3 items-center justify-center rounded-full ${sending ? 'bg-surfaceMuted' : 'bg-divider'}`}
-              onPress={() => {
-                Haptics.selectionAsync().catch(() => {});
-                handleSend(msg);
-              }}
-              disabled={sending}
-              accessibilityRole="button"
-              accessibilityLabel={`Send quick message: ${msg}`}
-              accessibilityState={{ disabled: sending }}
+        {threadClosed ? (
+          <ClosedThreadNotice status={bookingStatus} />
+        ) : (
+          <>
+            {/* Quick Messages */}
+            <ScrollView
+              horizontal
+              showsHorizontalScrollIndicator={false}
+              // Explicit fixed height + flexShrink/flexGrow=0 so the strip
+              // never stretches to fill leftover vertical space (an Android
+              // flex quirk would otherwise turn each pill into a tall capsule).
+              style={{ height: 46, flexGrow: 0, flexShrink: 0 }}
+              className="border-t border-divider"
+              contentContainerStyle={{ paddingHorizontal: 12, paddingVertical: 6, gap: 8, alignItems: 'center' }}
             >
-              <Text className={`text-xs font-montserrat ${sending ? 'text-textTertiary' : 'text-primary'}`}>
-                {msg}
-              </Text>
-            </Pressable>
-          ))}
-        </ScrollView>
+              {RUNNER_QUICK_MESSAGES.map((msg) => (
+                <Pressable
+                  key={msg}
+                  // Explicit height keeps the pill from stretching to fill
+                  // the ScrollView's cross-axis when a parent flex bounds it.
+                  // hitSlop lifts the 32pt pill to a >=44pt effective target.
+                  style={{ height: 32 }}
+                  hitSlop={{ top: 6, bottom: 6 }}
+                  className={`px-3 items-center justify-center rounded-full ${sending ? 'bg-surfaceMuted' : 'bg-divider'}`}
+                  onPress={() => {
+                    Haptics.selectionAsync().catch(() => {});
+                    handleSend(msg);
+                  }}
+                  disabled={sending}
+                  accessibilityRole="button"
+                  accessibilityLabel={`Send quick message: ${msg}`}
+                  accessibilityState={{ disabled: sending }}
+                >
+                  <Text className={`text-xs font-montserrat ${sending ? 'text-textTertiary' : 'text-primary'}`}>
+                    {msg}
+                  </Text>
+                </Pressable>
+              ))}
+            </ScrollView>
 
-        {/* Input Area — bottom padding tracks the system inset so the
-            Android gesture/nav bar never overlaps the send button. When the
-            iOS keyboard is up the KeyboardAvoidingView already lifts the
-            composer above it, so the home-indicator inset would only open a
-            dead gap between composer and keyboard — collapse it to 8pt. */}
-        <View
-          className="flex-row items-end px-4 pt-3 border-t border-divider bg-surface"
-          style={{
-            paddingBottom:
-              Platform.OS === 'ios' && keyboardVisible
-                ? 8
-                : Math.max(insets.bottom, 12),
-          }}
-        >
-          <Pressable
-            className="mr-2 mb-1.5"
-            onPress={() => {
-              Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(
-                () => {},
-              );
-              setImagePickerVisible(true);
-            }}
-            disabled={sending}
-            hitSlop={12}
-            accessibilityRole="button"
-            accessibilityLabel="Attach a photo"
-          >
-            <Camera
-              size={24}
-              color={sending ? LightColors.textMuted : LightColors.textSecondary}
-            />
-          </Pressable>
-          <TextInput
-            className="flex-1 bg-background border border-divider rounded-2xl px-4 py-2.5 text-base font-montserrat text-textPrimary"
-            style={{ maxHeight: 120, minHeight: 40 }}
-            value={inputText}
-            onChangeText={(t) => {
-              setInputText(t);
-              // Broadcast a throttled "typing" ping to the customer.
-              sendTyping();
-            }}
-            placeholder="Type a message..."
-            placeholderTextColor={LightColors.textMuted}
-            multiline
-            editable={!sending}
-            accessibilityLabel="Message input"
-          />
-          <Pressable
-            className={`ml-2 mb-1 w-10 h-10 rounded-full items-center justify-center ${
-              sending || !inputText.trim() ? 'bg-dividerStrong' : 'bg-primary'
-            }`}
-            hitSlop={8}
-            onPress={() => {
-              Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(
-                () => {},
-              );
-              handleSend();
-            }}
-            disabled={sending || !inputText.trim()}
-            accessibilityRole="button"
-            accessibilityLabel="Send message"
-            accessibilityState={{ disabled: sending || !inputText.trim() }}
-          >
-            {/* On the disabled/grey (dividerStrong) button a white glyph
-                measures ~1.3:1 and effectively vanishes — drop to the muted
-                ink rung (3.2:1 on that wash, clears the 3:1 non-text floor)
-                so the inactive send target stays legible. */}
-            {sending ? (
-              <Spinner size="small" color={LightColors.textTertiary} />
-            ) : (
-              <Send
-                size={18}
-                color={inputText.trim() ? LightColors.textInverse : LightColors.textTertiary}
+            {/* Input Area — bottom padding tracks the system inset so the
+                Android gesture/nav bar never overlaps the send button. When the
+                iOS keyboard is up the KeyboardAvoidingView already lifts the
+                composer above it, so the home-indicator inset would only open a
+                dead gap between composer and keyboard — collapse it to 8pt. */}
+            <View
+              className="flex-row items-end px-4 pt-3 border-t border-divider bg-surface"
+              style={{
+                paddingBottom:
+                  Platform.OS === 'ios' && keyboardVisible
+                    ? 8
+                    : Math.max(insets.bottom, 12),
+              }}
+            >
+              <Pressable
+                className="mr-2 mb-1.5"
+                onPress={() => {
+                  Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(
+                    () => {},
+                  );
+                  setImagePickerVisible(true);
+                }}
+                disabled={sending}
+                hitSlop={12}
+                accessibilityRole="button"
+                accessibilityLabel="Attach a photo"
+              >
+                <Camera
+                  size={24}
+                  color={sending ? LightColors.textMuted : LightColors.textSecondary}
+                />
+              </Pressable>
+              <TextInput
+                className="flex-1 bg-background border border-divider rounded-2xl px-4 py-2.5 text-base font-montserrat text-textPrimary"
+                style={{ maxHeight: 120, minHeight: 40 }}
+                value={inputText}
+                onChangeText={(t) => {
+                  setInputText(t);
+                  // Broadcast a throttled "typing" ping to the customer.
+                  sendTyping();
+                }}
+                placeholder="Type a message..."
+                placeholderTextColor={LightColors.textMuted}
+                multiline
+                editable={!sending}
+                accessibilityLabel="Message input"
               />
-            )}
-          </Pressable>
-        </View>
+              <Pressable
+                className={`ml-2 mb-1 w-10 h-10 rounded-full items-center justify-center ${
+                  sending || !inputText.trim() ? 'bg-dividerStrong' : 'bg-primary'
+                }`}
+                hitSlop={8}
+                onPress={() => {
+                  Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(
+                    () => {},
+                  );
+                  handleSend();
+                }}
+                disabled={sending || !inputText.trim()}
+                accessibilityRole="button"
+                accessibilityLabel="Send message"
+                accessibilityState={{ disabled: sending || !inputText.trim() }}
+              >
+                {/* On the disabled/grey (dividerStrong) button a white glyph
+                    measures ~1.3:1 and effectively vanishes — drop to the muted
+                    ink rung (3.2:1 on that wash, clears the 3:1 non-text floor)
+                    so the inactive send target stays legible. */}
+                {sending ? (
+                  <Spinner size="small" color={LightColors.textTertiary} />
+                ) : (
+                  <Send
+                    size={18}
+                    color={inputText.trim() ? LightColors.textInverse : LightColors.textTertiary}
+                  />
+                )}
+              </Pressable>
+            </View>
+          </>
+        )}
       </KeyboardAvoidingView>
 
       <ImagePickerModal

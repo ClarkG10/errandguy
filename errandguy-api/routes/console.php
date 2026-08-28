@@ -81,6 +81,17 @@ Schedule::call(fn () => dispatch_sync(new \App\Jobs\ExpireStaleMatchesJob()))
     ->onOneServer()
     ->withoutOverlapping(10);
 
+// Convenience: one "your scheduled errand is coming up" reminder ~30 minutes
+// before a scheduled booking's window opens — the last FREE-cancellation moment,
+// which previously passed in silence (nothing between the create confirmation and
+// "Runner Found!" at scheduled_at−15min). A sweep rather than a days-long delayed
+// job (which a worker restart loses); idempotent via a per-booking cache flag, so
+// a double run can't double-push. Notification-only — no money, no state changes.
+Schedule::command('errandguy:send-scheduled-reminders')
+    ->everyFiveMinutes()
+    ->onOneServer()
+    ->withoutOverlapping(10);
+
 // Money-safety backstop: cancel + refund prepaid bookings stranded past the
 // auto-cancel window when the DELAYED AutoCancelBookingJob never ran (worker
 // down, or a crash before it was dispatched). Uses Schedule::command (NOT
@@ -91,5 +102,15 @@ Schedule::call(fn () => dispatch_sync(new \App\Jobs\ExpireStaleMatchesJob()))
 // silence the backstop for the framework-default 24h. (SCALE-REL-1/5)
 Schedule::command('errandguy:reap-stranded-bookings')
     ->everyFiveMinutes()
+    ->onOneServer()
+    ->withoutOverlapping(10);
+
+// Out-of-hours alerting for the queues where a waiting user is blocked on a
+// human (pending payouts, KYC review, open disputes, unanswered support). The
+// panel already shows these, but only to an admin who happens to be looking.
+// The command is inert until a recipient is configured and throttles itself per
+// queue, so scheduling it before ops picks a mailbox sends nothing.
+Schedule::command('errandguy:admin-queue-alert')
+    ->everyFifteenMinutes()
     ->onOneServer()
     ->withoutOverlapping(10);

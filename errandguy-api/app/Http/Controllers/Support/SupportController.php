@@ -81,7 +81,8 @@ class SupportController extends Controller
      * GET /support/tickets/{id} — owner-only. Returns the ticket plus a
      * cursor-paginated page of messages (mirrors ChatController::index:
      * newest-page fetched DESC, returned ASC, ?before=<iso8601> cursor to
-     * page backwards into older messages).
+     * page backwards into older messages, ?after=<message id> for the
+     * forward delta an open-thread poll needs).
      */
     public function show(Request $request, string $id): JsonResponse
     {
@@ -90,6 +91,58 @@ class SupportController extends Controller
 
         $limit = min(max($request->integer('limit', 50), 1), 100);
         $before = $request->input('before');
+
+        // Forward delta for the open-thread poll: `?after=<message id>` ships
+        // ONLY messages newer than the one the client already holds, so a
+        // 20-30s poll on an open thread costs an (almost always) empty page
+        // instead of re-downloading the whole 50-row head. Mirrors
+        // ChatController::index's cursor exactly — the cursor is the message
+        // id, not a raw timestamp, and the comparison is on the same
+        // (created_at, id) tuple the ordering uses, so a sub-second timestamp
+        // collision can never skip an agent reply. An unknown cursor (purged
+        // message, bad client state) falls through to the head page below so
+        // the client resyncs from scratch. The `ticket` in the payload is
+        // always fresh, which is how the client picks up a status change.
+        if ($after = $request->input('after')) {
+            $cursor = SupportMessage::where('ticket_id', $ticket->id)
+                ->whereKey($after)
+                ->first(['id', 'created_at']);
+
+            if ($cursor) {
+                $rows = SupportMessage::query()
+                    ->where('ticket_id', $ticket->id)
+                    ->where(function ($q) use ($cursor) {
+                        $q->where('created_at', '>', $cursor->created_at)
+                            ->orWhere(function ($q2) use ($cursor) {
+                                $q2->where('created_at', $cursor->created_at)
+                                    ->where('id', '>', $cursor->id);
+                            });
+                    })
+                    ->with('sender:id,full_name,avatar_url')
+                    ->orderBy('created_at')
+                    ->orderBy('id')
+                    ->limit($limit + 1)
+                    ->get();
+
+                $hasMore = $rows->count() > $limit;
+                $page = $rows->take($limit)->values(); // already ASC
+
+                return response()->json([
+                    'data' => [
+                        'ticket' => new SupportTicketResource($ticket),
+                        'messages' => SupportMessageResource::collection($page),
+                    ],
+                    'meta' => [
+                        'mode' => 'after',
+                        // More NEWER messages beyond this page (client was far
+                        // behind) — poll again with next_after.
+                        'has_more' => $hasMore,
+                        'next_before' => null,
+                        'next_after' => $page->last()?->id ?? $cursor->id,
+                    ],
+                ]);
+            }
+        }
 
         $query = SupportMessage::query()
             ->where('ticket_id', $ticket->id)
@@ -117,8 +170,13 @@ class SupportController extends Controller
                 'messages' => SupportMessageResource::collection($page),
             ],
             'meta' => [
+                'mode' => 'head',
                 'has_more' => $hasMore,
                 'next_before' => $hasMore ? $page->first()?->created_at?->toIso8601String() : null,
+                // Cursor for the open-thread forward poll (?after=). Null on an
+                // empty thread, which can't happen via store() but can via an
+                // over-paged ?before=.
+                'next_after' => $page->last()?->id,
             ],
         ]);
     }
@@ -162,11 +220,14 @@ class SupportController extends Controller
         ], 201);
     }
 
-    // TODO(admin-reply): Agent/operator replies are out of scope for this
-    // scaffold. A future admin route (e.g. POST /admin/support/tickets/{id}/reply
-    // under the admin group) should create a SupportMessage with
-    // sender_type='agent', bump last_message_at, and set status to
-    // 'pending'/'resolved' as appropriate, then sendPush() the ticket owner.
+    // Agent/operator replies live in the Filament admin panel, not on this API:
+    // App\Filament\Resources\SupportTickets\RelationManagers\MessagesRelationManager
+    // (reply → SupportMessage sender_type='agent' + last_message_at + status
+    // 'pending') and .../Tables/SupportTicketsTable (setStatus). Both now notify
+    // the ticket owner via App\Filament\Resources\SupportTickets\SupportTicketNotifier
+    // — in-app row + Reverb broadcast + device push, data.type 'support_reply' /
+    // 'support_status'. If a JSON admin-reply route is ever added, route it
+    // through that same notifier so the two surfaces can't drift.
 
     private function authorizeOwner($user, SupportTicket $ticket): void
     {

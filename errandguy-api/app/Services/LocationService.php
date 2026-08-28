@@ -4,6 +4,8 @@ namespace App\Services;
 
 use App\Events\RouteDeviationAlert;
 use App\Events\RunnerLocationUpdated;
+use App\Jobs\SendPushJob;
+use App\Models\Booking;
 use App\Models\ErrandType;
 use App\Models\RunnerLocation;
 use App\Models\RunnerProfile;
@@ -26,6 +28,104 @@ class LocationService
      * gate. See docs/scaling-tier0-rollout.md ("location write pipeline").
      */
     private const PROFILE_POSITION_TTL_SECONDS = 20;
+
+    /**
+     * "Runner is nearby" approach push — the two travel legs it covers, mapped
+     * to the booking status that means the runner is actually driving TO that
+     * target. Arrival itself is NOT here: the runner's manual
+     * `arrived_at_pickup` / `arrived_at_dropoff` transitions already push
+     * (SendBookingStatusNotification), so this only fills the missing
+     * *advance* warning.
+     *
+     * Single-location errands (queue, bills payment) never reach `in_transit`
+     * and carry no drop-off coords, so they naturally get the pickup leg only.
+     */
+    private const APPROACH_LEGS = [
+        'pickup' => 'heading_to_pickup',
+        'dropoff' => 'in_transit',
+    ];
+
+    /** Fire the approach push once the runner is inside this distance (km). */
+    private const APPROACH_FIRE_RADIUS_KM = 0.3;
+
+    /**
+     * A leg only becomes eligible to fire after we have seen the runner at
+     * least this far (km) from that leg's target on this booking. Without the
+     * arming step a runner who accepts a job while already standing at the
+     * pickup would trigger an "almost there" push that carries no information,
+     * and one jittery first fix would burn the one-shot latch. The 300-600 m
+     * band between the two radii is a deliberate dead zone: it neither arms nor
+     * fires, so a runner idling near the boundary can't flap.
+     */
+    private const APPROACH_ARM_RADIUS_KM = 0.6;
+
+    /**
+     * Worst positional accuracy (metres) we will trust for an approach push. A
+     * weak fix (indoors, urban canyon, Wi-Fi-only) routinely reports hundreds
+     * of metres of error and can teleport the runner onto the target — crying
+     * wolf on a one-shot push. Pings that omit accuracy entirely are trusted
+     * (the field is optional and older clients don't send it).
+     */
+    private const APPROACH_MAX_ACCURACY_M = 100.0;
+
+    /**
+     * How long the per-leg arm/latch flags live. Comfortably longer than any
+     * single travel leg, short enough that the keys expire on their own —
+     * nothing has to clean them up on completion, and a booking id is never
+     * reused so a stale flag can't leak onto another errand.
+     */
+    private const APPROACH_FLAG_TTL_SECONDS = 10800;
+
+    /**
+     * Booking coordinates/customer/errand-type are effectively immutable for
+     * the life of an errand, so they are cached per booking instead of being
+     * re-read on every 5 s ping. The mutable half (status) is read separately
+     * and ONLY when a ping is already inside the fire radius.
+     */
+    private const APPROACH_META_TTL_SECONDS = 900;
+
+    /**
+     * Base approach copy per leg, written for the physical pickup→deliver flow.
+     * Mirrors SendBookingStatusNotification: a per-errand-type override wins
+     * where the base wording would be wrong (a passenger ride has a "driver",
+     * a bills-payment pickup is a payment counter, not the customer's door).
+     */
+    private const APPROACH_TEMPLATES = [
+        'pickup' => [
+            'title' => 'Runner is nearby',
+            'body' => 'Your runner is almost at the pickup location.',
+        ],
+        'dropoff' => [
+            'title' => 'Runner is nearby',
+            'body' => 'Your runner is almost at the drop-off location.',
+        ],
+    ];
+
+    /** Keyed by errand_type slug → leg. Any leg not listed uses the base copy. */
+    private const APPROACH_TYPE_OVERRIDES = [
+        'transportation' => [
+            'pickup' => [
+                'title' => 'Driver is nearby',
+                'body' => 'Your driver is almost at your pickup point.',
+            ],
+            'dropoff' => [
+                'title' => 'Almost at your destination',
+                'body' => 'You’re arriving at your destination.',
+            ],
+        ],
+        'bills_payment' => [
+            'pickup' => [
+                'title' => 'Runner is nearby',
+                'body' => 'Your runner is almost at the payment center.',
+            ],
+        ],
+        'queue' => [
+            'pickup' => [
+                'title' => 'Runner is nearby',
+                'body' => 'Your runner is almost at the queue location.',
+            ],
+        ],
+    ];
 
     /**
      * Update a runner's location and insert into runner_locations table.
@@ -87,7 +187,180 @@ class LocationService
             ]);
         }
 
+        // Server-side "your runner is nearby" advance warning. Runs LAST — after
+        // every durable write — and is fully swallowed on failure, exactly like
+        // the broadcast guard above: this is a convenience push, and a ping must
+        // never fail because a notification couldn't be enqueued (the ping also
+        // feeds matching freshness and the customer's live pin).
+        if ($bookingId) {
+            try {
+                $this->notifyCustomerOnApproach($bookingId, $coords);
+            } catch (\Throwable $e) {
+                Log::warning('Nearby-approach notification failed', [
+                    'booking_id' => $bookingId,
+                    'error' => $e->getMessage(),
+                ]);
+            }
+        }
+
         return true;
+    }
+
+    /**
+     * Push the CUSTOMER a one-shot "runner is nearby" when the runner closes to
+     * within APPROACH_FIRE_RADIUS_KM of the target of the leg they are actually
+     * travelling (pickup while `heading_to_pickup`, drop-off while
+     * `in_transit`).
+     *
+     * Before this existed the only proximity signal was a React effect on the
+     * mounted customer tracking screen, so the cue died the moment the customer
+     * switched screens or backgrounded the app — i.e. it only worked for people
+     * who were already watching, which is the waiting it was meant to remove.
+     *
+     * Cost discipline (this is the hottest write path in the app):
+     *   - immutable booking data is cached per booking (APPROACH_META_TTL_SECONDS);
+     *   - the distance work is two haversines on data already in hand;
+     *   - the booking's STATUS is read only for a ping that is already inside
+     *     the fire radius on an armed, unlatched leg — a handful of times per
+     *     errand, never per ping;
+     *   - the push itself goes out through the queued SendPushJob, so no
+     *     Expo/FCM call ever happens on the ping request.
+     */
+    private function notifyCustomerOnApproach(string $bookingId, array $coords): void
+    {
+        $accuracy = $coords['accuracy'] ?? null;
+        if ($accuracy !== null && (float) $accuracy > self::APPROACH_MAX_ACCURACY_M) {
+            return;
+        }
+
+        $meta = $this->approachMeta($bookingId);
+        if (empty($meta)) {
+            return;
+        }
+
+        foreach (self::APPROACH_LEGS as $leg => $legStatus) {
+            $targetLat = $meta["{$leg}_lat"] ?? null;
+            $targetLng = $meta["{$leg}_lng"] ?? null;
+            if ($targetLat === null || $targetLng === null) {
+                continue;
+            }
+
+            $distanceKm = $this->haversineDistance(
+                (float) $coords['lat'],
+                (float) $coords['lng'],
+                (float) $targetLat,
+                (float) $targetLng
+            );
+
+            $armKey = "nearby_armed:{$bookingId}:{$leg}";
+
+            // Far from this leg's target → arm it (idempotent: Cache::add is a
+            // no-op once the flag exists) and do nothing else. Note this arms
+            // the drop-off leg while the runner is still heading to pickup,
+            // which is exactly right — by `in_transit` the leg is ready.
+            if ($distanceKm > self::APPROACH_ARM_RADIUS_KM) {
+                Cache::add($armKey, true, self::APPROACH_FLAG_TTL_SECONDS);
+                continue;
+            }
+
+            // Dead band between the two radii: neither arm nor fire.
+            if ($distanceKm > self::APPROACH_FIRE_RADIUS_KM) {
+                continue;
+            }
+
+            $latchKey = "nearby_notified:{$bookingId}:{$leg}";
+
+            // Cheapest early-out: already notified for this leg. Keeps the rest
+            // of the leg (dozens of pings inside the radius) at one cache read.
+            if (Cache::has($latchKey)) {
+                continue;
+            }
+
+            if (!Cache::has($armKey)) {
+                continue;
+            }
+
+            // Only now is a DB read justified — and it is the authoritative
+            // check that the runner is travelling THIS leg, so a cached target
+            // can never mis-fire across a status transition.
+            if (Booking::whereKey($bookingId)->value('status') !== $legStatus) {
+                continue;
+            }
+
+            // Atomic one-shot latch: a retried or duplicated ping cannot send a
+            // second push for the same booking leg.
+            if (!Cache::add($latchKey, true, self::APPROACH_FLAG_TTL_SECONDS)) {
+                continue;
+            }
+
+            $slug = $meta['slug'] ?? null;
+            $copy = ($slug ? (self::APPROACH_TYPE_OVERRIDES[$slug][$leg] ?? null) : null)
+                ?? self::APPROACH_TEMPLATES[$leg];
+
+            // Queued and DEVICE-ONLY. The point of this ping is to reach a
+            // customer who isn't looking at their phone; anyone with the app
+            // open already sees the runner closing in on the live map. A
+            // persisted "your runner is nearby" row would be stale clutter
+            // minutes later, once they have arrived and gone — the same reason
+            // chat and job offers use the remote-only path. Deliberately keeps
+            // the `booking_update` type the status pushes use, so the existing
+            // mobile tap handler routes it to this booking's tracking screen
+            // with no client change.
+            SendPushJob::dispatch(
+                $meta['customer_id'],
+                $copy['title'],
+                $copy['body'],
+                [
+                    'type' => 'booking_update',
+                    'booking_id' => $bookingId,
+                    'status' => $legStatus,
+                    'leg' => $leg,
+                ],
+                remoteOnly: true,
+            );
+        }
+    }
+
+    /**
+     * Immutable-for-the-errand booking data the approach check needs, cached per
+     * booking. Returns [] for a booking that can't be notified — and [] caches
+     * fine (unlike null, which Cache::remember refuses to store), so a
+     * customer-less booking doesn't re-query on every ping.
+     *
+     * @return array<string,mixed>
+     */
+    private function approachMeta(string $bookingId): array
+    {
+        return Cache::remember(
+            "nearby_meta:{$bookingId}",
+            self::APPROACH_META_TTL_SECONDS,
+            function () use ($bookingId) {
+                $booking = Booking::query()
+                    ->with('errandType:id,slug')
+                    ->find($bookingId, [
+                        'id',
+                        'customer_id',
+                        'errand_type_id',
+                        'pickup_lat',
+                        'pickup_lng',
+                        'dropoff_lat',
+                        'dropoff_lng',
+                    ]);
+
+                if (!$booking || !$booking->customer_id) {
+                    return [];
+                }
+
+                return [
+                    'customer_id' => $booking->customer_id,
+                    'slug' => $booking->errandType?->slug,
+                    'pickup_lat' => $booking->pickup_lat !== null ? (float) $booking->pickup_lat : null,
+                    'pickup_lng' => $booking->pickup_lng !== null ? (float) $booking->pickup_lng : null,
+                    'dropoff_lat' => $booking->dropoff_lat !== null ? (float) $booking->dropoff_lat : null,
+                    'dropoff_lng' => $booking->dropoff_lng !== null ? (float) $booking->dropoff_lng : null,
+                ];
+            }
+        );
     }
 
     /**

@@ -2,6 +2,7 @@
 
 namespace App\Http\Resources;
 
+use App\Models\SystemConfig;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\JsonResource;
 
@@ -38,7 +39,21 @@ class RunnerProfileResource extends JsonResource
             'working_area_lng' => $this->when($isSelf, $this->working_area_lng),
             'working_area_radius' => $this->when($isSelf, $this->working_area_radius),
             'bank_name' => $this->when($isSelf, $this->bank_name),
+            // Masked proof that an account IS on file. bank_account_number is
+            // encrypted + $hidden, so the payout screen's account field is
+            // blank forever and runners re-enter it every visit; the last 4
+            // digits are computed at read and never stored (see the model
+            // accessor). Closure so a non-self serialization never decrypts.
+            'bank_account_last4' => $this->when($isSelf, fn (): ?string => $this->bank_account_last4),
             'ewallet_number' => $this->when($isSelf, $this->ewallet_number),
+            // The payout floor the Request button is really gated on. The app
+            // hardcoded ₱100 while the server reads min_payout_amount from
+            // SystemConfig — an admin raising it silently broke the client's
+            // "you can cash out" maths. (SystemConfig::getValue is cached 1h.)
+            'payout_minimum' => $this->when(
+                $isSelf,
+                fn (): float => (float) SystemConfig::getValue('min_payout_amount', '100'),
+            ),
             'approved_at' => $this->approved_at,
             // Drives the runner's "Member since" on the profile tab (and is a
             // harmless trust signal for customers). Without it the mobile read

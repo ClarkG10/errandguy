@@ -15,6 +15,8 @@ import type { LucideIcon } from 'lucide-react-native';
 import { MapPin, Navigation, Truck, ShoppingBag } from 'lucide-react-native';
 import { Button } from '../ui/Button';
 import { PickupDistanceLine } from './PickupDistanceLine';
+import { PaymentChip, ScheduledChip, StopsChip } from './OfferChips';
+import { readServerPickupKm } from './offerMeta';
 import { formatCurrency } from '../../utils/formatCurrency';
 import { formatRunnerPayout } from '../../utils/runnerPayout';
 import { formatDistanceKm } from '../../utils/formatDistance';
@@ -28,7 +30,22 @@ interface IncomingRequestModalProps {
   booking: Booking;
   onAccept: () => void | Promise<void>;
   onDecline: () => void | Promise<void>;
+  /**
+   * The window LOCALLY ran out. Deliberately separate from `onDecline`:
+   * a timeout is not a decision, and reporting it to POST /decline
+   * permanently lowered the runner's acceptance_rate — the stat that also
+   * ranks them in MatchingService — for a phone that was in their pocket.
+   * Falls back to `onDecline` only when a caller doesn't supply it.
+   */
+  onExpire?: () => void | Promise<void>;
+  /** Total window length in seconds. Prefer the server's real deadline. */
   timeoutSeconds?: number;
+  /**
+   * Absolute epoch-ms the window closes. When given, the countdown is derived
+   * from the wall clock instead of counting timer ticks, so a backgrounded /
+   * throttled app resumes on the truth rather than a frozen number.
+   */
+  expiresAt?: number;
 }
 
 // Category chip — lucide glyph + label, replacing the old emoji-prefixed
@@ -70,9 +87,16 @@ export function IncomingRequestModal({
   booking,
   onAccept,
   onDecline,
+  onExpire,
   timeoutSeconds = 30,
+  expiresAt,
 }: IncomingRequestModalProps) {
-  const [remaining, setRemaining] = useState(timeoutSeconds);
+  // Absolute deadline, fixed at mount. Callers key this modal per offer, so a
+  // new offer remounts with its own deadline rather than inheriting this one.
+  const deadlineRef = useRef<number>(expiresAt ?? Date.now() + timeoutSeconds * 1000);
+  const [remaining, setRemaining] = useState(() =>
+    Math.max(0, Math.ceil((deadlineRef.current - Date.now()) / 1000)),
+  );
   const [accepting, setAccepting] = useState(false);
   const [declining, setDeclining] = useState(false);
   const reduceMotion = useReducedMotion();
@@ -93,13 +117,40 @@ export function IncomingRequestModal({
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy).catch(() => {});
   }, []);
 
+  // Denominator for the depleting arc — the window we actually started with,
+  // which may come from the server deadline rather than `timeoutSeconds`.
+  const totalRef = useRef<number>(Math.max(1, remaining, timeoutSeconds));
+
+  // The offer can be UPGRADED in place: the realtime projection carries no
+  // `accept_deadline`, so the first raise uses the 30s fallback and the home
+  // screen swaps in the REST payload's real deadline moments later. Adopt the
+  // longer window without remounting (which would reset an in-flight accept).
+  useEffect(() => {
+    if (expiresAt == null || deadlineRef.current === expiresAt) return;
+    deadlineRef.current = expiresAt;
+    const next = Math.max(0, Math.ceil((expiresAt - Date.now()) / 1000));
+    totalRef.current = Math.max(1, totalRef.current, next);
+    setRemaining(next);
+  }, [expiresAt]);
+
+  // Ref-pin the exit callbacks. The parent recreates them on every render, so
+  // depending on their identity here restarted the 1s timer on each parent
+  // re-render — on a busy dashboard (polls, minute ticks) the countdown could
+  // sit frozen and never reach zero.
+  const onDeclineRef = useRef(onDecline);
+  onDeclineRef.current = onDecline;
+  const onExpireRef = useRef(onExpire);
+  onExpireRef.current = onExpire;
+
   useEffect(() => {
     if (accepting || declining) return;
     if (remaining <= 0) {
-      // Auto-decline honesty: the offer didn't vanish because of a bug or
-      // a fumble — the window simply closed. Say so before it disappears.
+      // The window simply closed — that is NOT a decline. Dismiss locally and
+      // let the server's own ExpireStaleMatchesJob re-match the booking; POSTing
+      // /decline here recalculated (and permanently lowered) the runner's
+      // acceptance rate for a decision they never made.
       toast.info('Time’s up — that request went to another runner.');
-      onDecline();
+      void (onExpireRef.current ?? onDeclineRef.current)();
       return;
     }
     // Escalating urgency as the window closes: a warning buzz when 10s
@@ -109,9 +160,19 @@ export function IncomingRequestModal({
     } else if (remaining <= 5) {
       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy).catch(() => {});
     }
-    const timer = setTimeout(() => setRemaining((r) => r - 1), 1000);
+    // Re-derive from the absolute deadline each tick so a throttled or
+    // backgrounded JS timer can't leave a stale number on screen. Always fall
+    // at least one second per tick: if the wall-clock read happened to round
+    // to the same integer, an unchanged state value would not re-render, the
+    // effect would not re-arm, and the countdown would freeze on screen.
+    const timer = setTimeout(() => {
+      setRemaining((prev) => {
+        const wallClock = Math.max(0, Math.ceil((deadlineRef.current - Date.now()) / 1000));
+        return wallClock < prev ? wallClock : Math.max(0, prev - 1);
+      });
+    }, 1000);
     return () => clearTimeout(timer);
-  }, [remaining, onDecline, accepting, declining]);
+  }, [remaining, accepting, declining]);
 
   const handleAccept = useCallback(async () => {
     if (accepting || declining) return;
@@ -137,7 +198,9 @@ export function IncomingRequestModal({
     }
   }, [onDecline, accepting, declining]);
 
-  const progress = Math.max(0, remaining / timeoutSeconds);
+  // Arc always sweeps a full circle down to empty instead of starting
+  // part-drained or over-full (see totalRef above).
+  const progress = Math.max(0, Math.min(1, remaining / totalRef.current));
   // *Dark amber rung so the number/arc clear AA in the 10s window; base
   // amber (#F59E0B) is only ~1.9:1 and fails even the large-text 3:1 floor.
   const urgencyColor =
@@ -323,6 +386,19 @@ export function IncomingRequestModal({
               )}
             </View>
 
+            {/* Decision-critical facts the 30s modal used to omit entirely:
+                how the job settles (and how much cash the runner handles in
+                person), whether it is a SCHEDULED window rather than a job
+                starting now, and whether there are extra stops. A runner
+                accepting a T-15min scheduled job believing it was immediate,
+                or arriving at a doorstep not knowing to collect money, is the
+                expensive failure this row prevents. */}
+            <View className="flex-row flex-wrap items-center gap-1.5 mb-3">
+              <PaymentChip booking={booking} />
+              <ScheduledChip booking={booking} />
+              <StopsChip booking={booking} />
+            </View>
+
             {/* Addresses — hide dropoff for on-site / single-location errands. */}
             <View className="mb-3">
               <View className="flex-row items-start gap-2 mb-1">
@@ -340,6 +416,32 @@ export function IncomingRequestModal({
                 </View>
               )}
             </View>
+
+            {/* What the errand actually IS. `description` has always been in
+                the realtime offer payload and was simply never rendered, so
+                the runner judged a paid job from its type and two addresses.
+                Clamped so the pinned actions stay reachable. */}
+            {booking.description ? (
+              <Text
+                className="text-xs font-montserrat text-textPrimary mb-2"
+                numberOfLines={3}
+              >
+                {booking.description}
+              </Text>
+            ) : null}
+            {booking.special_instructions ? (
+              <View className="bg-surfaceMuted rounded-xl px-2.5 py-2 mb-3">
+                <Text className="text-[10px] font-montserrat-bold uppercase text-textSecondary mb-0.5">
+                  Special instructions
+                </Text>
+                <Text
+                  className="text-xs font-montserrat text-textPrimary"
+                  numberOfLines={3}
+                >
+                  {booking.special_instructions}
+                </Text>
+              </View>
+            ) : null}
 
             {/* Shopping Budget banner — runner needs to know spend ceiling before accepting. */}
             {isShopping && booking.shopping_budget != null && (
@@ -388,7 +490,10 @@ export function IncomingRequestModal({
                 accept signal, distinct from the trip distance above. Hides
                 itself when live location is unavailable. */}
             <View className="mt-2">
-              <PickupDistanceLine booking={booking} />
+              <PickupDistanceLine
+                booking={booking}
+                fallbackKm={readServerPickupKm(booking)}
+              />
             </View>
 
             {booking.is_transportation && (

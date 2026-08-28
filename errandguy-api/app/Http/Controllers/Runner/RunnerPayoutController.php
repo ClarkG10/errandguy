@@ -22,11 +22,24 @@ class RunnerPayoutController extends Controller
             return $this->fail(ErrorCode::NOT_FOUND, 'We couldn’t find your runner profile. Please contact support.', 404);
         }
 
-        // Check payout method is configured
-        if (!$profile->bank_name && !$profile->ewallet_number) {
+        // Check payout method is configured. An e-wallet number alone is
+        // sendable; a bank needs BOTH the bank name and an account number, so
+        // "bank_name is set" was too loose — a runner who filled only the bank
+        // name passed this gate, got a hopeful "arrives in 1–3 days" receipt,
+        // and their payout then sat unsendable in the admin queue (the bulk
+        // disburse skips rows with no saved account). Reject it here, where the
+        // message can say exactly what is missing. Reads the RAW column so a
+        // legacy/undecryptable value still counts as on file.
+        $hasEwallet = filled($profile->ewallet_number);
+        $hasBank = filled($profile->bank_name) && $profile->hasStoredBankAccountNumber();
+
+        if (!$hasEwallet && !$hasBank) {
             return $this->fail(
                 ErrorCode::PAYOUT_METHOD_REQUIRED,
-                'Add a bank account or e-wallet in your payout settings before requesting a payout.',
+                filled($profile->bank_name)
+                    ? 'Your '.$profile->bank_name.' payout details are incomplete — add your account number in '
+                        .'payout settings before requesting a payout.'
+                    : 'Add a bank account or e-wallet in your payout settings before requesting a payout.',
             );
         }
 
@@ -97,9 +110,13 @@ class RunnerPayoutController extends Controller
             );
         }
 
-        $destination = $profile->bank_name
-            ? "your {$profile->bank_name} account"
-            : 'your e-wallet';
+        // Name the destination the money will ACTUALLY go to. Both the Filament
+        // "Send via Xendit" prefill and the bulk disburse resolve the account as
+        // `ewallet_number ?: bank_account_number`, so a runner with both saved
+        // was promised "your BPI account" and paid to their e-wallet.
+        $destination = $hasEwallet
+            ? 'your e-wallet'
+            : "your {$profile->bank_name} account";
 
         return $this->ok(
             $transaction,

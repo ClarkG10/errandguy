@@ -11,6 +11,7 @@ import { paymentService } from '../../services/payment.service';
 import { useQuery } from '../../hooks/useQuery';
 import { CacheTTL } from '../../services/cache.service';
 import { useAuthStore } from '../../stores/authStore';
+import { usePreferencesStore } from '../../stores/preferencesStore';
 import { LightColors } from '../../constants/colors';
 import { formatCurrency } from '../../utils/formatCurrency';
 import type { PaymentMethod, PaymentMethodType } from '../../types';
@@ -135,6 +136,12 @@ export function PaymentMethodSelector({
   const isDisabledType = (type: PaymentMethodType) =>
     type === 'wallet' && walletInsufficient;
 
+  // How this account last paid (persisted on booking-create success by the
+  // review screen). A pre-selection only — the customer still sees it here and
+  // the amount is on the Confirm button.
+  const prefsHydrated = usePreferencesStore((s) => s.isHydrated);
+  const lastUsed = usePreferencesStore((s) => s.lastPaymentMethods[userId]);
+
   // Auto-select default once on first successful load.
   // Fallback: when the user has no saved methods (or no default flagged),
   // auto-pick Cash on Delivery. The booking server treats `cash` as the
@@ -158,13 +165,36 @@ export function PaymentMethodSelector({
         return;
       }
     }
+    // Everything below picks a default for a FRESH draft, and the first
+    // candidate is the persisted last-used memory — so wait one tick for it
+    // rather than snapping to Cash and refusing to move (autoSelectedRef is a
+    // one-shot). loadFromStorage always flips isHydrated, even on a storage
+    // error, so this can't strand the selector.
+    if (!prefsHydrated) return;
+
+    // 1. How this account actually paid last time. Beats the saved default:
+    //    the sentinel options (GCash/Maya/Cash) can never BE a saved default,
+    //    so a habitual GCash user was re-picking it on every booking.
+    //    Re-resolved against the CURRENT lists — a deleted saved method, an
+    //    operator-disabled type, or an unaffordable wallet all fall through.
+    if (lastUsed) {
+      const remembered =
+        visibleStandard.find((o) => o.id === lastUsed.id) ??
+        methods.find((m) => m.id === lastUsed.id);
+      if (remembered && !isDisabledType(remembered.type)) {
+        autoSelectedRef.current = true;
+        onSelectRef.current(remembered.id, remembered.type);
+        return;
+      }
+    }
+    // 2. Saved default.
     const def = methods.find((m) => m.is_default);
     if (def && !isDisabledType(def.type)) {
       autoSelectedRef.current = true;
       onSelectRef.current(def.id, def.type);
       return;
     }
-    // No usable saved default — pick a sensible enabled option: prefer Cash
+    // 3. No usable saved default — pick a sensible enabled option: prefer Cash
     // if it's offered, otherwise the first available non-disabled method.
     autoSelectedRef.current = true;
     const fallback =
@@ -172,7 +202,8 @@ export function PaymentMethodSelector({
       visibleStandard.find((o) => !isDisabledType(o.type)) ??
       CASH_OPTION;
     onSelectRef.current(fallback.id, fallback.type);
-  }, [methodsQ.data, selectedId, walletInsufficient]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [methodsQ.data, selectedId, walletInsufficient, prefsHydrated, lastUsed]);
 
   const selectedStandard = STANDARD_OPTIONS.find((o) => o.id === selectedId);
   const selectedMethod = methods.find((m) => m.id === selectedId);
