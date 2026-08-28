@@ -19,15 +19,26 @@ class ListDisputeTickets extends ListRecords
 
         return [
             'all' => Tab::make('All')->badge(array_sum($c)),
+            // SLA queues: oldest first, so the customer who has been waiting
+            // three days is on top instead of the last page. Same idiom as the
+            // KYC pending tab (ListRunnerProfiles) — the asc clause is applied
+            // to the base query ahead of the table's created_at,desc default
+            // and, being the first orderBy on that column, wins.
             'open' => Tab::make('Open')->icon('heroicon-m-exclamation-circle')->badgeColor('warning')
                 ->badge(ListTabs::sum($c, 'open'))
-                ->modifyQueryUsing(fn (Builder $query): Builder => $query->where('status', 'open')),
+                ->modifyQueryUsing(fn (Builder $query): Builder => $query
+                    ->where('status', 'open')
+                    ->orderBy('created_at', 'asc')),
             'reviewing' => Tab::make('Reviewing')->icon('heroicon-m-magnifying-glass')->badgeColor('info')
                 ->badge(ListTabs::sum($c, 'reviewing'))
-                ->modifyQueryUsing(fn (Builder $query): Builder => $query->where('status', 'reviewing')),
+                ->modifyQueryUsing(fn (Builder $query): Builder => $query
+                    ->where('status', 'reviewing')
+                    ->orderBy('created_at', 'asc')),
             'escalated' => Tab::make('Escalated')->icon('heroicon-m-arrow-trending-up')->badgeColor('danger')
                 ->badge(ListTabs::sum($c, 'escalated'))
-                ->modifyQueryUsing(fn (Builder $query): Builder => $query->where('status', 'escalated')),
+                ->modifyQueryUsing(fn (Builder $query): Builder => $query
+                    ->where('status', 'escalated')
+                    ->orderBy('created_at', 'asc')),
             'resolved' => Tab::make('Resolved')->icon('heroicon-m-check-circle')->badgeColor('success')
                 ->badge(ListTabs::sum($c, 'resolved'))
                 ->modifyQueryUsing(fn (Builder $query): Builder => $query->where('status', 'resolved')),

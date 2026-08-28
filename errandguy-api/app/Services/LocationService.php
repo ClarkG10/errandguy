@@ -30,6 +30,27 @@ class LocationService
     private const PROFILE_POSITION_TTL_SECONDS = 20;
 
     /**
+     * Throttle for location rows that carry NO booking_id.
+     *
+     * A runner streams GPS from the moment they flip online, long before any
+     * errand, and every one of those pings inserted a row into the platform's
+     * busiest table. Nothing reads them: every consumer is booking-scoped
+     * (BookingController::track, PublicTripController), and the only
+     * runner-scoped reader has no callers. Matching doesn't use this table
+     * either — it reads the denormalised position on runner_profiles, written
+     * on its own throttle just below.
+     *
+     * So idle runners were generating the dominant write volume on the exact
+     * table the customer's live-tracking read hits, and bloating the 24h
+     * retention set the nightly prune chews through. Untagged pings now land
+     * at the same coarse cadence as the profile write — enough for a support
+     * breadcrumb, without the amplification. The instant a booking is
+     * attached, the full ingest cadence resumes so the customer's pin stays
+     * smooth.
+     */
+    private const UNTAGGED_LOCATION_TTL_SECONDS = 20;
+
+    /**
      * "Runner is nearby" approach push — the two travel legs it covers, mapped
      * to the booking status that means the runner is actually driving TO that
      * target. Arrival itself is NOT here: the runner's manual
@@ -144,17 +165,29 @@ class LocationService
             return false;
         }
 
-        // Insert location record — kept at the full ingest cadence so the
-        // customer's live pin stays smooth (track reads the latest row).
-        $location = RunnerLocation::create([
-            'runner_id' => $runnerId,
-            'booking_id' => $bookingId,
-            'lat' => $coords['lat'],
-            'lng' => $coords['lng'],
-            'heading' => $coords['heading'] ?? null,
-            'speed' => $coords['speed'] ?? null,
-            'accuracy' => $coords['accuracy'] ?? null,
-        ]);
+        // Insert location record — full ingest cadence whenever a booking is
+        // attached, so the customer's live pin stays smooth (track reads the
+        // latest row). Untagged pings from a merely-online runner are
+        // throttled: see UNTAGGED_LOCATION_TTL_SECONDS.
+        $location = null;
+        $shouldPersist = $bookingId !== null
+            || Cache::add(
+                "runner_untagged_loc_throttle:{$runnerId}",
+                true,
+                self::UNTAGGED_LOCATION_TTL_SECONDS,
+            );
+
+        if ($shouldPersist) {
+            $location = RunnerLocation::create([
+                'runner_id' => $runnerId,
+                'booking_id' => $bookingId,
+                'lat' => $coords['lat'],
+                'lng' => $coords['lng'],
+                'heading' => $coords['heading'] ?? null,
+                'speed' => $coords['speed'] ?? null,
+                'accuracy' => $coords['accuracy'] ?? null,
+            ]);
+        }
 
         // Push the fix live to the customer tracking this booking. Only when a
         // booking is attached — the `booking.{id}` channel is the customer's
@@ -162,7 +195,7 @@ class LocationService
         // the one synchronous (ShouldBroadcastNow) broadcast, so guard it: a
         // Reverb outage must never turn a location ping into a failed request
         // (the ping also feeds matching freshness, which must always succeed).
-        if ($bookingId) {
+        if ($bookingId && $location) {
             try {
                 RunnerLocationUpdated::dispatch($location);
             } catch (\Throwable $e) {

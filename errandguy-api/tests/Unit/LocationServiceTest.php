@@ -32,6 +32,33 @@ class LocationServiceTest extends TestCase
         ]);
     }
 
+    /**
+     * A booking-tagged ping — the only kind whose history anything reads, and
+     * the kind that feeds the customer's live pin.
+     */
+    private function trackedBookingId(): string
+    {
+        $customer = User::factory()->create(['role' => 'customer']);
+        $type = \App\Models\ErrandType::firstOrCreate(['slug' => 'delivery'], [
+            'name' => 'Delivery', 'description' => 'D', 'icon_name' => 'Package',
+            'base_fee' => 50, 'per_km_walk' => 15, 'per_km_bicycle' => 12,
+            'per_km_motorcycle' => 10, 'per_km_car' => 18, 'min_negotiate_fee' => 30,
+            'is_active' => true, 'sort_order' => 1,
+        ]);
+
+        return \App\Models\Booking::create([
+            'booking_number' => 'EG-LS-'.uniqid(),
+            'customer_id' => $customer->id, 'runner_id' => $this->runner->id,
+            'errand_type_id' => $type->id, 'status' => 'in_transit',
+            'pickup_address' => 'A', 'pickup_lat' => 14.60, 'pickup_lng' => 120.98,
+            'dropoff_address' => 'B', 'dropoff_lat' => 14.55, 'dropoff_lng' => 121.02,
+            'schedule_type' => 'now', 'pricing_mode' => 'fixed', 'vehicle_type_rate' => 'motorcycle',
+            'distance_km' => 5.0, 'base_fee' => 50, 'distance_fee' => 50, 'service_fee' => 15,
+            'surcharge' => 0, 'total_amount' => 115, 'runner_payout' => 85,
+            'is_transportation' => false,
+        ])->id;
+    }
+
     public function test_first_ping_records_history_and_denormalised_position(): void
     {
         $ok = $this->service->updateRunnerLocation($this->runner->id, ['lat' => 14.60, 'lng' => 120.98]);
@@ -56,17 +83,47 @@ class LocationServiceTest extends TestCase
         $this->assertSame(1, RunnerLocation::where('runner_id', $this->runner->id)->count());
     }
 
+    /**
+     * A runner streams GPS from the moment they go online, long before any
+     * errand, and every untagged ping used to insert a row into the busiest
+     * table on the platform. Nothing reads those rows: every consumer is
+     * booking-scoped, and matching uses runner_profiles instead.
+     */
+    public function test_untagged_pings_are_throttled_because_nothing_reads_them(): void
+    {
+        $this->service->updateRunnerLocation($this->runner->id, ['lat' => 14.60, 'lng' => 120.98]);
+        Cache::forget("runner_location_throttle:{$this->runner->id}");
+        $this->service->updateRunnerLocation($this->runner->id, ['lat' => 14.70, 'lng' => 121.10]);
+
+        $this->assertSame(
+            1,
+            RunnerLocation::where('runner_id', $this->runner->id)->count(),
+            'an idle online runner should not write a row per ping',
+        );
+
+        // The matching position still tracks the runner — that write has its
+        // own throttle and is what matching actually reads.
+        $profile = RunnerProfile::where('user_id', $this->runner->id)->first();
+        $this->assertNotNull($profile->last_location_at);
+    }
+
     public function test_profile_position_write_is_throttled_while_history_keeps_flowing(): void
     {
+        // Booking-tagged, because that is the case whose history is actually
+        // read (and the one feeding the customer's pin). Untagged pings are
+        // deliberately throttled — see
+        // test_untagged_pings_are_throttled_because_nothing_reads_them.
+        $bookingId = $this->trackedBookingId();
+
         // Ping 1 — writes history + the denormalised matching position.
-        $this->service->updateRunnerLocation($this->runner->id, ['lat' => 14.60, 'lng' => 120.98]);
+        $this->service->updateRunnerLocation($this->runner->id, ['lat' => 14.60, 'lng' => 120.98], $bookingId);
 
         // Next accepted ping a few seconds later: clear ONLY the 5s ingest gate,
         // leaving the longer profile-position gate in place (simulates real
         // 5s-cadence pings within the profile-throttle window).
         Cache::forget("runner_location_throttle:{$this->runner->id}");
 
-        $this->service->updateRunnerLocation($this->runner->id, ['lat' => 14.70, 'lng' => 121.10]);
+        $this->service->updateRunnerLocation($this->runner->id, ['lat' => 14.70, 'lng' => 121.10], $bookingId);
 
         // History appended on both pings (keeps the customer's live pin smooth) …
         $this->assertSame(2, RunnerLocation::where('runner_id', $this->runner->id)->count());

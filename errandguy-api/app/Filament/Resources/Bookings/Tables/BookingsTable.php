@@ -8,6 +8,7 @@ use App\Filament\Support\ExportCsv;
 use App\Models\AdminUser;
 use App\Models\Booking;
 use Filament\Actions\Action;
+use Filament\Actions\BulkAction;
 use Filament\Actions\ViewAction;
 use Filament\Forms\Components\Textarea;
 use Filament\Forms\Components\TextInput;
@@ -16,9 +17,17 @@ use Filament\Tables\Columns\Summarizers\Sum;
 use Filament\Tables\Columns\TextColumn;
 use Filament\Tables\Filters\SelectFilter;
 use Filament\Tables\Table;
+use Illuminate\Support\Collection;
 
 class BookingsTable
 {
+    /**
+     * Ceiling on a single bulk re-match. adminRematch dispatches offer jobs per
+     * booking, so an unbounded selection would fan simultaneous offers out to
+     * every runner in range at once.
+     */
+    private const REMATCH_BULK_LIMIT = 25;
+
     public static function configure(Table $table): Table
     {
         return $table
@@ -111,6 +120,89 @@ class BookingsTable
                 ]),
             ])
             ->toolbarActions([
+                // Clear a batch of stranded errands in one pass. A surge or a
+                // matching hiccup strands them together, and re-running
+                // matching was a per-row modal — open, confirm, repeat, with a
+                // customer waiting behind every row.
+                //
+                // Capped deliberately: adminRematch dispatches offer jobs per
+                // booking, so an unbounded selection would fan out simultaneous
+                // offers to every runner in range at once. Rows that have since
+                // been taken or cancelled are counted as skipped, never
+                // aborting the rest of the batch.
+                BulkAction::make('rematchSelected')
+                    ->label('Re-run matching for selected')
+                    ->icon(Heroicon::OutlinedArrowPathRoundedSquare)
+                    ->color('warning')
+                    ->requiresConfirmation()
+                    ->modalHeading('Re-run matching for the selected errands')
+                    ->modalDescription('Sends fresh offers to nearby runners for every selected errand still awaiting one. Rows that already have a runner, or are no longer live, are skipped. Limited to '.self::REMATCH_BULK_LIMIT.' at a time.')
+                    ->schema([
+                        TextInput::make('radius_km')
+                            ->label('Search radius (km, optional)')
+                            ->helperText('Applied to every selected errand. Leave blank for the default.')
+                            ->numeric()
+                            ->minValue(1)
+                            ->maxValue(50),
+                    ])
+                    ->visible(fn (): bool => auth('admin')->user()?->hasAnyRole(
+                        AdminUser::ROLE_SUPER_ADMIN,
+                        AdminUser::ROLE_ADMIN,
+                        AdminUser::ROLE_OPS,
+                    ) ?? false)
+                    ->deselectRecordsAfterCompletion()
+                    ->action(function (array $data, Collection $records): void {
+                        $radiusKm = isset($data['radius_km']) && $data['radius_km'] !== null && $data['radius_km'] !== ''
+                            ? (float) $data['radius_km']
+                            : null;
+
+                        if ($records->count() > self::REMATCH_BULK_LIMIT) {
+                            AdminNotify::warning(
+                                'Too many errands selected',
+                                'Select at most '.self::REMATCH_BULK_LIMIT.' so offers do not all fan out at once.',
+                            );
+
+                            return;
+                        }
+
+                        $sent = 0;
+                        $skipped = 0;
+                        $failed = 0;
+                        $service = app(\App\Services\BookingService::class);
+
+                        foreach ($records as $record) {
+                            if (! in_array($record->status, ['no_runner', 'pending'], true)) {
+                                $skipped++;
+                                continue;
+                            }
+
+                            try {
+                                $service->adminRematch($record->id, $radiusKm);
+                                $sent++;
+                            } catch (\App\Exceptions\BookingStateException) {
+                                // Taken or cancelled between selection and now.
+                                $skipped++;
+                            } catch (\Throwable $e) {
+                                report($e);
+                                $failed++;
+                            }
+                        }
+
+                        $notes = [];
+                        if ($skipped) {
+                            $notes[] = "{$skipped} skipped (already matched, or no longer live).";
+                        }
+                        if ($failed) {
+                            $notes[] = "{$failed} failed — see logs.";
+                        }
+
+                        AdminNotify::success(
+                            $sent.' errand'.($sent === 1 ? '' : 's').' re-matched',
+                            note: $notes === [] ? 'Fresh offers are on their way to nearby runners.' : implode(' ', $notes),
+                            audit: 'booking.rematch.bulk',
+                            properties: ['count' => $sent, 'radius_km' => $radiusKm],
+                        );
+                    }),
                 ExportCsv::bulk('bookings', [
                     'Booking' => fn (Booking $r): ?string => $r->booking_number,
                     'Status' => fn (Booking $r): ?string => $r->status,
