@@ -311,6 +311,12 @@ export default function RunnerHomeScreen() {
       // rather than waiting out the 30s reconcile poll.
       if (offer.status === 'matched') void currentErrandQ.revalidate();
     },
+    onOfferWithdrawn: () => {
+      // Someone else took it (or it expired). Re-read the feed so the dead
+      // card goes now, instead of the runner tapping it and being told the
+      // errand is already gone.
+      void offersQ.revalidate();
+    },
   });
 
   const recentErrands = (historyQ.data ?? []).slice(0, 3);

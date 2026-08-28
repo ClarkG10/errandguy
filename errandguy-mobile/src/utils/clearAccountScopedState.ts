@@ -12,6 +12,13 @@ import { clearRecentRecipients } from './recentRecipients';
  *  the user's own words about their own problem and must not outlive them. */
 const SUPPORT_DRAFT_KEY = '@support_draft_v1';
 
+/** The trusted-contacts list (names + mobile numbers of the people a customer
+ *  nominates for emergencies). Unlike every other key here it carries NO user
+ *  id, so it isn't merely stale for the next account — it is directly readable
+ *  by them. Written by the trusted-contacts screen and the auth warm-up, both
+ *  of which keep their own copy of the literal. */
+const TRUSTED_CONTACTS_KEY = '@trusted_contacts_cache';
+
 /**
  * Wipe everything scoped to the currently signed-in account so it can't bleed
  * into the next user on the same device. Called on logout AND when a DIFFERENT
@@ -33,6 +40,8 @@ const SUPPORT_DRAFT_KEY = '@support_draft_v1';
  *   • recent recipients (@errandguy:recent_recipients:*) — third-party names
  *     and mobile numbers, the most sensitive thing this app keeps on-device.
  *   • support compose draft (@support_draft_v1).
+ *   • trusted contacts (@trusted_contacts_cache) — emergency contacts' names
+ *     and numbers, under a key with no user id in it.
  *   • CacheService (persisted query cache) + apiCache (in-memory) + recent
  *     destinations — cached network responses / addresses of the prior user.
  */
@@ -50,6 +59,7 @@ export async function clearAccountScopedState(): Promise<void> {
     geocodingService.clearRecent(),
     clearRecentRecipients(),
     AsyncStorage.removeItem(SUPPORT_DRAFT_KEY),
+    AsyncStorage.removeItem(TRUSTED_CONTACTS_KEY),
   ]);
   apiCache.clear();
 }

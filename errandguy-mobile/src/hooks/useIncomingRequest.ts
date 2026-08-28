@@ -10,6 +10,13 @@ interface UseIncomingRequestOptions {
    * instead of waiting out its staleTime.
    */
   onOffer?: (booking: Partial<Booking>) => void;
+  /**
+   * An errand this runner was offered is no longer claimable — someone else
+   * took it, it expired, or the customer cancelled. Refresh the feed so the
+   * dead card goes rather than waiting for the runner to tap it and be told
+   * BOOKING_STALE.
+   */
+  onOfferWithdrawn?: (bookingId: string) => void;
 }
 
 export function useIncomingRequest(
@@ -20,6 +27,7 @@ export function useIncomingRequest(
   // useRunnerStore() would re-run it on every unrelated runner-state write.
   const setIncomingRequest = useRunnerStore((s) => s.setIncomingRequest);
   const onOffer = options?.onOffer;
+  const onOfferWithdrawn = options?.onOfferWithdrawn;
 
   const { isConnected } = useEchoChannel({
     channel: `runner.${runnerId}`,
@@ -43,6 +51,31 @@ export function useIncomingRequest(
           expiresAt: offerExpiresAt(readAcceptDeadline(booking as Booking)),
         });
       }
+    },
+  });
+
+  // Retraction rides the runner's own notification stream (the same channel the
+  // offer card arrived on), because the server withdraws the offer by deleting
+  // that card. Without this the row only disappears on the next fetch, so a
+  // runner looking at the feed keeps a live-looking offer they can only
+  // discover is gone by tapping it. Separate subscription rather than a second
+  // event on `runner.{id}`: useEchoChannel binds one event per channel.
+  useEchoChannel({
+    channel: `notifications.${runnerId}`,
+    event: 'offer.withdrawn',
+    enabled: !!runnerId,
+    onEvent: (payload) => {
+      const bookingId = (payload as { booking_id?: string })?.booking_id;
+      if (!bookingId) return;
+
+      // Close the offer modal only if it is showing THIS errand — never a
+      // different offer the runner is still deciding on.
+      const open = useRunnerStore.getState().incomingRequest;
+      if (open?.booking?.id === bookingId) {
+        setIncomingRequest(null);
+      }
+
+      onOfferWithdrawn?.(bookingId);
     },
   });
 
