@@ -88,6 +88,20 @@ export function notificationInvalidationKeys(
         ['wallet'],
       ];
 
+    // An emergency alert on an errand both parties are on. Refresh the
+    // booking surfaces so the receiving side's active screen reflects the
+    // alert instead of leaving it to a badge increment nobody watches.
+    case 'sos': {
+      const keys: InvalidationKey[] = [
+        ['booking', 'active'],
+        ['bookings'],
+        ['runner', 'errand', 'current'],
+      ];
+      const bookingId = asId(data.booking_id);
+      if (bookingId) keys.push(['booking', bookingId]);
+      return keys;
+    }
+
     default:
       return [];
   }

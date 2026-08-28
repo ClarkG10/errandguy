@@ -73,11 +73,32 @@ describe('notificationInvalidationKeys', () => {
     ]);
   });
 
+  describe('sos', () => {
+    it('refreshes the booking surfaces for the receiving side', () => {
+      const keys = notificationInvalidationKeys({ type: 'sos', data: { booking_id: 'bk-1' } });
+      expect(keys).toEqual(
+        expect.arrayContaining([
+          ['booking', 'active'],
+          ['bookings'],
+          ['runner', 'errand', 'current'],
+          ['booking', 'bk-1'],
+        ]),
+      );
+    });
+
+    it('still refreshes the lists when the payload carries no booking id', () => {
+      const keys = notificationInvalidationKeys({ type: 'sos', data: {} });
+      expect(keys).toEqual(
+        expect.arrayContaining([['booking', 'active'], ['bookings']]),
+      );
+      expect(keys.some((k) => k.length === 2 && k[0] === 'booking' && k[1] !== 'active')).toBe(false);
+    });
+  });
+
   describe('unknown / malformed input behaves exactly as before (no invalidation)', () => {
     it.each([
       ['promo', { type: 'promo', data: {} }],
       ['system', { type: 'system', data: {} }],
-      ['sos', { type: 'sos', data: { booking_id: 'bk-1' } }],
       ['chat', { type: 'chat', data: { booking_id: 'bk-1' } }],
       ['referral', { type: 'referral', data: {} }],
       ['incoming_request', { type: 'incoming_request', data: {} }],

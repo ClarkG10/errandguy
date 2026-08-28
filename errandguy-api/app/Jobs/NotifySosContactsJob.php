@@ -51,7 +51,22 @@ class NotifySosContactsJob extends BaseJob
             ? $booking->runner_id
             : $booking->customer_id;
         if ($counterpartId) {
-            $notifications->notifyInApp(
+            // sendPush, NOT notifyInApp: the counterpart is the one person
+            // physically present at the emergency, and they are typically
+            // driving with the app backgrounded. notifyInApp only writes the
+            // row and broadcasts, so the alert arrived as a silent +1 on the
+            // notification bell — nothing rang, and they learned of it
+            // whenever they next happened to open the app. sendPush keeps the
+            // in-app row and the live broadcast, and adds the device wake.
+            //
+            // The payload deliberately DROPS live_link. sendPush uses one data
+            // bag for both the stored row and the device push, and a push sits
+            // in the OS notification store (and, on Android, a lock-screen
+            // preview) — no place for what is effectively a bearer credential
+            // to a live location feed. Nothing is lost: the app never read
+            // live_link from a notification, it resolves the token from the
+            // SOS alert itself.
+            $notifications->sendPush(
                 $counterpartId,
                 'SOS Alert',
                 'An emergency alert has been triggered.',
@@ -60,7 +75,6 @@ class NotifySosContactsJob extends BaseJob
                     'booking_id' => $booking->id,
                     'alert_id' => $alert->id,
                     'status' => 'active',
-                    'live_link' => $liveLink,
                     'triggered_by_role' => $role,
                 ],
             );

@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useRef } from 'react';
-import { View, Text, Pressable, StyleSheet, Platform } from 'react-native';
+import { View, Text, Pressable, StyleSheet, Platform, AccessibilityInfo } from 'react-native';
 import Animated, {
   useSharedValue,
   useAnimatedStyle,
@@ -46,6 +46,8 @@ const SHOW_DURATION = 4000;
 // Toasts carrying an action linger a beat longer so the user has time
 // to read the label AND reach the button.
 const SHOW_DURATION_ACTION = 5000;
+/** Extra dwell when a screen reader is on — spoken text outlasts read text. */
+const SHOW_DURATION_SR_BONUS = 3000;
 
 function ToastCard({
   id,
@@ -82,13 +84,33 @@ function ToastCard({
     translateY.value = withSpring(0, { damping: 20, stiffness: 300, mass: 0.8 });
     opacity.value = withTiming(1, { duration: 300 });
 
-    // Auto-dismiss timer
-    timerRef.current = setTimeout(
-      animateOut,
-      actionLabel && onAction ? SHOW_DURATION_ACTION : SHOW_DURATION,
-    );
+    // Toast is the app's primary transient feedback and it auto-dismisses,
+    // so a screen-reader user who heard nothing had no way to recover the
+    // message. accessibilityLiveRegion above covers Android; iOS needs an
+    // explicit announce (same pattern as OTPInput / book/confirm). Announcing
+    // on iOS ONLY — doing both on Android double-speaks.
+    if (Platform.OS === 'ios') {
+      AccessibilityInfo.announceForAccessibility(message);
+    }
+
+    // Auto-dismiss timer. Spoken text takes longer than read text, so give
+    // screen-reader users a longer dwell — 4s can be shorter than the
+    // utterance of a 3-line message.
+    const baseDuration = actionLabel && onAction ? SHOW_DURATION_ACTION : SHOW_DURATION;
+    let cancelled = false;
+    AccessibilityInfo.isScreenReaderEnabled()
+      .then((enabled) => {
+        if (cancelled) return;
+        if (!enabled) return;
+        if (timerRef.current) clearTimeout(timerRef.current);
+        timerRef.current = setTimeout(animateOut, baseDuration + SHOW_DURATION_SR_BONUS);
+      })
+      .catch(() => {});
+
+    timerRef.current = setTimeout(animateOut, baseDuration);
 
     return () => {
+      cancelled = true;
       if (timerRef.current) clearTimeout(timerRef.current);
     };
   }, []);
@@ -110,7 +132,13 @@ function ToastCard({
   }));
 
   return (
-    <Animated.View style={[styles.card, { backgroundColor: config.bg }, style]}>
+    <Animated.View
+      style={[styles.card, { backgroundColor: config.bg }, style]}
+      accessibilityRole="alert"
+      // Android live region. Only errors interrupt speech in progress —
+      // 'polite' queues everything else behind whatever is being read.
+      accessibilityLiveRegion={variant === 'error' ? 'assertive' : 'polite'}
+    >
       <Icon size={20} color={config.iconColor} />
       <Text
         style={[styles.message, { color: config.textColor }]}

@@ -84,6 +84,7 @@ class NotifySosContactsJobTest extends TestCase
         Log::spy();
         $notifications = Mockery::spy(NotificationService::class);
         $notifications->shouldReceive('notifyInApp')->andReturn(new Notification());
+        $notifications->shouldReceive('sendPush')->andReturnNull();
 
         (new NotifySosContactsJob($alert->id))->handle($notifications);
 
@@ -92,9 +93,16 @@ class NotifySosContactsJobTest extends TestCase
         Log::shouldHaveReceived('warning')
             ->with('SOS trusted-contact SMS not delivered (no SMS provider configured)', Mockery::type('array'))
             ->twice();
-        // The counterpart (the runner) gets the in-app SOS banner.
-        $notifications->shouldHaveReceived('notifyInApp')
+        // The counterpart (the runner) is WOKEN, not just badged. They are the
+        // one person physically present at the emergency and are usually
+        // driving with the app backgrounded, so this must be a device push.
+        $notifications->shouldHaveReceived('sendPush')
             ->withArgs(fn ($userId, $title, $body, $data) => $userId === $this->runner->id && ($data['type'] ?? null) === 'sos')
+            ->once();
+        // ...and the live-trip token never rides along into the OS
+        // notification store / lock-screen preview.
+        $notifications->shouldHaveReceived('sendPush')
+            ->withArgs(fn ($userId, $title, $body, $data) => ! array_key_exists('live_link', $data))
             ->once();
         // The admin safety topic is alerted.
         $notifications->shouldHaveReceived('sendToTopic')

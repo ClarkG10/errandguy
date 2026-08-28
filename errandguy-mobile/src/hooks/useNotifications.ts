@@ -205,8 +205,17 @@ function handleNotificationTapped(
       }
       break;
     case 'sos':
+      // Role-branch like 'chat' above. An SOS alerts the OTHER participant, so
+      // for a runner this notification is always about a customer's alarm —
+      // and it used to push them unconditionally at the customer-only tracking
+      // route, which cannot load their booking. They landed on a dead screen
+      // during the one event where seconds matter.
       if (data.booking_id) {
-        router.push(`/(customer)/tracking/${data.booking_id}` as never);
+        router.push(
+          (isRunner
+            ? `/(runner)/errand/${data.booking_id}`
+            : `/(customer)/tracking/${data.booking_id}`) as never,
+        );
       }
       break;
     case 'promo':

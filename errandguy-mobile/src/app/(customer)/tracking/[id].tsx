@@ -12,6 +12,8 @@ import {
   Share,
   Modal,
   useWindowDimensions,
+  AccessibilityInfo,
+  Platform,
 } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Image as ExpoImage } from 'expo-image';
@@ -1168,6 +1170,26 @@ export default function TrackingScreen() {
   // walking out to meet the runner shouldn't have to keep waking the phone.
   // Releases itself the moment the booking reaches a terminal status.
   useKeepAwakeWhile(isLiveBooking);
+
+  // Speak status changes on iOS. The status pill carries
+  // accessibilityLiveRegion, but that is Android-only in React Native — so on
+  // iOS a VoiceOver user got no notification when the runner accepted, arrived
+  // or handed over: the exact events this screen exists to report. The pill
+  // also unmounts on a terminal status, so those were announced nowhere at
+  // all. Guarded on a ref because realtime and the poll can deliver the same
+  // status twice.
+  const announcedStatusRef = useRef<string | null>(null);
+  useEffect(() => {
+    const status = booking?.status;
+    if (!status) return;
+    if (announcedStatusRef.current === status) return;
+    // Skip the very first render: the user just arrived and the screen reader
+    // is already reading the screen.
+    const isFirst = announcedStatusRef.current === null;
+    announcedStatusRef.current = status;
+    if (isFirst || Platform.OS !== 'ios') return;
+    AccessibilityInfo.announceForAccessibility(STATUS_LABELS[status] ?? status);
+  }, [booking?.status]);
 
   if (loading) {
     return (
