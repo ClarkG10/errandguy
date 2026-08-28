@@ -978,6 +978,18 @@ class BookingController extends Controller
                 'stops',
             ])
             ->active()
+            // A booking scheduled for next week is 'active' by status, and
+            // being newer it used to win this ordering outright — so placing a
+            // scheduled errand HID the live one the customer had a runner
+            // driving towards, and the customer layout then pointed its single
+            // realtime status channel at the wrong booking, freezing the live
+            // one's updates entirely. Rank anything already in (or past) its
+            // matching window ahead of one still waiting for its window to
+            // open; the 15-minute lead is the same one matching itself uses.
+            ->orderByRaw(
+                "CASE WHEN schedule_type = 'scheduled' AND scheduled_at IS NOT NULL AND scheduled_at > ? THEN 1 ELSE 0 END ASC",
+                [now()->addMinutes(15)],
+            )
             ->orderByDesc('created_at')
             ->first();
 

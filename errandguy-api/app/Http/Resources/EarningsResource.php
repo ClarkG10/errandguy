@@ -12,6 +12,7 @@ class EarningsResource extends JsonResource
         return [
             'period' => $this->resource['period'],
             'total_earnings' => $this->resource['total_earnings'],
+            'total_tips' => $this->resource['total_tips'] ?? 0,
             'total_errands' => $this->resource['total_errands'],
             'avg_per_errand' => $this->resource['avg_per_errand'],
             'acceptance_rate' => $this->resource['acceptance_rate'],

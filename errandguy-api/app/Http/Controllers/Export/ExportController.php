@@ -44,8 +44,15 @@ class ExportController extends Controller
 
         [$rangeStart, $rangeEnd] = $this->applyPeriod($query, $request, $period);
 
-        $agg = $query->selectRaw('COALESCE(SUM(runner_payout), 0) as sum_payout, COUNT(*) as cnt')->first();
+        // Tips are aggregated separately and printed as their own line — never
+        // added into the payout total, which is the figure commission and
+        // settlement reconcile against. Keeps the PDF agreeing with the
+        // Earnings screen, which shows the same two figures side by side.
+        $agg = $query->selectRaw(
+            'COALESCE(SUM(runner_payout), 0) as sum_payout, COALESCE(SUM(tip_amount), 0) as sum_tips, COUNT(*) as cnt'
+        )->first();
         $totalEarnings = (float) ($agg->sum_payout ?? 0);
+        $totalTips = (float) ($agg->sum_tips ?? 0);
         $totalErrands = (int) ($agg->cnt ?? 0);
         $avgPerErrand = $totalErrands > 0 ? round($totalEarnings / $totalErrands, 2) : 0;
 
@@ -79,6 +86,7 @@ class ExportController extends Controller
             'range_start' => $rangeStart,
             'range_end' => $rangeEnd,
             'total_earnings' => $totalEarnings,
+            'total_tips' => $totalTips,
             'total_errands' => $totalErrands,
             'avg_per_errand' => $avgPerErrand,
             'line_items' => $lineItems,

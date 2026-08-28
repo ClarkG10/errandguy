@@ -29,6 +29,7 @@ import { useLocationStore } from '../../../stores/locationStore';
 import { useSmartPolling } from '../../../hooks/useSmartPolling';
 import { useVoiceGuidance } from '../../../hooks/useVoiceGuidance';
 import { useReducedMotion } from '../../../hooks/useReducedMotion';
+import { useKeepAwakeWhile } from '../../../hooks/useKeepAwakeWhile';
 import { runnerService } from '../../../services/runner.service';
 import { routeService, type NavigationRoute, type NavigationStep } from '../../../services/route.service';
 import { ExpandableSheet } from '../../../components/ui/ExpandableSheet';
@@ -126,6 +127,11 @@ function fmtArrival(secondsFromNow: number): string {
 }
 
 export default function NavigateScreen() {
+  // Turn-by-turn on a bar mount: the screen must not sleep between junctions.
+  // Unconditional — this screen exists only while the runner is navigating,
+  // and the tag is released the moment it unmounts.
+  useKeepAwakeWhile(true);
+
   const router = useRouter();
   const { id } = useLocalSearchParams<{ id: string }>();
   const currentErrand = useRunnerStore((s) => s.currentErrand);

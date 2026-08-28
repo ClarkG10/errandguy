@@ -59,6 +59,10 @@ interface ButtonProps {
   style?: ViewStyle;
   testID?: string;
   accessibilityHint?: string;
+  /** Extra touch area beyond the painted bounds. Defaults per size so every
+   *  button clears the 44dp accessibility floor without changing its looks —
+   *  pass a value only to resolve an overlap with a neighbouring control. */
+  hitSlop?: number;
 }
 
 const PRIMARY_BG = LightColors.primary;       // #2563EB
@@ -105,6 +109,20 @@ const BASE_SIZES: Record<ButtonSize, { padV: number; padH: number; minH: number;
   lg: { padV: 10, padH: 20, minH: 44, text: 16, icon: 18 },
 };
 
+/**
+ * Touch-slop per size, chosen so the EFFECTIVE target is >= 44dp even though
+ * the painted control stays visually compact.
+ *
+ * The comment above used to claim sm/md "are paired with hitSlop at their call
+ * sites" — but ButtonProps never accepted one and this component never set
+ * one, so 70+ call sites shipped a 40dp target and the sm ones 30dp. That
+ * included the controls it hurts most: the runner's step-advance CTA in the
+ * cockpit, the offer-feed Accept (sitting directly on top of a full-card
+ * Pressable that opens a details sheet, so a high thumb browses instead of
+ * taking the job) and the ride-PIN Verify.
+ */
+const SIZE_HIT_SLOP: Record<ButtonSize, number> = { sm: 7, md: 2, lg: 0 };
+
 // One family on every platform — the system-font remap turns this into
 // SF Pro (iOS) / Roboto (Android) at weight 600, so the CTA reads identically
 // cross-platform. (On web the loaded Inter face is used directly.)
@@ -132,6 +150,7 @@ export function Button({
   style,
   testID,
   accessibilityHint,
+  hitSlop,
 }: ButtonProps) {
   const scale = useRef(new Animated.Value(1)).current;
   const reduceMotion = useReducedMotion();
@@ -250,6 +269,7 @@ export function Button({
     accessibilityLabel: title,
     accessibilityHint,
     accessibilityState: { disabled: isDisabled, busy: loading },
+    hitSlop: hitSlop ?? SIZE_HIT_SLOP[size],
     testID,
     disabled: isDisabled,
     onPress: handlePress,

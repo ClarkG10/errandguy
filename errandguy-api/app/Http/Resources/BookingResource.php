@@ -114,6 +114,10 @@ class BookingResource extends JsonResource
             'total_amount' => $this->total_amount,
             'customer_offer' => $this->customer_offer,
             'runner_payout' => $this->runner_payout,
+            // The mobile Booking type has declared tip_amount all along; the
+            // server simply never sent it, so every runner-side surface that
+            // could have shown a tip rendered nothing.
+            'tip_amount' => $this->tip_amount,
             'negotiate_expires_at' => $this->negotiate_expires_at,
             // ── Runner-facing settlement metadata (DISPLAY ONLY) ──────────
             // How a job settles changes the runner's decision AND their

@@ -156,7 +156,10 @@ export function NegotiateOfferCard({
         <View className="px-4 pb-4 -mt-1">
           <Button
             title="Accept"
-            size="sm"
+            // Taking the job is the money action and it sits directly beneath
+            // the full-card Pressable that opens the details sheet — a thumb
+            // landing a few points high used to browse instead of accept.
+            size="lg"
             onPress={onAccept}
             loading={accepting}
             loadingTitle="Accepting…"

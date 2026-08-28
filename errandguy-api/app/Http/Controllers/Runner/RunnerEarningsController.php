@@ -66,14 +66,25 @@ class RunnerEarningsController extends Controller
         }
 
         // Single aggregate query instead of separate sum() + count().
-        $agg = $query->selectRaw('COALESCE(SUM(runner_payout), 0) as sum_payout, COUNT(*) as cnt')->first();
+        // Tips are summed ALONGSIDE the payout, never into it: runner_payout is
+        // what the cash-settlement commission maths and the PDF statement
+        // reconcile against, so folding tips in would corrupt both. The runner
+        // was told about each tip by push and then never saw it again on this
+        // screen — the headline simply read lower than what hit their wallet.
+        $agg = $query->selectRaw(
+            'COALESCE(SUM(runner_payout), 0) as sum_payout, COALESCE(SUM(tip_amount), 0) as sum_tips, COUNT(*) as cnt'
+        )->first();
         $totalEarnings = (float) ($agg->sum_payout ?? 0);
+        $totalTips = (float) ($agg->sum_tips ?? 0);
         $totalErrands = (int) ($agg->cnt ?? 0);
         $avgPerErrand = $totalErrands > 0 ? round($totalEarnings / $totalErrands, 2) : 0;
 
         $data = [
             'period' => $period,
             'total_earnings' => $totalEarnings,
+            // Bucketed by the errand's completed_at, so a tip that lands days
+            // later counts in the period the errand was run.
+            'total_tips' => $totalTips,
             'total_errands' => $totalErrands,
             'avg_per_errand' => $avgPerErrand,
             'acceptance_rate' => (float) $profile->acceptance_rate,

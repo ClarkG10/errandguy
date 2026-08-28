@@ -50,20 +50,25 @@ const csvCell = (v: string | number) => {
 
 /** Build a CSV (date, errand type, payout) from the loaded earnings rows. */
 function buildEarningsCsv(rows: Booking[]): string {
-  const header = ['Date', 'Errand type', 'Payout'];
+  const header = ['Date', 'Errand type', 'Payout', 'Tip'];
   const lines = [header.map(csvCell).join(',')];
   for (const r of rows) {
     const date = new Date(r.completed_at ?? r.created_at).toISOString();
     const type = r.errand_type?.name ?? 'Errand';
     // Payout only — never the customer's total_amount (see utils/runnerPayout).
     const payout = r.runner_payout ?? 0;
-    lines.push([csvCell(date), csvCell(type), csvCell(payout)].join(','));
+    const tip = Number(r.tip_amount ?? 0);
+    lines.push([csvCell(date), csvCell(type), csvCell(payout), csvCell(tip)].join(','));
   }
   return lines.join('\n');
 }
 
 interface EarningsData {
   total_earnings: number;
+  /** Tips on errands completed in this period. Reported and displayed
+   *  SEPARATELY from total_earnings — runner_payout is what commission and
+   *  the PDF statement reconcile against, so tips must never be added in. */
+  total_tips: number;
   total_errands: number;
   avg_per_errand: number;
 }
@@ -484,6 +489,18 @@ export default function EarningsScreen() {
                 (translucent chips lightened the local background and
                 dragged the small white numerals under the AA floor).
                 Numbers ride Inter tabular; the middot is decorative. */}
+            {/* Tips sit on their own line, never folded into the total above:
+                the runner is told about each tip by push, so a headline that
+                excluded them read as money going missing. */}
+            {Number(earningsData?.total_tips ?? 0) > 0 && (
+              <Text className="text-[13px] font-montserrat text-white/85 mt-1">
+                plus{' '}
+                <Text className="font-inter-semi tabular-nums text-white">
+                  {formatCurrency(Number(earningsData?.total_tips ?? 0))}
+                </Text>{' '}
+                in tips
+              </Text>
+            )}
             <View className="flex-row items-center mt-3">
               <Text className="text-[13px] font-inter-semi tabular-nums text-white">
                 {earningsData?.total_errands ?? 0}

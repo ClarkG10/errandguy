@@ -45,6 +45,7 @@ import { useChatStore } from '../../../stores/chatStore';
 import { useLocationStore } from '../../../stores/locationStore';
 import { useSmartPolling } from '../../../hooks/useSmartPolling';
 import { useBackGuard } from '../../../hooks/useBackGuard';
+import { useKeepAwakeWhile } from '../../../hooks/useKeepAwakeWhile';
 import { useReducedMotion } from '../../../hooks/useReducedMotion';
 import { useQuery } from '../../../hooks/useQuery';
 import { useEta } from '../../../hooks/useEta';
@@ -521,6 +522,11 @@ export default function ActiveErrandScreen() {
   // Android hardware-back guard: require two presses while errand is active
   // AND the runner is the assigned mutator (read-only deep link can leave freely).
   useBackGuard(isErrandActive && !isReadOnly);
+
+  // The cockpit is the screen a runner works the whole job from, often mounted
+  // on the bike. Hold the display while the errand is live (and not a
+  // read-only history view); released automatically once it goes terminal.
+  useKeepAwakeWhile(isErrandActive && !isReadOnly);
   const timelineSteps = errandRule.statusFlow as unknown as BookingStatus[];
   const currentStatusIdx = booking ? timelineSteps.indexOf(booking.status) : -1;
 

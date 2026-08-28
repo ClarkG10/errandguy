@@ -92,6 +92,9 @@ export function StatusActionButton({
       loading={loading}
       loadingTitle="Updating…"
       disabled={disabled}
+      // The single most-tapped control in the product, hit one-handed
+      // outdoors and often at a motorcycle stop. 44dp painted, not just slop.
+      size="lg"
       accessibilityHint={
         disabled
           ? 'Disabled until the passenger’s 4-digit ride PIN is verified above'

@@ -135,6 +135,15 @@
                     <td colspan="3">Total ({{ $total_errands }} errands)</td>
                     <td class="num">&#8369;{{ number_format($total_earnings, 2) }}</td>
                 </tr>
+                {{-- Tips print as their own line, never summed into the payout
+                     total above, so the statement reconciles against the same
+                     figure commission and settlement use. --}}
+                @if(($total_tips ?? 0) > 0)
+                    <tr class="totals">
+                        <td colspan="3">Tips received</td>
+                        <td class="num">&#8369;{{ number_format($total_tips, 2) }}</td>
+                    </tr>
+                @endif
             @endif
             @if($line_items_truncated ?? false)
                 <tr>

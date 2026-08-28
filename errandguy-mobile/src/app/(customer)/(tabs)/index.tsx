@@ -60,6 +60,7 @@ import { LightColors, Elevation } from '../../../constants/colors';
 import type { Booking, ErrandType } from '../../../types';
 import { formatCurrency } from '../../../utils/formatCurrency';
 import { formatRelativeTime } from '../../../utils/formatDate';
+import { scheduledWindowLabel, SCHEDULED_MATCH_LEAD_MINUTES } from '../../../utils/scheduledBooking';
 
 const ICON_MAP: Record<string, LucideIcon> = {
   Package,
@@ -84,26 +85,6 @@ const REPEATABLE_STATUSES = ['completed', 'delivered'];
 // Promos within this window read as "expiring" — worth nudging before they
 // lapse. Anything past it is just a standard available promo.
 const PROMO_EXPIRY_SOON_MS = 7 * 24 * 60 * 60 * 1000;
-
-// Mirrors the server's scheduled-booking deferral: BookingController delays
-// MatchRunnerJob until `scheduled_at − 15 min`, so a scheduled errand sits in
-// `pending` (no search running) until then. Used to decide whether the home
-// card may honestly claim we're looking for a runner.
-const SCHEDULED_MATCH_LEAD_MINUTES = 15;
-
-/**
- * Calendar-style label for a scheduled errand ("Tomorrow, 9:00 AM").
- * Same day-bucketing idiom as formatChatDayLabel, with the time appended —
- * a bare "Aug 30, 9:00 AM" makes the reader do the date maths.
- */
-function formatScheduledLabel(at: dayjs.Dayjs): string {
-  const diffDays = at.startOf('day').diff(dayjs().startOf('day'), 'day');
-  const time = at.format('h:mm A');
-  if (diffDays <= 0) return `Today, ${time}`;
-  if (diffDays === 1) return `Tomorrow, ${time}`;
-  if (diffDays < 7) return `${at.format('dddd')}, ${time}`;
-  return `${at.format('MMM D')}, ${time}`;
-}
 
 /**
  * Clone a terminal booking into a fresh booking draft so "Repeat last" can
@@ -456,17 +437,8 @@ export default function CustomerHomeScreen() {
   // corrects it.
   const scheduledPending = useMemo(() => {
     if (!isRenderableActiveBooking(activeBooking)) return null;
-    if (activeBooking.status !== 'pending') return null;
-    if (activeBooking.schedule_type !== 'scheduled') return null;
-    if (!activeBooking.scheduled_at) return null;
-    const at = dayjs(activeBooking.scheduled_at);
-    if (!at.isValid()) return null;
-    if (
-      at.subtract(SCHEDULED_MATCH_LEAD_MINUTES, 'minute').isBefore(dayjs())
-    ) {
-      return null;
-    }
-    return { label: formatScheduledLabel(at) };
+    const label = scheduledWindowLabel(activeBooking);
+    return label ? { label } : null;
   }, [activeBooking]);
 
   // Wrap a raw-Pressable handler with a light impact haptic — these

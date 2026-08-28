@@ -54,6 +54,7 @@ import { useRunnerTracking } from '../../../hooks/useRunnerTracking';
 import { useBookingStatus } from '../../../hooks/useBookingStatus';
 import { useSmartPolling } from '../../../hooks/useSmartPolling';
 import { useBackGuard } from '../../../hooks/useBackGuard';
+import { useKeepAwakeWhile } from '../../../hooks/useKeepAwakeWhile';
 import { useEta } from '../../../hooks/useEta';
 import { useReducedMotion } from '../../../hooks/useReducedMotion';
 import { TrackingSkeleton } from '../../../components/ui/Skeleton';
@@ -1162,6 +1163,11 @@ export default function TrackingScreen() {
   const isLiveBooking =
     !!booking && !['completed', 'cancelled', 'no_runner'].includes(booking.status);
   useBackGuard(isLiveBooking, 'Tracking your errand — tap back again to leave');
+
+  // Keep the live map lit while the errand is actually running — a customer
+  // walking out to meet the runner shouldn't have to keep waking the phone.
+  // Releases itself the moment the booking reaches a terminal status.
+  useKeepAwakeWhile(isLiveBooking);
 
   if (loading) {
     return (

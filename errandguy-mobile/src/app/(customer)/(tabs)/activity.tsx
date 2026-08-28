@@ -26,6 +26,7 @@ import { ActivityListSkeleton } from '../../../components/ui/Skeleton';
 import { BrandRefreshControl } from '../../../components/ui/BrandRefreshControl';
 import { Eyebrow } from '../../../components/ui/Typography';
 import type { Booking } from '../../../types';
+import { scheduledWindowLabel } from '../../../utils/scheduledBooking';
 import { LightColors } from '../../../constants/colors';
 import { copy } from '../../../constants/copy';
 import { errorMessage } from '../../../utils/errorCatalog';
@@ -150,9 +151,15 @@ export default function ActivityScreen() {
       const onTheWay: Booking[] = [];
       const inProgress: Booking[] = [];
       const searching: Booking[] = [];
+      // A booking scheduled for next week is `pending` too, so bucketing on
+      // status alone filed it under "Looking for runner" with the live
+      // searches — the same "stuck search" misread the Home card was fixed
+      // for, still landing one tab over.
+      const scheduled: Booking[] = [];
       for (const b of bookings) {
         if (b.status === 'pending') {
-          searching.push(b);
+          if (scheduledWindowLabel(b)) scheduled.push(b);
+          else searching.push(b);
         } else if (b.status === 'matched' || b.status === 'accepted') {
           onTheWay.push(b);
         } else {
@@ -162,6 +169,7 @@ export default function ActivityScreen() {
       return [
         { title: 'In progress', data: inProgress },
         { title: 'On the way', data: onTheWay },
+        { title: 'Scheduled', data: scheduled },
         { title: 'Looking for runner', data: searching },
       ].filter((s) => s.data.length > 0);
     }
