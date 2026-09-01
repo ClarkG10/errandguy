@@ -51,11 +51,22 @@ class ActionQueue extends StatsOverviewWidget
             // number consistent with the no_runner list its tap deep-links to.)
             $stuckQuery = fn () => Booking::where('status', 'no_runner');
 
+            // KYC applications an admin can ACT on. Counting raw
+            // verification_status = 'pending' counted every account that ever
+            // registered — the profile row is created empty at signup — so this
+            // card's number never fell and its oldest-item age was pinned to the
+            // first-ever signup, leaving the SLA colour permanently red and
+            // therefore meaningless. Restricted to applications with every
+            // required document on file, the age is a real wait again. The
+            // incomplete ones stay visible (and counted) on the list's
+            // "Incomplete" tab.
+            $verificationQuery = fn () => RunnerProfile::query()->pending()->readyForReview();
+
             return [
                 'sos' => SOSAlert::where('status', 'active')->count(),
                 'sos_oldest' => SOSAlert::where('status', 'active')->min('triggered_at'),
-                'verifications' => RunnerProfile::where('verification_status', 'pending')->count(),
-                'verifications_oldest' => RunnerProfile::where('verification_status', 'pending')->min('created_at'),
+                'verifications' => $verificationQuery()->count(),
+                'verifications_oldest' => $verificationQuery()->min('created_at'),
                 'disputes' => DisputeTicket::unresolved()->count(),
                 'disputes_oldest' => DisputeTicket::unresolved()->min('created_at'),
                 'payouts' => WalletTransaction::where('type', 'payout')->where('status', 'pending')->count(),
@@ -79,16 +90,20 @@ class ActionQueue extends StatsOverviewWidget
                 ->url(BookingResource::getUrl('index', ['tableFilters' => ['status' => ['value' => 'no_runner']]])),
 
             Stat::make('Pending verifications', number_format($d['verifications']))
-                ->description($this->withAge($d['verifications'] > 0 ? 'Runners awaiting approval' : 'Nothing waiting', $d['verifications_oldest']))
+                ->description($this->withAge($d['verifications'] > 0 ? 'Complete applications awaiting approval' : 'Nothing ready to review', $d['verifications_oldest']))
                 ->descriptionIcon('heroicon-m-identification')
                 ->color($this->escalate($d['verifications_oldest'], $d['verifications'] > 0 ? 'warning' : 'gray', 1440, 2880))
-                ->url(RunnerProfileResource::getUrl('index', ['tableFilters' => ['verification_status' => ['value' => 'pending']]])),
+                ->url(RunnerProfileResource::getUrl('index', ['tab' => 'ready'])),
 
             Stat::make('Open disputes', number_format($d['disputes']))
                 ->description($this->withAge($d['disputes'] > 0 ? 'Awaiting resolution' : 'No open disputes', $d['disputes_oldest']))
                 ->descriptionIcon('heroicon-m-scale')
                 ->color($this->escalate($d['disputes_oldest'], $d['disputes'] > 0 ? 'warning' : 'gray', 240, 1440))
-                ->url(DisputeTicketResource::getUrl('index', ['tableFilters' => ['status' => ['value' => 'open']]])),
+                // The card counts unresolved (open + reviewing + escalated) —
+                // land on the tab that shows exactly that set, not the
+                // open-only filter, so the number on the card matches the
+                // list it opens.
+                ->url(DisputeTicketResource::getUrl('index', ['tab' => 'unresolved'])),
 
             Stat::make('Pending payouts', number_format($d['payouts']))
                 ->description($this->withAge($d['payouts'] > 0 ? 'Awaiting disbursement' : 'Nothing pending', $d['payouts_oldest']))

@@ -1,4 +1,4 @@
-import React, { useEffect } from 'react';
+import React, { useContext, useEffect } from 'react';
 import {
   View,
   Pressable,
@@ -21,6 +21,7 @@ import Animated, {
   Easing,
   runOnJS,
 } from 'react-native-reanimated';
+import { SafeAreaInsetsContext } from 'react-native-safe-area-context';
 import { useKeyboard } from '../../hooks/useKeyboard';
 import { LightColors } from '../../constants/colors';
 import { Radius } from '../../constants/radius';
@@ -34,6 +35,13 @@ const TIMING_OUT = { duration: 220, easing: Easing.in(Easing.cubic) } as const;
 // OS keyboard transition cadence so the sheet doesn't lag behind.
 const TIMING_KB = { duration: 220, easing: Easing.out(Easing.cubic) } as const;
 
+// Dismiss thresholds for the handle drag. The distance rule is the old
+// one; the flick rule is new and exists because the drag surface is now
+// the handle strip alone — a short, fast flick down must still close.
+const DISMISS_DISTANCE = 100;
+const DISMISS_FLICK_VELOCITY = 900;
+const DISMISS_FLICK_DISTANCE = 24;
+
 interface BottomSheetProps {
   isVisible: boolean;
   onClose: () => void;
@@ -45,6 +53,13 @@ interface BottomSheetProps {
   snapPoints?: number[];
   children: React.ReactNode;
   scrollable?: boolean;
+  /**
+   * Pinned action row rendered OUTSIDE the scroll area, flush to the
+   * bottom of the sheet, with safe-area padding. Use it for the sheet's
+   * primary CTA so it stays at thumb height instead of sitting below the
+   * fold of long content (mirrors `ExpandableSheet`'s `footer`).
+   */
+  footer?: React.ReactNode;
   /**
    * When the keyboard opens, automatically grow the sheet up to
    * (1 - this fraction) * screen height so the inputs inside stay
@@ -70,8 +85,19 @@ interface BottomSheetProps {
  *     belt-and-braces measure on iOS where the keyboard animation
  *     occasionally beats our `translateY` by a frame.
  *
- * Drag-to-dismiss is preserved — the user can still pan the sheet
- * down past the velocity threshold to close it.
+ * Drag-to-dismiss — the pan lives on the HANDLE STRIP only, matching
+ * `ExpandableSheet`. It used to wrap the whole sheet, which meant the
+ * pan claimed every vertical drag inside the body: the native scroller
+ * (this component's own ScrollView, or a consumer's own ScrollView /
+ * FlatList when `scrollable={false}`) was cancelled, and because
+ * `onUpdate` clamps upward movement to the resting top an upward drag
+ * produced literally zero movement — long sheets read as frozen and
+ * anything below the fold (e.g. the runner's "Accept errand") was
+ * unreachable. Scoping the pan is the cheap, uniform fix: no consumer
+ * has to opt in, and it works identically for sheets that bring their
+ * own scroller. Cost: swipe-anywhere-to-dismiss is gone; the backdrop
+ * tap, `onAccessibilityEscape`, each sheet's own Close control and a
+ * short flick on the handle remain as the escapes.
  */
 export function BottomSheet({
   isVisible,
@@ -79,6 +105,7 @@ export function BottomSheet({
   snapPoints = [0.5],
   children,
   scrollable = true,
+  footer,
   avoidKeyboard = true,
 }: BottomSheetProps) {
   // Live height (not a module-scope snapshot) so snap math and the
@@ -87,6 +114,14 @@ export function BottomSheet({
   const translateY = useSharedValue(SCREEN_HEIGHT);
   const context = useSharedValue(0);
   const { isVisible: kbVisible, height: kbHeight } = useKeyboard();
+  // Read the insets off the context directly rather than through
+  // `useSafeAreaInsets()`: that hook throws when no SafeAreaProvider is
+  // mounted, and this component is rendered by unit tests (and inside a
+  // Modal). `null` simply means "no provider" — fall back to the 12pt
+  // floor, which is what `Math.max(insets.bottom, 12)` yields anyway on
+  // every device without a home indicator.
+  const insets = useContext(SafeAreaInsetsContext);
+  const footerPadBottom = Math.max(insets?.bottom ?? 0, 12);
 
   const baseSnap = Math.max(...snapPoints) * SCREEN_HEIGHT;
   // When the keyboard is up, expand the sheet up to (screen - keyboard
@@ -113,17 +148,30 @@ export function BottomSheet({
   }, [isVisible, restingTop, kbVisible, translateY]);
 
   const gesture = Gesture.Pan()
+    // The visible handle strip is only ~26pt tall — under the 44dp floor for
+    // the one surface that can drag-dismiss the sheet. Gesture-level slop
+    // grows the grab area without moving layout: upward into the sheet's top
+    // padding, downward a little over the content edge (a vertical drag that
+    // close to the handle reads as a dismiss attempt anyway).
+    .hitSlop({ top: 10, bottom: 10 })
     .onStart(() => {
       context.value = translateY.value;
     })
     .onUpdate((event) => {
+      // Downward only. There is a single snap point, so there is nothing
+      // above the resting top to drag towards — the clamp keeps an
+      // upward drag from lifting the sheet off the bottom of the screen
+      // and exposing the backdrop underneath it.
       translateY.value = Math.max(
         event.translationY + context.value,
         restingTop,
       );
     })
     .onEnd((event) => {
-      if (event.translationY > 100) {
+      const flicked =
+        event.velocityY > DISMISS_FLICK_VELOCITY &&
+        event.translationY > DISMISS_FLICK_DISTANCE;
+      if (event.translationY > DISMISS_DISTANCE || flicked) {
         translateY.value = withTiming(SCREEN_HEIGHT, TIMING_OUT);
         runOnJS(onClose)();
       } else {
@@ -160,62 +208,79 @@ export function BottomSheet({
           accessibilityRole="button"
           accessibilityLabel="Close"
         />
-        <GestureDetector gesture={gesture}>
-          <Animated.View
-            className="absolute left-0 right-0 bg-surface"
-            // Trap screen-reader focus inside the sheet and let the
-            // standard escape gesture (iOS two-finger Z) dismiss it.
-            accessibilityViewIsModal
-            onAccessibilityEscape={onClose}
-            style={[
-              { height: sheetHeight },
-              // Edge-to-edge sheet (no floating side margins) — modern
-              // apps anchor sheets to the screen edges. Subtler top
-              // corners + a diffuse top shadow give depth.
-              {
-                borderTopLeftRadius: Radius.sheet,
-                borderTopRightRadius: Radius.sheet,
-                shadowColor: LightColors.textPrimary,
-                shadowOffset: { width: 0, height: -10 },
-                shadowOpacity: 0.08,
-                shadowRadius: 24,
-                elevation: 12,
-              },
-              animatedStyle,
-            ]}
-          >
-            <View className="items-center pt-2.5 pb-1.5">
-              <View className="w-9 h-1 rounded-full bg-divider" />
+        <Animated.View
+          className="absolute left-0 right-0 bg-surface"
+          // Trap screen-reader focus inside the sheet and let the
+          // standard escape gesture (iOS two-finger Z) dismiss it.
+          accessibilityViewIsModal
+          onAccessibilityEscape={onClose}
+          style={[
+            { height: sheetHeight },
+            // Edge-to-edge sheet (no floating side margins) — modern
+            // apps anchor sheets to the screen edges. Subtler top
+            // corners + a diffuse top shadow give depth.
+            {
+              borderTopLeftRadius: Radius.sheet,
+              borderTopRightRadius: Radius.sheet,
+              shadowColor: LightColors.textPrimary,
+              shadowOffset: { width: 0, height: -10 },
+              shadowOpacity: 0.08,
+              shadowRadius: 24,
+              elevation: 12,
+            },
+            animatedStyle,
+          ]}
+        >
+          {/* Drag handle area — ONLY this strip receives the pan gesture
+              so inner ScrollViews/FlatLists continue to scroll normally
+              (same rule as ExpandableSheet). The padding is a little
+              taller than the bar needs so the grab target is ~26pt
+              rather than the bare 4pt bar. */}
+          <GestureDetector gesture={gesture}>
+            <View className="items-center pt-3 pb-2.5" testID="sheet-drag-handle">
+              <View className="w-10 h-1 rounded-full bg-divider" />
             </View>
-            {/*
-              Inner KeyboardAvoidingView is a safety net on iOS for the
-              rare frame where the keyboard animation beats our
-              translateY. Behaviour is `padding` so the inner ScrollView
-              shrinks instead of being pushed off the bottom of the
-              sheet. Android relies on `windowSoftInputMode=adjustResize`
-              (set by Expo by default) plus our translateY follow.
-            */}
-            <KeyboardAvoidingView
-              style={{ flex: 1 }}
-              behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-              keyboardVerticalOffset={0}
-            >
-              {scrollable ? (
-                <ScrollView
-                  className="flex-1 px-4 pb-6"
-                  showsVerticalScrollIndicator={false}
-                  bounces={false}
-                  keyboardShouldPersistTaps="handled"
-                  contentContainerStyle={{ paddingBottom: 24 }}
-                >
-                  {children}
-                </ScrollView>
-              ) : (
-                <View className="flex-1 px-4 pb-6">{children}</View>
-              )}
-            </KeyboardAvoidingView>
-          </Animated.View>
-        </GestureDetector>
+          </GestureDetector>
+          {/*
+            Inner KeyboardAvoidingView is a safety net on iOS for the
+            rare frame where the keyboard animation beats our
+            translateY. Behaviour is `padding` so the inner ScrollView
+            shrinks instead of being pushed off the bottom of the
+            sheet. Android relies on `windowSoftInputMode=adjustResize`
+            (set by Expo by default) plus our translateY follow.
+          */}
+          <KeyboardAvoidingView
+            style={{ flex: 1 }}
+            behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+            keyboardVerticalOffset={0}
+          >
+            {scrollable ? (
+              <ScrollView
+                className={footer ? 'flex-1 px-4' : 'flex-1 px-4 pb-6'}
+                showsVerticalScrollIndicator={false}
+                bounces={false}
+                keyboardShouldPersistTaps="handled"
+                contentContainerStyle={{ paddingBottom: footer ? 12 : 24 }}
+              >
+                {children}
+              </ScrollView>
+            ) : (
+              <View className={footer ? 'flex-1 px-4' : 'flex-1 px-4 pb-6'}>
+                {children}
+              </View>
+            )}
+            {/* Pinned CTA row. Outside the scroller, inside the KAV, so
+                it rides above the keyboard and never scrolls away. */}
+            {footer ? (
+              <View
+                className="px-4 pt-3 border-t border-divider bg-surface"
+                style={{ paddingBottom: footerPadBottom }}
+              >
+                {footer}
+              </View>
+            ) : null}
+          </KeyboardAvoidingView>
+        </Animated.View>
       </GestureHandlerRootView>
     </Modal>
   );

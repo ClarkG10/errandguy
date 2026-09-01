@@ -15,7 +15,16 @@ import { DateTimePicker } from '../../../components/customer/DateTimePicker';
 import { BookingStepIndicator } from '../../../components/customer/BookingStepIndicator';
 import { LightColors } from '../../../constants/colors';
 import { useResponsive } from '../../../constants/responsive';
-import type { ScheduleType } from '../../../types';
+import type { Booking, ScheduleType } from '../../../types';
+import { useAuthStore } from '../../../stores/authStore';
+import { bookingService } from '../../../services/booking.service';
+import { useQuery } from '../../../hooks/useQuery';
+import { CacheTTL } from '../../../services/cache.service';
+import {
+  findRecurringSlot,
+  nextOccurrence,
+  type RecurringSlot,
+} from '../../../utils/bookingRecall';
 
 // Legacy local labels kept only as documentation of the canonical order.
 // All step UI is now driven by `BookingStepIndicator`.
@@ -24,12 +33,32 @@ import type { ScheduleType } from '../../../types';
  * Convenience presets shown above the wheel picker. The labels are
  * resolved each render so "Tonight 7 PM" doesn't suggest a time that's
  * already past on the device clock — past presets are filtered out.
+ *
+ * `slot` is the customer's OWN recurring scheduling habit, derived from the
+ * `scheduled_at` on their past bookings (see utils/bookingRecall). Every one
+ * of the four canned picks is pure clock arithmetic, so a customer who books
+ * the same Saturday-morning run every week was offered none of them and
+ * always drove the wheel picker. When they have a habit it leads the row;
+ * when they don't, the row is exactly what it was before.
  */
-function buildQuickPicks(raw: dayjs.Dayjs) {
+function buildQuickPicks(raw: dayjs.Dayjs, slot?: RecurringSlot | null) {
   const picks: { label: string; value: dayjs.Dayjs; sublabel: string }[] = [];
   // Zero sub-minute noise so a pick's ISO round-trips identically through
   // the wheel picker (which emits whole minutes).
   const now = raw.millisecond(0);
+
+  if (slot) {
+    const usual = dayjs(nextOccurrence(slot, now.toDate()));
+    // Same 30-minute lead guard the canned picks use — a learned slot can
+    // never write an unbookable time into the draft.
+    if (usual.isAfter(now.add(30, 'minute'))) {
+      picks.push({
+        label: 'Your usual',
+        sublabel: usual.format('ddd · h:mm A'),
+        value: usual,
+      });
+    }
+  }
 
   const inAnHour = now.add(1, 'hour').minute(0).second(0);
   if (inAnHour.isAfter(now.add(30, 'minute'))) {
@@ -63,7 +92,17 @@ function buildQuickPicks(raw: dayjs.Dayjs) {
     value: tomorrowNoon,
   });
 
-  return picks;
+  // Dedupe by minute, first occurrence wins. A learned Saturday-9AM slot can
+  // land on the same minute as "Tomorrow 9:00 AM" — and "In 1 hour" already
+  // collided with "Tonight 7:00 PM" between 6 and 7pm — so two chips could
+  // write the identical draft value.
+  const seen = new Set<string>();
+  return picks.filter((pick) => {
+    const key = pick.value.format('YYYY-MM-DDTHH:mm');
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
 }
 
 export default function ScheduleScreen() {
@@ -82,11 +121,40 @@ export default function ScheduleScreen() {
     draftBooking.schedule_type ?? 'now',
   );
 
+  /* ── The customer's own recurring slot ──
+     Reads the SAME ['bookings','recent'] cache entry Home and the details
+     step already render (login warms it), so in the normal flow this is a
+     cache hit with no request — and it only runs at all once the customer
+     has actually switched to "Later". */
+  const userId = useAuthStore((s) => s.user?.id ?? 'anon');
+  const recentBookingsQ = useQuery<Booking[]>(
+    ['bookings', 'recent', userId],
+    async () => {
+      const res = await bookingService.getBookings({ per_page: 10 });
+      const b = res.data?.data;
+      return Array.isArray(b) ? b : [];
+    },
+    {
+      staleTime: 60_000,
+      ttl: CacheTTL.LONG,
+      enabled: userId !== 'anon' && scheduleType === 'scheduled',
+    },
+  );
+  // Self-suppressing: null until two DISTINCT past days share a weekday+hour,
+  // because a wrong "your usual" is worse than no chip at all.
+  const recurringSlot = useMemo(
+    () => findRecurringSlot(recentBookingsQ.data),
+    [recentBookingsQ.data],
+  );
+
   // Quick presets capture the device clock, so they're re-anchored
   // whenever it may have drifted: on foreground return and when the
   // picker section becomes visible again.
   const [picksNow, setPicksNow] = useState(() => dayjs());
-  const quickPicks = useMemo(() => buildQuickPicks(picksNow), [picksNow]);
+  const quickPicks = useMemo(
+    () => buildQuickPicks(picksNow, recurringSlot),
+    [picksNow, recurringSlot],
+  );
   const selectedIso = draftBooking.scheduled_at;
 
   useEffect(() => {

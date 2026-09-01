@@ -63,7 +63,12 @@ class LiveAlertsWidget extends TableWidget
             ])
             ->recordUrl(fn (AdminAlert $record): ?string => match ($record->type) {
                 'sos' => $record->subject_id ? SOSAlertResource::getUrl('view', ['record' => $record->subject_id]) : null,
-                'no_runner' => $record->subject_id ? BookingResource::getUrl('view', ['record' => $record->subject_id]) : null,
+                // Every booking-subject alert deep-links to the booking — the
+                // operator's whole job on these rows is to open it. The stall
+                // and ride-duration monitors both pass the booking id.
+                'no_runner', 'stalled_errand', 'ride_duration' => $record->subject_id
+                    ? BookingResource::getUrl('view', ['record' => $record->subject_id])
+                    : null,
                 default => null,
             })
             ->recordActions([

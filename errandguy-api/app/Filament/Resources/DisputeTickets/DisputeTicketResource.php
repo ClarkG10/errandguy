@@ -35,9 +35,20 @@ class DisputeTicketResource extends Resource
         return DisputeTicketsTable::configure($table);
     }
 
+    /**
+     * One query per relation for the whole page — never one per row.
+     *
+     * `completedPayment` + `resolvedBy` are eager loads (the Amount / Paid-via
+     * columns and the "Resolved by" name), and `is_refundable` is a single
+     * EXISTS subselect on the same statement so the refund gate costs nothing
+     * extra. The view page resolves its record through here too
+     * (resolveRecordRouteBinding), so the header actions see the same flag.
+     */
     public static function getEloquentQuery(): Builder
     {
-        return parent::getEloquentQuery()->with(['booking', 'reporter']);
+        return parent::getEloquentQuery()
+            ->with(['booking', 'reporter', 'completedPayment', 'resolvedBy'])
+            ->withExists(['refundablePayments as is_refundable']);
     }
 
     public static function getRelations(): array

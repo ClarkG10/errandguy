@@ -73,6 +73,18 @@ describe('notificationInvalidationKeys', () => {
     ]);
   });
 
+  describe('booking_stops_updated', () => {
+    it('heals the cached booking the tick belongs to', () => {
+      expect(
+        notificationInvalidationKeys({ type: 'booking_stops_updated', data: { booking_id: 'bk-1' } }),
+      ).toEqual([['booking', 'bk-1']]);
+    });
+
+    it('does nothing without a booking id', () => {
+      expect(notificationInvalidationKeys({ type: 'booking_stops_updated', data: {} })).toEqual([]);
+    });
+  });
+
   describe('sos', () => {
     it('refreshes the booking surfaces for the receiving side', () => {
       const keys = notificationInvalidationKeys({ type: 'sos', data: { booking_id: 'bk-1' } });

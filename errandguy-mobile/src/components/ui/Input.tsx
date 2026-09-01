@@ -1,4 +1,4 @@
-import React, { useState, useRef, useImperativeHandle, forwardRef } from 'react';
+import React, { useState, useRef, useEffect, useImperativeHandle, forwardRef } from 'react';
 import {
   View,
   TextInput,
@@ -14,6 +14,8 @@ import { Eye, EyeOff } from 'lucide-react-native';
 import type { LucideIcon } from 'lucide-react-native';
 import { useResponsive } from '../../constants/responsive';
 import { LightColors } from '../../constants/colors';
+import { CHROME_MAX_FONT_SCALE } from '../../constants/fontScale';
+import { announceFieldError } from '../../utils/validation/announceFieldError';
 
 interface InputProps extends Omit<TextInputProps, 'onChange'> {
   label?: string;
@@ -106,6 +108,37 @@ export const Input = forwardRef<InputHandle, InputProps>(function Input(
     blur: () => inputRef.current?.blur(),
   }));
 
+  // `accessibilityLiveRegion` on the error text below is ANDROID-ONLY, and
+  // `accessibilityRole="alert"` maps to no iOS trait — so on iOS a rejected
+  // field was completely silent. `announceFieldError` covers iOS (and no-ops
+  // on Android, so the live region isn't doubled up); it also batches a
+  // whole submit's worth of field errors into one sentence, since iOS
+  // announcements interrupt each other.
+  //
+  // Fires only on the transition into an error (or onto a DIFFERENT message):
+  // re-rendering with the same error — every keystroke of a field that is
+  // still invalid — must not re-interrupt the screen reader.
+  const prevErrorRef = useRef<string | undefined>(undefined);
+  useEffect(() => {
+    const previous = prevErrorRef.current;
+    prevErrorRef.current = error;
+    if (!error || error === previous) return;
+    announceFieldError(label ? `${label}, error: ${error}` : error);
+  }, [error, label]);
+
+  // RN's `accessibilityState` has no `invalid` key and there is no
+  // aria-describedby equivalent, so the LABEL is the only association
+  // mechanism: fold the error into it, and the helper caption into the hint.
+  // Without this a user who re-focuses the field to find out what went wrong
+  // hears "Email" and nothing else — the error text is a separate, unlinked
+  // node further down the tree.
+  const fieldName = label || placeholder;
+  const accessibilityLabel = error
+    ? fieldName
+      ? `${fieldName}, error: ${error}`
+      : `Error: ${error}`
+    : fieldName;
+
   // Filled → focused transition: muted fill at rest, white + blue
   // border when active. Border width is constant so focus never
   // shifts layout.
@@ -130,7 +163,17 @@ export const Input = forwardRef<InputHandle, InputProps>(function Input(
   return (
     <View style={fs.wrapper}>
       {label && (
-        <Text style={[fs.label, { color: labelColor, fontSize: labelSize }]}>{label}</Text>
+        // NOTE: the caption stays in the accessibility tree even though the
+        // field's own accessibilityLabel repeats it. Hiding it would be
+        // tidier to swipe through, but it is the only fallback if a caller
+        // overrides accessibilityLabel via `...rest` — and it is what
+        // `getByText(label)` in screen tests relies on.
+        <Text
+          style={[fs.label, { color: labelColor, fontSize: labelSize }]}
+          maxFontSizeMultiplier={CHROME_MAX_FONT_SCALE}
+        >
+          {label}
+        </Text>
       )}
       <Pressable
         style={[
@@ -146,8 +189,13 @@ export const Input = forwardRef<InputHandle, InputProps>(function Input(
         )}
         <TextInput
           ref={inputRef}
-          accessibilityLabel={label || placeholder}
+          accessibilityLabel={accessibilityLabel}
+          accessibilityHint={helperText}
           accessibilityState={{ disabled: rest.editable === false }}
+          // NOTE: no maxFontSizeMultiplier on the field text itself — it is
+          // free to scale with the OS setting because the container is
+          // `minHeight`, so the row grows instead of clipping. Only the
+          // small captions around it (label / error / helper) are capped.
           style={[fs.input, { fontSize: inputSize }, multiline && fs.inputMultiline]}
           value={value}
           onChangeText={onChangeText}
@@ -225,13 +273,19 @@ export const Input = forwardRef<InputHandle, InputProps>(function Input(
       {error ? (
         <Text
           style={fs.error}
+          // Android announces this on its own. iOS gets the explicit
+          // announceForAccessibility above — RN maps neither the live region
+          // nor role="alert" to a VoiceOver trait.
           accessibilityLiveRegion="polite"
           accessibilityRole="alert"
+          maxFontSizeMultiplier={CHROME_MAX_FONT_SCALE}
         >
           {error}
         </Text>
       ) : helperText ? (
-        <Text style={fs.helper}>{helperText}</Text>
+        <Text style={fs.helper} maxFontSizeMultiplier={CHROME_MAX_FONT_SCALE}>
+          {helperText}
+        </Text>
       ) : null}
       {showToolbar && (
         <InputAccessoryView nativeID={accessoryId}>
@@ -242,7 +296,9 @@ export const Input = forwardRef<InputHandle, InputProps>(function Input(
               accessibilityRole="button"
               accessibilityLabel="Done editing"
             >
-              <Text style={fs.kbdDone}>Done</Text>
+              <Text style={fs.kbdDone} maxFontSizeMultiplier={CHROME_MAX_FONT_SCALE}>
+                Done
+              </Text>
             </Pressable>
           </View>
         </InputAccessoryView>

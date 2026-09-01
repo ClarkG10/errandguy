@@ -63,4 +63,40 @@ class SupportTicket extends Model
     {
         return $query->where('user_id', $userId);
     }
+
+    /**
+     * Tickets genuinely waiting on US: either still 'open', or non-terminal with
+     * the newest message from the user.
+     *
+     * An agent reply flips the ticket to 'pending'; when the customer answers,
+     * SupportController::postMessage bumps last_message_at but LEAVES the status
+     * alone (it only re-opens a resolved/closed ticket). So a customer reply is
+     * invisible in a status-only view — it sits in Pending next to tickets that
+     * are genuinely awaiting the user, and the only way to tell them apart was
+     * to open every pending ticket in turn. This is the predicate that separates
+     * them, and it is the single source of truth for both the "Waiting on us"
+     * tab and the sidebar badge, so the two can never disagree.
+     *
+     * COST: one correlated "who spoke last" subquery per candidate row, served
+     * by idx_support_messages_ticket_created (ticket_id, created_at) as an index
+     * seek + LIMIT 1 — deliberately NOT a whereHas on latestMessage(), whose
+     * one-of-many join groups the whole support_messages table. The id
+     * tiebreaker matters: created_at has second precision, so two messages in
+     * the same second would otherwise resolve arbitrarily.
+     */
+    public function scopeNeedsReply($query)
+    {
+        $lastSender = SupportMessage::query()
+            ->select('sender_type')
+            ->whereColumn('support_messages.ticket_id', 'support_tickets.id')
+            ->latest('created_at')
+            ->latest('id')
+            ->limit(1);
+
+        return $query
+            ->whereNotIn('status', ['resolved', 'closed'])
+            ->where(fn ($q) => $q
+                ->where('status', 'open')
+                ->orWhere($lastSender, '=', 'user'));
+    }
 }

@@ -66,6 +66,20 @@ const TYPE_META: Record<
     textColor: LightColors.primary,
     chipClass: 'bg-surfaceMuted',
   },
+  // Live progress ticks (shopping checklist / extra stops) — same booking
+  // accent as a status update; their real surface is the tracking screen.
+  shopping_items_updated: {
+    icon: Package,
+    color: LightColors.primary,
+    textColor: LightColors.primary,
+    chipClass: 'bg-surfaceMuted',
+  },
+  booking_stops_updated: {
+    icon: Package,
+    color: LightColors.primary,
+    textColor: LightColors.primary,
+    chipClass: 'bg-surfaceMuted',
+  },
   // Runner-only offer type; present here only to satisfy the exhaustive
   // NotificationType map — customers never receive it.
   incoming_request: {
@@ -122,6 +136,8 @@ const TYPE_META: Record<
 // row.
 const TYPE_LABELS: Record<NotificationType, string> = {
   booking_update: 'Booking',
+  shopping_items_updated: 'Shopping',
+  booking_stops_updated: 'Stops',
   incoming_request: 'Offer',
   payment: 'Payment',
   promo: 'Promo',
@@ -148,7 +164,7 @@ const CATEGORIES: { key: CategoryKey; label: string }[] = [
 
 const CATEGORY_TYPES: Record<Exclude<CategoryKey, 'all'>, NotificationType[]> =
   {
-    bookings: ['booking_update'],
+    bookings: ['booking_update', 'shopping_items_updated', 'booking_stops_updated'],
     payments: ['payment', 'referral'],
     promos: ['promo'],
     more: ['chat', 'sos', 'system', 'document_update'],
@@ -646,6 +662,10 @@ export default function NotificationsScreen() {
       const data = notification.data ?? {};
       switch (notification.type) {
         case 'booking_update':
+        // Progress ticks describe a live errand — same destination as a
+        // status update. Before these cases the rows were dead on tap.
+        case 'shopping_items_updated':
+        case 'booking_stops_updated':
           if (data.booking_id) {
             // Warm the tracking fetch before navigating (only the id is known
             // here, so no store seed) so the screen's mount GET coalesces

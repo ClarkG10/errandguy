@@ -966,9 +966,29 @@ class BookingController extends Controller
         ]);
     }
 
+    /**
+     * GET /bookings/active — the customer's in-flight errand(s).
+     *
+     * `data` keeps its long-standing shape: THE one active booking (or null),
+     * which is what every shipped client reads. Nothing about it changes.
+     *
+     * `active_bookings` is a purely ADDITIVE sibling key carrying the same
+     * ranked list, capped, with `data` pointing at its first element. Nothing
+     * caps concurrent bookings server-side and a days-out scheduled booking
+     * stays 'active' by status, so a customer routinely has two or more — and
+     * a single-row endpoint made every one but the top of the ranking
+     * invisible (no card, and the customer layout subscribes its realtime
+     * status channel per rendered booking). A client that knows the new key
+     * can stack the cards; one that doesn't behaves exactly as before.
+     */
     public function active(Request $request): JsonResponse
     {
-        $booking = $request->user()
+        // Cap: the home card stack is a glance surface, not a list screen. A
+        // customer with more than a few live errands still sees the top-ranked
+        // ones, and the ordering below decides which those are.
+        $maxActive = 3;
+
+        $bookings = $request->user()
             ->customerBookings()
             ->with([
                 'errandType',
@@ -991,10 +1011,17 @@ class BookingController extends Controller
                 [now()->addMinutes(15)],
             )
             ->orderByDesc('created_at')
-            ->first();
+            ->limit($maxActive)
+            ->get();
+
+        $first = $bookings->first();
 
         return response()->json([
-            'data' => $booking ? new BookingResource($booking) : null,
+            // Unchanged contract: the single top-ranked booking, or null.
+            'data' => $first ? new BookingResource($first) : null,
+            // Additive: the same rows, same ranking, same serialization, so
+            // active_bookings[0] is byte-identical to `data`.
+            'active_bookings' => BookingResource::collection($bookings),
         ]);
     }
 

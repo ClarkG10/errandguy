@@ -330,7 +330,10 @@ export default function RunnerProfileScreen() {
     { label: 'Payout Settings', icon: Wallet, route: '/(runner)/payout' },
     { label: 'Preferred Errand Types', icon: ListChecks, route: '/(runner)/settings/preferred-types' },
     {
-      label: 'Working Areas',
+      // Named for what the screen actually controls. There is no stored
+      // "area" — the server measures working_area_radius from the runner's
+      // live GPS, so the honest label is the radius, not an area.
+      label: 'Working Radius',
       icon: MapPinned,
       route: '/(runner)/settings/working-areas',
       preview: radiusPreview,
@@ -338,7 +341,10 @@ export default function RunnerProfileScreen() {
   ];
 
   const settingsMenu: MenuItem[] = [
-    { label: 'Notification Preferences', icon: Bell, route: '/(runner)/settings/notifications' },
+    // Not "Preferences" any more: the per-category toggles were fake (see the
+    // header comment in settings/notifications.tsx). The screen now shows the
+    // real device permission state and routes to the OS settings.
+    { label: 'Notifications', icon: Bell, route: '/(runner)/settings/notifications' },
     { label: 'Appearance & Accessibility', icon: Accessibility, route: '/(runner)/settings/appearance' },
     { label: 'Help & Support', icon: LifeBuoy, route: '/(runner)/settings/help' },
     { label: 'Terms & Privacy', icon: FileText, route: '/(runner)/settings/terms' },

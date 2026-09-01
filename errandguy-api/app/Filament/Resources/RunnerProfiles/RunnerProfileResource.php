@@ -27,7 +27,10 @@ class RunnerProfileResource extends Resource
 
     public static function getEloquentQuery(): Builder
     {
-        return parent::getEloquentQuery()->with(['user']);
+        // withDocumentCounts(): the list's "Docs" cell (and its ready/incomplete
+        // colour) resolves from these aggregates, so a reviewable application is
+        // distinguishable without opening the row.
+        return parent::getEloquentQuery()->with(['user'])->withDocumentCounts();
     }
 
     public static function infolist(Schema $schema): Schema
@@ -56,15 +59,34 @@ class RunnerProfileResource extends Resource
         ];
     }
 
-    /** Sidebar badge: runners awaiting verification (the review queue). */
+    /**
+     * Sidebar badge: applications an admin can ACT on right now.
+     *
+     * This counted raw verification_status = 'pending', but a bare profile row is
+     * created at registration before any upload — so the badge counted every
+     * account that ever signed up, never dropped, and stopped meaning "work is
+     * waiting". Empty applications are still reachable (the Incomplete tab, which
+     * carries its own count); they just no longer inflate the queue.
+     */
     public static function getNavigationBadge(): ?string
     {
-        $n = \App\Support\AdminCache::remember(
-            \App\Support\AdminCache::BADGE_VERIFICATIONS,
-            fn () => RunnerProfile::where('verification_status', 'pending')->count(),
-        );
+        $n = static::readyForReviewCount();
 
         return $n ? (string) $n : null;
+    }
+
+    /**
+     * Cached count of pending applications with every required document on file.
+     * Shared by the sidebar badge and the list's "Ready to review" tab so both
+     * read from one query (RunnerDocumentController forgets this key the moment a
+     * runner uploads, so a completed application appears immediately).
+     */
+    public static function readyForReviewCount(): int
+    {
+        return (int) \App\Support\AdminCache::remember(
+            \App\Support\AdminCache::BADGE_VERIFICATIONS,
+            fn (): int => RunnerProfile::query()->pending()->readyForReview()->count(),
+        );
     }
 
     public static function getNavigationBadgeColor(): ?string
@@ -74,7 +96,7 @@ class RunnerProfileResource extends Resource
 
     public static function getNavigationBadgeTooltip(): ?string
     {
-        return 'Runners awaiting verification';
+        return 'Runner applications ready to review';
     }
 
     /** Global search (top bar): find runners by name, plate, or phone. */

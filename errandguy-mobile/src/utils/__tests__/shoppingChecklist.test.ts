@@ -1,6 +1,8 @@
 import {
   serializeChecklist,
   parseChecklist,
+  shoppingProgress,
+  shoppingItemsFromNotification,
 } from '../shoppingChecklist';
 import type { ChecklistItem } from '../../types/booking';
 
@@ -71,5 +73,125 @@ describe('shoppingChecklist', () => {
   it('tolerates a plain "x" separator and extra spacing', () => {
     const parsed = parseChecklist('Shopping list:\n-  Bananas   x 6');
     expect(parsed!.items).toEqual([{ id: 'item-0', name: 'Bananas', qty: 6 }]);
+  });
+});
+
+describe('shoppingProgress', () => {
+  const item = (id: string, checked?: boolean) => ({
+    id,
+    name: id,
+    qty: 1,
+    ...(checked === undefined ? {} : { checked }),
+  });
+
+  it('counts ticked lines and reports the ratio', () => {
+    const p = shoppingProgress([item('a', true), item('b'), item('c', true), item('d', false)]);
+    expect(p).toEqual({ picked: 2, total: 4, ratio: 0.5, allPicked: false });
+  });
+
+  it('treats a missing `checked` flag as not picked', () => {
+    // A list the runner has never touched comes back without the tick keys.
+    expect(shoppingProgress([item('a'), item('b')])).toEqual({
+      picked: 0,
+      total: 2,
+      ratio: 0,
+      allPicked: false,
+    });
+  });
+
+  it('flags allPicked only when every line is ticked', () => {
+    expect(shoppingProgress([item('a', true), item('b', true)]).allPicked).toBe(true);
+    expect(shoppingProgress([item('a', true), item('b', false)]).allPicked).toBe(false);
+  });
+
+  it('never divides by zero on an empty / absent list', () => {
+    for (const input of [[], null, undefined]) {
+      expect(shoppingProgress(input)).toEqual({
+        picked: 0,
+        total: 0,
+        ratio: 0,
+        allPicked: false,
+      });
+    }
+  });
+});
+
+describe('shoppingItemsFromNotification', () => {
+  const BOOKING = 'bk-1';
+  const payload = (overrides: Record<string, unknown> = {}) => ({
+    type: 'shopping_items_updated',
+    data: {
+      type: 'shopping_items_updated',
+      booking_id: BOOKING,
+      shopping_items: [
+        { id: 'i1', name: 'Milk', qty: 2, checked: true, checked_at: '2026-08-29T01:00:00+08:00' },
+        { id: 'i2', name: 'Bread', qty: 1, checked: false, checked_at: null },
+      ],
+      ...overrides,
+    },
+  });
+
+  it('returns the refreshed list for this booking', () => {
+    expect(shoppingItemsFromNotification(payload(), BOOKING)).toEqual([
+      { id: 'i1', name: 'Milk', qty: 2, checked: true, checked_at: '2026-08-29T01:00:00+08:00' },
+      { id: 'i2', name: 'Bread', qty: 1, checked: false, checked_at: null },
+    ]);
+  });
+
+  it('ignores a row for another booking', () => {
+    expect(shoppingItemsFromNotification(payload(), 'bk-2')).toBeNull();
+    expect(shoppingItemsFromNotification(payload({ booking_id: 'bk-9' }), BOOKING)).toBeNull();
+  });
+
+  it('ignores every other notification type', () => {
+    const other = {
+      type: 'booking_update',
+      data: { type: 'booking_update', booking_id: BOOKING, shopping_items: [{ id: 'i1', name: 'Milk', qty: 1 }] },
+    };
+    expect(shoppingItemsFromNotification(other, BOOKING)).toBeNull();
+  });
+
+  it('falls back to the top-level type column when the bag omits it', () => {
+    const noBagType = {
+      type: 'shopping_items_updated',
+      data: { booking_id: BOOKING, shopping_items: [{ id: 'i1', name: 'Milk', qty: 1 }] },
+    };
+    expect(shoppingItemsFromNotification(noBagType, BOOKING)).toHaveLength(1);
+  });
+
+  it('refuses an empty list rather than blanking the customer’s card', () => {
+    // The tick endpoint 422s when the booking has no list, so an empty
+    // broadcast can only be malformed.
+    expect(shoppingItemsFromNotification(payload({ shopping_items: [] }), BOOKING)).toBeNull();
+  });
+
+  it('refuses a payload with an unusable row instead of half-applying it', () => {
+    const bad = payload({
+      shopping_items: [
+        { id: 'i1', name: 'Milk', qty: 1 },
+        { name: 'no id here', qty: 1 },
+      ],
+    });
+    expect(shoppingItemsFromNotification(bad, BOOKING)).toBeNull();
+    expect(
+      shoppingItemsFromNotification(payload({ shopping_items: [null] }), BOOKING),
+    ).toBeNull();
+    expect(
+      shoppingItemsFromNotification(payload({ shopping_items: 'nope' }), BOOKING),
+    ).toBeNull();
+  });
+
+  it('normalises a missing / junk quantity to 1 and a missing tick to false', () => {
+    const loose = payload({ shopping_items: [{ id: 'i1', name: 'Milk' }] });
+    expect(shoppingItemsFromNotification(loose, BOOKING)).toEqual([
+      { id: 'i1', name: 'Milk', qty: 1, checked: false, checked_at: null },
+    ]);
+  });
+
+  it('is a no-op without a signal or a booking id', () => {
+    expect(shoppingItemsFromNotification(null, BOOKING)).toBeNull();
+    expect(shoppingItemsFromNotification(undefined, BOOKING)).toBeNull();
+    expect(shoppingItemsFromNotification(payload(), null)).toBeNull();
+    expect(shoppingItemsFromNotification(payload(), undefined)).toBeNull();
   });
 });

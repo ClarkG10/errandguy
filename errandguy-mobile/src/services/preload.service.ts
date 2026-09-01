@@ -1,5 +1,6 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Asset } from 'expo-asset';
+import api from './api';
 import { CacheService, CacheTTL } from './cache.service';
 import { configService } from './config.service';
 import { bookingService } from './booking.service';
@@ -456,66 +457,209 @@ export async function preloadCustomerEssentials(userId: string) {
   void runPool(belowFold);
 }
 
+/**
+ * GET /runner/home — every above-the-fold runner-dashboard section in ONE
+ * authenticated round trip (RunnerHomeController).
+ *
+ * Each field is byte-identical to the `data` of the endpoint it stands in for:
+ *   profile           ← GET /runner/profile
+ *   earnings_today    ← GET /runner/earnings?period=today
+ *   earnings_week     ← GET /runner/earnings?period=this_week
+ *   recent_errands    ← GET /runner/errands/history?per_page=3
+ *   available_errands ← GET /runner/errand/available   ([] when offline)
+ *   current_errand    ← GET /runner/errand/current
+ *   peak_hours        ← GET /runner/peak-hours?days=30
+ *
+ * That parity is the whole point: seedRunnerHome writes these straight into
+ * the per-section useQuery cache keys, so any drift would silently poison
+ * them. The individual endpoints stay as each screen's revalidation path.
+ *
+ * The section values are deliberately `unknown` where this module has no
+ * business asserting a shape (the profile / earnings objects are typed by the
+ * screens that read them); what matters here is the KEY and the TTL.
+ */
+export interface RunnerHomeAggregate {
+  profile: unknown;
+  earnings_today: unknown;
+  earnings_week: unknown;
+  recent_errands: Booking[];
+  available_errands: Booking[];
+  current_errand: Booking | null;
+  peak_hours: { days: number; grid: number[][] } | null;
+}
+
+/**
+ * The one request seedRunnerHome makes.
+ *
+ * This BELONGS on runnerService, beside the calls it replaces — exactly where
+ * userService.getCustomerHome() sits for the customer aggregate. runner.service.ts
+ * is owned by another workstream this pass, so the call lives here for now:
+ * when `runnerService.getHome()` lands, swap this body for it and nothing else
+ * changes. Silent so cold-start warm-up never flashes the top progress bar,
+ * and micro-cached briefly so warm-up and an in-race screen fetch coalesce
+ * rather than paying the round trip twice (mirrors getCustomerHome).
+ */
+const getRunnerHome = () =>
+  api.get<{ data: RunnerHomeAggregate }>('/runner/home', {
+    cacheTtlMs: 30_000,
+    silent: true,
+  });
+
+/**
+ * The ORIGINAL per-endpoint above-the-fold runner seeds — one request each.
+ *
+ * Superseded by the /runner/home aggregate below, but kept EXACTLY as they
+ * were as its fallback path: an older server, a 403/404 or a partial payload
+ * degrades warm-up to precisely the behaviour that shipped before the
+ * aggregate existed. Thunks, so the pool decides when each fires.
+ */
+const runnerAboveFoldSeeds = (userId: string): Array<() => Promise<unknown>> => [
+  () =>
+    seed(
+      ['runner', 'profile', userId],
+      async () => {
+        const r = await runnerService.getRunnerProfile();
+        return r.data?.data ?? r.data ?? null;
+      },
+      CacheTTL.LONG,
+    ),
+  () =>
+    seed(
+      ['runner', 'earnings', 'today', userId],
+      async () => {
+        const r = await runnerService.getEarnings('today');
+        return r.data?.data ?? r.data ?? null;
+      },
+      CacheTTL.MEDIUM,
+    ),
+  () =>
+    seed(
+      ['runner', 'earnings', 'week', userId],
+      async () => {
+        const r = await runnerService.getEarnings('week');
+        return r.data?.data ?? r.data ?? null;
+      },
+      CacheTTL.MEDIUM,
+    ),
+  () =>
+    seed(
+      ['runner', 'errands', 'recent', userId],
+      async () => {
+        const r = await runnerService.getErrandHistory({ page: 1, per_page: 3 });
+        return r.data?.data ?? r.data ?? [];
+      },
+      CacheTTL.LONG,
+    ),
+  () =>
+    seed(
+      ['runner', 'errand', 'available', userId],
+      async () => {
+        const r = await runnerService.getAvailableErrands();
+        return r.data?.data ?? r.data ?? [];
+      },
+      CacheTTL.SHORT,
+    ),
+  () =>
+    seed(
+      ['runner', 'errand', 'current', userId],
+      async () => {
+        const r = await runnerService.getCurrentErrand();
+        return r.data?.data ?? r.data ?? null;
+      },
+      CacheTTL.SHORT,
+    ),
+];
+
+/**
+ * Structural guard on the runner aggregate payload.
+ *
+ * Same contract as isUsableHomeAggregate: seeding is a WRITE into the caches
+ * the dashboard paints from on its first frame, so a half-formed payload is
+ * worse than no payload (a missing `current_errand` would pin "no errand" over
+ * a live one for the whole freshness window). Every section must be present
+ * and of the right kind, or we fall back to the individual endpoints.
+ * `current_errand` is nullable, so it is checked for PRESENCE, not truth;
+ * `peak_hours` is optional here and seeded separately (see seedRunnerHome).
+ */
+const isUsableRunnerHomeAggregate = (payload: unknown): payload is RunnerHomeAggregate => {
+  if (!payload || typeof payload !== 'object') return false;
+  const h = payload as Partial<RunnerHomeAggregate>;
+  const isObject = (v: unknown) => !!v && typeof v === 'object' && !Array.isArray(v);
+  return (
+    isObject(h.profile) &&
+    isObject(h.earnings_today) &&
+    isObject(h.earnings_week) &&
+    Array.isArray(h.recent_errands) &&
+    Array.isArray(h.available_errands) &&
+    'current_errand' in payload
+  );
+};
+
+/**
+ * Seed every above-the-fold runner-dashboard cache from ONE request.
+ *
+ * The runner never got the treatment the customer side did: warm-up paid SIX
+ * separate authenticated GETs before the success curtain lifted, each a full
+ * framework boot + Sanctum auth on Forge. GET /runner/home returns all of them
+ * at once — plus peak-hours, which was never warmed at all — so warm-up is a
+ * single round trip and the demand nudge paints from cache for free.
+ *
+ * The cache keys, value shapes and TTLs written here are IDENTICAL to the
+ * per-endpoint seeds above; the screens' useQuery keys are untouched and the
+ * individual endpoints remain their revalidation paths. Any failure (network,
+ * unavailable endpoint, unusable payload) transparently falls back to those
+ * per-endpoint seeds, so this can only ever be faster, never less warm.
+ */
+async function seedRunnerHome(userId: string): Promise<void> {
+  try {
+    const response = await getRunnerHome();
+    const home = response.data?.data;
+    if (!isUsableRunnerHomeAggregate(home)) throw new Error('unusable runner home aggregate');
+
+    // One timestamp for the whole snapshot — it IS one read.
+    const fetchedAt = Date.now();
+    const write = <T,>(keyParts: (string | number)[], value: T, ttl: number) =>
+      CacheService.set<CachedEntry<T>>(buildKey(keyParts), { value, fetchedAt }, ttl);
+
+    await Promise.all([
+      write(['runner', 'profile', userId], home.profile, CacheTTL.LONG),
+      write(['runner', 'earnings', 'today', userId], home.earnings_today, CacheTTL.MEDIUM),
+      // The app's short form is 'week'; the API period is 'this_week'. The KEY
+      // is what the hero reads — do not "fix" it to match the server.
+      write(['runner', 'earnings', 'week', userId], home.earnings_week, CacheTTL.MEDIUM),
+      write(['runner', 'errands', 'recent', userId], home.recent_errands, CacheTTL.LONG),
+      // An OFFLINE runner legitimately has no offers. Seed the empty list
+      // rather than skipping the key: "no offers" is the correct cold state,
+      // and a missing key costs the screen the round trip this saves.
+      write(['runner', 'errand', 'available', userId], home.available_errands, CacheTTL.SHORT),
+      write(['runner', 'errand', 'current', userId], home.current_errand ?? null, CacheTTL.SHORT),
+      // Shared across every runner — this key carries NO userId, because the
+      // dashboard nudge and the Demand screen deliberately share one entry.
+      // Only seed a well-formed grid; a malformed one would pin an empty
+      // heatmap on Demand for the whole freshness window.
+      ...(Array.isArray(home.peak_hours?.grid)
+        ? [write(['runner', 'peak-hours', 30], home.peak_hours, CacheTTL.LONG)]
+        : []),
+    ]);
+  } catch {
+    // Best-effort, exactly like every other warm-up path: degrade to the
+    // pre-aggregate per-endpoint seeds rather than leaving the dashboard cold.
+    await runPool(runnerAboveFoldSeeds(userId));
+  }
+}
+
 export async function preloadRunnerEssentials(userId: string) {
   // Above-the-fold runner dashboard data — the ONLY set the interactive login
   // path awaits before the success curtain lifts (profile, today's + week's
-  // earnings, recent errands, available offers, current errand). (P3)
+  // earnings, recent errands, available offers, current errand, peak hours).
+  //
+  // What used to be six separate requests here is now ONE — seedRunnerHome
+  // fans GET /runner/home out into the same six cache keys (plus peak-hours,
+  // free in the same payload) and falls back to those six requests if the
+  // aggregate is unavailable. (P3)
   const aboveFold: Array<() => Promise<unknown>> = [
     () => preloadCoreImages(),
-    () =>
-      seed(
-        ['runner', 'profile', userId],
-        async () => {
-          const r = await runnerService.getRunnerProfile();
-          return r.data?.data ?? r.data ?? null;
-        },
-        CacheTTL.LONG,
-      ),
-    () =>
-      seed(
-        ['runner', 'earnings', 'today', userId],
-        async () => {
-          const r = await runnerService.getEarnings('today');
-          return r.data?.data ?? r.data ?? null;
-        },
-        CacheTTL.MEDIUM,
-      ),
-    () =>
-      seed(
-        ['runner', 'earnings', 'week', userId],
-        async () => {
-          const r = await runnerService.getEarnings('week');
-          return r.data?.data ?? r.data ?? null;
-        },
-        CacheTTL.MEDIUM,
-      ),
-    () =>
-      seed(
-        ['runner', 'errands', 'recent', userId],
-        async () => {
-          const r = await runnerService.getErrandHistory({ page: 1, per_page: 3 });
-          return r.data?.data ?? r.data ?? [];
-        },
-        CacheTTL.LONG,
-      ),
-    () =>
-      seed(
-        ['runner', 'errand', 'available', userId],
-        async () => {
-          const r = await runnerService.getAvailableErrands();
-          return r.data?.data ?? r.data ?? [];
-        },
-        CacheTTL.SHORT,
-      ),
-    () =>
-      seed(
-        ['runner', 'errand', 'current', userId],
-        async () => {
-          const r = await runnerService.getCurrentErrand();
-          return r.data?.data ?? r.data ?? null;
-        },
-        CacheTTL.SHORT,
-      ),
+    () => seedRunnerHome(userId),
   ];
 
   // Below-the-fold — warmed in the BACKGROUND after the dashboard is interactive

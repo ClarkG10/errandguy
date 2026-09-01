@@ -226,10 +226,15 @@ class AdminQueueAlertCommand extends Command
         );
 
         // 24h mirrors ActionQueue's amber escalation for pending verifications.
+        // Same definition as the panel card this email points at: READY
+        // applications only (both required docs uploaded, none rejected). The
+        // bare pending count includes every account that registered and never
+        // uploaded a document — an email saying "37 waiting" against a panel
+        // showing 4 ready teaches admins the email lies.
         $breaches[] = self::evaluate(
-            'kyc', 'Pending runner verifications', 1440, '24 hours',
+            'kyc', 'Runner verifications ready for review', 1440, '24 hours',
             'Runners cannot earn until their KYC is reviewed.',
-            fn () => RunnerProfile::where('verification_status', 'pending'),
+            fn () => RunnerProfile::query()->pending()->readyForReview(),
         );
 
         // 12h mirrors ActionQueue's payout escalation.
@@ -246,13 +251,14 @@ class AdminQueueAlertCommand extends Command
             fn () => DisputeTicket::unresolved(),
         );
 
-        // 'open' is the never-answered state: the Filament reply action moves a
-        // ticket to 'pending', so anything still 'open' has had no agent reply.
-        // Age from the last message (or creation) exactly like the ticket list.
+        // Same definition as the panel's "Needs reply" tab: never answered, OR
+        // the last message in the thread is the user's — a customer replying
+        // to an agent puts the ball back in our court even though the status
+        // long left 'open'. Age from the last message exactly like the list.
         $breaches[] = self::evaluate(
-            'support', 'Unanswered support tickets', 240, '4 hours',
-            'Users are waiting for a first reply in their support thread.',
-            fn () => SupportTicket::where('status', 'open'),
+            'support', 'Support tickets awaiting a reply', 240, '4 hours',
+            'Users are waiting for a reply in their support thread.',
+            fn () => SupportTicket::needsReply(),
             'COALESCE(last_message_at, created_at)',
             raw: true,
         );

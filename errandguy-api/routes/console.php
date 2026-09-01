@@ -105,6 +105,19 @@ Schedule::command('errandguy:reap-stranded-bookings')
     ->onOneServer()
     ->withoutOverlapping(10);
 
+// Safety/ops: raise a "may be stalled" admin alert for an errand sitting in a
+// runner-held status with no progress past its per-status threshold. The only
+// prior duration monitor (check-ride-duration above) covers TRANSPORTATION in
+// transit only, so a delivery runner who accepted and then went dark was
+// detected by nothing. Schedule::command (NOT Schedule::job), like
+// reap-stranded-bookings, so the detector survives a queue-worker outage — one
+// of the very ways an errand stalls. Notify-only: it raises an operator alert
+// and changes no booking state and no money.
+Schedule::command('errandguy:detect-stalled-errands')
+    ->everyFiveMinutes()
+    ->onOneServer()
+    ->withoutOverlapping(10);
+
 // Out-of-hours alerting for the queues where a waiting user is blocked on a
 // human (pending payouts, KYC review, open disputes, unanswered support). The
 // panel already shows these, but only to an admin who happens to be looking.

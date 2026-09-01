@@ -175,12 +175,18 @@ class CustomerHomeAggregateTest extends TestCase
         );
     }
 
-    public function test_payload_carries_exactly_the_six_sections(): void
+    public function test_payload_carries_exactly_the_expected_sections(): void
     {
         $home = $this->home();
 
+        // `active_bookings` is the additive sibling of `active_booking` (see
+        // ActiveBookingsListTest) — the singular key is unchanged and still
+        // authoritative; the list is the stack the home card can page through.
         $this->assertSame(
-            ['errand_types', 'active_booking', 'recent_bookings', 'wallet_balance', 'promos', 'referral'],
+            [
+                'errand_types', 'active_booking', 'active_bookings', 'recent_bookings',
+                'wallet_balance', 'promos', 'referral',
+            ],
             array_keys($home),
         );
     }

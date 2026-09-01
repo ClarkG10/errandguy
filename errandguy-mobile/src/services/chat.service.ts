@@ -129,9 +129,17 @@ export const chatService = {
   getUnreadCount() {
     // Silent: refreshed every 30s on a foreground interval; the user
     // never asked for it, so it shouldn't trigger the loader bar.
+    //
+    // Deliberately UNCACHED. chatStore.refreshUnread — this endpoint's only
+    // caller — snapshots its bump sequence BEFORE the request and trusts the
+    // response to reflect server state as of that moment: that is what lets it
+    // keep a realtime increment that landed mid-flight. A micro-cached body
+    // predates the snapshot, so a badge bumped between the cache fill and the
+    // next reconcile was "authoritatively" wiped back to the stale count for
+    // up to 10s. In-flight dedupe still coalesces concurrent calls.
     return api.get<{
       data: { total: number; by_booking: Record<string, number> };
-    }>('/chat/unread-count', { cacheTtlMs: 10_000, silent: true });
+    }>('/chat/unread-count', { silent: true });
   },
 
   getConversations() {

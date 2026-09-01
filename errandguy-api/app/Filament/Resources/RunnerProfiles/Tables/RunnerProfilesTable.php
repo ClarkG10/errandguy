@@ -46,6 +46,37 @@ class RunnerProfilesTable
                         'rejected' => 'danger',
                         default => 'gray',
                     }),
+                // Whether this application is reviewable AT ALL, at a glance — a
+                // pending row exists from registration, so without this the dead
+                // profiles and the real ones look identical until you open them.
+                TextColumn::make('documents_count')
+                    ->label('Docs')
+                    ->badge()
+                    ->tooltip('A review needs a Government ID and a Selfie with ID, neither rejected')
+                    ->color(fn ($record): string => match (true) {
+                        (int) ($record->required_documents_count ?? 0) >= count(RunnerProfile::REQUIRED_DOCUMENT_TYPES) => 'success',
+                        (int) ($record->documents_count ?? 0) === 0 => 'gray',
+                        default => 'warning',
+                    })
+                    ->formatStateUsing(function ($state, $record): string {
+                        $total = (int) $state;
+
+                        if ($total === 0) {
+                            return 'None yet';
+                        }
+
+                        $parts = [$total.' uploaded'];
+
+                        if ((int) ($record->documents_pending_count ?? 0) > 0) {
+                            $parts[] = $record->documents_pending_count.' pending';
+                        }
+
+                        if ((int) ($record->documents_rejected_count ?? 0) > 0) {
+                            $parts[] = $record->documents_rejected_count.' rejected';
+                        }
+
+                        return implode(' · ', $parts);
+                    }),
                 TextColumn::make('vehicle_type')->badge()->color('gray'),
                 TextColumn::make('vehicle_plate'),
                 IconColumn::make('is_online')->boolean(),

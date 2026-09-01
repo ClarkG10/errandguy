@@ -3,13 +3,28 @@
 namespace App\Services;
 
 use App\Events\NotificationCreated;
+use App\Models\DeviceToken;
 use App\Models\Notification;
 use App\Models\User;
+use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
 
 class NotificationService
 {
+    /**
+     * Expo accepts up to 100 push messages (or, for one message, up to 100
+     * `to` tokens) per HTTP request. Fan-outs are chunked to this size so a
+     * broadcast costs ceil(devices / 100) round trips instead of one per user.
+     */
+    private const EXPO_BATCH_SIZE = 100;
+
+    /**
+     * Rows per bulk INSERT, so a 200-runner fan-out stays well inside any
+     * driver placeholder limit.
+     */
+    private const INSERT_CHUNK_SIZE = 100;
+
     public function sendPush(string $userId, string $title, string $body, array $data = []): void
     {
         if (!User::whereKey($userId)->exists()) {
@@ -67,6 +82,64 @@ class NotificationService
         }
     }
 
+    /**
+     * Device-only push (no in-app rows, no broadcast) to MANY users at once —
+     * the same message to everybody.
+     *
+     * The per-user sendRemotePush() costs 2 queries + at least one blocking
+     * HTTP round trip EACH, so calling it in a loop over a large audience (the
+     * negotiate offer fan-out: up to 200 nearby runners) pins the queue worker
+     * for minutes and lights up the last runner's phone long after the first —
+     * by which time the errand is usually taken. This collapses the same work
+     * into: one device_tokens query, one users query for the legacy-column
+     * stragglers, and ceil(expoDevices / 100) Expo requests.
+     *
+     * Best-effort, exactly like sendRemotePush: every send is individually
+     * try/caught downstream, so a push failure never fails the caller.
+     *
+     * @param  array<int,string>  $userIds
+     */
+    public function sendRemotePushToMany(array $userIds, string $title, string $body, array $data = []): void
+    {
+        $userIds = array_values(array_unique(array_filter($userIds)));
+        if (empty($userIds)) {
+            return;
+        }
+
+        // ONE query for every registered device across the whole audience
+        // (replaces N × `$user->deviceTokens()->pluck()`).
+        $devices = DeviceToken::whereIn('user_id', $userIds)->get(['user_id', 'token']);
+        $tokens = $devices->pluck('token')->all();
+
+        // Same legacy fallback sendRemotePush() applies, batched: users who
+        // registered before device_tokens existed still carry a token on the
+        // old column. Only asked for the users that have no device row.
+        $missing = array_values(array_diff($userIds, $devices->pluck('user_id')->all()));
+        if (! empty($missing)) {
+            $tokens = array_merge(
+                $tokens,
+                User::whereIn('id', $missing)->whereNotNull('fcm_token')->pluck('fcm_token')->all(),
+            );
+        }
+
+        $tokens = array_values(array_unique(array_filter($tokens)));
+        if (empty($tokens)) {
+            return;
+        }
+
+        $expoTokens = array_values(array_filter($tokens, fn ($t) => str_starts_with($t, 'ExponentPushToken')));
+        $fcmTokens = array_values(array_filter($tokens, fn ($t) => ! str_starts_with($t, 'ExponentPushToken')));
+
+        // One request per 100 devices — Expo's documented per-request cap.
+        foreach (array_chunk($expoTokens, self::EXPO_BATCH_SIZE) as $chunk) {
+            $this->sendExpoPush($chunk, $title, $body, $data);
+        }
+        // FCM has no batched path here (kreait sends per token), unchanged.
+        foreach ($fcmTokens as $fcmToken) {
+            $this->sendFCMPush($fcmToken, $title, $body, $data);
+        }
+    }
+
     public function sendBulkPush(array $userIds, string $title, string $body, array $data = []): void
     {
         foreach ($userIds as $userId) {
@@ -104,6 +177,62 @@ class NotificationService
         NotificationCreated::dispatch($notification);
 
         return $notification;
+    }
+
+    /**
+     * notifyInApp() for MANY users at once: one bulk INSERT of the identical
+     * card for every recipient, then the SAME per-user `NotificationCreated`
+     * Reverb broadcast notifyInApp() dispatches — so each recipient's live
+     * stream is unchanged; only the write is batched (200 inserts → 2).
+     *
+     * Callers own dedup, exactly as with notifyInApp(): this inserts one row
+     * per id it is handed, so pass a de-duplicated, already-filtered list.
+     *
+     * @param  array<int,string>  $userIds
+     * @return Collection<int,Notification>
+     */
+    public function notifyInAppMany(array $userIds, string $title, string $body, array $data = []): Collection
+    {
+        $userIds = array_values(array_unique(array_filter($userIds)));
+        if (empty($userIds)) {
+            return collect();
+        }
+
+        $now = now();
+        $encoded = json_encode($data);
+        $prototype = new Notification();
+
+        $rows = array_map(fn (string $userId) => [
+            // A bulk insert never builds a model, so HasUuids never assigns a
+            // key — mint the very same ordered UUID it would have.
+            'id' => $prototype->newUniqueId(),
+            'user_id' => $userId,
+            'title' => $title,
+            'body' => $body,
+            'type' => $data['type'] ?? 'system',
+            // Insert bypasses casts — hand the driver the encoded JSON.
+            'data' => $encoded,
+            'is_read' => false,
+            // The column defaults to CURRENT_TIMESTAMP (the model has
+            // $timestamps = false), but set it explicitly so the rows we
+            // broadcast carry the same created_at the DB stored.
+            'created_at' => $now,
+        ], $userIds);
+
+        foreach (array_chunk($rows, self::INSERT_CHUNK_SIZE) as $chunk) {
+            Notification::insert($chunk);
+        }
+
+        // hydrate() fills raw attributes (no cast-on-write), so `data` decodes
+        // back to an array on read and NotificationResource — the broadcast
+        // payload — is byte-for-byte what notifyInApp() would have produced.
+        $notifications = Notification::hydrate($rows);
+
+        foreach ($notifications as $notification) {
+            NotificationCreated::dispatch($notification);
+        }
+
+        return $notifications;
     }
 
     public function sendToTopic(string $topic, string $title, string $body, array $data = []): void

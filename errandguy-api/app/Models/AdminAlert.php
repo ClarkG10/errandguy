@@ -9,7 +9,8 @@ use Illuminate\Support\Facades\Log;
 
 /**
  * A single operator alert shown in the /admin "Live alerts" feed. Raised on
- * time-critical events (SOS, stuck errand) and dismissed by operators.
+ * time-critical events (SOS, unmatched errand, a stalled or over-running
+ * errand) and dismissed by operators.
  */
 class AdminAlert extends Model
 {
@@ -38,7 +39,7 @@ class AdminAlert extends Model
      * isn't migrated on this environment yet) must NEVER break the caller's
      * flow (SOS triggering, runner matching).
      *
-     * @param  string       $type      sos | no_runner | dispute | …
+     * @param  string       $type      sos | no_runner | stalled_errand | ride_duration | dispute | …
      * @param  string       $severity  critical | warning | info
      * @param  string|null  $subjectId related record id, for the deep-link
      */

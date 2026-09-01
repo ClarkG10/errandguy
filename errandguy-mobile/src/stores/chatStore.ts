@@ -16,6 +16,48 @@ function compareMessages(a: Message, b: Message): number {
   return a.id < b.id ? -1 : a.id > b.id ? 1 : 0;
 }
 
+/**
+ * Message ids already counted into `unreadByBooking` by the realtime path.
+ *
+ * The same message can reach us twice — a re-subscribe after a socket drop
+ * re-delivers, and the cockpit's chat channel is shared with the open thread —
+ * and an unread badge that double-counts is worse than one that waits. Bounded
+ * so a long shift can't grow it without limit; the poll is the reconcile, so
+ * forgetting an old id is harmless.
+ */
+const COUNTED_IDS_LIMIT = 300;
+const countedMessageIds = new Set<string>();
+
+/**
+ * bookingId → the sequence number of the last realtime increment on its badge.
+ * Read by refreshUnread to decide whether the server snapshot it just received
+ * is actually OLDER than what we know (see the merge there).
+ *
+ * A monotonic counter, not a timestamp: Date.now() has millisecond resolution,
+ * and a message can land in the same millisecond a reconcile was issued —
+ * exactly the case this ordering has to get right.
+ */
+let unreadBumpSeq = 0;
+const lastBumpSeqByBooking = new Map<string, number>();
+
+function rememberCounted(messageId: string): void {
+  if (countedMessageIds.size >= COUNTED_IDS_LIMIT) {
+    // Cheapest possible bound: drop the oldest insertion (Sets iterate in
+    // insertion order). One eviction per add once the cap is reached.
+    const oldest = countedMessageIds.values().next().value;
+    if (oldest !== undefined) countedMessageIds.delete(oldest);
+  }
+  countedMessageIds.add(messageId);
+}
+
+/** Test seam — the module keeps realtime bookkeeping outside the store state
+ *  so it never triggers a re-render. */
+export function __resetChatRealtimeBookkeeping(): void {
+  countedMessageIds.clear();
+  lastBumpSeqByBooking.clear();
+  unreadBumpSeq = 0;
+}
+
 interface ChatState {
   messages: Record<string, Message[]>;
   unreadCount: number;
@@ -40,6 +82,14 @@ interface ChatState {
   clearChat: (bookingId: string) => void;
   setUnreadCount: (count: number) => void;
   setIsTyping: (bookingId: string, typing: boolean) => void;
+  /**
+   * Count a chat message that arrived over Reverb into the per-booking unread
+   * badge. Called by the app-wide chat watcher (useRealtimeNotifications) for
+   * conversations the user is NOT currently reading, so the badge on the
+   * tracking / cockpit screens appears the moment the message lands instead of
+   * waiting out the 30s reconcile poll. Idempotent per message id.
+   */
+  noteIncomingMessage: (bookingId: string, message: Message, myId?: string | null) => void;
   refreshUnread: () => Promise<void>;
 }
 
@@ -127,6 +177,11 @@ export const useChatStore = create<ChatState>((set, get) => ({
         },
       }));
     }
+    // The thread is open: whatever the realtime path counted for it is now
+    // read, so drop the bump marker too — otherwise refreshUnread's merge
+    // below could re-raise the badge the user just cleared.
+    lastBumpSeqByBooking.delete(bookingId);
+
     // Optimistically zero the unread count for this booking and adjust total.
     set((state) => {
       const prev = state.unreadByBooking[bookingId] ?? 0;
@@ -155,16 +210,59 @@ export const useChatStore = create<ChatState>((set, get) => ({
       };
     }),
 
+  noteIncomingMessage: (bookingId, message, myId) => {
+    if (!bookingId || !message?.id) return;
+    // Our own message echoed back off the channel — the sender never has an
+    // unread badge for what they just typed.
+    if (myId && message.sender_id === myId) return;
+    // Mirror the server's predicate exactly (ChatController::unreadCount counts
+    // messages from the other participant with a null read_at), so the
+    // optimistic value and the reconcile can only ever agree.
+    if (message.read_at) return;
+    if (countedMessageIds.has(message.id)) return;
+    rememberCounted(message.id);
+    lastBumpSeqByBooking.set(bookingId, ++unreadBumpSeq);
+    set((state) => ({
+      unreadByBooking: {
+        ...state.unreadByBooking,
+        [bookingId]: (state.unreadByBooking[bookingId] ?? 0) + 1,
+      },
+      unreadCount: state.unreadCount + 1,
+    }));
+  },
+
   refreshUnread: async () => {
+    // Read BEFORE the request so we can tell a realtime message that landed
+    // while it was in flight from one the server already knew about.
+    const seqAtStart = unreadBumpSeq;
     try {
       const res = await chatService.getUnreadCount();
       const data = res.data?.data;
       if (!data) return;
-      set({
-        unreadCount: data.total ?? 0,
-        unreadByBooking:
-          (data.by_booking as Record<string, number>) ?? {},
+      const byBooking = (data.by_booking as Record<string, number>) ?? {};
+      set((state) => {
+        // The server is authoritative — it is what clears a badge read on
+        // another device. The ONE exception: a message that arrived over
+        // Reverb AFTER this request was sent cannot be in the snapshot it
+        // answers with, and blindly overwriting would blink the badge back off
+        // for up to 30s. Keep the larger value for those bookings only.
+        const merged: Record<string, number> = { ...byBooking };
+        let total = data.total ?? 0;
+        for (const [bookingId, seq] of lastBumpSeqByBooking) {
+          if (seq <= seqAtStart) continue;
+          const local = state.unreadByBooking[bookingId] ?? 0;
+          const fromServer = merged[bookingId] ?? 0;
+          if (local > fromServer) {
+            total += local - fromServer;
+            merged[bookingId] = local;
+          }
+        }
+        return { unreadCount: total, unreadByBooking: merged };
       });
+      // Bumps older than this snapshot are now folded into it.
+      for (const [bookingId, seq] of [...lastBumpSeqByBooking]) {
+        if (seq <= seqAtStart) lastBumpSeqByBooking.delete(bookingId);
+      }
     } catch {
       // Silently ignore — UI will retry on next interval.
     }

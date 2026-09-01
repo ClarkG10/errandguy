@@ -96,3 +96,115 @@ export function parseChecklist(
   const note = lines.slice(i).join('\n').trim();
   return note.length > 0 ? { items, note } : { items };
 }
+
+/**
+ * A single line of the SERVER-synced checklist (`booking.shopping_items`),
+ * as opposed to the {@link ChecklistItem} the customer's builder produces.
+ * The tick fields are written only by the runner
+ * (`PATCH /runner/errand/{id}/shopping-items`).
+ */
+export interface ShoppingProgressItem {
+  id: string;
+  name: string;
+  qty: number;
+  checked?: boolean;
+  checked_at?: string | null;
+}
+
+/** Progress summary of a server-synced checklist. */
+export interface ShoppingProgress {
+  picked: number;
+  total: number;
+  /** 0–1. Zero when the list is empty, so callers never divide by zero. */
+  ratio: number;
+  /** True only when there is at least one item AND every one is ticked. */
+  allPicked: boolean;
+}
+
+/**
+ * Count how far along a runner is on a server-synced shopping list.
+ *
+ * Pure and tolerant of the wire shape: `checked` may be absent (a list the
+ * runner has never touched), and the array itself may be null/undefined for a
+ * non-shopping errand.
+ */
+export function shoppingProgress(
+  items: ShoppingProgressItem[] | null | undefined,
+): ShoppingProgress {
+  const list = Array.isArray(items) ? items : [];
+  const total = list.length;
+  const picked = list.reduce((n, item) => n + (item?.checked ? 1 : 0), 0);
+  return {
+    picked,
+    total,
+    ratio: total > 0 ? picked / total : 0,
+    allPicked: total > 0 && picked === total,
+  };
+}
+
+/**
+ * Shape of the realtime notification the runner's tick produces. Mirrors
+ * `AppNotification` loosely on purpose so this stays testable without the
+ * app's type barrel (and so an unrecognised `type` string can't fail to
+ * type-check here the way it does against `NotificationType`).
+ */
+export interface ShoppingItemsSignal {
+  type?: string | null;
+  data?: Record<string, unknown> | null;
+}
+
+/** The notification type `ShoppingChecklistController::update` emits. */
+export const SHOPPING_ITEMS_UPDATED = 'shopping_items_updated';
+
+/**
+ * Pull a refreshed checklist out of a `shopping_items_updated` notification.
+ *
+ * Every runner tick writes the WHOLE list back and pushes it to the customer
+ * (ShoppingChecklistController → notifyInApp), so the customer's tracking
+ * screen can patch its booking straight from the payload instead of spending a
+ * request to re-read what it was just handed.
+ *
+ * Returns null — meaning "not for us, change nothing" — for any row that is a
+ * different notification type, belongs to another booking, or carries a
+ * payload we can't trust. An EMPTY array counts as untrustworthy: the tick
+ * endpoint 422s on a booking with no list, so an empty broadcast can only be a
+ * malformed one, and honouring it would blank the customer's card.
+ */
+export function shoppingItemsFromNotification(
+  signal: ShoppingItemsSignal | null | undefined,
+  bookingId: string | null | undefined,
+): ShoppingProgressItem[] | null {
+  if (!signal || !bookingId) return null;
+  const data = signal.data ?? {};
+  // The server writes the `type` column FROM data['type'], so the bag is the
+  // more direct read and needs no client-side union to know the string.
+  const type =
+    typeof data.type === 'string' && data.type !== ''
+      ? data.type
+      : typeof signal.type === 'string'
+        ? signal.type
+        : '';
+  if (type !== SHOPPING_ITEMS_UPDATED) return null;
+  if (data.booking_id !== bookingId) return null;
+
+  const raw = data.shopping_items;
+  if (!Array.isArray(raw) || raw.length === 0) return null;
+
+  const items: ShoppingProgressItem[] = [];
+  for (const entry of raw) {
+    if (!entry || typeof entry !== 'object') return null;
+    const row = entry as Record<string, unknown>;
+    if (typeof row.id !== 'string' || row.id === '') return null;
+    if (typeof row.name !== 'string') return null;
+    const qty = Number(row.qty);
+    items.push({
+      id: row.id,
+      name: row.name,
+      qty: Number.isFinite(qty) && qty > 0 ? Math.floor(qty) : 1,
+      checked: row.checked === true,
+      checked_at: typeof row.checked_at === 'string' ? row.checked_at : null,
+    });
+  }
+
+  return items;
+}

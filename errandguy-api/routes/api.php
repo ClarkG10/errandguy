@@ -14,6 +14,7 @@ use App\Http\Controllers\Runner\RunnerDocumentController;
 use App\Http\Controllers\Runner\RunnerEarningsController;
 use App\Http\Controllers\Runner\RunnerErrandController;
 use App\Http\Controllers\Runner\RunnerErrandHistoryController;
+use App\Http\Controllers\Runner\RunnerHomeController;
 use App\Http\Controllers\Runner\RunnerLocationController;
 use App\Http\Controllers\Runner\RunnerOnlineController;
 use App\Http\Controllers\Runner\RunnerPayoutController;
@@ -180,6 +181,14 @@ Route::prefix('v1')->group(function () {
 
         // Runner routes
         Route::prefix('runner')->middleware(['role:runner'])->group(function () {
+            // Runner dashboard in ONE round trip (profile + today's & this
+            // week's earnings + recent errands + available offers + current
+            // errand + peak hours). Each section is byte-identical to the
+            // individual endpoint that still serves it, so the app seeds its
+            // existing caches from this and keeps the per-resource routes as
+            // revalidation paths. Mirrors GET /customer/home. (A5)
+            Route::get('/home', [RunnerHomeController::class, 'show']);
+
             Route::get('/profile', [RunnerProfileController::class, 'show']);
             Route::put('/profile', [RunnerProfileController::class, 'update']);
             Route::post('/documents', [RunnerDocumentController::class, 'store']);
@@ -220,6 +229,8 @@ Route::prefix('v1')->group(function () {
 
             // Runner toggles shopping-checklist ticks while shopping.
             Route::patch('/errand/{id}/shopping-items', [ShoppingChecklistController::class, 'update']);
+            // Runner ticks an extra multi-stop destination off (offline-queue safe).
+            Route::patch('/errand/{id}/stops/{stop}', [RunnerErrandController::class, 'completeStop']);
             // Demand heatmap + peak-hours (cached aggregates).
             Route::get('/heatmap', [HeatmapController::class, 'heatmap']);
             Route::get('/peak-hours', [HeatmapController::class, 'peakHours']);

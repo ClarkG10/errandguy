@@ -38,9 +38,13 @@ class SupportTicketResource extends Resource
         return SupportTicketsTable::configure($table);
     }
 
+    /**
+     * latestMessage is a latestOfMany HasOne, so "who spoke last" costs ONE
+     * extra query for the whole page instead of a thread load per row.
+     */
     public static function getEloquentQuery(): Builder
     {
-        return parent::getEloquentQuery()->with(['user']);
+        return parent::getEloquentQuery()->with(['user', 'latestMessage']);
     }
 
     public static function getRelations(): array
@@ -63,11 +67,22 @@ class SupportTicketResource extends Resource
         return ['subject'];
     }
 
+    /**
+     * Everything waiting on US, not just everything 'open'.
+     *
+     * An agent reply moves the ticket to 'pending'; the customer's answer leaves
+     * the status alone, so a status='open' badge silently omitted every ticket a
+     * customer had already replied to — the agent only found them by opening
+     * each pending ticket in turn. SupportTicket::needsReply() is the shared
+     * predicate (see the "Waiting on us" tab, which uses the same scope), and it
+     * is a strict superset of the old count, so nothing that used to show
+     * disappears. Cached under the same key, flushed by AdminActivity::log.
+     */
     public static function getNavigationBadge(): ?string
     {
         $n = \App\Support\AdminCache::remember(
             \App\Support\AdminCache::BADGE_SUPPORT,
-            fn () => SupportTicket::where('status', 'open')->count(),
+            fn () => SupportTicket::needsReply()->count(),
         );
 
         return $n ? (string) $n : null;

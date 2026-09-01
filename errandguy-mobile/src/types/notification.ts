@@ -13,7 +13,13 @@ export type NotificationType =
   | 'system'
   | 'sos'
   | 'chat'
-  | 'document_update';
+  | 'document_update'
+  // Live progress ticks from the runner (shopping checklist / extra stops).
+  // Their real consumer is the tracking screen, which patches itself straight
+  // from the payload — but the rows also land in the inbox, so they must be
+  // typed, categorised and tappable like everything else.
+  | 'shopping_items_updated'
+  | 'booking_stops_updated';
 
 export interface AppNotification {
   id: string;

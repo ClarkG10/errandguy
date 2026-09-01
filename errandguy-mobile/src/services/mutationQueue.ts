@@ -106,6 +106,20 @@ const HANDLERS: Record<string, (payload: any) => Promise<unknown>> = {
   'runner.updateChecklistTicks': ({ bookingId, items }) =>
     runnerService.updateChecklistTicks(bookingId, items),
 
+  // Multi-stop "visited this stop" ticks. Same bar as the checklist above and
+  // for the same reason: the runner ticks a stop off at a gate, a basement
+  // car park or a subdivision guardhouse — precisely where signal dies — and a
+  // dropped tick must not un-visit a stop they actually reached. Stop-scoped
+  // and last-write-wins (the PATCH stamps ONE stop's completed_at), and the
+  // server makes a replay a no-op: it compares the requested state against the
+  // stored one under a row lock and returns 200 having changed (and notified)
+  // nothing. NOT a booking-state transition — the status ladder has no stop
+  // stage; this is progress reporting on a column the customer already sees.
+  // A replay that lands after the errand closed 422s and is dropped as
+  // permanent, which is correct.
+  'runner.completeStop': ({ bookingId, stopId, completed }) =>
+    runnerService.completeStop(bookingId, stopId, completed),
+
   // Errand review (rating + comment). Content, never money — the tip is a
   // separate action and is NEVER queued. Replay is provably safe because the
   // server makes a second submit a no-op: it 422s with "already reviewed", which

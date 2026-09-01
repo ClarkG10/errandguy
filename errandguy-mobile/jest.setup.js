@@ -14,6 +14,13 @@ jest.mock('react-native-gesture-handler', () => {
           onStart: jest.fn(function () { return this; }),
           onUpdate: jest.fn(function () { return this; }),
           onEnd: jest.fn(function () { return this; }),
+          // Config builders the real RNGH Pan chain supports — every one
+          // returns `this` so component code can chain them in any order.
+          hitSlop: jest.fn(function () { return this; }),
+          activeOffsetX: jest.fn(function () { return this; }),
+          activeOffsetY: jest.fn(function () { return this; }),
+          failOffsetX: jest.fn(function () { return this; }),
+          failOffsetY: jest.fn(function () { return this; }),
         };
         return handler;
       }),

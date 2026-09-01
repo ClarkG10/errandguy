@@ -61,6 +61,14 @@ import type { Booking, ErrandType } from '../../../types';
 import { formatCurrency } from '../../../utils/formatCurrency';
 import { formatRelativeTime } from '../../../utils/formatDate';
 import { scheduledWindowLabel, SCHEDULED_MATCH_LEAD_MINUTES } from '../../../utils/scheduledBooking';
+import {
+  mergeActiveBookings,
+  parseActiveBookings,
+} from '../../../utils/activeBookings';
+import {
+  applyErrandTypeOrder,
+  rankErrandTypesByUsage,
+} from '../../../utils/errandTypeOrder';
 
 const ICON_MAP: Record<string, LucideIcon> = {
   Package,
@@ -85,6 +93,13 @@ const REPEATABLE_STATUSES = ['completed', 'delivered'];
 // Promos within this window read as "expiring" — worth nudging before they
 // lapse. Anything past it is just a standard available promo.
 const PROMO_EXPIRY_SOON_MS = 7 * 24 * 60 * 60 * 1000;
+
+// Paged active-errand stack geometry. The zone inset is the screen's 20pt page
+// margin plus hs.activeZone's 12pt padding; the peek is how much of the next
+// card stays visible so the stack announces itself without an extra label.
+const ACTIVE_ZONE_INSET = 32;
+const ACTIVE_CARD_PEEK = 30;
+const ACTIVE_CARD_GAP = 10;
 
 /**
  * Clone a terminal booking into a fresh booking draft so "Repeat last" can
@@ -172,7 +187,7 @@ export default function CustomerHomeScreen() {
   const router = useRouter();
   const isFocused = useIsFocused();
   const insets = useSafeAreaInsets();
-  const { height: winHeight } = useResponsive();
+  const { width: winWidth, height: winHeight } = useResponsive();
   const user = useAuthStore((s) => s.user);
   const role = useAuthStore((s) => s.role);
   const activeBooking = useBookingStore((s) => s.activeBooking);
@@ -219,6 +234,30 @@ export default function CustomerHomeScreen() {
     { staleTime: 30_000, ttl: CacheTTL.SHORT, enabled: enabled && !!user?.id },
   );
 
+  // Every in-flight errand, not just the top-ranked one: same endpoint as the
+  // query above, but reading the additive `active_bookings` array, so a second
+  // live errand gets its own card instead of vanishing into Activity. Falls
+  // back to the singular row when the array isn't there (older API / a body
+  // cached before it shipped), which makes this strictly additive.
+  //
+  // Deliberately a SEPARATE key from ['booking','active',…]: that one is the
+  // singular contract the boot snapshot seeds and the store is fed from, so it
+  // keeps painting card #1 instantly on a cold start while this one fetches.
+  // Cost of that split, stated plainly: whenever both queries fetch at once
+  // (focus revalidation, pull-to-refresh) the api layer's in-flight dedupe
+  // collapses them into one GET — but on a cold start, where the singular is
+  // served from the seeded snapshot, this one is a genuine extra request.
+  // preload.service seeding ['bookings','active-list',userId] from the
+  // /customer/home aggregate's `active_bookings` section would remove it.
+  const activeBookingsQ = useQuery<Booking[]>(
+    ['bookings', 'active-list', user?.id ?? 'anon'],
+    async () => {
+      const res = await bookingService.getActiveBooking();
+      return parseActiveBookings(res.data);
+    },
+    { staleTime: 30_000, ttl: CacheTTL.SHORT, enabled: enabled && !!user?.id },
+  );
+
   // ── Rewards band sources ──────────────────────────────────────────────
   // All three mirror the exact useQuery keys/shapes the Profile tab already
   // prefetches (see preload.service: prefetchPromos / prefetchReferral and the
@@ -255,11 +294,72 @@ export default function CustomerHomeScreen() {
     { staleTime: 30_000, ttl: CacheTTL.MEDIUM, enabled: enabled && !!user?.id },
   );
 
-  const errandTypes = (errandTypesQ.data ?? []).filter((t) => t.is_active);
+  const errandTypes = useMemo(
+    () => (errandTypesQ.data ?? []).filter((t) => t.is_active),
+    [errandTypesQ.data],
+  );
+
+  // ── Personalised service order ────────────────────────────────────────
+  // The catalogue arrives in ONE global sort_order and Home shows its first
+  // four tiles, so a customer whose regular service is 5th (laundry) or 7th
+  // (bills) never saw their own tile — "See all" then scroll, on every single
+  // booking. The recent-bookings window this screen already loads says what
+  // they actually book, so we rank the catalogue by it (2+ bookings to be
+  // promoted, ties keep sort_order — see utils/errandTypeOrder).
+  //
+  // The ranking is computed ONCE per session and then replayed, because a
+  // recomputation on every window change would reshuffle the tiles under the
+  // user's thumb — muscle memory is most of the value here. A newly booked
+  // type therefore moves up on the next launch, not mid-session. Pinned per
+  // user id so a sign-in as somebody else can't inherit the previous order.
+  //
+  // The window it counts over is whatever is cached when both queries first
+  // resolve: 10 from this screen's own fetcher, but 5 on a cold start, because
+  // the boot snapshot seeds this same key from /customer/home
+  // (HomeController::RECENT_BOOKINGS). Two bookings of a type still promote it
+  // out of five, so the rule holds either way — raising that constant to 10
+  // just sharpens the signal on the first launch of a session.
+  const [pinnedTypeOrder, setPinnedTypeOrder] = useState<{
+    userId: string;
+    ids: string[];
+  } | null>(null);
+  const typeOrderUserId = user?.id ?? 'anon';
+  useEffect(() => {
+    if (!enabled) return;
+    if (pinnedTypeOrder?.userId === typeOrderUserId) return;
+    // Wait for both inputs to resolve once — pinning a catalogue-order
+    // fallback while the bookings are still loading would freeze exactly the
+    // layout this is meant to replace.
+    if (errandTypes.length === 0) return;
+    if (recentBookingsQ.loading) return;
+    setPinnedTypeOrder({
+      userId: typeOrderUserId,
+      ids: rankErrandTypesByUsage(errandTypes, recentBookingsQ.data ?? []).map(
+        (t) => t.id,
+      ),
+    });
+  }, [
+    enabled,
+    errandTypes,
+    recentBookingsQ.data,
+    recentBookingsQ.loading,
+    pinnedTypeOrder,
+    typeOrderUserId,
+  ]);
+
+  const orderedTypes = useMemo(
+    () =>
+      applyErrandTypeOrder(
+        errandTypes,
+        pinnedTypeOrder?.userId === typeOrderUserId ? pinnedTypeOrder.ids : null,
+      ),
+    [errandTypes, pinnedTypeOrder, typeOrderUserId],
+  );
+
   // Keep the home dashboard simple — surface only the most common
-  // errand types here. The full list lives one tap deeper on the
-  // booking type screen ("See all").
-  const featuredTypes = errandTypes.slice(0, 4);
+  // errand types here (now "most common FOR THIS CUSTOMER"). The full list
+  // lives one tap deeper on the booking type screen ("See all").
+  const featuredTypes = orderedTypes.slice(0, 4);
   const recentBookings = (recentBookingsQ.data ?? []).slice(0, 3);
   const initialLoading =
     enabled && (errandTypesQ.loading || recentBookingsQ.loading) &&
@@ -272,6 +372,27 @@ export default function CustomerHomeScreen() {
     if (activeBookingQ.loading && activeBookingQ.data == null) return;
     setActiveBooking(activeBookingQ.data ?? null);
   }, [activeBookingQ.data, activeBookingQ.loading, setActiveBooking]);
+
+  // ── The live-errand stack ─────────────────────────────────────────────
+  // The store's singular booking stays authoritative for card #1 (it is what
+  // the realtime `booking.{id}` channel heals in place, and what the rest of
+  // the app reads), with the fetched list adding the errands that used to be
+  // invisible. Capped by mergeActiveBookings at the same 3 the server caps
+  // `active_bookings` at.
+  const activeCards = useMemo(
+    () =>
+      mergeActiveBookings(
+        isRenderableActiveBooking(activeBooking) ? activeBooking : null,
+        (activeBookingsQ.data ?? []).filter(isRenderableActiveBooking),
+      ),
+    [activeBooking, activeBookingsQ.data],
+  );
+  // Paged card index — only meaningful with more than one card. Clamped when
+  // an errand completes and the stack shrinks under the current page.
+  const [activeCardIndex, setActiveCardIndex] = useState(0);
+  useEffect(() => {
+    setActiveCardIndex((i) => Math.min(i, Math.max(0, activeCards.length - 1)));
+  }, [activeCards.length]);
 
   const [refreshing, setRefreshing] = useState(false);
   // Recent rows open the same detail sheet Activity uses — tap parity
@@ -289,6 +410,7 @@ export default function CustomerHomeScreen() {
       errandTypesQ.refresh(),
       recentBookingsQ.refresh(),
       activeBookingQ.refresh(),
+      activeBookingsQ.refresh(),
       promosQ.refresh(),
       walletBalanceQ.refresh(),
       referralQ.refresh(),
@@ -298,6 +420,7 @@ export default function CustomerHomeScreen() {
     errandTypesQ,
     recentBookingsQ,
     activeBookingQ,
+    activeBookingsQ,
     promosQ,
     walletBalanceQ,
     referralQ,
@@ -423,23 +546,25 @@ export default function CustomerHomeScreen() {
     router.push(resumeInfo.route as any);
   }, [resumeInfo, router]);
 
-  // A SCHEDULED errand stays `pending` until the server starts matching
-  // (~15 min before its window), so ActiveBookingCard — which maps `pending`
-  // straight to the searching phase — would show "Looking for a runner
-  // nearby…" under a pulsing dot for hours or days on an errand nobody is
-  // even looking at yet. That reads as a stuck search and drives cancellations
-  // and support chats. While we're still outside the match window we swap in
-  // a calm, static card that simply states WHEN it runs; once the window opens
-  // (or a runner is on it) the normal live card takes back over.
-  //
-  // Recomputed per render off the device clock — no timer. A few minutes of
-  // clock skew at the boundary is cosmetic, and the next poll/focus render
-  // corrects it.
-  const scheduledPending = useMemo(() => {
-    if (!isRenderableActiveBooking(activeBooking)) return null;
-    const label = scheduledWindowLabel(activeBooking);
-    return label ? { label } : null;
-  }, [activeBooking]);
+  // Section eyebrow. With one card it names what the card is; with several it
+  // states the count, which is also the only place the stack's size is spoken
+  // (the page dots are hidden from screen readers).
+  const activeEyebrow =
+    activeCards.length > 1
+      ? `Your errands · ${activeCards.length} active`
+      : scheduledWindowLabel(activeCards[0]) !== null
+        ? 'Scheduled errand'
+        : 'Your errand';
+
+  // Card geometry for the paged stack: the page margin (20) plus the tinted
+  // zone's padding (12) on each side, minus a peek so the next card is visibly
+  // there. Only used when there is more than one card — a single errand keeps
+  // the full-width card exactly as before.
+  const activeCardWidth = Math.max(
+    220,
+    winWidth - ACTIVE_ZONE_INSET * 2 - ACTIVE_CARD_PEEK,
+  );
+  const activeCardStride = activeCardWidth + ACTIVE_CARD_GAP;
 
   // Wrap a raw-Pressable handler with a light impact haptic — these
   // don't get the shared Button's press haptic. Applied to every
@@ -452,6 +577,44 @@ export default function CustomerHomeScreen() {
       fn();
     },
     [],
+  );
+
+  // One live-errand card. A SCHEDULED errand stays `pending` until the server
+  // starts matching (~15 min before its window), so ActiveBookingCard — which
+  // maps `pending` straight to the searching phase — would show "Looking for a
+  // runner nearby…" under a pulsing dot for hours or days on an errand nobody
+  // is even looking at yet. That reads as a stuck search and drives
+  // cancellations and support chats. Outside the match window we swap in a
+  // calm, static card that simply states WHEN it runs; once the window opens
+  // (or a runner is on it) the normal live card takes back over.
+  //
+  // Recomputed per render off the device clock — no timer. A few minutes of
+  // clock skew at the boundary is cosmetic, and the next poll/focus render
+  // corrects it.
+  const renderActiveCard = useCallback(
+    (booking: Booking) => {
+      // Warm the tracking fetch on the same tap so the screen's mount GET
+      // coalesces (the card's booking is already in hand, so the paint is
+      // instant regardless). (P2)
+      const open = () => {
+        warmTracking(booking);
+        router.push(`/(customer)/tracking/${booking.id}`);
+      };
+      const label = scheduledWindowLabel(booking);
+      return label ? (
+        // Same destination as the live card so the tap target is consistent
+        // (tracking owns cancel / details).
+        <ScheduledErrandCard
+          booking={booking}
+          label={label}
+          onPress={withLightImpact(open)}
+        />
+      ) : (
+        // ActiveBookingCard fires its own press haptic — don't double up.
+        <ActiveBookingCard booking={booking} onPress={open} />
+      );
+    },
+    [router, withLightImpact],
   );
 
   // "Frequently booked" personalization — computed purely from the
@@ -625,7 +788,7 @@ export default function CustomerHomeScreen() {
   // search chrome, and a slim gradient band the destination card floats over.
   // (The mascot that used to fill this space is gone, so it no longer needs
   // to be a third of the screen.)
-  const heroHeight = insets.top + (activeBooking ? 84 : 112);
+  const heroHeight = insets.top + (activeCards.length > 0 ? 84 : 112);
 
   if (initialLoading) {
     // No SafeAreaView here — the skeleton mirrors the shipped hero and
@@ -896,92 +1059,73 @@ export default function CustomerHomeScreen() {
           </View>
         )}
 
-        {/* Active errand — promoted directly under the destination card
+        {/* Active errand(s) — promoted directly under the destination card
             (above the pills) so the user's live errand wins the first
-            viewport. No eyebrow needed: the card itself communicates the
-            live state via its progress track and headline. */}
-        {isRenderableActiveBooking(activeBooking) && (
+            viewport. More than one errand is genuinely common (a live errand
+            plus one booked for later), and every one but the top of the
+            ranking used to be invisible here, so the section becomes a paged
+            stack once there are two — capped at 3, the same cap the server
+            puts on `active_bookings`. */}
+        {activeCards.length > 0 && (
           <View className="mx-5 mt-4" style={hs.activeZone}>
             <Eyebrow className="ml-1 mb-2" color={LightColors.primary}>
-              {scheduledPending ? 'Scheduled errand' : 'Your errand'}
+              {activeEyebrow}
             </Eyebrow>
-            {scheduledPending ? (
-              // Booked for later, not yet being matched — a static calendar
-              // card. No pulsing dot and no journey bar: nothing is moving
-              // yet, and pretending otherwise is what made this confusing.
-              // Same destination as the live card so the tap target is
-              // consistent (tracking owns cancel / details).
-              <Pressable
-                onPress={withLightImpact(() => {
-                  warmTracking(activeBooking);
-                  router.push(`/(customer)/tracking/${activeBooking.id}`);
-                })}
-                accessibilityRole="button"
-                accessibilityLabel={`Scheduled errand: ${
-                  activeBooking.errand_type?.name ?? 'Errand'
-                } on ${scheduledPending.label}. Tap to view details.`}
-                android_ripple={{ color: 'rgba(37,99,235,0.08)' }}
-                // Layout / fill / radius via className — NativeWind drops
-                // those from the style-function form.
-                className="bg-surface rounded-2xl p-4"
-                style={({ pressed }) => [
-                  hs.recentCard,
-                  pressed && hs.cardPressed,
-                ]}
-              >
-                <View className="flex-row items-center">
-                  <View style={hs.scheduledIcon}>
-                    <CalendarClock
-                      size={15}
-                      color={LightColors.primary}
-                      strokeWidth={2}
-                    />
-                  </View>
-                  <Text
-                    className="flex-1 ml-2.5 text-[12px] font-montserrat-bold text-textSecondary"
-                    numberOfLines={1}
-                  >
-                    {activeBooking.errand_type?.name ?? 'Errand'}
-                  </Text>
-                  <Text className="text-[14px] font-inter-semi text-textPrimary">
-                    {formatCurrency(activeBooking.total_amount)}
-                  </Text>
-                </View>
-                <Text
-                  className="text-[16px] font-montserrat-bold text-textPrimary mt-2.5"
-                  numberOfLines={2}
-                >
-                  {scheduledPending.label}
-                </Text>
-                <Text className="text-[12px] font-montserrat text-textSecondary mt-1 leading-[17px]">
-                  We&apos;ll start looking for a runner about{' '}
-                  {SCHEDULED_MATCH_LEAD_MINUTES} minutes before.
-                </Text>
-                <View
-                  className="flex-row items-center mt-3 pt-3"
-                  style={hs.scheduledFooter}
-                >
-                  <Text className="flex-1 text-[12px] font-montserrat-semi text-primary">
-                    View details
-                  </Text>
-                  <ChevronRight
-                    size={16}
-                    color={LightColors.primary}
-                    strokeWidth={2.2}
-                  />
-                </View>
-              </Pressable>
+            {activeCards.length === 1 ? (
+              renderActiveCard(activeCards[0])
             ) : (
-              <ActiveBookingCard
-                booking={activeBooking}
-                onPress={() => {
-                  // Warm the tracking fetch on the same tap so the screen's mount
-                  // GET coalesces (activeBooking is already the store value, so
-                  // the paint is instant regardless). (P2)
-                  warmTracking(activeBooking);
-                  router.push(`/(customer)/tracking/${activeBooking.id}`);
-                }}
-              />
+              <>
+                <ScrollView
+                  horizontal
+                  testID="active-errand-pager"
+                  showsHorizontalScrollIndicator={false}
+                  decelerationRate="fast"
+                  snapToInterval={activeCardStride}
+                  snapToAlignment="start"
+                  disableIntervalMomentum
+                  // flex-start, not the default stretch: a short "booked for
+                  // later" card next to a tall live one must keep its own
+                  // height instead of becoming a tall box with content
+                  // stranded at the top.
+                  contentContainerStyle={{ alignItems: 'flex-start' }}
+                  onMomentumScrollEnd={(e) => {
+                    setActiveCardIndex(
+                      Math.round(e.nativeEvent.contentOffset.x / activeCardStride),
+                    );
+                  }}
+                >
+                  {activeCards.map((booking, i) => (
+                    <View
+                      key={booking.id}
+                      style={{
+                        width: activeCardWidth,
+                        marginRight:
+                          i === activeCards.length - 1 ? 0 : ACTIVE_CARD_GAP,
+                      }}
+                    >
+                      {renderActiveCard(booking)}
+                    </View>
+                  ))}
+                </ScrollView>
+                {/* Page dots — a visual cue only. The count is already spoken
+                    by the section eyebrow and each card carries its own label,
+                    so these stay out of the accessibility tree. */}
+                <View
+                  className="flex-row items-center justify-center mt-2.5"
+                  accessibilityElementsHidden
+                  importantForAccessibility="no-hide-descendants"
+                >
+                  {activeCards.map((booking, i) => (
+                    <View
+                      key={booking.id}
+                      style={[
+                        hs.activeDot,
+                        i === activeCardIndex && hs.activeDotOn,
+                      ]}
+                    />
+                  ))}
+                </View>
+              </>
             )}
           </View>
         )}
@@ -1332,6 +1476,70 @@ export default function CustomerHomeScreen() {
   );
 }
 
+/**
+ * A booking made for LATER, still outside its matching window. Rendered
+ * instead of ActiveBookingCard so a `pending` scheduled errand doesn't sit
+ * under a pulsing dot claiming we're "looking for a runner nearby" for days.
+ *
+ * Extracted from the home render so the paged stack can decide per card —
+ * a customer can easily hold one live errand and one booked for tomorrow.
+ */
+function ScheduledErrandCard({
+  booking,
+  label,
+  onPress,
+}: {
+  booking: Booking;
+  label: string;
+  onPress: () => void;
+}) {
+  return (
+    <Pressable
+      onPress={onPress}
+      accessibilityRole="button"
+      accessibilityLabel={`Scheduled errand: ${
+        booking.errand_type?.name ?? 'Errand'
+      } on ${label}. Tap to view details.`}
+      android_ripple={{ color: 'rgba(37,99,235,0.08)' }}
+      // Layout / fill / radius via className — NativeWind drops
+      // those from the style-function form.
+      className="bg-surface rounded-2xl p-4"
+      style={({ pressed }) => [hs.recentCard, pressed && hs.cardPressed]}
+    >
+      <View className="flex-row items-center">
+        <View style={hs.scheduledIcon}>
+          <CalendarClock size={15} color={LightColors.primary} strokeWidth={2} />
+        </View>
+        <Text
+          className="flex-1 ml-2.5 text-[12px] font-montserrat-bold text-textSecondary"
+          numberOfLines={1}
+        >
+          {booking.errand_type?.name ?? 'Errand'}
+        </Text>
+        <Text className="text-[14px] font-inter-semi text-textPrimary">
+          {formatCurrency(booking.total_amount)}
+        </Text>
+      </View>
+      <Text
+        className="text-[16px] font-montserrat-bold text-textPrimary mt-2.5"
+        numberOfLines={2}
+      >
+        {label}
+      </Text>
+      <Text className="text-[12px] font-montserrat text-textSecondary mt-1 leading-[17px]">
+        We&apos;ll start looking for a runner about{' '}
+        {SCHEDULED_MATCH_LEAD_MINUTES} minutes before.
+      </Text>
+      <View className="flex-row items-center mt-3 pt-3" style={hs.scheduledFooter}>
+        <Text className="flex-1 text-[12px] font-montserrat-semi text-primary">
+          View details
+        </Text>
+        <ChevronRight size={16} color={LightColors.primary} strokeWidth={2.2} />
+      </View>
+    </Pressable>
+  );
+}
+
 const hs = StyleSheet.create({
   // Height is responsive (clamped to viewport, shrunk when an errand is
   // live) — applied inline in the render.
@@ -1516,6 +1724,17 @@ const hs = StyleSheet.create({
     backgroundColor: LightColors.primary50,
     alignItems: 'center',
     justifyContent: 'center',
+  },
+  // Page dots under the paged active-errand stack.
+  activeDot: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+    marginHorizontal: 3,
+    backgroundColor: LightColors.primary100,
+  },
+  activeDotOn: {
+    backgroundColor: LightColors.primary,
   },
   // Hairline above the card's "View details" row.
   scheduledFooter: {

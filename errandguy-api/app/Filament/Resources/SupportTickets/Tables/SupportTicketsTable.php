@@ -2,15 +2,11 @@
 
 namespace App\Filament\Resources\SupportTickets\Tables;
 
-use App\Filament\Resources\SupportTickets\SupportTicketNotifier;
-use App\Filament\Support\AdminNotify;
+use App\Filament\Resources\SupportTickets\Actions\SupportTicketActions;
 use App\Filament\Support\DateRangeFilter;
 use App\Filament\Support\ExportCsv;
 use App\Models\SupportTicket;
-use Filament\Actions\Action;
 use Filament\Actions\ViewAction;
-use Filament\Forms\Components\Select;
-use Filament\Support\Icons\Heroicon;
 use Filament\Tables\Columns\TextColumn;
 use Filament\Tables\Filters\SelectFilter;
 use Filament\Tables\Table;
@@ -38,8 +34,35 @@ class SupportTicketsTable
                         'closed' => 'gray',
                         default => 'gray',
                     }),
+                // Who spoke LAST — the fact that decides whether this ticket is
+                // waiting on us or on the user, and which the status column
+                // cannot express (a customer reply leaves the ticket 'pending').
+                // Both entries come from the latestMessage eager load in
+                // SupportTicketResource::getEloquentQuery(), so the whole page
+                // costs one extra query.
+                TextColumn::make('latestMessage.sender_type')
+                    ->label('Last from')
+                    ->badge()
+                    ->formatStateUsing(fn (?string $state): string => match ($state) {
+                        'user' => 'Customer',
+                        'agent' => 'Support',
+                        'system' => 'System',
+                        default => '—',
+                    })
+                    ->color(fn (?string $state): string => $state === 'user' ? 'warning' : 'gray')
+                    ->tooltip(fn (?string $state): ?string => $state === 'user'
+                        ? 'The user spoke last — this ticket is waiting on us.'
+                        : null)
+                    ->placeholder('—'),
+                TextColumn::make('latestMessage.content')
+                    ->label('Last message')
+                    ->limit(60)
+                    ->wrap()
+                    ->placeholder('—')
+                    ->toggleable(),
                 TextColumn::make('last_message_at')
                     ->dateTime()
+                    ->since()
                     ->sortable(),
                 TextColumn::make('created_at')
                     ->since()
@@ -77,41 +100,7 @@ class SupportTicketsTable
             ])
             ->recordActions([
                 ViewAction::make(),
-                Action::make('setStatus')
-                    ->label('Set status')
-                    ->icon(Heroicon::OutlinedChatBubbleLeftRight)
-                    ->visible(fn (): bool => auth('admin')->user()?->canHandleSupport() ?? false)
-                    ->schema([
-                        Select::make('status')
-                            ->required()
-                            ->options([
-                                'open' => 'Open',
-                                'pending' => 'Pending',
-                                'resolved' => 'Resolved',
-                                'closed' => 'Closed',
-                            ]),
-                    ])
-                    ->fillForm(fn ($record): array => ['status' => $record->status])
-                    ->action(function (array $data, $record): void {
-                        $previous = $record->status;
-                        $record->update(['status' => $data['status']]);
-
-                        // Tell the owner their ticket moved (resolved/closed/
-                        // re-opened) — previously silent, so a user waiting on a
-                        // resolution never learned it landed. Only on a REAL
-                        // change; latched + best-effort inside the notifier.
-                        if ($data['status'] !== $previous) {
-                            SupportTicketNotifier::statusChanged($record, $data['status']);
-                        }
-
-                        AdminNotify::success(
-                            'Ticket status updated',
-                            $record,
-                            ['Ticket' => $record->id, 'New status' => $data['status'] ?? $record->status],
-                            audit: 'support.status_changed',
-                            properties: ['status' => $data['status']],
-                        );
-                    }),
+                ...SupportTicketActions::all(),
             ]);
     }
 }

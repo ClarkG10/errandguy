@@ -28,11 +28,13 @@ jest.mock('../../hooks/useQuery', () => ({
 // Service mocks — keeps the whole api.ts/axios graph out of the test while
 // still proving each handler calls the right method with the right args.
 const mockUpdateChecklistTicks = jest.fn();
+const mockCompleteStop = jest.fn();
 const mockReviewBooking = jest.fn();
 
 jest.mock('../runner.service', () => ({
   runnerService: {
     updateChecklistTicks: (...a: unknown[]) => mockUpdateChecklistTicks(...a),
+    completeStop: (...a: unknown[]) => mockCompleteStop(...a),
     updateRunnerProfile: jest.fn(),
   },
 }));
@@ -50,14 +52,16 @@ const pending = () => useMutationQueueStore.getState().pending;
 beforeEach(async () => {
   jest.clearAllMocks();
   mockUpdateChecklistTicks.mockResolvedValue({ data: {} });
+  mockCompleteStop.mockResolvedValue({ data: {} });
   mockReviewBooking.mockResolvedValue({ data: {} });
   useNetworkStore.setState({ isOffline: false, lastChangedAt: null });
   await clearMutationQueue();
 });
 
 describe('mutationQueue — registry', () => {
-  it('registers the checklist and review kinds', () => {
+  it('registers the checklist, stop-tick and review kinds', () => {
     expect(isQueueable('runner.updateChecklistTicks')).toBe(true);
+    expect(isQueueable('runner.completeStop')).toBe(true);
     expect(isQueueable('booking.review')).toBe(true);
   });
 
@@ -157,6 +161,81 @@ describe('runner.updateChecklistTicks', () => {
     expect(mockUpdateChecklistTicks).toHaveBeenCalledTimes(1);
     expect(pending()).toHaveLength(2); // both still queued, neither penalised
     expect(pending()[0].attempts).toBe(0);
+  });
+});
+
+describe('runner.completeStop', () => {
+  // A stop tick is recorded in a guardhouse, a basement car park or a mall
+  // interior — the same dead-signal places the shopping checklist gets used.
+  // Its licence to sit on the queue is that the PATCH is a no-op on replay
+  // (the server compares the requested state under a row lock), so the bar
+  // here is: same call online and offline, stop-scoped coalescing, and no
+  // retry of a verdict the server already gave.
+  const spec = (stopId: string, completed: boolean) =>
+    queueable(
+      'runner.completeStop',
+      { bookingId: 'bk-1', stopId, completed },
+      {
+        invalidate: [['runner', 'errand', 'byId', 'bk-1']],
+        dedupeKey: `stop-bk-1-${stopId}`,
+      },
+    );
+
+  it('online commit calls the same service method a replay would', async () => {
+    await spec('stop-1', true).commit();
+    expect(mockCompleteStop).toHaveBeenCalledWith('bk-1', 'stop-1', true);
+  });
+
+  it('coalesces a tick then an untick of ONE stop to its latest state', async () => {
+    enqueueMutation(spec('stop-1', true).offline);
+    enqueueMutation(spec('stop-1', false).offline);
+    expect(pending()).toHaveLength(1);
+
+    await flushMutationQueue();
+
+    expect(mockCompleteStop).toHaveBeenCalledTimes(1);
+    expect(mockCompleteStop).toHaveBeenCalledWith('bk-1', 'stop-1', false);
+  });
+
+  it('never lets one stop supersede a sibling stop', async () => {
+    enqueueMutation(spec('stop-1', true).offline);
+    enqueueMutation(spec('stop-2', true).offline);
+    expect(pending()).toHaveLength(2);
+
+    await flushMutationQueue();
+
+    expect(mockCompleteStop).toHaveBeenNthCalledWith(1, 'bk-1', 'stop-1', true);
+    expect(mockCompleteStop).toHaveBeenNthCalledWith(2, 'bk-1', 'stop-2', true);
+    expect(pending()).toHaveLength(0);
+  });
+
+  it('replays on flush and refreshes the errand', async () => {
+    enqueueMutation(spec('stop-1', true).offline);
+    await flushMutationQueue();
+
+    expect(mockCompleteStop).toHaveBeenCalledTimes(1);
+    expect(mockInvalidateQuery).toHaveBeenCalledWith(['runner', 'errand', 'byId', 'bk-1']);
+    expect(pending()).toHaveLength(0);
+  });
+
+  it('drops a tick the server rejects (errand closed) and reconciles the UI', async () => {
+    mockCompleteStop.mockRejectedValue({ status: 422 });
+    enqueueMutation(spec('stop-1', true).offline);
+
+    await flushMutationQueue();
+
+    expect(pending()).toHaveLength(0);
+    expect(mockInvalidateQuery).toHaveBeenCalledWith(['runner', 'errand', 'byId', 'bk-1']);
+  });
+
+  it('keeps a tick that hit a transient 5xx for the next reconnect', async () => {
+    mockCompleteStop.mockRejectedValue({ status: 503 });
+    enqueueMutation(spec('stop-1', true).offline);
+
+    await flushMutationQueue();
+
+    expect(pending()).toHaveLength(1);
+    expect(pending()[0].attempts).toBe(1);
   });
 });
 

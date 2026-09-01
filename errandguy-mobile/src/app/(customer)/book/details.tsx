@@ -30,6 +30,8 @@ import {
   Clock,
   UserRound,
   BookUser,
+  History,
+  StickyNote,
 } from 'lucide-react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { BottomSheet } from '../../../components/ui/BottomSheet';
@@ -72,8 +74,27 @@ import {
   normalizePhPhone,
   type RecentRecipient,
 } from '../../../utils/recentRecipients';
+import {
+  draftHasRecallableContent,
+  findRecall,
+  recentInstructionSuggestions,
+} from '../../../utils/bookingRecall';
+import { formatShortDate } from '../../../utils/formatDate';
 
 const DEFAULT_CENTER: [number, number] = [121.0, 14.6];
+
+/**
+ * Canned special-instruction templates. Hoisted out of the render so the
+ * customer's OWN recurring notes can be deduped against them (see
+ * `recentInstructionSuggestions`) instead of being offered twice.
+ */
+const INSTRUCTION_TEMPLATES = [
+  'Leave at the gate',
+  'Call on arrival',
+  'Hand to me directly',
+  'Fragile — handle with care',
+  'Leave with guard',
+];
 // Step labels live in `BookingStepIndicator`; keep this file lean.
 
 // expo-contacts needs a native build and is absent in Expo Go — the same
@@ -992,6 +1013,122 @@ export default function TaskDetailsScreen() {
       return Array.isArray(b) ? b : [];
     },
     { staleTime: 60_000, ttl: CacheTTL.LONG, enabled: savedAddrUserId !== 'anon' },
+  );
+
+  /* ── "Same as last time", scoped to THIS errand type ──
+     Every type except transportation makes the description REQUIRED, and the
+     shopping types additionally force a checklist plus a pre-authorised
+     budget — all of it starting blank on every single booking. A customer
+     paying the same Meralco account monthly retyped their account number
+     twelve times a year; a weekly grocery customer rebuilt the same eight
+     rows. The only escape was "Repeat last", which clones whichever booking
+     happened to be most recent regardless of type — useless the moment
+     someone alternates between two services.
+
+     Source is the SAME ['bookings','recent'] list this screen already reads
+     for its place shortcuts, so this costs no extra round trip and works
+     from cache offline. Purely a chip: nothing is applied until the customer
+     taps it, and everything it writes lands in a VISIBLE input (the budget
+     above all — it is a spend authorisation, never a hidden draft value). */
+  const recall = useMemo(
+    () =>
+      findRecall(recentBookingsQ.data, {
+        errandTypeId: draftBooking.errand_type_id,
+        requiresShoppingBudget: rule.requiresShoppingBudget,
+        showDescription: rule.showDescription,
+        allowedVehicles: rule.allowedVehicles,
+        // Live floor for THIS booking — a remembered offer under it is a 422
+        // at submit, so it is dropped rather than recalled (Review then seeds
+        // the floor itself, exactly as it does today).
+        minNegotiateFee:
+          typeof estimate?.min_negotiate_fee === 'number'
+            ? estimate.min_negotiate_fee
+            : undefined,
+      }),
+    [
+      recentBookingsQ.data,
+      draftBooking.errand_type_id,
+      rule.requiresShoppingBudget,
+      rule.showDescription,
+      rule.allowedVehicles,
+      estimate,
+    ],
+  );
+
+  // Suppressed the moment the draft carries anything a recall would
+  // overwrite — typing in progress, or a "Repeat last" clone the customer
+  // arrived with. Undo empties the draft again, so the chip comes back.
+  const showRecallChip =
+    phase === 'details' &&
+    !!recall &&
+    !draftHasRecallableContent({
+      description: draftBooking.description,
+      shoppingItems: draftBooking.shoppingItems,
+      shopping_budget: draftBooking.shopping_budget,
+      special_instructions: draftBooking.special_instructions,
+    });
+
+  const applyRecall = useCallback(() => {
+    if (!recall) return;
+    const before = useBookingStore.getState().draftBooking;
+    // Snapshot only the keys the recall can touch, so Undo restores exactly
+    // what was there (including "nothing") without disturbing the rest.
+    const previous = {
+      description: before.description,
+      shoppingItems: before.shoppingItems,
+      shopping_budget: before.shopping_budget,
+      special_instructions: before.special_instructions,
+      vehicle_type_rate: before.vehicle_type_rate,
+      pricing_mode: before.pricing_mode,
+      customer_offer: before.customer_offer,
+    };
+    const previousBudgetText = budgetText;
+
+    updateDraft(recall.fields);
+    // The budget input is locally controlled — the draft write alone would
+    // leave the visible field empty while the value silently rode along.
+    if (recall.fields.shopping_budget != null) {
+      setBudgetText(String(recall.fields.shopping_budget));
+    }
+    setErrors((e) => ({
+      ...e,
+      description: '',
+      shoppingItems: '',
+      shopping_budget: '',
+    }));
+    Haptics.selectionAsync().catch(() => {});
+    toast.success('Filled in from your last one — edit anything.', {
+      actionLabel: 'Undo',
+      onAction: () => {
+        updateDraft(previous);
+        setBudgetText(previousBudgetText);
+      },
+    });
+  }, [recall, budgetText, updateDraft]);
+
+  /* ── The customer's own recurring notes ──
+     The five canned strings below are generic; what a repeat customer
+     actually writes ("Unit 12B Tower 2, ring twice, dog is friendly") is
+     specific and identical every time. Same cached list, same chip idiom as
+     the recipient quick-fill. Not type-scoped: a gate note describes the
+     address, not the service. */
+  const instructionSuggestions = useMemo(
+    () => recentInstructionSuggestions(recentBookingsQ.data, INSTRUCTION_TEMPLATES, 3),
+    [recentBookingsQ.data],
+  );
+
+  /** Append a note the same way the dock's own template chips do. */
+  const appendInstruction = useCallback(
+    (note: string) => {
+      const current = (
+        useBookingStore.getState().draftBooking.special_instructions ?? ''
+      ).trim();
+      updateDraft({
+        special_instructions: current ? `${current}, ${note}` : note,
+      });
+      Haptics.selectionAsync().catch(() => {});
+    },
+    [updateDraft],
   );
 
   /* ── One-tap places row (pickup / dropoff card) ──
@@ -2130,6 +2267,40 @@ export default function TaskDetailsScreen() {
                 <Text style={st.helperNoteText}>{rule.helperNote}</Text>
               </View>
             )}
+            {/* One-tap recall of what this customer asked for LAST time on
+                this same errand type. Sits above the first field so the
+                values visibly land in the inputs below it — never a silent
+                pre-fill, and undoable from the toast. */}
+            {showRecallChip && recall && (
+              <Pressable
+                className="flex-row items-center"
+                style={({ pressed }) => [st.recallCard, pressed && st.recallCardPressed]}
+                onPress={applyRecall}
+                accessibilityRole="button"
+                // The preview can be a 500-character bill reference — cap what
+                // VoiceOver reads; the full text is in the fields it fills.
+                accessibilityLabel={`Fill in the same details as your last ${recall.typeName} from ${formatShortDate(recall.sourceCreatedAt)}. ${recall.preview.slice(0, 140)}`}
+                accessibilityHint="Fills the fields below. You can edit anything afterwards."
+              >
+                <View style={st.recallIcon}>
+                  <History size={15} color={LightColors.primary} />
+                </View>
+                <View style={{ flex: 1 }}>
+                  <Text style={st.recallTitle} numberOfLines={1}>
+                    {`Same as last ${recall.typeName}`}
+                  </Text>
+                  {!!recall.preview && (
+                    <Text style={st.recallPreview} numberOfLines={2}>
+                      {recall.preview}
+                    </Text>
+                  )}
+                  <Text style={st.recallMeta} numberOfLines={1}>
+                    {formatShortDate(recall.sourceCreatedAt)}
+                  </Text>
+                </View>
+                <Text style={st.recallCta}>Use</Text>
+              </Pressable>
+            )}
             {/* Shopping types (grocery / food / purchase / bills) build a
                 structured checklist instead of a free-text description —
                 it's serialized into `description` at submit. */}
@@ -2227,6 +2398,31 @@ export default function TaskDetailsScreen() {
                     <ChevronUp size={14} color={LightColors.primary} />
                   </Pressable>
                 )}
+                {/* The customer's OWN recurring notes, ahead of the canned
+                    templates. Rendered here rather than passed into the dock's
+                    `chips` because a real note ("Unit 12B Tower 2, ring twice,
+                    dog is friendly") has to truncate in the chip while the tap
+                    still inserts the full text. */}
+                {instructionSuggestions.length > 0 && (
+                  <View style={st.contactFillRow}>
+                    {instructionSuggestions.map((note) => (
+                      <Pressable
+                        key={`note-${note}`}
+                        className="flex-row items-center bg-primary50 rounded-full px-3 py-1.5"
+                        style={({ pressed }) => (pressed ? st.saveChipPressed : null)}
+                        hitSlop={6}
+                        onPress={() => appendInstruction(note)}
+                        accessibilityRole="button"
+                        accessibilityLabel={`Insert your note: ${note}`}
+                      >
+                        <StickyNote size={13} color={LightColors.primary} />
+                        <Text style={[st.saveChipText, { maxWidth: 180 }]} numberOfLines={1}>
+                          {note}
+                        </Text>
+                      </Pressable>
+                    ))}
+                  </View>
+                )}
                 {/* Docks a big, focused editor above the keyboard so long notes
                     aren't cramped behind it (Messenger-style). See KeyboardDockInput. */}
                 <KeyboardDockInput
@@ -2236,13 +2432,7 @@ export default function TaskDetailsScreen() {
                   placeholder="Any special notes..."
                   multiline
                   maxLength={300}
-                  chips={[
-                    'Leave at the gate',
-                    'Call on arrival',
-                    'Hand to me directly',
-                    'Fragile — handle with care',
-                    'Leave with guard',
-                  ]}
+                  chips={INSTRUCTION_TEMPLATES}
                 />
               </>
             )}
@@ -3012,6 +3202,48 @@ const st = StyleSheet.create({
     borderRadius: 16,
     padding: 12,
     marginBottom: 14,
+  },
+  // "Same as last <type>" recall card. Same primary-tinted family as the
+  // quick-fill chips on this screen, one rung larger because it fills several
+  // fields at once and has to show WHAT it will fill.
+  recallCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: LightColors.primary50,
+    borderRadius: 14,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    marginBottom: 14,
+  },
+  recallCardPressed: {
+    backgroundColor: LightColors.primary100,
+  },
+  recallIcon: {
+    marginRight: 10,
+  },
+  recallTitle: {
+    fontSize: 13,
+    fontFamily: 'Quicksand_700Bold',
+    color: LightColors.primaryDark,
+  },
+  recallPreview: {
+    fontSize: 12,
+    fontFamily: 'Quicksand_400Regular',
+    color: LightColors.textSecondary,
+    marginTop: 2,
+    lineHeight: 16,
+  },
+  recallMeta: {
+    fontSize: 11,
+    fontFamily: 'Quicksand_500Medium',
+    color: LightColors.textTertiary,
+    marginTop: 2,
+  },
+  recallCta: {
+    fontSize: 12,
+    fontFamily: 'Quicksand_700Bold',
+    color: LightColors.primary,
+    marginLeft: 10,
   },
   helperNoteText: {
     fontSize: 12,

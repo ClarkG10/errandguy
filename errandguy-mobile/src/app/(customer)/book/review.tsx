@@ -6,6 +6,7 @@ import {
   Pressable,
   KeyboardAvoidingView,
   Platform,
+  AccessibilityInfo,
 } from 'react-native';
 import * as Haptics from 'expo-haptics';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -110,6 +111,17 @@ interface EstimateResult {
   recommended_max?: number;
 }
 
+// Screen-reader copy for the full-screen create overlay (BookingProgress).
+// The overlay covers the screen for the multi-second create round-trip and
+// renders its stage label visually only, so without this a blind customer taps
+// "Confirm & pay" and hears nothing until navigation lands. Mirrors the
+// STATE_ANNOUNCEMENTS pattern in book/confirm.tsx.
+const BOOKING_STAGE_ANNOUNCEMENTS: Record<BookingStage, string> = {
+  checking: 'Confirming your details.',
+  creating: 'Booking your errand. This can take a few seconds.',
+  checkout: 'Opening secure checkout.',
+};
+
 export default function ReviewScreen() {
   const router = useRouter();
   const { contentMaxWidth } = useResponsive();
@@ -185,6 +197,33 @@ export default function ReviewScreen() {
   // Synchronous re-entrancy latch — closes the double-tap window before the
   // Button's `loading` disable lands a render later.
   const submitLatch = useRef(false);
+  // Which of the two mutually exclusive overlays is up. Hoisted out of the
+  // JSX so the screen-reader announcement below and the render agree on one
+  // source of truth (they were duplicated expressions).
+  const paymentOverlayStage =
+    attempt?.kind === 'booking' && verifyStage && verifyStage !== 'preparing'
+      ? verifyStage
+      : null;
+  const createOverlayStage = paymentOverlayStage ? null : bookingStage;
+
+  // Announce the create overlay's stage changes. BookingProgress is a
+  // full-screen Modal whose stage label is visual only, so submitting was
+  // silent from tap to navigation. Same treatment as book/confirm.tsx's
+  // STATE_ANNOUNCEMENTS. PaymentProgress announces its own stages, so the
+  // hand-off between the two overlays never double-speaks.
+  const spokenStageRef = useRef<BookingStage | null>(null);
+  useEffect(() => {
+    if (!createOverlayStage) {
+      spokenStageRef.current = null;
+      return;
+    }
+    if (spokenStageRef.current === createOverlayStage) return;
+    spokenStageRef.current = createOverlayStage;
+    AccessibilityInfo.announceForAccessibility(
+      BOOKING_STAGE_ANNOUNCEMENTS[createOverlayStage],
+    );
+  }, [createOverlayStage]);
+
   // Pre-empt the create ceremony while the app knows it has no connection.
   // Never while a submit is already in flight: the POST that dropped the
   // connection is what SET this flag, and swapping the button out from under
@@ -1318,24 +1357,14 @@ export default function ReviewScreen() {
           Creating → Opening checkout). Mutually exclusive with PaymentProgress
           below: once the gateway verification is live, that overlay wins so the
           two Modals never stack. */}
-      <BookingProgress
-        stage={
-          attempt?.kind === 'booking' && verifyStage && verifyStage !== 'preparing'
-            ? null
-            : bookingStage
-        }
-      />
+      <BookingProgress stage={createOverlayStage} />
 
       {/* Honest payment verification for online / saved-method charges. Hidden
           during 'preparing' (BookingProgress covers the create call above); it
           takes over from the gateway hand-off onward. Wallet/cash resolve
-          before this ever shows. */}
+          before this ever shows. PaymentProgress announces its own stages. */}
       <PaymentProgress
-        stage={
-          attempt?.kind === 'booking' && verifyStage && verifyStage !== 'preparing'
-            ? verifyStage
-            : null
-        }
+        stage={paymentOverlayStage}
         offline={isOffline}
         successTitle="Payment confirmed"
         successCta="Continue"

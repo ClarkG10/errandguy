@@ -11,7 +11,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { configureReanimatedLogger, ReanimatedLogLevel } from 'react-native-reanimated';
-import { Platform, Text, TextInput, LogBox, StatusBar } from 'react-native';
+import { Platform, LogBox, StatusBar } from 'react-native';
 import { useAuthStore } from '../stores/authStore';
 import { useBookingStore } from '../stores/bookingStore';
 import { usePaymentStore } from '../stores/paymentStore';
@@ -55,23 +55,34 @@ LogBox.ignoreLogs([
 // useFonts() call — the loaded Google Sans TTFs are also registered under the
 // legacy Quicksand_*/Inter_* family names the codebase still references.
 
-// Lock font scaling globally so the app renders at the same physical
-// size on iOS and Android regardless of the OS-level "Display size" /
-// "Font size" accessibility settings. Without this, Android with a
-// large display setting renders every label, button, and tab item ~1.3x
-// larger than iOS — which is what the user was complaining about.
-// Suppression is set on the component defaultProps before any screen
-// mounts, so it cascades through the whole tree.
-// @ts-expect-error - defaultProps exists at runtime on RN base components
-Text.defaultProps = Text.defaultProps ?? {};
-// @ts-expect-error
-Text.defaultProps.allowFontScaling = false;
-// @ts-expect-error
-TextInput.defaultProps = TextInput.defaultProps ?? {};
-// @ts-expect-error
-TextInput.defaultProps.allowFontScaling = false;
-// @ts-expect-error
-TextInput.defaultProps.maxFontSizeMultiplier = 1;
+// FONT SCALING — deliberately NOT locked here. Read src/constants/fontScale.ts
+// before adding anything back.
+//
+// This block used to read:
+//
+//   Text.defaultProps.allowFontScaling = false;
+//   TextInput.defaultProps.maxFontSizeMultiplier = 1;
+//
+// intending to freeze the app at one physical size on both platforms. It had
+// stopped working: React 19 no longer resolves `defaultProps` on function
+// components, this project compiles JSX with the automatic runtime, and RN's
+// `Text` is a function component — so the assignment applied to nothing. (Only
+// the legacy `React.createElement` path still honours `defaultProps`, so a few
+// third-party libraries were locked while the entire app scaled — the opposite
+// of the cross-platform parity the code claimed.) It was invisible because
+// react-native's jest setup replaces `Text` with a CLASS mock, where
+// `defaultProps` still resolves.
+//
+// The decision, made explicit rather than left accidental: OS text scaling
+// STAYS ON — it is the single highest-frequency accessibility accommodation
+// there is — and layout is protected per component with an explicit
+// `maxFontSizeMultiplier={CHROME_MAX_FONT_SCALE}` on fixed-height chrome
+// (Button, Typography, ToastProvider, Input, PaymentProgress and the tracking
+// screen already do this). Body copy stays uncapped so it can grow and wrap.
+//
+// Deleting these lines changes NOTHING at runtime; they were already inert.
+// `src/constants/__tests__/fontScale.test.tsx` pins that fact so the dead
+// pattern cannot come back mistaken for a working lock.
 
 // Hide Android system navigation bar (immersive mode — swipe up to reveal).
 // `expo-navigation-bar` ships a native module that may be missing in some

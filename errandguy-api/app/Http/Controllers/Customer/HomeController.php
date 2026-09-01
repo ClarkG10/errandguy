@@ -16,8 +16,8 @@ use Illuminate\Http\Request;
  * start (/errand-types, /bookings?per_page=N, /bookings/active, /promos,
  * /wallet/balance, /user/referral), each paying a full framework boot +
  * Sanctum auth on Forge, and the login warm-up fires most of them a second
- * time. This endpoint returns all six sections at once so the client can seed
- * its existing useQuery cache keys from a single response.
+ * time. This endpoint returns all of those sections at once so the client can
+ * seed its existing useQuery cache keys from a single response.
  *
  * SHAPE CONTRACT (the whole point — the client seeds per-section caches from
  * this payload, so any drift silently poisons them): every section is EXACTLY
@@ -69,6 +69,12 @@ class HomeController extends Controller
 
         $wallet = $this->section(app(WalletController::class)->balance($request));
 
+        // /bookings/active now ships TWO keys — `data` (the one top-ranked
+        // booking, unchanged) and the additive `active_bookings` list. Invoke
+        // it once and split it here so both aggregate sections stay
+        // structurally identical to that endpoint rather than re-querying.
+        $active = $bookings->active($request);
+
         return $this->ok([
             // Same key, same soft/hard TTLs, same query as the public
             // /errand-types route — a shared cache entry, not a second one.
@@ -78,7 +84,11 @@ class HomeController extends Controller
                 86400,
                 fn () => ErrandType::where('is_active', true)->orderBy('sort_order')->get()->toArray(),
             ),
-            'active_booking' => $this->section($bookings->active($request)),
+            'active_booking' => $this->section($active),
+            // Additive sibling of `active_booking`, mirroring the same new key
+            // on /bookings/active. The singular key stays authoritative for
+            // clients (and for the app's booking store); this is the stack.
+            'active_bookings' => $this->key($active, 'active_bookings') ?? [],
             'recent_bookings' => $this->section($bookings->index($recentRequest)) ?? [],
             // The NUMBER, not the {balance: n} object: the app's
             // ['wallet','balance',userId] cache key holds a plain number and
@@ -95,8 +105,18 @@ class HomeController extends Controller
      */
     private function section(JsonResponse $response): mixed
     {
+        return $this->key($response, 'data');
+    }
+
+    /**
+     * Same unwrap for a delegated response's SIBLING top-level key (an
+     * endpoint that ships more than `data`, e.g. /bookings/active's additive
+     * `active_bookings`).
+     */
+    private function key(JsonResponse $response, string $key): mixed
+    {
         $payload = $response->getData(true);
 
-        return is_array($payload) ? ($payload['data'] ?? null) : null;
+        return is_array($payload) ? ($payload[$key] ?? null) : null;
     }
 }

@@ -50,6 +50,7 @@ import Reanimated, {
 import { HereMapView, HereMarker, HerePolyline, type HereMapViewRef } from '../../../components/map';
 import { useBookingStore } from '../../../stores/bookingStore';
 import { useChatStore } from '../../../stores/chatStore';
+import { useNotificationStore } from '../../../stores/notificationStore';
 import { useLocationStore } from '../../../stores/locationStore';
 import { bookingService } from '../../../services/booking.service';
 import { useRunnerTracking } from '../../../hooks/useRunnerTracking';
@@ -74,6 +75,9 @@ import { formatTime } from '../../../utils/formatDate';
 import { formatCurrency } from '../../../utils/formatCurrency';
 import { mediaSource } from '../../../utils/mediaSource';
 import { ImageLightbox } from '../../../components/ui/ImageLightbox';
+import { ShoppingProgressCard } from '../../../components/customer/ShoppingProgressCard';
+import { StopsProgressCard } from '../../../components/customer/StopsProgressCard';
+import { stopCompletionsFromNotification, mergeStopCompletions } from '../../../utils/stopProgress';
 import { resolveImageUrl } from '../../../utils/resolveImageUrl';
 import { errorMessage } from '../../../utils/errorCatalog';
 import { haptics } from '../../../utils/haptics';
@@ -81,6 +85,7 @@ import { STATUS_LABELS } from '../../../constants/statusLabels';
 import { LightColors, Elevation } from '../../../constants/colors';
 import { copy } from '../../../constants/copy';
 
+import { shoppingItemsFromNotification } from '../../../utils/shoppingChecklist';
 import { getErrandTypeRule } from '../../../constants/errandTypeRules';
 import type { Booking, BookingStatus, BookingStatusLog } from '../../../types';
 import { toast } from '../../../stores/toastStore';
@@ -103,6 +108,12 @@ const HOLD_PHASES: BookingStatus[] = ['arrived_at_pickup', 'arrived_at_dropoff']
 // the Android back guard: isLiveBooking below keeps its own expression where
 // 'delivered' still counts as live.
 const TERMINAL_UI: BookingStatus[] = ['delivered', 'completed', 'cancelled', 'no_runner'];
+
+// Statuses where the runner is realistically ticking the shopping list off.
+// Everything the runner reports at the till (actual_item_cost, receipt) lands
+// on the picked_up TRANSITION, which the realtime watcher already refetches —
+// so the tick fallback below only needs to cover the window before it.
+const SHOPPING_TICK_STATUSES: BookingStatus[] = ['accepted', 'heading_to_pickup', 'arrived_at_pickup'];
 
 // Constant across statuses — a changing snapPoints identity re-fires the
 // sheet's initial-position effect and stomps the user's chosen snap. Only
@@ -609,6 +620,36 @@ export default function TrackingScreen() {
     },
   );
 
+  // Degraded-path fallback for shopping ticks. The live path is the
+  // `shopping_items_updated` broadcast handled further down; when Reverb is
+  // the thing that's down, that never arrives and the lean /track poll carries only
+  // `status`, which a tick never moves. So while a shopping errand is actually
+  // being shopped AND realtime is unhealthy, tail the full booking on a slow
+  // cadence. Deliberately narrow: shopping errands only, only in the pre-pickup
+  // shopping window, only when realtime has already failed us — everything else
+  // keeps riding the lean poll. useSmartPolling pauses it while backgrounded or
+  // offline, same as its siblings.
+  const hasShoppingItems = (booking?.shopping_items?.length ?? 0) > 0;
+  const isShoppingWindow =
+    !!booking && SHOPPING_TICK_STATUSES.includes(booking.status);
+  useSmartPolling(
+    () => {
+      if (!id) return;
+      return bookingService
+        .getBooking(id)
+        .then((res) => {
+          const fresh = res.data?.data as Booking | undefined;
+          if (fresh) setActiveBooking(fresh);
+        });
+    },
+    {
+      interval: 45_000,
+      enabled: !!id && hasShoppingItems && isShoppingWindow && !realtimeHealthy && !isTerminalUi,
+      runOnMount: false,
+      maxInterval: 180_000,
+    },
+  );
+
   // Phase-aware route target. While the runner is heading to the
   // pickup, drawing a static pickup→dropoff polyline is misleading —
   // the customer cares about runner→pickup. Once the parcel is in
@@ -773,7 +814,19 @@ export default function TrackingScreen() {
         // this wiped the mount-seeded timeline to [] on every status change and
         // the per-stage timestamps vanished until remount. (Cf. the correct
         // `full.data?.data?.booking` read ~200 lines above.)
-        setStatusLogs(trackRes.data.data?.booking?.status_logs ?? []);
+        const fresh = trackRes.data.data?.booking as Booking | undefined;
+        setStatusLogs(fresh?.status_logs ?? []);
+        // ...and keep the FULL booking we just paid for. This used to extract
+        // status_logs and throw the rest away, so every field that only ever
+        // changes ALONGSIDE a transition — actual_item_cost, receipt_photo_url,
+        // pickup/delivery proof photos, all written in the same PATCH that
+        // moves the errand to picked_up/delivered — stayed at its mount value
+        // until the customer backed out of the screen and re-entered.
+        // BookingStatusChanged only broadcasts lifecycle fields, so realtime
+        // could never supply them either. Writing through the store re-enters
+        // this same effect with the status unchanged, which is a no-op past the
+        // guard above — no refetch loop.
+        if (fresh) setActiveBooking(fresh);
       }).catch(() => {});
 
       // User-visible confirmation that something happened. Without this
@@ -819,7 +872,82 @@ export default function TrackingScreen() {
     if (activeBooking.status === 'completed') {
       router.replace(`/(customer)/rate/${id}`);
     }
-  }, [activeBooking, id, router]);
+  }, [activeBooking, id, router, setActiveBooking]);
+
+  // ── Runner's shopping ticks, live ─────────────────────────────────────
+  // The runner's PATCH /runner/errand/{id}/shopping-items pushes the WHOLE
+  // refreshed checklist to the customer as an in-app `shopping_items_updated`
+  // notification (ShoppingChecklistController, notifyInApp — broadcast only, no
+  // device buzz per tick). The app-wide realtime handler already lands that row
+  // in the notification store, so we read the newest row from there rather than
+  // opening a second socket for the same channel, and patch the booking in
+  // place: the payload IS the new list, so a tick costs zero requests.
+  //
+  // Ticks never move `status`, which is why nothing else on this screen could
+  // ever see them — the realtime watcher above and the reconcile poll both key
+  // their full refetch on a status CHANGE.
+  const latestNotification = useNotificationStore((s) => s.notifications[0] ?? null);
+  const lastTickNotificationRef = useRef<string | null>(null);
+  const tickWatchArmedRef = useRef(false);
+  useEffect(() => {
+    // The row sitting at the head of the inbox when this screen mounts predates
+    // it — the mount fetch already loaded authoritative shopping_items, so
+    // applying it would only risk replaying a list the inbox happens to be
+    // holding from an earlier errand. Arm on the first pass and react to
+    // arrivals from then on.
+    if (!tickWatchArmedRef.current) {
+      tickWatchArmedRef.current = true;
+      lastTickNotificationRef.current = latestNotification?.id ?? null;
+      return;
+    }
+    if (!id || !latestNotification) return;
+    if (lastTickNotificationRef.current === latestNotification.id) return;
+    lastTickNotificationRef.current = latestNotification.id;
+
+    // Type/booking/payload validation lives in the pure helper so it is
+    // unit-testable without a socket (utils/shoppingChecklist).
+    const patched = shoppingItemsFromNotification(
+      { type: latestNotification.type, data: latestNotification.data },
+      id,
+    );
+
+    // Same channel, same idiom, different payload: the runner ticking off an
+    // extra STOP arrives as `booking_stops_updated`. The payload is partial
+    // ({id, sequence, completed_at} — no address), so it merges into the stops
+    // the booking already holds rather than replacing them.
+    const stopUpdates = stopCompletionsFromNotification(
+      { type: latestNotification.type, data: latestNotification.data },
+      id,
+    );
+
+    if (!patched && !stopUpdates) return;
+
+    // Write through the store, not local state: the home card and the booking
+    // detail sheet read the same `activeBooking`, and the watcher above turns
+    // it back into this screen's `booking`.
+    const current = useBookingStore.getState().activeBooking;
+    if (current && current.id === id) {
+      const mergedStops = stopUpdates ? mergeStopCompletions(current.stops, stopUpdates) : null;
+      if (patched || mergedStops) {
+        setActiveBooking({
+          ...current,
+          ...(patched ? { shopping_items: patched } : null),
+          ...(mergedStops ? { stops: mergedStops } : null),
+        });
+      }
+    } else {
+      setBooking((prev) => {
+        if (!prev || prev.id !== id) return prev;
+        const mergedStops = stopUpdates ? mergeStopCompletions(prev.stops, stopUpdates) : null;
+        if (!patched && !mergedStops) return prev;
+        return {
+          ...prev,
+          ...(patched ? { shopping_items: patched } : null),
+          ...(mergedStops ? { stops: mergedStops } : null),
+        };
+      });
+    }
+  }, [latestNotification, id, setActiveBooking]);
 
   // Route GeoJSON
   const routeMapCoords = useMemo(() => {
@@ -1605,11 +1733,35 @@ export default function TrackingScreen() {
     </View>
   );
 
+  // Live shopping progress — the runner's ticks, mirrored read-only. Sits
+  // OUTSIDE the collapsed "Trip details" disclosure while the errand is
+  // running: "has my runner found the milk yet?" is the question the customer
+  // otherwise opens the chat to ask, and a collapsed answer is no answer. On a
+  // terminal receipt it moves INTO the details section, as a record of what was
+  // picked up rather than a live signal.
+  const shoppingProgressSection =
+    !isTerminalUi && hasShoppingItems ? (
+      <View className="mt-3">
+        <ShoppingProgressCard items={booking.shopping_items} live />
+      </View>
+    ) : null;
+
+  // Multi-stop progress — the customer paid a per-stop fee, so "which stops
+  // are done?" deserves the same live answer the shopping list gets. Hidden
+  // for the ordinary single-drop booking.
+  const stopsProgressSection =
+    !isTerminalUi && (booking.stops?.length ?? 0) > 0 ? (
+      <View className="mt-3">
+        <StopsProgressCard stops={booking.stops} live />
+      </View>
+    ) : null;
+
   // Extra details (shopping summary + proof photos) — collapsed on live
   // statuses, auto-expanded once on terminal (the receipt IS the point),
   // and only rendered when there's actually something to reveal.
   const detailsSection =
     (isShopping && booking.shopping_budget != null) ||
+    (isTerminalUi && hasShoppingItems) ||
     booking.pickup_photo_url ||
     booking.delivery_photo_url ||
     booking.signature_url ? (
@@ -1636,6 +1788,14 @@ export default function TrackingScreen() {
 
         {detailsOpen && (
           <>
+            {/* What the runner actually picked up. Live errands render this
+                above the fold instead (shoppingProgressSection), so the two
+                placements are mutually exclusive. */}
+            {isTerminalUi && hasShoppingItems && (
+              <View className="mb-4">
+                <ShoppingProgressCard items={booking.shopping_items} />
+              </View>
+            )}
             {/* Shopping reconciliation card — visible whenever a shopping budget
                 was pre-authorized so the customer can see what was approved
                 and, after pickup, exactly what the runner spent. */}
@@ -2630,6 +2790,8 @@ export default function TrackingScreen() {
               ) : null}
               {!arrivedPinHero ? pinCard : null}
               {runnerCard}
+              {shoppingProgressSection}
+              {stopsProgressSection}
               {tripRouteSection}
               {detailsSection}
               {shoppingPaidNotice}

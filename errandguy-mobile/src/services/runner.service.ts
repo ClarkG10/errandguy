@@ -339,6 +339,28 @@ export const runnerService = {
   },
 
   /**
+   * PATCH /runner/errand/{id}/stops/{stop} — tick an extra stop off (or
+   * reopen it) on a multi-stop errand.
+   *
+   * Body: `{ completed }` (omitted ⇒ true). The backend stamps
+   * `booking_stops.completed_at`, returns the full BookingResource with
+   * `stops` loaded, and pushes an in-app `booking_stops_updated` payload to
+   * the customer so their tracking screen ticks live.
+   *
+   * Replay-safe by construction: sending the same value twice is a 200 no-op
+   * server-side, which is why this is allowed on the offline mutation queue
+   * (see `runner.completeStop` in mutationQueue.ts). Nothing about the status
+   * machine or money moves — a stop tick is progress reporting.
+   */
+  completeStop(bookingId: string, stopId: string, completed = true) {
+    const p = api.patch(`/runner/errand/${bookingId}/stops/${stopId}`, {
+      completed,
+    });
+    p.then(invalidateRunnerErrands).catch(() => {});
+    return p;
+  },
+
+  /**
    * GET /runner/heatmap?days=14 — recent-booking demand cells for the busy-
    * areas map. Response: { data: { days, cells: [{ lat, lng, weight }] } }.
    * Silent + cached: it's a read-only aggregate shared across all runners.

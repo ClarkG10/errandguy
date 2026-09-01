@@ -65,6 +65,12 @@ class RunnerErrandController extends Controller
      */
     private const SINGLE_LOCATION_SLUGS = ['queue', 'bills_payment'];
 
+    /**
+     * Terminal statuses after which a booking's per-stop ticks are frozen —
+     * same set ShoppingChecklistController uses for its checklist.
+     */
+    private const CLOSED_STATUSES = ['completed', 'cancelled'];
+
     public function __construct(
         private MatchingService $matchingService,
         private LocationService $locationService,
@@ -691,6 +697,116 @@ class RunnerErrandController extends Controller
 
         return response()->json([
             'message' => 'PIN verified successfully.',
+        ]);
+    }
+
+    /**
+     * PATCH /runner/errand/{id}/stops/{stop} — tick an extra multi-stop
+     * destination off (or un-tick a mis-tap).
+     *
+     * Contract: { "completed": bool } — omitted means true.
+     *
+     * A multi-stop booking charges the customer a real per-stop fee and the
+     * extra legs flow into the runner's payout, but `booking_stops.completed_at`
+     * has been an unwritten column since the table was created (its migration
+     * comment reserves it for exactly this), so nothing ever recorded that a
+     * stop was actually visited. This is the write side of that column. It is
+     * NOT a status stage: the booking's own status machine is untouched, no
+     * money moves, and completing the errand is neither gated on nor changed by
+     * these ticks.
+     *
+     * Mirrors {@see \App\Http\Controllers\Runner\ShoppingChecklistController::update}
+     * — assigned runner only, refused once the booking is closed, and the
+     * customer is pushed the fresh list in-app so the ticks land live.
+     *
+     * IDEMPOTENT by design: the mobile side rides this on the offline mutation
+     * queue, so the same tick can arrive twice. A replay that asks for the
+     * state the stop is already in is a no-op — the original `completed_at`
+     * survives (a re-send must not silently restamp the visit time) and no
+     * second notification is emitted.
+     */
+    public function completeStop(Request $request, string $id, string $stopId): JsonResponse
+    {
+        $validated = $request->validate([
+            'completed' => ['sometimes', 'boolean'],
+        ]);
+        $completed = (bool) ($validated['completed'] ?? true);
+
+        $booking = Booking::findOrFail($id);
+        $user = $request->user();
+
+        if ($user->id !== $booking->runner_id) {
+            return $this->fail(ErrorCode::ERRAND_NOT_ASSIGNED, 'You are not assigned to this errand.', 403);
+        }
+
+        if (in_array($booking->status, self::CLOSED_STATUSES, true)) {
+            return $this->fail(
+                ErrorCode::BOOKING_STATE_INVALID,
+                'This errand is closed — its stops can no longer be updated.',
+            );
+        }
+
+        // Scoped through the relation so a stop id from ANOTHER booking is a
+        // 404 here rather than a cross-booking write.
+        if (! $booking->stops()->whereKey($stopId)->exists()) {
+            return $this->fail(ErrorCode::NOT_FOUND, 'That stop is not part of this errand.', 404);
+        }
+
+        // Re-read under a row lock: a double-tap (or a queue flush racing a
+        // live tap) would otherwise both pass the already-in-this-state check
+        // and the later write would restamp the visit time.
+        $changed = DB::transaction(function () use ($booking, $stopId, $completed) {
+            $stop = \App\Models\BookingStop::where('booking_id', $booking->id)
+                ->whereKey($stopId)
+                ->lockForUpdate()
+                ->first();
+
+            if (! $stop || $completed === ($stop->completed_at !== null)) {
+                return false;
+            }
+
+            $stop->update(['completed_at' => $completed ? now() : null]);
+
+            return true;
+        });
+
+        $booking->load(['errandType', 'runner', 'customer', 'statusLogs', 'stops']);
+
+        // Only a real state change reaches the customer — a replayed tick from
+        // the offline queue must not mint a second notification row. Same
+        // fire-and-forget shape the checklist uses: notifyInApp persists the
+        // row and broadcasts it on notifications.{userId} (no device wake — a
+        // tick is not worth a buzz), dispatched afterResponse so it never holds
+        // the runner's PATCH open. Values captured by value.
+        if ($changed) {
+            $customerId = $booking->customer_id;
+            $bookingId = $booking->id;
+            $stops = $booking->stops
+                ->map(fn ($stop) => [
+                    'id' => $stop->id,
+                    'sequence' => $stop->sequence,
+                    'completed_at' => $stop->completed_at,
+                ])
+                ->values()
+                ->all();
+
+            dispatch(function () use ($customerId, $bookingId, $stops) {
+                app(\App\Services\NotificationService::class)->notifyInApp(
+                    $customerId,
+                    'Stop updated',
+                    'Your runner updated a stop on your errand.',
+                    [
+                        'type' => 'booking_stops_updated',
+                        'booking_id' => $bookingId,
+                        'stops' => $stops,
+                    ],
+                );
+            })->afterResponse();
+        }
+
+        return response()->json([
+            'data' => new BookingResource($booking),
+            'message' => $completed ? 'Stop marked complete.' : 'Stop reopened.',
         ]);
     }
 

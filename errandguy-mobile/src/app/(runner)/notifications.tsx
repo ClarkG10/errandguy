@@ -60,6 +60,20 @@ const TYPE_META: Record<
     textColor: LightColors.primary,
     chipClass: 'bg-surfaceMuted',
   },
+  // Live progress ticks (shopping checklist / extra stops) — same booking
+  // accent as a status update; their real surface is the tracking screen.
+  shopping_items_updated: {
+    icon: Package,
+    color: LightColors.primary,
+    textColor: LightColors.primary,
+    chipClass: 'bg-surfaceMuted',
+  },
+  booking_stops_updated: {
+    icon: Package,
+    color: LightColors.primary,
+    textColor: LightColors.primary,
+    chipClass: 'bg-surfaceMuted',
+  },
   // A job offer nearby — accent (the "Guy" gold) marks it as an opportunity,
   // visually distinct from a plain booking status update.
   incoming_request: {
@@ -118,6 +132,8 @@ const TYPE_META: Record<
 // row so category is legible without relying on the glyph colour alone.
 const TYPE_LABELS: Record<NotificationType, string> = {
   booking_update: 'Booking',
+  shopping_items_updated: 'Shopping',
+  booking_stops_updated: 'Stops',
   incoming_request: 'Offer',
   payment: 'Payment',
   promo: 'Promo',

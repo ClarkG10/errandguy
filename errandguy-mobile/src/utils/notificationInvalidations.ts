@@ -88,6 +88,14 @@ export function notificationInvalidationKeys(
         ['wallet'],
       ];
 
+    // The runner ticked an extra stop. The tracking screen patches itself
+    // straight from the payload (utils/stopProgress), so this only heals the
+    // cached booking for the surfaces that refetch instead.
+    case 'booking_stops_updated': {
+      const bookingId = asId(data.booking_id);
+      return bookingId ? [['booking', bookingId]] : [];
+    }
+
     // An emergency alert on an errand both parties are on. Refresh the
     // booking surfaces so the receiving side's active screen reflects the
     // alert instead of leaving it to a badge increment nobody watches.

@@ -60,37 +60,53 @@ class BroadcastToRunnersJob implements ShouldQueue
         // + broadcast over their `notifications.{userId}` Reverb channel (live
         // when the app is open), and (2) a device push to WAKE a backgrounded
         // app — with no second inbox row, and a tap that opens their offers
-        // home. This job is queued/off-request, so per-runner work is fine.
-        foreach ($runners as $runner) {
-            // Idempotent in-app OFFER: exactly one 'incoming_request' card per
-            // (runner, booking), no matter how many times this job re-runs — a
-            // queue retry, a worker crash mid-loop, or the admin "stuck errand"
-            // re-dispatch (BookingService::adminRematch). notifyInApp() does an
-            // unconditional insert with no dedup, so guard it here. A duplicate
-            // device push is acceptable; a duplicate inbox card is not. (mirrors
-            // the fixed-match dedup in MatchRunnerJob)
-            $alreadyOffered = Notification::where('user_id', $runner->user_id)
-                ->where('type', 'incoming_request')
-                ->where('data->booking_id', $booking->id)
-                ->exists();
+        // home.
+        //
+        // Both are done in BULK for the whole audience (up to 200 runners). The
+        // old shape was a per-runner loop of 2 queries + a blocking Expo HTTP
+        // round trip each, so runner #1's phone lit up immediately and runner
+        // #150's tens of seconds later — usually after the errand was taken —
+        // while this single job held the queue worker hostage (and risked its
+        // 60s timeout) ahead of every other queued push on the platform.
+        //
+        // De-dupe the recipient list first: the per-runner path was implicitly
+        // dedup'd by its own existence check, the bulk insert is not.
+        $runnerUserIds = $runners->pluck('user_id')->filter()->unique()->values()->all();
 
-            if (! $alreadyOffered) {
-                $notifications->notifyInApp(
-                    $runner->user_id,
-                    'New Errand Request',
-                    'A new errand is available near you.',
-                    $payload,
-                );
-            }
+        // Idempotent in-app OFFER: exactly one 'incoming_request' card per
+        // (runner, booking), no matter how many times this job re-runs — a
+        // queue retry, a worker crash mid-loop, or the admin "stuck errand"
+        // re-dispatch (BookingService::adminRematch). notifyInAppMany() does an
+        // unconditional insert with no dedup, so guard it here — ONE grouped
+        // query for the whole audience instead of one per runner. A duplicate
+        // device push is acceptable; a duplicate inbox card is not. (mirrors
+        // the fixed-match dedup in MatchRunnerJob)
+        $alreadyOffered = Notification::whereIn('user_id', $runnerUserIds)
+            ->where('type', 'incoming_request')
+            ->where('data->booking_id', $booking->id)
+            ->pluck('user_id')
+            ->all();
 
-            $notifications->sendRemotePush(
-                $runner->user_id,
-                'New errand nearby',
-                'A new errand is available near you. Tap to view the offer.',
-                ['type' => 'incoming_request', 'booking_id' => $booking->id],
+        $needsCard = array_values(array_diff($runnerUserIds, $alreadyOffered));
+
+        if (! empty($needsCard)) {
+            $notifications->notifyInAppMany(
+                $needsCard,
+                'New Errand Request',
+                'A new errand is available near you.',
+                $payload,
             );
         }
 
-        Log::info("BroadcastToRunnersJob: notified {$runners->count()} runners for booking {$this->bookingId}");
+        // One device fan-out for everybody: 2 queries + ceil(devices / 100)
+        // Expo requests, and every runner's phone rings at the same moment.
+        $notifications->sendRemotePushToMany(
+            $runnerUserIds,
+            'New errand nearby',
+            'A new errand is available near you. Tap to view the offer.',
+            ['type' => 'incoming_request', 'booking_id' => $booking->id],
+        );
+
+        Log::info('BroadcastToRunnersJob: notified ' . count($runnerUserIds) . " runners for booking {$this->bookingId}");
     }
 }

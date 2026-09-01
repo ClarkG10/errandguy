@@ -12,7 +12,7 @@ import {
 } from 'react-native';
 import { Image } from 'expo-image';
 import { MotiView } from 'moti';
-import { X, Camera, Receipt as ReceiptIcon } from 'lucide-react-native';
+import { X, Camera, Receipt as ReceiptIcon, MessageCircle, AlertTriangle } from 'lucide-react-native';
 import * as Haptics from 'expo-haptics';
 import { Button } from '../ui/Button';
 import { Input } from '../ui/Input';
@@ -28,6 +28,16 @@ interface ReceiptCaptureModalProps {
   submitting?: boolean;
   onSubmit: (params: { actualCost: number; receiptUri: string }) => void | Promise<void>;
   onClose: () => void;
+  /**
+   * Open the booking chat. Offered as the FIRST exit from an over-budget
+   * basket, because talking to the customer about what to drop or swap is the
+   * only thing that can actually resolve one (see the over-budget panel).
+   * Optional so the modal still renders standalone.
+   */
+  onMessageCustomer?: () => void;
+  /** Open the mid-errand issue sheet — the escalation when the customer can't
+   *  be reached and the runner is stuck at the till. */
+  onReportIssue?: () => void;
 }
 
 export function ReceiptCaptureModal({
@@ -36,6 +46,8 @@ export function ReceiptCaptureModal({
   submitting = false,
   onSubmit,
   onClose,
+  onMessageCustomer,
+  onReportIssue,
 }: ReceiptCaptureModalProps) {
   const [amountText, setAmountText] = useState('');
   const [receiptUri, setReceiptUri] = useState<string | null>(null);
@@ -165,10 +177,74 @@ export function ReceiptCaptureModal({
                 // separate low-contrast Text.
                 error={
                   overBudget
-                    ? 'Exceeds budget — message the customer to add funds.'
+                    ? `Over budget by ${formatCurrency(amount - budget)}`
                     : undefined
                 }
               />
+
+              {/* Over-budget dead-end, made honest.
+                  The old copy read "message the customer to add funds" — but
+                  `shopping_budget` has exactly ONE writer in the whole API
+                  (booking creation), so there is no screen, no endpoint and no
+                  path by which a customer can add funds. A runner standing at
+                  the till followed that instruction into nothing.
+                  What the app CAN do is: talk to the customer about the
+                  basket, or hand the problem to support. Both are one tap from
+                  here now, and the amount + receipt survive the trip (this
+                  modal stays mounted), so the runner comes back to the numbers
+                  they already entered. */}
+              {overBudget && (
+                <View style={s.overBudgetPanel}>
+                  <Text style={s.overBudgetTitle}>
+                    The budget can&apos;t be raised in the app
+                  </Text>
+                  <Text style={s.overBudgetBody}>
+                    We can only charge the customer up to{' '}
+                    {formatCurrency(budget)} for items. Agree with them on what
+                    to drop or swap, then enter the new total. If you&apos;re
+                    stuck at the till, report it and support will take it from
+                    there.
+                  </Text>
+                  {(onMessageCustomer || onReportIssue) && (
+                    <View style={s.overBudgetActions}>
+                      {onMessageCustomer && (
+                        <Pressable
+                          onPress={onMessageCustomer}
+                          accessibilityRole="button"
+                          accessibilityLabel="Message the customer about the basket"
+                          hitSlop={6}
+                          style={[s.overBudgetBtn, s.overBudgetBtnPrimary]}
+                        >
+                          <MessageCircle
+                            size={15}
+                            color={LightColors.textInverse}
+                            strokeWidth={2.2}
+                          />
+                          <Text style={s.overBudgetBtnPrimaryLabel}>
+                            Message customer
+                          </Text>
+                        </Pressable>
+                      )}
+                      {onReportIssue && (
+                        <Pressable
+                          onPress={onReportIssue}
+                          accessibilityRole="button"
+                          accessibilityLabel="Report this to support"
+                          hitSlop={6}
+                          style={s.overBudgetBtn}
+                        >
+                          <AlertTriangle
+                            size={15}
+                            color={LightColors.textPrimary}
+                            strokeWidth={2.2}
+                          />
+                          <Text style={s.overBudgetBtnLabel}>Report</Text>
+                        </Pressable>
+                      )}
+                    </View>
+                  )}
+                </View>
+              )}
 
               <Text style={s.sectionLabel}>Receipt photo *</Text>
 
@@ -302,6 +378,60 @@ const s = StyleSheet.create({
     fontFamily: 'Quicksand_400Regular',
     color: LightColors.textSecondary,
     marginTop: 4,
+  },
+  overBudgetPanel: {
+    backgroundColor: LightColors.dangerSoft,
+    borderRadius: 12,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    marginBottom: 16,
+  },
+  overBudgetTitle: {
+    fontSize: 13,
+    fontFamily: 'Quicksand_700Bold',
+    color: LightColors.dangerDark,
+  },
+  overBudgetBody: {
+    // 12px floor on a soft wash, textSecondary for AA — same rule the budget
+    // hint above follows.
+    fontSize: 12,
+    fontFamily: 'Quicksand_400Regular',
+    color: LightColors.textSecondary,
+    marginTop: 4,
+    lineHeight: 17,
+  },
+  overBudgetActions: {
+    flexDirection: 'row',
+    gap: 8,
+    marginTop: 12,
+  },
+  overBudgetBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    height: 44,
+    paddingHorizontal: 14,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: LightColors.dividerStrong,
+    backgroundColor: LightColors.surface,
+  },
+  overBudgetBtnPrimary: {
+    flex: 1,
+    borderColor: LightColors.primary,
+    backgroundColor: LightColors.primary,
+  },
+  overBudgetBtnLabel: {
+    fontSize: 13,
+    fontFamily: 'Quicksand_600SemiBold',
+    color: LightColors.textPrimary,
+    marginLeft: 6,
+  },
+  overBudgetBtnPrimaryLabel: {
+    fontSize: 13,
+    fontFamily: 'Quicksand_700Bold',
+    color: LightColors.textInverse,
+    marginLeft: 6,
   },
   sectionLabel: {
     fontSize: 12,

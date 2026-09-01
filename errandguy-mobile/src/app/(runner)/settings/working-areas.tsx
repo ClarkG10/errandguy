@@ -51,11 +51,21 @@ export default function WorkingAreasScreen() {
   const [requestingLocation, setRequestingLocation] = useState(false);
   const [mapReady, setMapReady] = useState(false);
   const [showDiscard, setShowDiscard] = useState(false);
-  // Real user interaction with the radius/center — distinct from `isDirty`.
-  // A first-time runner (no saved working_area_lat/lng) reads as dirty the
-  // instant currentLocation seeds the center, which is correct for Save
-  // (there IS a new area to persist) but must NOT trip the discard guard on
-  // a back with no edit. The guard keys off this flag; Save still keys off
+  // locationStore.currentLocation is written by THIS SCREEN and nowhere else
+  // (setCurrentLocation has no other caller in src/), so on a cold open it is
+  // null. Now that the circle is centred on the live fix rather than a saved
+  // pin, that would drop a returning runner straight to the "Enable Location"
+  // placeholder even though they granted location long ago. Seed it silently
+  // on mount instead — see the effect below.
+  const [seedingLocation, setSeedingLocation] = useState(
+    () => !useLocationStore.getState().currentLocation,
+  );
+  // Real user interaction with the radius — distinct from `isDirty`. The
+  // slider seeds from `runnerProfile` at first render, so a profile that
+  // hydrates AFTER mount (store empty on a cold open) leaves `radius` on the
+  // 5 km default while `initialRadius` jumps to the saved value: dirty with
+  // nobody having touched anything. The discard guard keys off this flag so
+  // that case can't raise a phantom "Discard changes?"; Save still keys off
   // isDirty so its gating is unchanged.
   const [touched, setTouched] = useState(false);
 
@@ -71,28 +81,31 @@ export default function WorkingAreasScreen() {
   const mapThrottleAtRef = useRef(0);
   const mapThrottleTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  // working_area_lat/lng are decimal columns → they arrive as JSON STRINGS
-  // ("14.5995000") on a server fetch (not cast on the backend). Coerce to
-  // Number so the map region math and the `lat.toFixed(4)` center label below
-  // don't crash ("...".toFixed is not a function). 0 stays falsy so the
-  // `lat && lng` guards still hold.
-  const savedLat = runnerProfile?.working_area_lat;
-  const savedLng = runnerProfile?.working_area_lng;
-  const lat = Number(savedLat ?? currentLocation?.lat ?? 0);
-  const lng = Number(savedLng ?? currentLocation?.lng ?? 0);
+  // THE CIRCLE IS DRAWN AROUND THE RUNNER'S LIVE POSITION, NOT A STORED PIN.
+  //
+  // This screen used to let the runner "place" a centre, save it into
+  // working_area_lat/lng, and then drew the preview circle around that saved
+  // point. It was fiction: NOTHING on the server reads working_area_lat/lng.
+  // The only consumer of this setting is the open-offers feed
+  // (RunnerErrandController::available), which measures
+  // `working_area_radius` from the runner's LAST GPS PING
+  // (runner_profiles.current_lat/current_lng). So a runner who pinned Makati
+  // and then drove home to Cavite was shown a Makati circle while actually
+  // being served Cavite errands — the map disagreed with the feed.
+  //
+  // Until the server honours a stored centre, the honest preview is the one
+  // that matches the filter: centre on where the runner is right now. The
+  // Save payload below therefore sends the radius ONLY; the stale
+  // working_area_lat/lng already on the profile are left untouched (the
+  // FormRequest has no `nullable` rule, so they cannot be cleared from here)
+  // and are simply no longer written.
+  const lat = Number(currentLocation?.lat ?? 0);
+  const lng = Number(currentLocation?.lng ?? 0);
 
-  // Dirty = the runner has actually moved the center or the radius off the
-  // saved profile. A no-op Save is gated so it can't fire an optimistic write
-  // + network call for an identical value. A first-time set (saved lat/lng
-  // null, current location seeded) reads as dirty — that's a real change.
-  // Compare numbers on BOTH sides: savedLat may be a string (server fetch) or
-  // a number (after an optimistic save); an un-coerced compare read always-dirty.
-  const isDirty =
-    radius !== initialRadius ||
-    savedLat == null ||
-    savedLng == null ||
-    lat !== Number(savedLat) ||
-    lng !== Number(savedLng);
+  // Dirty = the runner moved the radius off the saved profile value. A no-op
+  // Save is gated so it can't fire an optimistic write + network call for an
+  // identical value.
+  const isDirty = radius !== initialRadius;
 
   // Unsaved-edit guard: only prompt to discard when the runner has actually
   // touched a control AND there's a real diff. Stops the false "Discard
@@ -123,6 +136,29 @@ export default function WorkingAreasScreen() {
       250,
     );
   }, [mapReady, mapRadius, lat, lng]);
+
+  // Silent, no-prompt location seed. `requirePermission: false` makes
+  // getCurrentCoords resolve null unless permission is ALREADY granted, so
+  // merely opening a settings screen can never raise an OS dialog; the
+  // explicit "Enable Location" CTA below owns the asking. Runs once on mount.
+  useEffect(() => {
+    if (useLocationStore.getState().currentLocation) {
+      setSeedingLocation(false);
+      return;
+    }
+    let cancelled = false;
+    (async () => {
+      const pos = await getCurrentCoords({ requirePermission: false, timeoutMs: 6000 }).catch(
+        () => null,
+      );
+      if (cancelled) return;
+      if (pos) setCurrentLocation({ lat: pos.lat, lng: pos.lng });
+      setSeedingLocation(false);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [setCurrentLocation]);
 
   // Drop any pending trailing-edge map update on unmount.
   useEffect(() => {
@@ -159,22 +195,20 @@ export default function WorkingAreasScreen() {
   }, [navigation, hasUnsavedEdit]);
 
   const handleSave = async () => {
-    if (!lat || !lng) {
-      toast.warning('Please enable location services to set your working area.');
-      return;
-    }
-    // Both the wire payload AND the optimistic apply use the three SEPARATE
-    // working_area_lat/lng/radius fields. The backend FormRequest
-    // (UpdateRunnerProfileRequest) accepts ONLY those three — there is no
-    // `working_area` rule/accessor, so `->update($request->validated())` would
-    // silently DROP a `working_area` JSON key (the old payload here), persisting
-    // nothing while the optimistic UI + success toast claimed it saved.
-    // Rolls back profile + radius on failure; the service invalidates
+    // Radius ONLY. The backend FormRequest (UpdateRunnerProfileRequest)
+    // accepts working_area_lat/lng/radius as three separate `sometimes`
+    // fields — omitting the first two is valid and leaves them as they are.
+    // We stopped sending them because nothing on the server reads them (see
+    // the note above `lat`), and writing a snapshot of wherever the runner
+    // happened to stand when they hit Save would only give a future consumer
+    // a stale centre to honour. The radius is location-independent, so Save
+    // now works even with GPS off.
+    // Rolls the profile back on failure; the service invalidates
     // ['runner','profile'], so no post-save refetch is needed.
     const prev = runnerProfile;
     const q = queueable(
       'runner.updateProfile',
-      { working_area_lat: lat, working_area_lng: lng, working_area_radius: radius },
+      { working_area_radius: radius },
       { dedupeKey: 'runner-profile-working-area' },
     );
     await runOptimistic({
@@ -182,8 +216,6 @@ export default function WorkingAreasScreen() {
         if (runnerProfile) {
           setRunnerProfile({
             ...runnerProfile,
-            working_area_lat: lat,
-            working_area_lng: lng,
             working_area_radius: radius,
           });
         }
@@ -194,11 +226,11 @@ export default function WorkingAreasScreen() {
       rollback: () => setRunnerProfile(prev),
       commit: q.commit,
       offline: q.offline,
-      errorMessage: "Couldn't update your working area.",
+      errorMessage: "Couldn't update your working radius.",
       retry: true,
       onSuccess: () => {
         Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
-        toast.success('Working area updated');
+        toast.success('Working radius updated');
       },
     });
   };
@@ -280,7 +312,7 @@ export default function WorkingAreasScreen() {
   return (
     <View className="flex-1 bg-background">
       <GradientHeader
-        title="Working Areas"
+        title="Working Radius"
         showBack
         fallbackHref="/(runner)/(tabs)/profile"
         onBackPress={handleBackPress}
@@ -301,7 +333,9 @@ export default function WorkingAreasScreen() {
       >
         {/* Map with circle overlay */}
         <View className="mx-5 h-56 rounded-2xl overflow-hidden mb-4">
-          {lat && lng ? (
+          {seedingLocation ? (
+            <Skeleton width="100%" height={MAP_HEIGHT} borderRadius={0} />
+          ) : lat && lng ? (
             <>
               <HereMapView
                 ref={mapRef}
@@ -365,19 +399,23 @@ export default function WorkingAreasScreen() {
           )}
         </View>
 
-        {/* Center Location */}
+        {/* Where the circle is measured from. Named for what it actually is
+            — the runner's live position — instead of the old "Center Point",
+            which read like a pin they had placed and the app would remember. */}
         <View className="px-5 mb-4">
           <Card className="p-4">
             <Text className="text-sm font-montserrat-bold text-textSecondary mb-1">
-              Center Point
+              Measured from your current location
             </Text>
             <Text className="text-sm font-montserrat text-textPrimary">
-              {lat && lng
-                ? `${lat.toFixed(4)}, ${lng.toFixed(4)}`
-                : 'Location not available'}
+              {seedingLocation
+                ? 'Locating you…'
+                : lat && lng
+                  ? `${lat.toFixed(4)}, ${lng.toFixed(4)}`
+                  : 'Location not available'}
             </Text>
             <Text className="text-xs font-montserrat text-textSecondary mt-1">
-              Uses your current location or previously saved center.
+              Offers are matched to wherever you are at the time — the circle moves with you.
             </Text>
           </Card>
         </View>
@@ -415,19 +453,32 @@ export default function WorkingAreasScreen() {
 
         <View className="px-5">
           <Text className="text-xs font-montserrat text-textSecondary leading-5">
-            You will receive errand requests within this radius of your center point.
-            A larger radius gives you more requests but may require longer travel.
+            Open offers are filtered to errands whose pickup is within this distance of
+            where you are. A larger radius gives you more requests but may require
+            longer travel.
+          </Text>
+          {/* Honest disclosure of a real server-side asymmetry: the open-offers
+              feed clamps to this radius, but MatchingService dispatches direct
+              offers using the platform-wide matching_radius_km. A runner with a
+              5 km radius can therefore be woken for a 9 km errand that never
+              appears in their list — better explained than left baffling. */}
+          <Text className="text-xs font-montserrat text-textSecondary leading-5 mt-2">
+            An errand offered to you directly can still come from a little further out.
+            Those arrive as an offer you can accept or decline — this radius only
+            controls the open offers you browse.
           </Text>
         </View>
       </ScrollView>
 
       {/* Save Button — dirty-gated so a no-op tap can't fire an optimistic
-          write + network call; disabled too while location is missing. */}
+          write + network call. No longer gated on having a GPS fix: the
+          radius is a plain number and saves fine with location off (only the
+          map preview needs coordinates). */}
       <BottomActionBar>
         <Button
-          title="Save Working Area"
+          title="Save Working Radius"
           onPress={handleSave}
-          disabled={!isDirty || !lat || !lng}
+          disabled={!isDirty}
           fullWidth
         />
       </BottomActionBar>
@@ -435,7 +486,7 @@ export default function WorkingAreasScreen() {
       <ConfirmModal
         visible={showDiscard}
         title="Discard changes?"
-        message="Your working area changes haven't been saved yet. Leave without saving?"
+        message="Your working radius hasn't been saved yet. Leave without saving?"
         confirmLabel="Discard"
         cancelLabel="Keep editing"
         destructive

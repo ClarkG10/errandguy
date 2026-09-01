@@ -19,6 +19,16 @@ class ListDisputeTickets extends ListRecords
 
         return [
             'all' => Tab::make('All')->badge(array_sum($c)),
+            // The dashboard's "Open disputes" card counts every UNRESOLVED
+            // dispute (open + reviewing + escalated) — this tab is the list
+            // that count actually corresponds to, so the card can deep-link
+            // somewhere that shows the same number it displays. Oldest first,
+            // like the other work queues.
+            'unresolved' => Tab::make('Unresolved')->icon('heroicon-m-inbox-stack')->badgeColor('warning')
+                ->badge(ListTabs::sum($c, 'open') + ListTabs::sum($c, 'reviewing') + ListTabs::sum($c, 'escalated'))
+                ->modifyQueryUsing(fn (Builder $query): Builder => $query
+                    ->unresolved()
+                    ->orderBy('created_at', 'asc')),
             // SLA queues: oldest first, so the customer who has been waiting
             // three days is on top instead of the last page. Same idiom as the
             // KYC pending tab (ListRunnerProfiles) — the asc clause is applied

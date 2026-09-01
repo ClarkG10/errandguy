@@ -1,5 +1,5 @@
 import React, { useState, useCallback, useRef, useEffect, useMemo } from 'react';
-import { View, Text, ScrollView, TextInput, RefreshControl, Pressable, Linking, KeyboardAvoidingView, Platform, useWindowDimensions, Animated, PanResponder } from 'react-native';
+import { AccessibilityInfo, View, Text, ScrollView, TextInput, RefreshControl, Pressable, Linking, KeyboardAvoidingView, Platform, useWindowDimensions, Animated, PanResponder } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import { useIsFocused } from '@react-navigation/native';
@@ -18,6 +18,8 @@ import {
   AlertTriangle,
   Banknote,
   ChevronRight,
+  Check,
+  Flag,
 } from 'lucide-react-native';
 import * as Haptics from 'expo-haptics';
 import { JourneyBeads } from '../../../components/ui/JourneyBeads';
@@ -53,7 +55,10 @@ import { useEchoChannel } from '../../../hooks/useEchoChannel';
 import { CacheTTL } from '../../../services/cache.service';
 import { runnerService } from '../../../services/runner.service';
 import { supportService } from '../../../services/support.service';
+import { queueable } from '../../../services/mutationQueue';
+import { runOptimistic } from '../../../utils/optimistic';
 import type { Booking } from '../../../types';
+import type { BookingStop } from '../../../types/booking';
 import { STATUS_LABELS } from '../../../constants/statusLabels';
 import { Elevation, LightColors } from '../../../constants/colors';
 import { Radius } from '../../../constants/radius';
@@ -103,6 +108,20 @@ const ARRIVAL_RADIUS_M = 120;
 
 /** Terminal statuses — no further runner action is possible. */
 const TERMINAL_STATUSES = ['completed', 'cancelled', 'no_runner'];
+
+/**
+ * Statuses where the runner is actually DRIVING the extra stops — the goods
+ * (or passenger) are aboard and everything left is drop-off legs. Before this
+ * the stop list is reference material the runner may want to plan against;
+ * from here it is the work itself, so the list is lifted into the sheet's
+ * primary column and the sheet reveals itself once per leg.
+ */
+const STOP_PHASE_STATUSES = new Set<string>([
+  'picked_up',
+  'in_transit',
+  'arrived_at_dropoff',
+  'delivered',
+]);
 
 /**
  * Monotonic rank of every status the runner can observe. Used ONLY to reject a
@@ -232,6 +251,146 @@ function RunnerEtaLeaf({
   return children(eta.minutes);
 }
 
+/**
+ * One extra stop on a multi-stop errand, rendered as a real work item.
+ *
+ * The customer is charged a per-stop fee for each of these and it flows into
+ * the runner payout, but until now they rendered as static <View>s inside a
+ * disclosure that defaults CLOSED — no way to navigate there, no way to call
+ * whoever is waiting, no way to record the visit. Each row now carries:
+ *   • a tick that stamps `completed_at` through the offline-safe queue,
+ *   • Navigate, which reuses the SAME external-nav handoff (and remembered
+ *     Waze-vs-Maps choice) the main CTA uses, and
+ *   • Call, on the stop's own contact — not the booking's customer.
+ *
+ * Presentational only: every action is a callback the cockpit owns.
+ */
+function StopRow({
+  stop,
+  canTick,
+  onToggle,
+  onNavigate,
+  onCall,
+}: {
+  stop: BookingStop;
+  /** Ticking is offered only once the runner is actually running the stops. */
+  canTick: boolean;
+  onToggle: (stop: BookingStop) => void;
+  onNavigate: (stop: BookingStop) => void;
+  onCall: (stop: BookingStop) => void;
+}) {
+  const done = !!stop.completed_at;
+  const phone = stop.contact_phone ?? null;
+  const meta = [stop.contact_name, phone].filter(Boolean).join(' \u00b7 ');
+  return (
+    <View
+      className={`rounded-xl px-3 py-2.5 mb-2 border ${
+        done ? 'bg-successSoft border-success' : 'bg-surfaceMuted border-divider'
+      }`}
+    >
+      <View className="flex-row items-start">
+        <Pressable
+          onPress={() => onToggle(stop)}
+          disabled={!canTick}
+          accessibilityRole="checkbox"
+          accessibilityState={{ checked: done, disabled: !canTick }}
+          accessibilityLabel={`Stop ${stop.sequence}, ${stop.address}${
+            meta ? `, ${meta}` : ''
+          }`}
+          accessibilityHint={
+            canTick
+              ? done
+                ? 'Marks this stop as not visited yet'
+                : 'Marks this stop as visited'
+              : undefined
+          }
+          hitSlop={8}
+          className="w-7 h-7 rounded-full items-center justify-center mr-2.5"
+          style={{
+            backgroundColor: done ? LightColors.success : LightColors.primaryLight,
+          }}
+        >
+          {done ? (
+            <Check size={15} color={LightColors.textInverse} strokeWidth={3} />
+          ) : (
+            <Text className="text-[11px] font-inter-semi text-primary">
+              {stop.sequence}
+            </Text>
+          )}
+        </Pressable>
+        <View className="flex-1">
+          <Text
+            className="text-[13px] font-montserrat-semi text-textPrimary"
+            numberOfLines={2}
+            style={
+              done
+                ? {
+                    textDecorationLine: 'line-through',
+                    color: LightColors.textTertiary,
+                  }
+                : undefined
+            }
+          >
+            {stop.address}
+          </Text>
+          {meta ? (
+            <Text className="text-[11px] font-montserrat text-textSecondary mt-0.5">
+              {meta}
+            </Text>
+          ) : null}
+          {stop.note ? (
+            <Text className="text-[11px] font-montserrat text-textSecondary mt-0.5">
+              “{stop.note}”
+            </Text>
+          ) : null}
+        </View>
+      </View>
+
+      {/* Per-stop handoffs. Layout lives in className (a Pressable styled only
+          through the style callback drops flexDirection under NativeWind). */}
+      <View className="flex-row gap-2 mt-2.5">
+        <Pressable
+          onPress={() => onNavigate(stop)}
+          accessibilityRole="button"
+          accessibilityLabel={`Navigate to stop ${stop.sequence}`}
+          accessibilityHint="Opens your navigation app at this stop"
+          hitSlop={8}
+          className="flex-1 h-10 rounded-xl bg-primaryLight border border-primaryMuted flex-row items-center justify-center"
+        >
+          <Navigation size={14} color={LightColors.primary} strokeWidth={2.2} />
+          <Text className="text-primary text-[12px] font-montserrat-bold ml-1.5">
+            Navigate
+          </Text>
+        </Pressable>
+        <Pressable
+          onPress={() => onCall(stop)}
+          disabled={!phone}
+          accessibilityRole="button"
+          accessibilityState={{ disabled: !phone }}
+          accessibilityLabel={
+            phone
+              ? `Call the contact at stop ${stop.sequence}`
+              : `No phone number for stop ${stop.sequence}`
+          }
+          hitSlop={8}
+          className={`h-10 px-4 rounded-xl border border-dividerStrong bg-surface flex-row items-center justify-center ${
+            phone ? '' : 'opacity-50'
+          }`}
+        >
+          <Phone
+            size={14}
+            color={phone ? LightColors.primary : LightColors.textMuted}
+            strokeWidth={2.2}
+          />
+          <Text className="text-textPrimary text-[12px] font-montserrat-semi ml-1.5">
+            Call
+          </Text>
+        </Pressable>
+      </View>
+    </View>
+  );
+}
+
 export default function ActiveErrandScreen() {
   const router = useRouter();
   const { id } = useLocalSearchParams<{ id: string }>();
@@ -306,6 +465,11 @@ export default function ActiveErrandScreen() {
   // by default. The runner's brain only needs the current step + the
   // ONE big action button; everything else is reference material.
   const [detailsOpen, setDetailsOpen] = useState(false);
+  // Unticked-stops warning shown on the FINAL Complete tap. `ack` is a ref, not
+  // state: once the runner has been told, the second tap must go straight
+  // through rather than re-prompting.
+  const [showStopWarning, setShowStopWarning] = useState(false);
+  const stopWarningAckRef = useRef(false);
   // Branded leave confirmation for the in-app back chevron (parity with
   // the SOS / payout / logout ConfirmModals). The Android hardware-back
   // guard keeps its own double-press toast — see useBackGuard.
@@ -628,6 +792,43 @@ export default function ActiveErrandScreen() {
     }
   })();
 
+  // ── Screen-reader step announcements ───────────────────────────────────
+  // The cockpit's step machine advances from three directions — the runner's
+  // own tap (optimistic), the realtime channel, and the reconcile poll — and
+  // until now nothing spoke: a runner using TalkBack while riding could not
+  // tell the errand had moved on.
+  //
+  // Same split the customer tracking screen uses: the journey-beads node below
+  // carries `accessibilityLiveRegion` for Android, and iOS — which ignores it
+  // — is announced imperatively here. The live region deliberately sits on the
+  // BEADS and not on the step hero, because the hero contains the live ETA
+  // pill that rewrites itself on every GPS fix (~6-10s); a live region around
+  // that would re-announce the whole step every few seconds mid-drive.
+  //
+  // Guarding on ONE derived-status ref is what keeps a transition delivered
+  // twice (the runner's optimistic advance, then the broadcast confirming it)
+  // from being spoken twice.
+  const heroTitleRef = useRef(runnerHeroTitle);
+  heroTitleRef.current = runnerHeroTitle;
+  const announcedStatusRef = useRef<string | null>(null);
+  useEffect(() => {
+    const status = booking?.status;
+    if (!status) return;
+    if (announcedStatusRef.current === status) return;
+    // Skip the first resolved status: the runner just opened the screen and
+    // the reader is already working through it.
+    const isFirst = announcedStatusRef.current === null;
+    announcedStatusRef.current = status;
+    // Android already heard it from the live region — announcing here too
+    // would say the whole step twice.
+    if (isFirst || Platform.OS !== 'ios') return;
+    const label = STATUS_LABELS[status] ?? status;
+    const next = heroTitleRef.current;
+    AccessibilityInfo.announceForAccessibility(
+      next ? `${label}. Next: ${next}` : label,
+    );
+  }, [booking?.status]);
+
   const customerPhone =
     booking?.dropoff_contact_phone ??
     booking?.pickup_contact_phone ??
@@ -654,6 +855,11 @@ export default function ActiveErrandScreen() {
   // offers both and remembers the choice — after the first pick it's a single
   // tap straight into the runner's own app (long-press re-opens the chooser).
   const [showNavPicker, setShowNavPicker] = useState(false);
+  // Which destination the chooser should launch once the runner picks an app.
+  // null = the current leg's own target (the main CTA); a per-stop Navigate
+  // pins that stop's coordinates so the chooser can never send the runner to
+  // the wrong pin. A ref, not state: the picker's render doesn't depend on it.
+  const navPickerTargetRef = useRef<{ lat: number; lng: number } | null>(null);
   const [preferredNavApp, setPreferredNavAppState] =
     useState<ExternalNavApp | null>(null);
   useEffect(() => {
@@ -680,8 +886,14 @@ export default function ActiveErrandScreen() {
   );
 
   const launchExternalNav = useCallback(
-    async (app: ExternalNavApp, remember: boolean) => {
-      if (!navTarget) {
+    async (
+      app: ExternalNavApp,
+      remember: boolean,
+      /** Explicit destination; defaults to the current leg's pin. */
+      target?: { lat: number; lng: number } | null,
+    ) => {
+      const dest = target ?? navTarget;
+      if (!dest) {
         toast.error('Address coordinates are missing');
         return;
       }
@@ -689,7 +901,7 @@ export default function ActiveErrandScreen() {
         setPreferredNavAppState(app);
         void setPreferredNavApp(app);
       }
-      const opened = await openExternalNav(app, navTarget.lat, navTarget.lng);
+      const opened = await openExternalNav(app, dest.lat, dest.lng);
       if (!opened) {
         toast.error(
           app === 'waze' ? 'Could not open Waze' : 'Could not open maps',
@@ -705,12 +917,116 @@ export default function ActiveErrandScreen() {
       toast.error('Address coordinates are missing');
       return;
     }
+    // Main CTA: clear any pinned stop target so the chooser follows the leg.
+    navPickerTargetRef.current = null;
     if (preferredNavApp) {
       void launchExternalNav(preferredNavApp, false);
       return;
     }
     setShowNavPicker(true);
   }, [navTarget, preferredNavApp, launchExternalNav]);
+
+  // ── Multi-stop legs ────────────────────────────────────────────────────
+  // The customer pays a per-stop fee for these and it flows into the payout,
+  // but the cockpit used to render them as static text inside a disclosure
+  // that defaults closed — no navigation, no call, no way to record a visit.
+  const stops: BookingStop[] = booking?.stops ?? [];
+  const hasStops = stops.length > 0;
+  // Ticking is offered only once the goods are aboard; before that the list is
+  // reference material the runner may want to plan a route against.
+  const canTickStops =
+    hasStops &&
+    !!booking &&
+    STOP_PHASE_STATUSES.has(booking.status) &&
+    !isReadOnly &&
+    isErrandActive;
+
+  /** Per-stop external handoff — same remembered Waze-vs-Maps choice as the
+   *  main CTA, just pinned to this stop's coordinates. */
+  const handleStopNavigate = useCallback(
+    (stop: BookingStop) => {
+      const coords = normalizeCoords(stop.lat, stop.lng);
+      if (!coords) {
+        toast.error('This stop has no coordinates');
+        return;
+      }
+      haptics.light();
+      if (preferredNavApp) {
+        void launchExternalNav(preferredNavApp, false, coords);
+        return;
+      }
+      navPickerTargetRef.current = coords;
+      setShowNavPicker(true);
+    },
+    [preferredNavApp, launchExternalNav],
+  );
+
+  /** Calls the person waiting AT THE STOP — not the booking's customer. */
+  const handleStopCall = useCallback((stop: BookingStop) => {
+    const phone = stop.contact_phone;
+    if (!phone) {
+      toast.error('No phone number for this stop');
+      return;
+    }
+    Linking.openURL(`tel:${phone}`).catch(() => toast.error('Could not start call'));
+  }, []);
+
+  /**
+   * Record (or undo) a stop visit. Optimistic + offline-queued, exactly like
+   * the shopping-checklist ticks: a runner ticks a stop off at a guardhouse or
+   * a basement car park, and a dead signal must not un-visit a stop they
+   * actually reached. The PATCH is replay-safe server-side (it compares the
+   * requested state under a row lock and no-ops), which is what makes it
+   * legal on the mutation queue. Nothing about the status ladder moves.
+   */
+  const handleToggleStop = useCallback((stop: BookingStop) => {
+    const cur = bookingRef.current;
+    if (!cur) return;
+    const nextCompleted = !stop.completed_at;
+    haptics.selection();
+
+    // Stop-scoped patch through the SWR cache. Functional so a sibling tick
+    // applied while this one is in flight can't be clobbered by a stale
+    // snapshot — the apply is per-stop, so the rollback is too.
+    const patchStop = (completedAt: string | null) =>
+      mutateRef.current((prev) => {
+        // `booking` can still be the runner-store copy when the detail fetch
+        // hasn't resolved; seed from whatever the screen is showing so the
+        // tick paints either way.
+        const base = prev ?? bookingRef.current;
+        if (!base) return prev;
+        return {
+          ...base,
+          stops: (base.stops ?? []).map((s) =>
+            s.id === stop.id ? { ...s, completed_at: completedAt } : s,
+          ),
+        };
+      });
+
+    const q = queueable(
+      'runner.completeStop',
+      { bookingId: cur.id, stopId: stop.id, completed: nextCompleted },
+      {
+        // Reconcile to server truth once the queued tick lands — and also when
+        // the queue gives up on it (a 4xx because the errand closed).
+        invalidate: [['runner', 'errand', 'byId', cur.id]],
+        // Per STOP: toggling one stop three times offline coalesces to its
+        // final state and can never supersede a sibling stop's queued tick.
+        dedupeKey: `stop-${cur.id}-${stop.id}`,
+      },
+    );
+
+    void runOptimistic({
+      apply: () => patchStop(nextCompleted ? new Date().toISOString() : null),
+      rollback: () => patchStop(stop.completed_at ?? null),
+      ...q,
+      errorMessage: "Couldn't update that stop. Please try again.",
+      retry: true,
+      // Silent while offline: the global OfflineBanner already says why, and
+      // the tick staying ticked IS the confirmation.
+      offlineMessage: null,
+    });
+  }, []);
 
   // Runner-side SOS — tap once to open confirm, again to broadcast.
   // Idempotent on the backend, so a double-tap won't stack alerts.
@@ -831,6 +1147,23 @@ export default function ActiveErrandScreen() {
 
     const nextStatus = getNextStatus(booking.status, errandSlug);
     if (!nextStatus) return;
+
+    // Final Complete tap with extra stops still unticked: WARN, never block.
+    // A runner turned away at a gate, or sent to an address nobody answers,
+    // must not be trapped on a job they cannot close — the tick is a record of
+    // the visit, not a gate on completion. Named so the runner can tell an
+    // "I forgot to tick it" from an "I never went". Shown once per session:
+    // acknowledging it must not turn into a nag on every retry.
+    if (nextStatus === 'completed' && !stopWarningAckRef.current) {
+      const unvisited = (bookingRef.current?.stops ?? []).filter(
+        (stop) => !stop.completed_at,
+      );
+      if (unvisited.length > 0) {
+        haptics.warning();
+        setShowStopWarning(true);
+        return;
+      }
+    }
 
     // Shopping errands: capture receipt + actual cost when transitioning into picked_up.
     if (booking.status === 'arrived_at_pickup' && isShoppingErrand) {
@@ -1272,6 +1605,8 @@ export default function ActiveErrandScreen() {
   // (transportation PIN entry), reveal it once by snapping to mid so
   // the field isn't hidden behind a dead-looking disabled button.
   const autoSnapStatusRef = useRef<string | null>(null);
+  // One-shot latch for the multi-stop reveal (see the effect below).
+  const stopsRevealedRef = useRef(false);
   useEffect(() => {
     if (!booking) return;
     const status = booking.status;
@@ -1288,10 +1623,26 @@ export default function ActiveErrandScreen() {
       }
       return;
     }
+    // Multi-stop: the first time the runner enters a leg where the extra stops
+    // ARE the work, lift the sheet so the stop list is on screen without a
+    // tap. One-shot per screen session (same shape as the shopping-list
+    // auto-open below) — re-lifting on every stop-phase transition would fight
+    // a runner who had deliberately dropped the sheet to see the map.
+    if (
+      hasStops &&
+      !stopsRevealedRef.current &&
+      !isReadOnly &&
+      STOP_PHASE_STATUSES.has(status)
+    ) {
+      stopsRevealedRef.current = true;
+      userMovedRef.current = true; // don't let the collapsed pin fight the reveal
+      snapTo(Math.max(SNAP_MID, snapCollapsedRef.current));
+      return;
+    }
     if (!userMovedRef.current && Math.abs(currentSheetHeightRef.current - SNAP_COLLAPSED) > 2) {
       snapTo(SNAP_COLLAPSED);
     }
-  }, [booking?.status, isTransportation, pinVerified, booking?.ride_pin_verified, SNAP_COLLAPSED, SNAP_MID, snapTo]);
+  }, [booking?.status, isTransportation, pinVerified, booking?.ride_pin_verified, hasStops, isReadOnly, SNAP_COLLAPSED, SNAP_MID, snapTo]);
 
   // Shopping errands: the tickable list IS the runner's core reference,
   // so open the Trip-details disclosure once on load (the ErrandDetailsCard
@@ -1441,6 +1792,73 @@ export default function ActiveErrandScreen() {
       });
     }
   }
+
+  // ── Derived display values (plain, below the early-return guard) ───────
+  const heroSubtitle =
+    (inPickupPhase
+      ? booking.pickup_address ?? errandRule.pickupLabel
+      : booking.dropoff_address ?? errandRule.dropoffLabel) ?? undefined;
+  // "Step 4 of 8" for the beads' screen-reader label — the beads themselves
+  // are eight unlabeled dots, i.e. eight dead swipe stops without this.
+  const stepPositionLabel =
+    currentStatusIdx >= 0
+      ? `Step ${currentStatusIdx + 1} of ${timelineSteps.length}`
+      : null;
+  // The one string that both labels the beads and — via the live region on
+  // them — is what Android speaks when the step advances. Deliberately ETA-
+  // free so a GPS fix can never trigger it. The iOS announcer above says the
+  // same thing minus the step position.
+  const stepAnnouncement = [
+    stepPositionLabel,
+    STATUS_LABELS[booking.status] ?? booking.status,
+    runnerHeroTitle ? `Next: ${runnerHeroTitle}` : null,
+  ]
+    .filter(Boolean)
+    .join('. ');
+  const visitedStopCount = stops.filter((stop) => !!stop.completed_at).length;
+  const unvisitedStops = stops.filter((stop) => !stop.completed_at);
+  // Once the runner is actually running the stops they ARE the job, so the
+  // list sits above the customer pill; before that it is reference material
+  // and sits below it. Either way it is out of the collapsed "Trip details"
+  // disclosure it used to hide inside.
+  const stopsInPrimarySlot = canTickStops;
+
+  const stopsSection = hasStops ? (
+    <View className="mb-3">
+      <View className="flex-row items-center justify-between mb-2">
+        <View className="flex-row items-center">
+          <Flag size={12} color={LightColors.textTertiary} strokeWidth={2.2} />
+          <Text
+            className="text-[10px] font-montserrat-bold text-textTertiary uppercase ml-1.5"
+            style={{ letterSpacing: 1.2 }}
+          >
+            Extra stops
+          </Text>
+        </View>
+        {canTickStops && (
+          <Text className="text-[11px] font-montserrat-bold text-primary">
+            {visitedStopCount}/{stops.length} visited
+          </Text>
+        )}
+      </View>
+      {stops.map((stop) => (
+        <StopRow
+          key={stop.id}
+          stop={stop}
+          canTick={canTickStops}
+          onToggle={handleToggleStop}
+          onNavigate={handleStopNavigate}
+          onCall={handleStopCall}
+        />
+      ))}
+      {canTickStops && (
+        <Text className="text-[11px] font-montserrat text-textTertiary leading-[15px]">
+          Tick each stop as you leave it — the customer sees it land live. If a
+          stop turns you away you can still complete the errand.
+        </Text>
+      )}
+    </View>
+  ) : null;
 
   return (
     <SafeAreaView className="flex-1 bg-background" edges={[]}>
@@ -1655,19 +2073,50 @@ export default function ActiveErrandScreen() {
               className="px-5 pb-2"
               onLayout={(e) => setHeaderH(e.nativeEvent.layout.height)}
             >
-              <JourneyBeads status={booking.status} showLabel={false} />
+              {/* Beads collapse into ONE labelled node — otherwise a reader
+                  swipes through eight unlabeled dots to reach the headline —
+                  and that node is the screen's live region: its label changes
+                  only when the STEP does, never on a GPS fix. */}
+              <View
+                accessible
+                accessibilityLiveRegion="polite"
+                accessibilityLabel={stepAnnouncement}
+              >
+                <JourneyBeads status={booking.status} showLabel={false} />
+              </View>
               <View className="mt-2">
                 <RunnerEtaLeaf targetLat={etaTargetLat} targetLng={etaTargetLng}>
                   {(etaMin) => (
-                    <CurrentStepHero
-                      eyebrow={inPickupPhase ? 'PICKUP' : 'DROP-OFF'}
-                      title={runnerHeroTitle}
-                      subtitle={(inPickupPhase
-                        ? booking.pickup_address ?? errandRule.pickupLabel
-                        : booking.dropoff_address ?? errandRule.dropoffLabel) ?? undefined}
-                      etaMinutes={etaMin != null ? Math.max(1, Math.round(etaMin)) : null}
-                      accent={booking.status === 'cancelled' ? 'danger' : 'brand'}
-                    />
+                    // The verb-led "do this now" headline is the single most
+                    // important element on the screen and had no a11y props at
+                    // all: not a header, not a jump target, its eyebrow /
+                    // title / subtitle / ETA read as four separate swipes.
+                    // Grouped here (at the call site, so the shared component
+                    // stays untouched) into one header node carrying the whole
+                    // instruction — including the ETA, which is otherwise lost
+                    // when the group collapses.
+                    <View
+                      accessible
+                      accessibilityRole="header"
+                      accessibilityLabel={[
+                        STATUS_LABELS[booking.status] ?? booking.status,
+                        runnerHeroTitle,
+                        heroSubtitle,
+                        etaMin != null
+                          ? `${Math.max(1, Math.round(etaMin))} minutes away`
+                          : null,
+                      ]
+                        .filter(Boolean)
+                        .join('. ')}
+                    >
+                      <CurrentStepHero
+                        eyebrow={inPickupPhase ? 'PICKUP' : 'DROP-OFF'}
+                        title={runnerHeroTitle}
+                        subtitle={heroSubtitle}
+                        etaMinutes={etaMin != null ? Math.max(1, Math.round(etaMin)) : null}
+                        accent={booking.status === 'cancelled' ? 'danger' : 'brand'}
+                      />
+                    </View>
                   )}
                 </RunnerEtaLeaf>
                 {/* Action row — Navigate (primary, in-app turn-by-turn)
@@ -1784,6 +2233,8 @@ export default function ActiveErrandScreen() {
                 />
               }
             >
+              {stopsInPrimarySlot ? stopsSection : null}
+
               {/* ── Customer pill ─────────────────────────────── */}
               <View className="flex-row items-center bg-surface border border-divider rounded-2xl p-3 mb-3">
                 <Avatar name={customerName} size="md" />
@@ -1880,8 +2331,25 @@ export default function ActiveErrandScreen() {
                 </View>
               )}
 
+              {stopsInPrimarySlot ? null : stopsSection}
+
               {/* ── Payout strip (always visible) ─────────────── */}
-              <View className="flex-row items-center justify-between bg-surface border border-divider rounded-2xl px-4 py-3 mb-3">
+              <View
+                className="flex-row items-center justify-between bg-surface border border-divider rounded-2xl px-4 py-3 mb-3"
+                // One node, one sentence: the label and the figure read as
+                // "Your payout, ₱250" instead of two orphaned swipe stops.
+                accessible
+                accessibilityLabel={[
+                  booking.runner_payout != null
+                    ? `Your payout, ${formatCurrency(booking.runner_payout)}`
+                    : 'Your payout is pending',
+                  isShoppingErrand && booking.shopping_budget != null
+                    ? `Shopping budget ${formatCurrency(booking.shopping_budget)}`
+                    : null,
+                ]
+                  .filter(Boolean)
+                  .join('. ')}
+              >
                 <View>
                   <Text className="text-[10px] font-montserrat-bold uppercase text-textTertiary" style={{ letterSpacing: 1 }}>
                     Your payout
@@ -1914,6 +2382,7 @@ export default function ActiveErrandScreen() {
               <Pressable
                 onPress={() => setDetailsOpen((v) => !v)}
                 accessibilityRole="button"
+                accessibilityState={{ expanded: detailsOpen }}
                 accessibilityLabel={detailsOpen ? 'Hide trip details' : 'Show trip details'}
                 hitSlop={6}
                 className="flex-row items-center justify-between py-2"
@@ -1950,46 +2419,12 @@ export default function ActiveErrandScreen() {
                     />
                   </View>
 
-                  {(booking.stops?.length ?? 0) > 0 && (
-                    <View className="mb-3">
-                      <Text className="text-[10px] font-montserrat-bold text-textTertiary mb-2 uppercase" style={{ letterSpacing: 1.2 }}>
-                        Extra stops
-                      </Text>
-                      {(booking.stops ?? []).map((stop) => (
-                        <View
-                          key={stop.id}
-                          className="flex-row items-start bg-surfaceMuted rounded-xl px-3 py-2.5 mb-2"
-                        >
-                          <View
-                            className="w-6 h-6 rounded-full items-center justify-center mr-2.5"
-                            style={{ backgroundColor: LightColors.primaryLight }}
-                          >
-                            <Text className="text-[11px] font-inter-semi text-primary">
-                              {stop.sequence}
-                            </Text>
-                          </View>
-                          <View className="flex-1">
-                            <Text
-                              className="text-[13px] font-montserrat-semi text-textPrimary"
-                              numberOfLines={2}
-                            >
-                              {stop.address}
-                            </Text>
-                            {stop.contact_name || stop.contact_phone ? (
-                              <Text className="text-[11px] font-montserrat text-textSecondary mt-0.5">
-                                {[stop.contact_name, stop.contact_phone].filter(Boolean).join(' · ')}
-                              </Text>
-                            ) : null}
-                            {stop.note ? (
-                              <Text className="text-[11px] font-montserrat text-textSecondary mt-0.5">
-                                “{stop.note}”
-                              </Text>
-                            ) : null}
-                          </View>
-                        </View>
-                      ))}
-                    </View>
-                  )}
+                  {/* The extra-stop list used to live HERE, as static text
+                      inside a disclosure that defaults closed — the customer
+                      paid a per-stop fee for destinations the runner was never
+                      driven to. It now renders in the sheet's primary column
+                      (search `stopsSection`) with per-stop Navigate, Call and
+                      a visit tick. Nothing is duplicated here on purpose. */}
 
                   <Text className="text-[10px] font-montserrat-bold text-textTertiary mb-3 uppercase" style={{ letterSpacing: 1.2 }}>
                     Progress
@@ -2198,6 +2633,19 @@ export default function ActiveErrandScreen() {
             .finally(() => setSubmittingReceipt(false));
         }}
         onClose={() => setShowReceipt(false)}
+        // Real exits from an over-budget basket. The budget itself cannot be
+        // raised anywhere in the product, so the honest options are: talk to
+        // the customer about the basket, or hand it to support. The modal
+        // stays mounted, so the amount + receipt the runner already entered
+        // are still there when they come back.
+        onMessageCustomer={() => {
+          setShowReceipt(false);
+          router.push(`/(runner)/chat/${booking.id}` as any);
+        }}
+        onReportIssue={() => {
+          setShowReceipt(false);
+          setShowIssueSheet(true);
+        }}
       />
 
       {/* Completion Modal */}
@@ -2322,6 +2770,43 @@ export default function ActiveErrandScreen() {
         onCancel={() => setShowArrivalPrompt(false)}
       />
 
+      {/* Unticked extra stops on the FINAL Complete tap — a warning, never a
+          gate. A runner turned away at a stop (gate closed, nobody home, the
+          customer redirected them by chat) must be able to close the errand;
+          blocking here would strand them on a job with no exit. So we name the
+          stops, offer a way back to tick them, and let "Complete anyway"
+          through. The acknowledgement is remembered for the session so the
+          second tap isn't a second interrogation. */}
+      <ConfirmModal
+        visible={showStopWarning}
+        title={
+          unvisitedStops.length === 1
+            ? '1 stop not marked visited'
+            : `${unvisitedStops.length} stops not marked visited`
+        }
+        message={`${unvisitedStops
+          .map((stop) => `Stop ${stop.sequence}: ${stop.address}`)
+          .join('\n')}\n\nIf you did go, tick ${
+          unvisitedStops.length === 1 ? 'it' : 'them'
+        } off first so the customer can see it. If you were turned away, carry on — you can still complete the errand.`}
+        confirmLabel="Complete anyway"
+        cancelLabel="Back to stops"
+        onConfirm={() => {
+          stopWarningAckRef.current = true;
+          setShowStopWarning(false);
+          void handleStatusUpdate();
+        }}
+        onCancel={() => {
+          setShowStopWarning(false);
+          // The completion CTA is a SlideToConfirm that latches once slid —
+          // re-arm it, or the runner is left holding a spent control.
+          setSlideResetKey((k) => k + 1);
+          // Put the stop list back on screen so "Back to stops" means it.
+          userMovedRef.current = true;
+          snapTo(Math.max(SNAP_MID, snapCollapsedRef.current));
+        }}
+      />
+
       {/* Runner SOS confirm */}
       <ConfirmModal
         visible={showSOSConfirm}
@@ -2362,7 +2847,10 @@ export default function ActiveErrandScreen() {
           actually drive with. */}
       <FloatingModal
         isVisible={showNavPicker}
-        onClose={() => setShowNavPicker(false)}
+        onClose={() => {
+          navPickerTargetRef.current = null;
+          setShowNavPicker(false);
+        }}
         title="Navigate with"
       >
         {(
@@ -2384,7 +2872,11 @@ export default function ActiveErrandScreen() {
             onPress={() => {
               haptics.selection();
               setShowNavPicker(false);
-              void launchExternalNav(opt.app, true);
+              // A per-stop Navigate pins its own coordinates; the main CTA
+              // leaves this null and falls back to the current leg's pin.
+              const target = navPickerTargetRef.current;
+              navPickerTargetRef.current = null;
+              void launchExternalNav(opt.app, true, target);
             }}
             accessibilityRole="button"
             accessibilityLabel={`Navigate with ${opt.label}`}

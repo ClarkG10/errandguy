@@ -15,6 +15,18 @@ class RunnerProfile extends Model
     protected $keyType = 'string';
     public $incrementing = false;
 
+    /**
+     * The documents a runner MUST upload before a KYC application can be
+     * reviewed at all — the SINGLE source of truth for that pair on the PHP
+     * side. The mobile runner gate declares the same list
+     * (errandguy-mobile/src/app/(runner)/_layout.tsx REQUIRED_RUNNER_DOC_TYPES,
+     * itself mirroring the `required: true` entries of REQUIRED_DOCUMENTS in
+     * onboarding.tsx). If the two ever drift, an application the app considers
+     * complete would be filed under "Incomplete" in the admin queue and wait
+     * longer than it should — so change them together.
+     */
+    public const REQUIRED_DOCUMENT_TYPES = ['government_id', 'selfie'];
+
     protected $fillable = [
         'user_id',
         'verification_status',
@@ -132,5 +144,67 @@ class RunnerProfile extends Model
     public function scopePending($query)
     {
         return $query->where('verification_status', 'pending');
+    }
+
+    /**
+     * Applications an admin can actually act on: a non-rejected document on file
+     * for EVERY required type (mirrors the mobile gate's isDocComplete — a
+     * rejected document doesn't count, the runner is sent back to re-upload).
+     *
+     * `pending` on its own is not a review queue: the profile row is created at
+     * registration, before a single upload, so the emptiest applications are
+     * also the oldest and permanently head-block an oldest-first list. Compose
+     * with pending() for "the KYC queue".
+     */
+    public function scopeReadyForReview($query)
+    {
+        foreach (self::REQUIRED_DOCUMENT_TYPES as $type) {
+            $query->whereHas('documents', fn ($documents) => $documents
+                ->where('document_type', $type)
+                ->where('status', '!=', 'rejected'));
+        }
+
+        return $query;
+    }
+
+    /**
+     * The exact complement of readyForReview(): at least one required document
+     * is still missing (or was rejected and not replaced). Kept as its own scope
+     * so the "Incomplete" bucket stays visible with its own count — nothing
+     * disappears from the admin, it just stops blocking the review queue.
+     */
+    public function scopeAwaitingDocuments($query)
+    {
+        return $query->where(function ($outer) {
+            foreach (self::REQUIRED_DOCUMENT_TYPES as $type) {
+                $outer->orWhereDoesntHave('documents', fn ($documents) => $documents
+                    ->where('document_type', $type)
+                    ->where('status', '!=', 'rejected'));
+            }
+        });
+    }
+
+    /**
+     * documents_count plus a count per review status, so the admin list can show
+     * a "Docs" cell ("2 uploaded · 1 pending") and a reviewable row is
+     * distinguishable from a dead one without opening it.
+     *
+     * required_documents_count is a row count over the required types; the
+     * uploader keeps at most one row per type, so "== count(REQUIRED_DOCUMENT_TYPES)"
+     * means complete. It drives display only — readyForReview() above does the
+     * exact per-type check that filing decisions rest on.
+     */
+    public function scopeWithDocumentCounts($query)
+    {
+        return $query->withCount([
+            'documents',
+            'documents as documents_pending_count' => fn ($documents) => $documents
+                ->where('status', 'pending'),
+            'documents as documents_rejected_count' => fn ($documents) => $documents
+                ->where('status', 'rejected'),
+            'documents as required_documents_count' => fn ($documents) => $documents
+                ->whereIn('document_type', self::REQUIRED_DOCUMENT_TYPES)
+                ->where('status', '!=', 'rejected'),
+        ]);
     }
 }
