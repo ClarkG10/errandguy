@@ -38,6 +38,17 @@ Schedule::command('cache:prune-stale-tags')->hourly();
 // Data retention: cleanup old locations (24h) and messages (30d post-completion)
 Schedule::command('errandguy:cleanup-locations')->daily()->onOneServer();
 
+// Money-in safety net: settle top-ups the customer paid for and walked away
+// from. The status endpoint pull-reconciles against the gateway, but only while
+// the app is POLLING it — so a dropped webhook plus a customer who never
+// reopened the app left money out of their GCash and a row stuck 'pending'
+// forever, with nothing on either side reconciling it. Every 15 minutes: fast
+// enough that nobody waits long, and --limit bounds gateway calls per run.
+Schedule::command('errandguy:reconcile-topups')
+    ->everyFifteenMinutes()
+    ->onOneServer()
+    ->withoutOverlapping();
+
 // Reap dead access tokens. Nothing has ever pruned personal_access_tokens, so
 // every token any user has ever been issued is still on the row — and the
 // sliding session (RotateAccessToken) now leaves the outgoing token behind on
