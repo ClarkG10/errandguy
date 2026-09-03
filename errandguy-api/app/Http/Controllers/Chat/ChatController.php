@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers\Chat;
 
+use App\Enums\BookingStatus;
 use App\Events\ChatMessageSent;
 use App\Http\Controllers\Controller;
 use App\Http\Requests\Chat\SendMessageRequest;
@@ -112,7 +113,7 @@ class ChatController extends Controller
 
         $this->authorizeBookingParticipant($request->user(), $booking);
 
-        if (in_array($booking->status, ['completed', 'cancelled'])) {
+        if (BookingStatus::isFinalized($booking->status)) {
             return response()->json([
                 'message' => 'Cannot send messages on a closed booking.',
             ], 422);
@@ -205,7 +206,7 @@ class ChatController extends Controller
             ->where(function ($q) use ($userId) {
                 $q->where('customer_id', $userId)->orWhere('runner_id', $userId);
             })
-            ->whereNotIn('status', ['completed', 'cancelled', 'no_runner'])
+            ->whereNotIn('status', BookingStatus::ENDED)
             ->pluck('id');
 
         if ($bookingIds->isEmpty()) {
@@ -290,7 +291,7 @@ class ChatController extends Controller
             ->pluck('unread', 'booking_id');
 
         $cutoff = now()->subDays(14);
-        $isActive = fn (Booking $b) => ! in_array($b->status, ['completed', 'cancelled', 'no_runner']);
+        $isActive = fn (Booking $b) => ! BookingStatus::isEnded($b->status);
 
         $items = $bookings
             ->map(function (Booking $b) use ($userId, $latestPerBooking, $unreadPerBooking, $cutoff, $isActive) {

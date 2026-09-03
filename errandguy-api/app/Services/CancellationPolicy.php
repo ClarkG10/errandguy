@@ -2,6 +2,7 @@
 
 namespace App\Services;
 
+use App\Enums\BookingStatus;
 use App\Models\Booking;
 
 /**
@@ -43,7 +44,7 @@ class CancellationPolicy
     {
         $status = $booking->status;
 
-        if (in_array($status, ['completed', 'cancelled', 'no_runner'], true)) {
+        if (BookingStatus::isEnded($status)) {
             return [
                 'fee' => 0.0,
                 'tier' => 'free',

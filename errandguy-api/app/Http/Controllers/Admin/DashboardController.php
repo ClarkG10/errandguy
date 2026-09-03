@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers\Admin;
 
+use App\Enums\BookingStatus;
 use App\Http\Controllers\Controller;
 use App\Models\Booking;
 use App\Models\User;
@@ -45,7 +46,7 @@ class DashboardController extends Controller
                     // Filament dashboard's own card, BookingListStats, ActionQueue
                     // which classes no_runner as "stuck"). Without this the API
                     // dashboard's active count disagreed with the panel's.
-                    'active' => Booking::whereNotIn('status', ['completed', 'cancelled', 'no_runner'])->count(),
+                    'active' => Booking::whereNotIn('status', BookingStatus::ENDED)->count(),
                     'completed_today' => Booking::where('status', 'completed')
                         ->where('completed_at', '>=', $todayStart)
                         ->where('completed_at', '<', $tomorrowStart)->count(),

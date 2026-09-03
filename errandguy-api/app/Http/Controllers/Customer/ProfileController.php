@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers\Customer;
 
+use App\Enums\BookingStatus;
 use App\Http\Controllers\Controller;
 use App\Http\Requests\UpdateProfileRequest;
 use App\Http\Requests\UploadAvatarRequest;
@@ -135,7 +136,7 @@ class ProfileController extends Controller
                 $q->where('customer_id', $user->id)
                   ->orWhere('runner_id', $user->id);
             })
-            ->whereNotIn('status', ['completed', 'cancelled', 'no_runner'])
+            ->whereNotIn('status', BookingStatus::ENDED)
             ->exists();
 
         if ($hasActive) {

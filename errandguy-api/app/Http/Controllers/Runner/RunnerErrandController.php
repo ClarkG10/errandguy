@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers\Runner;
 
+use App\Enums\BookingStatus;
 use App\Events\BookingStatusChanged;
 use App\Http\Controllers\Controller;
 use App\Support\ErrorCode;
@@ -69,7 +70,7 @@ class RunnerErrandController extends Controller
      * Terminal statuses after which a booking's per-stop ticks are frozen —
      * same set ShoppingChecklistController uses for its checklist.
      */
-    private const CLOSED_STATUSES = ['completed', 'cancelled'];
+    private const CLOSED_STATUSES = BookingStatus::FINALIZED;
 
     public function __construct(
         private MatchingService $matchingService,

@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers;
 
+use App\Enums\BookingStatus;
 use App\Models\Booking;
 use App\Models\SOSAlert;
 use Illuminate\Http\JsonResponse;
@@ -130,7 +131,7 @@ class PublicTripController extends Controller
             // recipient can't keep watching the runner / customer addresses
             // indefinitely. The customer can still re-share if they reopen
             // (rebook) the errand.
-            ->whereNotIn('status', ['completed', 'cancelled', 'no_runner'])
+            ->whereNotIn('status', BookingStatus::ENDED)
             // TTL backstop: a share link also dies after trip_share_expires_at.
             // Lenient (NULL still resolves) on purpose — a NULL expiry means a
             // link minted before this column existed (or by another backend
@@ -235,7 +236,7 @@ class PublicTripController extends Controller
             'status_label' => $this->statusLabel($booking),
             'status_steps' => $this->statusSteps($booking),
             'eta' => $this->eta($booking, $latestLocation, $fixAge),
-            'is_ended' => in_array($booking->status, ['completed', 'cancelled', 'no_runner'], true),
+            'is_ended' => BookingStatus::isEnded($booking->status),
             // True ONLY when the token itself was an SOS live link, so a plain
             // trip-share recipient is never told about an emergency they
             // weren't given the emergency link for.

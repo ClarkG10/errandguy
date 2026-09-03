@@ -2,6 +2,7 @@
 
 namespace App\Filament\Widgets;
 
+use App\Enums\BookingStatus;
 use App\Models\Booking;
 use App\Models\RunnerProfile;
 use App\Models\User;
@@ -55,7 +56,7 @@ class AdminStatsOverview extends StatsOverviewWidget
                 'customers_new_today' => User::where('role', 'customer')->where('created_at', '>=', $todayStart)->count(),
                 'runners' => User::where('role', 'runner')->count(),
                 'runners_online' => RunnerProfile::where('is_online', true)->count(),
-                'active_bookings' => Booking::whereNotIn('status', ['completed', 'cancelled', 'no_runner'])->count(),
+                'active_bookings' => Booking::whereNotIn('status', BookingStatus::ENDED)->count(),
                 'gmv_today' => $gmv($todayStart, today()->addDay()),
                 'gmv_yesterday' => $gmv($yesterdayStart, $todayStart),
                 'gmv_spark' => $spark,

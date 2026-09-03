@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers\Runner;
 
+use App\Enums\BookingStatus;
 use App\Http\Controllers\Controller;
 use App\Http\Resources\BookingResource;
 use App\Models\Booking;
@@ -11,7 +12,7 @@ use Illuminate\Http\Request;
 class ShoppingChecklistController extends Controller
 {
     /** Terminal statuses where a booking's checklist can no longer be ticked. */
-    private const CLOSED_STATUSES = ['completed', 'cancelled'];
+    private const CLOSED_STATUSES = BookingStatus::FINALIZED;
 
     /**
      * PATCH /runner/errand/{id}/shopping-items — tick items off the list.

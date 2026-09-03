@@ -2,6 +2,7 @@
 
 namespace App\Services;
 
+use App\Enums\BookingStatus;
 use App\Enums\PaymentStatus;
 use App\Events\BookingCancelled;
 use App\Models\Booking;
@@ -196,7 +197,7 @@ class BookingService
     {
         $booking = Booking::findOrFail($bookingId);
 
-        if (in_array($booking->status, ['completed', 'cancelled'], true)) {
+        if (BookingStatus::isFinalized($booking->status)) {
             throw new \App\Exceptions\BookingStateException('Booking already finalized');
         }
 
