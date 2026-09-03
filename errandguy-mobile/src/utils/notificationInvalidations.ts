@@ -77,8 +77,12 @@ export function notificationInvalidationKeys(
     }
 
     // A runner KYC document was approved / rejected — the verification banner
-    // and the go-online gate both read the runner profile.
+    // and the go-online gate both read the runner profile. `onboarding_reminder`
+    // shares this: the runner may have uploaded something since the reminder was
+    // queued, so the gate they arrive at must be current rather than the one
+    // they left behind.
     case 'document_update':
+    case 'onboarding_reminder':
       return [['runner', 'profile']];
 
     // Payout sent / failed, or a wallet credit landed.

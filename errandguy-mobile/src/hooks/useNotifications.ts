@@ -202,7 +202,13 @@ function handleNotificationTapped(
     case 'referral':
       router.push((isRunner ? '/(runner)/(tabs)/earnings' : '/(customer)/wallet/') as never);
       break;
+    // Both land on the document screen: one is an admin decision on a
+    // submitted document, the other is the reminder for an application left
+    // unfinished (errandguy:send-onboarding-reminders). The reminder keeps its
+    // own type so the server can read its own cadence history off the
+    // notifications table, but the destination is the same screen.
     case 'document_update':
+    case 'onboarding_reminder':
       if (isRunner) router.push('/(runner)/settings/documents' as never);
       break;
     case 'chat':

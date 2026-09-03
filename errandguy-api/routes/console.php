@@ -38,6 +38,18 @@ Schedule::command('cache:prune-stale-tags')->hourly();
 // Data retention: cleanup old locations (24h) and messages (30d post-completion)
 Schedule::command('errandguy:cleanup-locations')->daily()->onOneServer();
 
+// Supply: nudge runners who started signing up and stopped. A runner registers,
+// hits the document gate, has to go find a government ID, and puts the phone
+// down meaning to come back — and nothing ever reminded them, so the
+// application sat at 'pending' forever and they never earned a peso. Daily at
+// 10:00 business time, because a "go photograph your ID" push is useless
+// overnight. The command owns the restraint (3 nudges, 48h apart, first
+// fortnight only).
+Schedule::command('errandguy:send-onboarding-reminders')
+    ->dailyAt('10:00')
+    ->timezone(config('app.business_timezone', 'Asia/Manila'))
+    ->onOneServer();
+
 // Money-in safety net: settle top-ups the customer paid for and walked away
 // from. The status endpoint pull-reconciles against the gateway, but only while
 // the app is POLLING it — so a dropped webhook plus a customer who never
