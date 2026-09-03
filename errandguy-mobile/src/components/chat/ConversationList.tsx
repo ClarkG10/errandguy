@@ -15,6 +15,7 @@ import { chatService } from '../../services/chat.service';
 import { prefetchChatMessages } from '../../services/preload.service';
 import { useAuthStore } from '../../stores/authStore';
 import { LightColors } from '../../constants/colors';
+import { statusLabel } from '../../constants/statusLabels';
 import type { Conversation } from '../../types';
 
 /** Renders the chat inbox. The same component drives the customer and
@@ -39,22 +40,6 @@ function timeAgo(iso: string | null): string {
   const d = new Date(iso);
   return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
 }
-
-const STATUS_LABEL: Record<string, string> = {
-  pending: 'Looking for runner',
-  matched: 'Runner assigned',
-  accepted: 'Accepted',
-  heading_to_pickup: 'Heading to pickup',
-  arrived_at_pickup: 'At pickup',
-  picked_up: 'Picked up',
-  in_transit: 'On the way',
-  arrived_at_dropoff: 'At drop-off',
-  delivered: 'Delivered',
-  completed: 'Completed',
-  cancelled: 'Cancelled',
-  no_runner: 'No runner found',
-  negotiate: 'Negotiating',
-};
 
 export function ConversationList({ chatHrefPrefix, fallbackHref }: Props) {
   const router = useRouter();
@@ -149,7 +134,10 @@ export function ConversationList({ chatHrefPrefix, fallbackHref }: Props) {
         ? `${item.errand_type.name}${
             item.booking_number ? ` · #${item.booking_number}` : ''
           }`
-        : STATUS_LABEL[item.status] ?? item.status;
+        : // The shared vocabulary, type-aware — this row used to carry its own
+          // fourth status map, so one errand read "Looking for runner" here and
+          // "Finding a runner" on the Activity row the thread belongs to.
+          statusLabel(item.status, item.errand_type?.slug);
 
       return (
         <Card

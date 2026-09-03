@@ -125,6 +125,64 @@ const DEFAULT_GET_RETRIES = 2;
 const RETRY_DELAYS_MS = [2000, 5000, 10000];
 const RETRY_TIMEOUT_MS = 12000;
 
+/**
+ * Tear the session down from inside the interceptor.
+ *
+ * Extracted so the 401 path (expired / revoked token) and the dead-account 403
+ * path share exactly one implementation — they were drifting, and only one of
+ * them existed.
+ *
+ * `wipeAccountState` is the difference that matters. A 401 is usually just an
+ * expired token for an account that is about to sign back in as ITSELF, so the
+ * persisted query cache and the in-progress booking draft are the user's own
+ * work and are left alone. A suspended/banned/deleted account is never coming
+ * back, so everything account-scoped goes — including the offline mutation
+ * queue, whose unsent writes would otherwise replay under whoever signs in
+ * next on the same handset.
+ */
+async function endSession(
+  opts: { wipeAccountState?: boolean; reason?: string } = {},
+): Promise<void> {
+  await secureStorage.remove('auth_token');
+
+  // Hard reset the in-memory auth store so the route gate flips back to
+  // /welcome immediately. Without this the user would sit on a stale
+  // logged-in screen until they tried to navigate.
+  // Lazy require avoids the api↔authStore circular import.
+  try {
+    const { useAuthStore } = require('../stores/authStore');
+    useAuthStore.setState({
+      user: null,
+      token: null,
+      isAuthenticated: false,
+      role: null,
+      userIsProvisional: false,
+      ...(opts.reason ? { sessionEndedReason: opts.reason } : null),
+    });
+  } catch {
+    /* store not yet initialised — safe to ignore */
+  }
+
+  // Drop the request micro-cache + ETag store so the next sign-in doesn't
+  // serve (or revalidate against) the previous user's responses.
+  microCache.clear();
+  etagStore.clear();
+  inflight.clear();
+  apiActivity.reset();
+
+  if (opts.wipeAccountState) {
+    // Lazy require: clearAccountScopedState imports apiCache from this module.
+    // Never allowed to throw — a storage failure must not strand someone in a
+    // half-signed-out session.
+    try {
+      const { clearAccountScopedState } = require('../utils/clearAccountScopedState');
+      await clearAccountScopedState();
+    } catch {
+      /* best effort */
+    }
+  }
+}
+
 const isRetryableError = (err: any, config: ExtraConfig): boolean => {
   if ((config.signal as any)?.aborted) return false;
   // Don't burn backoff cycles when connectivity is already known-down.
@@ -316,28 +374,31 @@ api.interceptors.response.use(
       const kind = classifyError(status, axiosCode, backendCode);
 
       if (status === 401) {
-        await secureStorage.remove('auth_token');
-        // Hard reset the in-memory auth store so the route gate flips
-        // back to /welcome immediately. Without this the user would sit
-        // on a stale logged-in screen until they tried to navigate.
-        // Lazy require avoids the api↔authStore circular import.
-        try {
-          const { useAuthStore } = require('../stores/authStore');
-          useAuthStore.setState({
-            user: null,
-            token: null,
-            isAuthenticated: false,
-            role: null,
-          });
-        } catch {
-          /* store not yet initialised — safe to ignore */
-        }
-        // Also drop the request micro-cache + ETag store so the next sign-in
-        // doesn't serve (or revalidate against) the previous user's responses.
-        microCache.clear();
-        etagStore.clear();
-        inflight.clear();
-        apiActivity.reset();
+        await endSession();
+      }
+
+      // A DEAD account (suspended / banned / deleted). EnsureUserActive returns
+      // 403 with one of these codes on every authenticated route, and this
+      // interceptor used to handle 401 only — so the session stayed "valid" and
+      // the user was trapped inside an app where every tab failed with its own
+      // generic toast and nothing ever explained why.
+      //
+      // Matched on the CODE, never the message: support will reword that copy.
+      // A plain 403 (a permission check on one endpoint — someone else's
+      // booking, a runner-only route) must NOT end the session, so this is
+      // deliberately narrow.
+      if (status === 403 && (backendCode === 'ACCOUNT_SUSPENDED' || backendCode === 'ACCOUNT_INACTIVE')) {
+        await endSession({
+          // Unlike an expired token, this account is not coming back: purge the
+          // on-device PII and — critically — the offline mutation queue, whose
+          // writes can never legitimately be sent and would otherwise replay
+          // under the next account to sign in on the same handset.
+          wipeAccountState: true,
+          reason:
+            typeof data?.message === 'string' && data.message
+              ? data.message
+              : 'Your account is no longer active. Please contact support.',
+        });
       }
 
       if (status === 422) {

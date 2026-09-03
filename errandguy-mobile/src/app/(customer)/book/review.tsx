@@ -48,6 +48,7 @@ import {
   shouldRetainIdempotencyKey,
 } from '../../../stores/paymentStore';
 import { newIdempotencyKey } from '../../../utils/idempotency';
+import { fareLines } from '../../../utils/fareLines';
 import { usePaymentVerification } from '../../../hooks/usePaymentVerification';
 import { invalidateQuery, useQuery } from '../../../hooks/useQuery';
 import { CacheTTL } from '../../../services/cache.service';
@@ -428,17 +429,7 @@ export default function ReviewScreen() {
     | { total_amount: number; distance_fee: number; base_fee: number; service_fee: number; surcharge: number }
     | undefined;
 
-  const priceItems = currentVehicleEstimate
-    ? [
-        { label: 'Base Fee', amount: currentVehicleEstimate.base_fee ?? 0 },
-        { label: 'Distance Fee', amount: currentVehicleEstimate.distance_fee ?? 0 },
-        { label: 'Convenience Fee', amount: currentVehicleEstimate.service_fee ?? 0 },
-        { label: 'Surcharge', amount: currentVehicleEstimate.surcharge ?? 0 },
-        ...(promoDiscount > 0
-          ? [{ label: 'Promo Discount', amount: -promoDiscount }]
-          : []),
-      ]
-    : [];
+  const priceItems = fareLines(currentVehicleEstimate, promoDiscount);
 
   // Clamped at zero — a fixed-amount promo larger than the fare must never
   // render "Confirm ₱-20.00".

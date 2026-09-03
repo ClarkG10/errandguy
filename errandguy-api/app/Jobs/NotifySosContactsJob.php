@@ -68,7 +68,7 @@ class NotifySosContactsJob extends BaseJob
             // SOS alert itself.
             $notifications->sendPush(
                 $counterpartId,
-                'SOS Alert',
+                'SOS alert',
                 'An emergency alert has been triggered.',
                 [
                     'type' => 'sos',

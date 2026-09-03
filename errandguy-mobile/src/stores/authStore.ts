@@ -162,8 +162,23 @@ interface AuthState {
    * Cleared the moment validateSession's real profile lands via setUser.
    */
   userIsProvisional: boolean;
+  /**
+   * Why the session ended, when it ended for a reason the user must be TOLD.
+   *
+   * Set only by the api interceptor's dead-account teardown (a 403 carrying
+   * ACCOUNT_SUSPENDED / ACCOUNT_INACTIVE). Before this existed, a suspended
+   * account was a zombie: the interceptor handled 401 only, so auth stayed
+   * "valid", the route gate kept the user inside the app, and every tab failed
+   * with its own generic toast while nothing ever said the account was gone.
+   *
+   * Consumed and cleared by the login screen (`consumeSessionEndedReason`) so
+   * it is shown exactly once and never resurfaces on a later sign-out.
+   */
+  sessionEndedReason: string | null;
 
   setUser: (user: User | null) => void;
+  /** Read-and-clear the forced-sign-out reason. */
+  consumeSessionEndedReason: () => string | null;
   setToken: (token: string | null) => Promise<void>;
   logout: () => Promise<void>;
   loadFromStorage: () => Promise<void>;
@@ -207,6 +222,13 @@ export const useAuthStore = create<AuthState>((set, get) => ({
   biometricEnabled: false,
   biometricLockPending: false,
   userIsProvisional: false,
+  sessionEndedReason: null,
+
+  consumeSessionEndedReason: () => {
+    const reason = get().sessionEndedReason;
+    if (reason) set({ sessionEndedReason: null });
+    return reason;
+  },
 
   setUser: (user) => {
     set({

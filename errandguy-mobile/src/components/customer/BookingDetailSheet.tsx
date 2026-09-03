@@ -17,6 +17,7 @@ import { warmTracking } from '../../services/preload.service';
 import { useBookingStore, type DraftBooking } from '../../stores/bookingStore';
 import { toast } from '../../stores/toastStore';
 import { formatCurrency } from '../../utils/formatCurrency';
+import { fareLines } from '../../utils/fareLines';
 import { formatFullDate, formatTime } from '../../utils/formatDate';
 import {
   statusLabel as statusLabelFor,
@@ -166,15 +167,7 @@ export function BookingDetailSheet({
   // never "Picked up").
   const statusLabel = statusLabelFor(booking.status, booking.errand_type?.slug);
 
-  const priceItems = [
-    { label: 'Base Fee', amount: booking.base_fee },
-    { label: 'Distance Fee', amount: booking.distance_fee },
-    { label: 'Convenience Fee', amount: booking.service_fee },
-    { label: 'Surcharge', amount: booking.surcharge },
-    ...(booking.promo_discount > 0
-      ? [{ label: 'Promo Discount', amount: -booking.promo_discount }]
-      : []),
-  ];
+  const priceItems = fareLines(booking, booking.promo_discount);
 
   const handleRebook = () => {
     const draft = buildDraftFromBooking(booking);

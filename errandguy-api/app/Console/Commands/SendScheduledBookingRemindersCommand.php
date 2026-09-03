@@ -12,7 +12,7 @@ use Illuminate\Support\Facades\Log;
  * window opens.
  *
  * A customer can schedule an errand days ahead and then hear nothing between the
- * "Booking Confirmed" push at creation and "Runner Found!" at scheduled_at−15min
+ * "Errand booked" push at creation and "Runner found" at scheduled_at−15min
  * (when the deferred MatchRunnerJob fires). That silence swallows the last
  * FREE-cancellation moment: CancellationPolicy charges nothing while a booking is
  * pending/matched, but a flat fee the instant a runner accepts — so a customer

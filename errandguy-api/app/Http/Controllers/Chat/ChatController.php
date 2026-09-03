@@ -253,7 +253,9 @@ class ChatController extends Controller
             ->with([
                 'customer:id,full_name,avatar_url',
                 'runner:id,full_name,avatar_url',
-                'errandType:id,name',
+                // `slug` drives the client's type-aware status vocabulary — a
+                // bills-payment thread must not claim an item was "Picked up".
+                'errandType:id,name,slug',
             ])
             ->orderByDesc('updated_at')
             ->limit(60)
@@ -317,7 +319,11 @@ class ChatController extends Controller
                     'booking_id' => (string) $b->id,
                     'booking_number' => $b->booking_number,
                     'status' => $b->status,
-                    'errand_type' => $b->errandType ? ['id' => (string) $b->errandType->id, 'name' => $b->errandType->name] : null,
+                    'errand_type' => $b->errandType ? [
+                        'id' => (string) $b->errandType->id,
+                        'name' => $b->errandType->name,
+                        'slug' => $b->errandType->slug,
+                    ] : null,
                     'counterparty' => $other ? [
                         'id' => (string) $other->id,
                         'full_name' => $other->full_name,

@@ -21,7 +21,13 @@ class SendBookingCancelledNotification implements ShouldQueue
         if ($booking->customer_id) {
             $this->notificationService->sendPush(
                 $booking->customer_id,
-                'Booking Cancelled',
+                // Sentence case, and the object is an "errand" — matching
+                // SendBookingStatusNotification::TEMPLATES and the app's
+                // `constants/copy.ts`. This was the last push title that
+                // arrived Title Case and renamed the thing mid-flow: an
+                // Alerts inbox showed "Your errand #x is on the way" and
+                // then "Booking Cancelled" for the very same errand.
+                'Errand cancelled',
                 "Your errand #{$number} has been cancelled.",
                 [
                     'type' => 'booking_update',
@@ -39,7 +45,7 @@ class SendBookingCancelledNotification implements ShouldQueue
         if ($booking->runner_id) {
             $this->notificationService->sendPush(
                 $booking->runner_id,
-                'Booking Cancelled',
+                'Errand cancelled',
                 "Errand #{$number} has been cancelled.",
                 [
                     'type' => 'booking_update',

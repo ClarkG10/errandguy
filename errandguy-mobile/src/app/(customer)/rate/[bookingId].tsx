@@ -43,6 +43,7 @@ import { openCheckoutUrl, PAYMENT_RETURN_URL } from '../../../utils/browser';
 import { mapFailureReason } from '../../../utils/paymentErrors';
 import { invalidateQuery } from '../../../hooks/useQuery';
 import { formatCurrency } from '../../../utils/formatCurrency';
+import { fareLines } from '../../../utils/fareLines';
 
 // Tip is funded from the customer's wallet when the balance covers it, and
 // otherwise paid directly online (GCash / Maya / card) via Xendit — so a
@@ -330,17 +331,7 @@ export default function RateScreen() {
         : { opacity: 0.85, transform: [{ scale: 0.97 }] }
       : null;
 
-  const priceItems = booking
-    ? [
-        { label: 'Base Fee', amount: booking.base_fee },
-        { label: 'Distance Fee', amount: booking.distance_fee },
-        { label: 'Convenience Fee', amount: booking.service_fee },
-        { label: 'Surcharge', amount: booking.surcharge },
-        ...(booking.promo_discount > 0
-          ? [{ label: 'Promo Discount', amount: -booking.promo_discount }]
-          : []),
-      ]
-    : [];
+  const priceItems = fareLines(booking, booking?.promo_discount);
 
   return (
     <SafeAreaView className="flex-1 bg-background" edges={['top']}>

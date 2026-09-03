@@ -153,7 +153,7 @@ class SOSService
         if ($runnerId) {
             $this->notificationService->notifyInApp(
                 $runnerId,
-                'SOS Resolved',
+                'SOS resolved',
                 'The emergency alert has been resolved.',
                 [
                     'type' => 'sos',

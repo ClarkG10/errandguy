@@ -2,6 +2,8 @@
 
 namespace App\Http\Middleware;
 
+use App\Support\ApiPayload;
+use App\Support\ErrorCode;
 use Closure;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Cache;
@@ -23,31 +25,42 @@ class EnsureUserActive
         $user = $request->user();
 
         if (!$user) {
-            return response()->json([
-                'success' => false,
-                'message' => 'Unauthenticated.',
-            ], 401);
+            return response()->json(
+                ApiPayload::error(ErrorCode::UNAUTHENTICATED->value, 'Unauthenticated.'),
+                401,
+            );
         }
 
-        if ($user->status === 'suspended') {
-            return response()->json([
-                'success' => false,
-                'message' => 'Your account has been suspended. Please contact support.',
-            ], 403);
-        }
+        // A dead account used to return a bare 403 with a human message and NO
+        // machine-readable `code`, and the app's interceptor handles only 401 —
+        // so a suspended user stayed "signed in" forever: the route gate kept
+        // them inside the app, every tab failed with its own generic error
+        // toast, and nothing ever told them to stop trying. Emitting the code
+        // lets the client end the session deterministically instead of
+        // string-matching a message that support copy will eventually reword.
+        //
+        // ACCOUNT_SUSPENDED / ACCOUNT_INACTIVE (403 by ErrorCode::httpStatus)
+        // are the codes `errorCatalog.ts` already knows.
+        if (in_array($user->status, ['suspended', 'banned', 'deleted'], true)) {
+            [$code, $message] = match ($user->status) {
+                'suspended' => [
+                    ErrorCode::ACCOUNT_SUSPENDED,
+                    'Your account has been suspended. Please contact support.',
+                ],
+                'banned' => [
+                    ErrorCode::ACCOUNT_SUSPENDED,
+                    'Your account has been permanently banned.',
+                ],
+                default => [
+                    ErrorCode::ACCOUNT_INACTIVE,
+                    'This account no longer exists.',
+                ],
+            };
 
-        if ($user->status === 'banned') {
-            return response()->json([
-                'success' => false,
-                'message' => 'Your account has been permanently banned.',
-            ], 403);
-        }
-
-        if ($user->status === 'deleted') {
-            return response()->json([
-                'success' => false,
-                'message' => 'This account no longer exists.',
-            ], 403);
+            return response()->json(
+                ApiPayload::error($code->value, $message),
+                $code->httpStatus(),
+            );
         }
 
         // Throttle the last_active_at write to once per minute per user.

@@ -288,7 +288,9 @@ export function ReceiptCaptureModal({
               )}
 
               <Button
-                title="Submit & Mark Picked Up"
+                // Verb-led and sentence case, like every other runner action —
+                // this was the last Title-Case status label in the runner flow.
+                title="Submit & confirm pickup"
                 onPress={handleSubmit}
                 disabled={!canSubmit}
                 loading={submitting}

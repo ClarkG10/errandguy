@@ -690,7 +690,7 @@ class RunnerErrandController extends Controller
         // waiting on this confirmation).
         app(\App\Services\NotificationService::class)->notifyInApp(
             $booking->customer_id,
-            'PIN Verified',
+            'PIN verified',
             'Your ride PIN has been verified. Have a safe trip!',
             ['type' => 'booking_update', 'booking_id' => $booking->id],
         );

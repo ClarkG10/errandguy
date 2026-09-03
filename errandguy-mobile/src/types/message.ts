@@ -35,7 +35,7 @@ export interface Conversation {
   booking_id: string;
   booking_number: string | null;
   status: string;
-  errand_type: { id: string; name: string } | null;
+  errand_type: { id: string; name: string; slug?: string } | null;
   counterparty: {
     id: string;
     full_name: string;
