@@ -6,6 +6,7 @@ import { CacheService } from '../services/cache.service';
 import { geocodingService } from '../services/geocoding.service';
 import { apiCache } from '../services/api';
 import { clearRecentRecipients } from './recentRecipients';
+import { clearMutationQueue } from '../services/mutationQueue';
 
 /** Unsent support-ticket text. Written only by the support compose screen,
  *  which keeps the key local to itself — mirrored here because the draft is
@@ -42,6 +43,13 @@ const TRUSTED_CONTACTS_KEY = '@trusted_contacts_cache';
  *   • support compose draft (@support_draft_v1).
  *   • trusted contacts (@trusted_contacts_cache) — emergency contacts' names
  *     and numbers, under a key with no user id in it.
+ *   • the offline mutation queue (@mutation_queue_v1) — the previous account's
+ *     UNSENT writes. This is the one entry that is not merely stale but
+ *     actively destructive: the queue flushes on the next reconnect/boot with
+ *     whatever bearer token is then resident, so on a shared handset (common
+ *     here) user A's queued profile edit or new address would be replayed
+ *     under user B's session — overwriting B's name, filing A's address in B's
+ *     address book. clearMutationQueue() existed with no callers.
  *   • CacheService (persisted query cache) + apiCache (in-memory) + recent
  *     destinations — cached network responses / addresses of the prior user.
  */
@@ -60,6 +68,7 @@ export async function clearAccountScopedState(): Promise<void> {
     clearRecentRecipients(),
     AsyncStorage.removeItem(SUPPORT_DRAFT_KEY),
     AsyncStorage.removeItem(TRUSTED_CONTACTS_KEY),
+    clearMutationQueue(),
   ]);
   apiCache.clear();
 }

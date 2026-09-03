@@ -725,11 +725,28 @@ export default function ReviewScreen() {
           checkoutUrl,
           reference: booking.booking_number,
         });
-        await openCheckoutUrl(checkoutUrl, PAYMENT_RETURN_URL);
-        // Regardless of the sheet's reported outcome we now VERIFY with the
-        // backend — 'cancelled' doesn't prove they didn't pay. Drop the create
-        // overlay so the verification overlay owns the screen.
+        const outcome = await openCheckoutUrl(checkoutUrl, PAYMENT_RETURN_URL);
         setBookingStage(null);
+
+        if (outcome === 'failed') {
+          // The sheet never OPENED, so no payment can have started — verifying
+          // would just spin an overlay against an untouched invoice. Distinct
+          // from 'cancelled' below, and the same distinction wallet top-up
+          // already draws. The booking exists and is unpaid; the stashed
+          // checkout URL means "Try again" reopens the SAME invoice rather
+          // than creating a second booking.
+          setAttemptStatus('failed', {
+            bookingId: booking.id,
+            checkoutUrl,
+            reference: booking.booking_number,
+          });
+          toast.error("Couldn't open checkout — you weren't charged. Tap Try again to pay.");
+          return;
+        }
+
+        // Otherwise VERIFY, never assume: 'cancelled' only means the sheet
+        // closed, which does NOT prove they didn't pay. The verification
+        // overlay now owns the screen.
         setAttemptStatus('verifying');
       } else {
         // Wallet/cash settle server-side already — nothing to verify.
@@ -1382,7 +1399,11 @@ export default function ReviewScreen() {
         failureMessage={
           attempt?.failureReason ? mapFailureReason(attempt.failureReason).message : undefined
         }
-        onRetry={attempt?.checkoutUrl && attempt?.method === 'card' ? retryBookingPayment : undefined}
+        // Any stashed checkout URL is retryable, not just a card's: retry
+        // reopens the SAME invoice, so there is no duplicate-charge risk on
+        // GCash/Maya either — and without this an e-wallet failure (including
+        // a sheet that never opened) offered no way forward at all.
+        onRetry={attempt?.checkoutUrl ? retryBookingPayment : undefined}
         onClose={() => leaveForBooking()}
         onSafeExit={() => leaveForBooking()}
       />

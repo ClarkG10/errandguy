@@ -61,6 +61,18 @@ interface QueuedMutation extends QueueSpec {
   id: string;
   createdAt: number;
   attempts: number;
+  /**
+   * The user this intent belongs to, stamped at enqueue.
+   *
+   * clearAccountScopedState() drops the whole queue on logout and on an
+   * account switch, but the api layer's 401 path resets auth WITHOUT going
+   * through it — so on a shared device an expired session could leave user
+   * A's unsent writes on disk for user B's token to flush. The flush skips
+   * entries whose owner isn't the current user, which closes that path too.
+   * Undefined on entries written before this field existed: those are
+   * treated as belonging to whoever is signed in, exactly as before.
+   */
+  userId?: string | null;
 }
 
 const STORAGE_KEY = '@mutation_queue_v1';
@@ -188,6 +200,16 @@ export const useMutationQueueStore = create<MutationQueueState>((set) => ({
   setFlushing: (flushing) => set({ flushing }),
 }));
 
+/** Signed-in user id, or null. Lazy require breaks the api↔authStore cycle. */
+const currentUserId = (): string | null => {
+  try {
+    const { useAuthStore } = require('../stores/authStore');
+    return useAuthStore.getState().user?.id ?? null;
+  } catch {
+    return null;
+  }
+};
+
 const getPending = () => useMutationQueueStore.getState().pending;
 const setPending = (next: QueuedMutation[]) =>
   useMutationQueueStore.getState().setPending(next);
@@ -213,6 +235,7 @@ export function enqueueMutation(spec: QueueSpec): string | null {
     id,
     createdAt: Date.now(),
     attempts: 0,
+    userId: currentUserId(),
   };
   const current = spec.dedupeKey
     ? getPending().filter((m) => m.dedupeKey !== spec.dedupeKey)
@@ -270,8 +293,18 @@ async function runFlush(): Promise<void> {
   try {
     // Snapshot ids to process; re-read the live list each iteration so a
     // concurrently-enqueued item written during the flush isn't lost.
+    const activeUserId = currentUserId();
     for (const entry of [...list]) {
       if (network.isOffline()) break; // dropped connection mid-flush — resume later.
+      // Never replay another account's intent under this session's token.
+      // See QueuedMutation.userId — the 401 path resets auth without running
+      // the account purge, so this is the backstop for a shared handset.
+      if (entry.userId && activeUserId && entry.userId !== activeUserId) {
+        list = list.filter((m) => m.id !== entry.id);
+        setPending(list);
+        void persist(list);
+        continue;
+      }
       const handler = HANDLERS[entry.kind];
       if (!handler) {
         // Handler removed in an app update — discard rather than wedge the queue.

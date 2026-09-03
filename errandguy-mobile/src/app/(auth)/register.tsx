@@ -257,12 +257,21 @@ export default function RegisterScreen() {
       }
 
       // Send OTP for phone verification
-      if (data.phone) {
+      // Verify via EMAIL, not SMS. There is no SMS provider wired
+      // (OTPService::sendViaSMS throws unconditionally until one lands), so
+      // the phone attempt this used to make failed for 100% of registrations:
+      // everyone got the apology toast, nobody ever reached the verify
+      // screen, and phone_verified/email_verified stayed false forever. Mail
+      // delivery works, email is a required register field, and verify-otp
+      // already handles the email channel end to end (params, masking,
+      // resend; the API sets email_verified). When SMS ships, phone becomes
+      // primary again.
+      if (data.email) {
         try {
-          await authService.sendOTP({ phone: data.phone });
+          await authService.sendOTP({ email: data.email });
           router.replace({
             pathname: '/(auth)/verify-otp',
-            params: { phone: data.phone, purpose: 'register-verify' },
+            params: { email: data.email, purpose: 'register-verify' },
           });
         } catch {
           // Don't silently skip verification — tell the user why they're

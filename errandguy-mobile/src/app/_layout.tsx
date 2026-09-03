@@ -165,12 +165,16 @@ export default function RootLayout() {
   const segments = useSegments();
   const router = useRouter();
 
-  // Register push notifications + FCM token. Only do this once the
-  // account has at least one verified contact channel — otherwise we'd
-  // be requesting OS-level notification permission while the user is
-  // still mid-OTP, which is jarring and degrades grant rates.
-  const canRegisterPush =
-    isAuthenticated && !!(user?.phone_verified || user?.email_verified);
+  // Register push notifications + FCM token once the user is signed in AND
+  // out of the auth flow. The gate used to be "has a verified contact
+  // channel" — a proxy for "not mid-OTP" so the OS permission prompt never
+  // interrupts code entry. But the proxy held push hostage to OTP delivery:
+  // with no SMS provider wired, every app registration failed verification,
+  // the flags stayed false forever, and NO app-registered user ever uploaded
+  // a push token — the entire push system was silently dead for them. Gate
+  // on what was actually meant instead: past the (auth) group. A verified
+  // flag is a bonus, never a prerequisite for hearing "runner accepted".
+  const canRegisterPush = isAuthenticated && segments[0] !== '(auth)';
   useNotifications(canRegisterPush);
 
   // Silently check for an OTA update once the app is past bootstrap. A

@@ -143,7 +143,18 @@ class RunnerProfilesTable
                                 'reviewed_by' => auth('admin')->id(),
                                 'reviewed_at' => now(),
                             ]);
-                            \App\Jobs\SendPushJob::dispatch($record->user_id, 'Verification Approved!', 'You can now start accepting errands.');
+                            // data.type matters: without it the mobile tap
+                            // router no-ops and nothing invalidates the cached
+                            // runner profile — the runner reads "approved" while
+                            // the app still shows the pending banner and a
+                            // locked go-online button. 'document_update' is the
+                            // type the app maps to the runner-profile refresh.
+                            \App\Jobs\SendPushJob::dispatch(
+                                $record->user_id,
+                                'Verification Approved!',
+                                'You can now start accepting errands.',
+                                ['type' => 'document_update'],
+                            );
                             AdminActivity::log('runner.approved', $record, ['via' => 'bulk']);
                             $approved++;
                         }
@@ -179,10 +190,13 @@ class RunnerProfilesTable
                                 'reviewed_at' => now(),
                             ]);
 
+                        // See the bulk action above: the type routes the tap and
+                        // unlocks the go-online button the moment the push lands.
                         \App\Jobs\SendPushJob::dispatch(
                             $record->user_id,
                             'Verification Approved!',
                             'You can now start accepting errands.',
+                            ['type' => 'document_update'],
                         );
 
                         AdminNotify::success(
@@ -224,6 +238,7 @@ class RunnerProfilesTable
                             $record->user_id,
                             'Verification Update',
                             $data['reason'],
+                            ['type' => 'document_update'],
                         );
 
                         AdminNotify::success(

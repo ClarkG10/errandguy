@@ -1068,10 +1068,21 @@ export default function TrackingScreen() {
       // Backend requires `reason` to be present (422 otherwise). The
       // sheet doesn't currently expose a free-text input, so fall back
       // to a clear default that audit logs / refund flows can key off.
-      await bookingService.cancelBooking(id, 'Cancelled by customer');
+      const res = await bookingService.cancelBooking(id, 'Cancelled by customer');
       setActiveBooking(null);
       setShowCancelModal(false);
       router.replace('/(customer)/(tabs)');
+
+      // Show the server's receipt. It states the fee actually charged, the
+      // amount refunded and the new wallet balance — deliberately built so a
+      // customer is never left wondering where their money went. The app used
+      // to throw it away and navigate off in silence, so money moved with no
+      // acknowledgement at the one moment trust is most fragile. Toasted
+      // AFTER the replace so it lands on the screen the user ends up on.
+      const receipt = (res as { data?: { message?: string } })?.data?.message;
+      if (receipt) {
+        toast.success(receipt);
+      }
     } catch (err) {
       haptics.error();
       toast.error(errorMessage(err, copy.booking.cancelFailed));

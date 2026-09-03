@@ -44,6 +44,11 @@ jest.mock('../booking.service', () => ({
   },
 }));
 jest.mock('../notification.service', () => ({ notificationService: {} }));
+// currentUserId() reads authStore lazily; drive it per test.
+let mockUserId: string | null = 'user-a';
+jest.mock('../../stores/authStore', () => ({
+  useAuthStore: { getState: () => ({ user: mockUserId ? { id: mockUserId } : null }) },
+}));
 jest.mock('../user.service', () => ({ userService: {} }));
 jest.mock('../payment.service', () => ({ paymentService: {} }));
 
@@ -345,5 +350,58 @@ describe('queue-wide guards still hold for the new kinds', () => {
 
     expect(mockUpdateChecklistTicks).not.toHaveBeenCalled();
     expect(pending()).toHaveLength(1);
+  });
+});
+
+
+describe('cross-account safety', () => {
+  it('does not replay a signed-out account\'s intent under the next user\'s token', async () => {
+    // User A queues a tick while offline...
+    mockUserId = 'user-a';
+    useNetworkStore.setState({ isOffline: true, lastChangedAt: null });
+    enqueueMutation({
+      kind: 'runner.updateChecklistTicks',
+      payload: { bookingId: 'bk-1', items: [{ id: 'i1', checked: true }] },
+    });
+    expect(pending()).toHaveLength(1);
+
+    // ...then user B signs in on the same handset and connectivity returns.
+    mockUserId = 'user-b';
+    useNetworkStore.setState({ isOffline: false, lastChangedAt: null });
+    await flushMutationQueue();
+
+    // A's write must NOT hit the network under B's session, and must not
+    // linger to try again later.
+    expect(mockUpdateChecklistTicks).not.toHaveBeenCalled();
+    expect(pending()).toHaveLength(0);
+  });
+
+  it('still replays the signed-in user\'s own queued intent', async () => {
+    mockUserId = 'user-a';
+    useNetworkStore.setState({ isOffline: true, lastChangedAt: null });
+    enqueueMutation({
+      kind: 'runner.updateChecklistTicks',
+      payload: { bookingId: 'bk-1', items: [{ id: 'i1', checked: true }] },
+    });
+
+    useNetworkStore.setState({ isOffline: false, lastChangedAt: null });
+    await flushMutationQueue();
+
+    expect(mockUpdateChecklistTicks).toHaveBeenCalledTimes(1);
+    expect(pending()).toHaveLength(0);
+  });
+
+  it('replays a legacy entry with no owner stamp, exactly as before', async () => {
+    mockUserId = null;
+    useNetworkStore.setState({ isOffline: true, lastChangedAt: null });
+    enqueueMutation({
+      kind: 'runner.updateChecklistTicks',
+      payload: { bookingId: 'bk-1', items: [{ id: 'i1', checked: true }] },
+    });
+    mockUserId = 'user-b';
+    useNetworkStore.setState({ isOffline: false, lastChangedAt: null });
+    await flushMutationQueue();
+
+    expect(mockUpdateChecklistTicks).toHaveBeenCalledTimes(1);
   });
 });
