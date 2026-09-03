@@ -191,6 +191,80 @@ class NotificationService
      * @param  array<int,string>  $userIds
      * @return Collection<int,Notification>
      */
+    /**
+     * In-app notify, but COALESCED onto one row per subject.
+     *
+     * For progress streams the customer receives many times per errand. A
+     * shopping checklist is ticked item by item, and each tick called
+     * notifyInApp — which persists a row — so a 40-item list dropped 40
+     * identical "Shopping list updated" cards into the Alerts inbox and buried
+     * everything that actually needed attention. The intent was always the LIVE
+     * BROADCAST (the tracking screen patches its checklist straight from the
+     * payload); the inbox rows were an accepted side effect of the delivery
+     * mechanism, not a design goal.
+     *
+     * Deliberately keeps ONE row rather than none: the inbox already types and
+     * categorises these ("Shopping"), and a customer who was away genuinely
+     * wants to know the list moved — once, showing the latest state.
+     *
+     * `created_at` is bumped on purpose. The inbox sorts by it, so leaving it
+     * alone would refresh the card's contents while it stayed buried wherever
+     * it first landed. Re-marked unread for the same reason: the payload
+     * changed, so it is new information.
+     *
+     * Falls back to a plain notifyInApp when there is no subject to coalesce on,
+     * so a missing booking_id can never silently drop the notification.
+     */
+    public function notifyInAppCoalesced(
+        string $userId,
+        string $title,
+        string $body,
+        array $data = [],
+        string $subjectKey = 'booking_id',
+    ): Notification {
+        $type = $data['type'] ?? 'system';
+        $subject = $data[$subjectKey] ?? null;
+
+        if (blank($subject)) {
+            return $this->notifyInApp($userId, $title, $body, $data);
+        }
+
+        // Bounded scan of this user's recent rows OF THIS TYPE, then matched on
+        // the subject in PHP — the subject lives inside the JSON `data` column,
+        // which is not indexable, while (user_id, created_at) and
+        // (type, created_at) both are.
+        $existing = Notification::query()
+            ->where('user_id', $userId)
+            ->where('type', $type)
+            ->whereNull('archived_at')
+            ->orderByDesc('created_at')
+            ->limit(20)
+            ->get()
+            ->first(fn (Notification $n) => ($n->data[$subjectKey] ?? null) === $subject);
+
+        if (! $existing) {
+            return $this->notifyInApp($userId, $title, $body, $data);
+        }
+
+        // forceFill, not update(): `created_at` is not in Notification's
+        // $fillable, so a mass-assign silently DROPS it — the card would keep
+        // its original timestamp and stay buried while its contents changed.
+        // Every value here is server-controlled, so bypassing the guard is safe.
+        $existing->forceFill([
+            'title' => $title,
+            'body' => $body,
+            'data' => $data,
+            'is_read' => false,
+            'created_at' => now(),
+        ])->save();
+
+        // Re-broadcast so the live consumers (the tracking screen's checklist,
+        // the unread badge) see the update exactly as they would a new row.
+        NotificationCreated::dispatch($existing);
+
+        return $existing;
+    }
+
     public function notifyInAppMany(array $userIds, string $title, string $body, array $data = []): Collection
     {
         $userIds = array_values(array_unique(array_filter($userIds)));

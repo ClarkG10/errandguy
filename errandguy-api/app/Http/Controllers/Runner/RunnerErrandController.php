@@ -797,7 +797,10 @@ class RunnerErrandController extends Controller
                 ->all();
 
             dispatch(function () use ($customerId, $bookingId, $stops) {
-                app(\App\Services\NotificationService::class)->notifyInApp(
+                // COALESCED for the same reason as the shopping checklist: this
+                // fires once per completed stop, and a multi-stop errand should
+                // leave ONE live card in the inbox, not one per stop.
+                app(\App\Services\NotificationService::class)->notifyInAppCoalesced(
                     $customerId,
                     'Stop updated',
                     'Your runner updated a stop on your errand.',

@@ -86,7 +86,12 @@ class ShoppingChecklistController extends Controller
         $customerId = $booking->customer_id;
         $bookingId = $booking->id;
         dispatch(function () use ($customerId, $bookingId, $items) {
-            app(\App\Services\NotificationService::class)->notifyInApp(
+            // COALESCED: one live card per errand, not one per tick. This runs on
+            // every item tick, so notifyInApp dropped 40 identical rows into the
+            // customer's inbox for a 40-item list and buried everything that
+            // needed attention. The broadcast — the part the tracking screen's
+            // checklist actually consumes — is unchanged.
+            app(\App\Services\NotificationService::class)->notifyInAppCoalesced(
                 $customerId,
                 'Shopping list updated',
                 'Your runner updated the shopping checklist.',

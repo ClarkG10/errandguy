@@ -215,7 +215,20 @@ class Payouts extends Page implements HasTable
             ->query(
                 WalletTransaction::query()->where('type', 'payout')->with('user:id,full_name,phone')
             )
-            ->defaultSort('created_at', 'desc')
+            // Pending work first, and OLDEST pending at the top — the runner who
+            // has been waiting longest for their own money is the one to pay
+            // next. A flat created_at DESC put them at the very bottom, so the
+            // longest wait was served last (the same defect already fixed on the
+            // dispute queues).
+            //
+            // Settled rows keep newest-first underneath, because for them this
+            // page is a ledger being browsed, not a queue being worked.
+            // Untyped on purpose: Filament injects this by PARAMETER NAME, and a
+            // type hint here would have to match its internal Builder import.
+            ->defaultSort(fn ($query) => $query
+                ->orderByRaw("CASE WHEN status = 'pending' THEN 0 ELSE 1 END")
+                ->orderByRaw("CASE WHEN status = 'pending' THEN created_at END ASC")
+                ->orderByDesc('created_at'))
             ->columns([
                 TextColumn::make('created_at')->label('Requested')->dateTime()->sortable(),
                 TextColumn::make('user.full_name')->label('Runner')->searchable(),
