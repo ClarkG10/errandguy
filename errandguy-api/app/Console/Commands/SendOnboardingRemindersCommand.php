@@ -80,8 +80,26 @@ class SendOnboardingRemindersCommand extends Command
                 ->where('role', 'runner')
                 ->where('status', 'active'))
             ->where('created_at', '<=', now()->subHours(self::FIRST_NUDGE_AFTER_HOURS))
-            ->where('created_at', '>=', now()->subDays(self::GIVE_UP_AFTER_DAYS))
-            ->with(['documents:id,runner_id,document_type,status'])
+            // The window is anchored on when the ball last landed in the
+            // RUNNER'S court — not on signup.
+            //
+            // Anchoring on the profile's own created_at silently punished the
+            // runner for OUR review latency: someone who submitted on day 1 and
+            // was rejected on day 20 becomes `awaitingDocuments` again and needs
+            // to re-upload, but sat permanently outside a 14-day signup window,
+            // so the reminders meant for exactly that case never fired. A
+            // rejection on day 10 left them four days instead of fourteen.
+            //
+            // `latest_rejected_at` is the most recent rejection review; falling
+            // back to created_at keeps a never-submitted application behaving
+            // exactly as before.
+            ->whereRaw(
+                'COALESCE((select max(reviewed_at) from runner_documents
+                    where runner_documents.runner_id = runner_profiles.id
+                      and runner_documents.status = ?), runner_profiles.created_at) >= ?',
+                ['rejected', now()->subDays(self::GIVE_UP_AFTER_DAYS)],
+            )
+            ->with(['documents:id,runner_id,document_type,status,reviewed_at'])
             // Oldest first: closest to ageing out of the window entirely.
             ->orderBy('created_at')
             ->limit($limit)
@@ -97,9 +115,18 @@ class SendOnboardingRemindersCommand extends Command
         $skipped = 0;
 
         foreach ($profiles as $profile) {
+            // The nudge allowance is counted from the same anchor the window
+            // uses — the last time this became the RUNNER'S move. Counting
+            // all-time was the other half of the same bug: a runner who used
+            // their three nudges before submitting, then got rejected weeks
+            // later, had no allowance left for the re-upload they now need.
+            // A rejection is a new ask, so it earns a new allowance.
+            $anchor = $this->attentionAnchor($profile);
+
             $history = Notification::query()
                 ->where('user_id', $profile->user_id)
                 ->where('type', self::TYPE)
+                ->where('created_at', '>=', $anchor)
                 ->orderByDesc('created_at')
                 ->get(['id', 'created_at']);
 
@@ -156,6 +183,26 @@ class SendOnboardingRemindersCommand extends Command
         $this->info("Nudged: {$sent}  Skipped: {$skipped}");
 
         return self::SUCCESS;
+    }
+
+    /**
+     * When this application last became the RUNNER'S move.
+     *
+     * The most recent document rejection if there is one, otherwise signup.
+     * Both the give-up window and the nudge allowance are measured from here so
+     * our own review latency can never eat the runner's reminders.
+     */
+    private function attentionAnchor(RunnerProfile $profile): \Illuminate\Support\Carbon
+    {
+        $lastRejection = $profile->documents
+            ->where('status', 'rejected')
+            ->pluck('reviewed_at')
+            ->filter()
+            ->max();
+
+        return $lastRejection
+            ? \Illuminate\Support\Carbon::parse($lastRejection)
+            : $profile->created_at;
     }
 
     /**

@@ -442,6 +442,28 @@ class PaymentService
     }
 
     /**
+     * Authoritative status read for a payout already sent to Xendit.
+     *
+     * The counterpart to getPaymentRequest() on the money-OUT side. createPayout
+     * leaves the row `pending` and relies entirely on the payout.succeeded /
+     * payout.failed webhook to settle it — so with no pull path, a webhook that
+     * never arrives strands the runner's money indefinitely (the wallet is
+     * already debited at creation).
+     *
+     * @return array<string,mixed>
+     */
+    public function getPayout(string $payoutId): array
+    {
+        $response = $this->http()->get("{$this->baseUrl}/v2/payouts/{$payoutId}");
+
+        if (! $response->successful()) {
+            throw new \RuntimeException('Failed to retrieve payout.');
+        }
+
+        return $response->json();
+    }
+
+    /**
      * Issue a REAL, FULL gateway reversal to source via Xendit.
      *
      * Locked + status-guarded: the payment row is locked for the duration so

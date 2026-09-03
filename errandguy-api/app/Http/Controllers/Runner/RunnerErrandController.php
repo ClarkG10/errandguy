@@ -612,8 +612,6 @@ class RunnerErrandController extends Controller
                 Cache::forget("runner_active_booking_id:{$user->id}");
             }
 
-            event(new BookingStatusChanged($booking, $oldStatus, $newStatus));
-
             return false;
         });
 
@@ -622,6 +620,13 @@ class RunnerErrandController extends Controller
                 'message' => 'This errand was just updated. Pull to refresh.',
             ], 409);
         }
+
+        // Dispatch AFTER the transaction commits (mirroring accept()/decline()),
+        // so the queued referral-reward listener — which counts the referee's
+        // COMPLETED bookings — sees the just-completed row persisted instead of
+        // racing an uncommitted write and dropping the bonus. The event itself
+        // is also ShouldDispatchAfterCommit as a belt-and-suspenders guard.
+        event(new BookingStatusChanged($booking, $oldStatus, $newStatus));
 
         $booking->load(['errandType', 'customer', 'statusLogs']);
 

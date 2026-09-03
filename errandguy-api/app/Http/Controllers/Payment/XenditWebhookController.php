@@ -127,12 +127,23 @@ class XenditWebhookController extends Controller
             //   - completed → reversePayout re-credits and marks it reversed
             //     (this is the money-loss MONEYX-1 was: a reversal after success
             //     used to hit failPayout's pending-only guard and be dropped).
+            $updated = null;
             if ($tx->status === 'pending') {
-                $wallet->failPayout($tx->id, (string) $reason);
+                $updated = $wallet->failPayout($tx->id, (string) $reason);
             } elseif ($tx->status === 'completed') {
-                $wallet->reversePayout($tx->id, (string) $reason);
+                $updated = $wallet->reversePayout($tx->id, (string) $reason);
             }
             // else: already failed/reversed → no-op.
+
+            // Tell the runner their money bounced back. failPayout/reversePayout
+            // each commit their own transaction and return the settled row, so
+            // this runs post-commit (never inside the lock). The helper is
+            // latched per payout in the cache, so a racing admin action or a
+            // duplicate gateway delivery can't send a second notice. (M1: this
+            // automated path previously re-credited silently.)
+            if ($updated) {
+                \App\Filament\Pages\Payouts::notifyRunnerOfBouncedPayout($updated, (string) $reason);
+            }
         } catch (\App\Exceptions\PayoutStateException) {
             // Raced to a terminal state by another delivery — no-op.
         }

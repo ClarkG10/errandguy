@@ -257,6 +257,80 @@ class OnboardingReminderTest extends TestCase
         $this->assertCount(0, $this->remindersFor($profile));
     }
 
+    /**
+     * Our review latency must not eat the runner's reminders.
+     *
+     * The window used to be anchored on signup, so a runner who submitted on
+     * day 1 and was REJECTED on day 20 became `awaitingDocuments` again — needing
+     * to re-upload — while sitting permanently outside a 14-day signup window.
+     * The reminders meant for exactly that case never fired. It is now anchored
+     * on the last time the ball landed in the runner's court.
+     */
+    public function test_a_late_rejection_reopens_the_nudge_window(): void
+    {
+        // Signed up 40 days ago — far outside any signup-anchored window.
+        $profile = $this->applicant(['selfie'], 24 * 40, 'runner', ['government_id']);
+        // …but we only rejected their ID yesterday.
+        RunnerDocument::where('runner_id', $profile->id)
+            ->where('status', 'rejected')
+            ->update(['reviewed_at' => now()->subDay()]);
+
+        $this->artisan('errandguy:send-onboarding-reminders')->assertSuccessful();
+
+        $reminders = $this->remindersFor($profile);
+        $this->assertCount(1, $reminders, 'a freshly rejected document must still be chased');
+        $this->assertStringContainsString('couldn’t accept', $reminders->first()->body);
+    }
+
+    /**
+     * The other half of the same bug: the 3-nudge allowance was counted
+     * all-time, so a runner who used it up before submitting had none left for
+     * the re-upload a later rejection asks for. A rejection is a new ask.
+     */
+    public function test_a_rejection_grants_a_fresh_nudge_allowance(): void
+    {
+        $profile = $this->applicant([], 24 * 40);
+
+        // Burn the full allowance against the original application.
+        for ($i = 0; $i < 3; $i++) {
+            Notification::create([
+                'user_id' => $profile->user_id,
+                'type' => 'onboarding_reminder',
+                'title' => 'Finish signing up',
+                'body' => 'old nudge',
+            ]);
+        }
+        Notification::where('user_id', $profile->user_id)
+            ->update(['created_at' => now()->subDays(35)]);
+
+        // Then they submitted, and we rejected it yesterday.
+        RunnerDocument::create([
+            'runner_id' => $profile->id,
+            'document_type' => 'government_id',
+            'file_url' => 'kyc/id.jpg',
+            'status' => 'rejected',
+            'reviewed_at' => now()->subDay(),
+        ]);
+
+        $this->artisan('errandguy:send-onboarding-reminders')->assertSuccessful();
+
+        // Three old + one new: the rejection earned its own allowance.
+        $this->assertCount(4, $this->remindersFor($profile));
+    }
+
+    /**
+     * The anchor must not become a loophole: an application that was never
+     * reviewed still ages out on signup, exactly as before.
+     */
+    public function test_an_unreviewed_application_still_ages_out(): void
+    {
+        $profile = $this->applicant([], 24 * 40);
+
+        $this->artisan('errandguy:send-onboarding-reminders')->assertSuccessful();
+
+        $this->assertCount(0, $this->remindersFor($profile));
+    }
+
     public function test_a_suspended_account_is_not_nudged(): void
     {
         $profile = $this->applicant([]);

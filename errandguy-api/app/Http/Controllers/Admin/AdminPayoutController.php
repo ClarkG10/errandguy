@@ -62,6 +62,12 @@ class AdminPayoutController extends Controller
             return $this->fail(ErrorCode::PAYOUT_STATE_INVALID, $e->getMessage());
         }
 
+        // Notify the runner their money bounced back — same cache-latched helper
+        // the Filament page uses, so the three payout-failure paths give
+        // identical, un-duplicated notice. failPayout committed already, so this
+        // is post-commit. (M1: this API path previously re-credited silently.)
+        \App\Filament\Pages\Payouts::notifyRunnerOfBouncedPayout($tx, $validated['reason']);
+
         AdminActivity::log('payout.failed', $tx, ['payout_id' => $id, 'reason' => $validated['reason'], 'via' => 'api']);
 
         return response()->json(['data' => $tx]);

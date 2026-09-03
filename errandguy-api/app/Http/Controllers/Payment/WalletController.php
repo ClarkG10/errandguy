@@ -10,6 +10,15 @@ use Illuminate\Http\Request;
 
 class WalletController extends Controller
 {
+    /**
+     * Most pending payouts reconciled on a single wallet-list read.
+     *
+     * Each one is a blocking gateway GET on a user-facing endpoint, so this
+     * bounds worst-case latency. A runner realistically has one pending payout;
+     * the scheduled sweep covers any beyond the cap.
+     */
+    private const MAX_PAYOUT_RECONCILES_PER_READ = 3;
+
     public function __construct(
         private WalletService $walletService,
     ) {}
@@ -182,6 +191,38 @@ class WalletController extends Controller
         }
 
         $transactions = $query->paginate($request->perPage(20));
+
+        // Heal stranded payouts on the very read the runner performs to check on
+        // them. The runner's payout screen loads this endpoint with
+        // ?type=payout, so opening it is the strongest possible signal that
+        // someone is waiting on that money — and a payout whose webhook never
+        // arrived is otherwise invisible to everything: the wallet is already
+        // debited, the row sits `pending` forever, and the app keeps showing
+        // "View payout status" instead of letting them request another.
+        //
+        // Deliberately on the READ rather than only in a sweep: the scheduled
+        // sweep is the backstop for nobody looking, but this path costs one
+        // throttled gateway GET and works even when the scheduler is down.
+        // Per-transaction throttled, and settlement goes through the same
+        // row-locked, pending-guarded methods the webhook uses.
+        // Bounded: each reconcile is a BLOCKING gateway GET, so a page carrying
+        // many pending payouts must not turn one list request into twenty round
+        // trips. Newest-first ordering means the cap keeps the rows a runner is
+        // actually watching; anything older is picked up by the sweep.
+        $budget = self::MAX_PAYOUT_RECONCILES_PER_READ;
+        $transactions->setCollection(
+            $transactions->getCollection()->map(function (WalletTransaction $row) use (&$budget) {
+                if ($budget <= 0 || $row->type !== 'payout' || $row->status !== 'pending') {
+                    return $row;
+                }
+                $budget--;
+
+                // Return the SETTLED row so the response reflects the state we
+                // just wrote — otherwise the runner is shown 'pending' anyway
+                // and has to pull-to-refresh to see money that already landed.
+                return $this->walletService->reconcilePendingPayout($row);
+            })
+        );
 
         // The canonical nested-meta envelope ({data, links, meta}) is now
         // produced by the shared ApiResponse::paginated() helper (previously

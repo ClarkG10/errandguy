@@ -54,6 +54,25 @@ class BookingSettlementService
 
         if ($booking->status === 'completed') {
             $this->backfillRunnerEarning($booking);
+
+            // Re-attempt the first-errand referral reward on THIS settlement
+            // path too. The webhook handlers call rewardReferralIfEligible
+            // separately, but reconcileBookingPayment (the status-poll fallback
+            // used when a webhook is never delivered) reaches settlement ONLY
+            // through here — so without this, a referee whose qualifying charge
+            // settles via the poll would never have their (or the referrer's)
+            // bonus granted. reward() locks the referral row and no-ops if it
+            // was already rewarded, so the webhook path calling both is safe.
+            if ($booking->customer_id) {
+                try {
+                    app(ReferralService::class)->reward($booking->customer_id);
+                } catch (\Throwable $e) {
+                    Log::warning('Referral reward re-attempt failed during settlement', [
+                        'booking_id' => $booking->id,
+                        'error' => $e->getMessage(),
+                    ]);
+                }
+            }
         }
     }
 

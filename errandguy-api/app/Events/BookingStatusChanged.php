@@ -6,6 +6,7 @@ use App\Models\Booking;
 use Illuminate\Broadcasting\InteractsWithSockets;
 use Illuminate\Broadcasting\PrivateChannel;
 use Illuminate\Contracts\Broadcasting\ShouldBroadcast;
+use Illuminate\Contracts\Events\ShouldDispatchAfterCommit;
 use Illuminate\Foundation\Events\Dispatchable;
 use Illuminate\Queue\SerializesModels;
 
@@ -15,10 +16,15 @@ use Illuminate\Queue\SerializesModels;
  *  - the customer/runner mobile apps, via the broadcast below.
  *
  * Broadcasting replaces what the old realtime path used to deliver by tailing the
- * `bookings` table WAL. Every explicit dispatch site is post-commit, so the
- * queued broadcast reloads a persisted row.
+ * `bookings` table WAL. Every explicit dispatch site is meant to be post-commit,
+ * so the queued broadcast reloads a persisted row — and `ShouldDispatchAfterCommit`
+ * now ENFORCES that invariant: if any site dispatches while a DB transaction is
+ * still open (as `RunnerErrandController::updateStatus` once did), the event is
+ * held until commit instead of letting a queued listener — e.g. the referral
+ * reward, which counts the referee's committed completed bookings — race a row
+ * that isn't persisted yet and silently drop the reward.
  */
-class BookingStatusChanged implements ShouldBroadcast
+class BookingStatusChanged implements ShouldBroadcast, ShouldDispatchAfterCommit
 {
     use Dispatchable, InteractsWithSockets, SerializesModels;
 

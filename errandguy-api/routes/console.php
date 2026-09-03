@@ -61,6 +61,17 @@ Schedule::command('errandguy:reconcile-topups')
     ->onOneServer()
     ->withoutOverlapping();
 
+// Money-OUT safety net, and the more painful side: a runner's wallet is debited
+// the moment a payout row is created, and the row stays 'pending' until the
+// gateway webhook lands. A dropped webhook means their money has left their
+// balance with nothing confirming it — and the app won't let them request
+// another while one is pending. The wallet list endpoint reconciles on read for
+// the runner who checks; this covers the one who doesn't.
+Schedule::command('errandguy:reconcile-payouts')
+    ->everyFifteenMinutes()
+    ->onOneServer()
+    ->withoutOverlapping();
+
 // Reap dead access tokens. Nothing has ever pruned personal_access_tokens, so
 // every token any user has ever been issued is still on the row — and the
 // sliding session (RotateAccessToken) now leaves the outgoing token behind on

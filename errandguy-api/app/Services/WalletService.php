@@ -222,6 +222,81 @@ class WalletService
     }
 
     /**
+     * Pull-based settlement reconciliation for ONE pending PAYOUT.
+     *
+     * The money-OUT mirror of reconcilePendingTopUp, and the more painful of the
+     * two: the wallet is debited the moment the payout row is created, and the
+     * row then stays `pending` until payout.succeeded / payout.failed arrives.
+     * With no pull path, a webhook that never lands means the runner's money has
+     * left their balance, nothing confirms it, and — because the app swaps the
+     * CTA to "View payout status" whenever a pending payout exists — they cannot
+     * request another one. Only an admin could unstick it, by hand, if the runner
+     * knew to ask.
+     *
+     * Same shape and same guarantees as the top-up reconcile:
+     *   • no-op unless this is a pending payout with a gateway ref;
+     *   • throttled per-transaction so a poll can't hammer the gateway;
+     *   • settles ONLY through completePayout / failPayout — both row-locked and
+     *     pending-guarded, and failPayout is what re-credits the wallet — so this
+     *     cannot double-pay or double-credit;
+     *   • only ever moves the row to the state the GATEWAY itself reports;
+     *   • a gateway hiccup never fails the caller (stays pending, retries later).
+     *
+     * @param  int|null  $throttleSeconds  null = the default polling window; 0 = bypass the throttle.
+     */
+    public function reconcilePendingPayout(
+        WalletTransaction $tx,
+        ?int $throttleSeconds = null,
+    ): WalletTransaction {
+        if ($tx->type !== 'payout' || $tx->status !== 'pending' || blank($tx->gateway_ref)) {
+            return $tx;
+        }
+
+        // See reconcilePendingTopUp: a window of 0 bypasses the latch via an
+        // explicit branch, because Cache::add returns false for any
+        // non-positive TTL and would silently pull nothing at all.
+        $window = $throttleSeconds ?? self::RECONCILE_PULL_THROTTLE_SECONDS;
+        if ($window > 0 && ! Cache::add("payout_reconcile_pull:{$tx->id}", 1, $window)) {
+            return $tx;
+        }
+
+        try {
+            $payout = app(PaymentService::class)->getPayout((string) $tx->gateway_ref);
+        } catch (\Throwable $e) {
+            // Gateway unreachable / not configured / transient — the webhook is
+            // still the primary settlement path.
+            return $tx;
+        }
+
+        $status = strtoupper((string) ($payout['status'] ?? ''));
+
+        try {
+            // ACCEPTED / PENDING / LOCKED mean the disbursement is still in
+            // flight at the gateway — nothing to settle yet.
+            $settled = match ($status) {
+                'SUCCEEDED' => $this->completePayout($tx->id),
+                'FAILED', 'REVERSED', 'CANCELLED' => $this->failPayout(
+                    $tx->id,
+                    (string) ($payout['failure_code'] ?? 'Payout '.strtolower($status).' at gateway'),
+                ),
+                default => null,
+            };
+        } catch (\App\Exceptions\PayoutStateException) {
+            // Settled by a racing webhook between our read and our write.
+            return $tx->fresh() ?? $tx;
+        } catch (\Throwable $e) {
+            Log::warning('Xendit payout reconcile failed', [
+                'transaction_id' => $tx->id,
+                'error' => $e->getMessage(),
+            ]);
+
+            return $tx->fresh() ?? $tx;
+        }
+
+        return $settled ?? $tx;
+    }
+
+    /**
      * Complete a top-up once Xendit confirms the invoice was paid.
      * Idempotent: a replayed webhook is a no-op after the first credit.
      */
@@ -892,9 +967,13 @@ class WalletService
                 }
             }
 
-            $minPayout = 100.0;
+            // Read the floor from the SAME SystemConfig key the runner-request
+            // path uses (RunnerPayoutController), not a hardcoded literal — else
+            // raising the configured minimum silently desynchronises the two
+            // payout entry points (the admin/Filament path kept accepting ₱100).
+            $minPayout = (float) \App\Models\SystemConfig::getValue('min_payout_amount', '100');
             if ($amount < $minPayout) {
-                throw new \RuntimeException("Minimum payout amount is ₱{$minPayout}.");
+                throw new \RuntimeException("Minimum payout amount is ₱" . number_format($minPayout, 2) . ".");
             }
 
             if ((float) $user->wallet_balance < $amount) {
