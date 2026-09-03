@@ -6,6 +6,7 @@ import { MapPin, Star, X, Plus } from 'lucide-react-native';
 import { useRouter } from 'expo-router';
 import { BottomSheet } from '../ui/BottomSheet';
 import { Spinner } from '../ui/Spinner';
+import { ErrorState } from '../ui/ErrorState';
 import { userService } from '../../services/user.service';
 import { useQuery } from '../../hooks/useQuery';
 import { CacheTTL } from '../../services/cache.service';
@@ -92,6 +93,19 @@ export function SavedAddressSheet({
         {loading ? (
           <View className="items-center py-8">
             <Spinner size="small" color={LightColors.primary} />
+          </View>
+        ) : addressesQ.error && addresses.length === 0 ? (
+          // A failed fetch used to fall through to the empty state below,
+          // telling the customer they had NO saved addresses when the request
+          // simply failed. Surface a real error with retry instead — mirrors
+          // the fix already applied on the full addresses/index screen.
+          <View className="py-6">
+            <ErrorState
+              title="Couldn't load your addresses"
+              onRetry={() => {
+                void addressesQ.refresh();
+              }}
+            />
           </View>
         ) : addresses.length === 0 ? (
           <View className="items-center py-8">

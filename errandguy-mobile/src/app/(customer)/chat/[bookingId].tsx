@@ -503,7 +503,11 @@ export default function ChatScreen() {
           () => {},
         );
         toast.error(errorMessage(err, copy.chat.sendFailed));
-        if (!content) setInputText((prev) => (prev ? prev : text));
+        // Do NOT restore the text into the composer here: chatSendMessage has
+        // already left a tap-to-retry "failed" bubble holding this exact
+        // payload. Refilling the input showed the message twice (failed bubble
+        // + composer) and created two competing retry paths — re-sending from
+        // the composer while the failed bubble still stood produced a duplicate.
       }
     },
     [bookingId, inputText, chatSendMessage, reducedMotion],

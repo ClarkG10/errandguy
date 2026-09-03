@@ -2202,7 +2202,11 @@ export default function TaskDetailsScreen() {
               <View style={st.saveChipRow}>
                 {canSavePickup && (
                   <Pressable
-                    style={({ pressed }) => [st.saveChip, pressed && st.saveChipPressed]}
+                    // Layout + background live in className: a Pressable styled
+                    // only through a style() callback loses flexDirection/
+                    // background (same rule the sibling contact chips follow).
+                    className="flex-row items-center bg-primary50 rounded-full px-3 py-1.5"
+                    style={({ pressed }) => (pressed ? st.saveChipPressed : null)}
                     hitSlop={6}
                     onPress={() => {
                       Haptics.selectionAsync().catch(() => {});
@@ -2221,7 +2225,11 @@ export default function TaskDetailsScreen() {
                 )}
                 {canSaveDropoff && (
                   <Pressable
-                    style={({ pressed }) => [st.saveChip, pressed && st.saveChipPressed]}
+                    // Layout + background live in className: a Pressable styled
+                    // only through a style() callback loses flexDirection/
+                    // background (same rule the sibling contact chips follow).
+                    className="flex-row items-center bg-primary50 rounded-full px-3 py-1.5"
+                    style={({ pressed }) => (pressed ? st.saveChipPressed : null)}
                     hitSlop={6}
                     onPress={() => {
                       Haptics.selectionAsync().catch(() => {});
@@ -2652,6 +2660,9 @@ export default function TaskDetailsScreen() {
           {!customLabelMode ? (
             <>
               <Pressable
+                // flex-row in className: a function-only style() callback with
+                // no className drops flexDirection (mirrors the recallCard fix).
+                className="flex-row items-center"
                 style={({ pressed }) => [st.labelOption, pressed && st.labelOptionPressed]}
                 onPress={() => handleSaveAddress('Home')}
                 disabled={savingAddress}
@@ -2664,6 +2675,9 @@ export default function TaskDetailsScreen() {
                 <Text style={st.labelOptionText}>Home</Text>
               </Pressable>
               <Pressable
+                // flex-row in className: a function-only style() callback with
+                // no className drops flexDirection (mirrors the recallCard fix).
+                className="flex-row items-center"
                 style={({ pressed }) => [st.labelOption, pressed && st.labelOptionPressed]}
                 onPress={() => handleSaveAddress('Work')}
                 disabled={savingAddress}
@@ -2676,6 +2690,9 @@ export default function TaskDetailsScreen() {
                 <Text style={st.labelOptionText}>Work</Text>
               </Pressable>
               <Pressable
+                // flex-row in className: a function-only style() callback with
+                // no className drops flexDirection (mirrors the recallCard fix).
+                className="flex-row items-center"
                 style={({ pressed }) => [st.labelOption, pressed && st.labelOptionPressed]}
                 onPress={() => {
                   Haptics.selectionAsync().catch(() => {});

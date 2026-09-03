@@ -31,13 +31,13 @@ export function StopsProgressCard({ stops, live }: StopsProgressCardProps) {
 
   return (
     <View
-      className="bg-surface rounded-2xl border border-border p-4"
+      className="bg-surface rounded-2xl border border-divider p-4"
       accessibilityLabel={`Extra stops: ${done} of ${ordered.length} completed`}
     >
       <View className="flex-row items-center justify-between mb-2">
         <View className="flex-row items-center">
           <MapPin size={16} color={LightColors.primary} />
-          <Text className="text-sm font-montserrat-semi text-text ml-2">Extra stops</Text>
+          <Text className="text-sm font-montserrat-semi text-textPrimary ml-2">Extra stops</Text>
         </View>
         <Text className="text-xs font-inter-semi tabular-nums text-textSecondary">
           {done}/{ordered.length} done
@@ -50,14 +50,14 @@ export function StopsProgressCard({ stops, live }: StopsProgressCardProps) {
           <View key={stop.id} className="flex-row items-center py-1.5">
             <View
               className={`w-5 h-5 rounded-md items-center justify-center mr-3 ${
-                isDone ? 'bg-success' : 'bg-surfaceMuted border border-border'
+                isDone ? 'bg-success' : 'bg-surfaceMuted border border-divider'
               }`}
             >
               {isDone && <Check size={13} color={LightColors.textInverse} strokeWidth={3} />}
             </View>
             <Text
               className={`flex-1 text-[13px] font-montserrat ${
-                isDone ? 'text-textMuted line-through' : 'text-text'
+                isDone ? 'text-textMuted line-through' : 'text-textPrimary'
               }`}
               numberOfLines={1}
             >

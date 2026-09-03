@@ -1123,7 +1123,7 @@ export default function ReviewScreen() {
             <View className="flex-row items-center">
               <Route size={13} color={LightColors.textTertiary} strokeWidth={2} />
               <Text className="text-[12px] font-inter tabular-nums text-textSecondary ml-1.5">
-                {estimate.distance_km.toFixed(1)} km
+                {Number(estimate.distance_km).toFixed(1)} km
               </Text>
             </View>
             {getEstimatedTime() && (
