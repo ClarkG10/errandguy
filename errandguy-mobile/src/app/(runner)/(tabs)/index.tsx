@@ -87,6 +87,7 @@ import { errorMessage } from '../../../utils/errorCatalog';
 import { copy } from '../../../constants/copy';
 import { haptics } from '../../../utils/haptics';
 import { LightColors, Elevation } from '../../../constants/colors';
+import { prefetchDemand } from '../../../services/preload.service';
 
 /** Whole-peso display for the goal progress line — "₱650 of ₱1,000". */
 const pesos = (v: number) => `₱${Math.round(v).toLocaleString('en-PH')}`;
@@ -1614,7 +1615,14 @@ export default function RunnerHomeScreen() {
                 style={{ width: '50%', paddingHorizontal: 6, paddingBottom: 12 }}
               >
                 <Pressable
-                  onPress={() => router.push(route as any)}
+                  onPress={() => {
+                    // The Demand screen's peak-hours half paints from the
+                    // runner-home snapshot, but its 14-day heatmap grid was
+                    // never warmed — so half the screen always spun. A tap
+                    // here is the only way in, so it's the whole signal.
+                    if (route === '/(runner)/demand') prefetchDemand();
+                    router.push(route as any);
+                  }}
                   accessibilityRole="button"
                   accessibilityLabel={label}
                   className="bg-surface px-4 py-4 rounded-2xl border border-divider flex-row items-center"

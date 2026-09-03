@@ -6,6 +6,7 @@ import { configService } from './config.service';
 import { bookingService } from './booking.service';
 import { paymentService } from './payment.service';
 import { runnerService } from './runner.service';
+import { supportService } from './support.service';
 import { notificationService } from './notification.service';
 import { userService, type CustomerHomeAggregate } from './user.service';
 import { chatService } from './chat.service';
@@ -159,6 +160,73 @@ export function prefetchReferral(userId: string): void {
   void seed(
     ['user', 'referral', userId],
     async () => (await userService.getReferral()).data?.data,
+    CacheTTL.MEDIUM,
+  );
+}
+
+/**
+ * Warm the Support inbox on a tap from either Help screen.
+ *
+ * The only two ways in are `(customer)/help` and `(runner)/settings/help`, and
+ * neither warmed anything — so the one screen a user opens BECAUSE something
+ * is already wrong greeted them with a spinner. Params and shape mirror the
+ * screen's own fetcher exactly.
+ */
+export function prefetchSupportTickets(userId: string): void {
+  void seed(
+    ['support', 'tickets', userId],
+    async () => ((await supportService.getTickets()).data?.data ?? []) as unknown[],
+    CacheTTL.MEDIUM,
+  );
+}
+
+/**
+ * Warm the Demand screen's heatmap on a tap from the runner Home quick action.
+ *
+ * The runner-home aggregate already seeds `['runner','peak-hours',30]`, so the
+ * peak-hours nudge on this screen paints from cache — but the 14-day heatmap
+ * GRID beside it was never warmed, so half the screen always spun. The day
+ * count is part of the cache key, so it has to match the screen's 14 exactly.
+ */
+export function prefetchDemand(): void {
+  void seed(
+    ['runner', 'heatmap', DEMAND_HEATMAP_DAYS],
+    async () => (await runnerService.getHeatmap(DEMAND_HEATMAP_DAYS)).data?.data,
+    CacheTTL.LONG,
+  );
+}
+
+/** Days of history the Demand heatmap requests — part of its cache key. */
+const DEMAND_HEATMAP_DAYS = 14;
+
+/**
+ * Rows in the payout screen's activity preview.
+ *
+ * Owned HERE and imported by the screen, rather than duplicated, because the
+ * page size is part of what the seeded value must correspond to: a silent
+ * divergence would leave the prefetch warming a shape the screen never uses —
+ * the exact dead-prefetch failure this pass was auditing for.
+ */
+export const PAYOUT_ACTIVITY_PREVIEW = 6;
+
+/**
+ * Warm the payout screen's recent wallet activity on a tap from Earnings.
+ *
+ * The payout list itself is warmed at boot, but the activity preview under it
+ * was not — so a money screen half-painted. `perPage` must match the screen's
+ * own page size, since the fetcher's params are what the seeded value has to
+ * correspond to.
+ */
+export function prefetchPayoutActivity(userId: string): void {
+  void seed(
+    ['runner', 'wallet', 'activity', userId],
+    async () =>
+      ((
+        await paymentService.getWalletTransactions({
+          page: 1,
+          per_page: PAYOUT_ACTIVITY_PREVIEW,
+        })
+      ).data?.data ?? []) as unknown[],
     CacheTTL.MEDIUM,
   );
 }
@@ -418,15 +486,16 @@ export async function preloadCustomerEssentials(userId: string) {
         },
         CacheTTL.MEDIUM,
       ),
-    () =>
-      seed(
-        ['notifications', 'unread', userId],
-        async () => {
-          const r = await notificationService.getUnreadCount();
-          return r.data?.data ?? r.data ?? { count: 0 };
-        },
-        CacheTTL.SHORT,
-      ),
+    // Prime the unread badge — a REQUEST, not a query-cache seed.
+    //
+    // The tab badge doesn't go through useQuery at all: useRealtimeNotifications
+    // calls getUnreadCount() straight into the store and keeps it live over
+    // Reverb. So the CacheService key this used to write was read by nothing.
+    // What actually made the badge paint immediately was the side effect —
+    // getUnreadCount() is an `api.get` with a 15s micro-cache, so warming it
+    // here means the hook's own call on mount coalesces onto this one.
+    // Keeping the request and dropping the dead write states that plainly.
+    () => notificationService.getUnreadCount().then(() => undefined).catch(() => undefined),
     () =>
       seed(
         ['notifications', userId],
@@ -732,15 +801,16 @@ export async function preloadRunnerEssentials(userId: string) {
         },
         CacheTTL.MEDIUM,
       ),
-    () =>
-      seed(
-        ['notifications', 'unread', userId],
-        async () => {
-          const r = await notificationService.getUnreadCount();
-          return r.data?.data ?? r.data ?? { count: 0 };
-        },
-        CacheTTL.SHORT,
-      ),
+    // Prime the unread badge — a REQUEST, not a query-cache seed.
+    //
+    // The tab badge doesn't go through useQuery at all: useRealtimeNotifications
+    // calls getUnreadCount() straight into the store and keeps it live over
+    // Reverb. So the CacheService key this used to write was read by nothing.
+    // What actually made the badge paint immediately was the side effect —
+    // getUnreadCount() is an `api.get` with a 15s micro-cache, so warming it
+    // here means the hook's own call on mount coalesces onto this one.
+    // Keeping the request and dropping the dead write states that plainly.
+    () => notificationService.getUnreadCount().then(() => undefined).catch(() => undefined),
     () =>
       seed(
         ['notifications', userId],

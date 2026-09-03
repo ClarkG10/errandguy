@@ -29,6 +29,8 @@ import { useReducedMotion } from '../../hooks/useReducedMotion';
 import { useResponsive } from '../../constants/responsive';
 import { LightColors } from '../../constants/colors';
 import { toast } from '../../stores/toastStore';
+import { useAuthStore } from '../../stores/authStore';
+import { prefetchSupportTickets } from '../../services/preload.service';
 
 // LayoutAnimation is opt-in on old-architecture Android.
 if (Platform.OS === 'android' && UIManager.setLayoutAnimationEnabledExperimental) {
@@ -117,6 +119,8 @@ function FaqChevron({ open, reduceMotion }: { open: boolean; reduceMotion: boole
 
 export default function CustomerHelpScreen() {
   const router = useRouter();
+  // Key must match the Support screen's own ['support','tickets',userId].
+  const userId = useAuthStore((st) => st.user?.id ?? 'anon');
   const reduceMotion = useReducedMotion();
   const { contentMaxWidth } = useResponsive();
   const [expanded, setExpanded] = useState<number | null>(0);
@@ -210,6 +214,9 @@ export default function CustomerHelpScreen() {
           <Pressable
             onPress={() => {
               Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
+              // Warm the inbox before navigating — the one screen someone
+              // opens because something is already wrong shouldn't spin.
+              prefetchSupportTickets(userId);
               router.push('/(customer)/support');
             }}
             className="flex-row items-center py-3 px-4"

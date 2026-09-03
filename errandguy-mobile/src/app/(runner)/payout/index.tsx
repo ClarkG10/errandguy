@@ -52,9 +52,12 @@ import { haptics } from '../../../utils/haptics';
 import { Radius } from '../../../constants/radius';
 import type { WalletTransaction } from '../../../types';
 import { LightColors, Elevation } from '../../../constants/colors';
+import { PAYOUT_ACTIVITY_PREVIEW } from '../../../services/preload.service';
 
 /** How many ledger rows the inline "Wallet activity" preview shows. */
-const ACTIVITY_PREVIEW = 6;
+// Owned by preload.service so the prefetch and this screen cannot request
+// different page sizes (a divergence would make the warm-up a no-op).
+const ACTIVITY_PREVIEW = PAYOUT_ACTIVITY_PREVIEW;
 
 /** Whole-peso display for the payout-progress line — "₱65 of ₱100".
  *  Mirrors the runner home daily-goal bar's peso formatting so the two

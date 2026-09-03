@@ -31,6 +31,7 @@ jest.mock('../cache.service', () => {
 const mockGetCustomerHome = jest.fn();
 const mockGetErrandTypes = jest.fn();
 const mockGetActiveBooking = jest.fn();
+const mockGetUnreadCount = jest.fn();
 const mockGetBookings = jest.fn();
 const mockGetWalletBalance = jest.fn();
 
@@ -63,7 +64,7 @@ jest.mock('../payment.service', () => ({
 }));
 jest.mock('../notification.service', () => ({
   notificationService: {
-    getUnreadCount: jest.fn(() => Promise.resolve({ data: { data: { count: 0 } } })),
+    getUnreadCount: (...a: unknown[]) => mockGetUnreadCount(...a),
     getNotifications: jest.fn(() => Promise.resolve({ data: { data: [] } })),
   },
 }));
@@ -127,6 +128,7 @@ beforeEach(() => {
   jest.clearAllMocks();
   mockGetErrandTypes.mockResolvedValue({ data: { data: ERRAND_TYPES } });
   mockGetActiveBooking.mockResolvedValue({ data: { data: ACTIVE_BOOKING } });
+  mockGetUnreadCount.mockReset().mockResolvedValue({ data: { data: { count: 0 } } });
   mockGetBookings.mockResolvedValue({ data: { data: RECENT_BOOKINGS } });
   mockGetWalletBalance.mockResolvedValue({ data: { data: { balance: 1234.5 } } });
   mockGetCustomerHome.mockResolvedValue(aggregate());
@@ -263,11 +265,29 @@ describe('preloadCustomerEssentials — /customer/home aggregate fan-out', () =>
     const w = writes();
 
     expect(w[`q:wallet:transactions:${USER}:all`]).toBeDefined();
-    expect(w[`q:notifications:unread:${USER}`]).toBeDefined();
     expect(w[`q:user:addresses:${USER}`]).toBeDefined();
     expect(w[`q:payment-methods:${USER}`]).toBeDefined();
     expect(w[`q:chat:conversations:${USER}`]).toBeDefined();
     expect(w[`q:bookings:activity:all:${USER}`]).toBeDefined();
+  });
+
+  /**
+   * The unread badge is primed by a REQUEST, not a query-cache seed.
+   *
+   * useRealtimeNotifications never goes through useQuery — it calls
+   * getUnreadCount() straight into the store and keeps it live over Reverb — so
+   * the cache key the warm-up used to write was read by nothing. What actually
+   * made the badge paint immediately is the side effect: getUnreadCount() is an
+   * `api.get` with a 15s micro-cache, so the hook's own call on mount coalesces
+   * onto this one. This asserts the useful half happens and the dead half
+   * doesn't (the previous version of this test pinned the dead write).
+   */
+  it('primes the unread badge with a request, and writes no dead cache key', async () => {
+    await preloadCustomerEssentials(USER);
+    await flush();
+
+    expect(mockGetUnreadCount).toHaveBeenCalled();
+    expect(writes()[`q:notifications:unread:${USER}`]).toBeUndefined();
   });
 });
 

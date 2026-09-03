@@ -33,6 +33,7 @@ import { toast } from '../../../stores/toastStore';
 import type { Booking, WalletTransaction } from '../../../types';
 import { LightColors, Elevation } from '../../../constants/colors';
 import { TAB_CONTENT_BOTTOM_INSET_RUNNER } from '../../../constants/tabLayout';
+import { prefetchPayoutActivity } from '../../../services/preload.service';
 
 type Period = 'today' | 'week' | 'month';
 
@@ -787,7 +788,13 @@ export default function EarningsScreen() {
           <Button
             title={pendingPayout ? 'View payout status' : 'Request Payout'}
             variant="primary"
-            onPress={() => router.push('/(runner)/payout' as any)}
+            onPress={() => {
+              // The payout list is warmed at boot; the wallet-activity preview
+              // beneath it was not, so a MONEY screen half-painted. Page size
+              // must match the payout screen's own.
+              prefetchPayoutActivity(userId);
+              router.push('/(runner)/payout' as any);
+            }}
             fullWidth
           />
         </View>

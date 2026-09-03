@@ -32,6 +32,8 @@ import { useReducedMotion } from '../../../hooks/useReducedMotion';
 import { useResponsive } from '../../../constants/responsive';
 import { LightColors } from '../../../constants/colors';
 import { toast } from '../../../stores/toastStore';
+import { useAuthStore } from '../../../stores/authStore';
+import { prefetchSupportTickets } from '../../../services/preload.service';
 
 // LayoutAnimation is opt-in on old-architecture Android.
 if (Platform.OS === 'android' && UIManager.setLayoutAnimationEnabledExperimental) {
@@ -110,6 +112,8 @@ const FAQS: FAQ[] = [
 
 export default function HelpScreen() {
   const router = useRouter();
+  // Key must match the Support screen's own ['support','tickets',userId].
+  const userId = useAuthStore((st) => st.user?.id ?? 'anon');
   const insets = useSafeAreaInsets();
   const reduceMotion = useReducedMotion();
   const { contentMaxWidth } = useResponsive();
@@ -257,6 +261,8 @@ export default function HelpScreen() {
           <Pressable
             onPress={() => {
               Haptics.selectionAsync().catch(() => {});
+              // Warm the inbox before navigating (see (customer)/help.tsx).
+              prefetchSupportTickets(userId);
               // Support tickets live in the shared (customer) stack — a
               // single threaded-support surface for both roles.
               router.push('/(customer)/support');
