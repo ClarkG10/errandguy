@@ -39,6 +39,28 @@ export interface RunnerProfile {
   documents?: RunnerDocument[];
 }
 
+/**
+ * What the shift just ended amounted to, returned by PUT /runner/online when
+ * going offline.
+ *
+ * `null` from the server means "we can't measure this honestly" (no recorded
+ * shift start) — render nothing rather than a zeroed card that reads like a
+ * bad day.
+ *
+ * `earnings` is payout ONLY; `tips` is reported alongside and is never folded
+ * in, matching the earnings screen and the PDF statement. The two must agree —
+ * runner_payout is what the cash-settlement commission maths reconciles
+ * against.
+ */
+export interface ShiftSummary {
+  started_at: string;
+  ended_at: string;
+  minutes_online: number;
+  errands: number;
+  earnings: number;
+  tips: number;
+}
+
 export interface RunnerDocument {
   id: string;
   runner_id: string;

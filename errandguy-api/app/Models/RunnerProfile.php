@@ -34,6 +34,7 @@ class RunnerProfile extends Model
         'vehicle_plate',
         'vehicle_photo_url',
         'is_online',
+        'online_since',
         'current_lat',
         'current_lng',
         'last_location_at',
@@ -60,6 +61,9 @@ class RunnerProfile extends Model
     {
         return [
             'is_online' => 'boolean',
+            // Must be a Carbon instance — the shift summary does date maths on
+            // it the moment a runner clocks off.
+            'online_since' => 'datetime',
             'preferred_types' => 'array',
             'total_earnings' => 'decimal:2',
             'acceptance_rate' => 'decimal:2',

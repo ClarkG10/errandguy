@@ -40,6 +40,7 @@ import {
 import { NegotiateOfferCard } from '../../../components/runner/NegotiateOfferCard';
 import { VerificationBanner } from '../../../components/runner/VerificationBanner';
 import { OfferDetailsSheet } from '../../../components/runner/OfferDetailsSheet';
+import { ShiftSummarySheet } from '../../../components/runner/ShiftSummarySheet';
 import { offerExpiresAt, readAcceptDeadline } from '../../../components/runner/offerMeta';
 import { ActiveRunnerErrandCard } from '../../../components/runner/ActiveRunnerErrandCard';
 import { Avatar } from '../../../components/ui/Avatar';
@@ -80,6 +81,7 @@ import { useReducedMotion } from '../../../hooks/useReducedMotion';
 import { useHideTabBarOnScroll } from '../../../hooks/useHideTabBarOnScroll';
 import { TAB_CONTENT_BOTTOM_INSET_RUNNER } from '../../../constants/tabLayout';
 import type { Booking } from '../../../types';
+import type { ShiftSummary } from '../../../types/runner';
 import { toast } from '../../../stores/toastStore';
 import { errorMessage } from '../../../utils/errorCatalog';
 import { copy } from '../../../constants/copy';
@@ -228,6 +230,8 @@ export default function RunnerHomeScreen() {
   const [locationGranted, setLocationGranted] = useState<boolean | null>(null);
   /** Open offer being previewed in the details sheet (null = sheet closed). */
   const [previewOffer, setPreviewOffer] = useState<Booking | null>(null);
+  /** What the shift just ended came to. Null = nothing to show. */
+  const [shiftSummary, setShiftSummary] = useState<ShiftSummary | null>(null);
   /** Id of the offer whose accept is in flight — locks every other claim. */
   const [acceptingOfferId, setAcceptingOfferId] = useState<string | null>(null);
 
@@ -685,6 +689,10 @@ export default function RunnerHomeScreen() {
       // the toggle fails the runner is still online and their open offers
       // must reappear, not stay cleared until the next revalidation.
       const prevOffers = offersQ.data;
+      // The shift summary rides back on the toggle response. runOptimistic's
+      // onSuccess takes no argument, so capture it in the commit rather than
+      // widening a helper that ~30 other call sites share.
+      let shift: ShiftSummary | null = null;
       await runOptimistic({
         apply: () => {
           toggleOnline(false);
@@ -694,13 +702,24 @@ export default function RunnerHomeScreen() {
           toggleOnline(true);
           offersQ.mutate(() => prevOffers ?? []);
         },
-        commit: () => runnerService.toggleOnline(false),
+        commit: async () => {
+          const res = await runnerService.toggleOnline(false);
+          shift = res.data?.data?.shift ?? null;
+          return res;
+        },
         errorMessage: 'Could not go offline. Please try again.',
         retry: true,
         onSuccess: () => {
           stopTracking();
           Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
-          toast.info("You're offline. We'll stop sending you new requests.");
+          // The sheet IS the confirmation when we have one — a toast saying
+          // "you're offline" behind a sheet that already says "shift complete"
+          // is the same news twice.
+          if (shift) {
+            setShiftSummary(shift);
+          } else {
+            toast.info("You're offline. We'll stop sending you new requests.");
+          }
         },
       });
       return;
@@ -1683,6 +1702,11 @@ export default function RunnerHomeScreen() {
           also raise for a runner sitting on Earnings or History. */}
 
       {/* Full detail + Accept for an OPEN (negotiate) offer. */}
+      {/* Clocking off used to be silent: the runner had to open the earnings
+          tab and work out which rows belonged to the hours they'd just
+          worked. */}
+      <ShiftSummarySheet shift={shiftSummary} onClose={() => setShiftSummary(null)} />
+
       <OfferDetailsSheet
         booking={previewOffer}
         onClose={() => setPreviewOffer(null)}
