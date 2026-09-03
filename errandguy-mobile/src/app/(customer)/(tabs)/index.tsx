@@ -243,12 +243,13 @@ export default function CustomerHomeScreen() {
   // Deliberately a SEPARATE key from ['booking','active',…]: that one is the
   // singular contract the boot snapshot seeds and the store is fed from, so it
   // keeps painting card #1 instantly on a cold start while this one fetches.
-  // Cost of that split, stated plainly: whenever both queries fetch at once
-  // (focus revalidation, pull-to-refresh) the api layer's in-flight dedupe
-  // collapses them into one GET — but on a cold start, where the singular is
-  // served from the seeded snapshot, this one is a genuine extra request.
-  // preload.service seeding ['bookings','active-list',userId] from the
-  // /customer/home aggregate's `active_bookings` section would remove it.
+  // Cost of that split: whenever both queries fetch at once (focus
+  // revalidation, pull-to-refresh) the api layer's in-flight dedupe collapses
+  // them into one GET. On a COLD start this used to be a genuine extra
+  // request — preload.service now seeds this key too, from the /customer/home
+  // aggregate's `active_bookings` section, so both paint from the snapshot.
+  // (That seed is conditional: an older API omits the section, and pinning an
+  // empty array over a live errand would be worse than fetching.)
   const activeBookingsQ = useQuery<Booking[]>(
     ['bookings', 'active-list', user?.id ?? 'anon'],
     async () => {

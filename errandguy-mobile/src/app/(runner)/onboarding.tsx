@@ -183,10 +183,30 @@ export default function RunnerOnboardingScreen() {
         type: 'image/jpeg',
       } as any);
 
-      await runnerService.uploadDocument(formData);
-      await fetchProfile();
+      const res = await runnerService.uploadDocument(formData);
+
+      // Confirm on the UPLOAD, not after a second round trip. This is the
+      // first screen of onboarding and the heaviest wait in it: the runner has
+      // just watched a photo upload over mobile data, and making them wait on
+      // a profile GET before anything acknowledges it is exactly where this
+      // funnel loses people. The document IS submitted here, so it's honest.
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
       toast.success('Document uploaded — we’ll review it shortly.');
+
+      // Tick the checklist from the response we already hold. The server
+      // replaces any same-type document (a rejected one is deleted before the
+      // insert), so replace rather than append.
+      const uploaded = res.data?.data as RunnerDocument | undefined;
+      if (uploaded) {
+        setDocuments((prev) => [
+          ...prev.filter((d) => d.document_type !== uploaded.document_type),
+          uploaded,
+        ]);
+      }
+
+      // Reconcile with the server in the background — it also carries
+      // verification_status, which a resubmission flips back to pending.
+      void fetchProfile();
     } catch (err: any) {
       haptics.error();
       toast.error(errorMessage(err, copy.runner.documentUploadFailed));

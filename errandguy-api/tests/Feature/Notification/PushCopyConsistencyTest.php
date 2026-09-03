@@ -30,6 +30,9 @@ class PushCopyConsistencyTest extends TestCase
 {
     use RefreshDatabase;
 
+    /** Words allowed to keep an inner capital in a title. */
+    private const PROPER_NOUNS = ['ErrandGuy'];
+
     /**
      * Every title/body string in both arrays, flattened to
      * "path" => "string" so a failure names the offending entry.
@@ -236,6 +239,79 @@ class PushCopyConsistencyTest extends TestCase
                 $key = str_replace(base_path().'/', '', $file->getPathname()).':'.$tok[2];
                 $found[$key] = trim($title[0][1], "'\"");
             }
+
+            $found += $this->rawNotificationTitles($file->getPathname());
+        }
+
+        return $found;
+    }
+
+    /**
+     * Titles written by a RAW `Notification::create([...])` rather than through
+     * NotificationService.
+     *
+     * These land in the SAME Alerts inbox but bypass the service entirely, so
+     * the positional-argument scan above could never see them — a blind spot
+     * that was hiding a Title-Case "Document Submitted" on the KYC upload, the
+     * first notification a new runner receives.
+     *
+     * @return array<string, string> "file:line" => title
+     */
+    private function rawNotificationTitles(string $path): array
+    {
+        $tokens = token_get_all((string) file_get_contents($path));
+        $count = count($tokens);
+        $found = [];
+        $rel = str_replace(base_path().'/', '', $path);
+
+        for ($i = 0; $i < $count; $i++) {
+            $tok = $tokens[$i];
+            if (! is_array($tok) || $tok[0] !== T_STRING || $tok[1] !== 'Notification') {
+                continue;
+            }
+            // Notification::create(
+            if (! (($tokens[$i + 1] ?? null) && is_array($tokens[$i + 1]) && $tokens[$i + 1][0] === T_DOUBLE_COLON)) {
+                continue;
+            }
+            if (! (($tokens[$i + 2] ?? null) && is_array($tokens[$i + 2]) && $tokens[$i + 2][1] === 'create')) {
+                continue;
+            }
+
+            // Walk the call, looking for a literal 'title' => 'literal' pair.
+            $depth = 0;
+            for ($k = $i + 3; $k < $count; $k++) {
+                $t = $tokens[$k];
+                if (is_string($t)) {
+                    if (in_array($t, ['(', '['], true)) {
+                        $depth++;
+                    } elseif (in_array($t, [')', ']'], true)) {
+                        $depth--;
+                        if ($depth <= 0) {
+                            break;
+                        }
+                    }
+
+                    continue;
+                }
+                if ($t[0] !== T_CONSTANT_ENCAPSED_STRING || trim($t[1], "'\"") !== 'title') {
+                    continue;
+                }
+                // Skip whitespace to the => and then to the value.
+                $j = $k + 1;
+                while ($j < $count && is_array($tokens[$j]) && $tokens[$j][0] === T_WHITESPACE) {
+                    $j++;
+                }
+                if (! (is_array($tokens[$j] ?? null) && $tokens[$j][0] === T_DOUBLE_ARROW)) {
+                    continue;
+                }
+                $j++;
+                while ($j < $count && is_array($tokens[$j]) && $tokens[$j][0] === T_WHITESPACE) {
+                    $j++;
+                }
+                if (is_array($tokens[$j] ?? null) && $tokens[$j][0] === T_CONSTANT_ENCAPSED_STRING) {
+                    $found[$rel.':'.$tokens[$j][2]] = trim($tokens[$j][1], "'\"");
+                }
+            }
         }
 
         return $found;
@@ -263,6 +339,10 @@ class PushCopyConsistencyTest extends TestCase
             'app/Services/SOSService.php' => 'SOS resolved',
             'app/Http/Controllers/Runner/RunnerErrandController.php' => 'PIN verified',
             'app/Listeners/SendBookingCancelledNotification.php' => 'Errand cancelled',
+            // A RAW Notification::create — a different code shape entirely, and
+            // the blind spot that was hiding a Title-Case title on the first
+            // notification a new runner ever receives.
+            'app/Http/Controllers/Runner/RunnerDocumentController.php' => 'Document submitted',
         ] as $file => $expected) {
             $hits = [];
             foreach ($titles as $where => $title) {
@@ -281,6 +361,12 @@ class PushCopyConsistencyTest extends TestCase
             foreach (preg_split('/\s+/u', $title) as $index => $word) {
                 $bare = preg_replace('/[^\p{L}]/u', '', $word) ?? '';
                 if ($bare === '') {
+                    continue;
+                }
+                // The product name is a proper noun and keeps its inner capital
+                // ("Welcome to ErrandGuy!"). Narrow by design: an allowlist, not
+                // a blanket exemption for any mixed-case word.
+                if (in_array($bare, self::PROPER_NOUNS, true)) {
                     continue;
                 }
                 // All-caps acronym of 2+ letters is allowed anywhere.

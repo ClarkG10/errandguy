@@ -39,6 +39,14 @@ export interface ReferralInfo {
 export interface CustomerHomeAggregate {
   errand_types: ErrandType[];
   active_booking: Booking | null;
+  /**
+   * ALL live errands, alongside the singular above (Home shows up to three).
+   *
+   * Optional because an older API build omits it — and the client must not
+   * assume otherwise: a missing array has to leave the list cache a MISS so
+   * the screen fetches normally, never seed an empty one over a live errand.
+   */
+  active_bookings?: Booking[];
   recent_bookings: Booking[];
   /**
    * The bare NUMBER, not the `{ balance }` object — the app's

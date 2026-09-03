@@ -12,6 +12,7 @@ import { chatService } from './chat.service';
 import { useChatStore } from '../stores/chatStore';
 import { useBookingStore } from '../stores/bookingStore';
 import { runPool } from '../utils/asyncPool';
+import { parseActiveBookings } from '../utils/activeBookings';
 import type { Booking, Conversation, Message } from '../types';
 
 // Mirrors the AsyncStorage key used by the trusted-contacts screen
@@ -321,6 +322,35 @@ async function seedCustomerHome(userId: string): Promise<void> {
     await Promise.all([
       write(['errand-types'], home.errand_types, CacheTTL.STATIC),
       write(['booking', 'active', userId], home.active_booking ?? null, CacheTTL.SHORT),
+      // The ARRAY of live errands, alongside the singular above.
+      //
+      // Home splits these two on purpose (the singular paints card #1 from the
+      // snapshot instantly while the list resolves), but the list key was never
+      // seeded — so on every cold start it was a genuine extra authenticated
+      // GET, on the most-hit surface in the app: the customer Home tab, the
+      // Profile tab and (customer)/_layout all read this key, and the layout
+      // uses it to pick which booking the realtime channel follows.
+      //
+      // Parsed with the SAME helper the screen's own fetcher uses, so the
+      // seeded value cannot drift in shape from what it would have fetched —
+      // the parity this whole snapshot depends on.
+      // Conditional for the same reason `referral` below is: an older API build
+      // omits the section, and seeding an empty array would pin "no active
+      // errand" over a live one for the whole freshness window. Absent → leave
+      // the key a miss and let the screen fetch, i.e. exactly today's
+      // behaviour, never worse.
+      ...(Array.isArray(home.active_bookings)
+        ? [
+            write(
+              ['bookings', 'active-list', userId],
+              parseActiveBookings({
+                active_bookings: home.active_bookings,
+                data: home.active_booking ?? null,
+              }),
+              CacheTTL.SHORT,
+            ),
+          ]
+        : []),
       write(['bookings', 'recent', userId], home.recent_bookings, CacheTTL.LONG),
       // The NUMBER, matching the wallet screen's fetcher (see the seed above).
       write(['wallet', 'balance', userId], home.wallet_balance, CacheTTL.MEDIUM),

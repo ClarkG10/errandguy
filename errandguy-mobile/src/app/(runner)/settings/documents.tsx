@@ -154,10 +154,41 @@ export default function DocumentsScreen() {
         type: 'image/jpeg',
       } as any);
 
-      await runnerService.uploadDocument(formData, (p) => setUploadPct(p));
-      await profileQ.refresh();
+      const res = await runnerService.uploadDocument(formData, (p) => setUploadPct(p));
+
+      // Confirm the instant the UPLOAD lands, not after a second round trip.
+      // The runner has just watched a photo crawl over mobile data; making them
+      // then wait on a profile GET before anything acknowledges it is the
+      // longest, worst-placed wait in the whole onboarding funnel — the one
+      // with the heaviest drop-off (see errandguy:send-onboarding-reminders).
+      // The document IS submitted at this point, so the copy is honest.
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
       toast.success('Document uploaded — we’ll review it shortly.');
+
+      // Paint the new row from the response we already hold. The server
+      // replaces any same-type document (it deletes a rejected one before
+      // inserting), so mirror that rather than appending a duplicate.
+      const uploaded = res.data?.data as RunnerDocument | undefined;
+      if (uploaded) {
+        profileQ.mutate((prev) =>
+          prev
+            ? {
+                ...prev,
+                documents: [
+                  ...(prev.documents ?? []).filter(
+                    (d) => d.document_type !== uploaded.document_type,
+                  ),
+                  uploaded,
+                ],
+              }
+            : prev,
+        );
+      }
+
+      // Server stays the authority — but in the background, where it costs
+      // the runner nothing. It also carries verification_status, which the
+      // upload can flip (rejected → pending on a resubmission).
+      void profileQ.refresh();
     } catch (err: any) {
       const message = errorMessage(err, copy.runner.documentUploadFailed);
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error).catch(() => {});

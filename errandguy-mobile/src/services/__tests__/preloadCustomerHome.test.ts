@@ -199,6 +199,64 @@ describe('preloadCustomerEssentials — /customer/home aggregate fan-out', () =>
     expect(w[`q:wallet:balance:${USER}`].value).toBe(1234.5);
   });
 
+  /**
+   * The list key is read by THREE surfaces — the Home tab, the Profile tab and
+   * (customer)/_layout, which uses it to pick the booking its realtime channel
+   * follows. It was never seeded, so every cold start paid an extra
+   * authenticated GET on the most-hit screen in the app while the snapshot it
+   * needed was already in hand.
+   */
+  it('seeds the active-errand LIST, not just the singular', async () => {
+    const list = [ACTIVE_BOOKING, { id: 'b-second', status: 'accepted' }];
+    mockGetCustomerHome.mockResolvedValue(aggregate({ active_bookings: list }));
+
+    await preloadCustomerEssentials(USER);
+
+    expect(writes()[`q:bookings:active-list:${USER}`]).toEqual({
+      value: list,
+      ttl: CacheTTL.SHORT,
+    });
+  });
+
+  it('seeds a genuine empty list, so Home does not fetch to learn there is nothing', async () => {
+    mockGetCustomerHome.mockResolvedValue(
+      aggregate({ active_bookings: [], active_booking: null }),
+    );
+
+    await preloadCustomerEssentials(USER);
+
+    expect(writes()[`q:bookings:active-list:${USER}`]).toEqual({
+      value: [],
+      ttl: CacheTTL.SHORT,
+    });
+  });
+
+  /**
+   * An older API build omits the section entirely — which production is
+   * currently running. Seeding an empty array there would pin "no active
+   * errand" over a live one for the whole freshness window, so the key must
+   * stay a MISS and let the screen fetch exactly as it does today.
+   */
+  it('leaves the list key a MISS when an older server omits the section', async () => {
+    // The default fixture has no `active_bookings` at all.
+    await preloadCustomerEssentials(USER);
+    const w = writes();
+
+    expect(w[`q:bookings:active-list:${USER}`]).toBeUndefined();
+    // …and the rest of the snapshot still lands, including the singular.
+    expect(w[`q:booking:active:${USER}`].value).toEqual(ACTIVE_BOOKING);
+  });
+
+  it('never lets a malformed section through as a seeded value', async () => {
+    mockGetCustomerHome.mockResolvedValue(
+      aggregate({ active_bookings: { nope: true } as unknown }),
+    );
+
+    await preloadCustomerEssentials(USER);
+
+    expect(writes()[`q:bookings:active-list:${USER}`]).toBeUndefined();
+  });
+
   it('still warms the below-the-fold set, unchanged', async () => {
     await preloadCustomerEssentials(USER);
     await flush();

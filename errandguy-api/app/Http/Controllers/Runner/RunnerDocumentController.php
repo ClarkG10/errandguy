@@ -115,7 +115,7 @@ class RunnerDocumentController extends Controller
         // Notify admins of new submission
         Notification::create([
             'user_id' => $request->user()->id,
-            'title' => 'Document Submitted',
+            'title' => 'Document submitted',
             'body' => "Your {$documentType} document has been submitted for review.",
             'type' => 'document_update',
             'data' => ['document_id' => $document->id],
