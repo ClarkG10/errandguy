@@ -38,3 +38,27 @@ $FORGE_PHP artisan queue:restart
 ( flock -w 10 9 || exit 1
     sudo -S service $FORGE_PHP_FPM reload ) 9>/tmp/fpmrestart.lock
 
+# Reverb holds its code in memory exactly like the queue worker, so a deploy
+# leaves the WebSocket server running the previous release until it is
+# signalled. Restarted LAST — after composer, optimize and the FPM reload — so
+# it can never come up on a half-deployed release: the known failure there is a
+# bootstrap/cache written before package:discover finished, which surfaces in
+# the daemon log as `There are no commands defined in the "reverb" namespace`
+# and takes realtime down until someone notices.
+#
+# `reverb:restart` is a cache-signalled graceful restart (the same mechanism as
+# queue:restart), so it needs no sudo and no Forge daemon id.
+#
+# NON-BLOCKING on purpose: at this point the release is already live and
+# migrated, and realtime degrades to polling — so a restart hiccup must never
+# fail an otherwise-good deploy.
+$FORGE_PHP artisan reverb:restart --no-interaction || true
+
+# Report unsafe/degraded production config into the deploy log (APP_DEBUG,
+# queue driver, Reverb credentials, Sentry DSN, TRUSTED_PROXIES). It normally
+# runs on the daily schedule, but the scheduler is the one thing that cannot
+# report its own death — so surfacing it per-deploy means a broken cron doesn't
+# also hide the config warnings. Exits non-zero when it finds something, hence
+# `|| true`: this is visibility, not a gate.
+$FORGE_PHP artisan errandguy:check-prod-config --no-interaction || true
+
