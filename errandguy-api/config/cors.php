@@ -42,6 +42,10 @@ return [
     'exposed_headers' => [
         'ETag',
         'X-Request-Id',
+        // Sliding-session refresh (RotateAccessToken). The native app isn't
+        // subject to CORS, but the Expo web build is — without this the browser
+        // strips the header and web users keep the 30-day logout cliff.
+        'X-New-Token',
     ],
 
     'max_age' => 600,

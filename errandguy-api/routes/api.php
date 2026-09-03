@@ -98,8 +98,14 @@ Route::prefix('v1')->group(function () {
         return $response;
     });
 
-    // Authenticated routes
-    Route::middleware(['auth:sanctum', 'active'])->group(function () {
+    // Authenticated routes.
+    //
+    // `token.rotate` keeps an active user signed in: SANCTUM_EXPIRATION is 30
+    // days and nothing renewed it, so every user hit a hard logout cliff a
+    // month after their last password entry — arbitrarily, possibly mid-errand.
+    // It emits an additive X-New-Token header near expiry. Deliberately NOT on
+    // /logout (below) or the admin group, whose 8h token expiry is intentional.
+    Route::middleware(['auth:sanctum', 'active', 'token.rotate'])->group(function () {
 
         // Client (mobile) crash ingest — best-effort observability so release-
         // build crashes (where console.* goes nowhere) become a visible,

@@ -71,6 +71,7 @@ return Application::configure(basePath: dirname(__DIR__))
             'admin.can' => \App\Http\Middleware\EnsureAdminCapability::class,
             'idempotent' => \App\Http\Middleware\EnsureIdempotency::class,
             'etag' => \App\Http\Middleware\EtagConditional::class,
+            'token.rotate' => \App\Http\Middleware\RotateAccessToken::class,
         ]);
 
         $middleware->throttleApi('api');

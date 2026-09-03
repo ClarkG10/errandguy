@@ -126,6 +126,45 @@ const RETRY_DELAYS_MS = [2000, 5000, 10000];
 const RETRY_TIMEOUT_MS = 12000;
 
 /**
+ * Adopt a server-rotated access token.
+ *
+ * `SANCTUM_EXPIRATION` is 30 days and nothing renewed it, so every user was
+ * signed out a month after their last password entry — at an arbitrary moment,
+ * possibly mid-errand. The server now mints a replacement as expiry
+ * approaches and returns it in `X-New-Token` (see RotateAccessToken).
+ *
+ * Purely additive: if the header is absent — an older API, or a token with
+ * plenty of life left — nothing happens. The previous token stays valid until
+ * its own expiry, so requests already in flight with it do not fail.
+ *
+ * Fire-and-forget: persisting the token must never delay or fail the response
+ * the caller is waiting on. A failed write just means we adopt the next one.
+ */
+function adoptRotatedToken(response: AxiosResponse<any>): void {
+  try {
+    const fresh = response.headers?.['x-new-token'] ?? response.headers?.['X-New-Token'];
+    if (typeof fresh !== 'string' || !fresh) return;
+
+    // Compare against the value the REQUEST interceptor actually reads, not the
+    // store's copy — they diverge during a pending biometric unlock.
+    if (secureStorage.peek('auth_token') === fresh) return;
+    void secureStorage.set('auth_token', fresh);
+
+    // Mirror into the store only when it is already holding a token. While a
+    // biometric unlock is pending, `token` is deliberately withheld from state
+    // (the secureStorage copy still authenticates requests) and writing one
+    // back would fight that design. Lazy require avoids the api↔authStore
+    // circular import.
+    const { useAuthStore } = require('../stores/authStore');
+    if (useAuthStore.getState().token) {
+      useAuthStore.setState({ token: fresh });
+    }
+  } catch {
+    /* store not ready, or headers absent — keep using the current token */
+  }
+}
+
+/**
  * Tear the session down from inside the interceptor.
  *
  * Extracted so the 401 path (expired / revoked token) and the dead-account 403
@@ -306,6 +345,7 @@ api.interceptors.response.use(
     // flag. The store no-ops when unchanged, so this is free on the
     // happy path.
     network.setOffline(false);
+    adoptRotatedToken(response);
     return response;
   },
   async (error) => {

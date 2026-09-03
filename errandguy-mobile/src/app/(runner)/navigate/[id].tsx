@@ -43,6 +43,7 @@ import { isStatusBackwards, isTerminalStatus } from '../../../constants/statusRa
 import { errorMessage } from '../../../utils/errorCatalog';
 import { copy } from '../../../constants/copy';
 import { haptics } from '../../../utils/haptics';
+import { formatTime } from '../../../utils/formatDate';
 import { toast } from '../../../stores/toastStore';
 import type { Booking, BookingStatus } from '../../../types';
 import { LightColors, Elevation } from '../../../constants/colors';
@@ -127,8 +128,11 @@ function fmtDuration(seconds: number): string {
 }
 
 function fmtArrival(secondsFromNow: number): string {
-  const arrive = new Date(Date.now() + secondsFromNow * 1000);
-  return arrive.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+  // formatTime, not toLocaleTimeString: the latter follows the DEVICE locale,
+  // so this ETA rendered 24h on a 24h-locale handset while every other clock
+  // in the app (schedule picker, receipts, chat) stayed 12h. It also depends on
+  // Intl/ICU being complete, which is not a safe assumption under Hermes.
+  return formatTime(new Date(Date.now() + secondsFromNow * 1000));
 }
 
 export default function NavigateScreen() {

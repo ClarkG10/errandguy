@@ -27,6 +27,7 @@ import { useHideTabBarOnScroll } from '../../../hooks/useHideTabBarOnScroll';
 import { CacheTTL } from '../../../services/cache.service';
 import { formatCurrency } from '../../../utils/formatCurrency';
 import { formatRunnerPayout } from '../../../utils/runnerPayout';
+import { formatTime } from '../../../utils/formatDate';
 import { secureStorage } from '../../../utils/storage';
 import { toast } from '../../../stores/toastStore';
 import type { Booking, WalletTransaction } from '../../../types';
@@ -697,10 +698,11 @@ export default function EarningsScreen() {
                             {errand.errand_type?.name ?? 'Errand'}
                           </Text>
                           <Text className="text-[11px] font-inter tabular-nums text-textMuted mt-0.5">
-                            {new Date(errand.completed_at ?? errand.created_at).toLocaleTimeString([], {
-                              hour: '2-digit',
-                              minute: '2-digit',
-                            })}
+                            {/* formatTime, not toLocaleTimeString — see
+                                navigate/[id].tsx fmtArrival. A runner's own
+                                earnings rows read 24h on a 24h-locale device
+                                while the errand card above them read 12h. */}
+                            {formatTime(errand.completed_at ?? errand.created_at)}
                           </Text>
                         </View>
                         <Text className="text-[14px] font-inter-semi tabular-nums text-textPrimary">

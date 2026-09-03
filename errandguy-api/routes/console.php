@@ -38,6 +38,14 @@ Schedule::command('cache:prune-stale-tags')->hourly();
 // Data retention: cleanup old locations (24h) and messages (30d post-completion)
 Schedule::command('errandguy:cleanup-locations')->daily()->onOneServer();
 
+// Reap dead access tokens. Nothing has ever pruned personal_access_tokens, so
+// every token any user has ever been issued is still on the row — and the
+// sliding session (RotateAccessToken) now leaves the outgoing token behind on
+// purpose, so in-flight requests don't 401. The 48h grace keeps a token a
+// little past its expiry, well clear of the rotation window, so this can never
+// delete something still in use.
+Schedule::command('sanctum:prune-expired --hours=48')->daily()->onOneServer();
+
 // Data retention: bound the money-path dedup tables — expired idempotency_keys
 // (dead after their 24h window) and old webhook_events (kept 90d as an audit
 // trail). Pruned only outside the replay window, so dedup stays intact. (DATA-9)
