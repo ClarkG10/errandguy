@@ -19,7 +19,7 @@ import { toast } from '../../stores/toastStore';
 import { formatCurrency } from '../../utils/formatCurrency';
 import { formatFullDate, formatTime } from '../../utils/formatDate';
 import {
-  STATUS_LABELS,
+  statusLabel as statusLabelFor,
   STATUS_COLORS,
   STATUS_TEXT_COLORS,
   TRACKABLE_STATUSES,
@@ -31,6 +31,58 @@ interface BookingDetailSheetProps {
   booking: Booking | null;
   isVisible: boolean;
   onClose: () => void;
+}
+
+/**
+ * The money outcome of a terminal booking, read off the fields the server
+ * already derives (BookingResource: `cancellation_fee`, `refunded_amount`,
+ * `refund_destination`).
+ *
+ * NOTHING is computed here — the fee is capped/zeroed server-side (PRICE-3 /
+ * PRICE-4) and a client-side "total − policy fee" would print a phantom
+ * charge, which is exactly why the arithmetic lives in one place on the
+ * server. This only normalises Laravel's decimal-as-string casts and answers
+ * the one question a receipt has to answer: did money move, and where did it
+ * go?
+ *
+ * Exported (and shared with the tracking receipt) so the cancelled errand
+ * tells the same story on every surface it appears on.
+ */
+export type BookingMoneyOutcome = {
+  /** Cancellation fee actually kept by the platform. */
+  fee: number;
+  /** Peso amount credited back, or null when nothing was ever returned. */
+  refunded: number | null;
+  /** Where the refund landed. 'wallet' is the only destination today. */
+  destination: 'wallet' | null;
+  /** True when money changed hands at all on this booking. */
+  moneyMoved: boolean;
+};
+
+const num = (v: unknown): number => {
+  const n = typeof v === 'number' ? v : Number(v);
+  return Number.isFinite(n) ? n : 0;
+};
+
+export function bookingMoneyOutcome(booking: Booking): BookingMoneyOutcome {
+  // Additive server fields; the shared Booking type predates them.
+  const b = booking as Booking & {
+    refunded_amount?: number | string | null;
+    refund_destination?: 'wallet' | null;
+  };
+  const fee = num(b.cancellation_fee);
+  const refunded =
+    b.refunded_amount === null || b.refunded_amount === undefined
+      ? null
+      : num(b.refunded_amount);
+
+  return {
+    fee,
+    refunded,
+    // Only claim a destination when there is actually something in flight.
+    destination: refunded != null && refunded > 0 ? (b.refund_destination ?? 'wallet') : null,
+    moneyMoved: fee > 0 || (refunded != null && refunded > 0),
+  };
 }
 
 /**
@@ -109,7 +161,10 @@ export function BookingDetailSheet({
   // reserved for the pill wash (see statusLabels.ts convention).
   const statusTextColor =
     STATUS_TEXT_COLORS[booking.status] ?? LightColors.textSecondary;
-  const statusLabel = STATUS_LABELS[booking.status] ?? booking.status;
+  // Type-aware so the sheet's eyebrow agrees with the Activity row it was
+  // opened from and with the tracking hero (a bill payment reads "Bill paid",
+  // never "Picked up").
+  const statusLabel = statusLabelFor(booking.status, booking.errand_type?.slug);
 
   const priceItems = [
     { label: 'Base Fee', amount: booking.base_fee },
@@ -153,6 +208,22 @@ export function BookingDetailSheet({
     router.push(`/(customer)/tracking/${booking.id}`);
   };
 
+  // A cancelled / unmatched errand is a money OUTCOME, not a bill: the fare
+  // breakdown below is what the errand WOULD have cost, and rendering it
+  // (plus the full total in the hero) told a customer whose ₱480 had already
+  // been refunded that they paid ₱500 for nothing. Swap in what actually
+  // happened instead.
+  const isMoneyOutcome =
+    booking.status === 'cancelled' || booking.status === 'no_runner';
+  const money = bookingMoneyOutcome(booking);
+  const heroCaption = isMoneyOutcome
+    ? money.refunded != null && money.refunded > 0
+      ? `${formatCurrency(money.refunded)} came back to your wallet`
+      : money.fee > 0
+        ? 'Kept as a cancellation fee'
+        : 'Nothing was charged'
+    : null;
+
   const isLive = TRACKABLE_STATUSES.includes(booking.status);
   const rebookable = ['completed', 'delivered', 'cancelled', 'no_runner'].includes(
     booking.status,
@@ -188,6 +259,11 @@ export function BookingDetailSheet({
           <Text className="text-[26px] font-inter-semi text-textPrimary tabular-nums mt-1">
             {formatCurrency(booking.total_amount)}
           </Text>
+          {heroCaption ? (
+            <Text className="text-[11px] font-montserrat-semi text-textTertiary mt-0.5">
+              {heroCaption}
+            </Text>
+          ) : null}
         </View>
 
         {/* ── Meta strip ── */}
@@ -245,10 +321,69 @@ export function BookingDetailSheet({
           </View>
         </View>
 
-        {/* ── Payment breakdown ── */}
-        <Eyebrow className="mb-2">Payment</Eyebrow>
+        {/* ── Payment — a bill while the errand stands, the money outcome
+            once it was cancelled or never matched. ── */}
+        <Eyebrow className="mb-2">{isMoneyOutcome ? 'What it cost' : 'Payment'}</Eyebrow>
         <View className="mb-5">
-          <PriceBreakdown items={priceItems} total={booking.total_amount} />
+          {isMoneyOutcome ? (
+            <View className="bg-surfaceMuted rounded-2xl p-4">
+              {money.moneyMoved ? (
+                <>
+                  <View className="flex-row items-center justify-between mb-1.5">
+                    <Text className="text-[13px] font-montserrat text-textSecondary">
+                      Errand total
+                    </Text>
+                    <Text className="text-[13px] font-inter text-textSecondary tabular-nums">
+                      {formatCurrency(booking.total_amount)}
+                    </Text>
+                  </View>
+                  {money.fee > 0 ? (
+                    <View className="flex-row items-center justify-between mb-1.5">
+                      <Text className="text-[13px] font-montserrat text-textSecondary">
+                        Cancellation fee
+                      </Text>
+                      <Text
+                        className="text-[13px] font-inter tabular-nums"
+                        style={{ color: LightColors.dangerDark }}
+                      >
+                        −{formatCurrency(money.fee)}
+                      </Text>
+                    </View>
+                  ) : null}
+                  <View className="h-px bg-divider my-2" />
+                  <View className="flex-row items-center justify-between">
+                    <Text className="text-[13px] font-montserrat-semi text-textPrimary flex-1 pr-3">
+                      {money.refunded != null && money.refunded > 0
+                        ? 'Refunded to your ErrandGuy wallet'
+                        : 'Refunded'}
+                    </Text>
+                    <Text
+                      className="text-[15px] font-inter-semi tabular-nums"
+                      style={{
+                        color:
+                          money.refunded != null && money.refunded > 0
+                            ? LightColors.successDark
+                            : LightColors.textSecondary,
+                      }}
+                    >
+                      {formatCurrency(money.refunded ?? 0)}
+                    </Text>
+                  </View>
+                </>
+              ) : (
+                <Text className="text-[13px] font-montserrat text-textSecondary">
+                  Nothing was charged for this errand.
+                </Text>
+              )}
+              {booking.cancellation_reason ? (
+                <Text className="text-[12px] font-montserrat text-textTertiary mt-3">
+                  Reason: {booking.cancellation_reason}
+                </Text>
+              ) : null}
+            </View>
+          ) : (
+            <PriceBreakdown items={priceItems} total={booking.total_amount} />
+          )}
         </View>
 
         {/* ── Actions — live bookings get a single Track CTA (the details

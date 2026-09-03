@@ -30,6 +30,17 @@ import { bookingService } from './booking.service';
  * 422s as "already reviewed"). The bar is the same: replaying it can never
  * produce an outcome the user didn't already ask for.
  *
+ * DELIBERATELY NOT HERE — the SOS raise. It clears the replay-safety bar
+ * (SOSService returns the existing active alert under a row lock and skips the
+ * fan-out), but not the CADENCE bar: this queue only drains on the
+ * offline→online edge and at boot, and the emergency case includes flaky signal
+ * where a POST times out while `networkStore` still says "online" — no edge is
+ * ever crossed, so a queued alarm would sit here indefinitely. It is also FIFO
+ * across every kind, and an SOS must not wait behind five profile writes
+ * backing off a 5xx. It lives in `services/sosIntent.ts`: same idea (persist
+ * the intent, replay it), emergency cadence, 1h expiry instead of 24h, and a
+ * stand-down that drops the intent first.
+ *
  * Correctness guards:
  *   • Coalescing — enqueueing a `dedupeKey` drops any earlier pending entry
  *     with the same key, so only the newest value for a resource replays

@@ -12,7 +12,9 @@ import * as Haptics from 'expo-haptics';
 import { Avatar } from '../ui/Avatar';
 import { useReducedMotion } from '../../hooks/useReducedMotion';
 import { LightColors, Elevation } from '../../constants/colors';
+import { statusHeadline } from '../../constants/statusLabels';
 import { formatCurrency } from '../../utils/formatCurrency';
+import { formatRating } from '../../utils/rating';
 import type { Booking, BookingStatus } from '../../types';
 
 interface ActiveBookingCardProps {
@@ -72,40 +74,6 @@ const STAGE_WORD: Record<Phase, string> = {
   cancelled: 'Cancelled',
 };
 
-function headlineFor(
-  status: BookingStatus,
-  runnerFirstName?: string | null,
-): string {
-  const name = runnerFirstName ?? 'Runner';
-  switch (status) {
-    case 'pending':
-      return 'Looking for a runner nearby…';
-    case 'no_runner':
-      // Terminal state (no runner was found) — no "yet"; it isn't still trying.
-      return 'No runners available';
-    case 'matched':
-      return `${name} matched — confirming…`;
-    case 'accepted':
-      return `${name} is on the way`;
-    case 'heading_to_pickup':
-      return `${name} is heading to pickup`;
-    case 'arrived_at_pickup':
-      return `${name} arrived at pickup`;
-    case 'picked_up':
-      return `${name} picked up your item`;
-    case 'in_transit':
-      return `${name} is en route`;
-    case 'arrived_at_dropoff':
-      return `${name} arrived at drop-off`;
-    case 'delivered':
-      return 'Delivered — confirm to complete';
-    case 'completed':
-      return 'Errand completed';
-    case 'cancelled':
-      return 'Errand cancelled';
-  }
-}
-
 const PRIMARY = LightColors.primary;
 const TEXT_PRIMARY = LightColors.textPrimary;
 const TEXT_SECONDARY = LightColors.textTertiary;
@@ -115,7 +83,14 @@ export function ActiveBookingCard({ booking, onPress }: ActiveBookingCardProps) 
   const phase = PHASE_BY_STATUS[booking.status];
   const filled = FILLED_SEGMENTS[phase];
   const runnerName = booking.runner?.full_name?.split(' ')[0] ?? null;
-  const headline = headlineFor(booking.status, runnerName);
+  // The card's own headline map used to live here and had drifted from the
+  // tracking hero it links into ("… is en route" vs "On the way to you") and
+  // narrated a parcel on errands that have none. Both registers now come from
+  // constants/statusLabels so the card, the hero and the push agree.
+  const headline = statusHeadline(booking.status, {
+    errandSlug: booking.errand_type?.slug,
+    runnerFirstName: runnerName,
+  });
   // no_runner shares the 'searching' phase but is NOT an active search —
   // exclude it so the dot stops pulsing and the caption doesn't claim
   // we're still "finding" one while the headline says none are available.
@@ -268,24 +243,46 @@ export function ActiveBookingCard({ booking, onPress }: ActiveBookingCardProps) 
               <Text style={styles.footerTitle} numberOfLines={1}>
                 {booking.runner.full_name}
               </Text>
-              {booking.runner.avg_rating != null && (
-                <View style={styles.ratingRow}>
-                  <Star
-                    size={11}
-                    color={LightColors.accentStrong}
-                    fill={LightColors.accentStrong}
-                  />
-                  <Text style={styles.ratingText}>
-                    {Number(booking.runner.avg_rating).toFixed(1)}
-                  </Text>
-                  {booking.runner.total_ratings ? (
-                    <Text style={styles.ratingCount}>
-                      {' · '}
-                      {booking.runner.total_ratings} trips
-                    </Text>
-                  ) : null}
-                </View>
-              )}
+              {/* A runner with no reviews yet has avg_rating 0. Printed raw
+                  that read "★ 0.0" — the worst-rated runner on the platform —
+                  to a customer who has just been matched and is deciding
+                  whether to cancel. Unrated runners now read "New runner"
+                  with no star glyph (see utils/rating), and the count says
+                  "reviews", which is what total_ratings actually counts
+                  (ReviewController), not "trips". */}
+              {(() => {
+                const rating = formatRating(
+                  booking.runner.avg_rating,
+                  booking.runner.total_ratings,
+                );
+                if (rating.isUnrated) {
+                  return (
+                    <View style={styles.ratingRow}>
+                      <Text style={styles.newRunnerText}>New runner</Text>
+                    </View>
+                  );
+                }
+                return (
+                  <View
+                    style={styles.ratingRow}
+                    accessible
+                    accessibilityLabel={rating.a11yLabel}
+                  >
+                    <Star
+                      size={11}
+                      color={LightColors.accentStrong}
+                      fill={LightColors.accentStrong}
+                    />
+                    <Text style={styles.ratingText}>{rating.label}</Text>
+                    {rating.countLabel ? (
+                      <Text style={styles.ratingCount} numberOfLines={1}>
+                        {' · '}
+                        {rating.countLabel}
+                      </Text>
+                    ) : null}
+                  </View>
+                );
+              })()}
             </View>
           </>
         ) : (
@@ -431,6 +428,14 @@ const styles = StyleSheet.create({
   ratingCount: {
     fontSize: 11,
     fontFamily: 'Quicksand_500Medium',
+    color: TEXT_SECONDARY,
+    flexShrink: 1,
+  },
+  // "New runner" carries no star glyph, so it starts at the row edge (no
+  // marginLeft) and stays secondary — it is a neutral fact, not a warning.
+  newRunnerText: {
+    fontSize: 11,
+    fontFamily: 'Quicksand_600SemiBold',
     color: TEXT_SECONDARY,
   },
   searchIconWrap: {

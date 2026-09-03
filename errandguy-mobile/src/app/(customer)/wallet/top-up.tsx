@@ -20,7 +20,12 @@ import { Input } from '../../../components/ui/Input';
 import { Hairline } from '../../../components/ui/Typography';
 import { formatCurrency } from '../../../utils/formatCurrency';
 import { openCheckoutUrl, PAYMENT_RETURN_URL } from '../../../utils/browser';
-import { usePaymentStore, isAttemptActive } from '../../../stores/paymentStore';
+import {
+  usePaymentStore,
+  isAttemptActive,
+  shouldRetainIdempotencyKey,
+} from '../../../stores/paymentStore';
+import { newIdempotencyKey } from '../../../utils/idempotency';
 import { usePaymentVerification } from '../../../hooks/usePaymentVerification';
 import { mapFailureReason } from '../../../utils/paymentErrors';
 import { errorMessage } from '../../../utils/errorCatalog';
@@ -75,6 +80,16 @@ export default function TopUpScreen() {
   const resolveAttempt = usePaymentStore((s) => s.resolve);
   const { attempt, stage: verifyStage, isOffline } = usePaymentVerification();
   const submitLatch = useRef(false);
+  // The create's Idempotency-Key, held in a screen-local ref — the pattern
+  // (runner)/payout/index.tsx uses — so it OUTLIVES the attempt the catch
+  // block resolves. A mutation has a flat 30s timeout and no retry layer, so a
+  // slow top-up create can time out client-side while the server has already
+  // opened the invoice; re-sending the SAME key makes EnsureIdempotency replay
+  // that first response instead of opening (and charging) a second one.
+  const topupKeyRef = useRef<string | null>(null);
+  // (amount, method) the retained key was used with. The server hashes the
+  // whole body, so a changed top-up must never re-use the key (it would 422).
+  const topupKeySigRef = useRef<string | null>(null);
 
   const displayAmount = customAmount ? parseFloat(customAmount) || 0 : amount;
 
@@ -97,16 +112,38 @@ export default function TopUpScreen() {
     }
 
     // Don't start a new top-up while a previous one is still being verified.
+    // The blocking attempt can be a BOOKING charge (or a top-up from a previous
+    // launch), which this screen's overlay deliberately doesn't render — so the
+    // toast hands over an escape instead of being a dead end.
+    // /payment-complete mounts the verifier, renders any attempt kind, and its
+    // "Got it" resolves the attempt, which releases this lock.
     if (isAttemptActive(usePaymentStore.getState().attempt)) {
-      toast.info("We're still confirming your last top-up — hang tight.");
+      toast.info("We're still confirming your last payment — hang tight.", {
+        actionLabel: 'Check status',
+        onAction: () => router.push('/payment-complete'),
+      });
       return;
     }
     if (submitLatch.current) return;
     submitLatch.current = true;
 
+    // Reuse the retained key when this is the SAME top-up as the failed try
+    // (the server hashes the whole body, so a changed amount/method must get a
+    // fresh key); mint one otherwise. This is what turns a timed-out create
+    // into a replay of the first invoice rather than a second charge.
+    const payloadSignature = `${displayAmount}|${method}`;
+    if (!topupKeyRef.current || topupKeySigRef.current !== payloadSignature) {
+      topupKeyRef.current = newIdempotencyKey();
+      topupKeySigRef.current = payloadSignature;
+    }
     // One attempt = one idempotency key, reused on retry so a double-tap /
     // network retry can never open two invoices or double-charge.
-    const payAttempt = beginAttempt({ kind: 'topup', amount: displayAmount, method });
+    const payAttempt = beginAttempt({
+      kind: 'topup',
+      amount: displayAmount,
+      method,
+      idempotencyKey: topupKeyRef.current,
+    });
     setLoading(true);
     try {
       // The server creates a Xendit invoice and returns a hosted checkout URL.
@@ -116,6 +153,10 @@ export default function TopUpScreen() {
         { amount: displayAmount, method },
         { idempotencyKey: payAttempt.idempotencyKey },
       );
+      // The server has spoken (a real response, replay included): this key is
+      // spent. The next Add-money tap is a new charge on its own key.
+      topupKeyRef.current = null;
+      topupKeySigRef.current = null;
       const checkoutUrl: string | undefined = res.data?.checkout_url;
       const topupId: string | undefined = res.data?.data?.id;
 
@@ -150,7 +191,17 @@ export default function TopUpScreen() {
       // overlay shows the honest result.
       setAttemptStatus('verifying');
     } catch (err: any) {
+      // Clear the ATTEMPT (it is the one-payment-at-a-time lock, and holding it
+      // would block the very retry we want) but decide the KEY on the failure
+      // class: a timeout / offline / 5xx / 409 leaves the outcome unknown, so
+      // the next tap must re-send the SAME key and let the backend replay the
+      // first invoice instead of opening a second charge. Only a definitive 4xx
+      // — the server rejecting on its own terms — starts a new attempt.
       resolveAttempt();
+      if (!shouldRetainIdempotencyKey(err)) {
+        topupKeyRef.current = null;
+        topupKeySigRef.current = null;
+      }
       // Honest copy: a gateway 422 (PAYMENT_GATEWAY_ERROR) resolves to
       // "you weren't charged"; anything else falls back to the wallet copy.
       haptics.error();
@@ -159,7 +210,7 @@ export default function TopUpScreen() {
       setLoading(false);
       submitLatch.current = false;
     }
-  }, [displayAmount, method, beginAttempt, setAttemptStatus, resolveAttempt]);
+  }, [displayAmount, method, beginAttempt, setAttemptStatus, resolveAttempt, router]);
 
   // Re-open the SAME checkout URL on retry. Only safe for CARD (its hosted
   // Xendit invoice stays payable); a GCash/Maya one-time payment_request URL is

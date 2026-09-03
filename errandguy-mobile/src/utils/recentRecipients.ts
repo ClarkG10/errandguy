@@ -1,4 +1,8 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import {
+  deriveRecipientsFromBookings,
+  readCachedRecentBookings,
+} from './recipientHistory';
 
 /**
  * Last-used booking recipients (pickup / drop-off contacts).
@@ -12,6 +16,13 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
  * handset can never read the previous user's contacts, and
  * `clearRecentRecipients` takes them off the disk entirely on account
  * teardown (see clearAccountScopedState).
+ *
+ * Because the list is device-local, a reinstall or a second handset used to
+ * come back EMPTY even though the server still holds those contacts on the
+ * customer's past bookings. An empty read now seeds itself from the
+ * recent-bookings window this account already has cached (see
+ * `recipientHistory`), so the shortcut survives a reinstall instead of dying
+ * with the install.
  */
 
 export interface RecentRecipient {
@@ -51,9 +62,10 @@ function phoneKey(phone: string): string {
   return normalizePhPhone(phone);
 }
 
-export async function getRecentRecipients(
-  userId?: string | null,
-  limit: number = RECIPIENT_CAP,
+/** The list exactly as it sits on this device (no history seeding). */
+async function readStoredRecipients(
+  userId: string | null | undefined,
+  limit: number,
 ): Promise<RecentRecipient[]> {
   try {
     const raw = await AsyncStorage.getItem(storageKey(userId));
@@ -74,6 +86,47 @@ export async function getRecentRecipients(
   } catch {
     return [];
   }
+}
+
+export async function getRecentRecipients(
+  userId?: string | null,
+  limit: number = RECIPIENT_CAP,
+): Promise<RecentRecipient[]> {
+  const stored = await readStoredRecipients(userId, limit);
+  if (stored.length > 0) return stored;
+  // Nothing on this device — the reinstall / new-handset case. Derive from the
+  // account's own cached booking window and write the result back so every
+  // later read is local again (and so `addRecentRecipient` promotes against a
+  // populated list). Fire-and-forget on the write: a failed persist just means
+  // the next read derives again.
+  return seedRecipientsFromHistory(userId, limit);
+}
+
+/**
+ * Rebuild the list from the server-held contacts on this account's recent
+ * bookings. Returns [] whenever there is nothing to derive (no cached window,
+ * no contacts on it, no signed-in id) — i.e. exactly today's behaviour.
+ */
+export async function seedRecipientsFromHistory(
+  userId: string | null | undefined,
+  limit: number = RECIPIENT_CAP,
+): Promise<RecentRecipient[]> {
+  const bookings = await readCachedRecentBookings(userId);
+  if (!bookings || bookings.length === 0) return [];
+
+  const derived = deriveRecipientsFromBookings(bookings, {
+    cap: RECIPIENT_CAP,
+    normalize: normalizePhPhone,
+    identity: phoneKey,
+  });
+  if (derived.length === 0) return [];
+
+  try {
+    await AsyncStorage.setItem(storageKey(userId), JSON.stringify(derived));
+  } catch {
+    /* non-critical — this is a typing shortcut, never data the booking needs */
+  }
+  return derived.slice(0, limit);
 }
 
 /**

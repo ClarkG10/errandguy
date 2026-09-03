@@ -125,7 +125,9 @@ const DEFAULT_RULE: ErrandTypeRule = {
   showPickupContact: true,
   showDropoffContact: true,
   pickupLabel: 'Pickup',
-  dropoffLabel: 'Dropoff',
+  // "Drop-off", hyphenated — the spelling STATUS_LABELS and every customer
+  // surface uses. This default was the one place it rendered as "Dropoff".
+  dropoffLabel: 'Drop-off',
   allowedVehicles: ['walk', 'bicycle', 'motorcycle', 'car'],
   defaultVehicle: 'motorcycle',
   singleLocation: false,
@@ -226,8 +228,15 @@ const RULES: Record<string, Partial<ErrandTypeRule>> = {
       accepted: 'Head to passenger',
       heading_to_pickup: 'I’ve arrived',
       arrived_at_pickup: 'Start ride',
-      picked_up: 'In transit',
-      in_transit: 'Arriving at drop-off',
+      // Every other ladder names the action the runner is ABOUT TO PERFORM.
+      // These two used to break that: `picked_up` read "In transit" (a status
+      // noun — the driver couldn't tell whether it described their state or
+      // offered to change it) and `in_transit` read "Arriving at drop-off"
+      // (present participle) where the standard ladder's identical transition
+      // reads "Arrived at drop-off" (past), teaching two contradictory
+      // meanings for the button tapped at the moment the driver pulls up.
+      picked_up: 'Start the trip',
+      in_transit: 'Arrived at drop-off',
       arrived_at_dropoff: 'Complete ride',
     },
     helperNote: 'You will receive a 4-digit PIN to share with your driver before boarding.',
@@ -312,3 +321,14 @@ export function getErrandTypeRule(slug?: string | null): ErrandTypeRule {
 }
 
 export const DEFAULT_ERRAND_TYPE_RULE = DEFAULT_RULE;
+
+/**
+ * Every slug with a rule override, in declaration order.
+ *
+ * Exported so the arch guards in
+ * `components/runner/__tests__/statusActionTransitions.test.ts` can sweep EVERY
+ * ladder rather than a hand-maintained list — that sweep is what catches a new
+ * errand type reintroducing a state-noun button label or the opposite tense for
+ * a transition every other ladder already names.
+ */
+export const ERRAND_TYPE_SLUGS = Object.keys(RULES);

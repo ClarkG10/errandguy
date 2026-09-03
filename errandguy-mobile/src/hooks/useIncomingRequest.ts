@@ -19,12 +19,24 @@ interface UseIncomingRequestOptions {
   onOfferWithdrawn?: (bookingId: string) => void;
 }
 
+/**
+ * The runner's offer stream.
+ *
+ * ONE owner: `OfferWatcher` in app/(runner)/_layout.tsx. It is mounted at the
+ * group layout — above the Tabs and above every pushed stack screen — because
+ * the runner tabs are `freezeOnBlur`, so while this lived on the Home tab an
+ * offer arriving to a runner reading Earnings, History or Busy-areas raised
+ * nothing at all. Do not add a second call site: useEchoChannel refcounts the
+ * channel, but each mount adds its own listener, so a second one would fire
+ * every callback twice.
+ */
 export function useIncomingRequest(
   runnerId: string | null,
   options?: UseIncomingRequestOptions,
 ) {
-  // Per-field selector — this hook is mounted app-wide for runners; a whole-store
-  // useRunnerStore() would re-run it on every unrelated runner-state write.
+  // Per-field selector — a whole-store useRunnerStore() would re-run this on
+  // every unrelated runner-state write (and it now sits at the layout, i.e.
+  // mounted for the whole shift).
   const setIncomingRequest = useRunnerStore((s) => s.setIncomingRequest);
   const onOffer = options?.onOffer;
   const onOfferWithdrawn = options?.onOfferWithdrawn;
@@ -38,6 +50,12 @@ export function useIncomingRequest(
     onEvent: (payload) => {
       const booking = payload as Partial<Booking>;
       onOffer?.(booking);
+      // Never re-raise an offer the runner already turned down. A decline is
+      // fire-and-forget, so the booking can still be `matched` server-side for
+      // a moment and be re-broadcast; asking again reads as the app ignoring
+      // them. (The feed callback above still runs — the errand may legitimately
+      // reappear as an open offer for someone to claim.)
+      if (booking.id && useRunnerStore.getState().isOfferDeclined(booking.id)) return;
       if (booking.status === 'matched') {
         setIncomingRequest({
           booking: booking as Booking,

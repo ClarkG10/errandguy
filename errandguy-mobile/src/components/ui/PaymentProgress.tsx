@@ -54,6 +54,9 @@ interface PaymentProgressProps {
   /** Failed-state: message + recovery actions. */
   failureMessage?: string;
   onRetry?: () => void;
+  /** Label for the retry action. "Try again" fits a payment that failed; a
+   *  checkout the customer backed out of wants "Resume payment". */
+  retryCta?: string;
   onChooseAnotherMethod?: () => void;
   /** Pending-state primary action — leave safely; verification continues. */
   onSafeExit?: () => void;
@@ -121,6 +124,7 @@ export function PaymentProgress({
   successCta = 'Done',
   failureMessage,
   onRetry,
+  retryCta = 'Try again',
   onChooseAnotherMethod,
   onSafeExit,
   onClose,
@@ -222,7 +226,7 @@ export function PaymentProgress({
                   "We couldn't confirm this payment. You weren't charged — try again or pick another method."}
               </Text>
               <View style={styles.actions}>
-                {onRetry ? <Button title="Try again" onPress={onRetry} fullWidth /> : null}
+                {onRetry ? <Button title={retryCta} onPress={onRetry} fullWidth /> : null}
                 {onChooseAnotherMethod ? (
                   <Button
                     title="Choose another method"

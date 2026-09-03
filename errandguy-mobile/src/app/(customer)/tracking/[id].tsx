@@ -53,6 +53,21 @@ import { useChatStore } from '../../../stores/chatStore';
 import { useNotificationStore } from '../../../stores/notificationStore';
 import { useLocationStore } from '../../../stores/locationStore';
 import { bookingService } from '../../../services/booking.service';
+// The panic button is durable now: the raise is persisted and retried by
+// sosIntent until the server ACKs, so this screen only presents that state.
+import {
+  acknowledgeSosRejection,
+  describeSosFailure,
+  raiseSos,
+  resumeSosIntent,
+  retryNow as retrySosNow,
+  standDownSos,
+  useSosIntentStore,
+} from '../../../services/sosIntent';
+import {
+  SosPendingSheet,
+  type SosCallableContact,
+} from '../../../components/safety/SosPendingSheet';
 import { useRunnerTracking } from '../../../hooks/useRunnerTracking';
 import { useBookingStatus } from '../../../hooks/useBookingStatus';
 import { useSmartPolling } from '../../../hooks/useSmartPolling';
@@ -77,11 +92,16 @@ import { mediaSource } from '../../../utils/mediaSource';
 import { ImageLightbox } from '../../../components/ui/ImageLightbox';
 import { ShoppingProgressCard } from '../../../components/customer/ShoppingProgressCard';
 import { StopsProgressCard } from '../../../components/customer/StopsProgressCard';
+// The receipt and the Activity detail sheet must tell the SAME money story,
+// so both read the outcome through one helper (it normalises the server's
+// decimal-as-string casts; it computes no money of its own).
+import { bookingMoneyOutcome } from '../../../components/customer/BookingDetailSheet';
 import { stopCompletionsFromNotification, mergeStopCompletions } from '../../../utils/stopProgress';
 import { resolveImageUrl } from '../../../utils/resolveImageUrl';
 import { errorMessage } from '../../../utils/errorCatalog';
 import { haptics } from '../../../utils/haptics';
 import { STATUS_LABELS } from '../../../constants/statusLabels';
+import { formatRating } from '../../../utils/rating';
 import { LightColors, Elevation } from '../../../constants/colors';
 import { copy } from '../../../constants/copy';
 
@@ -96,6 +116,61 @@ import { prefetchChatMessages } from '../../../services/preload.service';
 const CAN_CANCEL_STATUSES: BookingStatus[] = [
   'pending', 'matched', 'accepted', 'heading_to_pickup',
 ];
+
+/**
+ * Has the customer already rated this errand?
+ *
+ * BookingResource ships `review` / `customer_review` (BookingController::show
+ * eager-loads `reviews`); the shared Booking type predates both. A realtime
+ * lifecycle payload carries neither, which reads as "not rated yet" — exactly
+ * the right default for an errand that just completed.
+ */
+type WithReview = { review?: unknown; customer_review?: unknown };
+const bookingReview = (b: Booking | null | undefined): unknown => {
+  const r = b as (Booking & WithReview) | null | undefined;
+  return r?.review ?? r?.customer_review ?? null;
+};
+
+/**
+ * Confirm-modal body for a cancel preview.
+ *
+ * The fee alone answered the wrong question. A prepaid customer was told "a
+ * small ₱20.00 fee applies" and asked to confirm "Cancel & pay ₱20" — which
+ * reads as a NEW charge on a fare they had already been charged — and was
+ * never told the ₱480 was coming back, nor that it lands in their ErrandGuy
+ * wallet rather than back on their GCash. Both figures are the server's
+ * (GET /bookings/{id}/cancel-preview); the locked re-evaluation inside cancel()
+ * remains the authority and its response carries the settled receipt.
+ */
+export function cancelMoneyLines(p: {
+  fee: number;
+  reason: string;
+  refund_amount?: number | null;
+  refund_destination?: 'wallet' | null;
+}): string {
+  const n = (v: unknown) => {
+    const parsed = typeof v === 'number' ? v : Number(v);
+    return Number.isFinite(parsed) ? parsed : 0;
+  };
+  const fee = n(p.fee);
+  const refund = p.refund_amount == null ? 0 : n(p.refund_amount);
+
+  const detail: string[] = [];
+  if (fee > 0) detail.push(`Cancellation fee: ${formatCurrency(fee)}`);
+  if (refund > 0) {
+    detail.push(
+      p.refund_destination === 'wallet'
+        ? `Back to your ErrandGuy wallet: ${formatCurrency(refund)}`
+        : `Refunded to you: ${formatCurrency(refund)}`,
+    );
+  } else if (fee > 0) {
+    // Honest about the capped-fee case rather than leaving a silent gap
+    // where the refund line would be.
+    detail.push('Nothing is left to refund after the fee.');
+  }
+
+  return detail.length > 0 ? `${p.reason}\n\n${detail.join('\n')}` : p.reason;
+}
 
 // Auto-map window. Exported so ops can tune when tiles auto-mount without a
 // redesign — HERE raster tiles are billed per request, so this list IS the
@@ -244,6 +319,10 @@ export default function TrackingScreen() {
   >('idle');
   const [isCancelling, setIsCancelling] = useState(false);
   const [showCancelModal, setShowCancelModal] = useState(false);
+  // True once THIS screen cancelled the errand, so the status watcher's
+  // "this errand was cancelled" toast stays for remote cancellations (admin,
+  // auto-cancel, runner-side) only.
+  const selfCancelledRef = useRef(false);
   // Trip details (timeline, shopping breakdown, proof photos) collapse
   // by default so the bottom sheet stays uncluttered. Customers who
   // want the verbose breakdown tap "Trip details" to expand. We keep
@@ -255,15 +334,37 @@ export default function TrackingScreen() {
     tier: 'free' | 'flat' | 'percentage';
     reason: string;
     cancellable: boolean;
+    // Additive on GET /bookings/{id}/cancel-preview: what comes BACK and
+    // where it lands. Optional so a cached response from an older server (or
+    // an older app build's cache entry) still types.
+    refund_amount?: number | null;
+    refund_destination?: 'wallet' | null;
   } | null>(null);
   const [previewLoading, setPreviewLoading] = useState(false);
   const [showSOSModal, setShowSOSModal] = useState(false);
   const [sosSubmitting, setSosSubmitting] = useState(false);
-  // Cached count of the customer's trusted contacts (@trusted_contacts_cache,
-  // written by the trusted-contacts screen). null = not yet read / never
-  // visited. Only tunes the SOS modal's honesty copy, so a cache-only read
-  // with a stale value is fine — we never block the emergency flow on a fetch.
-  const [trustedCount, setTrustedCount] = useState<number | null>(null);
+  // Cached trusted contacts (@trusted_contacts_cache, written by the
+  // trusted-contacts screen). null = not yet read / never visited. It tunes the
+  // SOS modal's honesty copy AND — the reason we now keep the whole rows, not
+  // just a count — powers tap-to-call in the no-signal fallback, where a voice
+  // call is the only thing that still works. Cache-only, no network: we never
+  // block the emergency flow on a fetch.
+  const [trustedContacts, setTrustedContacts] = useState<
+    SosCallableContact[] | null
+  >(null);
+  const trustedCount = trustedContacts?.length ?? null;
+  // The queued (not-yet-acknowledged) SOS for THIS booking, and whether an
+  // attempt is in flight. Both live in the sosIntent store so they survive this
+  // screen unmounting mid-emergency.
+  const queuedSos = useSosIntentStore((s) =>
+    id && s.intent?.bookingId === id ? s.intent : null,
+  );
+  const sosSending = useSosIntentStore((s) => s.sending);
+  const sosAck = useSosIntentStore((s) => (id && s.lastAck?.bookingId === id ? s.lastAck : null));
+  const sosRejection = useSosIntentStore((s) =>
+    id && s.lastRejection?.bookingId === id ? s.lastRejection : null,
+  );
+  const [showSosPending, setShowSosPending] = useState(false);
   // Live-SOS stand-down state. triggeredAt drives the elapsed readout; the
   // notified list is whatever the alert response actually reached (the SMS
   // job is a no-op today, so we only claim contacts when the server does);
@@ -277,10 +378,10 @@ export default function TrackingScreen() {
   const [sosNow, setSosNow] = useState(() => Date.now());
   const [deactivatingSOS, setDeactivatingSOS] = useState(false);
 
-  // Read the cached trusted-contacts count once so the SOS modal can tell the
-  // truth about who actually gets alerted. Cache-only, no network: the number
-  // only tunes copy. Unknown/malformed cache leaves trustedCount null, which
-  // the modal treats as zero — we never promise contacts we can't confirm.
+  // Read the cached trusted contacts once so the SOS modal can tell the truth
+  // about who actually gets alerted, and so the no-signal fallback can offer
+  // their numbers. Cache-only, no network. Unknown/malformed cache leaves the
+  // list null (treated as zero) — we never promise contacts we can't confirm.
   useEffect(() => {
     let cancelled = false;
     AsyncStorage.getItem('@trusted_contacts_cache')
@@ -288,9 +389,24 @@ export default function TrackingScreen() {
         if (cancelled || !raw) return;
         try {
           const parsed = JSON.parse(raw);
-          if (Array.isArray(parsed)) setTrustedCount(parsed.length);
+          if (!Array.isArray(parsed)) return;
+          setTrustedContacts(
+            parsed
+              .filter(
+                (c: any) =>
+                  c && typeof c.phone === 'string' && c.phone.trim().length > 0,
+              )
+              .map((c: any) => ({
+                id: typeof c.id === 'string' ? c.id : undefined,
+                name:
+                  typeof c.name === 'string' && c.name.trim()
+                    ? c.name.trim()
+                    : 'Trusted contact',
+                phone: String(c.phone).trim(),
+              })),
+          );
         } catch {
-          // Malformed cache — leave trustedCount null (treated as zero).
+          // Malformed cache — leave the list null (treated as zero).
         }
       })
       .catch(() => {});
@@ -298,6 +414,34 @@ export default function TrackingScreen() {
       cancelled = true;
     };
   }, []);
+
+  // Pick an SOS back up that never reached the server (app killed mid-request,
+  // or still queued from a dead zone). Resuming is what makes the retry loop
+  // outlive this screen; the server's active-alert idempotency makes it free.
+  useEffect(() => {
+    void resumeSosIntent();
+  }, []);
+
+  // A queued raise that lands on a BACKGROUND retry has to reach this screen —
+  // otherwise it keeps saying "not sent yet" about an alert that is now live.
+  useEffect(() => {
+    if (!sosAck) return;
+    setSosContactsNotified(sosAck.contacts);
+    setSosTriggeredAt((prev) => prev ?? sosAck.acknowledgedAt);
+    setSosNow(Date.now());
+    setSosActive(true);
+    setShowSosPending(false);
+    setShowSOSModal(false);
+  }, [sosAck]);
+
+  // The server refused it outright (errand closed, or no longer ours) while we
+  // were retrying. Say so instead of leaving a promise on screen.
+  useEffect(() => {
+    if (!sosRejection || !id) return;
+    setShowSosPending(false);
+    toast.error(describeSosFailure(sosRejection.error));
+    acknowledgeSosRejection(id);
+  }, [sosRejection, id]);
 
   // Tick the elapsed clock once a second while an SOS is live so the
   // stand-down card's "active for" readout stays current. Runs only while
@@ -864,13 +1008,55 @@ export default function TrackingScreen() {
           case 'arrived_at_dropoff':
             toast.info(`${runnerName} arrived at dropoff`);
             break;
+          // Every forward transition was announced; the two ways an errand
+          // ENDS without the customer doing anything were not. An admin or
+          // auto-cancel used to morph the screen from "Finding you a runner"
+          // to "Cancelled" in silence. Suppressed for the customer's own
+          // cancel, which already toasts the server's money receipt.
+          case 'cancelled':
+            if (!selfCancelledRef.current) {
+              Haptics.notificationAsync(
+                Haptics.NotificationFeedbackType.Warning,
+              ).catch(() => {});
+              toast.error('This errand was cancelled. See the receipt below.');
+            }
+            break;
+          case 'no_runner':
+            Haptics.notificationAsync(
+              Haptics.NotificationFeedbackType.Warning,
+            ).catch(() => {});
+            // No money claim in the toast — a prepaid booking's fare IS
+            // auto-refunded here, so "nothing was charged" would be a lie.
+            // The receipt below states what happened to it.
+            toast.error('No runner was available for this errand.');
+            break;
           default:
             break;
         }
       }
-    }
-    if (activeBooking.status === 'completed') {
-      router.replace(`/(customer)/rate/${id}`);
+
+      // Sweep the customer to the rating screen ONLY on a real live
+      // completion they just watched happen. This used to sit outside the
+      // status-changed guard, so it also fired from the mount fetch — which
+      // meant a completed errand's receipt was unreachable forever: every
+      // route into tracking (Activity → "View full details", search, a
+      // notification tap) bounced straight to /rate, and the proof photos,
+      // signature, shopping reconciliation and stage timeline live nowhere
+      // else. Worse, on an already-rated errand /rate re-renders an empty
+      // form whose Submit 422s "already reviewed" for good.
+      //   - prev != null && prev !== 'completed' → a transition, not a mount
+      //     seed or a re-delivery of the same status.
+      //   - !hasReview → an errand rated three days ago opens as its
+      //     receipt; the receipt carries its own "Rate your runner" CTA when
+      //     a rating is still owed, so rate stays reachable on purpose.
+      if (
+        activeBooking.status === 'completed' &&
+        prev != null &&
+        prev !== 'completed' &&
+        !bookingReview(activeBooking)
+      ) {
+        router.replace(`/(customer)/rate/${id}`);
+      }
     }
   }, [activeBooking, id, router, setActiveBooking]);
 
@@ -1063,6 +1249,11 @@ export default function TrackingScreen() {
 
   const confirmCancel = useCallback(async () => {
     if (!id) return;
+    // Claim this cancellation as ours so the status watcher doesn't also
+    // announce it — confirmCancel already toasts the server's money receipt,
+    // and two toasts for one action reads as a bug. Set BEFORE the request so
+    // an inbound broadcast can't beat it.
+    selfCancelledRef.current = true;
     setIsCancelling(true);
     try {
       // Backend requires `reason` to be present (422 otherwise). The
@@ -1106,30 +1297,46 @@ export default function TrackingScreen() {
     if (!id || sosSubmitting) return;
     setSosSubmitting(true);
     try {
-      const res = await bookingService.triggerSOS(id);
-      // The backend SMS job is currently a no-op, so we only claim contacts
-      // were notified when the alert response actually lists them. Anything
-      // else falls back to the honest support-only messaging below.
-      const notified = (res?.data as any)?.data?.contacts_notified;
-      const contacts: string[] = Array.isArray(notified)
-        ? notified.filter(
-            (c: unknown): c is string => typeof c === 'string' && c.length > 0,
-          )
-        : [];
-      setSosContactsNotified(contacts);
-      setSosTriggeredAt(Date.now());
-      setSosNow(Date.now());
-      setSosActive(true);
-      setShowSOSModal(false);
-      haptics.warning();
-      toast.success(
-        contacts.length > 0
-          ? `SOS sent to ErrandGuy support and ${contacts.length} contact${contacts.length === 1 ? '' : 's'}`
-          : 'SOS sent to ErrandGuy support',
-      );
-    } catch (err) {
+      // raiseSos persists the intent BEFORE the first attempt and keeps
+      // retrying (reconnect edge + timer + foreground) until the server ACKs,
+      // so a dead-zone press is no longer lost. It never throws.
+      const result = await raiseSos(id, 'customer');
+      if (result.status === 'sent') {
+        // The backend SMS job is currently a no-op, so we only claim contacts
+        // were notified when the alert response actually lists them. Anything
+        // else falls back to the honest support-only messaging below.
+        const contacts = result.contacts;
+        setSosContactsNotified(contacts);
+        setSosTriggeredAt(Date.now());
+        setSosNow(Date.now());
+        setSosActive(true);
+        setShowSOSModal(false);
+        haptics.warning();
+        toast.success(
+          contacts.length > 0
+            ? `SOS sent to ErrandGuy support and ${contacts.length} contact${contacts.length === 1 ? '' : 's'}`
+            : 'SOS sent to ErrandGuy support',
+        );
+        return;
+      }
+      if (result.status === 'queued') {
+        // NOT sent — say exactly that, keep the alert queued, and put the two
+        // things that work without data (911, the cached contacts) one tap away.
+        haptics.warning();
+        setShowSOSModal(false);
+        setShowSosPending(true);
+        return;
+      }
+      // Rejected on the server's own terms — nothing is queued.
       haptics.error();
-      toast.error(errorMessage(err, copy.safety.sosFailed));
+      toast.error(describeSosFailure(result.error));
+      if (id) acknowledgeSosRejection(id);
+    } catch (err) {
+      // raiseSos is written not to throw; belt AND braces on the one path
+      // where an unhandled rejection would leave a person in danger staring
+      // at a spinner.
+      haptics.error();
+      toast.error(describeSosFailure(err));
     } finally {
       setSosSubmitting(false);
     }
@@ -1142,14 +1349,32 @@ export default function TrackingScreen() {
   const handleStandDown = useCallback(async () => {
     if (!id || deactivatingSOS) return;
     setDeactivatingSOS(true);
+    // Drop any UNSENT intent FIRST. A queued replay landing after the customer
+    // said "I'm safe" would re-raise the alarm they just cancelled — the one
+    // way a retry loop can do harm.
+    const { hadUnsentIntent } = standDownSos(id);
     try {
       await bookingService.deactivateSOS(id);
       setSosActive(false);
       setSosTriggeredAt(null);
       setSosContactsNotified([]);
+      setShowSosPending(false);
       haptics.success();
       toast.success('Alert cancelled — glad you’re safe');
     } catch (err) {
+      if (hadUnsentIntent) {
+        // Nothing had reached the server, and the intent is now gone, so there
+        // is genuinely nothing left to stand down — even though the DELETE
+        // (also offline) failed. Don't invite a retry that isn't needed.
+        setSosActive(false);
+        setSosTriggeredAt(null);
+        setSosContactsNotified([]);
+        setShowSosPending(false);
+        haptics.success();
+        toast.success('Alert cancelled — it was never sent');
+        setDeactivatingSOS(false);
+        return;
+      }
       haptics.error();
       // Re-arm the (otherwise permanently latched) slider so a retry works.
       setStandDownResetKey((k) => k + 1);
@@ -1380,6 +1605,24 @@ export default function TrackingScreen() {
     CAN_CANCEL_STATUSES.includes(booking.status) &&
     !(isShopping && !!booking.picked_up_at);
 
+  // The errand is OVER — deliberately narrower than isTerminalUi, which also
+  // covers `delivered` (where the post-dropoff safety window is still live and
+  // the runner is still reachable, see isLiveBooking above). Past this line
+  // there is no runner to call and no trip left to share: the trip-share
+  // endpoint excludes completed and cancelled bookings, so Share 404s →
+  // "Couldn't share your trip" — every single time.
+  const isFinished =
+    booking.status === 'completed' ||
+    booking.status === 'cancelled' ||
+    booking.status === 'no_runner';
+  // Cancelled / never-matched errands are a money OUTCOME, not a bill.
+  const isMoneyOutcome =
+    booking.status === 'cancelled' || booking.status === 'no_runner';
+  // What actually happened to the money, straight off the server's derived
+  // fields (refunded_amount / refund_destination / cancellation_fee).
+  const money = bookingMoneyOutcome(booking);
+  const hasReview = !!bookingReview(booking);
+
   const timelineSteps = steps.map((status, index) => {
     const log = statusLogs.find((l) => l.status === status);
     let stepStatus: 'completed' | 'current' | 'pending' = 'pending';
@@ -1448,7 +1691,18 @@ export default function TrackingScreen() {
           accent: 'success',
         };
       case 'cancelled':
-        return { title: 'Cancelled', accent: 'danger' };
+        // A one-word receipt left the customer to guess what it cost. Lead
+        // with the money headline; the card below carries the figures.
+        return {
+          title: 'Cancelled',
+          subtitle:
+            money.refunded != null && money.refunded > 0
+              ? 'Your money is already back in your ErrandGuy wallet.'
+              : money.fee > 0
+                ? 'A cancellation fee was kept from what you paid.'
+                : 'Nothing was charged for this errand.',
+          accent: 'danger',
+        };
       default:
         return { title: STATUS_LABELS[booking.status], accent: 'brand' };
     }
@@ -1620,17 +1874,39 @@ export default function TrackingScreen() {
           >
             {booking.runner?.full_name ?? 'Your runner'}
           </Text>
-          <View className="flex-row items-center mt-1">
-            <RatingStars
-              value={Number(booking.runner?.avg_rating ?? 0)}
-              size={13}
-              readonly
-            />
-            <Text className="text-[11px] font-inter-medium text-textTertiary ml-1.5">
-              {Number(booking.runner?.avg_rating ?? 0).toFixed(1)}
-              {booking.runner?.total_ratings ? ` · ${booking.runner.total_ratings} trips` : ''}
-            </Text>
-          </View>
+          {/* A runner with no reviews has avg_rating 0, and printed raw that
+              read as "0.0 stars" — the worst-rated operator on the platform —
+              to the customer who has just been matched and is deciding whether
+              to cancel. formatRating says "New" and draws no stars instead
+              (empty stars read as 0/5 just as badly). It also fixes the noun:
+              total_ratings is the REVIEW count, not completed errands, so a
+              runner with 50 errands and 8 reviews is no longer advertised as
+              "8 trips". */}
+          {(() => {
+            const runnerRating = formatRating(
+              booking.runner?.avg_rating,
+              booking.runner?.total_ratings,
+            );
+            return (
+              <View
+                className="flex-row items-center mt-1"
+                accessible
+                accessibilityLabel={runnerRating.a11yLabel}
+              >
+                {!runnerRating.isUnrated && (
+                  <RatingStars value={runnerRating.stars} size={13} readonly />
+                )}
+                <Text
+                  className={`text-[11px] font-inter-medium text-textTertiary ${
+                    runnerRating.isUnrated ? '' : 'ml-1.5'
+                  }`}
+                >
+                  {runnerRating.label}
+                  {runnerRating.countLabel ? ` · ${runnerRating.countLabel}` : ''}
+                </Text>
+              </View>
+            );
+          })()}
         </View>
         {/* Phase chip is live-only — "In transit" on a finished receipt lies. */}
         {!isTerminalUi && (
@@ -1648,21 +1924,26 @@ export default function TrackingScreen() {
 
       <View className="h-px bg-divider my-3.5" />
 
-      {/* Action row — evenly spaced icon-chip buttons with labels. */}
+      {/* Action row — evenly spaced icon-chip buttons with labels. On a
+          finished errand only Message survives: read-only chat history is
+          legitimate (ClosedThreadNotice says so), while Call dials the runner
+          of a job that no longer exists and Share is a guaranteed 404. */}
       <View className="flex-row">
-        <Pressable
-          accessibilityRole="button"
-          accessibilityLabel="Call runner"
-          onPress={handleCall}
-          className="flex-1 items-center"
-          hitSlop={6}
-          style={({ pressed }) => pressFx(pressed)}
-        >
-          <View className="w-11 h-11 rounded-full items-center justify-center mb-1.5" style={{ backgroundColor: LightColors.surfaceMuted }}>
-            <Phone size={18} color={LightColors.primary} strokeWidth={2} />
-          </View>
-          <Text className="text-[11px] font-montserrat-semi text-textSecondary">Call</Text>
-        </Pressable>
+        {!isFinished && (
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Call runner"
+            onPress={handleCall}
+            className="flex-1 items-center"
+            hitSlop={6}
+            style={({ pressed }) => pressFx(pressed)}
+          >
+            <View className="w-11 h-11 rounded-full items-center justify-center mb-1.5" style={{ backgroundColor: LightColors.surfaceMuted }}>
+              <Phone size={18} color={LightColors.primary} strokeWidth={2} />
+            </View>
+            <Text className="text-[11px] font-montserrat-semi text-textSecondary">Call</Text>
+          </Pressable>
+        )}
         <Pressable
           accessibilityRole="button"
           accessibilityLabel={
@@ -1687,27 +1968,29 @@ export default function TrackingScreen() {
           </View>
           <Text className="text-[11px] font-montserrat-semi text-textSecondary">Message</Text>
         </Pressable>
-        <Pressable
-          accessibilityRole="button"
-          accessibilityLabel={
-            booking.trip_share_active
-              ? 'Share trip link again'
-              : 'Share trip with a contact'
-          }
-          accessibilityState={{ disabled: sharingTrip }}
-          disabled={sharingTrip}
-          onPress={handleShareTrip}
-          className="flex-1 items-center"
-          hitSlop={6}
-          style={({ pressed }) => pressFx(pressed)}
-        >
-          <View className="w-11 h-11 rounded-full items-center justify-center mb-1.5" style={{ backgroundColor: LightColors.surfaceMuted }}>
-            <Share2 size={18} color={LightColors.primary} strokeWidth={2} />
-          </View>
-          <Text className="text-[11px] font-montserrat-semi text-textSecondary">
-            {booking.trip_share_active ? 'Shared' : 'Share'}
-          </Text>
-        </Pressable>
+        {!isFinished && (
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel={
+              booking.trip_share_active
+                ? 'Share trip link again'
+                : 'Share trip with a contact'
+            }
+            accessibilityState={{ disabled: sharingTrip }}
+            disabled={sharingTrip}
+            onPress={handleShareTrip}
+            className="flex-1 items-center"
+            hitSlop={6}
+            style={({ pressed }) => pressFx(pressed)}
+          >
+            <View className="w-11 h-11 rounded-full items-center justify-center mb-1.5" style={{ backgroundColor: LightColors.surfaceMuted }}>
+              <Share2 size={18} color={LightColors.primary} strokeWidth={2} />
+            </View>
+            <Text className="text-[11px] font-montserrat-semi text-textSecondary">
+              {booking.trip_share_active ? 'Shared' : 'Share'}
+            </Text>
+          </Pressable>
+        )}
       </View>
 
       {/* Stop-sharing affordance — only while a read-only trip link
@@ -1975,20 +2258,106 @@ export default function TrackingScreen() {
       </>
     ) : null;
 
-  // Shopping-paid notice — same condition as ever; warningDark text (the
-  // base warning tone fails AA on the soft wash).
-  const shoppingPaidNotice =
-    isShopping &&
-    booking.picked_up_at &&
-    CAN_CANCEL_STATUSES.includes(booking.status) === false &&
-    booking.status !== 'completed' &&
-    booking.status !== 'cancelled' ? (
-      <View className="bg-warning/10 border border-warning/40 rounded-xl p-3 mt-4 mb-2">
+  // Cancel-window-closed notice. Shopping errands have always explained
+  // themselves here ("the runner already paid for the items"); every other
+  // errand type got NOTHING — past heading_to_pickup the Cancel button simply
+  // vanished from the footer, so a customer who wanted out at
+  // arrived_at_pickup hunted for a button that was there a minute ago. Same
+  // understated treatment, generalised, and tappable through to the support
+  // path that can still help them.
+  const cancelClosedNotice =
+    !isTerminalUi && !canCancel ? (
+      <Pressable
+        onPress={() => handleReportProblem('booking')}
+        accessibilityRole="button"
+        accessibilityLabel="Cancel is closed — report a problem with this errand"
+        hitSlop={{ top: 8, bottom: 8, left: 6, right: 6 }}
+        className="bg-warning/10 border border-warning/40 rounded-xl p-3 mt-4 mb-2"
+        style={({ pressed }) => pressFx(pressed)}
+      >
         <Text className="text-xs font-montserrat-semi text-warningDark text-center">
-          Your runner already paid for the items. Cancel is no longer available.
+          {isShopping && booking.picked_up_at
+            ? 'Your runner already paid for the items, so cancel is no longer available. Tap to report a problem and we’ll help.'
+            : 'Your runner has already started this errand, so self-cancel is closed. Tap to report a problem and we’ll help.'}
         </Text>
-      </View>
+      </Pressable>
     ) : null;
+
+  // ── What the errand actually cost ─────────────────────────────────────
+  // The server records a fee, refunds the remainder to the wallet and flips
+  // payment_status to 'refunded' — and until now not one of those facts
+  // survived the cancel toast. The receipt was the single word "Cancelled"
+  // and the Activity sheet still billed the full fare, so the only trace of
+  // the customer's ₱480 was a wallet ledger row on another screen.
+  //
+  // Every figure comes from the server (BookingResource's cancellation_fee /
+  // refunded_amount / refund_destination). Nothing is recomputed here: the
+  // recorded fee is capped and zeroed by settlement (PRICE-3 / PRICE-4), so a
+  // client-side "total − policy fee" would print a phantom charge.
+  const moneyOutcomeSection = isMoneyOutcome ? (
+    <View className="bg-surfaceMuted rounded-2xl p-4 mt-1">
+      <Text
+        className="text-[11px] font-montserrat-bold uppercase text-textSecondary mb-3"
+        style={{ letterSpacing: 1.4 }}
+        maxFontSizeMultiplier={1.3}
+      >
+        What it cost
+      </Text>
+      {money.moneyMoved ? (
+        <>
+          <View className="flex-row items-center justify-between mb-1.5">
+            <Text className="text-[13px] font-montserrat text-textSecondary">
+              Errand total
+            </Text>
+            <Text className="text-[13px] font-inter text-textSecondary tabular-nums">
+              {formatCurrency(booking.total_amount)}
+            </Text>
+          </View>
+          {money.fee > 0 ? (
+            <View className="flex-row items-center justify-between mb-1.5">
+              <Text className="text-[13px] font-montserrat text-textSecondary">
+                Cancellation fee
+              </Text>
+              <Text
+                className="text-[13px] font-inter tabular-nums"
+                style={{ color: LightColors.dangerDark }}
+              >
+                −{formatCurrency(money.fee)}
+              </Text>
+            </View>
+          ) : null}
+          <View className="h-px bg-divider my-2" />
+          <View className="flex-row items-center justify-between">
+            <Text className="text-[13px] font-montserrat-semi text-textPrimary flex-1 pr-3">
+              {money.destination === 'wallet'
+                ? 'Refunded to your ErrandGuy wallet'
+                : 'Refunded'}
+            </Text>
+            <Text
+              className="text-[15px] font-inter-semi tabular-nums"
+              style={{
+                color:
+                  money.refunded != null && money.refunded > 0
+                    ? LightColors.successDark
+                    : LightColors.textSecondary,
+              }}
+            >
+              {formatCurrency(money.refunded ?? 0)}
+            </Text>
+          </View>
+        </>
+      ) : (
+        <Text className="text-[13px] font-montserrat text-textSecondary">
+          Nothing was charged for this errand.
+        </Text>
+      )}
+      {booking.cancellation_reason ? (
+        <Text className="text-[12px] font-montserrat text-textTertiary mt-3">
+          Reason: {booking.cancellation_reason}
+        </Text>
+      ) : null}
+    </View>
+  ) : null;
 
   // Quiet report-a-problem link — routes to the support composer pre-seeded
   // with this booking. Safety category while an SOS is live, otherwise a plain
@@ -2646,9 +3015,9 @@ export default function TrackingScreen() {
           // (post-dropoff safety window) and only drops on
           // completed/cancelled/no_runner — isLiveBooking is exactly that set.
           // Terminal receipts with nothing to show render no footer at all.
-          (!sosActive && isLiveBooking) || sosActive || canCancel ? (
+          (!sosActive && isLiveBooking) || sosActive || !!queuedSos || canCancel ? (
             <View style={{ gap: 8 }}>
-              {!sosActive && isLiveBooking && (
+              {!sosActive && !queuedSos && isLiveBooking && (
                 <Button
                   title="Emergency SOS"
                   variant="danger"
@@ -2656,6 +3025,39 @@ export default function TrackingScreen() {
                   onPress={handleSOS}
                   fullWidth
                 />
+              )}
+              {/* Queued-but-unsent SOS. It must never look like "SOS active":
+                  nobody has been alerted yet. One tap reopens the fallback
+                  sheet (911 + tap-to-call contacts + manual retry). */}
+              {!sosActive && !!queuedSos && (
+                <Pressable
+                  onPress={() => {
+                    haptics.selection();
+                    setShowSosPending(true);
+                  }}
+                  accessibilityRole="button"
+                  accessibilityLabel="SOS not sent yet — open emergency options"
+                  className="flex-row items-center rounded-2xl border border-danger bg-dangerSoft px-4 py-3.5"
+                  style={({ pressed }) => ({ opacity: pressed ? 0.85 : 1 })}
+                >
+                  <Shield size={18} color={LightColors.dangerDark} strokeWidth={2.4} />
+                  <View className="flex-1 ml-2.5">
+                    <Text
+                      className="text-[14px] font-montserrat-bold text-dangerDark"
+                      maxFontSizeMultiplier={1.3}
+                    >
+                      SOS not sent yet
+                    </Text>
+                    <Text
+                      className="text-[12px] font-montserrat text-dangerDark mt-0.5"
+                      maxFontSizeMultiplier={1.3}
+                    >
+                      {sosSending
+                        ? 'Sending…'
+                        : 'We’ll keep trying — tap for call options'}
+                    </Text>
+                  </View>
+                </Pressable>
               )}
               {sosActive && (
                 <View className="bg-dangerSoft border border-danger rounded-2xl p-4">
@@ -2769,14 +3171,37 @@ export default function TrackingScreen() {
                     <Button title="Book again" onPress={handleRebook} fullWidth />
                   </View>
                 )}
+                {/* A cancelled errand's only remaining action used to be
+                    "Report a problem" — even though the errand still needs
+                    doing. Recovery variant (secondary), matching the Activity
+                    sheet's own cancelled rebook. */}
+                {booking.status === 'cancelled' && (
+                  <View className="mt-4 w-full">
+                    <Button
+                      title="Rebook this errand"
+                      variant="secondary"
+                      onPress={handleRebook}
+                      accessibilityHint="Starts a new booking pre-filled from this one"
+                      fullWidth
+                    />
+                  </View>
+                )}
+                {/* Rate stays reachable ON PURPOSE now that a completed
+                    errand no longer force-replaces to the rating screen. */}
+                {booking.status === 'completed' && !hasReview && (
+                  <View className="mt-4 w-full">
+                    <Button
+                      title="Rate your runner"
+                      onPress={() => router.push(`/(customer)/rate/${booking.id}`)}
+                      fullWidth
+                    />
+                  </View>
+                )}
               </View>
+              {moneyOutcomeSection}
               {tripRouteSection}
               {detailsSection}
               {runnerCard ? <View className="mt-3">{runnerCard}</View> : null}
-              {/* Condition excludes completed/cancelled itself, so this only
-                  surfaces on a delivered shopping receipt — same as the old
-                  unconditional-in-body render. */}
-              {shoppingPaidNotice}
               {reportProblemLink}
             </>
           ) : (
@@ -2805,7 +3230,7 @@ export default function TrackingScreen() {
               {stopsProgressSection}
               {tripRouteSection}
               {detailsSection}
-              {shoppingPaidNotice}
+              {cancelClosedNotice}
               {reportProblemLink}
             </>
           )}
@@ -2820,14 +3245,16 @@ export default function TrackingScreen() {
           previewLoading
             ? 'Checking cancellation policy…'
             : cancelPreview
-              ? cancelPreview.fee > 0
-                ? `${cancelPreview.reason}\n\nCancellation fee: ${formatCurrency(cancelPreview.fee)}`
-                : cancelPreview.reason
+              ? cancelMoneyLines(cancelPreview)
               : "The runner will be notified. This action can't be undone."
         }
+        // NOT "Cancel & pay ₱20": on a prepaid errand the fee is DEDUCTED
+        // from money the customer already handed over, and a "pay" label read
+        // as a fresh charge on top. The fee and the refund are both stated in
+        // the body above.
         confirmLabel={
           cancelPreview && cancelPreview.fee > 0
-            ? `Cancel & pay ${formatCurrency(cancelPreview.fee)}`
+            ? 'Cancel errand'
             : 'Yes, cancel'
         }
         cancelLabel="Keep booking"
@@ -2936,6 +3363,29 @@ export default function TrackingScreen() {
           </Pressable>
         </Pressable>
       </Modal>
+
+      {/* No-signal SOS fallback. Open whenever the raise hasn't been
+          acknowledged: honest state + the two things that work without data. */}
+      <SosPendingSheet
+        visible={showSosPending && !!queuedSos}
+        contacts={trustedContacts ?? []}
+        attempts={queuedSos?.attempts ?? 0}
+        sending={sosSending}
+        onRetry={retrySosNow}
+        onCancelAlert={() => {
+          if (!id) return;
+          standDownSos(id);
+          // Belt AND braces: an attempt whose RESPONSE was lost did reach the
+          // server, so a raise we think is unsent may actually be active. The
+          // DELETE is a no-op when there's no active alert, so firing it costs
+          // nothing and closes that gap.
+          void bookingService.deactivateSOS(id).catch(() => {});
+          setShowSosPending(false);
+          haptics.success();
+          toast.success('Alert cancelled — it was never sent');
+        }}
+        onClose={() => setShowSosPending(false)}
+      />
 
       {/* Full-size proof-photo preview (bearer-aware; handles gated media). */}
       <ImageLightbox

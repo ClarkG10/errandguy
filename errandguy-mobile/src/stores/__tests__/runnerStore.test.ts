@@ -9,6 +9,7 @@ beforeEach(() => {
     incomingRequest: null,
     earnings: { today: 0, week: 0, month: 0, total: 0 },
     runnerProfile: null,
+    declinedOfferIds: [],
   });
 });
 
@@ -66,6 +67,47 @@ describe('runnerStore', () => {
       const state = useRunnerStore.getState();
       expect(state.incomingRequest).toBeNull();
       expect(state.currentErrand).toBeNull();
+    });
+
+    /**
+     * The offer modal lives on the runner LAYOUT while the REST reconcile that
+     * can re-raise a still-`matched` booking runs on Home. Two surfaces, one
+     * decision — so the decline has to be remembered in the store, or a
+     * fire-and-forget POST that failed gets the runner asked again 30s later.
+     */
+    it('remembers the declined offer id so it is never re-raised', () => {
+      const booking = makeBooking({ id: 'bk-declined' });
+      act(() =>
+        useRunnerStore.getState().setIncomingRequest({
+          booking,
+          expiresAt: Date.now() + 30000,
+        }),
+      );
+      act(() => useRunnerStore.getState().declineErrand('bk-declined'));
+
+      expect(useRunnerStore.getState().isOfferDeclined('bk-declined')).toBe(true);
+      expect(useRunnerStore.getState().isOfferDeclined('bk-other')).toBe(false);
+    });
+
+    it('does not duplicate an id declined twice', () => {
+      act(() => useRunnerStore.getState().declineErrand('bk-1'));
+      act(() => useRunnerStore.getState().declineErrand('bk-1'));
+
+      expect(useRunnerStore.getState().declinedOfferIds).toEqual(['bk-1']);
+    });
+
+    it('caps the memory so it cannot grow for the life of the process', () => {
+      act(() => {
+        for (let i = 0; i < 60; i++) {
+          useRunnerStore.getState().declineErrand(`bk-${i}`);
+        }
+      });
+
+      const ids = useRunnerStore.getState().declinedOfferIds;
+      expect(ids).toHaveLength(50);
+      // Newest kept, oldest dropped.
+      expect(ids[ids.length - 1]).toBe('bk-59');
+      expect(useRunnerStore.getState().isOfferDeclined('bk-0')).toBe(false);
     });
   });
 

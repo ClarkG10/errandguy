@@ -1,27 +1,125 @@
 import { create } from 'zustand';
+import { AppState, type NativeEventSubscription } from 'react-native';
 import * as Location from 'expo-location';
 import { runnerService } from '../services/runner.service';
 import { useRunnerStore } from './runnerStore';
-import { ensureLocationPermission } from '../utils/locationPermission';
+import { ensureLocationPermission, getCurrentCoords } from '../utils/locationPermission';
 import type { Coordinate, RunnerLocation } from '../types';
+
+/**
+ * How old a runner's last ping may be before MatchingService stops considering
+ * them for dispatch — `where('last_location_at', '>=', now()->subMinutes(5))`
+ * on the eligible-runner query used by BOTH findRunner and broadcastToRunners
+ * (errandguy-api/app/Services/MatchingService.php). Past this the runner is
+ * still "online" in every UI sense but is invisible to every match.
+ */
+export const DISPATCH_STALE_AFTER_MS = 5 * 60_000;
+
+/**
+ * When we start TELLING the runner. Deliberately two minutes inside the
+ * server's cutoff: the disclosure is only useful while there is still time to
+ * act on it, and the home screen re-derives it on a 60s tick, so the warning
+ * lands at worst ~4 min after the last ping — still ahead of dispatch dropping
+ * them.
+ */
+export const DISPATCH_WARN_AFTER_MS = 3 * 60_000;
+
+/**
+ * Foreground re-ping cadence while online and NOT on an errand.
+ *
+ * Background location is deliberately not implemented (no paid Apple account),
+ * so this is not a substitute for it — it closes a hole in the FOREGROUND
+ * watch: `timeInterval` is Android-only in expo-location, and the watch's own
+ * 30s heartbeat lives inside the position callback, so a runner sitting still
+ * with the app open (the coffee-shop wait, the single most common idle posture)
+ * emits nothing at all and silently ages out of matching. This re-POSTs the fix
+ * we already hold — no GPS wake, one small request a minute.
+ */
+const IDLE_HEARTBEAT_MS = 60_000;
+
+/**
+ * True when OUR last successful ping is old enough to warn about.
+ *
+ * Keyed off a locally-recorded send time, never a server timestamp compared
+ * against the device clock — a skewed phone would otherwise flap the warning.
+ * `null` (nothing sent yet this session) is NOT stale on its own; the caller
+ * falls back to `isServerLocationStale` for that case.
+ */
+export function isPingStale(lastPingAt: number | null, now: number = Date.now()): boolean {
+  if (lastPingAt == null) return false;
+  return now - lastPingAt > DISPATCH_WARN_AFTER_MS;
+}
+
+/**
+ * Cold-start fallback: the server's own `last_location_at` (shipped on the self
+ * runner-profile payload) says whether dispatch can see a runner the app has
+ * not yet pinged for — e.g. the app was killed mid-shift and the server still
+ * has them online.
+ *
+ * Uses the FULL server cutoff, not the earlier warn threshold, because this one
+ * compares a server instant to the device clock: at 5 minutes the runner is
+ * provably dropped, so a modest skew can't manufacture the warning.
+ */
+export function isServerLocationStale(
+  lastLocationAt: string | null | undefined,
+  now: number = Date.now(),
+): boolean {
+  if (!lastLocationAt) return false;
+  const at = Date.parse(lastLocationAt);
+  if (!Number.isFinite(at)) return false;
+  return now - at > DISPATCH_STALE_AFTER_MS;
+}
 
 interface LocationState {
   currentLocation: Coordinate | null;
   runnerLocation: RunnerLocation | null;
   watchId: Location.LocationSubscription | null;
   isTracking: boolean;
+  /** Epoch-ms of the last ping the SERVER accepted, or null if none yet this
+   *  session. This — not the watch callback firing — is what dispatch
+   *  visibility actually depends on. */
+  lastPingAt: number | null;
+  /** A ping is in flight. Lets the UI say "reconnecting…" instead of flashing
+   *  "dispatch can't see you" for the second it takes to restore visibility. */
+  isPinging: boolean;
 
   setCurrentLocation: (location: Coordinate | null) => void;
   setRunnerLocation: (location: RunnerLocation | null) => void;
   startTracking: () => Promise<boolean>;
   stopTracking: () => void;
+  /** Send ONE ping now. Never prompts for permission, never throws. */
+  pingLocation: (opts?: { fresh?: boolean }) => Promise<boolean>;
 }
+
+/**
+ * Foreground-only side rigs owned by startTracking/stopTracking. Module-scoped
+ * rather than store fields because nothing renders them and they must never
+ * participate in a selector — the store is a singleton, so exactly one of each
+ * can exist.
+ */
+let heartbeatId: ReturnType<typeof setInterval> | null = null;
+let appStateSub: NativeEventSubscription | null = null;
+/** The single in-flight ping, shared by every concurrent caller. */
+let inflightPing: Promise<boolean> | null = null;
+
+const clearSideRigs = () => {
+  if (heartbeatId) {
+    clearInterval(heartbeatId);
+    heartbeatId = null;
+  }
+  if (appStateSub) {
+    appStateSub.remove();
+    appStateSub = null;
+  }
+};
 
 export const useLocationStore = create<LocationState>((set, get) => ({
   currentLocation: null,
   runnerLocation: null,
   watchId: null,
   isTracking: false,
+  lastPingAt: null,
+  isPinging: false,
 
   setCurrentLocation: (location) => set({ currentLocation: location }),
 
@@ -63,6 +161,83 @@ export const useLocationStore = create<LocationState>((set, get) => ({
       return { runnerLocation: location };
     }),
 
+  /**
+   * Send ONE location ping right now and record whether the server took it.
+   *
+   *   fresh: true  → try for a new GPS fix first (manual "refresh my location"
+   *                  tap, or the app returning to the foreground).
+   *   fresh: false → re-POST the fix we already hold. Zero GPS cost; used by
+   *                  the idle heartbeat.
+   *
+   * Never prompts for permission (`requirePermission: false`), so it is safe on
+   * a plain foregrounding — the app deliberately never pops the OS dialog
+   * outside an explicit user action. Never throws: the caller reads the bool.
+   */
+  pingLocation: ({ fresh = false } = {}) => {
+    // Share an in-flight ping (same idiom as useQuery's inflightRef): the
+    // foreground listener and a runner's own "refresh" tap can land in the same
+    // moment, and two overlapping pings would race the server's 1-per-5s
+    // throttle AND let the loser's `finally` clear isPinging under the winner.
+    if (inflightPing) return inflightPing;
+
+    const run = async (): Promise<boolean> => {
+      let coords = get().currentLocation;
+      let gotFreshFix = false;
+
+      set({ isPinging: true });
+      try {
+        if (fresh) {
+          const pos = await getCurrentCoords({
+            requirePermission: false,
+            accuracy: Location.Accuracy.Balanced,
+            timeoutMs: 6000,
+          }).catch(() => null);
+          if (pos) {
+            coords = { lat: pos.lat, lng: pos.lng };
+            gotFreshFix = true;
+          }
+        }
+        if (!coords) return false;
+        // Only publish a genuinely NEW fix — re-posting the one we already hold
+        // must not notify every currentLocation subscriber for nothing.
+        if (gotFreshFix) set({ currentLocation: coords });
+
+        // A re-POST of an OLD fix must NOT be tagged to a booking: the
+        // customer's tracking screen renders the newest row and would present
+        // a stale position with a fresh "updated just now". Only a genuinely
+        // new fix carries the booking id. Matching reads the denormalised
+        // profile position, which an untagged ping refreshes just the same.
+        const bookingId = gotFreshFix
+          ? (useRunnerStore.getState().currentErrand?.id ?? null)
+          : null;
+
+        try {
+          await runnerService.updateLocation({ ...coords, booking_id: bookingId });
+          set({ lastPingAt: Date.now() });
+          return true;
+        } catch (err) {
+          // 429 is the server's own 1-per-5s throttle (LocationService), i.e. a
+          // FRESHER ping landed moments ago — dispatch can see us. Counting
+          // that as a failure would make the staleness disclosure flap.
+          const status =
+            (err as { status?: number; response?: { status?: number } })?.status ??
+            (err as { response?: { status?: number } })?.response?.status;
+          if (status === 429) {
+            set({ lastPingAt: Date.now() });
+            return true;
+          }
+          return false;
+        }
+      } finally {
+        set({ isPinging: false });
+        inflightPing = null;
+      }
+    };
+
+    inflightPing = run();
+    return inflightPing;
+  },
+
   startTracking: async () => {
     // Defensive: if a previous watcher is still alive (e.g. re-mount of
     // the runner home after a quick navigation), tear it down first so we
@@ -73,6 +248,8 @@ export const useLocationStore = create<LocationState>((set, get) => ({
       existing.remove();
       set({ watchId: null, isTracking: false });
     }
+    // …and its foreground rigs, so re-arming can never double-heartbeat.
+    clearSideRigs();
 
     // ensureLocationPermission handles the "denied once, can't re-prompt"
     // case by offering a deep-link into Settings — without it the runner
@@ -153,14 +330,56 @@ export const useLocationStore = create<LocationState>((set, get) => ({
         const activeErrandId = useRunnerStore.getState().currentErrand?.id ?? null;
         runnerService
           .updateLocation({ ...coords, booking_id: activeErrandId })
-          .catch(() => {
+          // Stamp the SEND, not the fix: dispatch visibility depends on the
+          // server having taken the ping, and this is the only place that
+          // knows it did. (429 = throttled duplicate, i.e. a fresher ping
+          // already landed — also visible, see pingLocation.)
+          .then(() => set({ lastPingAt: Date.now() }))
+          .catch((err) => {
+            const status =
+              (err as { status?: number; response?: { status?: number } })?.status ??
+              (err as { response?: { status?: number } })?.response?.status;
+            if (status === 429) set({ lastPingAt: Date.now() });
             // Network drop — keep the watcher alive; the next valid fix
             // will retry. Resetting `lastSent` would just spam the queue.
           });
       },
     );
 
-    set({ watchId: subscription, isTracking: true });
+    // Optimistic seed: going online PUTs /runner/online WITH coords, which the
+    // server writes straight to current_lat/lng + last_location_at — so at the
+    // instant we arm the watch the runner really is visible. Without this seed
+    // the cold `null` would fall through to the server-timestamp fallback (a
+    // profile payload cached from before the toggle) and flash the "can't see
+    // you" warning for the second before the first real ping lands.
+    set({ watchId: subscription, isTracking: true, lastPingAt: Date.now() });
+
+    // Restore visibility immediately rather than waiting on the watch's first
+    // callback — which, for a stationary device, may never come at all.
+    void get().pingLocation({ fresh: true });
+
+    // Foreground heartbeat — see IDLE_HEARTBEAT_MS. Idle only: while an errand
+    // is in hand the runner is moving (so the watch fires) and the customer's
+    // pin must be fed by real fixes.
+    heartbeatId = setInterval(() => {
+      const s = get();
+      if (!s.isTracking) return;
+      if (useRunnerStore.getState().currentErrand) return;
+      // Don't stack on top of a ping the watch just made.
+      if (s.lastPingAt != null && Date.now() - s.lastPingAt < IDLE_HEARTBEAT_MS - 5_000) return;
+      void get().pingLocation({ fresh: false });
+    }, IDLE_HEARTBEAT_MS);
+
+    // Returning to the app is exactly when visibility has to be rebuilt: the
+    // foreground watch was suspended while backgrounded, so last_location_at
+    // is already minutes old and matching has dropped the runner. One fresh fix
+    // (never a permission prompt) puts them back in the pool in about a second.
+    appStateSub = AppState.addEventListener('change', (state) => {
+      if (state !== 'active') return;
+      if (!get().isTracking) return;
+      void get().pingLocation({ fresh: true });
+    });
+
     return true;
   },
 
@@ -169,6 +388,9 @@ export const useLocationStore = create<LocationState>((set, get) => ({
     if (watchId) {
       watchId.remove();
     }
-    set({ watchId: null, isTracking: false });
+    clearSideRigs();
+    // Offline: freshness is meaningless (and the hero's disclosure is gated on
+    // isOnline anyway), so don't leave a timestamp behind for the next shift.
+    set({ watchId: null, isTracking: false, lastPingAt: null, isPinging: false });
   },
 }));

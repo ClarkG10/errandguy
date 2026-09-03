@@ -3,7 +3,7 @@ import { View, Text } from 'react-native';
 import { ChevronRight } from 'lucide-react-native';
 import { Card } from '../ui/Card';
 import { ErrandTypeIcon } from '../ui/ErrandTypeIcon';
-import { STATUS_LABELS, STATUS_COLORS } from '../../constants/statusLabels';
+import { statusLabel, STATUS_COLORS } from '../../constants/statusLabels';
 import { LightColors } from '../../constants/colors';
 import { formatCurrency } from '../../utils/formatCurrency';
 import { formatRelativeTime } from '../../utils/formatDate';
@@ -30,7 +30,10 @@ export const RecentErrandItem = memo(function RecentErrandItem({
   onPress,
 }: RecentErrandItemProps) {
   const statusColor = STATUS_COLORS[booking.status] ?? LightColors.textMuted;
-  const statusLabel = STATUS_LABELS[booking.status] ?? booking.status;
+  // Type-aware: "Picked Up" on a bills-payment or queue errand described a
+  // parcel that never existed. Same label the tracking screen and the push
+  // for this errand use.
+  const label = statusLabel(booking.status, booking.errand_type?.slug);
   // Map the API icon (Lucide name string) onto our SVG illustration
   // catalogue. Falls back gracefully to Package inside ErrandTypeIcon.
   const iconName = booking.errand_type?.icon_name ?? null;
@@ -42,7 +45,7 @@ export const RecentErrandItem = memo(function RecentErrandItem({
       className="mb-2.5"
       accessibilityLabel={`${
         booking.errand_type?.name ?? 'Errand'
-      }, ${statusLabel}, ${formatCurrency(booking.total_amount)}`}
+      }, ${label}, ${formatCurrency(booking.total_amount)}`}
     >
       {/* Header row — type icon, name + status, price + chevron. */}
       <View className="flex-row items-center">
@@ -68,7 +71,7 @@ export const RecentErrandItem = memo(function RecentErrandItem({
               className="text-[11px] font-inter-semi text-textTertiary"
               numberOfLines={1}
             >
-              {statusLabel} · {formatRelativeTime(booking.created_at)}
+              {label} · {formatRelativeTime(booking.created_at)}
             </Text>
           </View>
         </View>

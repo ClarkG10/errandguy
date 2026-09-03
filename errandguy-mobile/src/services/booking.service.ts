@@ -284,8 +284,17 @@ export const bookingService = {
     return api.delete(`/bookings/${id}/share-trip`);
   },
 
-  triggerSOS(id: string) {
-    return api.post(`/bookings/${id}/sos`);
+  /**
+   * Pull the alarm. `timeoutMs` lets the SOS retry loop (`sosIntent.ts`) fail
+   * fast and try again instead of hanging on the 30s client default — replay is
+   * safe because SOSService returns the EXISTING active alert under a row lock.
+   * Callers should go through `raiseSos()`, not this directly, so the intent is
+   * persisted and retried.
+   */
+  triggerSOS(id: string, opts?: { timeoutMs?: number }) {
+    return api.post(`/bookings/${id}/sos`, undefined, {
+      ...(opts?.timeoutMs ? { timeout: opts.timeoutMs } : {}),
+    });
   },
 
   deactivateSOS(id: string) {

@@ -57,6 +57,38 @@ const TERMINAL: AttemptStatus[] = ['success', 'failed'];
 export const isAttemptTerminal = (a?: PaymentAttempt | null): boolean =>
   !!a && TERMINAL.includes(a.status);
 
+/**
+ * Should a failed money-CREATE keep its idempotency key for the next try?
+ *
+ * The key exists for exactly one failure class: the one where the client
+ * cannot tell whether the server did the work. Mutations get a flat 30s
+ * timeout and no retry layer (api.ts), so a slow create — a Xendit invoice on
+ * provincial LTE — can time out client-side while the server completes it. If
+ * the retry then mints a FRESH key, the backend (which looks up
+ * user_id + idem_key) has no way to connect the two and books/charges twice.
+ *
+ * So: retain the key whenever the outcome is genuinely unknown or explicitly
+ * "still running", and drop it only when the server gave a definitive verdict
+ * on its own terms (a 4xx), which is a real new attempt.
+ *
+ *   • status 0  → offline / client timeout: no response, outcome UNKNOWN.
+ *   • status 5xx → EnsureIdempotency releases the claim on a 5xx, so the same
+ *     key runs cleanly again (and a partial server-side write is deduped).
+ *   • status 409 → the FIRST request with this key is still in flight. Minting
+ *     a new key here is the double-book, so this one is critical.
+ *   • any other 4xx → definitive rejection (validation, promo dead, gateway
+ *     refusal); the next Confirm is a genuinely new attempt.
+ *
+ * Callers hold the key in a screen-local ref (see (runner)/payout/index.tsx)
+ * rather than in the persisted attempt, so retaining it never also retains the
+ * one-payment-at-a-time lock.
+ */
+export const shouldRetainIdempotencyKey = (err: unknown): boolean => {
+  const status = (err as { status?: number } | null | undefined)?.status;
+  if (typeof status !== 'number') return true; // shape we don't recognise → assume unknown
+  return status === 0 || status === 409 || status >= 500;
+};
+
 /** An attempt that still owns the "one payment at a time" lock. */
 export const isAttemptActive = (a?: PaymentAttempt | null): boolean =>
   !!a && !TERMINAL.includes(a.status);
@@ -75,13 +107,22 @@ interface PaymentStoreState {
   attempt: PaymentAttempt | null;
   isHydrated: boolean;
 
-  /** Mint a new attempt (new attemptId + idempotencyKey) and persist it. */
+  /**
+   * Mint a new attempt (new attemptId + idempotencyKey) and persist it.
+   *
+   * `idempotencyKey` lets the calling screen supply a RETAINED key (held in a
+   * screen-local ref across a transport-class failure — see
+   * shouldRetainIdempotencyKey) so a retry of the same create is deduped
+   * server-side instead of booking/charging twice. Omit it for a genuinely new
+   * attempt and a fresh key is minted.
+   */
   beginAttempt: (init: {
     kind: PaymentKind;
     amount: number;
     method?: string;
     bookingId?: string;
     topupId?: string;
+    idempotencyKey?: string;
   }) => PaymentAttempt;
   /** Record the server payment id once the create response returns. */
   linkPayment: (paymentId: string) => void;
@@ -100,7 +141,7 @@ export const usePaymentStore = create<PaymentStoreState>((set, get) => ({
     const now = Date.now();
     const attempt: PaymentAttempt = {
       attemptId: newIdempotencyKey(),
-      idempotencyKey: newIdempotencyKey(),
+      idempotencyKey: init.idempotencyKey ?? newIdempotencyKey(),
       kind: init.kind,
       bookingId: init.bookingId,
       topupId: init.topupId,

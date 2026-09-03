@@ -275,4 +275,180 @@ class WalletTopUpTest extends TestCase
             'status' => 'failed',
         ]);
     }
+
+    // ── Pull-reconcile on the top-up status probe ───────────────────────────
+    // Top-up used to be the ONLY money-in flow with no pull path: the booking
+    // probe asks Xendit when a webhook lags, but this endpoint just re-read the
+    // DB row — so a delayed/dropped webhook stranded a customer whose money had
+    // already left GCash on "Payment is being processed" indefinitely.
+
+    /** Create a pending e-wallet top-up and return its transaction. */
+    private function pendingEwalletTopUp(string $prId, float $amount = 500): WalletTransaction
+    {
+        Http::fake([
+            'api.xendit.co/payment_requests' => Http::response([
+                'id' => $prId, 'status' => 'PENDING',
+                'actions' => [['url' => "https://gcash.example/authorize/{$prId}"]],
+            ], 200),
+        ]);
+        $this->actingAs($this->user)
+            ->postJson('/api/v1/wallet/top-up', ['amount' => $amount, 'method' => 'gcash'])
+            ->assertCreated();
+
+        return WalletTransaction::where('user_id', $this->user->id)
+            ->where('gateway_ref', $prId)
+            ->firstOrFail();
+    }
+
+    public function test_status_probe_pulls_the_gateway_and_credits_a_topup_the_webhook_never_delivered(): void
+    {
+        $tx = $this->pendingEwalletTopUp('pr-tu-reconcile-1');
+
+        // No webhook ever arrives; Xendit says the charge SUCCEEDED.
+        Http::fake([
+            'api.xendit.co/payment_requests/pr-tu-reconcile-1' => Http::response([
+                'id' => 'pr-tu-reconcile-1', 'status' => 'SUCCEEDED', 'amount' => 500,
+            ], 200),
+        ]);
+
+        $this->actingAs($this->user)
+            ->getJson("/api/v1/wallet/transactions/{$tx->id}/status")
+            ->assertOk()
+            // The poll itself now lands the terminal state the client waits for.
+            ->assertJsonPath('data.status', 'completed');
+
+        // Settled through completeTopUp — real credit, ledger balance stamped.
+        $this->assertEquals('completed', $tx->fresh()->status);
+        $this->assertEquals(600.00, (float) $this->user->fresh()->wallet_balance);
+    }
+
+    public function test_status_probe_reconcile_credits_exactly_once_across_repeat_polls(): void
+    {
+        $tx = $this->pendingEwalletTopUp('pr-tu-reconcile-2');
+
+        Http::fake([
+            'api.xendit.co/payment_requests/pr-tu-reconcile-2' => Http::response([
+                'id' => 'pr-tu-reconcile-2', 'status' => 'SUCCEEDED', 'amount' => 500,
+            ], 200),
+        ]);
+
+        // The app polls every ~3s; the throttle plus completeTopUp's own
+        // row-locked pending-check must make repeat polls (and a racing
+        // webhook) a no-op after the first credit.
+        for ($i = 0; $i < 3; $i++) {
+            $this->actingAs($this->user)
+                ->getJson("/api/v1/wallet/transactions/{$tx->id}/status")
+                ->assertOk();
+        }
+        $this->postJson('/api/v1/webhooks/xendit', [
+            'event' => 'payment.succeeded',
+            'data' => ['payment_request_id' => 'pr-tu-reconcile-2', 'amount' => 500],
+        ], ['x-callback-token' => 'test-webhook-token'])->assertOk();
+
+        $this->assertEquals(600.00, (float) $this->user->fresh()->wallet_balance);
+        $this->assertEquals(1, WalletTransaction::where('user_id', $this->user->id)
+            ->where('type', 'top_up')->where('status', 'completed')->count());
+    }
+
+    public function test_status_probe_reconcile_marks_a_failed_charge_failed_without_crediting(): void
+    {
+        $tx = $this->pendingEwalletTopUp('pr-tu-reconcile-3');
+
+        Http::fake([
+            'api.xendit.co/payment_requests/pr-tu-reconcile-3' => Http::response([
+                'id' => 'pr-tu-reconcile-3', 'status' => 'FAILED',
+            ], 200),
+        ]);
+
+        $this->actingAs($this->user)
+            ->getJson("/api/v1/wallet/transactions/{$tx->id}/status")
+            ->assertOk()
+            ->assertJsonPath('data.status', 'failed');
+
+        $this->assertEquals(100.00, (float) $this->user->fresh()->wallet_balance);
+        $this->assertNotNull($tx->fresh()->failure_reason);
+    }
+
+    public function test_status_probe_leaves_a_still_pending_charge_pending(): void
+    {
+        $tx = $this->pendingEwalletTopUp('pr-tu-reconcile-4');
+
+        // The customer hasn't approved in GCash yet — the probe must NOT invent
+        // a terminal state (a false 'failed' here would tell them a payment
+        // they are mid-way through has died).
+        Http::fake([
+            'api.xendit.co/payment_requests/pr-tu-reconcile-4' => Http::response([
+                'id' => 'pr-tu-reconcile-4', 'status' => 'REQUIRES_ACTION',
+            ], 200),
+        ]);
+
+        $this->actingAs($this->user)
+            ->getJson("/api/v1/wallet/transactions/{$tx->id}/status")
+            ->assertOk()
+            ->assertJsonPath('data.status', 'pending');
+
+        $this->assertEquals(100.00, (float) $this->user->fresh()->wallet_balance);
+    }
+
+    public function test_status_probe_survives_a_gateway_error_without_failing_the_poll(): void
+    {
+        $tx = $this->pendingEwalletTopUp('pr-tu-reconcile-5');
+
+        // Xendit down / key rejected. The poll must degrade to "still pending",
+        // never a 5xx and never a fabricated failure.
+        Http::fake([
+            'api.xendit.co/payment_requests/pr-tu-reconcile-5' => Http::response([], 500),
+        ]);
+
+        $this->actingAs($this->user)
+            ->getJson("/api/v1/wallet/transactions/{$tx->id}/status")
+            ->assertOk()
+            ->assertJsonPath('data.status', 'pending');
+
+        $this->assertEquals('pending', $tx->fresh()->status);
+        $this->assertEquals(100.00, (float) $this->user->fresh()->wallet_balance);
+    }
+
+    public function test_pending_topup_row_carries_its_resume_url_but_not_the_gateway_ref(): void
+    {
+        // Contract the wallet ledger's "Continue payment" affordance depends on:
+        // a pending top-up row must still carry the checkout URL so the customer
+        // can reopen the invoice they were already sent to (instead of starting
+        // a duplicate top-up), while the gateway internal stays hidden.
+        WalletTransaction::create([
+            'user_id' => $this->user->id, 'type' => 'top_up', 'amount' => 500,
+            'balance_after' => 100, 'status' => 'pending', 'gateway_ref' => 'inv_resume',
+            'checkout_url' => 'https://checkout.xendit.co/inv_resume',
+            'description' => 'Wallet top-up (awaiting payment)',
+        ]);
+
+        $this->actingAs($this->user)
+            ->getJson('/api/v1/wallet/transactions')
+            ->assertOk()
+            ->assertJsonPath('data.0.checkout_url', 'https://checkout.xendit.co/inv_resume')
+            ->assertJsonMissingPath('data.0.gateway_ref');
+    }
+
+    public function test_status_probe_does_not_pull_for_a_hosted_invoice_topup(): void
+    {
+        // A card/hosted-invoice ref is not a payment_request id, so the pull is
+        // skipped entirely (those remain webhook-settled) — no stray gateway
+        // call, and certainly no mis-addressed lookup.
+        Http::fake([
+            'api.xendit.co/v2/invoices' => Http::response([
+                'id' => 'inv_reconcile_1', 'invoice_url' => 'https://checkout.xendit.co/inv_reconcile_1',
+            ], 200),
+        ]);
+        $this->actingAs($this->user)
+            ->postJson('/api/v1/wallet/top-up', ['amount' => 500])
+            ->assertCreated();
+        $tx = WalletTransaction::where('gateway_ref', 'inv_reconcile_1')->firstOrFail();
+
+        $this->actingAs($this->user)
+            ->getJson("/api/v1/wallet/transactions/{$tx->id}/status")
+            ->assertOk()
+            ->assertJsonPath('data.status', 'pending');
+
+        Http::assertNotSent(fn ($request) => str_contains($request->url(), '/payment_requests/'));
+    }
 }

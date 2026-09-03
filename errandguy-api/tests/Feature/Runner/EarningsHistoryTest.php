@@ -52,11 +52,15 @@ class EarningsHistoryTest extends TestCase
         ]);
     }
 
-    public function test_history_period_today_uses_utc_day_window(): void
+    public function test_history_period_today_uses_the_business_day_window(): void
     {
+        // "Today" is a Manila day (config('app.business_timezone')), not a UTC
+        // one — the boundaries are pinned in BusinessTimezoneWindowsTest.
+        $tz = config('app.business_timezone', 'Asia/Manila');
+
         $today = $this->completedBooking('EG-HIST-TODAY', now());
-        // One hour before the UTC start of today → belongs to "yesterday".
-        $yesterday = $this->completedBooking('EG-HIST-YEST', now()->startOfDay()->subHour());
+        // One hour before the local start of today → belongs to "yesterday".
+        $yesterday = $this->completedBooking('EG-HIST-YEST', now($tz)->startOfDay()->utc()->subHour());
 
         $res = $this->actingAs($this->runner)
             ->getJson('/api/v1/runner/earnings/history?period=today')

@@ -3,7 +3,7 @@ import { View, Text, Pressable, Animated } from 'react-native';
 import { HereMapView, HereMarker, HerePolyline, type HereMapViewRef } from '../map';
 import { Locate, Navigation } from 'lucide-react-native';
 import { useLocationStore } from '../../stores/locationStore';
-import { routeService } from '../../services/route.service';
+import { routeService, formatEtaMinutes } from '../../services/route.service';
 import { useEta } from '../../hooks/useEta';
 import { LightColors, Elevation } from '../../constants/colors';
 
@@ -224,7 +224,10 @@ export function RunnerActiveMap({
           }}
         >
           <Text className="text-[11px] font-montserrat-bold text-textPrimary">
-            {Math.max(1, Math.round(displayEta))} min away
+            {/* Shared renderer — the local `${n} min` had no hour rollover,
+                so a long cross-city leg read "95 min" here while the
+                navigation bar for the same leg read "1h 35m". */}
+            {formatEtaMinutes(Math.max(1, Math.round(displayEta)))} away
           </Text>
         </Animated.View>
       )}

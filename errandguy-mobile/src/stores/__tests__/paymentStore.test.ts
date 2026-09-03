@@ -12,6 +12,7 @@ import {
   usePaymentStore,
   isAttemptActive,
   isAttemptTerminal,
+  shouldRetainIdempotencyKey,
 } from '../paymentStore';
 
 const STORAGE_KEY = '@payment_attempt_v1';
@@ -126,5 +127,60 @@ describe('paymentStore', () => {
     expect(a).toBeTruthy();
     expect(a!.status).toBe('pending');
     expect(a!.paymentId).toBe('pay_9');
+  });
+
+  it('beginAttempt reuses a RETAINED idempotency key when one is supplied', () => {
+    // The screen holds the create key in a ref so it outlives the attempt the
+    // catch block resolves; re-arming with that key is what makes a retry of a
+    // timed-out create a server-side REPLAY instead of a second booking.
+    act(() => {
+      usePaymentStore.getState().beginAttempt({
+        kind: 'booking',
+        amount: 300,
+        idempotencyKey: 'retained-key-1',
+      });
+    });
+    expect(usePaymentStore.getState().attempt!.idempotencyKey).toBe('retained-key-1');
+
+    // ...and a brand-new attempt (no key supplied) still mints its own.
+    act(() => usePaymentStore.getState().resolve());
+    act(() => {
+      usePaymentStore.getState().beginAttempt({ kind: 'booking', amount: 300 });
+    });
+    expect(usePaymentStore.getState().attempt!.idempotencyKey).not.toBe('retained-key-1');
+  });
+});
+
+describe('shouldRetainIdempotencyKey', () => {
+  it('retains the key when the outcome is UNKNOWN (the double-charge case)', () => {
+    // A mutation has a flat 30s timeout and no retry layer, so a slow create
+    // can time out client-side while the server completes it. Minting a fresh
+    // key on the next tap is exactly what booked and charged twice.
+    expect(shouldRetainIdempotencyKey({ status: 0, kind: 'timeout' })).toBe(true);
+    expect(shouldRetainIdempotencyKey({ status: 0, kind: 'offline' })).toBe(true);
+  });
+
+  it('retains the key on a 409 — the first request with it is still in flight', () => {
+    // EnsureIdempotency answers 409 while the original attempt is running. A
+    // new key here would run the create a second time for real.
+    expect(shouldRetainIdempotencyKey({ status: 409 })).toBe(true);
+  });
+
+  it('retains the key on a 5xx (the middleware released the claim, so it reruns clean)', () => {
+    expect(shouldRetainIdempotencyKey({ status: 500 })).toBe(true);
+    expect(shouldRetainIdempotencyKey({ status: 503 })).toBe(true);
+  });
+
+  it('drops the key on a definitive 4xx — the next try is a genuinely new attempt', () => {
+    expect(shouldRetainIdempotencyKey({ status: 422, code: 'PROMO_EXPIRED' })).toBe(false);
+    expect(shouldRetainIdempotencyKey({ status: 400 })).toBe(false);
+    expect(shouldRetainIdempotencyKey({ status: 404 })).toBe(false);
+    expect(shouldRetainIdempotencyKey({ status: 403 })).toBe(false);
+  });
+
+  it('retains the key for an unrecognised error shape (assume the outcome is unknown)', () => {
+    expect(shouldRetainIdempotencyKey(new Error('boom'))).toBe(true);
+    expect(shouldRetainIdempotencyKey(undefined)).toBe(true);
+    expect(shouldRetainIdempotencyKey(null)).toBe(true);
   });
 });

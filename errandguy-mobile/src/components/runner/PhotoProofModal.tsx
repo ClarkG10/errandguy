@@ -12,13 +12,29 @@ import { toast } from '../../stores/toastStore';
 
 interface PhotoProofModalProps {
   type: 'pickup' | 'delivery';
+  /**
+   * A capture that was already taken and whose upload failed (persisted by
+   * `utils/pendingProof`). The sheet then OPENS on that photo with "Retry
+   * upload" — before this, a failed upload reopened an empty camera and the
+   * runner had to re-shoot a doorstep they may have left. `null` = fresh
+   * capture, the original behaviour.
+   */
+  initialUri?: string | null;
   onConfirm: (uri: string) => void;
   onClose: () => void;
 }
 
-export function PhotoProofModal({ type, onConfirm, onClose }: PhotoProofModalProps) {
-  const [photoUri, setPhotoUri] = useState<string | null>(null);
+export function PhotoProofModal({
+  type,
+  initialUri = null,
+  onConfirm,
+  onClose,
+}: PhotoProofModalProps) {
+  const [photoUri, setPhotoUri] = useState<string | null>(initialUri);
   const [submitting, setSubmitting] = useState(false);
+  /** True while showing the un-uploaded capture we were handed, so the CTA can
+   *  say "Retry upload" instead of implying this is a new photo. */
+  const isRetry = !!initialUri && photoUri === initialUri;
 
   // Surface a denied camera/photo permission with a Settings deep-link so
   // the runner isn't stuck at a dead capture button in a proof-required flow.
@@ -107,9 +123,11 @@ export function PhotoProofModal({ type, onConfirm, onClose }: PhotoProofModalPro
             </View>
 
             <Text style={s.subtitle}>
-              {type === 'pickup'
-                ? 'Take a photo of the item you picked up.'
-                : 'Take a photo as proof of delivery.'}
+              {isRetry
+                ? 'This photo didn’t finish uploading. Send it again — no need to re-shoot.'
+                : type === 'pickup'
+                  ? 'Take a photo of the item you picked up.'
+                  : 'Take a photo as proof of delivery.'}
             </Text>
 
             {!photoUri ? (
@@ -155,7 +173,7 @@ export function PhotoProofModal({ type, onConfirm, onClose }: PhotoProofModalPro
                   </View>
                   <View style={{ flex: 1 }}>
                     <Button
-                      title="Confirm"
+                      title={isRetry ? 'Retry upload' : 'Confirm'}
                       onPress={handleConfirm}
                       loading={submitting}
                       loadingTitle="Uploading…"

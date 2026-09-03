@@ -2,6 +2,9 @@
 
 namespace App\Http\Resources;
 
+use App\Models\AdminUser;
+use App\Models\User;
+use App\Services\BookingService;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\JsonResource;
 
@@ -15,7 +18,7 @@ class BookingResource extends JsonResource
         // by tapping "decline" on every job. Same for receipts /
         // signatures / item photos.
         $isParticipant = $this->isParticipant();
-        $isAdmin = $request->user() instanceof \App\Models\AdminUser;
+        $isAdmin = $request->user() instanceof AdminUser;
         $canSeeContacts = $isParticipant || $isAdmin;
 
         // Runner-facing operational metadata (payment method type, cash to
@@ -24,7 +27,7 @@ class BookingResource extends JsonResource
         // the public trip page (no authenticated user) must stay unchanged.
         $viewer = $request->user();
         $canSeeRunnerOps = $isAdmin
-            || ($viewer instanceof \App\Models\User && $viewer->role === 'runner');
+            || ($viewer instanceof User && $viewer->role === 'runner');
 
         // Reviews are bidirectional (customer→runner AND runner→customer), so
         // a booking can hold two rows keyed by reviewer_id. Resolve them by
@@ -35,6 +38,13 @@ class BookingResource extends JsonResource
         $runnerReview = $this->runner_id
             ? $reviews?->firstWhere('reviewer_id', $this->runner_id)
             : null;
+
+        // What a cancellation (or an unmatched booking's auto-refund) actually
+        // did to the money. Derived here rather than client-side so every
+        // durable surface — the tracking receipt, the activity detail sheet,
+        // admin — tells the same story the cancel receipt told at the moment
+        // of cancelling.
+        $refundedAmount = $this->refundedAmount();
 
         return [
             'id' => $this->id,
@@ -158,7 +168,7 @@ class BookingResource extends JsonResource
                 $this->status === 'matched'
                     && $this->pricing_mode === 'fixed'
                     && $this->matched_at !== null,
-                fn () => \App\Services\BookingService::matchAcceptDeadline($this->matched_at),
+                fn () => BookingService::matchAcceptDeadline($this->matched_at),
             ),
             'is_transportation' => $this->is_transportation,
             // The ride PIN is the out-of-band secret the passenger (customer)
@@ -180,6 +190,21 @@ class BookingResource extends JsonResource
             'cancelled_at' => $this->cancelled_at,
             'cancellation_reason' => $this->cancellation_reason,
             'cancellation_fee' => $this->cancellation_fee,
+            // Peso amount that came BACK, or null when no money was ever
+            // returned on this booking. The fee has always been exposed; the
+            // refund it was deducted from was not, so days later a cancelled
+            // prepaid errand still showed the full ₱500 total and no trace of
+            // the ₱480 that went back — the booking read as money paid for
+            // nothing, with the only evidence a wallet ledger row on another
+            // screen. 0.0 (not null) is meaningful: money WAS returned-eligible
+            // but the capped fee consumed all of it.
+            'refunded_amount' => $refundedAmount,
+            // Where it landed. Cancels and no-runner refunds credit the
+            // ErrandGuy wallet — they are never reversed to the source
+            // instrument (BookingController::cancel records refunded_to =
+            // 'wallet' on the payment for exactly this reason), and telling
+            // the customer to watch their GCash for it would be a lie.
+            'refund_destination' => $refundedAmount !== null && $refundedAmount > 0 ? 'wallet' : null,
             'trip_share_active' => $this->trip_share_active,
             'trip_share_token' => $this->when(
                 $this->trip_share_active && $this->isParticipant(),
@@ -236,9 +261,9 @@ class BookingResource extends JsonResource
             // tapped a dead end instead of being sent to "Book again". Advisory
             // only — the endpoint re-checks this under a row lock.
             'can_retry_match' => $this->when(
-                $viewer instanceof \App\Models\User && $viewer->id === $this->customer_id,
+                $viewer instanceof User && $viewer->id === $this->customer_id,
                 fn () => $viewer->can('retryMatch', $this->resource)
-                    && \App\Services\BookingService::retryBlockReason($this->resource) === null,
+                    && BookingService::retryBlockReason($this->resource) === null,
             ),
             'is_trackable' => in_array($this->status, ['accepted', 'heading_to_pickup', 'arrived_at_pickup', 'picked_up', 'in_transit', 'arrived_at_dropoff', 'delivered']),
             'created_at' => $this->created_at,
@@ -293,12 +318,37 @@ class BookingResource extends JsonResource
     }
 
     /**
+     * Peso amount returned to the customer on this booking, or null when no
+     * money was ever given back.
+     *
+     * Read off the booking's own columns — the SAME arithmetic
+     * BookingController::cancel uses to build its receipt message (total −
+     * the fee actually recorded, gated on payment_status having flipped to
+     * 'refunded'), so the receipt the customer saw at cancel time and the
+     * receipt they open a week later can never disagree. Deliberately not
+     * recomputed from a policy tier: the recorded fee is capped/zeroed
+     * (PRICE-3 / PRICE-4) and a fresh tier computation would print a phantom
+     * charge.
+     */
+    protected function refundedAmount(): ?float
+    {
+        if ($this->payment_status !== 'refunded') {
+            return null;
+        }
+
+        return round(
+            max(0, (float) $this->total_amount - (float) $this->cancellation_fee),
+            2,
+        );
+    }
+
+    /**
      * Check if the current authenticated user is a participant of this booking.
      */
     protected function isParticipant(): bool
     {
         $user = request()->user();
-        if (!$user) {
+        if (! $user) {
             return false;
         }
 

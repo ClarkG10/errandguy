@@ -11,6 +11,7 @@ import { ArrowRight, MapPin, Navigation, Package } from 'lucide-react-native';
 import * as Haptics from 'expo-haptics';
 import { Avatar } from '../ui/Avatar';
 import { formatRunnerPayout } from '../../utils/runnerPayout';
+import { statusActionLabel } from './StatusActionButton';
 import { useReducedMotion } from '../../hooks/useReducedMotion';
 import { LightColors, Elevation } from '../../constants/colors';
 import type { Booking, BookingStatus } from '../../types';
@@ -29,9 +30,10 @@ interface ActiveRunnerErrandCardProps {
  * the runner killed and re-opened the app mid-errand, the dashboard
  * looked idle, which is misleading and wastes a tap on every return.
  *
- * The card surfaces the next concrete action ("Head to pickup",
- * "Mark picked up", etc.) so the runner always knows what's expected
- * of them next.
+ * The card surfaces the next concrete action — read from the same
+ * per-errand-type ladder the cockpit button renders (`statusActionLabel`), so
+ * the runner always knows what's expected of them next and the card cannot
+ * promise a different verb from the button it opens.
  */
 
 type Phase = 'pickup' | 'pickup_arrived' | 'in_transit' | 'arrived' | 'delivered';
@@ -47,29 +49,37 @@ const PHASE_BY_STATUS: Partial<Record<BookingStatus, Phase>> = {
   delivered: 'delivered',
 };
 
-const PHASE_COPY: Record<Phase, { title: string; cta: string; sub: string }> = {
+/**
+ * Supporting line + CTA per phase. The TITLE is no longer here: it used to be
+ * a fifth independent action vocabulary that disagreed with the cockpit button
+ * it opens ("Mark item picked up" here, "Pick up item" there) and named a
+ * drop-off leg that single-location errands don't have \u2014 a bill-payment card
+ * read "En route to drop-off". It now comes from `statusActionLabel`, the same
+ * per-errand-type ladder the button itself renders.
+ */
+const PHASE_COPY: Record<Phase, { fallbackTitle: string; cta: string; sub: string }> = {
   pickup: {
-    title: 'Head to pickup',
+    fallbackTitle: 'Head to pickup',
     cta: 'Open errand',
     sub: 'Tap to navigate and update status',
   },
   pickup_arrived: {
-    title: 'Mark item picked up',
+    fallbackTitle: 'Continue the errand',
     cta: 'Open errand',
     sub: 'You\u2019ve arrived at pickup',
   },
   in_transit: {
-    title: 'En route to drop-off',
+    fallbackTitle: 'Continue the errand',
     cta: 'Open errand',
     sub: 'Continue navigating to drop-off',
   },
   arrived: {
-    title: 'Mark delivered',
+    fallbackTitle: 'Continue the errand',
     cta: 'Open errand',
     sub: 'You\u2019ve arrived at drop-off',
   },
   delivered: {
-    title: 'Confirm completion',
+    fallbackTitle: 'Confirm completion',
     cta: 'Open errand',
     sub: 'Awaiting customer confirmation',
   },
@@ -81,6 +91,10 @@ export function ActiveRunnerErrandCard({
 }: ActiveRunnerErrandCardProps) {
   const phase = PHASE_BY_STATUS[errand.status] ?? 'pickup';
   const copy = PHASE_COPY[phase];
+  // The literal next tap, per errand type — so the card promises exactly what
+  // the cockpit button underneath it says.
+  const title =
+    statusActionLabel(errand.status, errand.errand_type?.slug) ?? copy.fallbackTitle;
   const customerName = errand.customer?.full_name?.split(' ')[0] ?? 'Customer';
   // While in transit, dropoff is the relevant address; otherwise pickup.
   const showingDropoff = phase === 'in_transit' || phase === 'arrived' || phase === 'delivered';
@@ -129,7 +143,7 @@ export function ActiveRunnerErrandCard({
     <Pressable
       onPress={handlePress}
       accessibilityRole="button"
-      accessibilityLabel={`Active errand for ${customerName}: ${copy.title}`}
+      accessibilityLabel={`Active errand for ${customerName}: ${title}`}
       accessibilityHint="Open the errand to update status or navigate"
       android_ripple={{ color: `${LightColors.primary}0F` }}
       // Box appearance MUST live in className: a Pressable styled only via a
@@ -161,7 +175,7 @@ export function ActiveRunnerErrandCard({
         />
         <View style={styles.bodyMeta}>
           <Text style={styles.titleText} numberOfLines={1}>
-            {copy.title}
+            {title}
           </Text>
           <Text style={styles.subText} numberOfLines={1}>
             {`${customerName} · ${errand.errand_type?.name ?? 'Errand'}`}

@@ -163,14 +163,15 @@ class RunnerHomeAggregateTest extends TestCase
     public function test_every_section_matches_its_individual_endpoint(): void
     {
         // peak-hours is deliberately served from the SAME SWR cache entry as
-        // GET /runner/peak-hours (`runner:peak_hours:30`), so a naive
+        // GET /runner/peak-hours (`runner:peak_hours:v2:30`), so a naive
         // read-both-and-compare would pass even if the two calls had drifted —
         // whichever ran first would seed the other's read. Bust the key between
-        // the two reads so each side really re-runs its own closure.
-        Cache::forget('runner:peak_hours:30');
+        // the two reads so each side really re-runs its own closure. (Keep this
+        // in step with HeatmapController's cache key if it is versioned again.)
+        Cache::forget('runner:peak_hours:v2:30');
         $individualPeak = $this->actingAs($this->runner)
             ->getJson('/api/v1/runner/peak-hours')->assertOk()->json('data');
-        Cache::forget('runner:peak_hours:30');
+        Cache::forget('runner:peak_hours:v2:30');
 
         $home = $this->home();
 

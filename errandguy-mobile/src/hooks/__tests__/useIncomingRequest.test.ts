@@ -36,7 +36,7 @@ const offer = (id: string) =>
 describe('useIncomingRequest', () => {
   beforeEach(() => {
     subscriptions.length = 0;
-    useRunnerStore.setState({ incomingRequest: null });
+    useRunnerStore.setState({ incomingRequest: null, declinedOfferIds: [] });
   });
 
   it('subscribes to both the offer stream and its retraction', () => {
@@ -95,6 +95,25 @@ describe('useIncomingRequest', () => {
 
     expect(useRunnerStore.getState().incomingRequest?.booking.id).toBe('b1');
     expect(onOfferWithdrawn).not.toHaveBeenCalled();
+  });
+
+  /**
+   * A decline is fire-and-forget, so the booking can still be `matched` on the
+   * server for a moment and be re-broadcast. Asking again reads as the app
+   * ignoring the runner's answer.
+   */
+  it('never re-raises an offer the runner already declined', () => {
+    const onOffer = jest.fn();
+    renderHook(() => useIncomingRequest('runner-1', { onOffer }));
+
+    fire('booking.incoming', offer('b1'));
+    useRunnerStore.getState().declineErrand('b1');
+    fire('booking.incoming', offer('b1'));
+
+    expect(useRunnerStore.getState().incomingRequest).toBeNull();
+    // The feed callback still runs — the errand may legitimately reappear in
+    // the open-offer list for someone else to claim.
+    expect(onOffer).toHaveBeenCalledTimes(2);
   });
 
   it('subscribes to nothing without a runner id', () => {

@@ -30,6 +30,7 @@ import { useSmartPolling } from '../../../hooks/useSmartPolling';
 import { useVoiceGuidance } from '../../../hooks/useVoiceGuidance';
 import { useReducedMotion } from '../../../hooks/useReducedMotion';
 import { useKeepAwakeWhile } from '../../../hooks/useKeepAwakeWhile';
+import { useEchoChannel } from '../../../hooks/useEchoChannel';
 import { runnerService } from '../../../services/runner.service';
 import { routeService, type NavigationRoute, type NavigationStep } from '../../../services/route.service';
 import { ExpandableSheet } from '../../../components/ui/ExpandableSheet';
@@ -38,6 +39,10 @@ import { FloatingModal } from '../../../components/ui/FloatingModal';
 import { getNextStatus } from '../../../components/runner/StatusActionButton';
 import { getErrandTypeRule } from '../../../constants/errandTypeRules';
 import { STATUS_LABELS } from '../../../constants/statusLabels';
+import { isStatusBackwards, isTerminalStatus } from '../../../constants/statusRank';
+import { errorMessage } from '../../../utils/errorCatalog';
+import { copy } from '../../../constants/copy';
+import { haptics } from '../../../utils/haptics';
 import { toast } from '../../../stores/toastStore';
 import type { Booking, BookingStatus } from '../../../types';
 import { LightColors, Elevation } from '../../../constants/colors';
@@ -127,11 +132,6 @@ function fmtArrival(secondsFromNow: number): string {
 }
 
 export default function NavigateScreen() {
-  // Turn-by-turn on a bar mount: the screen must not sleep between junctions.
-  // Unconditional — this screen exists only while the runner is navigating,
-  // and the tag is released the moment it unmounts.
-  useKeepAwakeWhile(true);
-
   const router = useRouter();
   const { id } = useLocalSearchParams<{ id: string }>();
   const currentErrand = useRunnerStore((s) => s.currentErrand);
@@ -164,6 +164,89 @@ export default function NavigateScreen() {
   const [arriving, setArriving] = useState(false);
 
   const mapRef = useRef<HereMapViewRef>(null);
+
+  // \u2500\u2500 Is this errand still a thing? \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
+  // Navigate used to be status-BLIND: the booking was a one-shot snapshot with
+  // no channel, no poll and no refetch, so a customer cancellation left the
+  // screen issuing turns to a dead job, holding the ETA HUD, and offering
+  // "I've Arrived" \u2014 a POST the server can only 422, under copy that asked the
+  // runner to retry it. The cockpit one screen below has had a channel, a rank
+  // guard and a spoken-cancellation toast all along; this screen now shares
+  // them (constants/statusRank.ts holds the merge rule both use).
+  const navTerminated = isTerminalStatus(booking?.status);
+
+  // Turn-by-turn on a bar mount: the screen must not sleep between junctions.
+  // Released the moment the errand goes terminal (or the screen unmounts) \u2014
+  // a cancelled job must not keep a phone lit on a bike mount.
+  useKeepAwakeWhile(!navTerminated);
+
+  const applyRealtimeStatus = useCallback((payload: unknown) => {
+    const incoming = payload as Partial<Booking> | null;
+    if (!incoming?.status) return;
+    setBooking((cur) => {
+      if (!cur) return cur;
+      if (incoming.id && incoming.id !== cur.id) return cur;
+      if (incoming.status === cur.status) return cur;
+      // Voice + camera-follow are live here: tearing them down on a
+      // mis-parsed or late payload mid-ride would be worse than stale state.
+      // Only a forward move (or a terminal status, which always wins) lands.
+      if (isStatusBackwards(incoming.status, cur.status)) return cur;
+      return { ...cur, ...incoming } as Booking;
+    });
+    // Mirror into the runner store so the cockpit/dashboard agree the moment
+    // the runner navigates back \u2014 the same side effect the cockpit performs.
+    const store = useRunnerStore.getState();
+    if (store.currentErrand?.id === (incoming.id ?? id)) {
+      if (incoming.status === 'completed' || incoming.status === 'cancelled') {
+        store.updateErrandStatus(incoming.status);
+      } else if (!isStatusBackwards(incoming.status, store.currentErrand.status)) {
+        useRunnerStore.setState({
+          currentErrand: { ...store.currentErrand, ...incoming } as Booking,
+        });
+      }
+    }
+  }, [id]);
+
+  const { isConnected: statusRealtimeConnected } = useEchoChannel({
+    channel: `booking.${id ?? 'none'}`,
+    event: 'booking.status',
+    enabled: !!id,
+    onEvent: applyRealtimeStatus,
+  });
+
+  // Fallback behind the channel, same cadence rule the cockpit uses: relax to
+  // 60s while genuinely subscribed, 30s when it isn't (socket down, auth
+  // rejected), so a cancellation still lands quickly on a dying connection.
+  useSmartPolling(
+    async () => {
+      if (!id) return;
+      const r = await runnerService.getErrand(id);
+      const fresh = (r?.data?.data ?? null) as Booking | null;
+      if (fresh?.status) applyRealtimeStatus(fresh);
+    },
+    {
+      interval: statusRealtimeConnected ? 60_000 : 30_000,
+      enabled: !!id && !!booking && !navTerminated,
+      runOnMount: false,
+    },
+  );
+
+  // Stop guiding the moment it's over: silence the voice and drop any open
+  // confirm. The runner is told out loud once (the transition they cannot see
+  // coming), then the screen swaps to the terminal panel below.
+  const announcedTerminalRef = useRef(false);
+  useEffect(() => {
+    if (!navTerminated) return;
+    stopVoice();
+    setShowArrivedPrompt(false);
+    setFollowCamera(false);
+    if (announcedTerminalRef.current) return;
+    announcedTerminalRef.current = true;
+    if (booking?.status === 'cancelled') {
+      haptics.warning();
+      toast.warning('This errand was cancelled. You can stop heading there.');
+    }
+  }, [navTerminated, booking?.status, stopVoice]);
 
   // Make sure GPS is streaming \u2014 the runner may have opened this
   // screen from a notification cold-start where the dashboard hasn't
@@ -310,13 +393,13 @@ export default function NavigateScreen() {
   }, [origin, destination]);
 
   useEffect(() => {
-    if (!origin || !destination) return;
+    if (!origin || !destination || navTerminated) return;
     const key = `${originKey}|${destKey}`;
     if (key === lastFetchKeyRef.current) return;
     lastFetchKeyRef.current = key;
     void fetchNav();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [originKey, destKey]);
+  }, [originKey, destKey, navTerminated]);
 
   // ── Off-route + step progression ──
   // Find the nearest point on the active route geometry. If the runner
@@ -400,7 +483,7 @@ export default function NavigateScreen() {
   // maxInterval still caps it at 5min should it ever reject). (P29)
   useSmartPolling(() => fetchNav(), {
     interval: 60_000,
-    enabled: !!origin && !!destination,
+    enabled: !!origin && !!destination && !navTerminated,
     runOnMount: false,
     maxInterval: 300_000,
   });
@@ -446,6 +529,11 @@ export default function NavigateScreen() {
   // than firing a bare status POST that would skip the required capture.
   const handleConfirmArrived = useCallback(async () => {
     if (!booking) return;
+    if (isTerminalStatus(booking.status)) {
+      // Nothing to advance — the terminal panel owns the screen from here.
+      setShowArrivedPrompt(false);
+      return;
+    }
     const next = getNextStatus(booking.status, booking.errand_type?.slug);
     const isArrivalStep =
       next === 'arrived_at_pickup' || next === 'arrived_at_dropoff';
@@ -488,11 +576,29 @@ export default function NavigateScreen() {
         return;
       }
       router.back();
-    } catch {
+    } catch (err: any) {
       setArriving(false);
-      toast.error('Could not mark arrived. Try again.');
+      // Was "Could not mark arrived. Try again." on EVERY failure — including
+      // the 422 the server returns for an errand that has moved on or been
+      // cancelled, i.e. copy that asked the runner to retry a call that can
+      // never succeed. errorCatalog maps BOOKING_STATE_INVALID to "This errand
+      // already moved on"; a genuine transport failure still reads as retryable.
+      toast.error(errorMessage(err, copy.runner.statusUpdateFailed));
+      // A rejection means our snapshot is stale — re-read the errand so the
+      // screen (and its terminal panel) catches up instead of re-offering the
+      // same doomed tap.
+      const status = err?.status;
+      if (id && typeof status === 'number' && status >= 400 && status < 500) {
+        runnerService
+          .getErrand(id)
+          .then((r) => {
+            const fresh = (r?.data?.data ?? null) as Booking | null;
+            if (fresh?.status) applyRealtimeStatus(fresh);
+          })
+          .catch(() => {});
+      }
     }
-  }, [booking, currentLocation, router]);
+  }, [booking, currentLocation, router, id, applyRealtimeStatus]);
 
   // ── Render ──
   const routeMapCoords = useMemo(() => {
@@ -520,13 +626,15 @@ export default function NavigateScreen() {
   useEffect(() => {
     const instruction = currentStep?.instruction;
     if (!instruction) return;
+    // Never announce a turn for an errand that has ended.
+    if (navTerminated) return;
     if (instruction === lastSpokenInstructionRef.current) return;
     const t = setTimeout(() => {
       lastSpokenInstructionRef.current = instruction;
       speak(instruction);
     }, 700);
     return () => clearTimeout(t);
-  }, [currentStep, speak]);
+  }, [currentStep, speak, navTerminated]);
 
   // Remaining ETA: sum of remaining step durations, minus any progress
   // we've made into the current step.
@@ -631,6 +739,58 @@ export default function NavigateScreen() {
         <Spinner size="small" color={LightColors.primary} />
         <Text className="mt-3 text-xs font-montserrat text-textSecondary">Preparing navigation\u2026</Text>
       </View>
+    );
+  }
+
+  // The errand ended while the runner was riding to it. No map, no turns, no
+  // "I've Arrived" — one honest panel and one way out.
+  if (navTerminated) {
+    const wasCancelled = booking.status === 'cancelled';
+    return (
+      <SafeAreaView className="flex-1 bg-background items-center justify-center px-8" edges={['top']}>
+        <View
+          className="w-16 h-16 rounded-full items-center justify-center mb-4"
+          style={{
+            backgroundColor: wasCancelled
+              ? LightColors.dangerSoft
+              : LightColors.successSoft,
+          }}
+        >
+          {wasCancelled ? (
+            <AlertTriangle size={28} color={LightColors.dangerDark} strokeWidth={2.2} />
+          ) : (
+            <Flag size={28} color={LightColors.successDark} strokeWidth={2.2} />
+          )}
+        </View>
+        <Text
+          className="text-base font-montserrat-bold text-textPrimary mb-1 text-center"
+          maxFontSizeMultiplier={1.3}
+        >
+          {wasCancelled ? 'This errand was cancelled' : 'This errand is finished'}
+        </Text>
+        <Text
+          className="text-xs font-montserrat text-textSecondary text-center mb-5"
+          style={{ lineHeight: 18 }}
+          maxFontSizeMultiplier={1.4}
+        >
+          {wasCancelled
+            ? 'You can stop heading there. Navigation and voice guidance have stopped.'
+            : `Status: ${STATUS_LABELS[booking.status] ?? booking.status}. Navigation has stopped.`}
+        </Text>
+        <Pressable
+          onPress={() => {
+            stopVoice();
+            router.back();
+          }}
+          accessibilityRole="button"
+          accessibilityLabel="Back to errand"
+          className="px-6 rounded-xl bg-primary items-center justify-center"
+          style={({ pressed }) => ({ minHeight: 48, opacity: pressed ? 0.9 : 1 })}
+          android_ripple={{ color: 'rgba(255,255,255,0.18)' }}
+        >
+          <Text className="text-white text-sm font-montserrat-bold">Back to errand</Text>
+        </Pressable>
+      </SafeAreaView>
     );
   }
 

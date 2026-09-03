@@ -69,6 +69,24 @@ return [
 
     /*
     |--------------------------------------------------------------------------
+    | Business Timezone
+    |--------------------------------------------------------------------------
+    |
+    | The wall clock the marketplace actually runs on. ErrandGuy operates in
+    | the Philippines (UTC+8, no DST), so a runner's "today", a peak-hours
+    | bucket and any other calendar boundary a human reads has to be computed
+    | here — NOT in the app timezone above, which deliberately stays UTC so
+    | every stored timestamp, scheduler window and deadline keeps one meaning.
+    |
+    | Use it only at display/bucketing boundaries, e.g.
+    | now(config('app.business_timezone'))->startOfDay()->utc().
+    |
+    */
+
+    'business_timezone' => env('APP_BUSINESS_TIMEZONE', 'Asia/Manila'),
+
+    /*
+    |--------------------------------------------------------------------------
     | Application Locale Configuration
     |--------------------------------------------------------------------------
     |

@@ -34,6 +34,35 @@ describe('describeError', () => {
     expect(errorMessage(null)).toBe('Please try again.');
   });
 
+  it('keeps a safety-critical caller fallback that the offline class would have eaten', () => {
+    // The bug this closes: `copy.safety.sosFailed` ("…or call for help
+    // directly") was written for exactly the dead-zone SOS, and step 3
+    // discarded it for "You're offline — check your connection and try again",
+    // the least actionable sentence you can hand someone in danger.
+    const sosCopy = 'Couldn’t trigger SOS. Please try again, or call for help directly.';
+    expect(errorMessage({ status: 0, kind: 'offline' }, sosCopy)).toBe(
+      'Check your connection and try again.',
+    );
+    expect(
+      errorMessage({ status: 0, kind: 'offline' }, sosCopy, { preferFallback: true }),
+    ).toBe(sosCopy);
+    // The class TITLE still leads — only the actionable line is the caller's.
+    const info = describeError(
+      { status: 0, kind: 'timeout' },
+      { fallback: sosCopy, preferFallback: true },
+    );
+    expect(info.title).toBe('Taking too long');
+    expect(info.message).toBe(sosCopy);
+  });
+
+  it('preferFallback never overrides a named backend code', () => {
+    const info = describeError(
+      { status: 422, code: 'BOOKING_STATE_INVALID', kind: 'validation' },
+      { fallback: 'my copy', preferFallback: true },
+    );
+    expect(info.title).toBe("That step isn't available");
+  });
+
   it('never throws on garbage input', () => {
     expect(() => describeError(undefined)).not.toThrow();
     expect(() => describeError('boom')).not.toThrow();

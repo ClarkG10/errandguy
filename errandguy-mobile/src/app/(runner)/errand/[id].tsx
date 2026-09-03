@@ -22,6 +22,7 @@ import {
   Flag,
 } from 'lucide-react-native';
 import * as Haptics from 'expo-haptics';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { JourneyBeads } from '../../../components/ui/JourneyBeads';
 import { StatusTimeline } from '../../../components/ui/StatusTimeline';
 import { CurrentStepHero } from '../../../components/ui/CurrentStepHero';
@@ -55,21 +56,45 @@ import { useEchoChannel } from '../../../hooks/useEchoChannel';
 import { CacheTTL } from '../../../services/cache.service';
 import { runnerService } from '../../../services/runner.service';
 import { supportService } from '../../../services/support.service';
+// The panic button is durable: raiseSos persists the intent and retries it
+// until the server ACKs (replay is a provable no-op — SOSService returns the
+// existing active alert under a row lock).
+import {
+  acknowledgeSosRejection,
+  describeSosFailure,
+  raiseSos,
+  resumeSosIntent,
+  retryNow as retrySosNow,
+  standDownSos,
+  useSosIntentStore,
+} from '../../../services/sosIntent';
+import {
+  SosPendingSheet,
+  type SosCallableContact,
+} from '../../../components/safety/SosPendingSheet';
 import { queueable } from '../../../services/mutationQueue';
 import { runOptimistic } from '../../../utils/optimistic';
 import type { Booking } from '../../../types';
 import type { BookingStop } from '../../../types/booking';
 import { STATUS_LABELS } from '../../../constants/statusLabels';
+import { STATUS_RANK, TERMINAL_STATUSES } from '../../../constants/statusRank';
 import { Elevation, LightColors } from '../../../constants/colors';
 import { Radius } from '../../../constants/radius';
 import { getErrandTypeRule } from '../../../constants/errandTypeRules';
 import { formatCurrency } from '../../../utils/formatCurrency';
+import { formatTime } from '../../../utils/formatDate';
 import type { BookingStatus } from '../../../types';
 import { toast } from '../../../stores/toastStore';
 import { errorMessage } from '../../../utils/errorCatalog';
 import { copy } from '../../../constants/copy';
 import { haptics } from '../../../utils/haptics';
 import { compressProofImage } from '../../../utils/proofImage';
+import {
+  clearPendingProof,
+  readPendingProof,
+  savePendingProof,
+  type PendingProof,
+} from '../../../utils/pendingProof';
 import {
   getPreferredNavApp,
   normalizeCoords,
@@ -106,8 +131,9 @@ const PICKUP_PHASE_STATUSES = new Set<string>([
  *  pulls up rather than exactly on the pin. */
 const ARRIVAL_RADIUS_M = 120;
 
-/** Terminal statuses — no further runner action is possible. */
-const TERMINAL_STATUSES = ['completed', 'cancelled', 'no_runner'];
+// TERMINAL_STATUSES / STATUS_RANK now live in constants/statusRank.ts — the
+// navigate screen consumes the SAME `booking.status` broadcast and has to merge
+// it by the identical rule (see the import above).
 
 /**
  * Statuses where the runner is actually DRIVING the extra stops — the goods
@@ -122,26 +148,6 @@ const STOP_PHASE_STATUSES = new Set<string>([
   'arrived_at_dropoff',
   'delivered',
 ]);
-
-/**
- * Monotonic rank of every status the runner can observe. Used ONLY to reject a
- * realtime broadcast that would move the cockpit BACKWARDS — a late-delivered
- * event for a transition the runner has already advanced past would otherwise
- * flicker the CTA back to the previous step. Terminal statuses bypass the
- * check entirely: a cancellation must always win, whatever it arrives after.
- */
-const STATUS_RANK: Record<string, number> = {
-  pending: 0,
-  matched: 1,
-  accepted: 2,
-  heading_to_pickup: 3,
-  arrived_at_pickup: 4,
-  picked_up: 5,
-  in_transit: 6,
-  arrived_at_dropoff: 7,
-  delivered: 8,
-  completed: 9,
-};
 
 /**
  * Canned mid-errand issues. Each opens a real, booking-linked support ticket
@@ -460,6 +466,10 @@ export default function ActiveErrandScreen() {
   // axios. null = nothing in flight, so the pill disappears entirely.
   const [uploadPreparing, setUploadPreparing] = useState(false);
   const [uploadProgress, setUploadProgress] = useState<number | null>(null);
+  // A proof capture whose upload never completed (see utils/pendingProof).
+  // Persisted, so it survives an app kill mid-upload; re-sent only on the
+  // runner's own tap.
+  const [pendingProof, setPendingProof] = useState<PendingProof | null>(null);
   const [sheetRefreshing, setSheetRefreshing] = useState(false);
   // Trip details (payout, errand description, status timeline) collapse
   // by default. The runner's brain only needs the current step + the
@@ -551,6 +561,36 @@ export default function ActiveErrandScreen() {
     }
   }, [fetchedQ.data, myUserId]);
 
+  // Pick up a proof capture that never finished uploading (app killed
+  // mid-request, or a dead-zone failure the runner backed out of). Read once
+  // per errand; a record the server has ALREADY moved past is dropped rather
+  // than offered, so we never invite a resume that can only 422. The
+  // in-session record written by handlePhotoConfirm is untouched by this.
+  useEffect(() => {
+    if (!id) return;
+    let cancelled = false;
+    readPendingProof(id)
+      .then((record) => {
+        if (cancelled || !record) return;
+        const cur = bookingRef.current;
+        const curRank = cur ? STATUS_RANK[cur.status] : undefined;
+        const wantRank = STATUS_RANK[record.status];
+        const alreadyPast =
+          !!cur &&
+          (TERMINAL_STATUSES.includes(cur.status) ||
+            (curRank != null && wantRank != null && curRank >= wantRank));
+        if (alreadyPast) {
+          void clearPendingProof(id);
+          return;
+        }
+        setPendingProof(record);
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [id]);
+
   // Read-only is now a function of booking state alone, not identity:
   // the API has already proved ownership by returning the booking.
   // Locked when the booking is terminal or hasn't loaded yet.
@@ -558,6 +598,18 @@ export default function ActiveErrandScreen() {
     if (!booking) return true;
     if (['completed', 'cancelled', 'no_runner'].includes(booking.status)) return true;
     return false;
+  })();
+
+  // Render gate for the "proof didn't upload" resume card. Deliberately
+  // DERIVED, not stored: during the optimistic in-flight window the local
+  // status already sits at the target (so the card hides), and a revert brings
+  // it straight back — which is exactly when the runner needs it.
+  const showResumeProof = (() => {
+    if (!pendingProof || !booking || isReadOnly) return false;
+    if (uploadPreparing || uploadProgress !== null) return false;
+    const curRank = STATUS_RANK[booking.status];
+    const wantRank = STATUS_RANK[pendingProof.status];
+    return curRank != null && wantRank != null && curRank < wantRank;
   })();
 
   // Light status-sync poll. The errand screen is the runner's primary
@@ -1029,25 +1081,107 @@ export default function ActiveErrandScreen() {
   }, []);
 
   // Runner-side SOS — tap once to open confirm, again to broadcast.
-  // Idempotent on the backend, so a double-tap won't stack alerts.
+  // Idempotent on the backend, so a double-tap won't stack alerts; the raise is
+  // also persisted + retried by sosIntent, so a dead-zone press isn't lost.
   const [showSOSConfirm, setShowSOSConfirm] = useState(false);
   const [sosLoading, setSosLoading] = useState(false);
   const [sosActive, setSosActive] = useState<boolean>(false);
+  const [showSosPending, setShowSosPending] = useState(false);
+  // Queued (unacknowledged) raise for THIS errand + whether an attempt is in
+  // flight. Held in the sosIntent store so it survives this screen unmounting.
+  const queuedSos = useSosIntentStore((s) =>
+    id && s.intent?.bookingId === id ? s.intent : null,
+  );
+  const sosSending = useSosIntentStore((s) => s.sending);
+  const sosAck = useSosIntentStore((s) =>
+    id && s.lastAck?.bookingId === id ? s.lastAck : null,
+  );
+  const sosRejection = useSosIntentStore((s) =>
+    id && s.lastRejection?.bookingId === id ? s.lastRejection : null,
+  );
   // Sync the SOS toggle from the (possibly async) booking payload.
   useEffect(() => {
     if (booking?.sos_triggered) setSosActive(true);
   }, [booking?.sos_triggered]);
 
+  // Pick up an SOS that never reached the server (killed mid-request / queued
+  // in a dead zone), and let a background retry that lands flip this screen.
+  useEffect(() => {
+    void resumeSosIntent();
+  }, []);
+  useEffect(() => {
+    if (!sosAck) return;
+    setSosActive(true);
+    setShowSosPending(false);
+    setShowSOSConfirm(false);
+  }, [sosAck]);
+  useEffect(() => {
+    if (!sosRejection || !id) return;
+    setShowSosPending(false);
+    toast.error(describeSosFailure(sosRejection.error));
+    acknowledgeSosRejection(id);
+  }, [sosRejection, id]);
+
+  // The runner's trusted contacts, cache-only, for the no-data fallback. Same
+  // key the trusted-contacts screen writes; a miss just hides those rows.
+  const [trustedContacts, setTrustedContacts] = useState<SosCallableContact[]>([]);
+  useEffect(() => {
+    let cancelled = false;
+    AsyncStorage.getItem('@trusted_contacts_cache')
+      .then((raw) => {
+        if (cancelled || !raw) return;
+        const parsed = JSON.parse(raw);
+        if (!Array.isArray(parsed)) return;
+        setTrustedContacts(
+          parsed
+            .filter(
+              (c: any) => c && typeof c.phone === 'string' && c.phone.trim().length > 0,
+            )
+            .map((c: any) => ({
+              id: typeof c.id === 'string' ? c.id : undefined,
+              name:
+                typeof c.name === 'string' && c.name.trim()
+                  ? c.name.trim()
+                  : 'Trusted contact',
+              phone: String(c.phone).trim(),
+            })),
+        );
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
   const handleConfirmSOS = useCallback(async () => {
     if (sosLoading || !booking) return;
     setSosLoading(true);
     try {
-      await runnerService.triggerSOS(booking.id);
-      setSosActive(true);
-      setShowSOSConfirm(false);
-      toast.success('Emergency contacts notified');
-    } catch {
-      toast.error('Could not trigger SOS. Try again.');
+      const result = await raiseSos(booking.id, 'runner');
+      if (result.status === 'sent') {
+        setSosActive(true);
+        setShowSOSConfirm(false);
+        // Was "Emergency contacts notified" — untrue while the trusted-contact
+        // SMS has no provider. Claim only the alert we can prove landed.
+        toast.success('SOS sent to ErrandGuy safety');
+        return;
+      }
+      if (result.status === 'queued') {
+        // Not sent. Say so, keep retrying, and offer 911 / tap-to-call.
+        haptics.warning();
+        setShowSOSConfirm(false);
+        setShowSosPending(true);
+        return;
+      }
+      haptics.error();
+      toast.error(describeSosFailure(result.error));
+      acknowledgeSosRejection(booking.id);
+    } catch (err) {
+      // raiseSos is written not to throw; belt AND braces on the one path
+      // where an unhandled rejection would leave a person in danger staring
+      // at a spinner.
+      haptics.error();
+      toast.error(describeSosFailure(err));
     } finally {
       setSosLoading(false);
     }
@@ -1308,15 +1442,88 @@ export default function ActiveErrandScreen() {
         }
         return true;
       })
-      .catch((err: any) => {
+      .catch(async (err: any) => {
         if (showUploadProgress) setUploadProgress(null);
         advancingRef.current = false; // re-arm on failure so the runner can retry
+        // ── Reconcile BEFORE reverting on a transport-class failure ────────
+        // A client timeout (or a dropped connection, or a 5xx after the write)
+        // does NOT mean the server rejected the transition. Reverting blindly
+        // put the cockpit back at e.g. arrived_at_dropoff on an errand the
+        // server had already marked delivered — and the runner's next tap then
+        // got "Invalid status transition from 'delivered' to 'delivered'". So
+        // ask the server what it actually has. A 4xx still reverts honestly:
+        // that IS the server's verdict.
+        const httpStatus = err?.status;
+        const kind = err?.kind;
+        const transportClass =
+          httpStatus === 0 ||
+          httpStatus == null ||
+          (typeof httpStatus === 'number' && httpStatus >= 500) ||
+          kind === 'offline' ||
+          kind === 'timeout' ||
+          kind === 'server';
+        if (transportClass) {
+          try {
+            const r = await runnerService.getErrand(prev.id);
+            const fresh = (r?.data?.data ?? null) as Booking | null;
+            const freshRank = fresh ? STATUS_RANK[fresh.status] : undefined;
+            const wantedRank = STATUS_RANK[status];
+            const applied =
+              !!fresh &&
+              (fresh.status === status ||
+                (freshRank != null && wantedRank != null && freshRank > wantedRank));
+            if (applied && fresh) {
+              // It landed after all. Keep the server's state instead of
+              // reverting into one the CTA can only 422 out of.
+              fetchedQ.mutate(fresh);
+              updateErrandStatus(fresh.status as BookingStatus);
+              if (status !== 'completed') {
+                Haptics.notificationAsync(
+                  Haptics.NotificationFeedbackType.Success,
+                ).catch(() => {});
+              } else {
+                setShowRate(true);
+              }
+              return true;
+            }
+            if (fresh && fresh.status !== prev.status) {
+              // The server has moved somewhere ELSE (admin/customer action) —
+              // revert to server truth, not to our stale snapshot. The stashed
+              // proof is moot for a job that went elsewhere.
+              haptics.error();
+              if (status === 'completed') setShowSuccessMoment(false);
+              setSlideResetKey((k) => k + 1);
+              fetchedQ.mutate(fresh);
+              updateErrandStatus(fresh.status as BookingStatus);
+              void clearPendingProof(prev.id);
+              setPendingProof(null);
+              toast.error(errorMessage(err, copy.runner.statusUpdateFailed));
+              return false;
+            }
+          } catch {
+            // Reconcile itself failed (still no signal) — fall through and
+            // revert, exactly as before.
+          }
+        }
         // Revert optimistic state and surface the error.
         haptics.error();
         if (status === 'completed') setShowSuccessMoment(false);
         setSlideResetKey((k) => k + 1);
         fetchedQ.mutate(prev);
         updateErrandStatus(prev.status as BookingStatus);
+        // The server rejected this on its own terms (errand closed, already
+        // advanced, not ours) — a stashed proof for it can never be sent, so
+        // don't leave a resume card promising otherwise. 408/429 stay stashed.
+        if (
+          typeof httpStatus === 'number' &&
+          httpStatus >= 400 &&
+          httpStatus < 500 &&
+          httpStatus !== 408 &&
+          httpStatus !== 429
+        ) {
+          void clearPendingProof(prev.id);
+          setPendingProof(null);
+        }
         toast.error(errorMessage(err, copy.runner.statusUpdateFailed));
         return false;
       });
@@ -1329,8 +1536,23 @@ export default function ActiveErrandScreen() {
     // 1600px proof shot before it goes up the wire — the same photo, a
     // fraction of the LTE wait. Falls back to the original on any failure.
     setUploadPreparing(true);
-    const uri = (await compressProofImage(rawUri)) ?? rawUri;
+    const compressed = (await compressProofImage(rawUri)) ?? rawUri;
     setUploadPreparing(false);
+    // Remember the capture BEFORE the upload starts. A failure (or an app kill
+    // mid-request) then leaves a photo the runner can re-send instead of
+    // re-shooting a doorstep they may have left. Cleared on server confirmation.
+    let uri = compressed;
+    if (phase && id) {
+      const stored = await savePendingProof({
+        bookingId: id,
+        phase,
+        uri: compressed,
+        capturedAt: new Date().toISOString(),
+        status: phase === 'delivery' ? 'delivered' : 'picked_up',
+      });
+      uri = stored.uri;
+      setPendingProof(stored);
+    }
     if (phase === 'delivery') {
       // Flow: mark `delivered` (uploads delivery_photo) → open the
       // completion sheet so the runner can capture the signature and
@@ -1350,15 +1572,46 @@ export default function ActiveErrandScreen() {
         deliveryPhoto: uri,
         showUploadProgress: true,
       });
-      if (delivered) setShowCompletion(true);
+      if (delivered) {
+        void clearPendingProof(id);
+        setPendingProof(null);
+        setShowCompletion(true);
+      }
       return;
     }
     // Pickup phase: pass the captured photo through to the backend.
-    await advanceStatus('picked_up', {
+    const pickedUp = await advanceStatus('picked_up', {
       pickupPhoto: uri,
       showUploadProgress: true,
     });
+    if (pickedUp) {
+      void clearPendingProof(id);
+      setPendingProof(null);
+    }
   };
+
+  /**
+   * Re-send the persisted capture for the transition it was taken for. Always
+   * the runner's own tap — never an automatic replay (a status transition is
+   * booking state, which the offline queue rightly refuses to replay silently).
+   */
+  const handleResumePendingProof = useCallback(async () => {
+    const record = pendingProof;
+    if (!record || !id) return;
+    haptics.selection();
+    const ok = await advanceStatus(record.status, {
+      ...(record.phase === 'delivery'
+        ? { deliveryPhoto: record.uri }
+        : { pickupPhoto: record.uri }),
+      showUploadProgress: true,
+    });
+    if (ok) {
+      void clearPendingProof(id);
+      setPendingProof(null);
+      if (record.phase === 'delivery') setShowCompletion(true);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pendingProof, id]);
 
   const handleCompletionConfirm = async (signatureUri: string) => {
     setShowCompletion(false);
@@ -1967,15 +2220,32 @@ export default function ActiveErrandScreen() {
                   <Pressable
                     onPress={() => {
                       if (sosActive) return;
+                      // A queued (unsent) raise reopens the honest fallback
+                      // sheet rather than arming a second confirm.
+                      if (queuedSos) {
+                        haptics.selection();
+                        setShowSosPending(true);
+                        return;
+                      }
                       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning).catch(() => {});
                       setShowSOSConfirm(true);
                     }}
                     disabled={sosActive || sosLoading}
                     accessibilityRole="button"
-                    accessibilityLabel={sosActive ? 'SOS already triggered' : 'Trigger emergency SOS'}
+                    accessibilityLabel={
+                      sosActive
+                        ? 'SOS already triggered'
+                        : queuedSos
+                          ? 'SOS not sent yet — open emergency options'
+                          : 'Trigger emergency SOS'
+                    }
                     hitSlop={6}
                     className={`w-10 h-10 rounded-full items-center justify-center ${
-                      sosActive ? 'bg-danger' : 'bg-danger/10'
+                      sosActive
+                        ? 'bg-danger'
+                        : queuedSos
+                          ? 'bg-dangerSoft border border-danger'
+                          : 'bg-danger/10'
                     }`}
                   >
                     <ShieldAlert
@@ -2537,6 +2807,44 @@ export default function ActiveErrandScreen() {
                     style={{ marginBottom: 10 }}
                   />
                 )}
+                {/* A proof photo that never finished uploading. One tap
+                    re-sends the SAME file — the runner doesn't have to be back
+                    at the door with the camera open again. Hidden while an
+                    upload is in flight and once the server is at (or past) the
+                    status the photo was taken for. */}
+                {showResumeProof && pendingProof && (
+                  <Pressable
+                    onPress={handleResumePendingProof}
+                    accessibilityRole="button"
+                    accessibilityLabel={`Send your ${
+                      pendingProof.phase === 'delivery' ? 'delivery' : 'pickup'
+                    } proof photo now`}
+                    className="flex-row items-center rounded-xl border border-warning bg-warningSoft px-3.5 py-2.5 mb-2.5"
+                    style={({ pressed }) => ({ opacity: pressed ? 0.85 : 1 })}
+                  >
+                    <AlertTriangle
+                      size={16}
+                      color={LightColors.warningDark}
+                      strokeWidth={2.2}
+                    />
+                    <View className="flex-1 ml-2.5">
+                      <Text
+                        className="text-[12px] font-montserrat-bold text-warningDark"
+                        maxFontSizeMultiplier={1.3}
+                      >
+                        {pendingProof.phase === 'delivery'
+                          ? 'Delivery proof not uploaded'
+                          : 'Pickup proof not uploaded'}
+                      </Text>
+                      <Text
+                        className="text-[11px] font-montserrat text-warningDark mt-0.5"
+                        maxFontSizeMultiplier={1.3}
+                      >
+                        Taken {formatTime(pendingProof.capturedAt)} · tap to send now
+                      </Text>
+                    </View>
+                  </Pressable>
+                )}
                 <Text className="text-[10px] font-montserrat-bold text-textTertiary uppercase tracking-wider mb-1.5 text-center">
                   {booking.status === 'matched'
                     ? 'This errand is offered to you — tap to claim it'
@@ -2579,6 +2887,13 @@ export default function ActiveErrandScreen() {
       {showPhotoProof && (
         <PhotoProofModal
           type={showPhotoProof}
+          // Reopen on the capture whose upload failed rather than an empty
+          // camera — same photo, one tap, no re-shoot at a door they've left.
+          initialUri={
+            pendingProof && pendingProof.phase === showPhotoProof
+              ? pendingProof.uri
+              : null
+          }
           onConfirm={handlePhotoConfirm}
           onClose={() => {
             setShowPhotoProof(null);
@@ -2807,11 +3122,16 @@ export default function ActiveErrandScreen() {
         }}
       />
 
-      {/* Runner SOS confirm */}
+      {/* Runner SOS confirm. The copy no longer promises a trusted-contact
+          SMS: NotifySosContactsJob::notifySMSContact has no provider wired and
+          only logs a breadcrumb, so the old "your trusted contacts will get a
+          live trip link via SMS" was a promise the backend cannot keep — the
+          customer-side modal was corrected for the same reason. What DOES
+          happen is claimed here, and nothing else. */}
       <ConfirmModal
         visible={showSOSConfirm}
         title="Trigger emergency SOS?"
-        message="Your trusted contacts will get a live trip link via SMS, and ErrandGuy safety will be alerted immediately. Only use this for real emergencies."
+        message="ErrandGuy safety is alerted immediately with your live location, and the customer is notified. Only use this for real emergencies."
         confirmLabel="Send SOS"
         confirmLoadingLabel="Sending…"
         cancelLabel="Not now"
@@ -2819,6 +3139,29 @@ export default function ActiveErrandScreen() {
         loading={sosLoading}
         onConfirm={handleConfirmSOS}
         onCancel={() => setShowSOSConfirm(false)}
+      />
+
+      {/* No-signal SOS fallback: honest "not sent yet" + the two things that
+          work without data (911, tap-to-call the cached trusted contacts). */}
+      <SosPendingSheet
+        visible={showSosPending && !!queuedSos}
+        contacts={trustedContacts}
+        attempts={queuedSos?.attempts ?? 0}
+        sending={sosSending}
+        onRetry={retrySosNow}
+        onCancelAlert={() => {
+          if (!id) return;
+          // Drop the unsent intent BEFORE anything else — a replay after the
+          // runner stood down would re-raise an alarm they cancelled. The
+          // DELETE then covers the one case we can't see: an attempt whose
+          // RESPONSE was lost did reach the server (it's a no-op otherwise).
+          standDownSos(id);
+          void runnerService.deactivateSOS(id).catch(() => {});
+          setShowSosPending(false);
+          haptics.success();
+          toast.success('Alert cancelled — it was never sent');
+        }}
+        onClose={() => setShowSosPending(false)}
       />
 
       {/* Branded leave confirm for the in-app back chevron — matches the

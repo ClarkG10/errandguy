@@ -17,6 +17,7 @@ import {
   RefreshCw,
   Info,
   Accessibility,
+  Package,
   type LucideIcon,
 } from 'lucide-react-native';
 import * as Haptics from 'expo-haptics';
@@ -29,6 +30,7 @@ import { InlineLogoutLink } from '../../../components/auth/InlineLogoutLink';
 import { GradientHeader } from '../../../components/ui/GradientHeader';
 import { BrandRefreshControl } from '../../../components/ui/BrandRefreshControl';
 import { BottomSheet } from '../../../components/ui/BottomSheet';
+import { ConfirmModal } from '../../../components/ui/ConfirmModal';
 import { Eyebrow } from '../../../components/ui/Typography';
 import { RatingStars } from '../../../components/ui/RatingStars';
 import { VerificationBanner } from '../../../components/runner/VerificationBanner';
@@ -46,6 +48,7 @@ import { checkForOtaUpdate } from '../../../hooks/useOtaUpdate';
 import { useHideTabBarOnScroll } from '../../../hooks/useHideTabBarOnScroll';
 import { TAB_CONTENT_BOTTOM_INSET_RUNNER } from '../../../constants/tabLayout';
 import { getAppVersionLabel } from '../../../utils/appVersion';
+import { formatRating } from '../../../utils/rating';
 
 interface MenuItem {
   label: string;
@@ -197,6 +200,10 @@ export default function RunnerProfileScreen() {
   const setUser = useAuthStore((s) => s.setUser);
   const logout = useAuthStore((s) => s.logout);
   const { runnerProfile, setRunnerProfile } = useRunnerStore();
+  const currentErrand = useRunnerStore((s) => s.currentErrand);
+  const setOnlineLocal = useRunnerStore((s) => s.toggleOnline);
+  const [showSwitchModal, setShowSwitchModal] = useState(false);
+  const [switching, setSwitching] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [showDeleteModal, setShowDeleteModal] = useState(false);
   const [loggingOut, setLoggingOut] = useState(false);
@@ -271,12 +278,60 @@ export default function RunnerProfileScreen() {
     }
   }, [deleteConfirmText, logout, router]);
 
+  // ── Mode switch (runner → customer) ─────────────────────────────────────
+  // role-select promises "you can switch anytime" and until now nothing in the
+  // app could: `role` was only ever written once, during signup. The backend
+  // has always supported it (PUT /user/profile takes `role`), so this is the
+  // missing half of that promise, not new machinery.
+  //
+  // Two guards. An errand in flight blocks the switch outright — walking into
+  // the customer navigator mid-errand abandons a job somebody is watching on a
+  // map. And being ONLINE is what makes a runner dispatchable, so the switch
+  // goes offline first; otherwise the server keeps offering errands to an app
+  // that no longer has a runner screen to answer with.
+  const confirmSwitchToCustomer = useCallback(async () => {
+    setSwitching(true);
+    try {
+      if (useRunnerStore.getState().isOnline) {
+        try {
+          await runnerService.toggleOnline(false);
+          setOnlineLocal(false);
+        } catch {
+          // Non-fatal: the only server-side rejection is "you have an active
+          // errand", which the guard below already prevents reaching here.
+        }
+      }
+      const res = await userService.updateProfile({ role: 'customer' });
+      let fresh = res.data?.data;
+      if (!fresh) {
+        const profile = await userService.getProfile();
+        fresh = profile.data?.data;
+      }
+      if (!fresh) throw new Error('profile-missing');
+      // setUser, never updateProfile: the store's top-level `role` — which
+      // every navigator gate reads — is only written by setUser.
+      setUser(fresh);
+      haptics.success();
+      setShowSwitchModal(false);
+      toast.success('You’re in customer mode. Switch back any time from Profile.');
+      router.replace('/(customer)/(tabs)' as any);
+    } catch (err) {
+      haptics.error();
+      toast.error(errorMessage(err, copy.profile.saveFailed));
+    } finally {
+      setSwitching(false);
+    }
+  }, [router, setOnlineLocal, setUser]);
+
   const isVerified = runnerProfile?.verification_status === 'approved';
 
   // avg_rating 0 means "no ratings yet", not a bottom-tier score —
-  // render it as unrated ("New") rather than the ambiguous "0.0".
+  // render it as unrated ("New") rather than the ambiguous "0.0". The
+  // treatment now comes from utils/rating so the customer-facing surfaces
+  // say exactly the same thing about the same runner.
   const avgRating = Number(user?.avg_rating ?? 0);
-  const isUnrated = !avgRating;
+  const rating = formatRating(user?.avg_rating, user?.total_ratings);
+  const isUnrated = rating.isUnrated;
   const ratingIsGood = avgRating >= 4.5;
 
   // Warning-tier flags — the single source of truth for both the bar
@@ -358,6 +413,25 @@ export default function RunnerProfileScreen() {
     { label: 'App version', icon: Info, preview: getAppVersionLabel() },
   ];
 
+  // One row, its own section: switching mode is not a "preference", and it
+  // must be findable by someone who signed up as a runner by mistake.
+  const modeMenu: MenuItem[] = [
+    {
+      label: 'Switch to customer mode',
+      icon: Package,
+      preview: currentErrand ? 'Errand in progress' : undefined,
+      previewColor: currentErrand ? LightColors.warningDark : undefined,
+      onPress: () => {
+        if (currentErrand) {
+          // Say why rather than rendering a dead row.
+          toast.info('Finish your current errand before switching to customer mode.');
+          return;
+        }
+        setShowSwitchModal(true);
+      },
+    },
+  ];
+
   const renderMenuItem = (item: MenuItem, idx: number, arr: MenuItem[]) => (
     <Pressable
       key={item.label}
@@ -434,7 +508,7 @@ export default function RunnerProfileScreen() {
             <View className="flex-row items-center mt-1">
               <Star size={11} color={LightColors.accentStrong} fill={LightColors.accentStrong} />
               <Text className="text-[12px] font-inter tabular-nums text-textSecondary ml-1">
-                {isUnrated ? 'New' : avgRating.toFixed(1)}
+                {rating.label}
               </Text>
               {runnerProfile ? (
                 <Text className="text-[12px] font-montserrat text-textTertiary ml-1.5">
@@ -534,10 +608,10 @@ export default function RunnerProfileScreen() {
                               : LightColors.warningDark,
                         }}
                       >
-                        {isUnrated ? 'New' : avgRating.toFixed(1)}
+                        {rating.label}
                       </Text>
                       {!isUnrated && (
-                        <RatingStars value={Math.round(avgRating)} size={14} readonly />
+                        <RatingStars value={rating.stars} size={14} readonly />
                       )}
                     </View>
                   </Pressable>
@@ -576,10 +650,18 @@ export default function RunnerProfileScreen() {
         </View>
 
         {/* Settings Menu */}
-        <View className="px-5 mb-6">
+        <View className="px-5 mb-4">
           <Eyebrow className="mb-3">Preferences</Eyebrow>
           <Card padding="sm" className="px-4">
             {settingsMenu.map((item, idx, arr) => renderMenuItem(item, idx, arr))}
+          </Card>
+        </View>
+
+        {/* Mode — the other half of role-select's "you can switch anytime" */}
+        <View className="px-5 mb-6">
+          <Eyebrow className="mb-3">Mode</Eyebrow>
+          <Card padding="sm" className="px-4">
+            {modeMenu.map((item, idx, arr) => renderMenuItem(item, idx, arr))}
           </Card>
         </View>
 
@@ -755,6 +837,21 @@ export default function RunnerProfileScreen() {
           })()
         ) : null}
       </BottomSheet>
+
+      {/* Switch-to-customer confirm. Reversible (the customer profile has the
+          way back), so it is NOT destructive — but it does change which app
+          the person is using, and it takes them offline, so it is stated
+          plainly before it happens. */}
+      <ConfirmModal
+        visible={showSwitchModal}
+        title="Switch to customer mode?"
+        message="You’ll go offline and stop receiving errand offers. Your runner profile, earnings and documents stay exactly as they are — switch back any time from your customer profile."
+        confirmLabel="Switch"
+        confirmLoadingLabel="Switching…"
+        loading={switching}
+        onConfirm={confirmSwitchToCustomer}
+        onCancel={() => setShowSwitchModal(false)}
+      />
 
       <LogoutSplash visible={loggingOut} />
     </View>

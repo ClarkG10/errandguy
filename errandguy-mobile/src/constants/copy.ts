@@ -10,6 +10,15 @@
  *
  * Copy convention: full sentences, sentence case, end with a period, honest and
  * action-oriented. Keep terminology aligned with the backend `Messages` catalog.
+ *
+ * TERMINOLOGY (settled — the app used both nouns interchangeably, so one errand
+ * could be a "booking" in the toast, an "errand" on the screen behind it and a
+ * "Booking" in the Alerts row that linked to it):
+ *   • The THING is an **errand**, always, on every customer-facing surface.
+ *   • **book / booking** may be used as the VERB or the act of placing one
+ *     ("Errand booked", "Couldn't book your errand"), never as the object.
+ *   • **booking number** stays as-is — it is a literal identifier printed on
+ *     receipts and the string support triages on.
  */
 export const copy = {
   auth: {
@@ -21,10 +30,10 @@ export const copy = {
     resetSent: 'If an account exists for that email, a reset link is on its way.',
   },
   booking: {
-    created: 'Booking placed — finding you a runner.',
-    createFailed: 'Couldn’t place your booking. Please try again.',
-    cancelled: 'Booking cancelled.',
-    cancelFailed: 'Couldn’t cancel this booking. Please try again.',
+    created: 'Errand booked — finding you a runner.',
+    createFailed: 'Couldn’t book your errand. Please try again.',
+    cancelled: 'Errand cancelled.',
+    cancelFailed: 'Couldn’t cancel this errand. Please try again.',
     rated: 'Thanks — your review has been submitted.',
     rateFailed: 'Couldn’t submit your review. Please try again.',
   },

@@ -198,16 +198,28 @@ class SendBookingStatusNotification implements ShouldQueue
         ],
     ];
 
+    /**
+     * Base status copy for the physical pickup→deliver flow.
+     *
+     * TITLES ARE SENTENCE CASE and the object is an "errand" — matching the
+     * TYPE_OVERRIDES above, mobile's `constants/copy.ts` convention and the
+     * in-app `STATUS_LABELS`. They used to be Title Case with exclamation
+     * marks ("Runner Found!", "Item Picked Up"), so one customer's Alerts
+     * inbox interleaved two casings for the same errand — the base templates
+     * in one voice and the per-type overrides in another — and the same
+     * object flipped names mid-flow ("Your errand #x is on the way" then
+     * "Booking #x has been cancelled").
+     */
     private const TEMPLATES = [
         'matched' => [
             'customer' => [
-                'title' => 'Runner Found!',
-                'body' => 'A runner has been matched for booking #{number}.',
+                'title' => 'Runner found',
+                'body' => 'A runner has been matched for errand #{number}.',
             ],
         ],
         'accepted' => [
             'customer' => [
-                'title' => 'Runner Assigned!',
+                'title' => 'Runner assigned',
                 'body' => 'Your runner is heading to the pickup location.',
             ],
         ],
@@ -217,19 +229,19 @@ class SendBookingStatusNotification implements ShouldQueue
         // still notifies the customer — now via the single listener path.
         'heading_to_pickup' => [
             'customer' => [
-                'title' => 'On the Way',
+                'title' => 'On the way',
                 'body' => 'Your runner is on the way to the pickup location.',
             ],
         ],
         'in_transit' => [
             'customer' => [
-                'title' => 'In Transit',
+                'title' => 'In transit',
                 'body' => 'Your errand #{number} is on the way to the destination.',
             ],
         ],
         'arrived_at_dropoff' => [
             'customer' => [
-                'title' => 'Arrived at Drop-off',
+                'title' => 'Arrived at drop-off',
                 'body' => 'Your runner has arrived at the drop-off location.',
             ],
         ],
@@ -241,23 +253,23 @@ class SendBookingStatusNotification implements ShouldQueue
         ],
         'arrived_at_pickup' => [
             'customer' => [
-                'title' => 'Runner Arrived',
+                'title' => 'Runner arrived',
                 'body' => 'Your runner has arrived at the pickup location.',
             ],
         ],
         'picked_up' => [
             'customer' => [
-                'title' => 'Item Picked Up',
+                'title' => 'Item picked up',
                 'body' => 'Your item has been picked up and is on the way.',
             ],
         ],
         'completed' => [
             'customer' => [
-                'title' => 'Errand Completed!',
+                'title' => 'Errand completed',
                 'body' => 'Your errand #{number} has been completed.',
             ],
             'runner' => [
-                'title' => 'Errand Completed',
+                'title' => 'Errand completed',
                 'body' => 'Errand #{number} completed. Payment will be processed.',
             ],
         ],
@@ -274,14 +286,19 @@ class SendBookingStatusNotification implements ShouldQueue
                 'body' => 'We couldn’t find a runner for errand #{number}.{refund} Tap to try again.',
             ],
         ],
+        // NOTE: unreachable today — no caller fires BookingStatusChanged with
+        // 'cancelled' (every cancel path raises BookingCancelled instead, which
+        // SendBookingCancelledNotification handles). Kept for the day a cancel
+        // does flow through the status event, and worded like the rest of this
+        // array so it cannot arrive in a third voice if it ever does.
         'cancelled' => [
             'customer' => [
-                'title' => 'Booking Cancelled',
-                'body' => 'Booking #{number} has been cancelled.',
+                'title' => 'Errand cancelled',
+                'body' => 'Errand #{number} has been cancelled.',
             ],
             'runner' => [
-                'title' => 'Booking Cancelled',
-                'body' => 'Booking #{number} was cancelled by the customer.',
+                'title' => 'Errand cancelled',
+                'body' => 'Errand #{number} was cancelled by the customer.',
             ],
         ],
     ];

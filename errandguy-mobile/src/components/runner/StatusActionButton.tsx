@@ -38,6 +38,34 @@ export function getNextStatus(
   return flow[idx + 1];
 }
 
+/**
+ * The exact label the runner's action button shows for a status — the single
+ * source of truth for "what is this runner about to tap".
+ *
+ * Exported because the runner HOME card previously carried its own phase-copy
+ * map and promised a different action from the button it opened ("Mark item
+ * picked up" over a cockpit reading "Pick up item"), and its drop-off wording
+ * ("En route to drop-off") described a leg that single-location errands — a
+ * bill payment, a queue job — do not have. Both surfaces now read from here,
+ * so the promise on the card is the button underneath it.
+ *
+ * Returns null when there is nothing to advance (terminal statuses).
+ */
+export function statusActionLabel(
+  status: BookingStatus,
+  errandSlug?: string | null,
+): string | null {
+  // `matched` means the errand has been OFFERED to this runner and is not
+  // theirs yet — the state a "New errand offer" push tap lands in. It used to
+  // borrow the 'accepted' label ("Head to pickup"), which both misdescribed
+  // the job and fired a status advance the server rejects before an accept.
+  // Name the actual next action; the cockpit's handler claims the errand.
+  if (status === 'matched') return 'Accept errand';
+  const rule = getErrandTypeRule(errandSlug);
+
+  return rule.statusActions[status as BookingStatusKey] ?? null;
+}
+
 export function StatusActionButton({
   status,
   errandSlug,
@@ -46,14 +74,7 @@ export function StatusActionButton({
   onPress,
   loading,
 }: StatusActionButtonProps) {
-  const rule = getErrandTypeRule(errandSlug);
-  // `matched` means the errand has been OFFERED to this runner and is not
-  // theirs yet — the state a "New errand offer" push tap lands in. It used to
-  // borrow the 'accepted' label ("Head to pickup"), which both misdescribed
-  // the job and fired a status advance the server rejects before an accept.
-  // Name the actual next action; the cockpit's handler claims the errand.
-  const labelKey = (status === 'matched' ? 'accepted' : status) as BookingStatusKey;
-  const label = status === 'matched' ? 'Accept errand' : rule.statusActions[labelKey];
+  const label = statusActionLabel(status, errandSlug);
 
   if (!label) return null;
 

@@ -225,10 +225,27 @@ const MESSAGE_IS_USELESS: ReadonlyArray<ErrorKind> = [
   'rate_limited',
 ];
 
+export interface DescribeErrorOptions {
+  /** Caller's domain copy — normally a mid-tier fallback (step 5). */
+  fallback?: string;
+  /**
+   * Keep the caller's `fallback` even for a kind whose backend message we'd
+   * normally overrule (offline/timeout/server/…).
+   *
+   * Use it where the class copy is TRUE but useless: the safety path is the
+   * case that forced this. `copy.safety.sosFailed` ("Please try again, or call
+   * for help directly") was written for exactly the dead-zone SOS, and step 3
+   * discarded it in favour of "You're offline — check your connection and try
+   * again" — the least actionable sentence you can hand someone in danger.
+   * Opt in only where the caller's copy tells the user what to DO instead.
+   */
+  preferFallback?: boolean;
+}
+
 /**
  * Resolve any error to honest, actionable copy. Never throws; safe defaults.
  */
-export function describeError(err: unknown, opts?: { fallback?: string }): ErrorInfo {
+export function describeError(err: unknown, opts?: DescribeErrorOptions): ErrorInfo {
   const e = (err ?? {}) as NormalizedError;
 
   // 1. Exact backend code.
@@ -242,8 +259,13 @@ export function describeError(err: unknown, opts?: { fallback?: string }): Error
 
   const kind: ErrorKind = e.kind ?? 'unknown';
 
-  // 3. Classes where the backend message is noise.
-  if (MESSAGE_IS_USELESS.includes(kind)) return KIND_DEFAULTS[kind];
+  // 3. Classes where the backend message is noise. The caller can still keep
+  //    its own copy when that copy is the actionable half (see preferFallback).
+  if (MESSAGE_IS_USELESS.includes(kind)) {
+    return opts?.preferFallback && opts.fallback
+      ? { ...KIND_DEFAULTS[kind], message: opts.fallback }
+      : KIND_DEFAULTS[kind];
+  }
 
   // 4. Trust the backend message for validation / specific 4xx.
   if (e.message) return { ...KIND_DEFAULTS[kind], message: e.message };
@@ -254,6 +276,11 @@ export function describeError(err: unknown, opts?: { fallback?: string }): Error
 }
 
 /** Convenience for the dominant `toast.error(...)` call-site pattern. */
-export function errorMessage(err: unknown, fallback?: string): string {
-  return describeError(err, { fallback }).message;
+export function errorMessage(
+  err: unknown,
+  fallback?: string,
+  opts?: { preferFallback?: boolean },
+): string {
+  return describeError(err, { fallback, preferFallback: opts?.preferFallback })
+    .message;
 }

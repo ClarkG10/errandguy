@@ -26,6 +26,7 @@ import {
   RefreshCw,
   Info,
   Accessibility,
+  Bike,
 } from 'lucide-react-native';
 import type { LucideIcon } from 'lucide-react-native';
 import * as Haptics from 'expo-haptics';
@@ -37,10 +38,16 @@ import { GradientHeader } from '../../../components/ui/GradientHeader';
 import { LogoutSplash } from '../../../components/ui/LogoutSplash';
 import { InlineLogoutLink } from '../../../components/auth/InlineLogoutLink';
 import { Eyebrow, Hairline } from '../../../components/ui/Typography';
+import { ConfirmModal } from '../../../components/ui/ConfirmModal';
 import { EditProfileModal } from '../../../components/customer/EditProfileModal';
 import { useAuthStore } from '../../../stores/authStore';
+import { useBookingStore } from '../../../stores/bookingStore';
 import { useAuth } from '../../../hooks/useAuth';
+import { useQuery } from '../../../hooks/useQuery';
 import { userService } from '../../../services/user.service';
+import { bookingService } from '../../../services/booking.service';
+import { CacheTTL } from '../../../services/cache.service';
+import { parseActiveBookings } from '../../../utils/activeBookings';
 import { prefetchPromos, prefetchReferral } from '../../../services/preload.service';
 import { formatCurrency } from '../../../utils/formatCurrency';
 import { LightColors } from '../../../constants/colors';
@@ -75,6 +82,8 @@ export default function CustomerProfileScreen() {
 
   const [refreshing, setRefreshing] = useState(false);
   const [showEditModal, setShowEditModal] = useState(false);
+  const [showRunnerModal, setShowRunnerModal] = useState(false);
+  const [switchingRole, setSwitchingRole] = useState(false);
   const [loggingOut, setLoggingOut] = useState(false);
   const [showDeleteModal, setShowDeleteModal] = useState(false);
   const [deleteConfirmText, setDeleteConfirmText] = useState('');
@@ -117,6 +126,59 @@ export default function CustomerProfileScreen() {
       setLoggingOut(false);
     }
   }, [logout]);
+
+  // ── Become / go back to being a runner ──────────────────────────────────
+  // role-select tells everyone "you can switch anytime" and nothing in the app
+  // ever could: `role` was written once, at signup, and RegisterController
+  // defaults it to 'customer' — so anyone who installed the app to EARN and
+  // killed it before the role screen was permanently stranded here (app/index
+  // routes any non-null role straight to the tabs). The backend has always
+  // accepted the switch: PUT /user/profile takes `role` and auto-creates the
+  // runner profile, and the runner layout then routes doc-less runners to
+  // onboarding on its own. This row is the missing UI, nothing more.
+  const activeBooking = useBookingStore((s) => s.activeBooking);
+  // Same key / TTL as the customer layout and Home, so this shares their
+  // cached list instead of adding a request of its own.
+  const activeListQ = useQuery(
+    ['bookings', 'active-list', user?.id ?? 'anon'],
+    async () => {
+      const res = await bookingService.getActiveBooking();
+      return parseActiveBookings(res.data);
+    },
+    { staleTime: 30_000, ttl: CacheTTL.SHORT, enabled: !!user?.id },
+  );
+  // An errand in flight blocks the switch: the runner navigator has no
+  // tracking screen for a customer's own booking, so switching mid-errand
+  // hides a live errand from the person who is paying for it.
+  const liveErrandCount = Math.max(
+    activeBooking ? 1 : 0,
+    (activeListQ.data ?? []).length,
+  );
+  const isRunnerAlready = !!user?.runner_profile;
+
+  const confirmBecomeRunner = useCallback(async () => {
+    setSwitchingRole(true);
+    try {
+      const res = await userService.updateProfile({ role: 'runner' });
+      let fresh = res.data?.data;
+      if (!fresh) {
+        const profile = await userService.getProfile();
+        fresh = profile.data?.data;
+      }
+      if (!fresh) throw new Error('profile-missing');
+      // setUser, never updateProfile: the store's top-level `role` — which
+      // every navigator gate reads — is only written by setUser.
+      setUser(fresh);
+      haptics.success();
+      setShowRunnerModal(false);
+      router.replace('/(runner)/(tabs)' as any);
+    } catch (err) {
+      haptics.error();
+      toast.error(errorMessage(err, copy.profile.saveFailed));
+    } finally {
+      setSwitchingRole(false);
+    }
+  }, [router, setUser]);
 
   const handleDeleteAccount = useCallback(async () => {
     if (deleteConfirmText !== 'DELETE') return;
@@ -194,6 +256,32 @@ export default function CustomerProfileScreen() {
   const earnMenu: MenuItem[] = [
     { label: 'Invite friends', icon: Gift, route: '/(customer)/referral' },
     { label: 'Promos & offers', icon: Ticket, route: '/(customer)/promos' },
+  ];
+
+  // Its own section: this is a mode change, not a reward or a setting, and it
+  // has to be findable by someone who meant to sign up as a runner.
+  const modeMenu: MenuItem[] = [
+    {
+      label: isRunnerAlready ? 'Switch to runner mode' : 'Become a runner',
+      icon: Bike,
+      trailing:
+        liveErrandCount > 0 ? (
+          <Text className="text-[12px] font-montserrat-bold text-warningDark">
+            Errand in progress
+          </Text>
+        ) : undefined,
+      onPress: () => {
+        lightTap();
+        if (liveErrandCount > 0) {
+          // Say why, rather than rendering a dead row.
+          toast.info(
+            'Finish or cancel your errand first — then you can switch to runner mode.',
+          );
+          return;
+        }
+        setShowRunnerModal(true);
+      },
+    },
   ];
 
   const supportMenu: MenuItem[] = [
@@ -428,6 +516,7 @@ export default function CustomerProfileScreen() {
         {renderSection('ACCOUNT', accountMenu)}
         {renderSection('PAYMENT', paymentMenu)}
         {renderSection('EARN & SAVE', earnMenu, true)}
+        {renderSection('MODE', modeMenu)}
         {renderSection('SUPPORT', supportMenu)}
 
         {/* Logout / Delete — inline tap-to-confirm. The previous
@@ -536,6 +625,25 @@ export default function CustomerProfileScreen() {
           </Pressable>
         </KeyboardAvoidingView>
       </Modal>
+
+      {/* Become-a-runner confirm. Reversible (the runner profile carries the
+          way back), so not destructive — but it does change which app the
+          person is in, and a first-time runner has documents to upload, so
+          both are stated before the flip. */}
+      <ConfirmModal
+        visible={showRunnerModal}
+        title={isRunnerAlready ? 'Switch to runner mode?' : 'Start earning as a runner?'}
+        message={
+          isRunnerAlready
+            ? 'You’ll switch to the runner app. Your bookings, wallet and saved addresses stay exactly as they are — switch back any time from your runner profile.'
+            : 'We’ll set up your runner profile. You’ll need a government ID and a selfie before you can accept errands, and you can switch back to customer mode any time from your profile.'
+        }
+        confirmLabel={isRunnerAlready ? 'Switch' : 'Continue'}
+        confirmLoadingLabel="Setting up…"
+        loading={switchingRole}
+        onConfirm={confirmBecomeRunner}
+        onCancel={() => setShowRunnerModal(false)}
+      />
 
       <EditProfileModal
         visible={showEditModal}

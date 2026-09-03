@@ -4,12 +4,24 @@ namespace App\Http\Controllers\Payment;
 
 use App\Http\Controllers\Controller;
 use App\Models\WalletTransaction;
+use App\Services\PaymentService;
 use App\Services\WalletService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\Log;
 
 class WalletController extends Controller
 {
+    /**
+     * Minimum seconds between synchronous gateway pulls for the SAME top-up
+     * during status polling. Mirrors PaymentService's booking-charge throttle:
+     * the app polls every ~3s and each pull is a blocking Xendit GET that
+     * occupies an FPM worker, while the webhook stays the primary real-time
+     * settlement path — so pulling at most once per window loses no freshness.
+     */
+    private const RECONCILE_PULL_THROTTLE_SECONDS = 10;
+
     public function __construct(
         private WalletService $walletService,
     ) {}
@@ -110,6 +122,12 @@ class WalletController extends Controller
     {
         $tx = WalletTransaction::where('user_id', $request->user()->id)->findOrFail($id);
 
+        // Confirm settlement directly with the gateway so a delayed/undelivered
+        // webhook (or local dev, where webhooks can't reach us) never leaves a
+        // genuinely-paid top-up stuck 'pending'. Same pull-reconcile the booking
+        // charge already gets in PaymentStatusController::show.
+        $tx = $this->reconcilePendingTopUp($tx);
+
         // Terminal non-success states. WalletTransaction only ever emits
         // 'failed' today (an expired top-up is coerced to 'failed'), but the
         // guard is widened so failure_reason stays correct if the enum grows.
@@ -129,6 +147,83 @@ class WalletController extends Controller
             'processed_at' => $processedAt, // alias kept for existing clients
             'failure_reason' => in_array($tx->status, $failureStates, true) ? $tx->failure_reason : null,
         ]);
+    }
+
+    /**
+     * Pull-based settlement reconciliation for a PENDING wallet top-up.
+     *
+     * Top-up was the one money-in flow with no pull path: the booking probe
+     * asks Xendit when a webhook lags, but this endpoint only re-read the DB
+     * row. So a delayed or dropped webhook left a customer whose money had
+     * already left GCash on "Payment is being processed" forever — and they
+     * usually started a second top-up.
+     *
+     * Deliberately narrow and additive:
+     *   • no-op unless this is a pending top_up with a gateway ref;
+     *   • throttled per-transaction (see RECONCILE_PULL_THROTTLE_SECONDS) so a
+     *     3s poll can't hammer the gateway or drain the FPM pool;
+     *   • settles ONLY through WalletService::completeTopUp / expireTopUp —
+     *     both row-locked, idempotent, and carrying their own settled-in-full
+     *     guard — so this cannot credit twice or credit an under-settled charge;
+     *   • only ever moves the row to the state the gateway itself reports;
+     *   • a gateway hiccup NEVER fails the poll (stays pending, retries next).
+     */
+    private function reconcilePendingTopUp(WalletTransaction $tx): WalletTransaction
+    {
+        if ($tx->type !== 'top_up' || $tx->status !== 'pending' || blank($tx->gateway_ref)) {
+            return $tx;
+        }
+
+        // Only the DIRECT e-wallet charge (GCash/Maya) can be pulled today: its
+        // gateway_ref is a Payment Requests id ("pr-…"), which PaymentService
+        // already knows how to GET. A hosted card invoice's id would need a
+        // /v2/invoices/{id} read that PaymentService doesn't expose, so those
+        // stay webhook-only (unchanged behaviour, never a wrong answer).
+        //
+        // The prefix is a safe discriminator, not a guess: an invoice id is a
+        // hex ObjectId, which cannot begin with "pr". If Xendit ever renamed
+        // the prefix this would simply stop pulling and fall back to today's
+        // webhook-only behaviour — it can never mis-address a lookup.
+        if (! str_starts_with((string) $tx->gateway_ref, 'pr')) {
+            return $tx;
+        }
+
+        // Cache::add is the throttle latch — it succeeds only when the key is
+        // absent, so exactly one poll per window wins the pull and the rest
+        // return the current DB state (kept live by the webhook).
+        if (! Cache::add("topup_reconcile_pull:{$tx->id}", 1, self::RECONCILE_PULL_THROTTLE_SECONDS)) {
+            return $tx;
+        }
+
+        try {
+            $pr = app(PaymentService::class)->getPaymentRequest((string) $tx->gateway_ref);
+        } catch (\Throwable $e) {
+            // Gateway unreachable / not configured / transient — never fail the
+            // poll; the webhook is still the primary settlement path.
+            return $tx;
+        }
+
+        $gatewayStatus = strtoupper((string) ($pr['status'] ?? ''));
+
+        try {
+            // PENDING / REQUIRES_ACTION → the customer hasn't finished paying.
+            $settled = match ($gatewayStatus) {
+                'SUCCEEDED' => $this->walletService->completeTopUp($tx->id, $pr),
+                'FAILED' => $this->walletService->expireTopUp($tx->id, 'Payment failed'),
+                'EXPIRED' => $this->walletService->expireTopUp($tx->id, 'Payment window expired'),
+                default => null,
+            };
+        } catch (\Throwable $e) {
+            // A settlement error must never 500 a status poll.
+            Log::warning('Xendit top-up reconcile failed', [
+                'transaction_id' => $tx->id,
+                'error' => $e->getMessage(),
+            ]);
+
+            return $tx->fresh() ?? $tx;
+        }
+
+        return $settled ?? $tx;
     }
 
     public function transactions(Request $request): JsonResponse

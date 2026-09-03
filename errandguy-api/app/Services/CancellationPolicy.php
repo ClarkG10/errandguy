@@ -104,4 +104,55 @@ class CancellationPolicy
             'cancellable' => true,
         ];
     }
+
+    /**
+     * What COMES BACK if the booking were cancelled right now, and where it
+     * lands — the half of the story preview() never told.
+     *
+     * A prepaid customer reads "a ₱20 fee applies" as a NEW charge on money
+     * they have already handed over, and the one number they actually care
+     * about (the ₱480 that returns, to the WALLET rather than back to GCash)
+     * was computed nowhere. This mirrors BookingController::cancel exactly:
+     *   - money only comes back when the booking actually collected some
+     *     ('paid'); cash / unpaid errands return nothing because they took
+     *     nothing (PRICE-3), and
+     *   - the amount is total − the fee we can really keep, credited to the
+     *     ErrandGuy wallet — never reversed to the source instrument.
+     *
+     * Advisory, exactly like the fee it accompanies: cancel() re-evaluates
+     * under a row lock and its response carries the authoritative figures.
+     *
+     * Deliberately NOT folded into preview(): cancel() merges the pre-lock
+     * preview into its `cancellation` payload alongside the settled
+     * `refunded`, and two near-identical keys that can disagree is the sort
+     * of money ambiguity this whole surface exists to remove.
+     *
+     * Shape: ['refund_amount' => float, 'refund_destination' => 'wallet'|null]
+     *
+     * @param  float|null  $fee  The already-computed preview fee, when the
+     *                           caller has one (saves recomputing it).
+     * @return array{refund_amount: float, refund_destination: ?string}
+     */
+    public static function refundPreview(Booking $booking, ?float $fee = null): array
+    {
+        // preview() is pure arithmetic over the booking's own attributes (no
+        // queries), so recomputing it here to read `cancellable` is free.
+        $policy = self::preview($booking);
+        $effectiveFee = $fee ?? (float) $policy['fee'];
+
+        // A booking that can no longer be cancelled has no refund to quote —
+        // a completed errand is still 'paid' and must never be shown a
+        // "you'd get ₱480 back" figure. Same for a booking that collected
+        // nothing up front (cash / unpaid): there is nothing to give back.
+        if (! $policy['cancellable'] || $booking->payment_status !== 'paid') {
+            return ['refund_amount' => 0.0, 'refund_destination' => null];
+        }
+
+        $refund = round(max(0, (float) $booking->total_amount - $effectiveFee), 2);
+
+        return [
+            'refund_amount' => $refund,
+            'refund_destination' => $refund > 0 ? 'wallet' : null,
+        ];
+    }
 }

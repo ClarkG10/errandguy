@@ -3,6 +3,7 @@ import { View, Text } from 'react-native';
 import { LocateFixed } from 'lucide-react-native';
 import { useLocationStore } from '../../stores/locationStore';
 import { useEta } from '../../hooks/useEta';
+import { formatEtaMinutes } from '../../services/route.service';
 import type { Booking } from '../../types';
 import { LightColors } from '../../constants/colors';
 
@@ -60,7 +61,11 @@ export function PickupDistanceLine({
       : `${(distanceMeters! / 1000).toFixed(1)} km`
     : `${(fallbackKm as number).toFixed(1)} km`;
 
-  const etaLabel = hasLiveFix && minutes != null ? ` · ~${minutes} min away` : '';
+  // Through the shared renderer, not a local `${minutes} min`: it carries the
+  // hour rollover ("1h 35m" instead of "95 min" on a cross-city pickup) and
+  // the singular, so a one-minute ETA no longer reads "1 minutes".
+  const etaText = hasLiveFix ? formatEtaMinutes(minutes) : null;
+  const etaLabel = etaText ? ` · ~${etaText} away` : '';
   // Only the SERVER figure is hedged — the live client fix is exact.
   const label = hasLiveFix
     ? `Pickup ${distanceLabel}${etaLabel}`
@@ -78,8 +83,8 @@ export function PickupDistanceLine({
       accessibilityLabel={
         !hasLiveFix
           ? `Pickup is about ${distanceLabel} away`
-          : minutes != null
-            ? `Pickup is ${distanceLabel} away, about ${minutes} minutes`
+          : etaText
+            ? `Pickup is ${distanceLabel} away, about ${etaText}`
             : `Pickup is ${distanceLabel} away`
       }
     >

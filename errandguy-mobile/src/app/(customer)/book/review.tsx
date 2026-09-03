@@ -42,7 +42,12 @@ import {
   BookingProgress,
   type BookingStage,
 } from '../../../components/customer/BookingProgress';
-import { usePaymentStore, isAttemptActive } from '../../../stores/paymentStore';
+import {
+  usePaymentStore,
+  isAttemptActive,
+  shouldRetainIdempotencyKey,
+} from '../../../stores/paymentStore';
+import { newIdempotencyKey } from '../../../utils/idempotency';
 import { usePaymentVerification } from '../../../hooks/usePaymentVerification';
 import { invalidateQuery, useQuery } from '../../../hooks/useQuery';
 import { CacheTTL } from '../../../services/cache.service';
@@ -122,6 +127,14 @@ const BOOKING_STAGE_ANNOUNCEMENTS: Record<BookingStage, string> = {
   checkout: 'Opening secure checkout.',
 };
 
+/** Marks an attempt whose gateway sheet the customer dismissed without paying,
+ *  so the failure overlay can offer "Resume payment" with honest copy instead
+ *  of the generic "we couldn't confirm this payment". */
+const CHECKOUT_CANCELLED = 'checkout_cancelled';
+
+const CHECKOUT_CANCELLED_MESSAGE =
+  "You closed checkout before paying, so nothing was charged. Your errand is saved — resume the payment now, or pay later from the errand. If you did finish paying, it updates by itself.";
+
 export default function ReviewScreen() {
   const router = useRouter();
   const { contentMaxWidth } = useResponsive();
@@ -197,11 +210,32 @@ export default function ReviewScreen() {
   // Synchronous re-entrancy latch — closes the double-tap window before the
   // Button's `loading` disable lands a render later.
   const submitLatch = useRef(false);
+  // The create's Idempotency-Key, held in a screen-local ref (the pattern
+  // (runner)/payout/index.tsx already uses) so it OUTLIVES the attempt the
+  // catch block resolves. A mutation gets a flat 30s timeout and no retry
+  // layer, so a slow create can time out client-side while the server
+  // completes it; re-sending the SAME key makes EnsureIdempotency replay the
+  // original 201 instead of minting a second booking and a second charge.
+  // Keeping it OUT of the persisted attempt means retaining the key never also
+  // retains the one-payment-at-a-time lock the retry would trip over.
+  const createKeyRef = useRef<string | null>(null);
+  // The payload the retained key was first used with. A key re-sent with a
+  // materially different body is rejected 422 ("already used with a different
+  // request"), so any edit to the draft/fare/method rotates it.
+  const createKeySigRef = useRef<string | null>(null);
+  // The attempt THIS screen started. The verification overlay is gated on it so
+  // a previous booking's rehydrated attempt can never flip terminal over a new
+  // draft and teleport the customer to the old booking (its outcome belongs to
+  // /payment-complete, which the blocked-submit toast below links to).
+  const ownedAttemptRef = useRef<string | null>(null);
   // Which of the two mutually exclusive overlays is up. Hoisted out of the
   // JSX so the screen-reader announcement below and the render agree on one
   // source of truth (they were duplicated expressions).
   const paymentOverlayStage =
-    attempt?.kind === 'booking' && verifyStage && verifyStage !== 'preparing'
+    attempt?.kind === 'booking' &&
+    attempt.attemptId === ownedAttemptRef.current &&
+    verifyStage &&
+    verifyStage !== 'preparing'
       ? verifyStage
       : null;
   const createOverlayStage = paymentOverlayStage ? null : bookingStage;
@@ -581,21 +615,22 @@ export default function ReviewScreen() {
       }
     }
     // Don't start a new payment while a previous one is still being verified.
+    // The blocking attempt can be a TOP-UP (or a booking from a previous
+    // launch), which this screen's overlay deliberately doesn't render — so the
+    // toast has to hand over an escape instead of being a dead end.
+    // /payment-complete mounts the verifier, renders any attempt kind, and its
+    // "Got it" resolves the attempt, which releases this lock.
     if (isAttemptActive(usePaymentStore.getState().attempt)) {
-      toast.info("We're still confirming your last payment — hang tight.");
+      toast.info("We're still confirming your last payment — hang tight.", {
+        actionLabel: 'Check status',
+        onAction: () => router.push('/payment-complete'),
+      });
       return;
     }
     // Synchronous latch closes the double-tap window before Button `loading`.
     if (submitLatch.current) return;
     submitLatch.current = true;
     const paymentAmount = pricingMode === 'negotiate' ? offerPrice ?? 0 : totalAmount;
-    // One attempt = one idempotency key, reused on retry so the backend can
-    // never create two bookings / two charges from a double-tap or retry.
-    const payAttempt = beginAttempt({
-      kind: 'booking',
-      amount: paymentAmount,
-      method: paymentMethodType ?? 'cash',
-    });
     setIsSubmitting(true);
     // Surface the full-screen staged overlay immediately on tap — "Checking
     // your details ✓ / Creating your errand ⟳" — instead of a lone button
@@ -658,9 +693,32 @@ export default function ReviewScreen() {
         promo_code: draftBooking.promo_code,
       };
 
+      // Reuse the retained key when the body is byte-for-byte what it was last
+      // time (the server hashes the whole request, so an edited draft MUST get
+      // a fresh key); mint one otherwise. This is what turns a timed-out create
+      // into a replay of the original booking rather than a second one.
+      const payloadSignature = JSON.stringify(payload);
+      if (!createKeyRef.current || createKeySigRef.current !== payloadSignature) {
+        createKeyRef.current = newIdempotencyKey();
+        createKeySigRef.current = payloadSignature;
+      }
+      // One attempt = one idempotency key, reused on retry so the backend can
+      // never create two bookings / two charges from a double-tap or retry.
+      const payAttempt = beginAttempt({
+        kind: 'booking',
+        amount: paymentAmount,
+        method: paymentMethodType ?? 'cash',
+        idempotencyKey: createKeyRef.current,
+      });
+      ownedAttemptRef.current = payAttempt.attemptId;
+
       const res = await bookingService.createBooking(payload, {
         idempotencyKey: payAttempt.idempotencyKey,
       });
+      // The server has spoken: this key is spent. A follow-up booking (even an
+      // identical rebook) must charge on its own key.
+      createKeyRef.current = null;
+      createKeySigRef.current = null;
       const booking = res.data.data;
       // The create body is JSON (no file parts), so the customer's staged item
       // photos are uploaded here right after — best-effort, since the booking
@@ -744,9 +802,30 @@ export default function ReviewScreen() {
           return;
         }
 
-        // Otherwise VERIFY, never assume: 'cancelled' only means the sheet
-        // closed, which does NOT prove they didn't pay. The verification
-        // overlay now owns the screen.
+        if (outcome === 'cancelled') {
+          // The customer DISMISSED the sheet. Flipping to 'verifying' here used
+          // to trap them behind a button-less spinner for the full 35s pending
+          // timeout, then claim their payment "is being processed" — for a
+          // payment they deliberately never made. Land on the actionable
+          // failure state instead (the same honest branch top-up already took):
+          // "Resume payment" re-opens the SAME invoice — no duplicate booking —
+          // and Close drops them on the errand to pay or cancel later.
+          //
+          // iOS can report a cancel when the sheet is dismissed AFTER paying but
+          // before the redirect, so the copy never claims the payment failed for
+          // good: the webhook still settles it and the push lands on the errand.
+          setAttemptStatus('failed', {
+            bookingId: booking.id,
+            checkoutUrl,
+            reference: booking.booking_number,
+            failureReason: CHECKOUT_CANCELLED,
+          });
+          return;
+        }
+
+        // Otherwise VERIFY, never assume: 'opened' means the outcome is
+        // unknowable (system-browser fallback), and 'success' is only the
+        // bridge redirect firing. The verification overlay now owns the screen.
         setAttemptStatus('verifying');
       } else {
         // Wallet/cash settle server-side already — nothing to verify.
@@ -763,10 +842,18 @@ export default function ReviewScreen() {
         router.replace(`/(customer)/book/confirm?bookingId=${booking.id}`);
       }
     } catch (err: any) {
-      // Create failed → no booking/charge exists to verify; clear the attempt.
-      // Honest copy per backend code: promo invalid, insufficient balance,
-      // gateway ("you weren't charged"), or a booking conflict.
+      // Clear the ATTEMPT (it is the one-payment-at-a-time lock, and holding it
+      // would block the very retry we want) but decide the KEY on the failure
+      // class: a timeout / offline / 5xx / 409 leaves the outcome unknown, so
+      // the next Confirm must re-send the SAME key and let the backend replay
+      // the original booking instead of creating a second one. Only a definitive
+      // 4xx — the server rejecting on its own terms — makes the next tap a
+      // genuinely new attempt.
       resolveAttempt();
+      if (!shouldRetainIdempotencyKey(err)) {
+        createKeyRef.current = null;
+        createKeySigRef.current = null;
+      }
       setBookingStage(null);
       haptics.error();
       // A promo can die between "apply" and "Confirm" — expired, usage cap
@@ -823,7 +910,19 @@ export default function ReviewScreen() {
     const url = usePaymentStore.getState().attempt?.checkoutUrl;
     if (!url) return;
     setAttemptStatus('awaiting_gateway');
-    await openCheckoutUrl(url, PAYMENT_RETURN_URL);
+    const outcome = await openCheckoutUrl(url, PAYMENT_RETURN_URL);
+    // Same honest branches as the first attempt: a sheet that never opened, or
+    // one the customer dismissed, must NOT spin the verification overlay for
+    // 35s. Stay on the actionable failure card so Resume/Close remain there.
+    if (outcome === 'failed') {
+      setAttemptStatus('failed', { failureReason: undefined });
+      toast.error("Couldn't open checkout — you weren't charged. Tap Resume payment to pay.");
+      return;
+    }
+    if (outcome === 'cancelled') {
+      setAttemptStatus('failed', { failureReason: CHECKOUT_CANCELLED });
+      return;
+    }
     setAttemptStatus('verifying');
   }, [setAttemptStatus]);
 
@@ -1397,13 +1496,22 @@ export default function ReviewScreen() {
         }
         onSuccessDone={() => leaveForBooking()}
         failureMessage={
-          attempt?.failureReason ? mapFailureReason(attempt.failureReason).message : undefined
+          attempt?.failureReason === CHECKOUT_CANCELLED
+            ? CHECKOUT_CANCELLED_MESSAGE
+            : attempt?.failureReason
+              ? mapFailureReason(attempt.failureReason).message
+              : undefined
         }
         // Any stashed checkout URL is retryable, not just a card's: retry
         // reopens the SAME invoice, so there is no duplicate-charge risk on
         // GCash/Maya either — and without this an e-wallet failure (including
         // a sheet that never opened) offered no way forward at all.
         onRetry={attempt?.checkoutUrl ? retryBookingPayment : undefined}
+        // "Resume payment" reads truthfully after a deliberate back-out; "Try
+        // again" only makes sense after a payment that actually failed.
+        retryCta={
+          attempt?.failureReason === CHECKOUT_CANCELLED ? 'Resume payment' : undefined
+        }
         onClose={() => leaveForBooking()}
         onSafeExit={() => leaveForBooking()}
       />

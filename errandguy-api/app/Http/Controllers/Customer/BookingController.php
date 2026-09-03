@@ -893,8 +893,19 @@ class BookingController extends Controller
         $booking = Booking::findOrFail($id);
         $this->authorize('cancel', $booking);
 
+        $policy = CancellationPolicy::preview($booking);
+
         return response()->json([
-            'data' => CancellationPolicy::preview($booking),
+            // Additive: the fee alone told the customer what cancelling COSTS
+            // and never what comes BACK, so a prepaid customer confirmed
+            // "Cancel & pay ₱20" on a fare they had already been charged, with
+            // no idea the other ₱480 was returning — or that it lands in their
+            // ErrandGuy wallet rather than back on their GCash. Same arithmetic
+            // and the same wallet destination cancel() actually settles with.
+            'data' => array_merge(
+                $policy,
+                CancellationPolicy::refundPreview($booking, (float) $policy['fee']),
+            ),
         ]);
     }
 

@@ -42,7 +42,12 @@ class ExportController extends Controller
 
         $query = $user->runnerBookings()->completed();
 
-        [$rangeStart, $rangeEnd] = $this->applyPeriod($query, $request, $period);
+        // Resolve the window ONCE — the header aggregate and the itemised rows
+        // below both filter on it, so they cannot describe different periods
+        // (and cannot straddle a midnight that falls between two now() calls).
+        [$windowStart, $windowEnd] = $this->periodWindow($request, $period);
+        $this->applyWindow($query, $windowStart, $windowEnd);
+        [$rangeStart, $rangeEnd] = $this->displayRange($period, $windowStart, $windowEnd);
 
         // Tips are aggregated separately and printed as their own line — never
         // added into the payout total, which is the figure commission and
@@ -56,22 +61,11 @@ class ExportController extends Controller
         $totalErrands = (int) ($agg->cnt ?? 0);
         $avgPerErrand = $totalErrands > 0 ? round($totalEarnings / $totalErrands, 2) : 0;
 
-        // Line items for the statement table.
+        // Line items for the statement table — same window as the aggregate.
         $lineItems = $user->runnerBookings()
             ->completed()
-            ->when($period === 'today', fn ($q) => $q
-                ->where('completed_at', '>=', now()->startOfDay())
-                ->where('completed_at', '<', now()->copy()->addDay()->startOfDay()))
-            ->when($period === 'this_week', fn ($q) => $q
-                ->where('completed_at', '>=', now()->startOfWeek())
-                ->where('completed_at', '<=', now()->endOfWeek()))
-            ->when($period === 'this_month', fn ($q) => $q
-                ->where('completed_at', '>=', now()->startOfMonth())
-                ->where('completed_at', '<', now()->copy()->startOfMonth()->addMonth()))
-            ->when($period === 'custom' && $request->filled('date_from'), fn ($q) => $q
-                ->where('completed_at', '>=', \Carbon\Carbon::parse($request->input('date_from'))->startOfDay()))
-            ->when($period === 'custom' && $request->filled('date_to'), fn ($q) => $q
-                ->where('completed_at', '<=', \Carbon\Carbon::parse($request->input('date_to'))->endOfDay()))
+            ->when($windowStart, fn ($q) => $q->where('completed_at', '>=', $windowStart))
+            ->when($windowEnd, fn ($q) => $q->where('completed_at', '<', $windowEnd))
             ->with('errandType:id,name')
             ->orderByDesc('completed_at')
             ->limit(500)
@@ -130,46 +124,95 @@ class ExportController extends Controller
     }
 
     /**
-     * Applies the same date-range filtering as RunnerEarningsController::summary
-     * and returns the resolved [start, end] for display on the statement.
+     * The same date-range filtering RunnerEarningsController::summary applies,
+     * on the resolved half-open UTC window.
+     *
+     * @param  \Illuminate\Database\Eloquent\Builder<\App\Models\Booking>  $query
      */
-    private function applyPeriod($query, Request $request, string $period): array
+    private function applyWindow($query, ?\Carbon\CarbonInterface $start, ?\Carbon\CarbonInterface $end): void
     {
-        switch ($period) {
-            case 'today':
-                $start = now()->startOfDay();
-                $end = now()->copy()->addDay()->startOfDay();
-                $query->where('completed_at', '>=', $start)
-                      ->where('completed_at', '<', $end);
-                return [$start, now()];
-            case 'this_week':
-                $start = now()->startOfWeek();
-                $end = now()->endOfWeek();
-                $query->where('completed_at', '>=', $start)
-                      ->where('completed_at', '<=', $end);
-                return [$start, $end];
-            case 'this_month':
-                $start = now()->startOfMonth();
-                $end = now()->copy()->startOfMonth()->addMonth();
-                $query->where('completed_at', '>=', $start)
-                      ->where('completed_at', '<', $end);
-                return [$start, now()];
-            case 'custom':
-                $start = $request->filled('date_from')
-                    ? \Carbon\Carbon::parse($request->input('date_from'))->startOfDay()
-                    : null;
-                $end = $request->filled('date_to')
-                    ? \Carbon\Carbon::parse($request->input('date_to'))->endOfDay()
-                    : null;
-                if ($start) {
-                    $query->where('completed_at', '>=', $start);
-                }
-                if ($end) {
-                    $query->where('completed_at', '<=', $end);
-                }
-                return [$start, $end];
+        if ($start) {
+            $query->where('completed_at', '>=', $start);
+        }
+        if ($end) {
+            $query->where('completed_at', '<', $end);
+        }
+    }
+
+    /**
+     * The [start, end] pair printed at the top of the statement. The filter
+     * runs on UTC boundaries (that is what completed_at stores) but the printed
+     * range is rendered in the business timezone, so a statement for "today" is
+     * headed with the Manila date the runner asked for rather than the UTC
+     * instant its window happens to begin at (16:00 the previous day).
+     *
+     * @return array{0: ?\Carbon\CarbonInterface, 1: ?\Carbon\CarbonInterface}
+     */
+    private function displayRange(string $period, ?\Carbon\CarbonInterface $start, ?\Carbon\CarbonInterface $end): array
+    {
+        $tz = self::businessTz();
+        $localStart = $start?->copy()->timezone($tz);
+
+        return match ($period) {
+            // An in-progress period reads "<start> – now", as it did before.
+            'today', 'this_month' => [$localStart, now($tz)],
+            // A closed window is half-open [start, end); the last moment a row
+            // can land on is a tick before `end`, and that is the date that
+            // belongs on paper — not the following Monday / next day.
+            'this_week', 'custom' => [$localStart, $end?->copy()->timezone($tz)->subSecond()],
+            default => [null, null],
+        };
+    }
+
+    /**
+     * The period as a half-open UTC window [start, end), with the boundaries
+     * falling on the BUSINESS calendar — a runner's "today" is a Manila day,
+     * not the 08:00-to-08:00 Manila slice a bare now()->startOfDay() produced.
+     * Mirrors RunnerEarningsController::namedWindow / ::customWindow so the PDF
+     * and the Earnings screen can never disagree about which errands are in.
+     *
+     * @return array{0: ?\Carbon\CarbonInterface, 1: ?\Carbon\CarbonInterface}
+     */
+    private function periodWindow(Request $request, string $period): array
+    {
+        $tz = self::businessTz();
+
+        if ($period === 'custom') {
+            return [
+                $request->filled('date_from')
+                    ? \Carbon\Carbon::parse($request->input('date_from'), $tz)->startOfDay()->utc()
+                    : null,
+                $request->filled('date_to')
+                    ? \Carbon\Carbon::parse($request->input('date_to'), $tz)->startOfDay()->addDay()->utc()
+                    : null,
+            ];
         }
 
-        return [null, null];
+        $start = now($tz);
+
+        switch ($period) {
+            case 'today':
+                $start->startOfDay();
+                $end = $start->copy()->addDay();
+                break;
+            case 'this_week':
+                $start->startOfWeek();
+                $end = $start->copy()->addWeek();
+                break;
+            case 'this_month':
+                $start->startOfMonth();
+                $end = $start->copy()->addMonth();
+                break;
+            default:
+                return [null, null];
+        }
+
+        return [$start->utc(), $end->utc()];
+    }
+
+    /** The wall clock a runner's calendar boundaries are read on (PH = UTC+8). */
+    private static function businessTz(): string
+    {
+        return (string) config('app.business_timezone', 'Asia/Manila');
     }
 }

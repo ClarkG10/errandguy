@@ -24,13 +24,16 @@ import {
   ChevronRight,
   Coins,
   SlidersHorizontal,
+  Clock,
 } from 'lucide-react-native';
 import { toast } from '../../../stores/toastStore';
 import type { LucideIcon } from 'lucide-react-native';
 import { useWalletStore } from '../../../stores/walletStore';
 import { useAuthStore } from '../../../stores/authStore';
+import { usePaymentStore, isAttemptActive } from '../../../stores/paymentStore';
 import { paymentService } from '../../../services/payment.service';
-import { useQuery } from '../../../hooks/useQuery';
+import { openCheckoutUrl, PAYMENT_RETURN_URL } from '../../../utils/browser';
+import { useQuery, invalidateQuery } from '../../../hooks/useQuery';
 import { CacheTTL } from '../../../services/cache.service';
 import { Card } from '../../../components/ui/Card';
 import { EmptyState } from '../../../components/ui/EmptyState';
@@ -191,6 +194,9 @@ export default function WalletScreen() {
   const { balance, transactions, setBalance, setTransactions } =
     useWalletStore();
   const userId = useAuthStore((s) => s.user?.id ?? 'anon');
+  // The persisted in-flight money attempt (booking charge or top-up), so a
+  // payment that outlived its screen has somewhere to be seen.
+  const pendingAttempt = usePaymentStore((s) => s.attempt);
   const [refreshing, setRefreshing] = useState(false);
   // Server-side type filter — part of the query key so each filter keeps
   // its own cache entry and swapping back to a previous chip is instant.
@@ -321,6 +327,101 @@ export default function WalletScreen() {
     }
   }, [exporting, txList]);
 
+  // Which ledger row is mid-action (resume / status probe), so its label can
+  // say so instead of looking inert while a round-trip runs.
+  const [busyTxId, setBusyTxId] = useState<string | null>(null);
+
+  /**
+   * Ask the server what actually happened to a top-up row.
+   *
+   * A pending top-up used to be a dead end: no way to re-check, no way to
+   * reopen the invoice, so customers started a SECOND top-up (a second pending
+   * row) or gave up on money they had already sent. The status endpoint is the
+   * same authoritative probe the checkout screen polls.
+   */
+  const probeTopUp = useCallback(
+    async (txId: string) => {
+      try {
+        const res = await paymentService.getTopUpStatus(txId);
+        const status: string | undefined = res.data?.data?.status ?? res.data?.status;
+        if (status === 'completed') {
+          toast.success('Top-up confirmed — your balance is up to date.');
+        } else if (status && status !== 'pending') {
+          toast.info("That top-up didn't go through — you weren't charged.");
+        } else {
+          toast.info(
+            "Still confirming with your provider. We'll credit your balance the moment it lands.",
+          );
+        }
+        // Other screens (the home balance pill, the payment selector) read the
+        // same keys, so heal them too — not just this list.
+        void invalidateQuery(['wallet']);
+        await Promise.all([balanceQ.refresh(), txQ.refresh()]);
+      } catch {
+        toast.error("Couldn't check that top-up just now. Please try again.");
+      }
+    },
+    [balanceQ, txQ],
+  );
+
+  const checkTopUpStatus = useCallback(
+    async (txId: string) => {
+      if (busyTxId) return;
+      setBusyTxId(txId);
+      Haptics.selectionAsync().catch(() => {});
+      try {
+        await probeTopUp(txId);
+      } finally {
+        setBusyTxId(null);
+      }
+    },
+    [busyTxId, probeTopUp],
+  );
+
+  /**
+   * Reopen a still-payable top-up invoice. The server already stores and
+   * serializes `checkout_url` on every pending top-up row, so resuming costs no
+   * backend work — and it reuses the SAME invoice, so it can never double-charge.
+   *
+   * No payment attempt is armed here on purpose: that would take the app-wide
+   * one-payment-at-a-time lock and block booking. The gateway stays the
+   * authority — we probe the row once the sheet closes, and the webhook settles
+   * it regardless of what the sheet reported.
+   */
+  const resumeTopUp = useCallback(
+    async (txId: string, url: string) => {
+      if (busyTxId) return;
+      setBusyTxId(txId);
+      try {
+        const outcome = await openCheckoutUrl(url, PAYMENT_RETURN_URL);
+        if (outcome === 'failed') {
+          // A one-time e-wallet authorization URL dies with its charge, so
+          // "reopen" can genuinely have nowhere to go. Say so honestly.
+          toast.error(
+            "Couldn't reopen that payment — it may have expired. Add money again to start a fresh one.",
+          );
+          return;
+        }
+        if (outcome === 'opened') {
+          // System-browser fallback: this resolved the moment the browser
+          // opened, so the customer is still out there paying. Probing now
+          // would only report the pending state we already show.
+          void invalidateQuery(['wallet']);
+          toast.info(
+            'Finish the payment in your browser — your balance updates automatically.',
+          );
+          return;
+        }
+        // Back in the app (paid, or the sheet dismissed — which does NOT prove
+        // they didn't pay): ask the server what actually happened.
+        await probeTopUp(txId);
+      } finally {
+        setBusyTxId(null);
+      }
+    },
+    [busyTxId, probeTopUp],
+  );
+
   const renderTransaction = useCallback(
     ({ item }: { item: WalletTransaction }) => {
       const config = TX_ICONS[item.type] ?? TX_ICONS.payment;
@@ -336,6 +437,14 @@ export default function WalletScreen() {
       const isPending = item.status === 'pending';
       const isFailed = item.status === 'failed';
       const settled = !isPending && !isFailed;
+      // A top-up is the only row the customer can still act on: pending ones
+      // can be resumed or re-checked, failed ones re-attempted. The resume URL
+      // is already on the wire (WalletTransaction.checkout_url) — narrowed
+      // locally rather than widening the shared type.
+      const isTopUp = item.type === 'top_up';
+      const resumeUrl =
+        (item as WalletTransaction & { checkout_url?: string | null }).checkout_url ?? null;
+      const busy = busyTxId === item.id;
 
       const amountClass = !settled
         ? 'text-textMuted'
@@ -388,6 +497,75 @@ export default function WalletScreen() {
                 </Text>
               ) : null}
             </View>
+
+            {/* Recovery affordances. A pending top-up row used to be inert —
+                the customer could neither reopen the invoice they had already
+                been sent to, nor ask what happened, so the only move left was
+                starting a duplicate top-up. Layout lives in className (a
+                Pressable styled only through the style callback loses
+                flexDirection). */}
+            {isTopUp && isPending ? (
+              <View className="mt-1.5">
+                <View className="flex-row items-center" style={{ gap: 16 }}>
+                  {resumeUrl ? (
+                    <Pressable
+                      onPress={() => resumeTopUp(item.id, resumeUrl)}
+                      disabled={busy}
+                      hitSlop={{ top: 10, bottom: 10, left: 6, right: 6 }}
+                      accessibilityRole="button"
+                      accessibilityLabel={`Continue paying this ${formatCurrency(Math.abs(item.amount))} top-up`}
+                      accessibilityState={{ disabled: busy, busy }}
+                      style={({ pressed }) => (pressed || busy ? { opacity: 0.6 } : null)}
+                    >
+                      <Text className="text-[11px] font-montserrat-bold text-primary">
+                        Continue payment
+                      </Text>
+                    </Pressable>
+                  ) : null}
+                  <Pressable
+                    onPress={() => checkTopUpStatus(item.id)}
+                    disabled={busy}
+                    hitSlop={{ top: 10, bottom: 10, left: 6, right: 6 }}
+                    accessibilityRole="button"
+                    accessibilityLabel="Check this top-up's status now"
+                    accessibilityState={{ disabled: busy, busy }}
+                    style={({ pressed }) => (pressed || busy ? { opacity: 0.6 } : null)}
+                  >
+                    <Text className="text-[11px] font-montserrat-bold text-primary">
+                      {busy ? 'Checking…' : 'Check status'}
+                    </Text>
+                  </Pressable>
+                </View>
+                <Text className="text-[10px] font-montserrat text-textTertiary mt-1">
+                  Unpaid top-ups expire on their own — you&apos;re never charged twice.
+                </Text>
+              </View>
+            ) : isTopUp && isFailed ? (
+              <View className="mt-1.5">
+                {item.failure_reason ? (
+                  <Text
+                    className="text-[10px] font-montserrat text-textTertiary mb-1"
+                    numberOfLines={2}
+                  >
+                    {item.failure_reason}
+                  </Text>
+                ) : null}
+                <Pressable
+                  onPress={() => {
+                    Haptics.selectionAsync().catch(() => {});
+                    router.push('/(customer)/wallet/top-up');
+                  }}
+                  hitSlop={{ top: 10, bottom: 10, left: 6, right: 6 }}
+                  accessibilityRole="button"
+                  accessibilityLabel="Try this top-up again"
+                  style={({ pressed }) => (pressed ? { opacity: 0.6 } : null)}
+                >
+                  <Text className="text-[11px] font-montserrat-bold text-primary">
+                    Try again
+                  </Text>
+                </Pressable>
+              </View>
+            ) : null}
           </View>
           <View className="items-end">
             <Text
@@ -407,7 +585,7 @@ export default function WalletScreen() {
         </View>
       );
     },
-    [],
+    [busyTxId, checkTopUpStatus, resumeTopUp, router],
   );
 
   // The hub scrolls as ONE unit: the balance hero, payment-methods
@@ -545,6 +723,48 @@ export default function WalletScreen() {
           </Pressable>
         </View>
       </LinearGradient>
+
+      {/* In-flight payment. The verification hook is mounted on only a handful
+          of screens, so an attempt that survived a kill (routine on low-RAM
+          Androids during the GCash app hop) had NO surface at all — its only
+          symptom was the next Add-money tap being refused. The wallet is where
+          a customer looks for missing money, so it says so here and links to
+          /payment-complete, which owns the full outcome UI (and whose "Got it"
+          releases the one-payment-at-a-time lock). Scoped to non-terminal
+          attempts; the store's 6h staleness drop keeps it from ever becoming
+          permanent. Caution amber (warning), matching PaymentProgress's own
+          pending state — not the brand gold accent. */}
+      {isAttemptActive(pendingAttempt) && pendingAttempt ? (
+        <View className="px-5 mb-3">
+          <Pressable
+            onPress={() => {
+              Haptics.selectionAsync().catch(() => {});
+              router.push('/payment-complete');
+            }}
+            className="flex-row items-center rounded-2xl bg-warningSoft px-4 py-3"
+            accessibilityRole="button"
+            accessibilityLabel={`Confirming your ${formatCurrency(pendingAttempt.amount)} ${
+              pendingAttempt.kind === 'topup' ? 'top-up' : 'payment'
+            }. Tap to check its status.`}
+            style={({ pressed }) => (pressed ? { opacity: 0.75 } : null)}
+          >
+            <Clock size={16} color={LightColors.warningDark} strokeWidth={2} />
+            <View className="flex-1 ml-2.5">
+              <Text
+                className="text-[12px] font-montserrat-bold"
+                style={{ color: LightColors.warningDark }}
+              >
+                Confirming your {formatCurrency(pendingAttempt.amount)}{' '}
+                {pendingAttempt.kind === 'topup' ? 'top-up' : 'payment'}
+              </Text>
+              <Text className="text-[11px] font-montserrat text-textSecondary mt-0.5">
+                No need to pay again — tap to check its status.
+              </Text>
+            </View>
+            <ChevronRight size={16} color={LightColors.warningDark} strokeWidth={2} />
+          </Pressable>
+        </View>
+      ) : null}
 
       {/* Ambient sync status — sits quietly under the balance hero,
           above the ledger. Purely informational. */}

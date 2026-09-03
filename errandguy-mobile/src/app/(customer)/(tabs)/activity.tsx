@@ -29,6 +29,7 @@ import type { Booking } from '../../../types';
 import { scheduledWindowLabel } from '../../../utils/scheduledBooking';
 import { LightColors } from '../../../constants/colors';
 import { copy } from '../../../constants/copy';
+import { STATUS_LABELS } from '../../../constants/statusLabels';
 import { errorMessage } from '../../../utils/errorCatalog';
 import { toast } from '../../../stores/toastStore';
 import { TAB_CONTENT_BOTTOM_INSET } from '../../../constants/tabLayout';
@@ -152,9 +153,9 @@ export default function ActivityScreen() {
       const inProgress: Booking[] = [];
       const searching: Booking[] = [];
       // A booking scheduled for next week is `pending` too, so bucketing on
-      // status alone filed it under "Looking for runner" with the live
-      // searches — the same "stuck search" misread the Home card was fixed
-      // for, still landing one tab over.
+      // status alone filed it under the live searches — the same "stuck
+      // search" misread the Home card was fixed for, still landing one tab
+      // over.
       const scheduled: Booking[] = [];
       for (const b of bookings) {
         if (b.status === 'pending') {
@@ -170,7 +171,10 @@ export default function ActivityScreen() {
         { title: 'In progress', data: inProgress },
         { title: 'On the way', data: onTheWay },
         { title: 'Scheduled', data: scheduled },
-        { title: 'Looking for runner', data: searching },
+        // Same words as the `pending` chip on the rows inside it
+        // (STATUS_LABELS.pending) — the header used to say "Looking for
+        // runner" directly above rows that said "Finding a Runner".
+        { title: STATUS_LABELS.pending, data: searching },
       ].filter((s) => s.data.length > 0);
     }
     const now = new Date();

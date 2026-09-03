@@ -66,15 +66,19 @@ class HeatmapController extends Controller
      * GET /runner/peak-hours?days=30
      *
      * Builds a day-of-week × hour-of-day demand grid from booking creation
-     * times. `grid` is a 7-row (Sun..Sat) × 24-column (00..23) matrix of
-     * booking counts.
+     * times, bucketed in the BUSINESS timezone (see {@see localExpr()}).
+     * `grid` is a 7-row (Sun..Sat) × 24-column (00..23) matrix of booking
+     * counts, indexed by the same local wall clock the app reads it against.
      */
     public function peakHours(Request $request): JsonResponse
     {
         $days = $this->clampDays($request->integer('days', 30), 90);
 
         $grid = CacheService::swr(
-            "runner:peak_hours:{$days}",
+            // `:v2:` — the grid used to be bucketed in raw UTC. Versioning the
+            // key means a deploy can't keep serving eight-hours-off grids out
+            // of the 30m hard TTL. Bump it again if the bucketing changes.
+            "runner:peak_hours:v2:{$days}",
             self::SWR_SOFT,
             self::SWR_HARD,
             function () use ($days) {
@@ -138,20 +142,56 @@ class HeatmapController extends Controller
 
     private function dowExpr(): string
     {
+        $col = $this->localExpr('created_at');
+
         return match ($this->driver()) {
-            'pgsql' => 'extract(dow from created_at)',
+            'pgsql' => "extract(dow from {$col})",
             // MySQL DAYOFWEEK() is 1=Sun..7=Sat; shift to 0=Sun..6=Sat.
-            'mysql', 'mariadb' => '(dayofweek(created_at) - 1)',
-            default => "cast(strftime('%w', created_at) as integer)", // sqlite
+            'mysql', 'mariadb' => "(dayofweek({$col}) - 1)",
+            default => "cast(strftime('%w', {$col}) as integer)", // sqlite
         };
     }
 
     private function hourExpr(): string
     {
+        $col = $this->localExpr('created_at');
+
         return match ($this->driver()) {
-            'pgsql' => 'extract(hour from created_at)',
-            'mysql', 'mariadb' => 'hour(created_at)',
-            default => "cast(strftime('%H', created_at) as integer)", // sqlite
+            'pgsql' => "extract(hour from {$col})",
+            'mysql', 'mariadb' => "hour({$col})",
+            default => "cast(strftime('%H', {$col}) as integer)", // sqlite
+        };
+    }
+
+    /**
+     * A UTC datetime column shifted into the business timezone, driver-aware.
+     *
+     * The rows are stored in UTC and the app timezone stays UTC, but the app
+     * reads this grid against the runner's own wall clock
+     * (`grid[now.getDay()][now.getHours()]`) and prints local hour labels. PH
+     * is UTC+8, so bucketing the raw column put the 6pm Manila rush in the
+     * 10am cell: every peak label, the "it's busy right now" nudge and the
+     * next-peak hint fired eight hours off. Shift before bucketing and the
+     * grid indices mean what the client already assumes they mean.
+     *
+     * Same conversion the admin hour chart already does
+     * ({@see \App\Support\AdminChartData::manilaHour()}), but derived from
+     * config('app.business_timezone') so the grid and the earnings windows
+     * share one source of truth. MySQL gets a NUMERIC offset because
+     * convert_tz() with a named zone needs the mysql.time_zone tables loaded,
+     * which the managed database does not ship.
+     */
+    private function localExpr(string $col): string
+    {
+        $tz = (string) config('app.business_timezone', 'Asia/Manila');
+        $now = now($tz);
+
+        return match ($this->driver()) {
+            // Postgres resolves zone names itself (and would handle DST).
+            'pgsql' => "(({$col} at time zone 'UTC') at time zone '" . str_replace("'", '', $tz) . "')",
+            'mysql', 'mariadb' => "convert_tz({$col}, '+00:00', '" . $now->format('P') . "')",
+            // sqlite (test suite): minutes keeps half-hour zones honest too.
+            default => "datetime({$col}, '" . sprintf('%+d minutes', $now->utcOffset()) . "')",
         };
     }
 }

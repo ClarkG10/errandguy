@@ -176,6 +176,12 @@ export const runnerService = {
       }
       p = api.post(`/runner/errand/${id}/status`, form, {
         headers: { 'Content-Type': 'multipart/form-data' },
+        // The client default (30s) is a JSON-request budget, and it was
+        // applying to a 1600px proof JPEG going up provincial LTE: uploads
+        // that were progressing fine got killed at 30s, reverting a handover
+        // the runner had actually made. Photo transitions get a real upload
+        // window; the JSON variant below keeps the default.
+        timeout: 90_000,
         onUploadProgress: onProgress
           ? (e: any) => {
               if (e.total) onProgress(e.loaded / e.total);
@@ -235,6 +241,9 @@ export const runnerService = {
     } as any);
     const p = api.post(`/runner/errand/${id}/status`, form, {
       headers: { 'Content-Type': 'multipart/form-data' },
+      // Same reason as advanceErrandStatus's multipart branch: a receipt photo
+      // on provincial LTE routinely outlives a 30s JSON budget.
+      timeout: 90_000,
       onUploadProgress: onProgress
         ? (e: any) => {
             if (e.total) onProgress(e.loaded / e.total);
@@ -385,8 +394,12 @@ export const runnerService = {
     });
   },
 
-  triggerSOS(bookingId: string) {
-    return api.post(`/runner/errand/${bookingId}/sos`);
+  /** Runner-side panic button. See bookingService.triggerSOS for why the
+   *  timeout is overridable and why replay is safe. Go through `raiseSos()`. */
+  triggerSOS(bookingId: string, opts?: { timeoutMs?: number }) {
+    return api.post(`/runner/errand/${bookingId}/sos`, undefined, {
+      ...(opts?.timeoutMs ? { timeout: opts.timeoutMs } : {}),
+    });
   },
 
   deactivateSOS(bookingId: string) {

@@ -35,16 +35,12 @@ import {
   Power,
   TrendingUp,
   Pencil,
+  RefreshCw,
 } from 'lucide-react-native';
 import { NegotiateOfferCard } from '../../../components/runner/NegotiateOfferCard';
 import { VerificationBanner } from '../../../components/runner/VerificationBanner';
-import { IncomingRequestModal } from '../../../components/runner/IncomingRequestModal';
 import { OfferDetailsSheet } from '../../../components/runner/OfferDetailsSheet';
-import {
-  offerExpiresAt,
-  offerTimeoutSeconds,
-  readAcceptDeadline,
-} from '../../../components/runner/offerMeta';
+import { offerExpiresAt, readAcceptDeadline } from '../../../components/runner/offerMeta';
 import { ActiveRunnerErrandCard } from '../../../components/runner/ActiveRunnerErrandCard';
 import { Avatar } from '../../../components/ui/Avatar';
 import { Button } from '../../../components/ui/Button';
@@ -52,10 +48,16 @@ import { ErrorState } from '../../../components/ui/ErrorState';
 import { Illustration } from '../../../components/ui/Illustration';
 import { SyncIndicator } from '../../../components/ui/SyncIndicator';
 import { useRunnerStore } from '../../../stores/runnerStore';
-import { useLocationStore } from '../../../stores/locationStore';
+import {
+  useLocationStore,
+  isPingStale,
+  isServerLocationStale,
+} from '../../../stores/locationStore';
 import { ensureLocationPermission, getCurrentCoords } from '../../../utils/locationPermission';
+import { formatRating } from '../../../utils/rating';
 import { runOptimistic } from '../../../utils/optimistic';
 import { useAuthStore } from '../../../stores/authStore';
+import { useNetworkStore } from '../../../stores/networkStore';
 import { useNotificationStore } from '../../../stores/notificationStore';
 import { runnerService } from '../../../services/runner.service';
 import { formatCurrency } from '../../../utils/formatCurrency';
@@ -64,10 +66,15 @@ import { formatRelativeTime } from '../../../utils/formatDate';
 import { formatDistanceKm } from '../../../utils/formatDistance';
 import { storage } from '../../../utils/storage';
 import { RunnerHomeSkeleton } from '../../../components/ui/Skeleton';
-import { useQuery } from '../../../hooks/useQuery';
+import { useQuery, invalidateQuery } from '../../../hooks/useQuery';
+import { useEchoChannel } from '../../../hooks/useEchoChannel';
+import {
+  isClosedStatus,
+  isStatusBackwards,
+  isTerminalStatus,
+} from '../../../constants/statusRank';
 import { CacheTTL } from '../../../services/cache.service';
 import { prefetchRunnerErrand } from '../../../services/preload.service';
-import { useIncomingRequest } from '../../../hooks/useIncomingRequest';
 import { useSmartPolling } from '../../../hooks/useSmartPolling';
 import { useReducedMotion } from '../../../hooks/useReducedMotion';
 import { useHideTabBarOnScroll } from '../../../hooks/useHideTabBarOnScroll';
@@ -196,7 +203,6 @@ export default function RunnerHomeScreen() {
     incomingRequest,
     clearIncomingRequest,
     acceptErrand,
-    declineErrand,
     earnings,
     setEarnings,
     runnerProfile,
@@ -207,6 +213,14 @@ export default function RunnerHomeScreen() {
   // while online). The action refs are stable, so these never re-render here.
   const startTracking = useLocationStore((s) => s.startTracking);
   const stopTracking = useLocationStore((s) => s.stopTracking);
+  const pingLocation = useLocationStore((s) => s.pingLocation);
+  // BOOLEAN selectors on purpose: a raw `lastPingAt` selector would re-render
+  // this whole screen on every accepted ping (up to 1 per 6s during an
+  // errand). These only change identity when the staleness boundary is
+  // crossed, or when a ping starts/finishes.
+  const pingStale = useLocationStore((s) => isPingStale(s.lastPingAt));
+  const neverPinged = useLocationStore((s) => s.lastPingAt == null);
+  const locationPinging = useLocationStore((s) => s.isPinging);
   const unreadCount = useNotificationStore((s) => s.unreadCount);
   const hideOnScroll = useHideTabBarOnScroll();
 
@@ -298,26 +312,15 @@ export default function RunnerHomeScreen() {
     { staleTime: CacheTTL.MEDIUM, ttl: CacheTTL.LONG, enabled },
   );
 
-  // Realtime offer stream. Declared AFTER the queries so a broadcast can also
-  // freshen the open-offers list: the fixed-match popup is only half the
-  // story — dispatch running at all is a strong signal this runner's feed
-  // just changed.
-  useIncomingRequest(isOnline && user?.id ? user.id : null, {
-    onOffer: (offer) => {
-      void offersQ.revalidate();
-      // The broadcast projection is deliberately thin (no accept_deadline, no
-      // payment metadata, no shopping budget / stops). Pull the full
-      // BookingResource straight away so the modal upgrades itself in seconds
-      // rather than waiting out the 30s reconcile poll.
-      if (offer.status === 'matched') void currentErrandQ.revalidate();
-    },
-    onOfferWithdrawn: () => {
-      // Someone else took it (or it expired). Re-read the feed so the dead
-      // card goes now, instead of the runner tapping it and being told the
-      // errand is already gone.
-      void offersQ.revalidate();
-    },
-  });
+  // The realtime offer stream is NOT mounted here. It lives on the runner
+  // GROUP LAYOUT (OfferWatcher in app/(runner)/_layout.tsx) so an offer
+  // reaches a runner who is reading Earnings, History or Busy-areas — these
+  // tabs are freezeOnBlur, so a subscription owned by this screen went deaf
+  // the moment they switched away. The watcher invalidates
+  // ['runner','errand','available'] on every broadcast, which this screen's
+  // offersQ picks up in place. What stays here is the REST reconcile below:
+  // the fallback that raises (and widens the window on) a matched offer when
+  // realtime never delivered.
 
   const recentErrands = (historyQ.data ?? []).slice(0, 3);
   const negotiateOffers = offersQ.data ?? [];
@@ -354,16 +357,131 @@ export default function RunnerHomeScreen() {
     runOnMount: false,
   });
 
+  // ── The phantom active errand ──────────────────────────────────────────
+  // `activeErrand = currentErrand ?? query` lets the store's copy shadow the
+  // server forever: after a remote cancel the 30s poll fetches a fresh `null`
+  // and the hero card, the "waiting for requests" state and the OPEN-OFFERS
+  // POLL (gated on `!activeErrand`) all stayed frozen on a job that no longer
+  // existed — the runner was silently shut out of paid work with no visible
+  // cause. Two paths close it, and neither may erase a LIVE errand:
+  //
+  //  1. Realtime — the same `booking.{id}` / `booking.status` channel the
+  //     cockpit uses, so a cancellation reaches Home in about a second. Only
+  //     the store errand is watched, and forward-only merges apply.
+  //  2. Reconcile — when the server's own "my current errand" has SETTLED as
+  //     null (not loading, no error, online) we don't take that as proof on
+  //     its own: we re-read THAT errand and clear only if it comes back
+  //     terminal (or gone). A dropped request can therefore never wipe the
+  //     card mid-job, which is what the `currentErrand ?? query` precedence
+  //     exists to protect.
+  const watchedErrandId = currentErrand?.id ?? null;
+  const applyActiveErrandStatus = useCallback((payload: unknown) => {
+    const incoming = payload as Partial<Booking> | null;
+    if (!incoming?.status) return;
+    const store = useRunnerStore.getState();
+    const cur = store.currentErrand;
+    if (!cur) return;
+    if (incoming.id && incoming.id !== cur.id) return;
+    if (incoming.status === cur.status) return;
+    if (isTerminalStatus(incoming.status)) {
+      if (isClosedStatus(incoming.status)) {
+        // Clears currentErrand (runnerStore.updateErrandStatus), which re-arms
+        // the idle affordances and the open-offers poll.
+        store.updateErrandStatus(incoming.status);
+      } else {
+        useRunnerStore.setState({ currentErrand: null });
+      }
+      void invalidateQuery(['runner', 'errand', 'current']);
+      if (incoming.status === 'cancelled') {
+        haptics.warning();
+        toast.warning('This errand was cancelled. You’re back on the offer feed.');
+      }
+      return;
+    }
+    // Non-terminal: keep the card in step, but never let a late event move it
+    // backwards past the runner's own optimistic advance.
+    if (isStatusBackwards(incoming.status, cur.status)) return;
+    useRunnerStore.setState({ currentErrand: { ...cur, ...incoming } as Booking });
+  }, []);
+
+  useEchoChannel({
+    channel: `booking.${watchedErrandId ?? 'none'}`,
+    event: 'booking.status',
+    enabled: !!watchedErrandId,
+    onEvent: applyActiveErrandStatus,
+  });
+
+  const phantomCheckedRef = React.useRef<string | null>(null);
+  const isOffline = useNetworkStore((s) => s.isOffline);
+  useEffect(() => {
+    const stale = currentErrand;
+    if (!stale) {
+      phantomCheckedRef.current = null;
+      return;
+    }
+    // Only ever act on a SETTLED, successful, online "no current errand".
+    if (isOffline) return;
+    if (currentErrandQ.loading || currentErrandQ.error) return;
+    if (currentErrandQ.updatedAt == null) return;
+    if (currentErrandQ.data) return;
+    if (phantomCheckedRef.current === stale.id) return;
+    phantomCheckedRef.current = stale.id;
+    let cancelled = false;
+    runnerService
+      .getErrand(stale.id)
+      .then((r) => {
+        if (cancelled) return;
+        const fresh = (r?.data?.data ?? null) as Booking | null;
+        const store = useRunnerStore.getState();
+        if (store.currentErrand?.id !== stale.id) return;
+        if (!fresh) {
+          useRunnerStore.setState({ currentErrand: null });
+          return;
+        }
+        if (!isTerminalStatus(fresh.status)) return; // still live — store was right
+        if (isClosedStatus(fresh.status)) store.updateErrandStatus(fresh.status);
+        else useRunnerStore.setState({ currentErrand: null });
+        if (fresh.status === 'cancelled') {
+          haptics.warning();
+          toast.warning('This errand was cancelled. You’re back on the offer feed.');
+        }
+      })
+      .catch((err: any) => {
+        if (cancelled) return;
+        // 404/403 — the errand is gone or no longer ours. Anything else
+        // (transport, 5xx) leaves the card alone and re-arms the check.
+        const status = err?.status;
+        if (status === 404 || status === 403) {
+          if (useRunnerStore.getState().currentErrand?.id === stale.id) {
+            useRunnerStore.setState({ currentErrand: null });
+          }
+        } else {
+          phantomCheckedRef.current = null;
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    currentErrand,
+    currentErrandQ.data,
+    currentErrandQ.loading,
+    currentErrandQ.error,
+    currentErrandQ.updatedAt,
+    isOffline,
+  ]);
+
   const lastSeenMatchIdRef = React.useRef<string | null>(null);
-  /** Offers the runner explicitly declined — never re-raise these, even if a
-   *  fire-and-forget decline POST failed and the booking is still `matched`. */
-  const declinedOfferIdsRef = React.useRef<Set<string>>(new Set());
   useEffect(() => {
     const fresh = currentErrandQ.data;
     if (!fresh) return;
     if (fresh.status !== 'matched') return;
     if (currentErrand?.id === fresh.id) return;
-    if (declinedOfferIdsRef.current.has(fresh.id)) return;
+    // Offers the runner explicitly declined — never re-raise these, even if a
+    // fire-and-forget decline POST failed and the booking is still `matched`.
+    // The memory lives in runnerStore because the decline is now handled by
+    // the layout's OfferWatcher, not by this screen.
+    if (useRunnerStore.getState().isOfferDeclined(fresh.id)) return;
 
     // The REST payload is richer than the Reverb offer projection (which
     // carries no accept_deadline / payment_method_type / amount_to_collect).
@@ -385,7 +503,14 @@ export default function RunnerHomeScreen() {
       return;
     }
 
-    // Already raised once and the server window is provably shut → let it go.
+    // The server told us when it stops honouring the accept and that moment has
+    // passed → never raise it. Without this, a modal that already expired
+    // (possibly raised by the layout's OfferWatcher, whose ref this screen
+    // can't see) came back for the MIN_OFFER_TIMEOUT floor of five seconds — an
+    // offer the runner cannot actually win.
+    if (Number.isFinite(deadlineMs) && !serverWindowOpen) return;
+
+    // Already raised once and no server deadline to appeal to → let it go.
     // But when the app's own (fallback) countdown closed EARLY and the server
     // is still honouring the accept, give the offer back with the real window
     // instead of silently losing the runner a job they never turned down.
@@ -711,34 +836,33 @@ export default function RunnerHomeScreen() {
     [acceptingOfferId, acceptErrand, clearIncomingRequest, offersQ, router],
   );
 
-  const handleAcceptErrand = useCallback(() => {
-    if (!incomingRequest) return;
-    return claimOffer(incomingRequest.booking);
-  }, [incomingRequest, claimOffer]);
-
-  const handleDeclineErrand = useCallback(() => {
-    if (!incomingRequest) return;
-    // Dismiss the offer INSTANTLY, then fire the decline in the background.
-    // Capture the id before clearing — declineErrand() nulls incomingRequest.
-    // No rollback: re-showing a declined offer is worse than a silent miss,
-    // and the server auto-expires the offer window regardless.
-    const id = incomingRequest.booking.id;
-    declinedOfferIdsRef.current.add(id);
-    declineErrand();
-    runnerService.declineErrand(id).catch(() => {});
-  }, [incomingRequest, declineErrand]);
-
   /**
-   * The countdown ran out on THIS device. That is not a decision, so it must
-   * not touch POST /decline: the decline endpoint recomputes acceptance_rate
-   * on every call, and that stat also ranks the runner inside MatchingService
-   * — a phone in a pocket was permanently costing them standing. Just dismiss;
-   * the server's own ExpireStaleMatchesJob re-matches the booking on time.
+   * "Refresh my location" — the action behind the dispatch-visibility warning
+   * on the hero. Sends one ping from a fresh fix (never prompting), which is
+   * all that matching's `last_location_at >= now()-5min` gate needs.
    */
-  const handleExpireOffer = useCallback(() => {
-    clearIncomingRequest();
-    void currentErrandQ.revalidate();
-  }, [clearIncomingRequest, currentErrandQ]);
+  const handleRefreshVisibility = useCallback(async () => {
+    haptics.selection();
+    const ok = await pingLocation({ fresh: true });
+    if (ok) {
+      toast.success('Location refreshed — you’re visible to customers again.');
+      return;
+    }
+    // Name the real reason: no connection, revoked permission, or no fix.
+    if (useNetworkStore.getState().isOffline) {
+      toast.error('No connection — we’ll share your location again once you’re back online.');
+      return;
+    }
+    const granted = await Location.getForegroundPermissionsAsync()
+      .then((r) => r.status === 'granted')
+      .catch(() => false);
+    setLocationGranted(granted);
+    toast.error(
+      granted
+        ? 'Couldn’t get a location fix. Check GPS and try again.'
+        : 'Location is off — turn it on to keep receiving errands.',
+    );
+  }, [pingLocation]);
 
   const verificationStatus = runnerProfile?.verification_status ?? 'pending';
   const firstName = user?.full_name?.split(' ')[0] ?? 'Runner';
@@ -767,13 +891,43 @@ export default function RunnerHomeScreen() {
   const lifetimeFailed =
     profileQ.error != null && profileQ.data == null && !runnerProfile;
 
+  // ── Dispatch visibility (the honest half of "ONLINE") ─────────────────
+  // Matching only considers runners whose last_location_at is inside 5
+  // minutes (MatchingService). GPS is a foreground-only watch — background
+  // location is deliberately not implemented — and expo-location's
+  // timeInterval is Android-only, so a phone in a pocket OR a runner sitting
+  // perfectly still can stop emitting and age out of every match while this
+  // card insists "receiving requests". We can't follow them into the
+  // background; we CAN stop lying about it and offer the one tap that fixes
+  // it. Prefer our own send time (immune to clock skew) and fall back to the
+  // server's last_location_at only before the first ping of the session
+  // (cold start against a server that still has them online).
+  const dispatchStale =
+    isOnline &&
+    !activeErrand &&
+    (pingStale ||
+      (neverPinged && isServerLocationStale(profileQ.data?.last_location_at)));
+
   const statusCaption = !canGoOnline
     ? 'Verification required'
+    : isOnline && locationPinging && (dispatchStale || neverPinged)
+    ? 'Reconnecting your location…'
+    : isOnline && dispatchStale
+    ? 'Online, but customers can’t see you'
     : isOnline
     ? 'You’re online · receiving requests'
     : locationGranted === false
     ? 'Location off · enable to start'
     : 'Tap the power button to go online';
+
+  // Only offer the tap when it can actually help — and never over a ping
+  // already in flight (which would double-fire the fix).
+  const showVisibilityRefresh = dispatchStale && !locationPinging;
+  const statusDotColor = !isOnline
+    ? 'rgba(255,255,255,0.6)'
+    : dispatchStale
+    ? LightColors.warning
+    : LightColors.success;
 
   const goalProgress =
     dailyGoal != null && dailyGoal > 0
@@ -967,7 +1121,11 @@ export default function RunnerHomeScreen() {
                       className="items-center justify-center"
                       style={{ width: 72, height: 72 }}
                     >
-                      {isOnline && !reduceMotion ? (
+                      {/* The halo is the loudest "you are live" claim on the
+                          screen — drop it while matching can't actually see
+                          this runner, so the pulse never contradicts the
+                          caption right below it. */}
+                      {isOnline && !reduceMotion && !dispatchStale ? (
                         <Animated.View
                           pointerEvents="none"
                           style={[
@@ -1101,23 +1259,50 @@ export default function RunnerHomeScreen() {
                     </Text>
                   </Pressable>
                 ))}
-                {/* Status caption — quiet, rides on the card */}
-                <View className="flex-row items-center mt-4 pt-3 border-t border-white/20">
+                {/* Status caption — quiet, rides on the card. Becomes the
+                    one-tap fix while dispatch can't see the runner: layout in
+                    className (a Pressable styled only through style={() => …}
+                    drops flexDirection). */}
+                <Pressable
+                  onPress={showVisibilityRefresh ? handleRefreshVisibility : undefined}
+                  disabled={!showVisibilityRefresh}
+                  hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                  accessibilityRole={showVisibilityRefresh ? 'button' : 'text'}
+                  accessibilityLabel={
+                    showVisibilityRefresh
+                      ? 'Customers can’t see your location. Tap to refresh it.'
+                      : statusCaption
+                  }
+                  className="flex-row items-center mt-4 pt-3 border-t border-white/20"
+                >
                   <View
                     className="rounded-full"
                     style={{
                       width: 6,
                       height: 6,
-                      backgroundColor: isOnline
-                        ? LightColors.success
-                        : 'rgba(255,255,255,0.6)',
+                      backgroundColor: statusDotColor,
                       marginRight: 6,
                     }}
                   />
-                  <Text className="text-[11px] font-montserrat text-white">
+                  <Text
+                    className="flex-1 text-[11px] font-montserrat text-white"
+                    numberOfLines={2}
+                  >
                     {statusCaption}
                   </Text>
-                </View>
+                  {showVisibilityRefresh ? (
+                    <View className="flex-row items-center ml-2">
+                      <RefreshCw
+                        size={12}
+                        color={LightColors.textInverse}
+                        strokeWidth={2.2}
+                      />
+                      <Text className="text-[11px] font-montserrat-bold text-white ml-1 underline">
+                        Refresh
+                      </Text>
+                    </View>
+                  ) : null}
+                </Pressable>
               </LinearGradient>
 
               {/* Offline stale-data cue — renders ONLY while we're showing
@@ -1248,6 +1433,16 @@ export default function RunnerHomeScreen() {
                 ? 'Sit tight — we’ll ping you the moment a nearby errand comes in.'
                 : 'Tap the power button above to start receiving errands.'}
             </Text>
+            {/* The one thing a waiting runner has to know and was never told:
+                visibility to dispatch depends on the app being open, because
+                location only streams in the foreground. Cheaper to say than to
+                let them wait out a busy hour they were invisible for. */}
+            {isOnline ? (
+              <Text className="text-[11px] font-montserrat text-textTertiary mt-2 text-center px-6">
+                Keep ErrandGuy open — we can only share your location while the
+                app is on screen.
+              </Text>
+            ) : null}
             {/* Softer live-demand hint while online + idle: when the next busy
                 slot is known, point to it so a quiet spell still feels
                 actionable. Neutral chrome (bg-surfaceMuted, blue glyph) — this
@@ -1300,7 +1495,8 @@ export default function RunnerHomeScreen() {
                   className="text-[20px] font-inter-semi tabular-nums text-textPrimary"
                   style={{ letterSpacing: -0.3 }}
                 >
-                  {Number(user?.avg_rating ?? 0).toFixed(1)}
+                  {/* 'New', not a demoralising 0.0, before the first review. */}
+                  {formatRating(user?.avg_rating, user?.total_ratings).label}
                 </Text>
                 <Star
                   size={13}
@@ -1482,22 +1678,9 @@ export default function RunnerHomeScreen() {
         )}
       </ScrollView>
 
-      {incomingRequest && (
-        <IncomingRequestModal
-          // Keyed per offer so a second match remounts the countdown with its
-          // own deadline instead of inheriting the first one's.
-          key={incomingRequest.booking.id}
-          booking={incomingRequest.booking}
-          onAccept={handleAcceptErrand}
-          onDecline={handleDeclineErrand}
-          onExpire={handleExpireOffer}
-          // The SERVER's acceptance window (accept_deadline), not a 30s guess.
-          timeoutSeconds={offerTimeoutSeconds(
-            readAcceptDeadline(incomingRequest.booking),
-          )}
-          expiresAt={incomingRequest.expiresAt}
-        />
-      )}
+      {/* The incoming-offer modal is NOT rendered here — it belongs to
+          OfferWatcher in app/(runner)/_layout.tsx, above the tabs, so it can
+          also raise for a runner sitting on Earnings or History. */}
 
       {/* Full detail + Accept for an OPEN (negotiate) offer. */}
       <OfferDetailsSheet
