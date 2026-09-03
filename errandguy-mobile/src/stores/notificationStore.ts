@@ -5,6 +5,20 @@ interface NotificationState {
   notifications: AppNotification[];
   unreadCount: number;
   isLoading: boolean;
+  /**
+   * Whether the OS will actually deliver a push to this device.
+   *
+   * Registration used to `return null` on a denial and say nothing — so a
+   * runner could go online, be told "You're online and ready for errands",
+   * and never hear about a single offer, because a push is the only channel
+   * that reaches a phone in a pocket. The denial was invisible to the app and
+   * unrecoverable from inside it.
+   *
+   * `null` = not determined yet this launch (registration hasn't run, or the
+   * platform can't tell us). Treat null as "don't warn" — warning on an
+   * unknown is worse than staying quiet.
+   */
+  pushPermission: 'granted' | 'denied' | null;
 
   setNotifications: (notifications: AppNotification[]) => void;
   addNotification: (notification: AppNotification) => void;
@@ -15,12 +29,14 @@ interface NotificationState {
   clear: () => void;
   setUnreadCount: (count: number) => void;
   setIsLoading: (loading: boolean) => void;
+  setPushPermission: (state: 'granted' | 'denied' | null) => void;
 }
 
 export const useNotificationStore = create<NotificationState>((set) => ({
   notifications: [],
   unreadCount: 0,
   isLoading: false,
+  pushPermission: null,
 
   // Replace the full list. Recompute the unread badge from the payload
   // itself so a refresh can never leave the badge out of sync with the
@@ -118,4 +134,6 @@ export const useNotificationStore = create<NotificationState>((set) => ({
   setUnreadCount: (count) => set({ unreadCount: count }),
 
   setIsLoading: (loading) => set({ isLoading: loading }),
+
+  setPushPermission: (state) => set({ pushPermission: state }),
 }));

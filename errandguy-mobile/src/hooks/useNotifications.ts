@@ -5,6 +5,7 @@ import { Platform, AppState } from 'react-native';
 import { router } from 'expo-router';
 import { userService } from '../services/user.service';
 import { useAuthStore } from '../stores/authStore';
+import { useNotificationStore } from '../stores/notificationStore';
 
 Notifications.setNotificationHandler({
   handleNotification: async () => ({
@@ -36,8 +37,17 @@ export function useNotifications(enabled = true) {
     }
 
     if (finalStatus !== 'granted') {
+      // Record the denial instead of swallowing it. A push is the ONLY channel
+      // that reaches a phone in a pocket, so a runner who denies this can go
+      // online, be told "You're online and ready for errands", and never hear
+      // about a single offer — with nothing in the app able to explain why.
+      // The runner online toggle reads this and says so.
+      useNotificationStore.getState().setPushPermission('denied');
+
       return null;
     }
+
+    useNotificationStore.getState().setPushPermission('granted');
 
     if (Platform.OS === 'android') {
       await Notifications.setNotificationChannelAsync('default', {

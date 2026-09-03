@@ -10,6 +10,7 @@ import {
   Modal,
   TextInput,
   KeyboardAvoidingView,
+  Linking,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -786,7 +787,25 @@ export default function RunnerHomeScreen() {
           );
         } else {
           Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
-          toast.success('You\u2019re online and ready for errands.');
+
+          // "Ready for errands" is only true if an offer can actually reach
+          // them. A push is the ONLY channel that does with the phone in a
+          // pocket, so promising readiness while notifications are denied sends
+          // a runner out for a shift that will look completely dead to them.
+          // Mirrors the location warning above, including the route to fix it.
+          if (useNotificationStore.getState().pushPermission === 'denied') {
+            toast.warning(
+              'You\u2019re online, but notifications are off \u2014 you won\u2019t be told about new errands.',
+              {
+                actionLabel: 'Turn on',
+                onAction: () => {
+                  Linking.openSettings().catch(() => {});
+                },
+              },
+            );
+          } else {
+            toast.success('You\u2019re online and ready for errands.');
+          }
         }
       }
     } catch (err: any) {
