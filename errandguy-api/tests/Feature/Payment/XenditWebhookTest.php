@@ -107,6 +107,46 @@ class XenditWebhookTest extends TestCase
         $this->assertEquals('failed', $this->booking->fresh()->payment_status);
     }
 
+    public function test_payment_failed_cancels_a_live_online_booking_and_releases_the_runner(): void
+    {
+        // BL-1 dispatch-before-capture: the booking was matched to a runner while
+        // the gateway charge was still pending. When the customer abandons the
+        // charge, the failed webhook must cancel the errand so the runner isn't
+        // left working an order that was never paid for.
+        $runner = User::factory()->create(['role' => 'runner', 'status' => 'active']);
+        $this->booking->update(['status' => 'matched', 'runner_id' => $runner->id]);
+
+        $this->postWebhook([
+            'event' => 'payment.failed',
+            'data' => ['id' => 'ddpy_x', 'payment_request_id' => 'pr_test_123', 'status' => 'FAILED'],
+        ])->assertOk();
+
+        $this->booking->refresh();
+        $this->assertEquals('cancelled', $this->booking->status);
+        $this->assertNotNull($this->booking->cancelled_at);
+        $this->assertNotEmpty($this->booking->cancellation_reason);
+        $this->assertDatabaseHas('booking_status_logs', [
+            'booking_id' => $this->booking->id,
+            'status' => 'cancelled',
+        ]);
+    }
+
+    public function test_late_payment_failure_never_cancels_an_already_completed_errand(): void
+    {
+        // The runner completed the errand before the charge captured (settlement
+        // back-fills the earning). A late payment.failed must NOT tear down the
+        // finished errand — only a still-live, genuinely unpaid booking is cancelled.
+        $runner = User::factory()->create(['role' => 'runner', 'status' => 'active']);
+        $this->booking->update(['status' => 'completed', 'runner_id' => $runner->id]);
+
+        $this->postWebhook([
+            'event' => 'payment.failed',
+            'data' => ['id' => 'ddpy_x', 'payment_request_id' => 'pr_test_123', 'status' => 'FAILED'],
+        ])->assertOk();
+
+        $this->assertEquals('completed', $this->booking->fresh()->status);
+    }
+
     public function test_unknown_payment_id_is_ignored(): void
     {
         $payload = [
