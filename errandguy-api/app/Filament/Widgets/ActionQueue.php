@@ -7,10 +7,12 @@ use App\Filament\Resources\Bookings\BookingResource;
 use App\Filament\Resources\DisputeTickets\DisputeTicketResource;
 use App\Filament\Resources\RunnerProfiles\RunnerProfileResource;
 use App\Filament\Resources\SOSAlerts\SOSAlertResource;
+use App\Filament\Resources\SupportTickets\SupportTicketResource;
 use App\Models\Booking;
 use App\Models\DisputeTicket;
 use App\Models\RunnerProfile;
 use App\Models\SOSAlert;
+use App\Models\SupportTicket;
 use App\Models\WalletTransaction;
 use App\Support\AdminCache;
 use Illuminate\Support\Carbon;
@@ -73,6 +75,13 @@ class ActionQueue extends StatsOverviewWidget
                 'payouts_oldest' => WalletTransaction::where('type', 'payout')->where('status', 'pending')->min('created_at'),
                 'stuck' => $stuckQuery()->count(),
                 'stuck_oldest' => $stuckQuery()->min('created_at'),
+                // Support was the only user-blocking queue with no card here,
+                // so a customer waiting on a first reply was invisible from the
+                // dashboard — the one screen an operator actually opens. Aged
+                // on last_message_at, which is when the user last spoke, i.e.
+                // how long they have actually been waiting.
+                'support' => SupportTicket::needsReply()->count(),
+                'support_oldest' => SupportTicket::needsReply()->min('last_message_at'),
             ];
         });
 
@@ -104,6 +113,17 @@ class ActionQueue extends StatsOverviewWidget
                 // open-only filter, so the number on the card matches the
                 // list it opens.
                 ->url(DisputeTicketResource::getUrl('index', ['tab' => 'unresolved'])),
+
+            Stat::make('Waiting on us', number_format($d['support']))
+                ->description($this->withAge($d['support'] > 0 ? 'Support tickets needing a reply' : 'Everyone has been answered', $d['support_oldest']))
+                ->descriptionIcon('heroicon-m-inbox-arrow-down')
+                // Tighter than the dispute thresholds: a dispute is a
+                // deliberation, an unanswered message is someone sitting there.
+                ->color($this->escalate($d['support_oldest'], $d['support'] > 0 ? 'warning' : 'gray', 120, 480))
+                // Lands on the tab that shows EXACTLY this set, oldest-unanswered
+                // first — so the number on the card matches the list it opens
+                // (same reasoning as the disputes card above).
+                ->url(SupportTicketResource::getUrl('index', ['tab' => 'awaiting'])),
 
             Stat::make('Pending payouts', number_format($d['payouts']))
                 ->description($this->withAge($d['payouts'] > 0 ? 'Awaiting disbursement' : 'Nothing pending', $d['payouts_oldest']))
