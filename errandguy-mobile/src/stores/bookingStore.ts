@@ -13,6 +13,23 @@ interface PersistedDraftEnvelope {
   step: number;
   /** epoch ms */
   savedAt: number;
+  /**
+   * The booking-create idempotency key for THIS draft, and the payload
+   * signature it was minted against.
+   *
+   * It has to live in the envelope rather than in a component ref because the
+   * ref dies with the process and the draft does not. A customer who force-quits
+   * during the multi-second create — after the server has persisted the booking
+   * but before the response lands — comes back to a resume card; confirming it
+   * with a fresh key made the server treat it as a brand-new request and create
+   * a SECOND errand with a SECOND charge. Two runners dispatched to one pickup.
+   *
+   * The signature preserves the required semantics: an EDITED draft must mint a
+   * new key (the server hashes the whole body), while an untouched resumed draft
+   * replays the same one and EnsureIdempotency returns the original booking.
+   */
+  createKey?: string | null;
+  createKeySig?: string | null;
 }
 
 const DRAFT_STORAGE_KEY = '@booking_draft_v1';
@@ -86,16 +103,27 @@ interface BookingState {
   updateDraft: (data: Partial<DraftBooking>) => void;
   /** Read the persisted draft from AsyncStorage and merge it in. Idempotent. */
   loadDraftFromStorage: () => Promise<void>;
+  /** Idempotency key for the in-flight create, persisted with the draft. */
+  createKey: string | null;
+  createKeySig: string | null;
+  setCreateKey: (key: string | null, sig: string | null) => void;
 }
 
 let persistTimer: ReturnType<typeof setTimeout> | null = null;
-const schedulePersist = (state: { draftBooking: DraftBooking; currentStep: number }) => {
+const schedulePersist = (state: {
+  draftBooking: DraftBooking;
+  currentStep: number;
+  createKey: string | null;
+  createKeySig: string | null;
+}) => {
   if (persistTimer) clearTimeout(persistTimer);
   persistTimer = setTimeout(() => {
     const envelope: PersistedDraftEnvelope = {
       draft: state.draftBooking,
       step: state.currentStep,
       savedAt: Date.now(),
+      createKey: state.createKey,
+      createKeySig: state.createKeySig,
     };
     // Empty drafts: just clear the row instead of writing `{}`.
     const isEmpty =
@@ -117,6 +145,8 @@ export const useBookingStore = create<BookingState>((set, get) => ({
   draftBooking: {},
   isLoading: false,
   isDraftHydrated: false,
+  createKey: null,
+  createKeySig: null,
 
   setActiveBooking: (booking) => set({ activeBooking: booking }),
 
@@ -127,8 +157,29 @@ export const useBookingStore = create<BookingState>((set, get) => ({
     }
   },
 
+  setCreateKey: (key, sig) => {
+    set({ createKey: key, createKeySig: sig });
+    // Persist IMMEDIATELY rather than through the debounce: the whole point is
+    // to survive a kill that can land during the create request itself, and a
+    // 250ms window is exactly when the customer is staring at the overlay
+    // deciding whether it has hung.
+    const s = get();
+    AsyncStorage.setItem(
+      DRAFT_STORAGE_KEY,
+      JSON.stringify({
+        draft: s.draftBooking,
+        step: s.currentStep,
+        savedAt: Date.now(),
+        createKey: key,
+        createKeySig: sig,
+      } satisfies PersistedDraftEnvelope),
+    ).catch(() => {});
+  },
+
   clearDraft: () => {
-    set({ draftBooking: {}, currentStep: 0 });
+    // The key dies with the draft — a NEW booking must never replay the
+    // previous one's key, or idempotency would return the old booking.
+    set({ draftBooking: {}, currentStep: 0, createKey: null, createKeySig: null });
     if (persistTimer) clearTimeout(persistTimer);
     AsyncStorage.removeItem(DRAFT_STORAGE_KEY).catch(() => {});
   },
@@ -162,6 +213,8 @@ export const useBookingStore = create<BookingState>((set, get) => ({
           draftBooking: envelope.draft,
           currentStep: typeof envelope.step === 'number' ? envelope.step : 0,
           isDraftHydrated: true,
+          createKey: envelope.createKey ?? null,
+          createKeySig: envelope.createKeySig ?? null,
         });
       } else {
         await AsyncStorage.removeItem(DRAFT_STORAGE_KEY);

@@ -147,6 +147,7 @@ export default function ReviewScreen() {
   const updateDraft = useBookingStore((s) => s.updateDraft);
   const setStep = useBookingStore((s) => s.setStep);
   const clearDraft = useBookingStore((s) => s.clearDraft);
+  const setCreateKey = useBookingStore((s) => s.setCreateKey);
   const setActiveBooking = useBookingStore((s) => s.setActiveBooking);
 
   const [estimate, setEstimate] = useState<EstimateResult | null>(null);
@@ -219,11 +220,9 @@ export default function ReviewScreen() {
   // original 201 instead of minting a second booking and a second charge.
   // Keeping it OUT of the persisted attempt means retaining the key never also
   // retains the one-payment-at-a-time lock the retry would trip over.
-  const createKeyRef = useRef<string | null>(null);
   // The payload the retained key was first used with. A key re-sent with a
   // materially different body is rejected 422 ("already used with a different
   // request"), so any edit to the draft/fare/method rotates it.
-  const createKeySigRef = useRef<string | null>(null);
   // The attempt THIS screen started. The verification overlay is gated on it so
   // a previous booking's rehydrated attempt can never flip terminal over a new
   // draft and teleport the customer to the old booking (its outcome belongs to
@@ -688,10 +687,17 @@ export default function ReviewScreen() {
       // time (the server hashes the whole request, so an edited draft MUST get
       // a fresh key); mint one otherwise. This is what turns a timed-out create
       // into a replay of the original booking rather than a second one.
+      // Read from the STORE, not a component ref. The ref died with the
+      // process while the draft survived it, so a customer who force-quit
+      // during the create came back to a resume card that minted a fresh key —
+      // and the server, seeing a new key, created a SECOND errand with a
+      // SECOND charge. Two runners to one pickup, two amounts to pay.
       const payloadSignature = JSON.stringify(payload);
-      if (!createKeyRef.current || createKeySigRef.current !== payloadSignature) {
-        createKeyRef.current = newIdempotencyKey();
-        createKeySigRef.current = payloadSignature;
+      const persisted = useBookingStore.getState();
+      let createKey = persisted.createKey;
+      if (!createKey || persisted.createKeySig !== payloadSignature) {
+        createKey = newIdempotencyKey();
+        setCreateKey(createKey, payloadSignature);
       }
       // One attempt = one idempotency key, reused on retry so the backend can
       // never create two bookings / two charges from a double-tap or retry.
@@ -699,7 +705,7 @@ export default function ReviewScreen() {
         kind: 'booking',
         amount: paymentAmount,
         method: paymentMethodType ?? 'cash',
-        idempotencyKey: createKeyRef.current,
+        idempotencyKey: createKey,
       });
       ownedAttemptRef.current = payAttempt.attemptId;
 
@@ -708,8 +714,7 @@ export default function ReviewScreen() {
       });
       // The server has spoken: this key is spent. A follow-up booking (even an
       // identical rebook) must charge on its own key.
-      createKeyRef.current = null;
-      createKeySigRef.current = null;
+      setCreateKey(null, null);
       const booking = res.data.data;
       // The create body is JSON (no file parts), so the customer's staged item
       // photos are uploaded here right after — best-effort, since the booking
@@ -842,8 +847,7 @@ export default function ReviewScreen() {
       // genuinely new attempt.
       resolveAttempt();
       if (!shouldRetainIdempotencyKey(err)) {
-        createKeyRef.current = null;
-        createKeySigRef.current = null;
+        setCreateKey(null, null);
       }
       setBookingStage(null);
       haptics.error();
