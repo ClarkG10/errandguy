@@ -8,6 +8,7 @@ import {
   ScrollView,
   KeyboardAvoidingView,
   Platform,
+  Linking,
 } from 'react-native';
 import {
   Star,
@@ -154,7 +155,13 @@ export default function TrustedContactsScreen() {
     try {
       const { status } = await Contacts.requestPermissionsAsync();
       if (status !== 'granted') {
-        toast.info('Allow contacts access to import a contact.');
+        // "Allow contacts access" was advice with no way to follow it: after a
+        // denial the OS never prompts again, so tapping Import just repeated
+        // the same message forever. Give the one route that actually works.
+        toast.error('Contacts access is off — enable it in Settings', {
+          actionLabel: 'Settings',
+          onAction: () => Linking.openSettings().catch(() => {}),
+        });
         return;
       }
       const picked = await Contacts.presentContactPickerAsync();

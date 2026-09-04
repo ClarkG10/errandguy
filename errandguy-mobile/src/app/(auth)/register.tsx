@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   View,
   Text,
@@ -9,6 +9,7 @@ import {
   Platform,
   Image,
   StyleSheet,
+  Linking,
 } from 'react-native';
 import * as Haptics from 'expo-haptics';
 import { useRouter } from 'expo-router';
@@ -56,7 +57,20 @@ const FIELD_ORDER = [
 export default function RegisterScreen() {
   const router = useRouter();
   const { register } = useAuth();
-  const { image, pickImage } = useImagePicker();
+  // Opt into the hook's denial callback. Without it the avatar tile was a
+  // SILENT dead button once photo access was denied: the picker returns null,
+  // nothing renders, nothing explains, and the OS will not prompt again — on
+  // the very first screen of the app. Same copy and recovery route as
+  // PhotoProofModal / ReceiptCaptureModal.
+  const handlePhotoPermissionDenied = useCallback(() => {
+    toast.error('Photo access is off — enable it in Settings', {
+      actionLabel: 'Settings',
+      onAction: () => Linking.openSettings().catch(() => {}),
+    });
+  }, []);
+  const { image, pickImage } = useImagePicker({
+    onPermissionDenied: handlePhotoPermissionDenied,
+  });
   const reducedMotion = useReducedMotion();
   const { contentMaxWidth } = useResponsive();
   const [loading, setLoading] = useState(false);
