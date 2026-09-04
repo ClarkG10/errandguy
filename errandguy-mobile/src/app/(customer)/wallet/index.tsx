@@ -160,6 +160,49 @@ const csvCell = (value: string | number | null | undefined): string => {
 
 /** Build a spreadsheet-friendly CSV from the loaded transactions.
  *  Columns: Date, Description, Type, Status, Amount (signed), Balance. */
+/** Rows per request when walking the full ledger for an export. */
+const EXPORT_PAGE_SIZE = 100;
+/**
+ * Hard ceiling on exported rows.
+ *
+ * Generous enough that no real customer hits it, low enough that a corrupted
+ * paginator can't loop forever. Hitting it is REPORTED, never silent — the
+ * whole point of this change is that an export must not misrepresent itself.
+ */
+const EXPORT_MAX_ROWS = 5000;
+
+/**
+ * Every wallet transaction, walked page by page.
+ *
+ * Stops on a short page (the last one), on a page that returns nothing, or at
+ * the row ceiling. `truncated` tells the caller the file is not the complete
+ * history so it can say so out loud.
+ */
+async function fetchAllTransactions(
+  type: string | null,
+): Promise<{ items: WalletTransaction[]; truncated: boolean }> {
+  const items: WalletTransaction[] = [];
+
+  for (let page = 1; ; page++) {
+    const r = await paymentService.getWalletTransactions({
+      page,
+      per_page: EXPORT_PAGE_SIZE,
+      ...(type ? { type } : {}),
+    });
+    const batch = (r.data?.data ?? []) as WalletTransaction[];
+    items.push(...batch);
+
+    // Short page = the end. An empty page also ends it, which guards against a
+    // server that keeps answering 200 past the last page.
+    if (batch.length < EXPORT_PAGE_SIZE) {
+      return { items, truncated: false };
+    }
+    if (items.length >= EXPORT_MAX_ROWS) {
+      return { items: items.slice(0, EXPORT_MAX_ROWS), truncated: true };
+    }
+  }
+}
+
 function buildTransactionsCsv(rows: WalletTransaction[]): string {
   const header = ['Date', 'Description', 'Type', 'Status', 'Amount', 'Balance'];
   const lines = rows.map((t) => {
@@ -295,7 +338,26 @@ export default function WalletScreen() {
     setExporting(true);
     try {
       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
-      const csv = buildTransactionsCsv(txList);
+
+      // Export the WHOLE history, not the page on screen.
+      //
+      // The list fetches one server page (20 rows), so this used to hand over
+      // a CSV of the 20 most recent transactions named
+      // "errandguy-transactions-<date>.csv" — a file that looks like a complete
+      // record and silently isn't. A short on-screen list is visibly short; an
+      // authoritative-looking export that omits ten months of spending is the
+      // kind of thing someone reconciles their money against.
+      //
+      // Paged rather than one huge request so a long history can't time out,
+      // and bounded so a pathological account can't spin here forever. If the
+      // bound is hit we say so instead of shipping a silently truncated file.
+      const rows = await fetchAllTransactions(txFilter);
+      const csv = buildTransactionsCsv(rows.items);
+      if (rows.truncated) {
+        toast.info(
+          `Exported your ${rows.items.length.toLocaleString()} most recent transactions.`,
+        );
+      }
       const stamp = new Date().toISOString().slice(0, 10);
       const fileUri = `${FileSystem.cacheDirectory}errandguy-transactions-${stamp}.csv`;
       await FileSystem.writeAsStringAsync(fileUri, csv);
@@ -325,7 +387,10 @@ export default function WalletScreen() {
     } finally {
       setExporting(false);
     }
-  }, [exporting, txList]);
+    // txFilter is read inside (the export honours the active filter), so it
+    // must be a dependency — a stale closure would export the wrong ledger
+    // slice after the customer switches filter.
+  }, [exporting, txList, txFilter]);
 
   // Which ledger row is mid-action (resume / status probe), so its label can
   // say so instead of looking inert while a round-trip runs.
