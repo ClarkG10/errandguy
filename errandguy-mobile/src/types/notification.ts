@@ -19,7 +19,12 @@ export type NotificationType =
   // from the payload — but the rows also land in the inbox, so they must be
   // typed, categorised and tappable like everything else.
   | 'shopping_items_updated'
-  | 'booking_stops_updated';
+  | 'booking_stops_updated'
+  // Reminder that a runner's application is still unfinished
+  // (errandguy:send-onboarding-reminders). Routes to the document screen like
+  // document_update; it needs its own type so the SERVER can read its own
+  // send cadence off the notifications table.
+  | 'onboarding_reminder';
 
 export interface AppNotification {
   id: string;

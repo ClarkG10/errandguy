@@ -130,6 +130,13 @@ const TYPE_META: Record<
     textColor: LightColors.primary,
     chipClass: 'bg-surfaceMuted',
   },
+  // Same surface as document_update — both land the runner on their documents.
+  onboarding_reminder: {
+    icon: FileText,
+    color: LightColors.primary,
+    textColor: LightColors.primary,
+    chipClass: 'bg-surfaceMuted',
+  },
 };
 
 // Short, capitalised label per type — reads as a tiny eyebrow on each
@@ -145,6 +152,7 @@ const TYPE_LABELS: Record<NotificationType, string> = {
   sos: 'Safety',
   system: 'System',
   document_update: 'Document',
+  onboarding_reminder: 'Sign-up',
   referral: 'Referral',
 };
 
@@ -167,7 +175,10 @@ const CATEGORY_TYPES: Record<Exclude<CategoryKey, 'all'>, NotificationType[]> =
     bookings: ['booking_update', 'shopping_items_updated', 'booking_stops_updated'],
     payments: ['payment', 'referral'],
     promos: ['promo'],
-    more: ['chat', 'sos', 'system', 'document_update'],
+    // onboarding_reminder sits here with document_update: both are KYC-ish
+    // nudges, and without an entry it appeared under "All" ONLY — invisible
+    // the moment any chip was selected.
+    more: ['chat', 'sos', 'system', 'document_update', 'onboarding_reminder'],
   };
 
 function matchesCategory(type: NotificationType, category: CategoryKey) {
@@ -420,10 +431,21 @@ export default function NotificationsScreen() {
     new Map<string, ReturnType<typeof setTimeout>>(),
   );
 
+  // The chips are a SERVER filter now, and part of the cache key so switching
+  // category refetches. They used to filter the loaded rows only, so a busy
+  // inbox could show "No payment notifications yet" while the payment rows sat
+  // unfetched on page three.
+  const categoryTypes =
+    category === 'all' ? undefined : CATEGORY_TYPES[category].join(',');
+
   const notifQ = useQuery<AppNotification[]>(
-    ['notifications', userId ?? 'anon'],
+    ['notifications', userId ?? 'anon', category],
     async () => {
-      const r = await notificationService.getNotifications({ page: 1, per_page: 20 });
+      const r = await notificationService.getNotifications({
+        page: 1,
+        per_page: 20,
+        types: categoryTypes,
+      });
       const list = (r.data?.data ?? []) as AppNotification[];
       // Reset pagination state whenever the head page is (re)fetched.
       setPage(1);
@@ -446,7 +468,13 @@ export default function NotificationsScreen() {
     setLoadingMore(true);
     try {
       const next = page + 1;
-      const r = await notificationService.getNotifications({ page: next, per_page: 20 });
+      // Must carry the category too, or page 2 of a filtered view returns
+      // every type and the list mixes categories under one chip.
+      const r = await notificationService.getNotifications({
+        page: next,
+        per_page: 20,
+        types: categoryTypes,
+      });
       const more = (r.data?.data ?? []) as AppNotification[];
       const meta = r.data?.meta ?? r.data;
       const lastPage = Number(meta?.last_page ?? meta?.['last_page']);

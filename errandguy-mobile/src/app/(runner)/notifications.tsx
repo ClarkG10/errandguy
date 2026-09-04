@@ -126,6 +126,14 @@ const TYPE_META: Record<
     textColor: LightColors.primary,
     chipClass: 'bg-surfaceMuted',
   },
+  // The unfinished-application nudge. This is the inbox that actually receives
+  // it, so it gets the same documents-surface treatment as document_update.
+  onboarding_reminder: {
+    icon: FileCheck2,
+    color: LightColors.primary,
+    textColor: LightColors.primary,
+    chipClass: 'bg-surfaceMuted',
+  },
 };
 
 // Short, capitalised label per type — reads as a tiny eyebrow on each
@@ -141,6 +149,7 @@ const TYPE_LABELS: Record<NotificationType, string> = {
   sos: 'Safety',
   system: 'System',
   document_update: 'Document',
+  onboarding_reminder: 'Sign-up',
   referral: 'Referral',
 };
 

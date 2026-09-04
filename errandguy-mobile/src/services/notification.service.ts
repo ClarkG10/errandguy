@@ -4,7 +4,12 @@ import { invalidateQuery } from '../hooks/useQuery';
 const invalidateNotifications = () => invalidateQuery(['notifications']);
 
 export const notificationService = {
-  getNotifications(params?: { page?: number; per_page?: number }) {
+  getNotifications(params?: {
+    page?: number;
+    per_page?: number;
+    /** Comma-separated notification types for the inbox category chips. */
+    types?: string;
+  }) {
     // Only cache the head page (page 1 with default per_page) — deeper
     // pages are stable history fetched on demand and don't benefit
     // from a 15s window cache.
