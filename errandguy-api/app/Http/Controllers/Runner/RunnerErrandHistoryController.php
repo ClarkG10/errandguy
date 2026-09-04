@@ -52,6 +52,18 @@ class RunnerErrandHistoryController extends Controller
             $search = $request->input('search');
             $query->where(function ($q) use ($search) {
                 $q->where('booking_number', 'like', "%{$search}%")
+                  // Addresses and errand type are searched HERE, server-side,
+                  // because the app promises them: its search field is labelled
+                  // "booking number, address, or type". Those three used to be
+                  // filtered client-side over the loaded pages only, so a runner
+                  // searching for an errand from three months ago was told "No
+                  // matches" while the record sat unfetched on page 12 — the
+                  // app advising them to use the one thing that couldn't work.
+                  ->orWhere('pickup_address', 'like', "%{$search}%")
+                  ->orWhere('dropoff_address', 'like', "%{$search}%")
+                  ->orWhereHas('errandType', function ($tq) use ($search) {
+                      $tq->where('name', 'like', "%{$search}%");
+                  })
                   ->orWhereHas('customer', function ($cq) use ($search) {
                       $cq->where('full_name', 'like', "%{$search}%");
                   });

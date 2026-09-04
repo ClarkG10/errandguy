@@ -40,11 +40,17 @@ export default function HistoryScreen() {
   const hideOnScroll = useHideTabBarOnScroll();
 
   // Page 1 is cached via useQuery (cache-first); subsequent pages append.
+  // Search is a SERVER param, and part of the cache key so a new term refetches.
+  // It used to be a client-side filter over the loaded pages only, so a runner
+  // searching for an errand from three months ago was told "No matches" while
+  // the record sat unfetched on page 12 — with the empty state advising them to
+  // search by booking number, the exact thing that couldn't work.
   const page1Q = useQuery<Booking[]>(
-    ['runner', 'errands', 'history', statusFilter, userId],
+    ['runner', 'errands', 'history', statusFilter, debouncedSearch.trim(), userId],
     async () => {
       const params: Record<string, any> = { page: 1, per_page: 15 };
       if (statusFilter !== 'all') params.status = statusFilter;
+      if (debouncedSearch.trim()) params.search = debouncedSearch.trim();
       const res = await runnerService.getErrandHistory(params);
       return (res.data.data ?? []) as Booking[];
     },
@@ -58,13 +64,18 @@ export default function HistoryScreen() {
   const [loadingMore, setLoadingMore] = useState(false);
   const [loadMoreFailed, setLoadMoreFailed] = useState(false);
 
-  // Reset pagination when filter changes.
+  // Reset pagination when the filter OR the search term changes.
+  //
+  // The search term belongs here now that it is a server param: without it,
+  // searching "Ana", scrolling to load page 2, then changing the term to "Ben"
+  // would refetch page 1 for Ben while page 2 of Ana's results stayed appended
+  // below it — a list quietly mixing results from two different searches.
   useEffect(() => {
     setExtraPages([]);
     setPage(1);
     setHasMore(true);
     setLoadMoreFailed(false);
-  }, [statusFilter]);
+  }, [statusFilter, debouncedSearch]);
 
   // Sync hasMore based on page-1 size.
   useEffect(() => {
@@ -94,6 +105,9 @@ export default function HistoryScreen() {
     try {
       const params: Record<string, any> = { page: nextPage, per_page: 15 };
       if (statusFilter !== 'all') params.status = statusFilter;
+      // Must carry the term too — without it page 2 of a search returns
+      // unfiltered rows and the list silently mixes matches with non-matches.
+      if (debouncedSearch.trim()) params.search = debouncedSearch.trim();
       const res = await runnerService.getErrandHistory(params);
       const data: Booking[] = res.data.data ?? [];
       setExtraPages((prev) => [...prev, ...data]);
@@ -115,17 +129,11 @@ export default function HistoryScreen() {
     fetchNextPage();
   }, [hasMore, loadingMore, loadMoreFailed, fetchNextPage]);
 
-  const filteredErrands = useMemo(() => {
-    if (!debouncedSearch.trim()) return errands;
-    const q = debouncedSearch.toLowerCase();
-    return errands.filter(
-      (e) =>
-        e.booking_number?.toLowerCase().includes(q) ||
-        e.pickup_address?.toLowerCase().includes(q) ||
-        e.dropoff_address?.toLowerCase().includes(q) ||
-        e.errand_type?.name?.toLowerCase().includes(q),
-    );
-  }, [errands, debouncedSearch]);
+  // No client-side filtering: the server already applied the term across the
+  // WHOLE history. Re-filtering here would be worse than redundant — the server
+  // also matches the customer's name, which this list never had, so a local
+  // pass would hide legitimate matches it couldn't see.
+  const filteredErrands = errands;
 
   const searchActive = debouncedSearch.trim().length > 0;
   // Distinguish "page 1 fetch failed" from a genuinely empty history —
