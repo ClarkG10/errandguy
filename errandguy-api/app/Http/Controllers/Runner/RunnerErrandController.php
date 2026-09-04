@@ -323,9 +323,44 @@ class RunnerErrandController extends Controller
             $profile->update(['acceptance_rate' => round($newAcceptanceRate, 2)]);
         }
 
-        // For fixed-price: trigger matching service to find next runner
-        if ($booking->pricing_mode === 'fixed' && $booking->status === 'matched') {
-            $booking->update(['status' => 'pending', 'runner_id' => null, 'matched_at' => null]);
+        // For fixed-price: revert to pending and re-dispatch matching.
+        //
+        // The precondition is re-checked UNDER A ROW LOCK, because the read at
+        // the top of this method is unlocked and the write used to carry an
+        // id-only WHERE. A customer tapping Cancel on the "Runner found" screen
+        // at the same moment the matched runner taps Decline would commit the
+        // cancel — refund issued, promo unredeemed, trip-share revoked, customer
+        // told "cancelled, ₱X refunded" — and then this write would land on its
+        // stale pre-cancel snapshot and RESURRECT the row as 'pending'.
+        //
+        // MatchRunnerJob only guards on status === 'pending', so the dead errand
+        // was re-dispatched: a second runner was offered an errand the customer
+        // had cancelled, and on completing it handleCompletion found
+        // payment_status === 'refunded', took neither settlement branch, and
+        // credited them NOTHING. A refunded customer got a runner at their door
+        // and that runner worked for free.
+        //
+        // Mirrors accept() above and AutoCancelBookingJob: lock, re-read, and
+        // only act if the row is still what we thought it was.
+        $reverted = DB::transaction(function () use ($id, $user) {
+            $locked = Booking::whereKey($id)->lockForUpdate()->first();
+
+            if (
+                ! $locked
+                || $locked->pricing_mode !== 'fixed'
+                || $locked->status !== 'matched'
+                || (string) $locked->runner_id !== (string) $user->id
+            ) {
+                return null;
+            }
+
+            $locked->update(['status' => 'pending', 'runner_id' => null, 'matched_at' => null]);
+
+            return $locked;
+        });
+
+        if ($reverted) {
+            $booking = $reverted;
 
             // Surface the matched → pending revert to the customer live, so
             // their tracking screen drops back to "finding a runner" instead of

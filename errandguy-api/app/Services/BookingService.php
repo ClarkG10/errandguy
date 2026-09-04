@@ -11,6 +11,7 @@ use App\Models\ErrandType;
 use App\Models\Payment;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Str;
 
 class BookingService
@@ -195,19 +196,39 @@ class BookingService
      */
     public function adminCancel(string $bookingId, string $adminId, string $reason): void
     {
-        $booking = Booking::findOrFail($bookingId);
+        // The finalized check and the write happen in ONE transaction under the
+        // row lock.
+        //
+        // They used to be an unlocked read followed by an id-only UPDATE, so an
+        // admin cancelling while the assigned runner was completing would read
+        // 'delivered' (not finalized), block on the lock the runner's completion
+        // transaction held, and then land ON TOP of it. The result: an errand the
+        // runner had finished flipped 'completed' → 'cancelled' AFTER they were
+        // credited their earning — so their history showed a job they completed
+        // as cancelled, their completion_rate counted it as a cancellation on the
+        // next recompute, and refundUnfulfilled then saw payment_status still
+        // 'paid' and refunded the whole fare for an errand that was delivered.
+        // Money out on both sides of the same errand.
+        //
+        // Locking makes the runner's completion win the race, and the admin gets
+        // the honest "Booking already finalized" that Filament already surfaces.
+        $booking = DB::transaction(function () use ($bookingId, $adminId, $reason) {
+            $locked = Booking::whereKey($bookingId)->lockForUpdate()->firstOrFail();
 
-        if (BookingStatus::isFinalized($booking->status)) {
-            throw new \App\Exceptions\BookingStateException('Booking already finalized');
-        }
+            if (BookingStatus::isFinalized($locked->status)) {
+                throw new \App\Exceptions\BookingStateException('Booking already finalized');
+            }
 
-        $booking->update([
-            'status' => 'cancelled',
-            'cancelled_at' => now(),
-            // cancelled_by is a uuid column — record the acting admin's real id.
-            'cancelled_by' => $adminId,
-            'cancellation_reason' => $reason,
-        ]);
+            $locked->update([
+                'status' => 'cancelled',
+                'cancelled_at' => now(),
+                // cancelled_by is a uuid column — record the acting admin's real id.
+                'cancelled_by' => $adminId,
+                'cancellation_reason' => $reason,
+            ]);
+
+            return $locked;
+        });
 
         // Don't leave the assigned runner's GPS pings tagged to the cancelled
         // booking for the next ~30s (per-runner active-booking cache).
@@ -276,6 +297,22 @@ class BookingService
         DB::transaction(function () use ($bookingId, $reason) {
             $locked = Booking::whereKey($bookingId)->lockForUpdate()->first();
             if (! $locked) {
+                return;
+            }
+
+            // Never refund a COMPLETED errand. Belt-and-braces behind
+            // adminCancel's row lock: this method is only ever called for a
+            // booking that will not be fulfilled, so a 'completed' row here
+            // means a caller raced a completion — and refunding the full fare
+            // for work that was actually delivered is money out with nothing
+            // to reclaim it. The promo unredeem below is skipped too, since a
+            // completed errand legitimately consumed its promo use.
+            if ($locked->status === 'completed') {
+                Log::warning('refundUnfulfilled called on a COMPLETED booking — refusing', [
+                    'booking_id' => $locked->id,
+                    'reason' => $reason,
+                ]);
+
                 return;
             }
 
