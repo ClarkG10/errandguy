@@ -1,5 +1,6 @@
 import api from './api';
 import { invalidateQuery } from '../hooks/useQuery';
+import { compressProofImage } from '../utils/proofImage';
 
 const invalidateBookingsCaches = (id?: string) => {
   // Fire-and-forget — cache wipes shouldn't block the UI.
@@ -82,9 +83,18 @@ export const bookingService = {
    * (no file parts), so the customer's staged item photos are uploaded here
    * right after. Best-effort: the booking already exists if this fails.
    */
-  uploadItemPhotos(id: string, uris: string[]) {
+  async uploadItemPhotos(id: string, uris: string[]) {
+    // Downscale FIRST. The picker hands back the camera's native frame — five
+    // of those is 10–20MB going up on provincial LTE at the exact moment the
+    // booking is created — and the server caps each file at 5MB, so a single
+    // oversized photo 422s the WHOLE batch and the runner arrives without the
+    // photos that define the job. compressProofImage is deliberately forgiving:
+    // any failure resolves to the original uri, so this can only help.
+    const compressed = await Promise.all(uris.map((uri) => compressProofImage(uri)));
+
     const form = new FormData();
-    uris.forEach((uri, i) => {
+    compressed.forEach((uri, i) => {
+      if (!uri) return;
       form.append('item_photos[]', {
         uri,
         type: 'image/jpeg',

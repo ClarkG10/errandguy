@@ -18,6 +18,7 @@ import { ImagePickerModal } from '../../../components/ui/ImagePickerModal';
 import { useRunnerStore } from '../../../stores/runnerStore';
 import { useAuthStore } from '../../../stores/authStore';
 import { runnerService } from '../../../services/runner.service';
+import { compressProofImage } from '../../../utils/proofImage';
 import { useQuery } from '../../../hooks/useQuery';
 import { CacheTTL } from '../../../services/cache.service';
 import { useResponsive } from '../../../constants/responsive';
@@ -146,10 +147,15 @@ export default function DocumentsScreen() {
     setUploading(docType);
     setUploadPct(0);
     try {
+      // Downscale before the wire — same rule as the onboarding upload: a
+      // multi-MB government-ID frame over mobile data, against a 10MB server
+      // cap. Forgiving by design, so a KYC doc is never lost to a resize error.
+      const compressed = (await compressProofImage(uri)) ?? uri;
+
       const formData = new FormData();
       formData.append('document_type', docType);
       formData.append('file', {
-        uri,
+        uri: compressed,
         name: `${docType}.jpg`,
         type: 'image/jpeg',
       } as any);

@@ -36,6 +36,7 @@ import { useRunnerStore } from '../../stores/runnerStore';
 import { useAuth } from '../../hooks/useAuth';
 import * as Haptics from 'expo-haptics';
 import { runnerService } from '../../services/runner.service';
+import { compressProofImage } from '../../utils/proofImage';
 import { userService } from '../../services/user.service';
 import type { DocumentType, RunnerDocument } from '../../types';
 import { toast } from '../../stores/toastStore';
@@ -175,10 +176,16 @@ export default function RunnerOnboardingScreen() {
   const uploadFile = async (docType: DocumentType, uri: string) => {
     setUploading(docType);
     try {
+      // Downscale before the wire. This is the first screen of onboarding and
+      // the heaviest wait in it — a multi-MB government-ID frame over mobile
+      // data — and the server caps the file at 10MB. Forgiving by design: any
+      // failure falls back to the original uri, so a KYC doc is never lost.
+      const compressed = (await compressProofImage(uri)) ?? uri;
+
       const formData = new FormData();
       formData.append('document_type', docType);
       formData.append('file', {
-        uri,
+        uri: compressed,
         name: `${docType}.jpg`,
         type: 'image/jpeg',
       } as any);

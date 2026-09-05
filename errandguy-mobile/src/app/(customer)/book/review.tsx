@@ -96,8 +96,13 @@ async function attachItemPhotos(bookingId: string, uris: string[]): Promise<void
       const transient = err?.kind === 'offline' || err?.kind === 'server';
       const delay = PHOTO_RETRY_DELAYS_MS[attempt];
       if (!transient || delay === undefined) {
+        // Be precise about the recovery. The old copy said to "resend them" in
+        // chat, but chat images post to a different endpoint and can never
+        // re-attach as item photos — so it pointed at something that cannot
+        // work. Sending them to the runner in chat DOES work, and that is what
+        // this now promises.
         toast.warning(
-          "Some item photos couldn't upload — reopen the errand chat to resend them.",
+          "Some item photos couldn't upload — you can send them to your runner in the errand chat.",
         );
         return;
       }
