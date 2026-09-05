@@ -57,7 +57,16 @@ class WalletService
         WalletTransaction $tx,
         ?int $throttleSeconds = null,
     ): WalletTransaction {
-        if ($tx->type !== 'top_up' || $tx->status !== 'pending' || blank($tx->gateway_ref)) {
+        // Gateway-funded TIPS settle through the identical shape — a pending row
+        // plus a Payment Requests ref — but had no reconciliation on ANY path:
+        // this method early-returned on them, the status poll routes tips here,
+        // and no sweep covered them. One dropped webhook and the customer's tip
+        // was captured at the gateway while the runner was never credited, with
+        // no recovery, automated or manual. Same pull, same guards, settled by
+        // the tip's own row-locked, idempotent completer below.
+        if (! in_array($tx->type, ['top_up', 'tip_payment'], true)
+            || $tx->status !== 'pending'
+            || blank($tx->gateway_ref)) {
             return $tx;
         }
 
@@ -100,18 +109,30 @@ class WalletService
 
         $gatewayStatus = strtoupper((string) ($pr['status'] ?? ''));
 
+        $isTip = $tx->type === 'tip_payment';
+
         try {
             // PENDING / REQUIRES_ACTION → the customer hasn't finished paying.
+            // Route to the settler that owns this row's money: a tip credits the
+            // RUNNER and stamps booking.tip_amount, a top-up credits the
+            // customer's own balance. Both are row-locked and idempotent.
             $settled = match ($gatewayStatus) {
-                'SUCCEEDED' => $this->completeTopUp($tx->id, $pr),
-                'FAILED' => $this->expireTopUp($tx->id, 'Payment failed'),
-                'EXPIRED' => $this->expireTopUp($tx->id, 'Payment window expired'),
+                'SUCCEEDED' => $isTip
+                    ? $this->completeGatewayTip($tx->id, $pr)
+                    : $this->completeTopUp($tx->id, $pr),
+                'FAILED' => $isTip
+                    ? $this->expireGatewayTip($tx->id, 'Payment failed')
+                    : $this->expireTopUp($tx->id, 'Payment failed'),
+                'EXPIRED' => $isTip
+                    ? $this->expireGatewayTip($tx->id, 'Payment window expired')
+                    : $this->expireTopUp($tx->id, 'Payment window expired'),
                 default => null,
             };
         } catch (\Throwable $e) {
             // A settlement error must never 500 a status poll.
-            Log::warning('Xendit top-up reconcile failed', [
+            Log::warning('Xendit gateway-charge reconcile failed', [
                 'transaction_id' => $tx->id,
+                'type' => $tx->type,
                 'error' => $e->getMessage(),
             ]);
 

@@ -72,6 +72,20 @@ Schedule::command('errandguy:reconcile-payouts')
     ->onOneServer()
     ->withoutOverlapping();
 
+// The same safety net for the PRIMARY revenue path, which had none. A booking
+// charge's only pull-reconcile was the customer's status poll, and that stops
+// the moment they dismiss the pending sheet — so a dropped webhook plus a
+// customer who walks away stranded the charge in both directions: a paid
+// booking left 'pending' credits the runner ₱0 at completion, and an abandoned
+// one stays live so a runner works an errand nobody paid for (the auto-cancel
+// job and stranded reaper only look at 'pending'/'no_runner', never 'accepted').
+// Also runs the completed-but-unpaid detective sweep — a delivered errand with
+// no settled payment is money already lost, and nothing else looks for it.
+Schedule::command('errandguy:reconcile-booking-payments')
+    ->everyFifteenMinutes()
+    ->onOneServer()
+    ->withoutOverlapping();
+
 // Reap dead access tokens. Nothing has ever pruned personal_access_tokens, so
 // every token any user has ever been issued is still on the row — and the
 // sliding session (RotateAccessToken) now leaves the outgoing token behind on

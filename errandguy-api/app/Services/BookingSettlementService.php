@@ -77,6 +77,82 @@ class BookingSettlementService
     }
 
     /**
+     * The mirror of settlePaidBooking for a charge that will NEVER arrive.
+     *
+     * An online booking is matched (and can complete) BEFORE its charge is
+     * captured — MatchRunnerJob gates on status only and accept() has no payment
+     * gate — so a runner can be driving an order the customer never paid for. A
+     * failed/expired terminal transition is the moment we learn the money is not
+     * coming; without this the booking stays matched/accepted and nothing
+     * releases the runner (AutoCancelBookingJob and ReapStrandedBookingsCommand
+     * only reap 'pending'/'no_runner'), so the runner completes the errand and is
+     * credited nothing.
+     *
+     * This MUST be called from every terminal path, not just the webhook. The
+     * pull-reconciler routinely beats the webhook (the app polls the status
+     * endpoint every 3s from the moment checkout opens), and once it terminalizes
+     * the charge the later webhook no-ops on canAdvance — so a webhook-only
+     * teardown is silently dead exactly when the customer declines in-app.
+     *
+     * Cancels the still-live, genuinely unpaid booking under a row lock and
+     * dispatches BookingCancelled, whose listeners retract outstanding offer cards
+     * and push both parties an "Errand cancelled" notice. No refund is involved
+     * (nothing was ever captured). Idempotent + race-safe: a booking that already
+     * completed, was cancelled, found no runner, or whose charge actually settled
+     * on another path (payment_status 'paid' / a Completed payment row) is left
+     * untouched — a stale failed/expired delivery must never tear down a paid or
+     * finished errand.
+     */
+    public function cancelUnpaidBooking(?Payment $payment, string $reason): void
+    {
+        $bookingId = $payment?->booking_id;
+        if (! $bookingId) {
+            return;
+        }
+
+        $cancelled = DB::transaction(function () use ($bookingId, $reason) {
+            $booking = Booking::whereKey($bookingId)->lockForUpdate()->first();
+            if (! $booking) {
+                return null;
+            }
+
+            if (in_array($booking->status, ['completed', 'cancelled', 'no_runner'], true)) {
+                return null;
+            }
+            if ($booking->payment_status === 'paid'
+                || Payment::where('booking_id', $booking->id)
+                    ->where('status', PaymentStatus::Completed->value)
+                    ->exists()) {
+                return null;
+            }
+
+            $booking->update([
+                'status' => 'cancelled',
+                'cancelled_at' => now(),
+                'cancellation_reason' => $reason,
+            ]);
+            \App\Models\BookingStatusLog::create([
+                'booking_id' => $booking->id,
+                'status' => 'cancelled',
+                'changed_by' => null,
+                'note' => $reason,
+            ]);
+            if ($booking->runner_id) {
+                \Illuminate\Support\Facades\Cache::forget("runner_active_booking_id:{$booking->runner_id}");
+            }
+
+            return $booking;
+        });
+
+        if ($cancelled) {
+            // Post-commit: BookingCancelled's listeners retract outstanding offer
+            // cards (RetractBroadcastOffers) and push both parties an "Errand
+            // cancelled" notice (SendBookingCancelledNotification).
+            event(new \App\Events\BookingCancelled($cancelled));
+        }
+    }
+
+    /**
      * A gateway charge settled on a booking the customer had already cancelled.
      * Return the money (minus whatever cancellation fee was actually recorded at
      * cancel time) to the customer's wallet and move the payment to Refunded —

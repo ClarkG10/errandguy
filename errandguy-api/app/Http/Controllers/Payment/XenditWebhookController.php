@@ -305,7 +305,9 @@ class XenditWebhookController extends Controller
                 $payment->transitionTo(PaymentStatus::Expired, 'webhook', 'invoice.expired', extra: [
                     'gateway_response' => $data,
                 ]);
-                if ($payment->booking) {
+                // Never downgrade a booking whose money actually arrived (a later
+                // attempt may already have settled it) — see PaymentService.
+                if ($payment->booking && ! in_array($payment->booking->payment_status, ['paid', 'refunded'], true)) {
                     $payment->booking->update(['payment_status' => 'expired']);
                 }
                 return $payment;
@@ -314,7 +316,7 @@ class XenditWebhookController extends Controller
             if ($payment) {
                 $this->notifyPayment($payment, 'expired');
                 $this->unredeemBookingPromo($payment);
-                $this->cancelUnpaidBooking($payment, 'Checkout window expired before payment was completed');
+                app(\App\Services\BookingSettlementService::class)->cancelUnpaidBooking($payment,'Checkout window expired before payment was completed');
             }
         }
     }
@@ -453,7 +455,10 @@ class XenditWebhookController extends Controller
             // do (invoice.paid → 'paid', invoice.expired → 'expired'). Without
             // this an abandoned saved-method auth left payment=Failed but
             // booking payment_status='pending' forever — an inconsistent pair.
-            if ($payment->booking) {
+            // ...but never DOWNGRADE a booking whose money actually arrived: a
+            // first attempt that fails after a second one succeeded would
+            // otherwise mark a genuinely paid errand unpaid.
+            if ($payment->booking && ! in_array($payment->booking->payment_status, ['paid', 'refunded'], true)) {
                 $payment->booking->update(['payment_status' => 'failed']);
             }
 
@@ -463,7 +468,7 @@ class XenditWebhookController extends Controller
         if ($payment) {
             $this->notifyPayment($payment, 'failed');
             $this->unredeemBookingPromo($payment);
-            $this->cancelUnpaidBooking($payment, 'Online payment was not completed');
+            app(\App\Services\BookingSettlementService::class)->cancelUnpaidBooking($payment,'Online payment was not completed');
             return;
         }
 
@@ -502,75 +507,6 @@ class XenditWebhookController extends Controller
     {
         if ($payment?->booking_id) {
             app(\App\Services\PromoService::class)->unredeem($payment->booking_id);
-        }
-    }
-
-    /**
-     * BL-1: an online booking is matched (and can complete) BEFORE its charge is
-     * captured — MatchRunnerJob gates on status only, and accept() has no payment
-     * gate, so a runner can be driving an order the customer never actually paid
-     * for. This failed/expired webhook is the moment we learn the money will
-     * never arrive; without this the booking stayed matched/accepted and nothing
-     * released the runner (AutoCancelBookingJob only reaps pending/no_runner), so
-     * the runner completed the errand and was credited nothing.
-     *
-     * Symmetric with unredeemBookingPromo above: cancel the still-live, genuinely
-     * unpaid booking under a row lock and dispatch BookingCancelled — whose
-     * listeners retract any outstanding offer cards AND push both the customer and
-     * the assigned runner an "Errand cancelled" notice. No refund is involved
-     * (nothing was ever captured). Idempotent + race-safe: a booking that already
-     * completed, was cancelled, found no runner, or whose charge actually settled
-     * on another path (payment_status 'paid' / a Completed payment row) is left
-     * untouched — a stale failed/expired delivery must never tear down a paid or
-     * finished errand. Webhook replay is already blocked upstream by canAdvance
-     * (this runs only when the terminal transition actually happened).
-     */
-    private function cancelUnpaidBooking(?Payment $payment, string $reason): void
-    {
-        $bookingId = $payment?->booking_id;
-        if (! $bookingId) {
-            return;
-        }
-
-        $cancelled = DB::transaction(function () use ($bookingId, $reason) {
-            $booking = \App\Models\Booking::whereKey($bookingId)->lockForUpdate()->first();
-            if (! $booking) {
-                return null;
-            }
-
-            if (in_array($booking->status, ['completed', 'cancelled', 'no_runner'], true)) {
-                return null;
-            }
-            if ($booking->payment_status === 'paid'
-                || Payment::where('booking_id', $booking->id)
-                    ->where('status', PaymentStatus::Completed->value)
-                    ->exists()) {
-                return null;
-            }
-
-            $booking->update([
-                'status' => 'cancelled',
-                'cancelled_at' => now(),
-                'cancellation_reason' => $reason,
-            ]);
-            \App\Models\BookingStatusLog::create([
-                'booking_id' => $booking->id,
-                'status' => 'cancelled',
-                'changed_by' => null,
-                'note' => $reason,
-            ]);
-            if ($booking->runner_id) {
-                \Illuminate\Support\Facades\Cache::forget("runner_active_booking_id:{$booking->runner_id}");
-            }
-
-            return $booking;
-        });
-
-        if ($cancelled) {
-            // Post-commit: BookingCancelled's listeners retract outstanding offer
-            // cards (RetractBroadcastOffers) and push both parties an "Errand
-            // cancelled" notice (SendBookingCancelledNotification).
-            event(new \App\Events\BookingCancelled($cancelled));
         }
     }
 

@@ -661,7 +661,7 @@ class PaymentService
      *   • only ever moves the Payment to the state the gateway itself reports;
      *   • refuses to mark paid for LESS than we charged.
      */
-    public function reconcileBookingPayment(Payment $payment): Payment
+    public function reconcileBookingPayment(Payment $payment, ?int $throttleSeconds = null): Payment
     {
         // Only a non-terminal gateway charge can be reconciled. Cash/wallet
         // settle locally; a terminal payment is already resolved; a blank
@@ -682,7 +682,11 @@ class PaymentService
         // the key is absent, so exactly one poll per window wins the pull.
         // (On the file cache this is best-effort under a rare race; on Redis
         // — see the Tier-0 rollout — it becomes a truly atomic SET NX.)
-        if (! Cache::add("payment_reconcile_pull:{$payment->id}", 1, self::RECONCILE_PULL_THROTTLE_SECONDS)) {
+        // A scheduled sweep passes 0 so it is never silenced by the polling
+        // endpoint's latch — a stranded charge is precisely the case where
+        // nobody is polling; the sweep's own cadence + --limit bound the load.
+        $throttle = $throttleSeconds ?? self::RECONCILE_PULL_THROTTLE_SECONDS;
+        if ($throttle > 0 && ! Cache::add("payment_reconcile_pull:{$payment->id}", 1, $throttle)) {
             return $payment;
         }
 
@@ -740,7 +744,12 @@ class PaymentService
                     // it terminalizes the charge, the later webhook no-ops
                     // (canAdvance=false), so the reversal must happen here too
                     // (payment review P0-7). Consumption-verified + idempotent.
-                    if ($locked->booking) {
+                    // Never DOWNGRADE a booking whose money actually arrived. A
+                    // customer whose first attempt fails and who then pays with a
+                    // second one leaves attempt #1 to terminalize later; writing
+                    // 'failed' then would mark a genuinely paid errand unpaid and
+                    // (via the teardown below) could cancel it.
+                    if ($locked->booking && ! in_array($locked->booking->payment_status, ['paid', 'refunded'], true)) {
                         $locked->booking->update(['payment_status' => 'failed']);
                     }
                     if ($locked->booking_id) {
@@ -750,7 +759,8 @@ class PaymentService
                     $locked->transitionTo(PaymentStatus::Expired, 'reconcile', 'payment_request.expired', extra: [
                         'gateway_response' => $pr,
                     ]);
-                    if ($locked->booking) {
+                    // Same no-downgrade rule as the FAILED branch above.
+                    if ($locked->booking && ! in_array($locked->booking->payment_status, ['paid', 'refunded'], true)) {
                         $locked->booking->update(['payment_status' => 'expired']);
                     }
                     if ($locked->booking_id) {
@@ -771,6 +781,33 @@ class PaymentService
                     app(\App\Services\BookingSettlementService::class)->settlePaidBooking($result);
                 } catch (\Throwable $e) {
                     Log::warning('Post-settlement resolution failed after reconcile', [
+                        'payment_id' => $result->id,
+                        'error' => $e->getMessage(),
+                    ]);
+                }
+            }
+
+            // ...and the mirror for a charge that will never arrive. This poll
+            // ALWAYS beats the webhook when the customer declines in-app (the app
+            // polls every 3s from the moment checkout opens), and terminalizing
+            // the charge here permanently disarms the webhook's own teardown
+            // (canAdvance=false ⇒ its post-commit block never runs). So without
+            // this, the single most common abandonment — open GCash, change your
+            // mind, decline — left the booking fully live: the runner drove out,
+            // completed the errand and was credited ₱0, and neither party was ever
+            // told the booking was void. Idempotent + race-safe (skips completed/
+            // cancelled/no_runner and anything actually paid). Never fail the poll.
+            if ($result instanceof Payment
+                && in_array($result->status, [PaymentStatus::Failed->value, PaymentStatus::Expired->value], true)) {
+                try {
+                    app(\App\Services\BookingSettlementService::class)->cancelUnpaidBooking(
+                        $result,
+                        $result->status === PaymentStatus::Expired->value
+                            ? 'Checkout window expired before payment was completed'
+                            : 'Online payment was not completed',
+                    );
+                } catch (\Throwable $e) {
+                    Log::warning('Unpaid-booking teardown failed after reconcile', [
                         'payment_id' => $result->id,
                         'error' => $e->getMessage(),
                     ]);

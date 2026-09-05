@@ -47,8 +47,12 @@ class ReconcilePendingTopUpsCommand extends Command
         // Oldest first: a top-up that has been stranded longest is the one whose
         // owner has been waiting longest (and is closest to the gateway's own
         // expiry, after which the truth stops being retrievable).
+        // Gateway-funded TIPS share this settlement path exactly (pending row +
+        // Payment Requests ref) and previously had no sweep at all, so a dropped
+        // webhook captured the customer's tip and never credited the runner, with
+        // no recovery anywhere. Same guards, same idempotent settlers.
         $pending = WalletTransaction::query()
-            ->where('type', 'top_up')
+            ->whereIn('type', ['top_up', 'tip_payment'])
             ->where('status', 'pending')
             ->whereNotNull('gateway_ref')
             ->where('created_at', '<=', now()->subMinutes($minAgeMinutes))
@@ -58,12 +62,12 @@ class ReconcilePendingTopUpsCommand extends Command
             ->get();
 
         if ($pending->isEmpty()) {
-            $this->info('No pending top-ups to reconcile.');
+            $this->info('No pending gateway charges to reconcile.');
 
             return self::SUCCESS;
         }
 
-        $this->info("Examining {$pending->count()} pending top-up(s)…");
+        $this->info("Examining {$pending->count()} pending gateway charge(s)…");
 
         $credited = 0;
         $failed = 0;
@@ -91,18 +95,26 @@ class ReconcilePendingTopUpsCommand extends Command
             if ($settled->status === 'completed') {
                 // The webhook should have done this. Surface it: one is a blip,
                 // a pattern is a webhook-delivery problem worth investigating.
-                Log::warning('Top-up settled by sweep, not webhook', [
+                $isTip = $tx->type === 'tip_payment';
+
+                Log::warning('Gateway charge settled by sweep, not webhook', [
                     'transaction_id' => $tx->id,
+                    'type' => $tx->type,
                     'user_id' => $tx->user_id,
                     'stranded_minutes' => (int) $tx->created_at->diffInMinutes(now()),
                 ]);
 
                 AdminAlert::raise(
-                    'topup_reconciled',
+                    $isTip ? 'tip_reconciled' : 'topup_reconciled',
                     'warning',
-                    'Top-up credited by reconciliation sweep',
-                    "A ₱{$tx->amount} top-up was confirmed paid at the gateway but no webhook settled it. "
-                        .'The wallet has been credited. Repeated occurrences indicate a webhook-delivery problem.',
+                    $isTip
+                        ? 'Tip credited by reconciliation sweep'
+                        : 'Top-up credited by reconciliation sweep',
+                    $isTip
+                        ? "A ₱{$tx->amount} tip was confirmed paid at the gateway but no webhook settled it. "
+                            .'The runner has now been credited. Repeated occurrences indicate a webhook-delivery problem.'
+                        : "A ₱{$tx->amount} top-up was confirmed paid at the gateway but no webhook settled it. "
+                            .'The wallet has been credited. Repeated occurrences indicate a webhook-delivery problem.',
                     $tx->id,
                 );
             }
