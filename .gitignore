@@ -1,1 +1,5 @@
 errandguy-mobile/build-*.tar.gz
+
+# Local agent/tooling config — not part of the product.
+.claude/
+.DS_Store

@@ -51,15 +51,18 @@ class SOSAlertInfolist
                                 : null),
                         TextEntry::make('booking.booking_number')->label('Booking')->placeholder('—'),
                     ]),
-                Section::make('Emergency contacts notified')
+                // Two DIFFERENT facts, deliberately not merged into one list:
+                // who the platform actually reached, and who the operator still
+                // has to reach by hand. `contacts_notified` is delivery-confirmed
+                // and, with no SMS provider wired, is always empty — so an
+                // operator reading only that would conclude the person has no
+                // emergency contacts, when in fact nobody has called them yet.
+                Section::make('Emergency contacts')
                     ->schema([
                         TextEntry::make('contacts_notified')
-                            ->hiddenLabel()
+                            ->label('Auto-notified by ErrandGuy')
                             ->listWithLineBreaks()
-                            ->placeholder('No contacts recorded')
-                            // Resolve the stored TrustedContact IDs to a human line
-                            // (name · relationship · phone), ordered by priority.
-                            // Falls back to the raw ID list if none resolve.
+                            ->placeholder('None — no SMS provider is configured, so no contact was auto-notified. Call them yourself using the list below.')
                             ->state(function (SOSAlert $record): array {
                                 $ids = $record->contacts_notified ?? [];
                                 if (empty($ids)) {
@@ -82,6 +85,22 @@ class SOSAlertInfolist
                                     ])->filter()->implode(' · '))
                                     ->all();
                             }),
+                        // The people to ring RIGHT NOW, in the order the person
+                        // chose (priority = who they want called first).
+                        TextEntry::make('contacts_to_call')
+                            ->label('Their trusted contacts — call in this order')
+                            ->listWithLineBreaks()
+                            ->placeholder('This person has no trusted contacts saved.')
+                            ->state(fn (SOSAlert $record): array => TrustedContact::query()
+                                ->where('user_id', $record->triggered_by)
+                                ->orderBy('priority')
+                                ->get()
+                                ->map(fn (TrustedContact $c): string => collect([
+                                    $c->name,
+                                    $c->relationship,
+                                    $c->phone,
+                                ])->filter()->implode(' · '))
+                                ->all()),
                     ]),
                 Section::make('Live link & location')
                     ->columns(2)

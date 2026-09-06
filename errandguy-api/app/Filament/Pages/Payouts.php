@@ -112,7 +112,7 @@ class Payouts extends Page implements HasTable
      *
      * Public on purpose: the OTHER two paths that settle a payout into
      * failed/reversed (the Xendit payout.failed / payout.reversed webhook and
-     * the AdminPayoutController::markFailed API) should route through this same
+     * any future admin surface) should route through this same
      * latch instead of growing their own copy. Handles both states.
      */
     public static function notifyRunnerOfBouncedPayout(WalletTransaction $tx, ?string $reason = null): void

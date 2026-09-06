@@ -47,19 +47,6 @@ class PayoutFlowTest extends TestCase
             ->postJson('/api/v1/runner/payout/request', ['amount' => $amount]);
     }
 
-    private function actingAsAdmin(): AdminUser
-    {
-        $admin = AdminUser::create([
-            'email' => 'ops@errandguy.test', 'password_hash' => Hash::make('Password1!'),
-            // Payout completion/failure is a MONEY action — requires
-            // canManageMoney (finance/super_admin), enforced by admin.can:money.
-            'full_name' => 'Finance', 'role' => 'finance', 'is_active' => true,
-        ]);
-        Sanctum::actingAs($admin);
-
-        return $admin;
-    }
-
     public function test_runner_can_request_payout_which_debits_the_wallet(): void
     {
         $this->requestPayout(500)->assertOk();
@@ -165,8 +152,7 @@ class PayoutFlowTest extends TestCase
             'balance_after' => 500, 'description' => 'Payout request', 'status' => 'pending',
         ]);
 
-        $this->actingAsAdmin();
-        $this->postJson("/api/v1/admin/payouts/{$payout->id}/complete")->assertOk();
+        app(\App\Services\WalletService::class)->completePayout($payout->id);
 
         $this->assertEquals('completed', $payout->fresh()->status);
         // Completing does NOT touch the balance (already debited on request).
@@ -180,8 +166,7 @@ class PayoutFlowTest extends TestCase
         $payout = WalletTransaction::where('user_id', $this->runner->id)->where('type', 'payout')->firstOrFail();
         $this->assertEquals(500.0, (float) $this->runner->fresh()->wallet_balance);
 
-        $this->actingAsAdmin();
-        $this->postJson("/api/v1/admin/payouts/{$payout->id}/fail", ['reason' => 'bank rejected'])->assertOk();
+        app(\App\Services\WalletService::class)->failPayout($payout->id, 'bank rejected');
 
         // Money is returned in full, with an audit refund row.
         $this->assertEquals('failed', $payout->fresh()->status);
@@ -196,10 +181,15 @@ class PayoutFlowTest extends TestCase
         $this->requestPayout(500)->assertOk();
         $payout = WalletTransaction::where('user_id', $this->runner->id)->where('type', 'payout')->firstOrFail();
 
-        $this->actingAsAdmin();
-        $this->postJson("/api/v1/admin/payouts/{$payout->id}/fail", ['reason' => 'bounce'])->assertOk();
-        // Second attempt is rejected — no second re-credit.
-        $this->postJson("/api/v1/admin/payouts/{$payout->id}/fail", ['reason' => 'again'])->assertStatus(422);
+        $wallet = app(\App\Services\WalletService::class);
+        $wallet->failPayout($payout->id, 'bounce');
+        // Second attempt is refused — no second re-credit.
+        try {
+            $wallet->failPayout($payout->id, 'again');
+            $this->fail('failing an already-failed payout must be refused');
+        } catch (\RuntimeException $e) {
+            // expected
+        }
 
         $this->assertEquals(1000.0, (float) $this->runner->fresh()->wallet_balance);
         $this->assertEquals(

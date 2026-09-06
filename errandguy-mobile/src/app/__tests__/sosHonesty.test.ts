@@ -110,6 +110,39 @@ describe('neither surface promises a trusted-contact SMS the backend cannot send
     expect(TRACKING_CODE).toContain('SOS sent to ErrandGuy support');
     expect(TRACKING_CODE).toContain('result.contacts');
   });
+
+  // The rule above was correct and was still defeated end-to-end: the SERVER
+  // pre-filled `contacts_notified` with every trusted contact the instant the
+  // alarm was pulled, before any delivery was attempted, so "only claim what
+  // the server listed" resolved to claiming everyone. SOSService no longer
+  // writes that field (NotifySosContactsJob fills it on confirmed delivery
+  // only), and these pin the two customer-facing sentences that were wrong.
+  it('the customer confirm never says trusted contacts get alerted', () => {
+    expect(TRACKING_CODE).not.toContain(
+      'alerts ErrandGuy support and your trusted contacts',
+    );
+    expect(TRACKING_CODE).toContain(
+      'puts your trusted contacts one tap away to call',
+    );
+  });
+
+  it('the LIVE sos card offers tap-to-call and disowns auto-notifying', () => {
+    // The banner says "Alerted {sosAlertedLabel}" — which resolves to
+    // "ErrandGuy support" alone now — so the contacts row has to state
+    // plainly that reaching them is the user's own action.
+    expect(TRACKING_CODE).toContain(
+      "We don&apos;t contact these people for you — tap to call:",
+    );
+    expect(TRACKING_CODE).toContain('Linking.openURL(`tel:${c.phone}`)');
+  });
+
+  it('the trusted-contacts screen does not promise we notify them', () => {
+    const CONTACTS = read('(customer)', 'trusted-contacts', 'index.tsx');
+    const CONTACTS_CODE = stripComments(CONTACTS);
+    expect(CONTACTS_CODE).not.toContain('to be notified during emergencies');
+    expect(CONTACTS_CODE).not.toContain('called first during SOS emergencies');
+    expect(CONTACTS_CODE).toContain('ErrandGuy doesn’t message them for you');
+  });
 });
 
 describe('the failure toast keeps the actionable half of the copy', () => {

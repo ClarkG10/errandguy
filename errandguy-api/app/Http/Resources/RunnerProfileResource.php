@@ -3,6 +3,7 @@
 namespace App\Http\Resources;
 
 use App\Models\SystemConfig;
+use App\Support\CashDebtPolicy;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\JsonResource;
 
@@ -54,6 +55,26 @@ class RunnerProfileResource extends JsonResource
                 $isSelf,
                 fn (): float => (float) SystemConfig::getValue('min_payout_amount', '100'),
             ),
+            // Why the offer feed is short. Over the cash-debt ceiling, CASH
+            // errands are filtered out of the pull feed AND out of dispatch AND
+            // refused at accept — so without this the runner just watches work
+            // stop appearing and blames the app. Rides the profile payload (like
+            // payout_minimum above) so it reaches every runner surface through
+            // plumbing that already exists, including the /runner/home
+            // aggregate. null when solvent, so the client renders nothing in the
+            // normal case.
+            'cash_debt_block' => $this->when($isSelf, function (): ?array {
+                $balance = (float) ($this->user?->wallet_balance ?? 0);
+                if (! CashDebtPolicy::blocks($balance)) {
+                    return null;
+                }
+
+                return [
+                    'owed' => round(abs($balance), 2),
+                    'limit' => CashDebtPolicy::limit(),
+                    'message' => CashDebtPolicy::message($balance),
+                ];
+            }),
             'approved_at' => $this->approved_at,
             // Drives the runner's "Member since" on the profile tab (and is a
             // harmless trust signal for customers). Without it the mobile read

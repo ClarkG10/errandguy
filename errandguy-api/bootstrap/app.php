@@ -67,8 +67,6 @@ return Application::configure(basePath: dirname(__DIR__))
         $middleware->alias([
             'role' => \App\Http\Middleware\RoleMiddleware::class,
             'active' => \App\Http\Middleware\EnsureUserActive::class,
-            'admin' => \App\Http\Middleware\EnsureAdminUser::class,
-            'admin.can' => \App\Http\Middleware\EnsureAdminCapability::class,
             'idempotent' => \App\Http\Middleware\EnsureIdempotency::class,
             'etag' => \App\Http\Middleware\EtagConditional::class,
             'token.rotate' => \App\Http\Middleware\RotateAccessToken::class,

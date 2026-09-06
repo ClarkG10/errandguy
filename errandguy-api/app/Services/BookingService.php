@@ -185,7 +185,7 @@ class BookingService
      */
     /**
      * Admin/platform-initiated cancel — the single money-safe path shared by
-     * BookingManagementController::cancel and the Filament BookingResource
+     * the Filament BookingResource cancel action (the sole admin surface)
      * cancel action.
      *
      * Because an admin/platform cancel is not the customer's fault, a paid

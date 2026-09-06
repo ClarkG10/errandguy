@@ -59,18 +59,57 @@ class NotifySosContactsJobTest extends TestCase
         }
     }
 
-    public function test_triggering_records_every_trusted_contact(): void
+    /**
+     * `contacts_notified` is DELIVERY-CONFIRMED, never intent.
+     *
+     * It used to be pre-filled with every trusted contact the instant the alarm
+     * was pulled — before any delivery was attempted, and with no SMS provider
+     * wired to attempt one. The mobile client reads this exact field to tell the
+     * person in the emergency who their alert reached, so it reported "support
+     * and 2 trusted contacts" when nobody had been contacted at all.
+     */
+    public function test_triggering_claims_no_contact_was_notified(): void
     {
         Bus::fake([NotifySosContactsJob::class]); // capture the fan-out, assert the durable record
 
         $alert = app(SOSService::class)->triggerSOS($this->booking->id, $this->customer->id, 'customer');
 
-        $expected = TrustedContact::where('user_id', $this->customer->id)->pluck('id')->sort()->values()->all();
-        $actual = collect($alert->fresh()->contacts_notified)->sort()->values()->all();
-        $this->assertSame($expected, $actual, 'not every trusted contact was recorded for notification');
-        $this->assertCount(2, $actual);
+        $this->assertSame(
+            [],
+            $alert->fresh()->contacts_notified ?? [],
+            'trigger must not claim a contact was notified before any delivery was attempted',
+        );
+        // The trusted contacts still exist — they are simply not yet reached.
+        $this->assertCount(2, TrustedContact::where('user_id', $this->customer->id)->get());
         $this->assertTrue($this->booking->fresh()->sos_triggered);
         Bus::assertDispatched(NotifySosContactsJob::class);
+    }
+
+    /**
+     * The fan-out job is the ONLY writer of `contacts_notified`, and it records a
+     * contact only on confirmed delivery. No SMS provider is wired, so a full
+     * run must still leave the field empty rather than back-filling intent.
+     */
+    public function test_fanout_records_no_contact_while_no_sms_provider_is_wired(): void
+    {
+        $alert = SOSAlert::create([
+            'booking_id' => $this->booking->id, 'customer_id' => $this->customer->id, 'runner_id' => $this->runner->id,
+            'triggered_by' => $this->customer->id, 'triggered_by_role' => 'customer', 'triggered_at' => now(),
+            'live_link_token' => str_repeat('b', 64), 'live_link_expires_at' => now()->addHour(), 'status' => 'active',
+        ]);
+
+        $notifications = Mockery::spy(NotificationService::class);
+        $notifications->shouldReceive('notifyInApp')->andReturn(new Notification());
+        $notifications->shouldReceive('sendPush')->andReturnNull();
+        $notifications->shouldReceive('sendToTopic')->andReturnNull();
+
+        (new NotifySosContactsJob($alert->id))->handle($notifications);
+
+        $this->assertSame(
+            [],
+            $alert->fresh()->contacts_notified ?? [],
+            'the fan-out must not record a contact it never actually delivered to',
+        );
     }
 
     public function test_job_fans_out_to_every_contact_the_counterpart_and_admin(): void

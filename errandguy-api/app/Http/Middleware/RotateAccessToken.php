@@ -30,7 +30,8 @@ use Symfony\Component\HttpFoundation\Response;
  * `ROTATE_WITHIN_DAYS` of life left anyway. `sanctum:prune-expired` reaps them.
  *
  * NOT rotated:
- *   • Admin tokens. AdminAuthController issues them with an explicit 8-hour
+ *   • Admin tokens. The admin panel is session-based (Filament); any admin
+ *     bearer token is minted with an explicit 8-hour
  *     `expires_at` and the `admin` ability — a deliberate decision from the
  *     2026-08-13 audit. A sliding admin session would quietly undo it.
  *   • Tokens with an explicit `expires_at`, for the same reason generalised:

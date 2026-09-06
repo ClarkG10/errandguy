@@ -3084,6 +3084,54 @@ export default function TrackingScreen() {
                     Alerted {sosAlertedLabel}. Stay safe — only stand down below
                     once you&apos;re out of danger.
                   </Text>
+                  {/* Your own people, one tap away. ErrandGuy does NOT contact
+                      them for you (no SMS provider is wired), and the copy says
+                      so rather than letting the reassuring "SOS active" header
+                      imply it — a promise nobody keeps is the worst thing this
+                      screen can make. Tapping places a call the USER makes,
+                      which is also the one channel that survives a dead data
+                      connection. Numbers come from the on-device cache, so this
+                      never blocks on a fetch mid-emergency. */}
+                  {trustedContacts && trustedContacts.length > 0 ? (
+                    <View className="mb-3">
+                      <Text
+                        className="text-[12px] font-montserrat-semi text-dangerDark mb-1.5"
+                        maxFontSizeMultiplier={1.3}
+                      >
+                        We don&apos;t contact these people for you — tap to call:
+                      </Text>
+                      {trustedContacts.map((c, i) => (
+                        <Pressable
+                          key={c.id ?? `${c.phone}-${i}`}
+                          accessibilityRole="button"
+                          accessibilityLabel={`Call ${c.name}`}
+                          onPress={() => {
+                            haptics.warning();
+                            Linking.openURL(`tel:${c.phone}`).catch(() =>
+                              toast.error('Could not start call'),
+                            );
+                          }}
+                          className="flex-row items-center rounded-xl border border-danger bg-white px-3 py-2.5 mb-1.5"
+                          style={({ pressed }) => ({ opacity: pressed ? 0.85 : 1 })}
+                        >
+                          <Phone size={15} color={LightColors.dangerDark} strokeWidth={2.4} />
+                          <Text
+                            className="flex-1 ml-2 text-[13px] font-montserrat-semi text-dangerDark"
+                            numberOfLines={1}
+                            maxFontSizeMultiplier={1.3}
+                          >
+                            {c.name}
+                          </Text>
+                          <Text
+                            className="text-[12px] font-montserrat text-dangerDark"
+                            maxFontSizeMultiplier={1.3}
+                          >
+                            {c.phone}
+                          </Text>
+                        </Pressable>
+                      ))}
+                    </View>
+                  ) : null}
                   <SlideToConfirm
                     key={`sos-standdown-${standDownResetKey}`}
                     label="I’m safe — cancel alert"
@@ -3319,9 +3367,14 @@ export default function TrackingScreen() {
                 style={{ lineHeight: 21 }}
                 maxFontSizeMultiplier={1.4}
               >
+                {/* Says only what actually happens. ErrandGuy support is alerted
+                    with the live location; trusted contacts are NOT messaged by
+                    us (no SMS provider is wired) — the next screen puts them one
+                    tap away instead. Do not restore the old "and your trusted
+                    contacts" wording without real delivery behind it. */}
                 {hasTrustedContacts
-                  ? 'This alerts ErrandGuy support and your trusted contacts with your live location. Continue?'
-                  : 'You have no trusted contacts yet — SOS still alerts ErrandGuy support with your live location.'}
+                  ? 'This alerts ErrandGuy support with your live location, and puts your trusted contacts one tap away to call. Continue?'
+                  : 'This alerts ErrandGuy support with your live location. You have no trusted contacts saved to call.'}
               </Text>
               {!hasTrustedContacts && (
                 <Pressable

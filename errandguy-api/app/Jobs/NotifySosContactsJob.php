@@ -36,11 +36,23 @@ class NotifySosContactsJob extends BaseJob
         $triggeredBy = $alert->triggered_by;
         $liveLink = config('app.url') . "/trip/{$alert->live_link_token}";
 
+        // Record ONLY the contacts a message was genuinely delivered to. The
+        // alert row is created with an empty `contacts_notified` and this is the
+        // single place it is ever filled, so the field can never claim more than
+        // actually happened (see SOSService::triggerSOS). With no SMS provider
+        // wired every attempt returns false, so it correctly stays empty and the
+        // app tells the user only that ErrandGuy support was alerted.
         $contacts = TrustedContact::where('user_id', $triggeredBy)
             ->orderBy('created_at')
             ->get();
+        $delivered = [];
         foreach ($contacts as $contact) {
-            $this->notifySMSContact($contact, $liveLink, $booking);
+            if ($this->notifySMSContact($contact, $liveLink, $booking)) {
+                $delivered[] = $contact->id;
+            }
+        }
+        if ($delivered !== []) {
+            $alert->update(['contacts_notified' => $delivered]);
         }
 
         // Live in-app SOS banner to the OTHER participant, over their
@@ -93,7 +105,17 @@ class NotifySosContactsJob extends BaseJob
         );
     }
 
-    private function notifySMSContact(TrustedContact $contact, string $liveLink, Booking $booking): void
+    /**
+     * Attempt SMS delivery to ONE trusted contact.
+     *
+     * @return bool true only when a message was genuinely handed to a provider.
+     *              The caller records `contacts_notified` from this return
+     *              value, and the mobile client renders that field verbatim to
+     *              a person in an emergency ("your alert reached …") — so
+     *              returning true without real delivery is a safety lie, not a
+     *              cosmetic one. It stays false until a provider is wired.
+     */
+    private function notifySMSContact(TrustedContact $contact, string $liveLink, Booking $booking): bool
     {
         // SMS delivery to trusted contacts is not yet wired to a provider. Do
         // NOT log the live-link token or the contact's phone number — the token
@@ -101,9 +123,16 @@ class NotifySosContactsJob extends BaseJob
         // phone is PII. Emit only a non-sensitive breadcrumb. See
         // SYSTEM_AUDIT_2026-07.md (C3): this must send a real SMS before SOS can
         // claim "contacts notified".
+        //
+        // TO WIRE A PROVIDER: send here and `return true` ONLY on a confirmed
+        // accept from the provider. Everything downstream — the alert record,
+        // the admin panel, and the customer-facing "who we reached" line — keys
+        // off that boolean and needs no other change.
         Log::warning('SOS trusted-contact SMS not delivered (no SMS provider configured)', [
             'booking_id' => $booking->id,
             'contact_id' => $contact->id,
         ]);
+
+        return false;
     }
 }

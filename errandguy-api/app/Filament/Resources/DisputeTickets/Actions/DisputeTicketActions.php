@@ -96,12 +96,46 @@ class DisputeTicketActions
                     ->maxLength(1000),
             ])
             ->action(function (array $data, $record): void {
-                $record->update([
-                    'status' => 'resolved',
-                    'resolution' => $data['resolution'],
-                    'resolved_by' => auth('admin')->id(),
-                    'resolved_at' => now(),
-                ]);
+                // Guard the transition under a row lock. `visible()` hides the
+                // action once a ticket is resolved, but that is a RENDER-time
+                // check: two admins on the ticket at the same time (or one
+                // double-submitting) both saw it open, and without this both
+                // writes land — overwriting the first resolver + resolution text
+                // in the audit trail and pushing the reporter twice. This guard
+                // used to live only in the now-deleted admin REST twin of this
+                // action; consolidating on one implementation must not lose it.
+                $transitioned = \Illuminate\Support\Facades\DB::transaction(
+                    function () use ($data, $record): bool {
+                        $locked = \App\Models\DisputeTicket::whereKey($record->getKey())
+                            ->lockForUpdate()
+                            ->first();
+
+                        if (! $locked || $locked->status === 'resolved') {
+                            return false;
+                        }
+
+                        $locked->update([
+                            'status' => 'resolved',
+                            'resolution' => $data['resolution'],
+                            'resolved_by' => auth('admin')->id(),
+                            'resolved_at' => now(),
+                        ]);
+                        $record->refresh();
+
+                        return true;
+                    },
+                );
+
+                // Only on a REAL transition, so a double-submit never
+                // double-notifies the reporter or double-writes the audit log.
+                if (! $transitioned) {
+                    AdminNotify::success('Dispute already resolved', $record, [
+                        'Ticket' => $record->id,
+                    ]);
+
+                    return;
+                }
+
                 // The old push said only "Your dispute has been resolved."
                 // — a dead end, since no customer/runner endpoint can read
                 // a dispute back. Carry the outcome IN the notification:
@@ -251,7 +285,40 @@ class DisputeTicketActions
                 && $record?->status !== 'resolved'
                 && (auth('admin')->user()?->canHandleSupport() ?? false))
             ->action(function ($record): void {
-                $record->update(['status' => 'escalated']);
+                // Same row-locked precondition as resolve(). `visible()` is a
+                // render-time check, so an escalate submitted against a view
+                // rendered before another admin resolved the ticket would
+                // otherwise drag a RESOLVED dispute back to 'escalated' and push
+                // the reporter about a case that is already closed. The two
+                // invariants preserved here — escalate is idempotent, and a
+                // resolved dispute cannot be escalated — were previously held
+                // only by the now-deleted admin REST twin.
+                $transitioned = \Illuminate\Support\Facades\DB::transaction(
+                    function () use ($record): bool {
+                        $locked = \App\Models\DisputeTicket::whereKey($record->getKey())
+                            ->lockForUpdate()
+                            ->first();
+
+                        if (! $locked || in_array($locked->status, ['escalated', 'resolved'], true)) {
+                            return false;
+                        }
+
+                        $locked->update(['status' => 'escalated']);
+                        $record->refresh();
+
+                        return true;
+                    },
+                );
+
+                if (! $transitioned) {
+                    AdminNotify::success('No change', $record, [
+                        'Ticket' => $record->id,
+                        'Status' => $record->fresh()?->status,
+                    ]);
+
+                    return;
+                }
+
                 // Escalation used to be silent to the reporter, so a case
                 // that was in fact still moving looked abandoned. Tell
                 // them it's alive. Fires only on a real transition (the

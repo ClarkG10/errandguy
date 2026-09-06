@@ -60,7 +60,7 @@ class SOSAlertsTable
                     'Status' => fn (SOSAlert $r): ?string => $r->status,
                     'Triggered' => fn (SOSAlert $r) => $r->triggered_at,
                     'Resolved' => fn (SOSAlert $r) => $r->resolved_at,
-                    'Contacts notified' => fn (SOSAlert $r): bool => (bool) $r->contacts_notified,
+                    'Contacts auto-notified' => fn (SOSAlert $r): bool => ! empty($r->contacts_notified),
                 ]),
             ])
             ->recordActions([

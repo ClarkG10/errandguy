@@ -30,13 +30,6 @@ use App\Http\Controllers\Payment\PaymentHistoryController;
 use App\Http\Controllers\Payment\PaymentStatusController;
 use App\Http\Controllers\Payment\XenditWebhookController;
 use App\Http\Controllers\Payment\WalletController;
-use App\Http\Controllers\Admin\AdminAuthController;
-use App\Http\Controllers\Admin\DashboardController;
-use App\Http\Controllers\Admin\UserManagementController;
-use App\Http\Controllers\Admin\RunnerVerificationController;
-use App\Http\Controllers\Admin\BookingManagementController;
-use App\Http\Controllers\Admin\DisputeController;
-use App\Http\Controllers\Admin\AdminPayoutController;
 // Phase 3 additions
 use App\Http\Controllers\Customer\ReferralController;
 use App\Http\Controllers\Customer\PromoController;
@@ -392,70 +385,6 @@ Route::prefix('v1')->group(function () {
         // ^ Match the modern /support/tickets sibling: this legacy route also
         //   writes a DisputeTicket into the ops moderation queue, so cap it the
         //   same way instead of leaving it on the 240/min global api limiter.
-    });
-
-    // Admin routes
-    Route::prefix('admin')->group(function () {
-        // Credential+IP limiter (NOT the credential-only 'auth' limiter): keying
-        // admin login on the email alone let anyone who knew an admin's email lock
-        // that admin out of the ops console with 5 junk attempts — the AUTHX-3
-        // pre-auth DoS the user-login route already avoids. (audit v4 security)
-        Route::post('/login', [AdminAuthController::class, 'login'])->middleware('throttle:login');
-
-        Route::middleware(['auth:sanctum', 'admin'])->group(function () {
-            Route::post('/logout', [AdminAuthController::class, 'logout']);
-            Route::get('/me', [AdminAuthController::class, 'me']);
-
-            Route::get('/dashboard/stats', [DashboardController::class, 'stats']);
-
-            Route::get('/users', [UserManagementController::class, 'index']);
-            Route::get('/users/{id}', [UserManagementController::class, 'show']);
-            // Account/errand moderation + runner verification — super_admin/admin/
-            // ops only (canModerate), mirroring the Filament Users/Bookings/
-            // RunnerProfiles action gates. This EXCLUDES support and finance:
-            // support handles disputes/tickets/SOS, not account/booking moderation,
-            // and admin booking-cancel issues a full wallet refund.
-            Route::post('/users/{id}/suspend', [UserManagementController::class, 'suspend'])->middleware('admin.can:moderate');
-            Route::post('/users/{id}/unsuspend', [UserManagementController::class, 'unsuspend'])->middleware('admin.can:moderate');
-
-            // Runner KYC reads expose government-ID / selfie metadata (and, for
-            // any un-migrated legacy row, a raw file_url). Gate the READS to
-            // moderation roles (super_admin/admin/ops) to match their approve/
-            // reject siblings and the byte-stream gate in
-            // RunnerDocumentFileController::adminShow — finance/support must never
-            // see runner KYC.
-            Route::get('/runners/pending', [RunnerVerificationController::class, 'pending'])->middleware('admin.can:moderate');
-            Route::get('/runners/{userId}/documents', [RunnerVerificationController::class, 'showDocuments'])->middleware('admin.can:moderate');
-            Route::post('/runners/{userId}/approve', [RunnerVerificationController::class, 'approve'])->middleware('admin.can:moderate');
-            Route::post('/runners/{userId}/reject', [RunnerVerificationController::class, 'reject'])->middleware('admin.can:moderate');
-
-            Route::get('/bookings', [BookingManagementController::class, 'index']);
-            Route::get('/bookings/{id}', [BookingManagementController::class, 'show']);
-            Route::post('/bookings/{id}/cancel', [BookingManagementController::class, 'cancel'])->middleware('admin.can:moderate');
-
-            // Disputes — super_admin/admin/support/ops (canHandleSupport), mirroring
-            // the Filament DisputeTicketResource gate (support IS permitted here).
-            // The READ routes were previously ungated, so a finance-role admin
-            // (canManageMoney but NOT canHandleSupport) — blocked from disputes in
-            // the panel — could still list/read dispute PII (both parties' phone +
-            // email) over the API. Gate the reads to match the mutating routes.
-            Route::get('/disputes', [DisputeController::class, 'index'])->middleware('admin.can:support');
-            Route::get('/disputes/{id}', [DisputeController::class, 'show'])->middleware('admin.can:support');
-            Route::post('/disputes/{id}/resolve', [DisputeController::class, 'resolve'])->middleware('admin.can:support');
-            Route::post('/disputes/{id}/escalate', [DisputeController::class, 'escalate'])->middleware('admin.can:support');
-
-            // Money surfaces — finance/super_admin only, mirroring the Filament
-            // Payouts + PlatformPaymentMethods pages (canManageMoney). The list
-            // read is money-gated too: it returns the full payout ledger +
-            // runner PII (name/phone) that support/ops must not see over the API.
-            Route::get('/payouts', [AdminPayoutController::class, 'index'])->middleware('admin.can:money');
-            Route::post('/payouts/{id}/complete', [AdminPayoutController::class, 'markCompleted'])->middleware('admin.can:money');
-            Route::post('/payouts/{id}/fail', [AdminPayoutController::class, 'markFailed'])->middleware('admin.can:money');
-
-            // Manage which payment methods the platform offers.
-            Route::get('/payment-methods', [\App\Http\Controllers\Admin\PaymentSettingController::class, 'index']);
-            Route::put('/payment-methods', [\App\Http\Controllers\Admin\PaymentSettingController::class, 'update'])->middleware('admin.can:money');
-        });
     });
 
     // Webhook routes (no auth, token-verified)

@@ -37,6 +37,7 @@ import {
   TrendingUp,
   Pencil,
   RefreshCw,
+  AlertTriangle,
 } from 'lucide-react-native';
 import { NegotiateOfferCard } from '../../../components/runner/NegotiateOfferCard';
 import { VerificationBanner } from '../../../components/runner/VerificationBanner';
@@ -904,6 +905,18 @@ export default function RunnerHomeScreen() {
   }, [pingLocation]);
 
   const verificationStatus = runnerProfile?.verification_status ?? 'pending';
+  // Server-computed (RunnerProfileResource) so the client never re-derives the
+  // ceiling from a stale config. Prefer the freshly fetched profile over the
+  // store copy, and treat anything malformed as "not blocked" — a false banner
+  // telling a solvent runner their work is paused is worse than none.
+  const cashDebtBlock = (() => {
+    const raw = (profileQ.data ?? runnerProfile)?.cash_debt_block;
+    if (!raw || typeof raw !== 'object') return null;
+    const owed = Number((raw as any).owed);
+    const message = (raw as any).message;
+    if (!Number.isFinite(owed) || typeof message !== 'string' || !message) return null;
+    return { owed, message };
+  })();
   const firstName = user?.full_name?.split(' ')[0] ?? 'Runner';
 
   if (initialLoading) {
@@ -1373,6 +1386,38 @@ export default function RunnerHomeScreen() {
               status={verificationStatus}
               onAction={() => router.push('/(runner)/settings/documents' as any)}
             />
+          </View>
+        )}
+
+        {/* Cash-debt block. The server filters CASH errands out of the offer
+            feed and refuses them at accept once unsettled commission passes
+            `runner_cash_debt_limit`, so WITHOUT this the runner just watches
+            work stop appearing and concludes the app is broken. Says the amount
+            owed and what to settle, and makes clear prepaid work still pays —
+            a block with no way out is worse than no block. */}
+        {cashDebtBlock && (
+          <View className="mx-5 -mt-3 mb-4 bg-danger/10 border border-danger/30 rounded-2xl px-4 py-3">
+            <View className="flex-row items-center mb-1">
+              <AlertTriangle size={14} color={LightColors.dangerDark} strokeWidth={2.4} />
+              <Text
+                className="ml-1.5 text-[12px] font-montserrat-bold text-dangerDark"
+                maxFontSizeMultiplier={1.3}
+              >
+                Cash errands paused — ₱
+                {Number(cashDebtBlock.owed).toLocaleString('en-PH', {
+                  minimumFractionDigits: 2,
+                  maximumFractionDigits: 2,
+                })}{' '}
+                owed
+              </Text>
+            </View>
+            <Text
+              className="text-[11px] font-montserrat text-textSecondary"
+              style={{ lineHeight: 16 }}
+              maxFontSizeMultiplier={1.3}
+            >
+              {cashDebtBlock.message}
+            </Text>
           </View>
         )}
 

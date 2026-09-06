@@ -4,7 +4,6 @@ namespace App\Services;
 
 use App\Models\Booking;
 use App\Models\SOSAlert;
-use App\Models\TrustedContact;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 
@@ -68,13 +67,22 @@ class SOSService
                 'status' => 'active',
             ]);
 
-            // WHICH trusted contacts will be notified — part of the durable
-            // safety record, so it stays inside the transaction.
-            $contactIds = TrustedContact::where('user_id', $triggeredBy)
-                ->orderBy('created_at')
-                ->pluck('id')
-                ->toArray();
-            $alert->update(['contacts_notified' => $contactIds]);
+            // `contacts_notified` is DELIVERY-CONFIRMED, not intent. It stays
+            // empty here and is appended to by NotifySosContactsJob only when a
+            // message is actually delivered to that contact.
+            //
+            // It used to be pre-filled with every trusted contact id the instant
+            // the alarm was pulled — before any delivery was attempted, and with
+            // no SMS provider wired to attempt one. The mobile client reads this
+            // exact field to tell the person in the emergency who their alert
+            // reached ("ErrandGuy support and 3 trusted contacts"), so the app
+            // confidently reported an alert that nobody ever received. The
+            // client's own guard ("only claim contacts when the server confirms
+            // them") was correct and was defeated by this write.
+            //
+            // Do NOT re-add a pre-fill here. If a snapshot of who SHOULD have
+            // been reached is ever needed for forensics, it belongs in a
+            // separate column with a name that says so.
 
             $booking->update(['sos_triggered' => true]);
 

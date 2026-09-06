@@ -157,10 +157,10 @@ class DiscoverySweepTest extends TestCase
             'email' => 'ops@errandguy.test', 'password_hash' => Hash::make('Password1!'),
             'full_name' => 'Ops', 'role' => 'admin', 'is_active' => true,
         ]);
-        Sanctum::actingAs($admin);
-
-        $this->postJson("/api/v1/admin/bookings/{$this->booking->id}/cancel", ['reason' => 'fraud'])
-            ->assertOk();
+        // Exercises the SHARED service the Filament Bookings cancel action calls
+        // (the admin REST twin that used to front it has been deleted).
+        app(\App\Services\BookingService::class)
+            ->adminCancel($this->booking->id, $admin->id, 'fraud');
 
         // cancelled_by is a uuid column — it must hold the admin's id, never the
         // literal 'admin' (which 500'd on Postgres).
@@ -190,10 +190,8 @@ class DiscoverySweepTest extends TestCase
             'email' => 'ops2@errandguy.test', 'password_hash' => Hash::make('Password1!'),
             'full_name' => 'Ops', 'role' => 'admin', 'is_active' => true,
         ]);
-        Sanctum::actingAs($admin);
-
-        $this->postJson("/api/v1/admin/bookings/{$paid->id}/cancel", ['reason' => 'fraud'])
-            ->assertOk();
+        app(\App\Services\BookingService::class)
+            ->adminCancel($paid->id, $admin->id, 'fraud');
 
         // Full refund, no fee (admin-initiated → not the customer's fault).
         $this->assertEquals('refunded', $paid->fresh()->payment_status);

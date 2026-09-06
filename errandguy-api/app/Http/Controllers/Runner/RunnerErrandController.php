@@ -219,7 +219,24 @@ class RunnerErrandController extends Controller
                 // winner commits, then read its committed 'accepted' booking.
                 // Lock order is Booking→User, matching MatchRunnerJob and
                 // handleCompletion, so no new deadlock cycle is introduced.
-                \App\Models\User::whereKey($user->id)->lockForUpdate()->first();
+                $lockedRunner = \App\Models\User::whereKey($user->id)->lockForUpdate()->first();
+
+                // Cash-debt ceiling. A cash errand settles by DEBITING the
+                // runner's wallet for the platform's commission, so taking cash
+                // work while already deep in debt digs the hole deeper with real
+                // money the platform never collects. Checked here, under the
+                // runner's row lock, because this is the authoritative gate —
+                // MatchingService also filters indebted runners out of cash
+                // dispatch, but a broadcast offer accepted a moment later must
+                // not slip past. Only CASH is blocked: prepaid/wallet errands
+                // CREDIT the runner, so their way back above the line is open.
+                if (
+                    $lockedRunner
+                    && $booking->payment_method === 'cash'
+                    && \App\Support\CashDebtPolicy::blocks((float) $lockedRunner->wallet_balance)
+                ) {
+                    throw new \RuntimeException('cash_debt');
+                }
 
                 // Only OTHER active errands should block acceptance — the
                 // booking being accepted may already be assigned to this
@@ -259,6 +276,15 @@ class RunnerErrandController extends Controller
                 return $this->fail(
                     ErrorCode::BOOKING_CONFLICT,
                     'You already have an active errand. Finish it before accepting another.',
+                );
+            }
+
+            if ($e->getMessage() === 'cash_debt') {
+                // Names the amount to settle — a bare refusal would leave the
+                // runner blocked with no idea what to do about it.
+                return $this->fail(
+                    ErrorCode::BOOKING_CONFLICT,
+                    \App\Support\CashDebtPolicy::message((float) $user->fresh()->wallet_balance),
                 );
             }
 
@@ -420,6 +446,16 @@ class RunnerErrandController extends Controller
             // customer-and-runner account can neither see nor claim the errand
             // it booked.
             ->where('customer_id', '!=', $user->id)
+            // Hide CASH errands from a runner over the cash-debt ceiling. The
+            // same CashDebtPolicy gates accept() and MatchingService dispatch,
+            // so leaving them in the pull feed would show work that is certain
+            // to be refused on tap. The runner is told WHY separately (the
+            // accept error names the amount to settle), so this is a filtered
+            // feed rather than a silent one.
+            ->when(
+                \App\Support\CashDebtPolicy::blocks((float) $user->wallet_balance),
+                fn ($q) => $q->where('payment_method', '!=', 'cash'),
+            )
             // Schedule-aware gate: a SCHEDULED negotiate booking is broadcast to
             // runners only at matchAt = scheduled_at - 15min (see
             // BookingController::store, which defers BroadcastToRunnersJob to

@@ -385,12 +385,12 @@ export default function TrustedContactsScreen() {
   const deleteMessage = (contact: TrustedContact) => {
     const base = `Remove ${contact.name} from your trusted contacts?`;
     if (contacts.length === 1) {
-      return `${base}\n\nYou'll have no one to notify during an emergency.`;
+      return `${base}\n\nYou'll have no one to call in one tap during an emergency.`;
     }
     if (contacts.findIndex((c) => c.id === contact.id) === 0) {
       const next = contacts.find((c) => c.id !== contact.id)?.name;
       return next
-        ? `${base}\n\nThis is your primary SOS contact — ${next} will be called first instead.`
+        ? `${base}\n\nThis is your primary SOS contact — ${next} will be listed first instead.`
         : `${base}\n\nThis is your primary SOS contact.`;
     }
     return base;
@@ -513,7 +513,7 @@ export default function TrustedContactsScreen() {
           style={{ marginTop: 2 }}
         />
         <Text className="flex-1 text-xs font-montserrat text-primary">
-          The contact marked with a star is called first during SOS emergencies. Tap the star on any contact to make it primary.
+          These are the people you can call in one tap when you trigger SOS — ErrandGuy doesn’t message them for you. The starred contact is listed first. Tap the star on any contact to make it primary.
         </Text>
       </View>
 
@@ -536,7 +536,7 @@ export default function TrustedContactsScreen() {
             <EmptyState
               illustration={<Illustration name="empty-contacts" size={180} />}
               title="No trusted contacts"
-              description="Add people you trust to be notified during emergencies"
+              description="Add people you trust, so SOS puts them one tap away to call"
             />
           )
         }

@@ -31,6 +31,11 @@ class SystemConfigSeeder extends Seeder
                 'description' => 'Minutes before unaccepted booking is auto-cancelled',
             ],
             [
+                'key' => 'runner_cash_debt_limit',
+                'value' => '1000',
+                'description' => 'Max unsettled platform commission (PHP) a runner may owe before they stop being offered CASH errands. 0 disables the block.',
+            ],
+            [
                 'key' => 'matched_acceptance_timeout_seconds',
                 'value' => '90',
                 'description' => 'Seconds a matched runner has to accept before the booking is re-matched to someone else',

@@ -33,6 +33,7 @@ class MatchingService
             $booking->errand_type_id,
             $excludeUserId,
             excludeCustomerId: $booking->customer_id,
+            isCashBooking: $booking->payment_method === 'cash',
         );
 
         if ($runners->isEmpty()) {
@@ -63,6 +64,7 @@ class MatchingService
             $booking->errand_type_id,
             limit: 200,
             excludeCustomerId: $booking->customer_id,
+            isCashBooking: $booking->payment_method === 'cash',
         );
 
         // NOTE: negotiate_expires_at is deliberately NOT set here. The create
@@ -95,7 +97,8 @@ class MatchingService
         string $errandTypeId,
         ?string $excludeUserId = null,
         int $limit = 50,
-        ?string $excludeCustomerId = null
+        ?string $excludeCustomerId = null,
+        bool $isCashBooking = false
     ): Collection {
         $runners = RunnerProfile::where('is_online', true)
             ->where('verification_status', 'approved')
@@ -108,6 +111,21 @@ class MatchingService
             // after a role switch) and settle it — paying as customer, collecting
             // the runner payout.
             ->when($excludeCustomerId, fn ($q) => $q->where('user_id', '!=', $excludeCustomerId))
+            // Cash-debt ceiling: don't dispatch CASH work to a runner who
+            // already owes more platform commission than the limit allows. A
+            // cash errand settles by debiting their wallet, so offering it would
+            // only deepen a debt we may never collect — and accept() refuses it
+            // anyway (CashDebtPolicy is shared by both), so the offer would be a
+            // guaranteed dead end that also burns the dispatch slot. Prepaid and
+            // wallet errands are unaffected: those CREDIT the runner, which is
+            // how they climb back above the line.
+            ->when(
+                $isCashBooking && \App\Support\CashDebtPolicy::enabled(),
+                fn ($q) => $q->whereHas(
+                    'user',
+                    fn ($u) => $u->where('wallet_balance', '>', -\App\Support\CashDebtPolicy::limit()),
+                ),
+            )
             ->whereNotNull('current_lat')
             ->whereNotNull('current_lng')
             // Cheap bounding-box prefilter so we don't haversine every

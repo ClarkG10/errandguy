@@ -18,8 +18,9 @@ use Filament\Tables\Table;
  *
  * The decisions themselves live in {@see DisputeTicketActions} so the record
  * page's header carries the identical buttons — including the identical role
- * gates. (DisputeController's "the Filament twin of this action" breadcrumb now
- * points there rather than at this file.)
+ * gates. (The admin REST twin of these actions has been removed — the Filament
+ * action is now the single implementation, and carries the row-locked
+ * preconditions that twin used to hold.)
  */
 class DisputeTicketsTable
 {

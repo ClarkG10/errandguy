@@ -116,6 +116,11 @@ class RunnerHomeController extends Controller
             // so this section is a cache read, not a second GROUP BY.
             'peak_hours' => $this->section(app(HeatmapController::class)->peakHours($peakRequest)),
         ]);
+        // NOTE: the cash-debt block is NOT a section of its own — it rides
+        // `profile` (RunnerProfileResource::cash_debt_block), so it reaches the
+        // dashboard through the cache key the client already seeds and
+        // revalidates. Adding a sibling key here would have given the same fact
+        // two homes and two freshness windows.
     }
 
     /**
