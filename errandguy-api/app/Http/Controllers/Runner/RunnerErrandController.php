@@ -980,16 +980,16 @@ class RunnerErrandController extends Controller
         $collected = false;
 
         if ($booking->payment_status === 'paid') {
-            $newBalance = (float) $user->wallet_balance + $payoutAmount;
-            WalletTransaction::create([
-                'user_id' => $user->id,
-                'type' => 'earning',
-                'amount' => $payoutAmount,
-                'balance_after' => $newBalance,
-                'reference_id' => $booking->id,
-                'description' => "Earning for errand #{$booking->booking_number}",
-            ]);
-            $user->update(['wallet_balance' => $newBalance]);
+            // Shared primitive — see WalletService::applyLedgerDelta. This path
+            // and the late-settlement back-fill both credit the SAME booking;
+            // they used to round it differently.
+            app(\App\Services\WalletService::class)->applyLedgerDelta(
+                $user,
+                'earning',
+                $payoutAmount,
+                $booking->id,
+                "Earning for errand #{$booking->booking_number}",
+            );
             $earnedForStats = $payoutAmount;
             $collected = true;
         } elseif ($booking->payment_method === 'cash') {
@@ -1006,16 +1006,13 @@ class RunnerErrandController extends Controller
             // negotiate offer) commission goes negative and they are correctly
             // CREDITED the shortfall.
             $commission = round((float) $booking->total_amount - (float) $booking->runner_payout, 2);
-            $newBalance = (float) $user->wallet_balance - $commission;
-            WalletTransaction::create([
-                'user_id' => $user->id,
-                'type' => 'commission',
-                'amount' => -$commission,
-                'balance_after' => $newBalance,
-                'reference_id' => $booking->id,
-                'description' => "Platform commission for cash errand #{$booking->booking_number}",
-            ]);
-            $user->update(['wallet_balance' => $newBalance]);
+            app(\App\Services\WalletService::class)->applyLedgerDelta(
+                $user,
+                'commission',
+                -$commission,
+                $booking->id,
+                "Platform commission for cash errand #{$booking->booking_number}",
+            );
             $earnedForStats = $payoutAmount; // earned in cash, in person
             $collected = true;
         }

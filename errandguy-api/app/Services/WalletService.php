@@ -27,6 +27,60 @@ class WalletService
     }
 
     /**
+     * The ONE way a wallet balance moves.
+     *
+     * The read→compute→create-row→update-balance ritual was copy-pasted across
+     * ~15 sites in three files, and had already DRIFTED: the runner earning
+     * credited at completion did not round the payout while the one back-filled
+     * after a late settlement did, so the same booking could credit different
+     * amounts depending on which path settled it — and both wrote an unrounded
+     * `balance_after` into the ledger the wallet reconciler treats as truth.
+     *
+     * This writes the ledger row and the balance TOGETHER, from one rounded
+     * figure, so they can never disagree and every row's `balance_after` is
+     * exact. Rounding happens once, here.
+     *
+     * Deliberately does NOT lock or open a transaction, and does NOT own
+     * idempotency: callers legitimately differ (some already hold a booking
+     * lock, some guard on a unique reference, some on a status precondition),
+     * and hiding those decisions here would make each site harder to reason
+     * about, not easier.
+     *
+     * CONTRACT — the caller MUST:
+     *   1. be inside a DB transaction, and
+     *   2. already hold a `lockForUpdate` on $user (the balance is read off the
+     *      passed model, so an unlocked read is a lost update).
+     *
+     * @param  User  $user  a row the caller has locked
+     * @param  float  $delta  signed: positive credits, negative debits
+     * @param  array<string,mixed>  $extra  extra ledger columns (status, gateway_ref, …)
+     */
+    public function applyLedgerDelta(
+        User $user,
+        string $type,
+        float $delta,
+        ?string $referenceId,
+        string $description,
+        array $extra = [],
+    ): WalletTransaction {
+        $delta = round($delta, 2);
+        $newBalance = round((float) $user->wallet_balance + $delta, 2);
+
+        $transaction = WalletTransaction::create(array_merge([
+            'user_id' => $user->id,
+            'type' => $type,
+            'amount' => $delta,
+            'balance_after' => $newBalance,
+            'reference_id' => $referenceId,
+            'description' => $description,
+        ], $extra));
+
+        $user->update(['wallet_balance' => $newBalance]);
+
+        return $transaction;
+    }
+
+    /**
      * Pull-based settlement reconciliation for ONE pending top-up.
      *
      * Top-up was the one money-in flow with no pull path: the booking probe

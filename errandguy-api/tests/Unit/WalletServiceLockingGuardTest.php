@@ -26,6 +26,20 @@ use ReflectionMethod;
 class WalletServiceLockingGuardTest extends TestCase
 {
     /**
+     * The ONE documented exception: applyLedgerDelta is the shared primitive
+     * every balance movement funnels through, and its contract explicitly puts
+     * the lock on the CALLER (some already hold a booking lock, some guard on a
+     * unique reference). It cannot lock itself without either double-locking or
+     * silently re-reading a row the caller already holds.
+     *
+     * Exempting it would punch a hole in this guard — any future method could
+     * evade the lock rule by delegating here — so the invariant does not
+     * disappear, it MOVES: test_every_caller_of_the_ledger_primitive_locks()
+     * below enforces it at the new boundary.
+     */
+    private const CALLER_LOCKED_PRIMITIVE = 'applyLedgerDelta';
+
+    /**
      * @return array<int, array{0:string,1:string}>  [methodName, methodSource]
      */
     private function balanceMutatingMethods(): array
@@ -77,6 +91,10 @@ class WalletServiceLockingGuardTest extends TestCase
     public function test_every_balance_mutating_method_locks_the_row_in_a_transaction(): void
     {
         foreach ($this->balanceMutatingMethods() as [$name, $body]) {
+            if ($name === self::CALLER_LOCKED_PRIMITIVE) {
+                continue; // see the constant's docblock — enforced on callers below
+            }
+
             $this->assertStringContainsString(
                 'lockForUpdate',
                 $body,
@@ -88,5 +106,62 @@ class WalletServiceLockingGuardTest extends TestCase
                 "WalletService::{$name} writes a balance outside a DB::transaction — the lock + read-modify-write must be atomic.",
             );
         }
+    }
+
+    /**
+     * The other half of the guard above.
+     *
+     * applyLedgerDelta reads the balance off the model it is handed, so an
+     * unlocked caller is a lost update — the exact double-credit / lost-debit
+     * this whole guard exists to prevent. Every call site must therefore hold a
+     * lockForUpdate on that row, taken shortly before the call.
+     *
+     * Checks the 60 lines preceding each call: in practice the lock is always
+     * inside the same transaction closure, a few lines up. A new call site
+     * dropped into unlocked code fails here.
+     */
+    public function test_every_caller_of_the_ledger_primitive_locks(): void
+    {
+        $appDir = dirname(dirname((new ReflectionClass(WalletService::class))->getFileName()));
+
+        $files = new \RecursiveIteratorIterator(new \RecursiveDirectoryIterator($appDir));
+        $callSites = 0;
+
+        foreach ($files as $file) {
+            if (! $file->isFile() || $file->getExtension() !== 'php') {
+                continue;
+            }
+
+            $lines = file($file->getPathname());
+            foreach ($lines as $i => $line) {
+                if (! str_contains($line, self::CALLER_LOCKED_PRIMITIVE.'(')) {
+                    continue;
+                }
+                // The declaration itself, not a call.
+                if (str_contains($line, 'function '.self::CALLER_LOCKED_PRIMITIVE)) {
+                    continue;
+                }
+
+                $callSites++;
+                $window = implode('', array_slice($lines, max(0, $i - 60), min(60, $i)));
+
+                $this->assertStringContainsString(
+                    'lockForUpdate',
+                    $window,
+                    sprintf(
+                        '%s:%d calls %s() without holding a row lock — the balance is read off the passed model, so an unlocked caller loses concurrent updates.',
+                        str_replace($appDir, 'app', $file->getPathname()),
+                        $i + 1,
+                        self::CALLER_LOCKED_PRIMITIVE,
+                    ),
+                );
+            }
+        }
+
+        $this->assertGreaterThan(
+            0,
+            $callSites,
+            'Found no call sites of the ledger primitive — this guard would pass vacuously.',
+        );
     }
 }

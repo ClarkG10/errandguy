@@ -244,16 +244,16 @@ class BookingSettlementService
                 return;
             }
 
-            $newBalance = (float) $runner->wallet_balance + $payout;
-            WalletTransaction::create([
-                'user_id' => $runner->id,
-                'type' => 'earning',
-                'amount' => $payout,
-                'balance_after' => $newBalance,
-                'reference_id' => $booking->id,
-                'description' => "Earning for errand #{$booking->booking_number} (settled after completion)",
-            ]);
-            $runner->update(['wallet_balance' => $newBalance]);
+            // One shared primitive with the completion-time credit, so the two
+            // paths that can settle the SAME booking can never round it
+            // differently or disagree with the ledger's balance_after.
+            app(WalletService::class)->applyLedgerDelta(
+                $runner,
+                'earning',
+                $payout,
+                $booking->id,
+                "Earning for errand #{$booking->booking_number} (settled after completion)",
+            );
 
             // The completion counter (total_errands / completion_rate) was
             // already bumped when the errand was marked completed; only the

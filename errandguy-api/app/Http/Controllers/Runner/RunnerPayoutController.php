@@ -85,21 +85,21 @@ class RunnerPayoutController extends Controller
                     throw new \RuntimeException('insufficient');
                 }
 
-                $newBalance = $balance - $amount;
-
-                $tx = WalletTransaction::create([
-                    'user_id' => $locked->id,
-                    'type' => 'payout',
-                    'amount' => -$amount,
-                    'balance_after' => $newBalance,
-                    'reference_id' => $reference,
-                    'description' => 'Payout request',
-                    'status' => 'pending',
-                ]);
-
-                $locked->update(['wallet_balance' => $newBalance]);
-
-                return $tx;
+                // Shared primitive — see WalletService::applyLedgerDelta. The
+                // guards above (idempotent reference + sufficient balance) stay
+                // here because they are this endpoint's own; only the ledger
+                // write itself is shared, so `balance_after` is computed and
+                // rounded exactly the way every other money movement is.
+                // 'pending' is explicit: a payout is not disbursed until the
+                // gateway confirms, and createPayout rejects a non-pending row.
+                return app(\App\Services\WalletService::class)->applyLedgerDelta(
+                    $locked,
+                    'payout',
+                    -$amount,
+                    $reference,
+                    'Payout request',
+                    ['status' => 'pending'],
+                );
             });
         } catch (\RuntimeException) {
             $balance = number_format((float) $user->fresh()->wallet_balance, 2);
