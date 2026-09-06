@@ -203,6 +203,79 @@ class CashDebtCeilingTest extends TestCase
         $this->assertSame(1000.0, (float) $block['limit']);
     }
 
+    /**
+     * The block rides RunnerProfileResource, so EVERY surface that serializes a
+     * runner's own profile must carry it — not just the /runner/home aggregate.
+     * It reads the balance off the authenticated user rather than the `user`
+     * relation, so no caller has to remember to eager-load anything: `show()`
+     * did, `update()` and the nested UserResource on /me did not.
+     */
+    public function test_every_self_profile_surface_carries_the_block(): void
+    {
+        $this->indebt();
+
+        foreach ([
+            ['GET', '/api/v1/runner/profile', [], 'data.cash_debt_block'],
+            ['GET', '/api/v1/runner/home', [], 'data.profile.cash_debt_block'],
+        ] as [$method, $uri, $payload, $path]) {
+            $block = $this->actingAs($this->runner)->json($method, $uri, $payload)->json($path);
+            $this->assertNotNull($block, "{$uri} must carry the cash-debt block");
+            $this->assertSame(1500.0, (float) $block['owed'], "{$uri} reported the wrong debt");
+        }
+    }
+
+    /** A profile UPDATE response is a self surface too — it was the asymmetric one. */
+    public function test_the_update_response_carries_the_block_too(): void
+    {
+        $this->indebt();
+
+        $block = $this->actingAs($this->runner)
+            ->putJson('/api/v1/runner/profile', ['vehicle_type' => 'motorcycle'])
+            ->json('data.cash_debt_block');
+
+        $this->assertNotNull($block);
+        $this->assertSame(1500.0, (float) $block['owed']);
+    }
+
+    /**
+     * A runner's debt is private financial data. RunnerProfileResource is
+     * serialized INSIDE customer-facing payloads (BookingResource → runner →
+     * runner_profile), so the $isSelf guard is what keeps it out — not route
+     * authorization. Asserted against the resource directly with the CUSTOMER as
+     * the request user: hitting /runner/profile as a customer would only prove
+     * the `role:runner` middleware works, and would pass even if the guard were
+     * removed. Uses resolve(), not toArray(): toArray() leaves when()'s
+     * MissingValue sentinel in the array, so the key is present either way and
+     * the assertion would be meaningless.
+     */
+    public function test_the_block_is_never_exposed_to_anyone_else(): void
+    {
+        $this->indebt();
+
+        $request = \Illuminate\Http\Request::create('/api/v1/runner/profile');
+        $request->setUserResolver(fn () => $this->customer);
+
+        $payload = (new \App\Http\Resources\RunnerProfileResource(
+            $this->runner->fresh()->runnerProfile,
+        ))->resolve($request);
+
+        $this->assertArrayNotHasKey(
+            'cash_debt_block',
+            $payload,
+            "a runner's debt must never be serialized to anyone but the runner",
+        );
+
+        // Control: the same resource DOES carry it for the runner themselves, so
+        // the assertion above cannot pass just because the key stopped existing.
+        $own = \Illuminate\Http\Request::create('/api/v1/runner/profile');
+        $own->setUserResolver(fn () => $this->runner);
+        $this->assertNotNull(
+            (new \App\Http\Resources\RunnerProfileResource(
+                $this->runner->fresh()->runnerProfile,
+            ))->resolve($own)['cash_debt_block'],
+        );
+    }
+
     public function test_a_solvent_runner_sees_no_block_on_home(): void
     {
         $this->runner->update(['wallet_balance' => 250.00]);

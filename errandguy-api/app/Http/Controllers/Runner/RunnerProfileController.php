@@ -23,10 +23,7 @@ class RunnerProfileController extends Controller
             ]);
         }
 
-        // `user` too, not just documents: RunnerProfileResource reads the
-        // runner's wallet_balance for the cash-debt block, and a lazy load there
-        // would be an N+1 on every profile render.
-        $profile->load(['documents', 'user']);
+        $profile->load('documents');
 
         return response()->json([
             'data' => new RunnerProfileResource($profile),

@@ -63,8 +63,16 @@ class RunnerProfileResource extends JsonResource
             // plumbing that already exists, including the /runner/home
             // aggregate. null when solvent, so the client renders nothing in the
             // normal case.
-            'cash_debt_block' => $this->when($isSelf, function (): ?array {
-                $balance = (float) ($this->user?->wallet_balance ?? 0);
+            //
+            // Reads the balance off `$request->user()`, NOT `$this->user`: this
+            // key only renders when $isSelf, which means the authenticated user
+            // IS this profile's owner, so the relation would be a second trip to
+            // the same row. Going through the relation instead made the payload
+            // silently depend on the caller eager-loading `user` — `show()` did,
+            // `update()` and the nested UserResource on /me did not, so those
+            // paths lazy-loaded one extra query each.
+            'cash_debt_block' => $this->when($isSelf, function () use ($request): ?array {
+                $balance = (float) ($request->user()?->wallet_balance ?? 0);
                 if (! CashDebtPolicy::blocks($balance)) {
                     return null;
                 }
