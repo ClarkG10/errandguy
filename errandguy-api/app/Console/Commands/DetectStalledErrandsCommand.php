@@ -64,10 +64,25 @@ class DetectStalledErrandsCommand extends Command
      * attention, and the point of the first deployment is to learn the real
      * distribution before tightening. Ordered as the errand flows.
      *
-     * 'delivered' is intentionally absent — it waits on the CUSTOMER's confirm
-     * tap, not the runner, so idling there is not a runner stall. 'pending' and
-     * 'matched' are absent too: no runner holds those, and ExpireStaleMatchesJob
-     * / ReapStrandedBookingsCommand already cover them.
+     * 'delivered' USED to be excluded here, on the reasoning that it waits on
+     * the customer's confirm tap rather than the runner. That reasoning was
+     * wrong: there is no customer confirm endpoint anywhere in routes/api.php —
+     * only the runner can advance 'delivered' → 'completed', and settlement
+     * happens exclusively in the 'completed' branch. So an errand parked at
+     * 'delivered' pays the runner NOTHING, and every other backstop skipped it
+     * too (AutoCancelBookingJob and ReapStrandedBookingsCommand only touch
+     * pending/no_runner; CheckRideDurationJob only transportation in_transit).
+     * The customer has no lever either — cancel and review are both blocked at
+     * this status, and their Activity screen files 'delivered' under COMPLETED,
+     * so it looks finished to them. If the runner's app dies or they consider
+     * the job done at handover, the errand sits there forever: runner unpaid,
+     * customer's money held, and not one alert on either side.
+     *
+     * A short threshold, because unlike the others the work is already done —
+     * this is the gap between handover and the second tap that settles it.
+     *
+     * 'pending' and 'matched' are still absent: no runner holds those, and
+     * ExpireStaleMatchesJob / ReapStrandedBookingsCommand already cover them.
      */
     private const DEFAULT_THRESHOLDS = [
         'accepted' => 30,
@@ -76,6 +91,7 @@ class DetectStalledErrandsCommand extends Command
         'picked_up' => 60,
         'in_transit' => 60,
         'arrived_at_dropoff' => 30,
+        'delivered' => 20,
     ];
 
     /** Human labels for the alert body — mirrors the admin BookingsTable. */
@@ -86,6 +102,7 @@ class DetectStalledErrandsCommand extends Command
         'picked_up' => 'Picked up',
         'in_transit' => 'In transit',
         'arrived_at_dropoff' => 'Arrived at dropoff',
+        'delivered' => 'Delivered, not yet completed',
     ];
 
     /**

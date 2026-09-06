@@ -191,14 +191,28 @@ class StalledErrandDetectionTest extends TestCase
 
     public function test_a_status_nobody_is_holding_is_not_monitored(): void
     {
-        // 'delivered' waits on the CUSTOMER's confirm tap, and 'pending' has no
-        // runner at all — neither is a runner stall.
-        $this->idleFor($this->makeErrand(['status' => 'delivered']), 300);
+        // 'pending' has no runner at all, and ExpireStaleMatchesJob /
+        // ReapStrandedBookingsCommand already cover it — not a runner stall.
         $this->idleFor($this->makeErrand(['status' => 'pending', 'runner_id' => null]), 300);
 
         $this->artisan('errandguy:detect-stalled-errands')->assertSuccessful();
 
         $this->assertSame(0, $this->stalledAlerts());
+    }
+
+    public function test_a_delivered_errand_that_never_completed_is_alerted(): void
+    {
+        // 'delivered' was excluded on the reasoning that it waits on the
+        // customer's confirm tap — but no customer confirm endpoint exists, and
+        // settlement happens only in the 'completed' branch. So an errand parked
+        // here pays the runner NOTHING while every other backstop skips it and
+        // the customer's Activity screen files it under completed. Nobody was
+        // watching the one state where the work is done and the money is not.
+        $this->idleFor($this->makeErrand(['status' => 'delivered']), 300);
+
+        $this->artisan('errandguy:detect-stalled-errands')->assertSuccessful();
+
+        $this->assertSame(1, $this->stalledAlerts());
     }
 
     public function test_an_in_transit_ride_is_left_to_the_ride_duration_monitor(): void

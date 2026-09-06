@@ -4,6 +4,7 @@ namespace App\Console\Commands;
 
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\DB;
 
 /**
  * One-shot LAUNCH GATE. Aggregates the go-live readiness checks into a single
@@ -92,6 +93,13 @@ class Preflight extends Command
         //    columns/tables and 500s on the hot path. Critical.
         $results[] = self::migrationsCheck();
 
+        // 2b. The money UNIQUE guards actually being present. Migrations running
+        //     is not the same as the guards existing — the money-integrity
+        //     migration skips a constraint (and still succeeds) if duplicates
+        //     already exist, so a "schema up to date" PASS can sit directly on
+        //     top of a missing double-refund backstop. Critical.
+        $results[] = self::moneyGuardsCheck();
+
         // 3. Scheduler liveness — the daily backup, config-check, cleanup jobs and
         //    safety monitors all ride the scheduler; if cron isn't running, none of
         //    them do. Mirrors HealthController::schedulerStatus (heartbeat every
@@ -112,6 +120,86 @@ class Preflight extends Command
         ];
 
         return $results;
+    }
+
+    /**
+     * The money-integrity UNIQUE guards must actually EXIST in this database.
+     *
+     * These are the last line of defence: `uq_wallet_tx_user_reference_type` is
+     * what makes a double-refund or double-earning impossible even if the
+     * application logic is wrong, and code across the settlement paths says so
+     * explicitly ("the DB-level backstop"). But the migration that creates them
+     * builds each one only if the table is already clean — on ANY pre-existing
+     * duplicate it logs CRITICAL and RETURNS, and the deploy SUCCEEDS with the
+     * guard absent. In production that log lands in a daily file nobody reads.
+     *
+     * So the guarantee the money code leans on can be silently missing, and
+     * until this check existed there was no way to find out. Assert it here,
+     * where a failure blocks launch instead of scrolling past.
+     *
+     * A missing guard is fixed by reconciling the duplicate rows and re-running
+     * the migration — never by weakening the constraint.
+     */
+    private static function moneyGuardsCheck(): array
+    {
+        $required = [
+            'wallet_transactions' => 'uq_wallet_tx_user_reference_type',
+            'payments' => 'uq_payments_gateway_tx',
+            'referrals' => 'uq_referrals_referee_id',
+            'promo_user_redemptions' => 'uq_promo_user_redemptions',
+        ];
+
+        try {
+            $connection = DB::connection();
+
+            // information_schema.statistics is MySQL-specific, and production is
+            // MySQL. On any other driver (sqlite in the test suite, a local dev
+            // box) the guards cannot be introspected this way — report that
+            // honestly instead of failing a gate the environment can't satisfy.
+            // A wrong prod driver is already a critical finding of its own in
+            // check-prod-config, so nothing hides here.
+            if ($connection->getDriverName() !== 'mysql') {
+                return [
+                    'check' => 'money integrity guards',
+                    'level' => 'critical',
+                    'ok' => true,
+                    'message' => 'Skipped — verifiable on MySQL only (driver: '.$connection->getDriverName().'). Run this against production.',
+                ];
+            }
+
+            $database = $connection->getDatabaseName();
+
+            $present = DB::table('information_schema.statistics')
+                ->where('table_schema', $database)
+                ->whereIn('index_name', array_values($required))
+                ->distinct()
+                ->pluck('index_name')
+                ->all();
+
+            $missing = [];
+            foreach ($required as $table => $index) {
+                if (! in_array($index, $present, true)) {
+                    $missing[] = "{$index} (on {$table})";
+                }
+            }
+
+            return [
+                'check' => 'money integrity guards',
+                'level' => 'critical',
+                'ok' => $missing === [],
+                'message' => $missing === []
+                    ? 'All DB-level money UNIQUE guards are installed.'
+                    : 'MISSING: '.implode(', ', $missing)
+                        .' — the migration skips a guard when duplicates already exist, so double-refund/double-earning is currently possible. Reconcile the duplicate rows and re-run the migration; do not weaken the constraint.',
+            ];
+        } catch (\Throwable $e) {
+            return [
+                'check' => 'money integrity guards',
+                'level' => 'critical',
+                'ok' => false,
+                'message' => 'Could not verify the money UNIQUE guards: '.$e->getMessage(),
+            ];
+        }
     }
 
     private static function migrationsCheck(): array
