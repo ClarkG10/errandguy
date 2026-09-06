@@ -128,9 +128,69 @@ class ReconcileBookingPaymentsCommand extends Command
 
         if (! $dryRun) {
             $this->flagCompletedButUnpaid();
+            $this->flagChargedButNeverRefunded();
         }
 
         return self::SUCCESS;
+    }
+
+    /**
+     * Detective control: money taken for an errand that never happened.
+     *
+     * A wallet-funded booking debits the customer and then records the paid flag.
+     * Those are now one transaction, but any future drift in that seam — or a
+     * refund path that silently declines — ends the same way: a committed
+     * `payment` ledger row against a cancelled booking with no `refund` beside
+     * it. The wallet reconciler cannot see this: the debit is internally
+     * consistent, just orphaned, so balance still equals the ledger.
+     *
+     * A cancellation fee that consumes the whole charge is legitimate and writes
+     * no refund row, so those are excluded rather than reported forever.
+     */
+    private function flagChargedButNeverRefunded(): void
+    {
+        $orphaned = Booking::query()
+            ->whereIn('status', ['cancelled', 'failed'])
+            ->whereExists(fn ($q) => $q->selectRaw('1')
+                ->from('wallet_transactions')
+                ->whereColumn('wallet_transactions.reference_id', 'bookings.id')
+                ->where('wallet_transactions.type', 'payment'))
+            ->whereNotExists(fn ($q) => $q->selectRaw('1')
+                ->from('wallet_transactions')
+                ->whereColumn('wallet_transactions.reference_id', 'bookings.id')
+                ->where('wallet_transactions.type', 'refund'))
+            // A full-value cancellation fee keeps the money by design.
+            ->where(function ($q) {
+                $q->whereNull('cancellation_fee')
+                    ->orWhereColumn('cancellation_fee', '<', 'total_amount');
+            })
+            ->orderBy('updated_at')
+            ->limit(50)
+            ->get(['id', 'booking_number', 'status', 'cancellation_fee', 'total_amount']);
+
+        if ($orphaned->isEmpty()) {
+            $this->info('No charged-but-unrefunded cancellations.');
+
+            return;
+        }
+
+        $numbers = $orphaned->pluck('booking_number')->take(10)->implode(', ');
+
+        $this->error("{$orphaned->count()} cancelled errand(s) charged with no refund: {$numbers}");
+
+        Log::critical('Cancelled errands charged with no refund', [
+            'count' => $orphaned->count(),
+            'booking_numbers' => $orphaned->pluck('booking_number')->take(10)->all(),
+        ]);
+
+        AdminAlert::raise(
+            'charged_unrefunded_cancellation',
+            'critical',
+            'Cancelled errands that were charged and never refunded',
+            "{$orphaned->count()} cancelled errand(s) hold a wallet payment with no matching refund: {$numbers}. "
+                .'The customer paid for an errand that never happened — refund each manually.',
+            $orphaned->first()->id,
+        );
     }
 
     /**

@@ -394,12 +394,45 @@ class BookingController extends Controller
             }
         } elseif ($paymentMethod === 'wallet') {
             try {
-                app(WalletService::class)->deduct(
-                    $user->id,
-                    $amount,
-                    $booking->id,
-                    "Payment for booking {$booking->booking_number}",
-                );
+                // ONE transaction for the debit AND the booking's paid flag.
+                //
+                // deduct() commits its own transaction, so these used to be four
+                // separate round-trips: money left the wallet first, and only
+                // three statements later did the booking say so. A fatal in that
+                // window (deploy restart, OOM) left a committed debit against a
+                // booking still carrying the migration default 'unpaid' — and
+                // nothing recovers it: the auto-cancel refund declines on
+                // `payment_status !== 'paid'`, and reconcile-wallets stays silent
+                // because the ledger and the balance still agree with each other.
+                // The customer is charged for an errand that is then cancelled,
+                // silently and permanently.
+                //
+                // Nesting deduct()'s transaction inside this one turns it into a
+                // savepoint governed by this commit, so the debit is now undone
+                // by the same failure that prevents the booking recording it.
+                // deduct() already locks the user row, so no new lock ordering.
+                $payment = DB::transaction(function () use ($user, $amount, $booking) {
+                    app(WalletService::class)->deduct(
+                        $user->id,
+                        $amount,
+                        $booking->id,
+                        "Payment for booking {$booking->booking_number}",
+                    );
+
+                    $payment = Payment::create([
+                        'booking_id' => $booking->id,
+                        'customer_id' => $user->id,
+                        'amount' => $amount,
+                        'currency' => 'PHP',
+                        'method' => 'wallet',
+                        'status' => 'pending',
+                    ]);
+                    $payment->transitionTo(PaymentStatus::Completed, extra: ['paid_at' => now()]);
+                    $booking->update(['payment_status' => 'paid']);
+
+                    return $payment;
+                });
+                $paymentId = $payment->id;
             } catch (\RuntimeException $e) {
                 // Not enough balance — mark the booking failed (never hard-delete:
                 // a Payment row and/or a promo redemption may already reference it,
@@ -413,19 +446,6 @@ class BookingController extends Controller
                         .'. Top up or choose another payment method — you weren’t charged.',
                 );
             }
-            // Wallet already debited above; create the payment as pending then
-            // record the settlement transition so it lands in the audit log.
-            $payment = Payment::create([
-                'booking_id' => $booking->id,
-                'customer_id' => $user->id,
-                'amount' => $amount,
-                'currency' => 'PHP',
-                'method' => 'wallet',
-                'status' => 'pending',
-            ]);
-            $paymentId = $payment->id;
-            $payment->transitionTo(PaymentStatus::Completed, extra: ['paid_at' => now()]);
-            $booking->update(['payment_status' => 'paid']);
         } elseif ($paymentMethod === 'cash') {
             $payment = Payment::create([
                 'booking_id' => $booking->id,
