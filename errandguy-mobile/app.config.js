@@ -65,6 +65,20 @@ module.exports = ({ config }) => {
           androidGoogleMapsApiKey: process.env.EXPO_PUBLIC_GOOGLE_MAPS_KEY,
         },
       ],
+      // MapLibre is the ACTUAL map renderer (components/map/index.tsx draws HERE
+      // raster tiles through it); react-native-maps above is only there for its
+      // API shape. Its config plugin is what adds the MapLibre SPM package to
+      // the Xcode project, and it was missing from this list — so a fresh
+      // `expo prebuild` produced a project that could not compile
+      // (`'MapLibre/MapLibre.h' file not found` from CameraStop.h).
+      //
+      // The old ios/ built only because someone added that Swift package BY
+      // HAND. That single hand-patch is why ios/ ended up gitignored and
+      // four months out of sync with package.json — the native project could
+      // not be regenerated without breaking the map, so it never was. Listing
+      // the plugin here is what makes the iOS project reproducible from config
+      // again; do not remove it while components/map imports MapLibre.
+      '@maplibre/maplibre-react-native',
       'expo-image',
       [
         'expo-notifications',
