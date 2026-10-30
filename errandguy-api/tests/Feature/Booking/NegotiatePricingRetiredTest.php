@@ -148,9 +148,10 @@ class NegotiatePricingRetiredTest extends TestCase
     public function test_the_admin_errand_type_pages_render_without_the_offer_floor(): void
     {
         $this->seed(\Database\Seeders\ErrandTypeSeeder::class);
-        $this->actingAs(AdminUser::create([
+        $this->actingAs(AdminUser::forceCreate([
             'email' => 'super@errandguy.test', 'password_hash' => Hash::make('Password1!'),
             'full_name' => 'Super', 'role' => AdminUser::ROLE_SUPER_ADMIN, 'is_active' => true,
+            'has_email_authentication' => true, // two-step sign-in set up
         ]), 'admin');
         $delivery = ErrandType::where('slug', 'delivery')->firstOrFail();
 

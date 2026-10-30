@@ -54,9 +54,10 @@ class PayoutSafetyTest extends TestCase
             'payout_channel' => 'gcash', 'ewallet_number' => '09171234567', 'payout_account_name' => 'Rhea Runner',
         ]);
 
-        $this->actingAs(AdminUser::create([
+        $this->actingAs(AdminUser::forceCreate([
             'email' => 'finance@errandguy.test', 'password_hash' => Hash::make('Password1!'),
             'full_name' => 'Finance', 'role' => 'finance', 'is_active' => true,
+            'has_email_authentication' => true, // two-step sign-in set up
         ]), 'admin');
 
         Http::fake(function ($request) {

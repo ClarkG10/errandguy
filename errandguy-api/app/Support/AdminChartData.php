@@ -8,17 +8,19 @@ use Illuminate\Support\Facades\DB;
 /**
  * Helpers for the admin dashboard chart widgets: build a gap-filled daily axis
  * so a day with zero activity still shows as a point on the line (instead of
- * the series silently collapsing). App + DB both run in UTC, so `today()` lines
- * up 1:1 with the driver-aware day buckets from {@see dayBucket()}.
+ * the series silently collapsing). Days are Manila calendar days
+ * ({@see BusinessDay}); the app and the database store UTC, so
+ * {@see dayBucket()} shifts each timestamp into Manila time before taking its
+ * date, matching the keys of {@see emptyDailyMap()}.
  */
 class AdminChartData
 {
-    /** Ordered map ['YYYY-MM-DD' => 0.0] for the last $days days, oldest → newest. */
+    /** Ordered map ['YYYY-MM-DD' => 0.0] for the last $days Manila days, oldest → newest. */
     public static function emptyDailyMap(int $days): array
     {
         $map = [];
         for ($i = $days - 1; $i >= 0; $i--) {
-            $map[today()->subDays($i)->toDateString()] = 0.0;
+            $map[BusinessDay::date($i)] = 0.0;
         }
 
         return $map;
@@ -39,23 +41,26 @@ class AdminChartData
         );
     }
 
-    /** The first date in the window as a Carbon (start of the range). */
+    /** Manila midnight at the start of the window, as a UTC instant. */
     public static function since(int $days): Carbon
     {
-        return today()->subDays($days - 1);
+        return BusinessDay::start($days - 1);
     }
 
     /**
-     * SQL expression bucketing a datetime column to a 'YYYY-MM-DD' day string,
-     * matching the keys produced by {@see emptyDailyMap()}. Driver-aware:
-     * Postgres to_char / MySQL date_format / SQLite strftime.
+     * SQL expression bucketing a UTC datetime column to its Manila 'YYYY-MM-DD'
+     * date, matching the keys produced by {@see emptyDailyMap()}. Manila has no
+     * daylight saving, so a fixed offset is exact and MySQL needs no time-zone
+     * tables. Driver-aware.
      */
     public static function dayBucket(string $column): string
     {
+        $local = now(BusinessDay::timezone());
+
         return match (self::driver()) {
-            'pgsql' => "to_char({$column}, 'YYYY-MM-DD')",
-            'sqlite' => "strftime('%Y-%m-%d', {$column})",
-            default => "date_format({$column}, '%Y-%m-%d')", // mysql / mariadb
+            'pgsql' => "to_char(({$column} at time zone 'UTC') at time zone '".BusinessDay::timezone()."', 'YYYY-MM-DD')",
+            'sqlite' => "strftime('%Y-%m-%d', {$column}, '".sprintf('%+d', $local->utcOffset())." minutes')",
+            default => "date_format(convert_tz({$column}, '+00:00', '".$local->format('P')."'), '%Y-%m-%d')", // mysql / mariadb
         };
     }
 

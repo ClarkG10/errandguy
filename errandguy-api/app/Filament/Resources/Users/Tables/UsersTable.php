@@ -82,7 +82,7 @@ class UsersTable
                     'Wallet balance (PHP)' => fn (User $r) => $r->wallet_balance,
                     'Avg rating' => fn (User $r) => $r->avg_rating,
                     'Joined' => fn (User $r) => $r->created_at,
-                ]),
+                ], personalData: true),
             ])
             ->toolbarActions([
                 ExportCsv::bulk('users', [
@@ -93,7 +93,7 @@ class UsersTable
                     'Status' => fn (User $r): ?string => $r->status,
                     'Wallet balance (PHP)' => fn (User $r) => $r->wallet_balance,
                     'Joined' => fn (User $r) => $r->created_at,
-                ]),
+                ], personalData: true),
 
                 BulkAction::make('suspendSelected')
                     ->label('Suspend selected')

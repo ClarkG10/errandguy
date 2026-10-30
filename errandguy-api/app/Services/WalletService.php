@@ -2,9 +2,11 @@
 
 namespace App\Services;
 
+use App\Models\AdminUser;
 use App\Models\Booking;
 use App\Models\User;
 use App\Models\WalletTransaction;
+use App\Support\PayoutDestination;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
@@ -878,16 +880,20 @@ class WalletService
      * user's WITHDRAWABLE balance (never promo bonus). Money-safe: the user row
      * is locked, the magnitude is capped, and a debit can never overdraw the
      * wallet below zero. Records an audited 'adjustment' transaction carrying the
-     * admin's reason. reference_id is intentionally NULL — an admin legitimately
-     * adjusts the same user more than once, and the authoritative who/when audit
-     * lives in AdminActivity (see the Filament action) — so this must NOT reuse
-     * the (user, reference, type) idempotency key.
+     * admin's reason and who made it. reference_id is intentionally NULL — an
+     * admin legitimately adjusts the same user more than once, and the
+     * authoritative who/when audit lives in AdminActivity (see the Filament
+     * action) — so this must NOT reuse the (user, reference, type) idempotency
+     * key.
+     *
+     * Insider limits (StaffMoneyLimit): the staff member's daily total is
+     * capped, and a large single adjustment raises a dashboard alert.
      *
      * @param  float  $signedAmount  Positive credits the user; negative debits.
-     * @throws \RuntimeException on a zero / over-cap amount, an empty reason, or
-     *                           an overdrawing debit.
+     * @throws \RuntimeException on a zero / over-cap amount, an empty reason, an
+     *                           overdrawing debit, or the staff daily limit.
      */
-    public function adjust(string $userId, float $signedAmount, string $reason): WalletTransaction
+    public function adjust(AdminUser $staff, string $userId, float $signedAmount, string $reason): WalletTransaction
     {
         $amount = round($signedAmount, 2);
         if ($amount === 0.0) {
@@ -901,9 +907,11 @@ class WalletService
             throw new \RuntimeException('A reason is required for a wallet adjustment.');
         }
 
-        $justAdjusted = null; // [userId, amount, newBalance] set on success
+        $justAdjusted = null; // [userId, amount, newBalance, userName] set on success
 
-        $transaction = DB::transaction(function () use ($userId, $amount, $reason, &$justAdjusted) {
+        $transaction = DB::transaction(function () use ($staff, $userId, $amount, $reason, &$justAdjusted) {
+            StaffMoneyLimit::assertWithinDailyCap($staff, $amount);
+
             $user = User::lockForUpdate()->findOrFail($userId);
 
             $newBalance = round((float) $user->wallet_balance + $amount, 2);
@@ -920,18 +928,29 @@ class WalletService
                 'amount' => $amount, // signed: + credit, − debit
                 'balance_after' => $newBalance,
                 'description' => ($amount > 0 ? 'Credit adjustment' : 'Debit adjustment').': '.$reason,
+                'initiated_by_staff_id' => $staff->getKey(),
             ]);
 
-            $justAdjusted = [$userId, $amount, $newBalance];
+            $justAdjusted = [$userId, $amount, $newBalance, $user->full_name];
 
             return $tx;
         });
 
         // Tell the user, honestly, AFTER commit (never push inside the lock).
         if ($justAdjusted) {
-            [$uid, $amt, $newBalance] = $justAdjusted;
+            [$uid, $amt, $newBalance, $userName] = $justAdjusted;
             $abs = number_format(abs($amt), 2);
             $bal = number_format($newBalance, 2);
+
+            StaffMoneyLimit::alertIfLarge(
+                StaffMoneyLimit::ALERT_ADJUSTMENT,
+                $staff,
+                $amt,
+                'Large wallet adjustment: '.($amt > 0 ? '+' : '−')."₱{$abs}",
+                ($amt > 0 ? 'Credited' : 'Debited')." ₱{$abs} ".($amt > 0 ? 'to' : 'from').' '.($userName ?: 'a user')."’s wallet. Reason: {$reason}.",
+                $uid,
+            );
+
             [$title, $body] = $amt > 0
                 ? ['Wallet credited', "₱{$abs} was added to your wallet. New balance: ₱{$bal}. Reason: {$reason}"]
                 : ['Wallet adjusted', "₱{$abs} was deducted from your wallet. New balance: ₱{$bal}. Reason: {$reason}"];
@@ -1038,6 +1057,7 @@ class WalletService
      * @param  string|null  $reference    stable idempotency token (uuid), or null
      * @param  array|null   $destination  see App\Support\PayoutDestination
      * @param  float        $minimum      the smallest payout allowed (0 = none)
+     * @param  AdminUser|null  $initiatedBy  the staff member, for "Pay a runner"
      *
      * @throws \App\Exceptions\WithdrawalException before any money moves
      */
@@ -1048,10 +1068,11 @@ class WalletService
         ?array $destination,
         float $minimum,
         string $description,
+        ?AdminUser $initiatedBy = null,
     ): WalletTransaction {
         $amount = round($amount, 2);
 
-        return DB::transaction(function () use ($userId, $amount, $reference, $destination, $minimum, $description) {
+        return DB::transaction(function () use ($userId, $amount, $reference, $destination, $minimum, $description, $initiatedBy) {
             $user = User::lockForUpdate()->findOrFail($userId);
 
             // Idempotent replay: a payout already exists for this reference →
@@ -1084,6 +1105,7 @@ class WalletService
             return $this->applyLedgerDelta($user, 'payout', -$amount, $reference, $description, [
                 'status' => 'pending',
                 'payout_destination' => $destination,
+                'initiated_by_staff_id' => $initiatedBy?->getKey(),
             ]);
         });
     }
@@ -1101,19 +1123,58 @@ class WalletService
      * Staff-initiated payout ("Pay a runner"): debit + queue a pending payout,
      * with the runner minimum. See createPendingPayout.
      *
+     * Staff type the destination themselves, so this moves money outside the
+     * runner's own payout request: it counts toward the staff member's daily
+     * limit and a large one raises a dashboard alert (StaffMoneyLimit). A
+     * replay of the same $reference returns the original without counting it
+     * again.
+     *
      * @param  string|null  $reference  per-modal idempotency token, so a
      *   double-submit can't double-debit + double-disburse (payment review P0-8).
      */
-    public function payout(string $userId, float $amount, ?string $reference = null, ?array $destination = null): WalletTransaction
+    public function payout(AdminUser $staff, string $userId, float $amount, ?string $reference = null, ?array $destination = null): WalletTransaction
     {
-        return $this->createPendingPayout(
-            $userId,
-            $amount,
-            $reference,
-            $destination,
-            self::runnerPayoutMinimum(),
-            'Payout to bank/e-wallet',
-        );
+        $tx = DB::transaction(function () use ($staff, $userId, $amount, $reference, $destination): WalletTransaction {
+            StaffMoneyLimit::lockStaff($staff);
+
+            if ($reference !== null) {
+                $existing = WalletTransaction::where('user_id', $userId)
+                    ->where('reference_id', $reference)
+                    ->where('type', 'payout')
+                    ->first();
+                if ($existing) {
+                    return $existing;
+                }
+            }
+
+            StaffMoneyLimit::assertWithinDailyCap($staff, $amount);
+
+            return $this->createPendingPayout(
+                $userId,
+                $amount,
+                $reference,
+                $destination,
+                self::runnerPayoutMinimum(),
+                'Payout to bank/e-wallet',
+                initiatedBy: $staff,
+            );
+        });
+
+        // A replay that lost a race inside createPendingPayout comes back as
+        // the original row, not a new one.
+        if ($tx->wasRecentlyCreated) {
+            $abs = number_format(abs((float) $tx->amount), 2);
+            StaffMoneyLimit::alertIfLarge(
+                StaffMoneyLimit::ALERT_PAYOUT,
+                $staff,
+                (float) $tx->amount,
+                "Large “Pay a runner” payout: ₱{$abs}",
+                "Paid ₱{$abs} out of ".($tx->user?->full_name ?: 'a runner')."’s wallet to ".PayoutDestination::label($destination).'.',
+                $tx->id,
+            );
+        }
+
+        return $tx;
     }
 
     /**

@@ -26,16 +26,22 @@ use Symfony\Component\HttpFoundation\StreamedResponse;
  *       ]),
  *   ])
  *
+ * Pass `personalData: true` when the columns include people's phone numbers,
+ * email addresses or wallet balances: only super admins and admins may then
+ * export (AdminUser::canExportPersonalData) — the button is hidden from
+ * everyone else, and a hidden action can't be run.
+ *
  * @param  array<string, callable>  $columns  header => fn($record) => scalar
  */
 class ExportCsv
 {
-    public static function make(string $filenameBase, array $columns): Action
+    public static function make(string $filenameBase, array $columns, bool $personalData = false): Action
     {
         return Action::make('exportCsv')
             ->label('Export CSV')
             ->icon(Heroicon::OutlinedArrowDownTray)
             ->color('gray')
+            ->visible(fn (): bool => self::allowed($personalData))
             ->action(function ($livewire) use ($filenameBase, $columns): StreamedResponse {
                 $query = method_exists($livewire, 'getFilteredSortedTableQuery')
                     ? $livewire->getFilteredSortedTableQuery()
@@ -76,12 +82,13 @@ class ExportCsv
      *
      * @param  array<string, callable>  $columns  header => fn($record) => scalar
      */
-    public static function bulk(string $filenameBase, array $columns): BulkAction
+    public static function bulk(string $filenameBase, array $columns, bool $personalData = false): BulkAction
     {
         return BulkAction::make('exportSelectedCsv')
             ->label('Export selected')
             ->icon(Heroicon::OutlinedArrowDownTray)
             ->color('gray')
+            ->visible(fn (): bool => self::allowed($personalData))
             ->deselectRecordsAfterCompletion()
             ->action(function (Collection $records) use ($filenameBase, $columns): StreamedResponse {
                 AdminActivity::log('export.csv.selected', null, ['dataset' => $filenameBase, 'count' => $records->count()]);
@@ -96,6 +103,13 @@ class ExportCsv
                     fclose($out);
                 }, $filenameBase.'-selected-'.now()->format('Ymd-His').'.csv', ['Content-Type' => 'text/csv; charset=UTF-8']);
             });
+    }
+
+    private static function allowed(bool $personalData): bool
+    {
+        $admin = auth('admin')->user();
+
+        return $admin !== null && (! $personalData || $admin->canExportPersonalData());
     }
 
     private static function stringify(mixed $value): string

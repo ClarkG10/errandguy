@@ -27,17 +27,19 @@ class SystemConfig extends Model
 
     /**
      * Staff-only settings: never sent to the app by GET /config/app (which
-     * serves the rest of this table to every signed-in user).
+     * serves the rest of this table to every signed-in user). Every
+     * stall_alert_* setting is staff-only too (PRIVATE_PREFIX).
      */
     public const PRIVATE_KEYS = [
         'ops_alert_emails',
         'ops_alert_phone',
         'admin_alert_email',
         'admin_alert_throttle_hours',
+        'admin_adjustment_daily_cap',
+        'admin_adjustment_alert_threshold',
     ];
 
-    /** Settings staff may leave empty in the admin panel (empty = off). */
-    public const BLANK_ALLOWED_KEYS = ['ops_alert_emails', 'ops_alert_phone'];
+    private const PRIVATE_PREFIX = 'stall_alert_';
 
     protected static function booted(): void
     {
@@ -64,11 +66,12 @@ class SystemConfig extends Model
         ];
     }
 
-    /** Every setting the app may read: the whole table minus PRIVATE_KEYS. */
+    /** Every setting the app may read: the whole table minus the staff-only ones. */
     public static function publicValues(): \Illuminate\Support\Collection
     {
         return static::query()
             ->whereNotIn('key', self::PRIVATE_KEYS)
+            ->where('key', 'not like', self::PRIVATE_PREFIX.'%')
             ->pluck('value', 'key');
     }
 

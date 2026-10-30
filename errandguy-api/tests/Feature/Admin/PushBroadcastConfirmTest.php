@@ -24,9 +24,10 @@ class PushBroadcastConfirmTest extends TestCase
     protected function setUp(): void
     {
         parent::setUp();
-        $admin = AdminUser::create([
+        $admin = AdminUser::forceCreate([
             'email' => 'super@errandguy.test', 'password_hash' => Hash::make('Password1!'),
             'full_name' => 'Super', 'role' => 'super_admin', 'is_active' => true,
+            'has_email_authentication' => true, // two-step sign-in set up
         ]);
         $this->actingAs($admin, 'admin');
     }

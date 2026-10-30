@@ -81,24 +81,31 @@ class ActionQueue extends StatsOverviewWidget
             ];
         });
 
-        return [
+        // A card links only to a page the viewer's role can open. SOS and
+        // support counts stay visible to everyone (unlinked when they can't
+        // act); the payout queue is money staff's work, so only they see it.
+        $stats = [
             Stat::make('Active SOS', number_format($d['sos']))
                 ->description($this->withAge($d['sos'] > 0 ? 'Life-safety — respond now' : 'All clear', $d['sos_oldest']))
                 ->descriptionIcon('heroicon-m-shield-exclamation')
                 ->color($d['sos'] > 0 ? 'danger' : 'gray')
-                ->url(SOSAlertResource::getUrl('index', ['tableFilters' => ['status' => ['value' => 'active']]])),
+                ->url(SOSAlertResource::canViewAny()
+                    ? SOSAlertResource::getUrl('index', ['tableFilters' => ['status' => ['value' => 'active']]])
+                    : null),
 
             Stat::make('Stuck errands', number_format($d['stuck']))
                 ->description($this->withAge($d['stuck'] > 0 ? 'No runner could be assigned' : 'All flowing', $d['stuck_oldest']))
                 ->descriptionIcon('heroicon-m-exclamation-triangle')
                 ->color($d['stuck'] > 0 ? 'danger' : 'gray')
-                ->url(BookingResource::getUrl('index', ['tableFilters' => ['status' => ['value' => 'no_runner']]])),
+                ->url(BookingResource::canViewAny()
+                    ? BookingResource::getUrl('index', ['tableFilters' => ['status' => ['value' => 'no_runner']]])
+                    : null),
 
             Stat::make('Pending verifications', number_format($d['verifications']))
                 ->description($this->withAge($d['verifications'] > 0 ? 'Complete applications awaiting approval' : 'Nothing ready to review', $d['verifications_oldest']))
                 ->descriptionIcon('heroicon-m-identification')
                 ->color($this->escalate($d['verifications_oldest'], $d['verifications'] > 0 ? 'warning' : 'gray', 1440, 2880))
-                ->url(RunnerProfileResource::getUrl('index', ['tab' => 'ready'])),
+                ->url(RunnerProfileResource::canViewAny() ? RunnerProfileResource::getUrl('index', ['tab' => 'ready']) : null),
 
             Stat::make('Waiting on us', number_format($d['support']))
                 ->description($this->withAge($d['support'] > 0 ? 'Support tickets needing a reply' : 'Everyone has been answered', $d['support_oldest']))
@@ -107,14 +114,18 @@ class ActionQueue extends StatsOverviewWidget
                 ->color($this->escalate($d['support_oldest'], $d['support'] > 0 ? 'warning' : 'gray', 120, 480))
                 // Lands on the tab that shows EXACTLY this set, oldest-unanswered
                 // first — so the number on the card matches the list it opens.
-                ->url(SupportTicketResource::getUrl('index', ['tab' => 'awaiting'])),
+                ->url(SupportTicketResource::canViewAny() ? SupportTicketResource::getUrl('index', ['tab' => 'awaiting']) : null),
+        ];
 
-            Stat::make('Pending payouts', number_format($d['payouts']))
+        if (Payouts::canAccess()) {
+            $stats[] = Stat::make('Pending payouts', number_format($d['payouts']))
                 ->description($this->withAge($d['payouts'] > 0 ? 'Awaiting disbursement' : 'Nothing pending', $d['payouts_oldest']))
                 ->descriptionIcon('heroicon-m-banknotes')
                 ->color($this->escalate($d['payouts_oldest'], $d['payouts'] > 0 ? 'primary' : 'gray', 720, 2880))
-                ->url(Payouts::getUrl()),
-        ];
+                ->url(Payouts::getUrl());
+        }
+
+        return $stats;
     }
 
     /**

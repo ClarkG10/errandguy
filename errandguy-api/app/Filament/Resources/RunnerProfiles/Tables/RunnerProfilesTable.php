@@ -31,6 +31,19 @@ class RunnerProfilesTable
         ) ?? false;
     }
 
+    protected static function canSeeMoney(): bool
+    {
+        return auth('admin')->user()?->canManageMoney() ?? false;
+    }
+
+    /** The lifetime-earnings export column, for money roles only. */
+    private static function earningsColumn(): array
+    {
+        return self::canSeeMoney()
+            ? ['Total earnings (PHP)' => fn (RunnerProfile $r) => $r->total_earnings]
+            : [];
+    }
+
     /**
      * Government ID and selfie both approved — the only state in which a
      * runner may be approved. Reads the list query's aggregate when present,
@@ -95,7 +108,9 @@ class RunnerProfilesTable
                 TextColumn::make('vehicle_plate'),
                 IconColumn::make('is_online')->boolean(),
                 TextColumn::make('total_errands')->sortable(),
-                TextColumn::make('total_earnings')->money('PHP')->sortable(),
+                // Earnings are money figures: money roles only.
+                TextColumn::make('total_earnings')->money('PHP')->sortable()
+                    ->visible(fn (): bool => self::canSeeMoney()),
                 TextColumn::make('created_at')
                     ->label('Waiting')
                     ->since()
@@ -125,9 +140,9 @@ class RunnerProfilesTable
                     'Plate' => fn (RunnerProfile $r): ?string => $r->vehicle_plate,
                     'Online' => fn (RunnerProfile $r): bool => (bool) $r->is_online,
                     'Total errands' => fn (RunnerProfile $r) => $r->total_errands,
-                    'Total earnings (PHP)' => fn (RunnerProfile $r) => $r->total_earnings,
+                    ...self::earningsColumn(),
                     'Joined' => fn (RunnerProfile $r) => $r->created_at,
-                ]),
+                ], personalData: true),
             ])
             ->toolbarActions([
                 ExportCsv::bulk('runners', [
@@ -135,8 +150,8 @@ class RunnerProfilesTable
                     'Phone' => fn (RunnerProfile $r): ?string => $r->user?->phone,
                     'Verification' => fn (RunnerProfile $r): ?string => $r->verification_status,
                     'Vehicle' => fn (RunnerProfile $r): ?string => $r->vehicle_type,
-                    'Total earnings (PHP)' => fn (RunnerProfile $r) => $r->total_earnings,
-                ]),
+                    ...self::earningsColumn(),
+                ], personalData: true),
                 BulkAction::make('bulkApprove')
                     ->label('Approve selected')
                     ->icon(Heroicon::OutlinedShieldCheck)

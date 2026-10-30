@@ -2,6 +2,7 @@
 
 namespace Tests\Feature\Payment;
 
+use App\Models\AdminUser;
 use App\Models\User;
 use App\Models\WalletTransaction;
 use App\Services\WalletService;
@@ -42,8 +43,13 @@ class BonusBalanceTest extends TestCase
         // Withdrawable wallet is empty; only non-withdrawable bonus is funded.
         $user = User::factory()->create(['wallet_balance' => 0, 'bonus_balance' => 500]);
 
+        $staff = AdminUser::create([
+            'email' => 'finance@errandguy.test', 'password_hash' => 'x',
+            'full_name' => 'Finance', 'role' => 'finance', 'is_active' => true,
+        ]);
+
         $this->expectException(\RuntimeException::class);
-        $this->wallet()->payout($user->id, 200);
+        $this->wallet()->payout($staff, $user->id, 200);
     }
 
     public function test_bonus_can_still_pay_for_an_errand(): void

@@ -40,9 +40,10 @@ class DisputeDeskRetiredTest extends TestCase
 
     public function test_the_panel_has_no_disputes_page_or_card(): void
     {
-        $admin = AdminUser::create([
+        $admin = AdminUser::forceCreate([
             'email' => 'super@errandguy.test', 'password_hash' => Hash::make('Password1!'),
             'full_name' => 'Super Admin', 'role' => 'super_admin', 'is_active' => true,
+            'has_email_authentication' => true, // two-step sign-in set up
         ]);
         $this->actingAs($admin, 'admin');
 

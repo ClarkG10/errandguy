@@ -4,6 +4,7 @@ namespace App\Filament\Resources\Payments\Widgets;
 
 use App\Models\Payment;
 use App\Support\AdminCache;
+use App\Support\BusinessDay;
 use Filament\Widgets\StatsOverviewWidget;
 use Filament\Widgets\StatsOverviewWidget\Stat;
 
@@ -17,9 +18,10 @@ class PaymentListStats extends StatsOverviewWidget
     protected function getStats(): array
     {
         $d = AdminCache::remember('admin:list:payments-stats', function (): array {
-            $today = today();
-            $tomorrow = today()->addDay();
-            $since = today()->subDays(30);
+            // Manila calendar days.
+            $today = BusinessDay::start();
+            $tomorrow = BusinessDay::endOfToday();
+            $since = BusinessDay::start(30);
 
             return [
                 'completed_today' => (float) Payment::where('status', 'completed')->where('paid_at', '>=', $today)->where('paid_at', '<', $tomorrow)->sum('amount'),

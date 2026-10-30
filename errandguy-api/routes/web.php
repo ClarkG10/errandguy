@@ -5,6 +5,7 @@ use App\Http\Controllers\BookingMediaController;
 use App\Http\Controllers\HealthController;
 use App\Http\Controllers\PublicTripController;
 use App\Http\Controllers\RunnerDocumentFileController;
+use App\Http\Middleware\RestrictStaffSessions;
 use Illuminate\Support\Facades\Route;
 
 // A plain ErrandGuy page (name, one line, links to the public pages below).
@@ -18,7 +19,7 @@ Route::get('/health', HealthController::class)->name('health');
 // from the PRIVATE media disk, authorized to a booking participant (sanctum
 // bearer) or an admin (session). 'web' middleware gives the admin session; the
 // sanctum bearer is resolved inside the controller. (audit: booking media was public)
-Route::middleware('web')
+Route::middleware(['web', RestrictStaffSessions::class])
     ->get('/internal/media/{path}', [BookingMediaController::class, 'show'])
     ->where('path', '.*')
     ->name('booking.media');
@@ -31,8 +32,10 @@ Route::middleware('web')
 | the Filament `/admin` prefix to avoid its route catch-all; the admin-guard
 | check lives in the controller (a 403 for anon, never a login redirect on an
 | image request). Files are streamed from the private kyc disk. (audit KYC)
+| These staff routes refuse a staff session that is disabled or hasn't set up
+| two-step sign-in yet (RestrictStaffSessions).
 */
-Route::middleware('web')
+Route::middleware(['web', RestrictStaffSessions::class])
     ->get('/internal/runner-documents/{document}/file', [RunnerDocumentFileController::class, 'adminShow'])
     ->name('admin.runner-documents.file');
 
@@ -42,7 +45,7 @@ Route::middleware('web')
 | Admin session only, safety roles only (403 otherwise); outside the Filament
 | `/admin` prefix for the same reason as the KYC viewer above.
 */
-Route::middleware('web')
+Route::middleware(['web', RestrictStaffSessions::class])
     ->get('/internal/admin/sos-alarm', SosAlarmController::class)
     ->name('admin.sos-alarm');
 

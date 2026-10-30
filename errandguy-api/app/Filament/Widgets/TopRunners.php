@@ -11,7 +11,8 @@ use Filament\Widgets\TableWidget;
 use Illuminate\Database\Eloquent\Builder;
 
 /**
- * Top runners by lifetime earnings — a leaderboard for the ops team.
+ * Top runners leaderboard for the ops team: by lifetime earnings for money
+ * roles, and by errands completed for everyone else, who never see earnings.
  */
 class TopRunners extends TableWidget
 {
@@ -23,24 +24,20 @@ class TopRunners extends TableWidget
 
     public function table(Table $table): Table
     {
+        $canSeeMoney = auth('admin')->user()?->canManageMoney() ?? false;
+        $rankBy = $canSeeMoney ? 'total_earnings' : 'total_errands';
+
         return $table
             ->query(fn (): Builder => RunnerProfile::query()
                 ->where('verification_status', 'approved')
-                // Precompute the rank in the single list query via a window
-                // function. The old per-row ->state() ran one COUNT(*) over
-                // runner_profiles per rendered row (11 queries for a 10-row page);
-                // this makes it 0.
                 ->select('runner_profiles.*')
-                // Alias is `earnings_rank`, NOT `rank`: RANK is a reserved word in
-                // MySQL 8 (window functions), so `as rank` is a syntax error there
-                // (SQLite tolerates it — MySQL CI caught this).
-                ->selectRaw('row_number() over (order by total_earnings desc) as earnings_rank')
+                ->selectRaw("row_number() over (order by {$rankBy} desc) as rank_position")
                 ->with('user:id,full_name,avatar_url,avg_rating')
-                ->orderByDesc('total_earnings'))
+                ->orderByDesc($rankBy))
             ->paginated([10])
-            ->defaultSort('total_earnings', 'desc')
+            ->defaultSort($rankBy, 'desc')
             ->columns([
-                TextColumn::make('earnings_rank')
+                TextColumn::make('rank_position')
                     ->label('#')
                     ->badge()
                     ->color(fn (int $state): string => $state <= 3 ? 'accent' : 'gray')
@@ -65,7 +62,8 @@ class TopRunners extends TableWidget
                     ->sortable()
                     ->weight('bold')
                     ->color('success')
-                    ->alignEnd(),
+                    ->alignEnd()
+                    ->visible($canSeeMoney),
             ])
             ->recordUrl(fn (RunnerProfile $record): string => RunnerProfileResource::getUrl('view', ['record' => $record]));
     }

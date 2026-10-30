@@ -4,6 +4,7 @@ namespace App\Filament\Resources\Users\Pages;
 
 use App\Filament\Resources\Users\UserResource;
 use App\Filament\Support\AdminNotify;
+use App\Services\StaffMoneyLimit;
 use App\Services\WalletService;
 use Filament\Actions\Action;
 use Filament\Forms\Components\Placeholder;
@@ -34,6 +35,10 @@ class ViewUser extends ViewRecord
                     Placeholder::make('current_balance')
                         ->label('Current balance')
                         ->content(fn (): string => '₱'.number_format((float) $this->getRecord()->wallet_balance, 2)),
+                    Placeholder::make('daily_allowance')
+                        ->label('You can still move today')
+                        ->content(fn (): string => '₱'.number_format(StaffMoneyLimit::remainingToday(auth('admin')->user()), 2)
+                            .' of your ₱'.number_format(StaffMoneyLimit::dailyCap(), 2).' daily limit (credits, debits and “Pay a runner” together).'),
                     Select::make('direction')
                         ->label('Direction')
                         ->options([
@@ -61,7 +66,7 @@ class ViewUser extends ViewRecord
                     $signed = ($data['direction'] === 'debit' ? -1 : 1) * (float) $data['amount'];
 
                     try {
-                        $tx = app(WalletService::class)->adjust($user->id, $signed, (string) $data['reason']);
+                        $tx = app(WalletService::class)->adjust(auth('admin')->user(), $user->id, $signed, (string) $data['reason']);
                         $user->refresh();
 
                         AdminNotify::success(
@@ -81,8 +86,9 @@ class ViewUser extends ViewRecord
                             ],
                         );
                     } catch (\RuntimeException $e) {
-                        // Expected money-rule rejections (overdraw / cap / blank
-                        // reason) — show the reason, don't 500.
+                        // Expected money-rule rejections (overdraw / per-adjustment
+                        // cap / staff daily limit / blank reason) — show the
+                        // reason, don't 500.
                         AdminNotify::error('Could not adjust wallet', $e, $user);
                     } catch (\Throwable $e) {
                         AdminNotify::error('Could not adjust wallet', $e, $user);

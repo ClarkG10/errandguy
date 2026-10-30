@@ -135,9 +135,10 @@ class ReferralProgramRetiredTest extends TestCase
 
     public function test_the_admin_referrals_page_is_gone(): void
     {
-        $this->actingAs(AdminUser::create([
+        $this->actingAs(AdminUser::forceCreate([
             'email' => 'super@errandguy.test', 'password_hash' => Hash::make('Password1!'),
             'full_name' => 'Super Admin', 'role' => AdminUser::ROLE_SUPER_ADMIN, 'is_active' => true,
+            'has_email_authentication' => true, // two-step sign-in set up
         ]), 'admin');
 
         $this->get('/admin/referrals')->assertNotFound();

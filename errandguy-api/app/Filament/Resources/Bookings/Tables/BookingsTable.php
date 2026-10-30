@@ -64,11 +64,13 @@ class BookingsTable
                     // filter — so the first view an operator sees counted
                     // cancelled / no_runner / in-flight money (never transacted)
                     // as GMV. Scope the summarizer to completed to match the label.
+                    // GMV is a money figure: money roles only.
                     ->summarize(
                         Sum::make('gmv')
                             ->money('PHP')
                             ->label('Total GMV')
                             ->query(fn (\Illuminate\Database\Query\Builder $query) => $query->where('status', 'completed'))
+                            ->visible(fn (): bool => auth('admin')->user()?->canManageMoney() ?? false)
                     ),
                 TextColumn::make('schedule_type')->badge()->color('gray')
                     ->toggleable(isToggledHiddenByDefault: true),

@@ -39,7 +39,8 @@ class RunnerProfileInfolist
                         IconEntry::make('is_online')->label('Online')->boolean(),
                         TextEntry::make('user.phone')->label('Phone')->icon('heroicon-m-phone')->copyable()->placeholder('—'),
                         TextEntry::make('approved_at')->dateTime()->placeholder('—'),
-                        TextEntry::make('total_earnings')->money('PHP')->weight('bold')->color('success'),
+                        TextEntry::make('total_earnings')->money('PHP')->weight('bold')->color('success')
+                            ->visible(fn (): bool => auth('admin')->user()?->canManageMoney() ?? false),
                         TextEntry::make('total_errands')->numeric(),
                     ]),
 

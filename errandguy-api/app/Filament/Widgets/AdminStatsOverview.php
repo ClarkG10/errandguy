@@ -7,6 +7,7 @@ use App\Models\Booking;
 use App\Models\RunnerProfile;
 use App\Models\User;
 use App\Support\AdminCache;
+use App\Support\BusinessDay;
 use Filament\Widgets\StatsOverviewWidget;
 use Filament\Widgets\StatsOverviewWidget\Stat;
 
@@ -26,8 +27,10 @@ class AdminStatsOverview extends StatsOverviewWidget
         // Everything cached together for 60s (Redis on prod) so the widget
         // doesn't fire a dozen COUNT/SUM queries at the remote DB per render.
         $d = AdminCache::remember(AdminCache::STATS, function (): array {
-            $todayStart = today();
-            $yesterdayStart = today()->subDay();
+            // "Today" is the Manila calendar day, not UTC's.
+            $todayStart = BusinessDay::start();
+            $tomorrowStart = BusinessDay::endOfToday();
+            $yesterdayStart = BusinessDay::start(1);
 
             $gmv = fn ($from, $to) => (float) Booking::where('status', 'completed')
                 ->where('completed_at', '>=', $from)
@@ -44,10 +47,10 @@ class AdminStatsOverview extends StatsOverviewWidget
                 ->where('completed_at', '<', $to)
                 ->count();
 
-            // 7-day GMV sparkline (oldest → newest).
+            // 7-day GMV sparkline (oldest → newest), one point per Manila day.
             $spark = [];
             for ($i = 6; $i >= 0; $i--) {
-                $dayStart = today()->subDays($i);
+                $dayStart = BusinessDay::start($i);
                 $spark[] = $gmv($dayStart, $dayStart->copy()->addDay());
             }
 
@@ -57,11 +60,11 @@ class AdminStatsOverview extends StatsOverviewWidget
                 'runners' => User::where('role', 'runner')->count(),
                 'runners_online' => RunnerProfile::where('is_online', true)->count(),
                 'active_bookings' => Booking::whereNotIn('status', BookingStatus::ENDED)->count(),
-                'gmv_today' => $gmv($todayStart, today()->addDay()),
+                'gmv_today' => $gmv($todayStart, $tomorrowStart),
                 'gmv_yesterday' => $gmv($yesterdayStart, $todayStart),
                 'gmv_spark' => $spark,
-                'revenue_today' => $revenue($todayStart, today()->addDay()),
-                'completed_today' => $completed($todayStart, today()->addDay()),
+                'revenue_today' => $revenue($todayStart, $tomorrowStart),
+                'completed_today' => $completed($todayStart, $tomorrowStart),
                 'completed_yesterday' => $completed($yesterdayStart, $todayStart),
             ];
         });

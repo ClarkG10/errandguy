@@ -7,6 +7,7 @@ use App\Filament\Support\AdminNotify;
 use App\Models\User;
 use App\Models\WalletTransaction;
 use App\Services\PaymentService;
+use App\Services\StaffMoneyLimit;
 use App\Services\WalletService;
 use App\Support\PayoutDestination;
 use BackedEnum;
@@ -141,7 +142,9 @@ class Payouts extends Page implements HasTable
                             $set('account_number', $destination['account_number'] ?? null);
                             $set('account_holder_name', $destination['account_name'] ?? null);
                         }),
-                    TextInput::make('amount')->numeric()->prefix('₱')->required()->minValue(1),
+                    TextInput::make('amount')->numeric()->prefix('₱')->required()->minValue(1)
+                        ->helperText(fn (): string => 'Counts toward your daily limit for money moved by hand: ₱'
+                            .number_format(StaffMoneyLimit::remainingToday(auth('admin')->user()), 2).' left today.'),
                     ...self::destinationFields(),
                     // Per-modal idempotency token: generated when the form opens
                     // and resubmitted verbatim, so a double-click / re-fire of the
@@ -159,7 +162,7 @@ class Payouts extends Page implements HasTable
 
                     try {
                         // Debit + create the pending payout (money-safe), then disburse.
-                        $tx = app(WalletService::class)->payout($data['user_id'], (float) $data['amount'], $data['idem'] ?? null, $destination);
+                        $tx = app(WalletService::class)->payout(auth('admin')->user(), $data['user_id'], (float) $data['amount'], $data['idem'] ?? null, $destination);
                         app(PaymentService::class)->createPayout(
                             $tx->id,
                             $data['channel_code'],

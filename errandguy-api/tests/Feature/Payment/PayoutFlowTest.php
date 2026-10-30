@@ -112,12 +112,19 @@ class PayoutFlowTest extends TestCase
         $this->assertDatabaseMissing('wallet_transactions', ['user_id' => $this->runner->id, 'type' => 'payout']);
     }
 
+    private function staff(): \App\Models\AdminUser
+    {
+        return \App\Models\AdminUser::firstOrCreate(['email' => 'finance@errandguy.test'], [
+            'password_hash' => 'x', 'full_name' => 'Finance', 'role' => 'finance', 'is_active' => true,
+        ]);
+    }
+
     public function test_admin_manual_payout_with_the_same_token_does_not_double_debit(): void
     {
         // The Filament "Pay a runner" form threads a per-modal idempotency token
         // so a double-submit collapses to one debit + one payout row (P0-8).
-        $tx1 = app(\App\Services\WalletService::class)->payout($this->runner->id, 300, 'admin-idem-1');
-        $tx2 = app(\App\Services\WalletService::class)->payout($this->runner->id, 300, 'admin-idem-1');
+        $tx1 = app(\App\Services\WalletService::class)->payout($this->staff(), $this->runner->id, 300, 'admin-idem-1');
+        $tx2 = app(\App\Services\WalletService::class)->payout($this->staff(), $this->runner->id, 300, 'admin-idem-1');
 
         $this->assertSame($tx1->id, $tx2->id);
         $this->assertEquals(700.0, (float) $this->runner->fresh()->wallet_balance);
@@ -134,7 +141,7 @@ class PayoutFlowTest extends TestCase
         // defaults to 'completed' (right for system-earned rows), so if payout()
         // omits it the Filament "Pay a runner" flow debits the runner, fails to
         // disburse, and strands the money with no recovery. (audit v4 money)
-        $tx = app(\App\Services\WalletService::class)->payout($this->runner->id, 300, 'admin-idem-pending');
+        $tx = app(\App\Services\WalletService::class)->payout($this->staff(), $this->runner->id, 300, 'admin-idem-pending');
 
         $this->assertSame('pending', $tx->status);
         // The load-bearing assertion: the PERSISTED row is pending, not the DB

@@ -24,6 +24,7 @@ use Illuminate\Support\Str;
  *
  *   php artisan errandguy:make-admin
  *   php artisan errandguy:make-admin ops@errandguy.app --name="Ops" --role=ops --password=secret
+ *   php artisan errandguy:make-admin you@errandguy.app --password=... --reset-two-step   # locked-out super admin
  *   ADMIN_EMAIL=you@errandguy.app ADMIN_PASSWORD=... php artisan errandguy:make-admin
  */
 class MakeAdmin extends Command
@@ -32,7 +33,8 @@ class MakeAdmin extends Command
         {email? : The admin email}
         {--name= : Full name}
         {--role= : One of super_admin, admin, finance, support, ops}
-        {--password= : Password (prompted securely if omitted)}';
+        {--password= : Password (prompted securely if omitted)}
+        {--reset-two-step : Also clear their two-step sign-in, to be set up again at next sign-in (lost phone and recovery codes)}';
 
     protected $description = 'Create or update an ErrandGuy admin-panel user';
 
@@ -91,6 +93,15 @@ class MakeAdmin extends Command
                 'is_active' => true,
             ],
         );
+
+        if ($this->option('reset-two-step')) {
+            $admin->forceFill([
+                'app_authentication_secret' => null,
+                'app_authentication_recovery_codes' => null,
+                'has_email_authentication' => false,
+            ])->save();
+            $this->line('Two-step sign-in cleared; it is set up again at the next sign-in.');
+        }
 
         $this->info(sprintf(
             '%s admin "%s" (%s) with role "%s".',

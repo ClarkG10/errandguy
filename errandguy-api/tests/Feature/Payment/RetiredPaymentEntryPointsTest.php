@@ -114,9 +114,10 @@ class RetiredPaymentEntryPointsTest extends TestCase
 
     public function test_the_admin_linked_methods_page_is_gone_and_the_catalog_page_shows_four(): void
     {
-        $this->actingAs(AdminUser::create([
+        $this->actingAs(AdminUser::forceCreate([
             'email' => 'super@errandguy.test', 'password_hash' => Hash::make('Password1!'),
             'full_name' => 'Super Admin', 'role' => AdminUser::ROLE_SUPER_ADMIN, 'is_active' => true,
+            'has_email_authentication' => true, // two-step sign-in set up
         ]), 'admin');
 
         $this->get('/admin/payment-methods')->assertNotFound();

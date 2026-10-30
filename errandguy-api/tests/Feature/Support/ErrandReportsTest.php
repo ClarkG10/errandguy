@@ -135,9 +135,10 @@ class ErrandReportsTest extends TestCase
         $report = SupportTicket::where('category', 'report_user')->firstOrFail();
         $other = SupportTicket::where('category', 'payment')->firstOrFail();
 
-        $admin = AdminUser::create([
+        $admin = AdminUser::forceCreate([
             'email' => 'support@errandguy.test', 'password_hash' => Hash::make('Password1!'),
             'full_name' => 'Support', 'role' => 'support', 'is_active' => true,
+            'has_email_authentication' => true, // two-step sign-in set up
         ]);
         $this->actingAs($admin, 'admin');
 

@@ -221,7 +221,8 @@ class ErrandCatalogSimplificationTest extends TestCase
     {
         $keys = ['ride_duration_alert_multiplier', 'route_deviation_threshold_meters', 'platform_fee_percent'];
         foreach ($keys as $key) {
-            DB::table('system_config')->insert(['key' => $key, 'value' => '1', 'description' => $key]);
+            // platform_fee_percent already exists (every read setting is created on migrate).
+            DB::table('system_config')->updateOrInsert(['key' => $key], ['value' => '1', 'description' => $key]);
         }
 
         $this->migrate();

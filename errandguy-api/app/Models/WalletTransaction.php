@@ -30,6 +30,7 @@ class WalletTransaction extends Model
         'processed_at',
         'payout_sent_at',
         'failure_reason',
+        'initiated_by_staff_id',
     ];
 
     // The gateway reference (Xendit internal id) is a gateway internal that the
@@ -39,10 +40,12 @@ class WalletTransaction extends Model
     //
     // payout_destination carries a full account number, so it never
     // serializes either; the ledger shows the masked label in
-    // display_description instead.
+    // display_description instead. Which staff member made a hand-made
+    // adjustment or payout is for the admin panel only.
     protected $hidden = [
         'gateway_ref',
         'payout_destination',
+        'initiated_by_staff_id',
     ];
 
     protected function casts(): array

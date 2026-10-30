@@ -7,6 +7,7 @@ use App\Filament\Resources\SystemConfigs\Pages\ListSystemConfigs;
 use App\Filament\Resources\SystemConfigs\Schemas\SystemConfigForm;
 use App\Filament\Resources\SystemConfigs\Tables\SystemConfigsTable;
 use App\Models\SystemConfig;
+use App\Support\SystemSettings;
 use BackedEnum;
 use Filament\Resources\Resource;
 use Filament\Schemas\Schema;
@@ -52,11 +53,17 @@ class SystemConfigResource extends Resource
         ];
     }
 
-    // --- Authorization: super_admin only; edit values, never create/delete keys ---
+    // --- Authorization: super_admin only; edit the values of settings the
+    // code reads (SystemSettings), never create or delete keys ---
 
     public static function canViewAny(): bool
     {
         return auth('admin')->user()?->canManageSystem() ?? false;
+    }
+
+    public static function canView(Model $record): bool
+    {
+        return static::canViewAny();
     }
 
     public static function canCreate(): bool
@@ -66,10 +73,15 @@ class SystemConfigResource extends Resource
 
     public static function canEdit(Model $record): bool
     {
-        return auth('admin')->user()?->canManageSystem() ?? false;
+        return static::canViewAny() && SystemSettings::isEditable($record->getKey());
     }
 
     public static function canDelete(Model $record): bool
+    {
+        return false;
+    }
+
+    public static function canDeleteAny(): bool
     {
         return false;
     }

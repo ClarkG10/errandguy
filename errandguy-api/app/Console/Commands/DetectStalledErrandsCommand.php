@@ -83,7 +83,7 @@ class DetectStalledErrandsCommand extends Command
      * 'pending' and 'matched' are still absent: no runner holds those, and
      * ExpireStaleMatchesJob / ReapStrandedBookingsCommand already cover them.
      */
-    private const DEFAULT_THRESHOLDS = [
+    public const DEFAULT_THRESHOLDS = [
         'accepted' => 30,
         'heading_to_pickup' => 30,
         'arrived_at_pickup' => 45,

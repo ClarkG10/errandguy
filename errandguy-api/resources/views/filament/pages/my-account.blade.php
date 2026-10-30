@@ -17,9 +17,15 @@
                 <div style="font-size:.78rem;letter-spacing:.02em;text-transform:uppercase;opacity:.55;">Role</div>
                 <div style="font-weight:600;margin-top:.35rem;">{{ $account['role'] ?? '—' }}</div>
             </div>
+            <div>
+                <div style="font-size:.78rem;letter-spacing:.02em;text-transform:uppercase;opacity:.55;">Two-step sign-in</div>
+                <div style="font-weight:600;margin-top:.35rem;">{{ $account['two_step'] ?? 'Not set up' }}</div>
+            </div>
         </div>
         <p style="margin-top:1.25rem;font-size:.875rem;opacity:.6;">
-            Use <strong>Edit profile</strong> or <strong>Change password</strong> (top right) to make changes.
+            Use <strong>Edit profile</strong> or <strong>Change password</strong> (top right) to make changes. Both ask for your current password.
         </p>
     </x-filament::section>
+
+    {{ $this->twoStepSignIn }}
 </x-filament-panels::page>

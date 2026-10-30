@@ -21,9 +21,10 @@ class AdminPagesRenderTest extends TestCase
     {
         parent::setUp();
 
-        $admin = AdminUser::create([
+        $admin = AdminUser::forceCreate([
             'email' => 'super@errandguy.test', 'password_hash' => Hash::make('Password1!'),
             'full_name' => 'Super Admin', 'role' => 'super_admin', 'is_active' => true,
+            'has_email_authentication' => true, // two-step sign-in set up
         ]);
         $this->actingAs($admin, 'admin');
     }
@@ -41,7 +42,9 @@ class AdminPagesRenderTest extends TestCase
         $this->get('/admin/my-account')
             ->assertOk()
             ->assertSee('super@errandguy.test')
-            ->assertSee('super_admin');
+            ->assertSee('super_admin')
+            ->assertSee('Two-step sign-in')
+            ->assertSee('Authenticator app');
     }
 
     public function test_push_broadcast_renders(): void
@@ -49,6 +52,13 @@ class AdminPagesRenderTest extends TestCase
         $this->get('/admin/push-broadcast')
             ->assertOk()
             ->assertSee('Send a push notification');
+    }
+
+    public function test_staff_and_settings_pages_render(): void
+    {
+        $this->get('/admin/staff')->assertOk()->assertSee('Add staff member')->assertSee('super@errandguy.test');
+        $this->get('/admin/system-configs')->assertOk()->assertSee('Platform fee (%)');
+        $this->get('/admin/system-configs/platform_fee_percent/edit')->assertOk()->assertSee('Allowed: 1 to 50');
     }
 
     public function test_audit_log_renders_even_when_empty(): void

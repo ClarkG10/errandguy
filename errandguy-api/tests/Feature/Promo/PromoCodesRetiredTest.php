@@ -61,9 +61,10 @@ class PromoCodesRetiredTest extends TestCase
 
     private function actAsAdmin(): void
     {
-        $admin = AdminUser::create([
+        $admin = AdminUser::forceCreate([
             'email' => 'super@errandguy.test', 'password_hash' => Hash::make('Password1!'),
             'full_name' => 'Super Admin', 'role' => AdminUser::ROLE_SUPER_ADMIN, 'is_active' => true,
+            'has_email_authentication' => true, // two-step sign-in set up
         ]);
         $this->actingAs($admin, 'admin');
     }

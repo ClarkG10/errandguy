@@ -90,6 +90,9 @@ class WalletTransactionsTable
                     'Description' => fn (WalletTransaction $r): ?string => $r->description,
                     'Reference' => fn (WalletTransaction $r): ?string => $r->reference_id,
                     'Created' => fn (WalletTransaction $r) => $r->created_at,
+                    // No phone or email columns, and only money roles can open
+                    // this page at all (canViewAny) — so finance, whose job is
+                    // reconciling these rows, can export them.
                 ]),
             ])
             ->recordActions([

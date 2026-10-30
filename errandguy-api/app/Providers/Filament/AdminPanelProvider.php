@@ -2,11 +2,18 @@
 
 namespace App\Providers\Filament;
 
-use Filament\Http\Middleware\Authenticate;
+use App\Filament\Pages\Auth\StaffLogin;
+use App\Filament\Pages\Dashboard;
+use App\Http\Middleware\AuthenticateStaff;
+use App\Models\AdminUser;
+use App\Notifications\StaffPasswordLink;
+use App\Notifications\StaffSignInCode;
+use Filament\Auth\MultiFactor\App\AppAuthentication;
+use Filament\Auth\MultiFactor\Email\EmailAuthentication;
+use Filament\Auth\Notifications\ResetPassword as FilamentResetPasswordEmail;
 use Filament\Http\Middleware\AuthenticateSession;
 use Filament\Http\Middleware\DisableBladeIconComponents;
 use Filament\Http\Middleware\DispatchServingFilamentEvent;
-use App\Filament\Pages\Dashboard;
 use Filament\Navigation\NavigationGroup;
 use Filament\Panel;
 use Filament\PanelProvider;
@@ -16,15 +23,37 @@ use Filament\Support\Enums\Width;
 use Filament\Support\Facades\FilamentColor;
 use Filament\Support\Icons\Heroicon;
 use Filament\View\PanelsRenderHook;
+use Illuminate\Auth\Events\PasswordReset;
 use Illuminate\Cookie\Middleware\AddQueuedCookiesToResponse;
 use Illuminate\Cookie\Middleware\EncryptCookies;
 use Illuminate\Foundation\Http\Middleware\PreventRequestForgery;
 use Illuminate\Routing\Middleware\SubstituteBindings;
 use Illuminate\Session\Middleware\StartSession;
+use Illuminate\Support\Facades\Event;
 use Illuminate\View\Middleware\ShareErrorsFromSession;
 
 class AdminPanelProvider extends PanelProvider
 {
+    public function boot(): void
+    {
+        // The "Forgot password?" email: ours, sent straight away (not queued)
+        // and worded for staff. Filament builds it through the container.
+        $this->app->bind(FilamentResetPasswordEmail::class, StaffPasswordLink::class);
+
+        Event::listen(PasswordReset::class, function (PasswordReset $event): void {
+            if (! $event->user instanceof AdminUser) {
+                return;
+            }
+
+            activity('admin')
+                ->event('auth.password_reset')
+                ->performedOn($event->user)
+                ->causedBy($event->user)
+                ->withProperties(['ip' => request()->ip()])
+                ->log('Staff password set from an emailed link');
+        });
+    }
+
     public function panel(Panel $panel): Panel
     {
         // Amber BRAND accent = the "Guy" half of the wordmark. Registered as a
@@ -46,7 +75,23 @@ class AdminPanelProvider extends PanelProvider
             // Authenticate against the existing `admin` session guard
             // (config/auth.php -> admins provider -> App\Models\AdminUser).
             ->authGuard('admin')
-            ->login()
+            // Password + per-account lock + audit (StaffLogin), then a second
+            // step every staff role must set up: an authenticator app (with
+            // recovery codes) or a code emailed to them. Staff without one are
+            // sent to set it up right after the password, before any page.
+            ->login(StaffLogin::class)
+            ->multiFactorAuthentication([
+                AppAuthentication::make()
+                    ->recoverable()
+                    ->brandName('ErrandGuy Admin'),
+                EmailAuthentication::make()
+                    ->codeNotification(StaffSignInCode::class)
+                    ->codeExpiryMinutes(10),
+            ], isRequired: true)
+            // "Forgot password?" and the set-password link a new staff member
+            // gets, through the staff-only `admins` broker.
+            ->passwordReset()
+            ->authPasswordBroker('admins')
             ->brandName('ErrandGuy Admin')
             // Mode-adaptive lockup (icon + CSS wordmark) instead of a raster that
             // only reads on one background — see resources/views/filament/brand.
@@ -117,8 +162,10 @@ class AdminPanelProvider extends PanelProvider
                 DisableBladeIconComponents::class,
                 DispatchServingFilamentEvent::class,
             ])
+            // Filament's sign-in check, plus: a disabled staff member is
+            // signed out on their next request (also on Livewire calls).
             ->authMiddleware([
-                Authenticate::class,
-            ]);
+                AuthenticateStaff::class,
+            ], isPersistent: true);
     }
 }

@@ -29,10 +29,11 @@ class AdminTicketDecisionsTest extends TestCase
 
     private function admin(string $role = 'super_admin', string $name = 'Super Admin'): AdminUser
     {
-        return AdminUser::create([
+        return AdminUser::forceCreate([
             'email' => $role.'-'.uniqid().'@errandguy.test',
             'password_hash' => Hash::make('Password1!'),
             'full_name' => $name, 'role' => $role, 'is_active' => true,
+            'has_email_authentication' => true, // two-step sign-in set up
         ]);
     }
 

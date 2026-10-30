@@ -5,6 +5,7 @@ namespace App\Filament\Widgets;
 use App\Models\Booking;
 use App\Support\AdminCache;
 use App\Support\AdminChartData;
+use App\Support\BusinessDay;
 use Filament\Widgets\StatsOverviewWidget;
 use Filament\Widgets\StatsOverviewWidget\Stat;
 
@@ -29,7 +30,7 @@ class OperationsKpis extends StatsOverviewWidget
     protected function getStats(): array
     {
         $d = AdminCache::rememberFor(AdminCache::CHART_BOOKINGS.':ops-kpis', 300, function (): array {
-            $since = today()->subDays(30);
+            $since = BusinessDay::start(30);
             $base = fn () => Booking::where('created_at', '>=', $since);
 
             $total = (clone $base())->count();

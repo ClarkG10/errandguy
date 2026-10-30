@@ -34,9 +34,10 @@ class RunnerKycQueueTest extends TestCase
     {
         parent::setUp();
 
-        $admin = AdminUser::create([
+        $admin = AdminUser::forceCreate([
             'email' => 'ops@errandguy.test', 'password_hash' => Hash::make('Password1!'),
             'full_name' => 'Ops', 'role' => 'admin', 'is_active' => true,
+            'has_email_authentication' => true, // two-step sign-in set up
         ]);
         $this->actingAs($admin, 'admin');
     }

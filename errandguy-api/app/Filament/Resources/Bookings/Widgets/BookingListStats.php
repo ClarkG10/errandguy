@@ -4,10 +4,15 @@ namespace App\Filament\Resources\Bookings\Widgets;
 
 use App\Models\Booking;
 use App\Support\AdminCache;
+use App\Support\BusinessDay;
 use Filament\Widgets\StatsOverviewWidget;
 use Filament\Widgets\StatsOverviewWidget\Stat;
 
-/** Compact stats strip shown above the Bookings list (resource-scoped, not on the dashboard). */
+/**
+ * Compact stats strip shown above the Bookings list (resource-scoped, not on
+ * the dashboard). "Today" is the Manila calendar day; GMV is shown to money
+ * roles only.
+ */
 class BookingListStats extends StatsOverviewWidget
 {
     protected ?string $pollingInterval = '60s';
@@ -17,8 +22,8 @@ class BookingListStats extends StatsOverviewWidget
     protected function getStats(): array
     {
         $d = AdminCache::remember('admin:list:bookings-stats', function (): array {
-            $today = today();
-            $tomorrow = today()->addDay();
+            $today = BusinessDay::start();
+            $tomorrow = BusinessDay::endOfToday();
 
             return [
                 'today' => Booking::where('created_at', '>=', $today)->count(),
@@ -28,11 +33,15 @@ class BookingListStats extends StatsOverviewWidget
             ];
         });
 
-        return [
+        $canSeeMoney = auth('admin')->user()?->canManageMoney() ?? false;
+
+        return array_values(array_filter([
             Stat::make('Placed today', number_format($d['today']))->color('primary')->descriptionIcon('heroicon-m-plus-circle'),
             Stat::make('Active now', number_format($d['active']))->color('info')->descriptionIcon('heroicon-m-bolt'),
-            Stat::make('GMV today', '₱'.number_format($d['gmv_today'], 2))->color('success')->descriptionIcon('heroicon-m-banknotes'),
+            $canSeeMoney
+                ? Stat::make('GMV today', '₱'.number_format($d['gmv_today'], 2))->color('success')->descriptionIcon('heroicon-m-banknotes')
+                : null,
             Stat::make('Completed today', number_format($d['completed_today']))->color('success')->descriptionIcon('heroicon-m-check-circle'),
-        ];
+        ]));
     }
 }

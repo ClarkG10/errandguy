@@ -5,6 +5,7 @@ namespace App\Filament\Widgets;
 use App\Models\Booking;
 use App\Support\AdminCache;
 use App\Support\AdminChartData;
+use App\Support\BusinessDay;
 use Filament\Support\RawJs;
 use Filament\Widgets\ChartWidget;
 
@@ -27,7 +28,7 @@ class BookingsByHourChart extends ChartWidget
     protected function getData(): array
     {
         $counts = AdminCache::rememberFor(AdminCache::CHART_BOOKINGS.':by-hour', 300, fn (): array => Booking::query()
-            ->where('created_at', '>=', today()->subDays(30))
+            ->where('created_at', '>=', BusinessDay::start(30))
             ->selectRaw(AdminChartData::manilaHour('created_at').' as h, count(*) as c')
             ->groupBy('h')
             ->pluck('c', 'h')

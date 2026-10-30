@@ -20,7 +20,8 @@ use Spatie\Activitylog\Models\Activity;
 
 /**
  * Read-only audit trail — every admin action recorded via AdminActivity::log()
- * (suspensions, approvals, refunds, cancellations, SOS resolutions, exports…).
+ * (suspensions, approvals, refunds, cancellations, SOS resolutions, exports,
+ * setting and staff changes…) plus every staff sign-in and failed attempt.
  * Restricted to super-admin / admin.
  */
 class ActivityLogResource extends Resource
@@ -58,7 +59,7 @@ class ActivityLogResource extends Resource
                 })->placeholder('—'),
                 TextColumn::make('description')->wrap()->limit(60),
                 TextColumn::make('causer_label')->label('By')
-                    ->state(fn (Activity $r): string => $r->causer?->full_name ?? ($r->causer_type ? class_basename($r->causer_type) : 'system'))
+                    ->state(fn (Activity $r): string => self::causerLabel($r))
                     ->icon('heroicon-m-user')->color('primary'),
                 TextColumn::make('subject_label')->label('On')
                     ->state(fn (Activity $r): string => $r->subject_type
@@ -90,7 +91,7 @@ class ActivityLogResource extends Resource
                     TextEntry::make('created_at')->dateTime(),
                     TextEntry::make('description')->columnSpanFull(),
                     TextEntry::make('causer_label')->label('Performed by')
-                        ->state(fn (Activity $r): string => $r->causer?->full_name ?? ($r->causer_type ? class_basename($r->causer_type) : 'system')),
+                        ->state(fn (Activity $r): string => self::causerLabel($r)),
                     TextEntry::make('subject_label')->label('Subject')
                         ->state(fn (Activity $r): string => $r->subject_type ? class_basename($r->subject_type).' #'.$r->subject_id : '—')
                         ->columnSpan(2),
@@ -106,6 +107,13 @@ class ActivityLogResource extends Resource
                         ->columnSpanFull(),
                 ]),
         ]);
+    }
+
+    /** Who did it; a failed staff sign-in has no signed-in staff member behind it. */
+    private static function causerLabel(Activity $r): string
+    {
+        return $r->causer?->full_name
+            ?? ($r->causer_type ? class_basename($r->causer_type) : (str_starts_with((string) $r->event, 'auth.') ? 'Sign-in page' : 'system'));
     }
 
     public static function getPages(): array
