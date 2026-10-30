@@ -261,9 +261,8 @@ function OfferWatcher() {
 
   /**
    * The countdown ran out on THIS device. That is not a decision, so it must
-   * not touch POST /decline: that endpoint recomputes acceptance_rate, which
-   * also ranks the runner inside MatchingService — a phone in a pocket was
-   * permanently costing them standing. Just dismiss; the server's own
+   * not touch POST /decline: that records a decline the runner never made for
+   * a phone that was in their pocket. Just dismiss; the server's own
    * ExpireStaleMatchesJob re-matches the booking on time, and Home's reconcile
    * hands the offer back if the server is somehow still honouring the accept.
    */
@@ -282,7 +281,7 @@ function OfferWatcher() {
       onAccept={handleAccept}
       onDecline={handleDecline}
       onExpire={handleExpire}
-      // The SERVER's acceptance window (accept_deadline), not a 30s guess.
+      // The SERVER's accept-by window (accept_deadline), not a 30s guess.
       timeoutSeconds={offerTimeoutSeconds(readAcceptDeadline(incomingRequest.booking))}
       expiresAt={incomingRequest.expiresAt}
     />

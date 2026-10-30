@@ -7,7 +7,6 @@ use App\Http\Requests\Booking\ReviewRequest;
 use App\Http\Resources\ReviewResource;
 use App\Models\Booking;
 use App\Models\Review;
-use App\Models\User;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -59,33 +58,15 @@ class ReviewController extends Controller
             ], 422);
         }
 
-        $review = DB::transaction(function () use ($booking, $request, $reviewerId, $revieweeId) {
-            $review = Review::create([
-                'booking_id' => $booking->id,
-                'reviewer_id' => $reviewerId,
-                'reviewee_id' => $revieweeId,
-                'rating' => $request->validated('rating'),
-                'comment' => $request->validated('comment'),
-            ]);
-
-            // Recompute the reviewee's average rating atomically.
-            $reviewee = User::where('id', $revieweeId)
-                ->lockForUpdate()
-                ->first();
-
-            if ($reviewee) {
-                $stats = Review::where('reviewee_id', $reviewee->id)
-                    ->selectRaw('AVG(rating) as avg_rating, COUNT(*) as total_ratings')
-                    ->first();
-
-                $reviewee->update([
-                    'avg_rating' => round($stats->avg_rating, 2),
-                    'total_ratings' => $stats->total_ratings,
-                ]);
-            }
-
-            return $review;
-        });
+        // Creating the review recomputes the reviewee's average under a lock on
+        // their row, in the same transaction (Review::refreshRatingFor).
+        $review = DB::transaction(fn () => Review::create([
+            'booking_id' => $booking->id,
+            'reviewer_id' => $reviewerId,
+            'reviewee_id' => $revieweeId,
+            'rating' => $request->validated('rating'),
+            'comment' => $request->validated('comment'),
+        ]));
 
         $review->load('reviewer');
 

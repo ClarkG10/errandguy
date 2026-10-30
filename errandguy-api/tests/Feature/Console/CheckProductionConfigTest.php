@@ -66,8 +66,24 @@ class CheckProductionConfigTest extends TestCase
             'cache.default' => 'redis',
             'queue.default' => 'redis',
             'sentry.dsn' => 'https://public@o1.ingest.sentry.io/123',
+            'services.semaphore.api_key' => 'semaphore-key',
+            'mail.admin_alert_address' => 'ops@errandguy.test',
         ]);
         $this->setTrustedProxies('173.245.48.0/20'); // a configured proxy range
+    }
+
+    public function test_flags_an_sos_that_would_reach_no_one_outside_the_panel(): void
+    {
+        $this->healthyConfig();
+        config([
+            'services.semaphore.api_key' => null,
+            'mail.admin_alert_address' => null,
+        ]);
+
+        $messages = implode(' | ', array_column(CheckProductionConfig::detect(), 'message'));
+
+        $this->assertStringContainsString('SEMAPHORE_API_KEY', $messages);
+        $this->assertStringContainsString('ops_alert_emails', $messages);
     }
 
     public function test_healthy_production_config_reports_nothing(): void

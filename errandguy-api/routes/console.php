@@ -18,7 +18,7 @@ Artisan::command('inspire', function () {
 
 // Liveness dead-man's-switch: stamp a heartbeat every minute so GET /health can
 // report `scheduler: stale` when the Forge cron stops. The scheduler backstops
-// SOS fan-out, the money/safety reapers, and the nightly backup — if it dies
+// stale-SOS closing, the money/safety reapers, and the nightly backup — if it dies
 // silently, all of those stop with no signal. It can't detect its own death, so
 // an external monitor polling /health catches it via this heartbeat. Cheap,
 // idempotent cache write; 15-min TTL so a dead scheduler's stamp expires.
@@ -184,9 +184,18 @@ Schedule::command('errandguy:detect-stalled-errands')
     ->onOneServer()
     ->withoutOverlapping(10);
 
+// Safety: close an SOS still open 24 hours after its errand ended, so a
+// forgotten alert doesn't keep the queue and the panel alarm lit forever.
+// Logged per alert; an errand still in progress is never touched.
+Schedule::command('errandguy:close-stale-sos')
+    ->hourly()
+    ->onOneServer()
+    ->withoutOverlapping(10);
+
 // Out-of-hours alerting for the queues where a waiting user is blocked on a
-// human (pending payouts, KYC review, open disputes, unanswered support). The
-// panel already shows these, but only to an admin who happens to be looking.
+// human (pending payouts, KYC review, unanswered support). The panel already
+// shows these, but only to an admin who happens to be looking. A new SOS is
+// emailed the moment it is raised (NotifySosContactsJob), not by this digest.
 // The command is inert until a recipient is configured and throttles itself per
 // queue, so scheduling it before ops picks a mailbox sends nothing.
 Schedule::command('errandguy:admin-queue-alert')

@@ -69,7 +69,6 @@ class RunnerEarningsController extends Controller
             'total_tips' => $totalTips,
             'total_errands' => $totalErrands,
             'avg_per_errand' => $avgPerErrand,
-            'acceptance_rate' => (float) $profile->acceptance_rate,
             'completion_rate' => (float) $profile->completion_rate,
             'online_hours' => null, // Estimated from location data if needed
         ];

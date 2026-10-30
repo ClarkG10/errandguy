@@ -4,12 +4,10 @@ namespace App\Filament\Widgets;
 
 use App\Filament\Pages\Payouts;
 use App\Filament\Resources\Bookings\BookingResource;
-use App\Filament\Resources\DisputeTickets\DisputeTicketResource;
 use App\Filament\Resources\RunnerProfiles\RunnerProfileResource;
 use App\Filament\Resources\SOSAlerts\SOSAlertResource;
 use App\Filament\Resources\SupportTickets\SupportTicketResource;
 use App\Models\Booking;
-use App\Models\DisputeTicket;
 use App\Models\RunnerProfile;
 use App\Models\SOSAlert;
 use App\Models\SupportTicket;
@@ -25,7 +23,7 @@ use Filament\Widgets\StatsOverviewWidget\Stat;
  * Active SOS is always first and red because it is a life-safety signal.
  *
  * Each queue also carries the age of its oldest waiting item so a small-but-old
- * backlog (e.g. one dispute untouched for a day) still reads as urgent, with
+ * backlog (e.g. one support ticket untouched for a day) still reads as urgent, with
  * amber/red escalation once it passes that queue's SLA.
  */
 class ActionQueue extends StatsOverviewWidget
@@ -69,8 +67,6 @@ class ActionQueue extends StatsOverviewWidget
                 'sos_oldest' => SOSAlert::where('status', 'active')->min('triggered_at'),
                 'verifications' => $verificationQuery()->count(),
                 'verifications_oldest' => $verificationQuery()->min('created_at'),
-                'disputes' => DisputeTicket::unresolved()->count(),
-                'disputes_oldest' => DisputeTicket::unresolved()->min('created_at'),
                 'payouts' => WalletTransaction::where('type', 'payout')->where('status', 'pending')->count(),
                 'payouts_oldest' => WalletTransaction::where('type', 'payout')->where('status', 'pending')->min('created_at'),
                 'stuck' => $stuckQuery()->count(),
@@ -104,25 +100,13 @@ class ActionQueue extends StatsOverviewWidget
                 ->color($this->escalate($d['verifications_oldest'], $d['verifications'] > 0 ? 'warning' : 'gray', 1440, 2880))
                 ->url(RunnerProfileResource::getUrl('index', ['tab' => 'ready'])),
 
-            Stat::make('Open disputes', number_format($d['disputes']))
-                ->description($this->withAge($d['disputes'] > 0 ? 'Awaiting resolution' : 'No open disputes', $d['disputes_oldest']))
-                ->descriptionIcon('heroicon-m-scale')
-                ->color($this->escalate($d['disputes_oldest'], $d['disputes'] > 0 ? 'warning' : 'gray', 240, 1440))
-                // The card counts unresolved (open + reviewing + escalated) —
-                // land on the tab that shows exactly that set, not the
-                // open-only filter, so the number on the card matches the
-                // list it opens.
-                ->url(DisputeTicketResource::getUrl('index', ['tab' => 'unresolved'])),
-
             Stat::make('Waiting on us', number_format($d['support']))
                 ->description($this->withAge($d['support'] > 0 ? 'Support tickets needing a reply' : 'Everyone has been answered', $d['support_oldest']))
                 ->descriptionIcon('heroicon-m-inbox-arrow-down')
-                // Tighter than the dispute thresholds: a dispute is a
-                // deliberation, an unanswered message is someone sitting there.
+                // An unanswered message is someone sitting there.
                 ->color($this->escalate($d['support_oldest'], $d['support'] > 0 ? 'warning' : 'gray', 120, 480))
                 // Lands on the tab that shows EXACTLY this set, oldest-unanswered
-                // first — so the number on the card matches the list it opens
-                // (same reasoning as the disputes card above).
+                // first — so the number on the card matches the list it opens.
                 ->url(SupportTicketResource::getUrl('index', ['tab' => 'awaiting'])),
 
             Stat::make('Pending payouts', number_format($d['payouts']))

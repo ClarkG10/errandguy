@@ -31,6 +31,20 @@ class RunnerProfilesTable
         ) ?? false;
     }
 
+    /**
+     * Government ID and selfie both approved — the only state in which a
+     * runner may be approved. Reads the list query's aggregate when present,
+     * so the button costs no query per row.
+     */
+    public static function documentsApproved(RunnerProfile $record): bool
+    {
+        $count = $record->getAttribute('approved_required_documents_count');
+
+        return $count !== null
+            ? (int) $count >= count(RunnerProfile::REQUIRED_DOCUMENT_TYPES)
+            : $record->hasApprovedRequiredDocuments();
+    }
+
     public static function configure(Table $table): Table
     {
         return $table
@@ -128,21 +142,24 @@ class RunnerProfilesTable
                     ->icon(Heroicon::OutlinedShieldCheck)
                     ->color('success')
                     ->requiresConfirmation()
-                    ->modalDescription('Approve every selected runner that is still pending, and notify them.')
+                    ->modalDescription('Approves every selected runner whose government ID and selfie are both approved, and notifies them. Anyone else is skipped.')
                     ->visible(fn (): bool => static::canModerate())
                     ->deselectRecordsAfterCompletion()
                     ->action(function (Collection $records): void {
                         $approved = 0;
+                        $skipped = 0;
                         foreach ($records as $record) {
                             if ($record->verification_status === 'approved') {
                                 continue;
                             }
+                            // Approving a runner never approves their documents
+                            // for them: each one is reviewed on its own first.
+                            if (! $record->hasApprovedRequiredDocuments()) {
+                                $skipped++;
+
+                                continue;
+                            }
                             $record->update(['verification_status' => 'approved', 'approved_at' => now()]);
-                            RunnerDocument::where('runner_id', $record->id)->where('status', 'pending')->update([
-                                'status' => 'approved',
-                                'reviewed_by' => auth('admin')->id(),
-                                'reviewed_at' => now(),
-                            ]);
                             // data.type matters: without it the mobile tap
                             // router no-ops and nothing invalidates the cached
                             // runner profile — the runner reads "approved" while
@@ -160,9 +177,13 @@ class RunnerProfilesTable
                         }
                         // Per-record audit already written in the loop above, so
                         // this is a count-only confirmation (no audit param).
+                        $notes = [$approved === 0 ? 'No runner in the selection could be approved.' : 'They’ve been notified.'];
+                        if ($skipped > 0) {
+                            $notes[] = $skipped.' skipped: their government ID and selfie must both be approved first.';
+                        }
                         AdminNotify::success(
                             $approved.' runner'.($approved === 1 ? '' : 's').' approved',
-                            note: $approved === 0 ? 'No pending runners were in the selection.' : 'They’ve been notified.',
+                            note: implode(' ', $notes),
                         );
                     }),
             ])
@@ -174,21 +195,27 @@ class RunnerProfilesTable
                     ->icon(Heroicon::OutlinedShieldCheck)
                     ->color('success')
                     ->requiresConfirmation()
+                    ->modalDescription('Their government ID and selfie are approved. This lets them go online and accept errands.')
+                    // Only offered once the government ID and selfie are both
+                    // approved (Documents tab). Approving a runner never
+                    // approves their documents for them.
                     ->visible(fn ($record): bool => $record->verification_status !== 'approved'
-                        && static::canModerate())
+                        && static::canModerate()
+                        && static::documentsApproved($record))
                     ->action(function ($record): void {
+                        if (! $record->hasApprovedRequiredDocuments()) {
+                            AdminNotify::warning(
+                                'Runner not approved',
+                                'Their government ID and selfie must both be approved first.',
+                            );
+
+                            return;
+                        }
+
                         $record->update([
                             'verification_status' => 'approved',
                             'approved_at' => now(),
                         ]);
-
-                        RunnerDocument::where('runner_id', $record->id)
-                            ->where('status', 'pending')
-                            ->update([
-                                'status' => 'approved',
-                                'reviewed_by' => auth('admin')->id(),
-                                'reviewed_at' => now(),
-                            ]);
 
                         // See the bulk action above: the type routes the tap and
                         // unlocks the go-online button the moment the push lands.

@@ -40,4 +40,17 @@ return [
         'webhook_token' => env('XENDIT_WEBHOOK_TOKEN'),
     ],
 
+    // Semaphore SMS (semaphore.co) — texts sent when someone presses SOS. No
+    // text is sent until SEMAPHORE_API_KEY is set. SEMAPHORE_SENDER_NAME must
+    // be a sender name approved on the Semaphore account (leave empty to use
+    // the account's default). SEMAPHORE_PRIORITY sends through Semaphore's
+    // priority queue, which goes out immediately at 2 credits per message.
+    'semaphore' => [
+        'api_key' => env('SEMAPHORE_API_KEY'),
+        'sender_name' => env('SEMAPHORE_SENDER_NAME'),
+        'priority' => (bool) env('SEMAPHORE_PRIORITY', true),
+        'base_url' => env('SEMAPHORE_BASE_URL', 'https://api.semaphore.co/api/v4'),
+        'timeout' => (int) env('SEMAPHORE_TIMEOUT', 10),
+    ],
+
 ];

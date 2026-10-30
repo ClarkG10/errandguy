@@ -13,6 +13,8 @@ class SupportTicketResource extends JsonResource
             'id' => $this->id,
             'user_id' => $this->user_id,
             'booking_id' => $this->booking_id,
+            // Set on a 'report_user' ticket: who the report is about.
+            'reported_user_id' => $this->reported_user_id,
             'subject' => $this->subject,
             'category' => $this->category,
             'status' => $this->status,

@@ -12,6 +12,7 @@ import {
   Circle,
   ShoppingBag,
   ShieldAlert,
+  ShieldCheck,
   ChevronDown,
   ChevronUp,
   AlertTriangle,
@@ -19,6 +20,7 @@ import {
   ChevronRight,
   Check,
   Flag,
+  UserX,
 } from 'lucide-react-native';
 import * as Haptics from 'expo-haptics';
 import AsyncStorage from '@react-native-async-storage/async-storage';
@@ -69,9 +71,21 @@ import {
   useSosIntentStore,
 } from '../../../services/sosIntent';
 import {
+  clearSosActive,
+  hydrateSosActive,
+  reconcileSosActive,
+  useSosActive,
+} from '../../../services/sosActive';
+import {
   SosPendingSheet,
   type SosCallableContact,
 } from '../../../components/safety/SosPendingSheet';
+import {
+  SosActiveCard,
+  SosResolvedNotice,
+  sosAlertedText,
+} from '../../../components/safety/SosActiveCard';
+import { ReportUserSheet } from '../../../components/safety/ReportUserSheet';
 import { queueable } from '../../../services/mutationQueue';
 import { runOptimistic } from '../../../utils/optimistic';
 import type { Booking } from '../../../types';
@@ -169,9 +183,9 @@ const ISSUE_REASONS: { key: string; label: string; message: string }[] = [
   },
   {
     key: 'store_closed',
-    label: 'Store / biller is closed',
+    label: 'Store is closed',
     message:
-      'The store or biller for this errand is closed or cannot serve the request right now.',
+      'The store for this errand is closed or cannot serve the request right now.',
   },
   {
     key: 'item_unavailable',
@@ -274,6 +288,7 @@ function RunnerEtaLeaf({
 function StopRow({
   stop,
   canTick,
+  contactsLocked,
   onToggle,
   onNavigate,
   onCall,
@@ -281,12 +296,14 @@ function StopRow({
   stop: BookingStop;
   /** Ticking is offered only once the runner is actually running the stops. */
   canTick: boolean;
+  /** Offered, not yet accepted: the stop's number stays hidden (and uncalled). */
+  contactsLocked: boolean;
   onToggle: (stop: BookingStop) => void;
   onNavigate: (stop: BookingStop) => void;
   onCall: (stop: BookingStop) => void;
 }) {
   const done = !!stop.completed_at;
-  const phone = stop.contact_phone ?? null;
+  const phone = contactsLocked ? null : stop.contact_phone ?? null;
   const meta = [stop.contact_name, phone].filter(Boolean).join(' \u00b7 ');
   return (
     <View
@@ -368,30 +385,32 @@ function StopRow({
             Navigate
           </Text>
         </Pressable>
-        <Pressable
-          onPress={() => onCall(stop)}
-          disabled={!phone}
-          accessibilityRole="button"
-          accessibilityState={{ disabled: !phone }}
-          accessibilityLabel={
-            phone
-              ? `Call the contact at stop ${stop.sequence}`
-              : `No phone number for stop ${stop.sequence}`
-          }
-          hitSlop={8}
-          className={`h-10 px-4 rounded-xl border border-dividerStrong bg-surface flex-row items-center justify-center ${
-            phone ? '' : 'opacity-50'
-          }`}
-        >
-          <Phone
-            size={14}
-            color={phone ? LightColors.primary : LightColors.textMuted}
-            strokeWidth={2.2}
-          />
-          <Text className="text-textPrimary text-[12px] font-montserrat-semi ml-1.5">
-            Call
-          </Text>
-        </Pressable>
+        {contactsLocked ? null : (
+          <Pressable
+            onPress={() => onCall(stop)}
+            disabled={!phone}
+            accessibilityRole="button"
+            accessibilityState={{ disabled: !phone }}
+            accessibilityLabel={
+              phone
+                ? `Call the contact at stop ${stop.sequence}`
+                : `No phone number for stop ${stop.sequence}`
+            }
+            hitSlop={8}
+            className={`h-10 px-4 rounded-xl border border-dividerStrong bg-surface flex-row items-center justify-center ${
+              phone ? '' : 'opacity-50'
+            }`}
+          >
+            <Phone
+              size={14}
+              color={phone ? LightColors.primary : LightColors.textMuted}
+              strokeWidth={2.2}
+            />
+            <Text className="text-textPrimary text-[12px] font-montserrat-semi ml-1.5">
+              Call
+            </Text>
+          </Pressable>
+        )}
       </View>
     </View>
   );
@@ -704,6 +723,8 @@ export default function ActiveErrandScreen() {
       const r = await runnerService.getErrand(id);
       const fresh = (r?.data?.data ?? null) as Booking | null;
       if (!fresh) return;
+      // A fresh read saying no alert is open closes a stale "SOS active" card.
+      reconcileSosActive(id, fresh.sos_triggered);
       // Mirror into the store when this is the runner's active job so the
       // home screen + other consumers see the new status. (Store-sync side
       // effect must be preserved: terminal → updateErrandStatus, non-terminal
@@ -855,11 +876,16 @@ export default function ActiveErrandScreen() {
     );
   }, [booking?.status]);
 
-  const customerPhone =
-    booking?.dropoff_contact_phone ??
-    booking?.pickup_contact_phone ??
-    booking?.customer?.phone ??
-    null;
+  // An errand that is only OFFERED (matched) shows no phone numbers — the
+  // customer's, or the pickup/drop-off contacts'. A newer server stops sending
+  // them until accept; this also covers an older one that still does.
+  const contactsLocked = booking?.status === 'matched';
+  const customerPhone = contactsLocked
+    ? null
+    : booking?.dropoff_contact_phone ??
+      booking?.pickup_contact_phone ??
+      booking?.customer?.phone ??
+      null;
   const customerName =
     booking?.dropoff_contact_name ??
     booking?.pickup_contact_name ??
@@ -1059,7 +1085,20 @@ export default function ActiveErrandScreen() {
   // also persisted + retried by sosIntent, so a dead-zone press isn't lost.
   const [showSOSConfirm, setShowSOSConfirm] = useState(false);
   const [sosLoading, setSosLoading] = useState(false);
-  const [sosActive, setSosActive] = useState<boolean>(false);
+  // The runner's OWN alert on this errand, from the per-errand record written
+  // on the server's ack — never `booking.sos_triggered`, which is set by the
+  // customer's alert too (and the customer may be raising one about the
+  // runner). Survives leaving and reopening the cockpit.
+  const sosRecord = useSosActive(id);
+  const sosActive = !!sosRecord && !sosRecord.resolvedAt;
+  const sosResolved = !!sosRecord?.resolvedAt;
+  // The SOS-active sheet: 911, tap-to-call contacts, "I'm safe".
+  const [showSosActive, setShowSosActive] = useState(false);
+  const [deactivatingSOS, setDeactivatingSOS] = useState(false);
+  // SlideToConfirm latches after a completed slide; bump on a FAILED
+  // stand-down so the retry the toast promises actually works.
+  const [standDownResetKey, setStandDownResetKey] = useState(0);
+  const [sosNow, setSosNow] = useState(() => Date.now());
   const [showSosPending, setShowSosPending] = useState(false);
   // Queued (unacknowledged) raise for THIS errand + whether an attempt is in
   // flight. Held in the sosIntent store so it survives this screen unmounting.
@@ -1073,22 +1112,46 @@ export default function ActiveErrandScreen() {
   const sosRejection = useSosIntentStore((s) =>
     id && s.lastRejection?.bookingId === id ? s.lastRejection : null,
   );
-  // Sync the SOS toggle from the (possibly async) booking payload.
-  useEffect(() => {
-    if (booking?.sos_triggered) setSosActive(true);
-  }, [booking?.sos_triggered]);
-
   // Pick up an SOS that never reached the server (killed mid-request / queued
-  // in a dead zone), and let a background retry that lands flip this screen.
+  // in a dead zone) and the acknowledged-alert records, and let a background
+  // retry that lands flip this screen.
   useEffect(() => {
     void resumeSosIntent();
+    void hydrateSosActive();
   }, []);
   useEffect(() => {
     if (!sosAck) return;
-    setSosActive(true);
+    setSosNow(Date.now());
     setShowSosPending(false);
     setShowSOSConfirm(false);
   }, [sosAck]);
+  // Elapsed readout ticks only while an alert is live.
+  useEffect(() => {
+    if (!sosActive) return;
+    setSosNow(Date.now());
+    const t = setInterval(() => setSosNow(Date.now()), 1000);
+    return () => clearInterval(t);
+  }, [sosActive]);
+  // While the alert is live, re-read the errand so one closed elsewhere
+  // (staff, or a missed "resolved" notification) can't leave the card
+  // claiming "SOS active" — including after the errand itself has ended,
+  // when the status poll above has stopped.
+  useSmartPolling(
+    async () => {
+      if (!id) return;
+      const r = await runnerService.getErrand(id);
+      const fresh = (r?.data?.data ?? null) as Booking | null;
+      if (fresh) reconcileSosActive(id, fresh.sos_triggered);
+    },
+    { interval: 30_000, enabled: !!id && sosActive, runOnMount: true },
+  );
+  const sosElapsedLabel = (() => {
+    if (!sosActive || !sosRecord) return null;
+    const secs = Math.max(0, Math.floor((sosNow - sosRecord.acknowledgedAt) / 1000));
+    const m = Math.floor(secs / 60);
+    const sec = secs % 60;
+    return m > 0 ? `${m}m ${sec}s` : `${sec}s`;
+  })();
   useEffect(() => {
     if (!sosRejection || !id) return;
     setShowSosPending(false);
@@ -1133,11 +1196,12 @@ export default function ActiveErrandScreen() {
     try {
       const result = await raiseSos(booking.id, 'runner');
       if (result.status === 'sent') {
-        setSosActive(true);
         setShowSOSConfirm(false);
-        // Was "Emergency contacts notified" — untrue while the trusted-contact
-        // SMS has no provider. Claim only the alert we can prove landed.
-        toast.success('SOS sent to ErrandGuy safety');
+        // Who it reached is the SERVER's sentence (or, from an older server,
+        // only what it confirmed). Then straight to 911 / contacts / "I'm safe".
+        haptics.warning();
+        toast.success(`SOS sent. ${sosAlertedText(result)}`);
+        setShowSosActive(true);
         return;
       }
       if (result.status === 'queued') {
@@ -1161,6 +1225,38 @@ export default function ActiveErrandScreen() {
     }
   }, [booking, sosLoading]);
 
+  // "I'm safe" — closes THIS runner's own alert. Drops any unsent intent FIRST
+  // (a replay after the stand-down would re-raise it), then the DELETE.
+  const handleStandDown = useCallback(async () => {
+    if (!id || deactivatingSOS) return;
+    setDeactivatingSOS(true);
+    const { hadUnsentIntent } = standDownSos(id);
+    try {
+      await runnerService.deactivateSOS(id);
+      clearSosActive(id);
+      setShowSosActive(false);
+      setShowSosPending(false);
+      haptics.success();
+      toast.success('Alert cancelled — glad you’re safe');
+    } catch (err) {
+      if (hadUnsentIntent) {
+        // Nothing reached the server and the intent is gone — nothing left to
+        // stand down, even though the (also offline) DELETE failed.
+        clearSosActive(id);
+        setShowSosActive(false);
+        setShowSosPending(false);
+        haptics.success();
+        toast.success('Alert cancelled — it was never sent');
+        return;
+      }
+      haptics.error();
+      setStandDownResetKey((k) => k + 1);
+      toast.error(errorMessage(err, 'Couldn’t cancel the alert. Please try again.'));
+    } finally {
+      setDeactivatingSOS(false);
+    }
+  }, [id, deactivatingSOS]);
+
   // ── Mid-errand issue reporting ─────────────────────────────────────────
   // Replaces a `mailto:` that dropped the runner into the OS mail composer
   // with the threaded, booking-linked support ticket the app already ships.
@@ -1168,6 +1264,8 @@ export default function ActiveErrandScreen() {
   // support sees the booking the ticket belongs to.
   const [showIssueSheet, setShowIssueSheet] = useState(false);
   const [issueSubmitting, setIssueSubmitting] = useState<string | null>(null);
+  // "Report this person" — the customer on this errand, to ErrandGuy staff.
+  const [showReportUser, setShowReportUser] = useState(false);
 
   const handleReportIssue = useCallback(
     async (reason: (typeof ISSUE_REASONS)[number]) => {
@@ -2005,6 +2103,7 @@ export default function ActiveErrandScreen() {
           key={stop.id}
           stop={stop}
           canTick={canTickStops}
+          contactsLocked={contactsLocked}
           onToggle={handleToggleStop}
           onNavigate={handleStopNavigate}
           onCall={handleStopCall}
@@ -2125,7 +2224,13 @@ export default function ActiveErrandScreen() {
                 {!isReadOnly && isErrandActive && (
                   <Pressable
                     onPress={() => {
-                      if (sosActive) return;
+                      // A live alert reopens its sheet (911, contacts, "I'm
+                      // safe") instead of arming a second raise.
+                      if (sosActive) {
+                        haptics.selection();
+                        setShowSosActive(true);
+                        return;
+                      }
                       // A queued (unsent) raise reopens the honest fallback
                       // sheet rather than arming a second confirm.
                       if (queuedSos) {
@@ -2136,11 +2241,11 @@ export default function ActiveErrandScreen() {
                       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning).catch(() => {});
                       setShowSOSConfirm(true);
                     }}
-                    disabled={sosActive || sosLoading}
+                    disabled={sosLoading}
                     accessibilityRole="button"
                     accessibilityLabel={
                       sosActive
-                        ? 'SOS already triggered'
+                        ? 'SOS active — open emergency options'
                         : queuedSos
                           ? 'SOS not sent yet — open emergency options'
                           : 'Trigger emergency SOS'
@@ -2180,6 +2285,52 @@ export default function ActiveErrandScreen() {
                 </Pressable>
               </View>
             </View>
+            {/* The alert's state, always in view — it survives leaving and
+                reopening the cockpit, and it is the way back to "I'm safe"
+                even after the errand itself has ended. */}
+            {sosActive || sosResolved ? (
+              <Pressable
+                onPress={() => {
+                  haptics.selection();
+                  setShowSosActive(true);
+                }}
+                accessibilityRole="button"
+                accessibilityLabel={
+                  sosActive
+                    ? 'SOS active — open emergency options'
+                    : 'SOS closed — open details'
+                }
+                className={`flex-row items-center rounded-2xl px-4 py-2.5 mt-2 ${
+                  sosActive ? 'bg-danger' : 'bg-surface border border-divider'
+                }`}
+                style={Elevation.md}
+              >
+                {sosActive ? (
+                  <ShieldAlert size={16} color={LightColors.textInverse} strokeWidth={2.2} />
+                ) : (
+                  <ShieldCheck size={16} color={LightColors.successDark} strokeWidth={2.2} />
+                )}
+                <Text
+                  className={`flex-1 ml-2 text-[13px] font-montserrat-bold ${
+                    sosActive ? 'text-white' : 'text-textPrimary'
+                  }`}
+                  numberOfLines={1}
+                  maxFontSizeMultiplier={1.3}
+                >
+                  {sosActive
+                    ? `SOS active${sosElapsedLabel ? ` · ${sosElapsedLabel}` : ''}`
+                    : 'SOS closed'}
+                </Text>
+                <Text
+                  className={`text-[12px] font-montserrat-semi ${
+                    sosActive ? 'text-white' : 'text-textSecondary'
+                  }`}
+                  maxFontSizeMultiplier={1.3}
+                >
+                  {sosActive ? 'Call 911 · I’m safe' : 'Details'}
+                </Text>
+              </Pressable>
+            ) : null}
           </View>
         </SafeAreaView>
 
@@ -2422,22 +2573,26 @@ export default function ActiveErrandScreen() {
                     className="text-[11px] font-montserrat text-textTertiary mt-0.5"
                     numberOfLines={1}
                   >
-                    {customerPhone ?? 'Phone unavailable'}
+                    {contactsLocked
+                      ? 'Contact details show after you accept'
+                      : customerPhone ?? 'Phone unavailable'}
                   </Text>
                 </View>
-                <Pressable
-                  onPress={handleCallCustomer}
-                  disabled={!customerPhone}
-                  accessibilityRole="button"
-                  accessibilityLabel="Call customer"
-                  hitSlop={6}
-                  // Neutral chip; the enabled/disabled state is carried by the
-                  // glyph colour (blue Phone when callable, muted when not) —
-                  // the chip background no longer differentiates.
-                  className="w-10 h-10 rounded-full items-center justify-center mr-2 bg-surfaceMuted"
-                >
-                  <Phone size={17} color={customerPhone ? LightColors.primary : LightColors.textMuted} strokeWidth={2} />
-                </Pressable>
+                {contactsLocked ? null : (
+                  <Pressable
+                    onPress={handleCallCustomer}
+                    disabled={!customerPhone}
+                    accessibilityRole="button"
+                    accessibilityLabel="Call customer"
+                    hitSlop={6}
+                    // Neutral chip; the enabled/disabled state is carried by the
+                    // glyph colour (blue Phone when callable, muted when not) —
+                    // the chip background no longer differentiates.
+                    className="w-10 h-10 rounded-full items-center justify-center mr-2 bg-surfaceMuted"
+                  >
+                    <Phone size={17} color={customerPhone ? LightColors.primary : LightColors.textMuted} strokeWidth={2} />
+                  </Pressable>
+                )}
                 <Pressable
                   onPress={() => router.push(`/(runner)/chat/${booking.id}` as any)}
                   accessibilityRole="button"
@@ -2579,21 +2734,40 @@ export default function ActiveErrandScreen() {
 
                   {/* Opens the in-app, booking-linked support thread instead
                       of the OS mail composer — see the issue sheet below. */}
-                  <Pressable
-                    onPress={() => {
-                      haptics.light();
-                      setShowIssueSheet(true);
-                    }}
-                    accessibilityRole="button"
-                    accessibilityLabel="Report an issue with this errand"
-                    hitSlop={8}
-                    className="flex-row items-center self-start gap-1.5 py-2"
-                  >
-                    <AlertTriangle size={12} color={LightColors.textMuted} />
-                    <Text className="text-[11px] font-montserrat-semi text-textTertiary underline">
-                      Report an issue
-                    </Text>
-                  </Pressable>
+                  <View className="flex-row flex-wrap items-center" style={{ columnGap: 18 }}>
+                    <Pressable
+                      onPress={() => {
+                        haptics.light();
+                        setShowIssueSheet(true);
+                      }}
+                      accessibilityRole="button"
+                      accessibilityLabel="Report an issue with this errand"
+                      hitSlop={8}
+                      className="flex-row items-center gap-1.5 py-2"
+                    >
+                      <AlertTriangle size={12} color={LightColors.textMuted} />
+                      <Text className="text-[11px] font-montserrat-semi text-textTertiary underline">
+                        Report an issue
+                      </Text>
+                    </Pressable>
+                    {booking.customer_id ? (
+                      <Pressable
+                        onPress={() => {
+                          haptics.light();
+                          setShowReportUser(true);
+                        }}
+                        accessibilityRole="button"
+                        accessibilityLabel="Report this person — the customer"
+                        hitSlop={8}
+                        className="flex-row items-center gap-1.5 py-2"
+                      >
+                        <UserX size={12} color={LightColors.textMuted} />
+                        <Text className="text-[11px] font-montserrat-semi text-textTertiary underline">
+                          Report this person
+                        </Text>
+                      </Pressable>
+                    ) : null}
+                  </View>
                 </View>
               )}
             </ScrollView>
@@ -2788,8 +2962,8 @@ export default function ActiveErrandScreen() {
           setSubmittingReceipt(true);
           // Downscale before the wire, not before the optimistic flip: the
           // runner is already moving on and the local preview uses the
-          // original file. A receipt at 1600px stays legible for disputes
-          // while costing a fraction of the LTE upload.
+          // original file. A receipt at 1600px stays legible if support ever
+          // has to check the amount, while costing a fraction of the LTE upload.
           compressProofImage(receiptUri)
             .then((compressed) =>
               runnerService.submitPickedUpWithReceipt(booking.id, {
@@ -2975,16 +3149,15 @@ export default function ActiveErrandScreen() {
         }}
       />
 
-      {/* Runner SOS confirm. The copy no longer promises a trusted-contact
-          SMS: NotifySosContactsJob::notifySMSContact has no provider wired and
-          only logs a breadcrumb, so the old "your trusted contacts will get a
-          live trip link via SMS" was a promise the backend cannot keep — the
-          customer-side modal was corrected for the same reason. What DOES
-          happen is claimed here, and nothing else. */}
+      {/* Runner SOS confirm. Claims only what is certain before anything is
+          sent: staff get the alert, plus the phone's location when it has a
+          fix. Whether trusted contacts are texted (only when SMS is set up)
+          and whether the customer hears of it are the SERVER's to say — the
+          active sheet quotes it after the fact. */}
       <ConfirmModal
         visible={showSOSConfirm}
         title="Trigger emergency SOS?"
-        message="ErrandGuy safety is alerted immediately with your live location, and the customer is notified. Only use this for real emergencies."
+        message="This alerts the ErrandGuy safety team and sends your phone’s current location if it’s available. In immediate danger, call 911. Only use this for real emergencies."
         confirmLabel="Send SOS"
         confirmLoadingLabel="Sending…"
         cancelLabel="Not now"
@@ -2993,6 +3166,39 @@ export default function ActiveErrandScreen() {
         onConfirm={handleConfirmSOS}
         onCancel={() => setShowSOSConfirm(false)}
       />
+
+      {/* Live (or since-closed) alert: 911, tap-to-call contacts, "I'm safe". */}
+      <FloatingModal
+        isVisible={showSosActive && (sosActive || sosResolved)}
+        onClose={() => setShowSosActive(false)}
+      >
+        {sosActive && sosRecord ? (
+          <SosActiveCard
+            record={sosRecord}
+            elapsedLabel={sosElapsedLabel}
+            contacts={trustedContacts}
+            onStandDown={handleStandDown}
+            standingDown={deactivatingSOS}
+            standDownResetKey={standDownResetKey}
+          />
+        ) : null}
+        {sosResolved && sosRecord ? (
+          <SosResolvedNotice
+            record={sosRecord}
+            onDismiss={() => {
+              if (id) clearSosActive(id);
+              setShowSosActive(false);
+            }}
+          />
+        ) : null}
+        <Button
+          title="Back to the errand"
+          variant="ghost"
+          fullWidth
+          onPress={() => setShowSosActive(false)}
+          style={{ marginTop: 10 }}
+        />
+      </FloatingModal>
 
       {/* No-signal SOS fallback: honest "not sent yet" + the two things that
           work without data (911, tap-to-call the cached trusted contacts). */}
@@ -3140,6 +3346,25 @@ export default function ActiveErrandScreen() {
           {booking.booking_number ?? 'this errand'} — you can add details there.
         </Text>
       </FloatingModal>
+
+      {booking.customer_id ? (
+        <ReportUserSheet
+          visible={showReportUser}
+          onClose={() => setShowReportUser(false)}
+          bookingId={booking.id}
+          bookingNumber={booking.booking_number}
+          reportedUserId={booking.customer_id}
+          // The ACCOUNT holder — customerName may be the drop-off recipient.
+          reportedName={booking.customer?.full_name?.split(' ')[0] ?? null}
+          counterpart="customer"
+          onSubmitted={(ticketId) => {
+            setShowReportUser(false);
+            // Support threads live in the shared (customer) stack — see
+            // handleReportIssue for why the cross-group push is safe.
+            if (ticketId) router.push(`/(customer)/support/${ticketId}`);
+          }}
+        />
+      ) : null}
     </SafeAreaView>
   );
 }

@@ -37,7 +37,6 @@ class ErrandAcceptTest extends TestCase
             'current_lat' => 14.5995,
             'current_lng' => 120.9842,
             'preferred_types' => [],
-            'acceptance_rate' => 100.00,
             'completion_rate' => 100.00,
             'total_errands' => 0,
             'total_earnings' => 0.00,
@@ -173,15 +172,15 @@ class ErrandAcceptTest extends TestCase
     public function test_a_stale_decline_is_a_no_op_that_costs_the_runner_nothing(): void
     {
         // The offer already lapsed (back to pending, no runner) when the
-        // runner tapped Decline: nothing to revert, and no acceptance-rate hit.
-        $this->profile->update(['total_errands' => 4, 'acceptance_rate' => 100.00]);
+        // runner tapped Decline: nothing to revert, and nothing held against them.
+        $this->profile->update(['total_errands' => 4]);
 
         $this->actingAs($this->runner)
             ->postJson("/api/v1/runner/errand/{$this->booking->id}/decline")
             ->assertOk();
 
         $this->assertSame('pending', $this->booking->fresh()->status);
-        $this->assertEquals(100.00, (float) $this->profile->fresh()->acceptance_rate);
+        $this->assertSame(4, (int) $this->profile->fresh()->total_errands);
     }
 
     public function test_runner_cannot_accept_already_accepted_booking(): void

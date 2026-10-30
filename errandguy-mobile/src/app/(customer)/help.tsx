@@ -15,7 +15,6 @@ import { useRouter } from 'expo-router';
 import {
   ChevronDown,
   Mail,
-  Phone,
   MessageCircle,
   Headphones,
   ChevronRight,
@@ -37,11 +36,6 @@ if (Platform.OS === 'android' && UIManager.setLayoutAnimationEnabledExperimental
   UIManager.setLayoutAnimationEnabledExperimental(true);
 }
 
-// Single source for the hotline so the visible number and the dialed
-// number can never drift apart.
-const SUPPORT_PHONE = '+63 917 123 4567';
-const SUPPORT_PHONE_URL = `tel:${SUPPORT_PHONE.replace(/ /g, '')}`;
-
 // Row pressed feedback: a surfaceMuted wash reads better than scale for
 // rows inside a shared card (scale would shift the hairlines). Rows carry
 // the card's horizontal inset so the wash bleeds edge-to-edge.
@@ -58,32 +52,37 @@ const FAQS: FAQ[] = [
   {
     question: 'How do I book an errand?',
     answer:
-      'Tap the errand type you need on the Home screen, set pickup and drop-off, add any details (notes, photos, recipient contact), then confirm. A nearby runner will be matched to you in real time.',
+      'Tap the errand type you need on the Home screen, set pickup and drop-off, add any details (notes, photos, recipient contact), then confirm. We offer it to the nearest available runner. If you pay with GCash or Maya, we start looking once your payment goes through.',
   },
   {
     question: 'How is the price calculated?',
     answer:
-      'The fare = base fee + per-km distance fee + a small vehicle premium (motorcycle/car). Every price is fixed: you see the full fare before you confirm, and a runner can only accept it — no bidding, no counter-offers. Tipping is optional.',
+      'The fare = base fee + per-km distance fee + a small vehicle premium (motorcycle/car). Every price is fixed: you see the full fare before you confirm, and a runner can only accept it — no bidding, no counter-offers. For a Buy-for-me errand you also repay the item cost in cash to the runner at the door, as shown on the receipt. Tipping is optional.',
   },
   {
     question: 'Can I track my runner live?',
     answer:
-      'Yes. Once a runner accepts, the booking moves to the Track screen with a live map. You can also share a read-only trip link with a trusted contact.',
+      'Yes. Once a runner accepts, the booking moves to the Track screen with a live map, the runner’s vehicle and plate. You can also share a read-only trip link with a trusted contact.',
   },
   {
     question: 'How do I pay?',
     answer:
-      'Cash on delivery, GCash or Maya (you approve the payment in their app), or your ErrandGuy wallet balance. You choose on the review screen before you confirm. Refunds for cancelled errands return to your wallet, and you can withdraw your wallet balance to GCash or Maya anytime from the Wallet screen.',
+      'Cash, GCash or Maya (you approve the payment in their app), or your ErrandGuy wallet balance. You choose on the review screen before you confirm — we don’t save cards. Refunds go to your wallet, and you can ask to withdraw your balance to GCash or Maya from the Wallet screen; our team reviews and sends withdrawals, usually within 1–3 business days.',
   },
   {
-    question: 'What if my runner cancels or never arrives?',
+    question: 'What if I cancel?',
     answer:
-      'You will be re-matched automatically. If the system cannot find a runner within a few minutes, your booking is cancelled with no charge.',
+      'Cancelling is free until a runner accepts. After that a small cancellation fee may apply — the app shows it before you confirm, and the fee goes to the runner who accepted. Anything you prepaid beyond the fee comes back to your wallet. Once your runner has arrived or started, the errand can’t be cancelled in the app — contact support instead.',
+  },
+  {
+    question: 'What if my runner can’t finish or stops responding?',
+    answer:
+      'Once a runner accepts, the errand stays theirs — runners can’t hand it back. If something goes wrong, tap "Report a problem" on the errand and our team can reassign it to another runner or cancel it. If no runner accepts your errand at all, it is cancelled with no charge and anything you paid returns to your wallet.',
   },
   {
     question: 'How do I report a safety issue?',
     answer:
-      'Use the SOS button on the Track screen. For non-emergencies, tap "Report an Issue" below to email our support team with your booking number.',
+      'In immediate danger, call 911. The SOS button on the Track screen alerts the ErrandGuy safety team — the screen then tells you exactly who was alerted. For anything else, use "Report a problem" or "Report this person" on the errand to open a ticket our team will answer in Support.',
   },
 ];
 
@@ -147,13 +146,6 @@ export default function CustomerHelpScreen() {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
     Linking.openURL(url).catch(() => {
       toast.error("Couldn't open your mail app.");
-    });
-  };
-
-  const openPhone = (url: string) => {
-    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
-    Linking.openURL(url).catch(() => {
-      toast.error("Couldn't open your phone app.");
     });
   };
 
@@ -266,29 +258,6 @@ export default function CustomerHelpScreen() {
           </Pressable>
           <Hairline />
           <Pressable
-            onPress={() => openPhone(SUPPORT_PHONE_URL)}
-            className="flex-row items-center py-3 px-4"
-            style={rowPressed}
-            android_ripple={ROW_RIPPLE}
-            accessibilityRole="button"
-            accessibilityLabel="Call support hotline"
-            accessibilityHint={`Calls ${SUPPORT_PHONE}, open 8 AM to 10 PM daily`}
-          >
-            <View className="w-10 h-10 rounded-full bg-surfaceMuted items-center justify-center">
-              <Phone size={18} color={LightColors.primary} strokeWidth={1.9} />
-            </View>
-            <View className="flex-1 ml-3">
-              <Text className="text-[14px] font-montserrat-semi text-textPrimary">
-                Hotline
-              </Text>
-              <Text className="text-[11px] font-montserrat text-textMuted">
-                <Text className="font-inter">{SUPPORT_PHONE}</Text> · 8 AM–10 PM daily
-              </Text>
-            </View>
-            <ArrowUpRight size={16} color={LightColors.textTertiary} strokeWidth={2} />
-          </Pressable>
-          <Hairline />
-          <Pressable
             onPress={() =>
               openMail(
                 'mailto:support@errandguyph.com?subject=ErrandGuy%20Issue%20Report&body=Booking%20number%3A%20%0AIssue%3A%20',
@@ -298,8 +267,8 @@ export default function CustomerHelpScreen() {
             style={rowPressed}
             android_ripple={ROW_RIPPLE}
             accessibilityRole="button"
-            accessibilityLabel="Report an issue"
-            accessibilityHint="Opens a pre-filled email; we respond within one business day"
+            accessibilityLabel="Report an issue by email"
+            accessibilityHint="Opens a pre-filled email to support@errandguyph.com"
           >
             <View className="w-10 h-10 rounded-full bg-surfaceMuted items-center justify-center">
               <MessageCircle
@@ -310,10 +279,10 @@ export default function CustomerHelpScreen() {
             </View>
             <View className="flex-1 ml-3">
               <Text className="text-[14px] font-montserrat-semi text-textPrimary">
-                Report an issue
+                Report an issue by email
               </Text>
               <Text className="text-[11px] font-montserrat text-textMuted">
-                We respond within one business day
+                Include your booking number
               </Text>
             </View>
             <ArrowUpRight size={16} color={LightColors.textTertiary} strokeWidth={2} />

@@ -1,10 +1,9 @@
-import React, { useCallback } from 'react';
-import { View, Text, Pressable, Modal, Linking } from 'react-native';
+import React from 'react';
+import { View, Text, Pressable, Modal } from 'react-native';
 import { Phone, ShieldAlert, RefreshCw } from 'lucide-react-native';
 import { Button } from '../ui/Button';
 import { LightColors } from '../../constants/colors';
-import { haptics } from '../../utils/haptics';
-import { toast } from '../../stores/toastStore';
+import { EMERGENCY_NUMBER, dialNumber } from './emergency';
 
 /**
  * The honest failure state of the panic button.
@@ -44,9 +43,6 @@ interface SosPendingSheetProps {
   onClose: () => void;
 }
 
-/** National emergency hotline (Philippines). Voice works where data doesn't. */
-const EMERGENCY_NUMBER = '911';
-
 export function SosPendingSheet({
   visible,
   contacts,
@@ -56,14 +52,6 @@ export function SosPendingSheet({
   onCancelAlert,
   onClose,
 }: SosPendingSheetProps) {
-  const dial = useCallback((number: string) => {
-    haptics.warning();
-    const tel = `tel:${number.replace(/[^0-9+#*]/g, '')}`;
-    Linking.openURL(tel).catch(() => {
-      toast.error(`Couldn’t open the dialler — call ${number}`);
-    });
-  }, []);
-
   return (
     <Modal
       visible={visible}
@@ -130,16 +118,16 @@ export function SosPendingSheet({
 
             {/* Voice fallbacks — the only things that work with no data. */}
             <Pressable
-              onPress={() => dial(EMERGENCY_NUMBER)}
+              onPress={() => dialNumber(EMERGENCY_NUMBER)}
               accessibilityRole="button"
-              accessibilityLabel="Call 911"
+              accessibilityLabel={`Call ${EMERGENCY_NUMBER}`}
               className="flex-row items-center rounded-xl bg-danger px-4 py-3.5 mt-4"
               style={({ pressed }) => ({ opacity: pressed ? 0.9 : 1 })}
               android_ripple={{ color: 'rgba(255,255,255,0.18)' }}
             >
               <Phone size={18} color={LightColors.textInverse} strokeWidth={2.4} />
               <Text className="ml-2.5 text-[15px] font-montserrat-bold text-white">
-                Call 911
+                Call {EMERGENCY_NUMBER}
               </Text>
             </Pressable>
 
@@ -155,7 +143,7 @@ export function SosPendingSheet({
                 {contacts.slice(0, 3).map((c, i) => (
                   <Pressable
                     key={c.id ?? `${c.phone}-${i}`}
-                    onPress={() => dial(c.phone)}
+                    onPress={() => dialNumber(c.phone)}
                     accessibilityRole="button"
                     accessibilityLabel={`Call ${c.name} at ${c.phone}`}
                     className="flex-row items-center rounded-xl border border-divider bg-surfaceMuted px-4 py-3 mb-2"

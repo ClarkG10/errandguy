@@ -17,6 +17,8 @@ import {
   FileText,
   Archive,
   Trash2,
+  Headphones,
+  Megaphone,
 } from 'lucide-react-native';
 import type { LucideIcon } from 'lucide-react-native';
 import * as Haptics from 'expo-haptics';
@@ -36,6 +38,7 @@ import { notificationService } from '../../../services/notification.service';
 import { runOptimistic } from '../../../utils/optimistic';
 import { queueable } from '../../../services/mutationQueue';
 import { warmTracking } from '../../../services/preload.service';
+import { notificationRoute } from '../../../utils/notificationRoute';
 import { useQuery } from '../../../hooks/useQuery';
 import { useReducedMotion } from '../../../hooks/useReducedMotion';
 import { useHideTabBarOnScroll } from '../../../hooks/useHideTabBarOnScroll';
@@ -116,6 +119,26 @@ const TYPE_META: Record<
     textColor: LightColors.primary,
     chipClass: 'bg-surfaceMuted',
   },
+  // Support desk replies / status changes — open the ticket thread.
+  support_reply: {
+    icon: Headphones,
+    color: LightColors.primary,
+    textColor: LightColors.primary,
+    chipClass: 'bg-surfaceMuted',
+  },
+  support_status: {
+    icon: Headphones,
+    color: LightColors.primary,
+    textColor: LightColors.primary,
+    chipClass: 'bg-surfaceMuted',
+  },
+  // Staff announcement — informational, nowhere further to go.
+  broadcast: {
+    icon: Megaphone,
+    color: LightColors.primary,
+    textColor: LightColors.primary,
+    chipClass: 'bg-surfaceMuted',
+  },
 };
 
 // Short, capitalised label per type — reads as a tiny eyebrow on each
@@ -130,6 +153,9 @@ const TYPE_LABELS: Record<NotificationType, string> = {
   system: 'System',
   document_update: 'Document',
   onboarding_reminder: 'Sign-up',
+  support_reply: 'Support',
+  support_status: 'Support',
+  broadcast: 'ErrandGuy',
 };
 
 // Category filter chips — a coarser grouping over the TYPE_META types
@@ -152,7 +178,16 @@ const CATEGORY_TYPES: Record<Exclude<CategoryKey, 'all'>, NotificationType[]> =
     // onboarding_reminder sits here with document_update: both are KYC-ish
     // nudges, and without an entry it appeared under "All" ONLY — invisible
     // the moment any chip was selected.
-    more: ['chat', 'sos', 'system', 'document_update', 'onboarding_reminder'],
+    more: [
+      'chat',
+      'sos',
+      'system',
+      'document_update',
+      'onboarding_reminder',
+      'support_reply',
+      'support_status',
+      'broadcast',
+    ],
   };
 
 function matchesCategory(type: NotificationType, category: CategoryKey) {
@@ -660,45 +695,19 @@ export default function NotificationsScreen() {
         notificationService.markAsRead(notification.id).catch(() => {});
       }
 
-      // Navigate based on type
-      const data = notification.data ?? {};
-      switch (notification.type) {
-        case 'booking_update':
-        // Progress ticks describe a live errand — same destination as a
-        // status update. Before these cases the rows were dead on tap.
-        case 'shopping_items_updated':
-        case 'booking_stops_updated':
-          if (data.booking_id) {
-            // Warm the tracking fetch before navigating (only the id is known
-            // here, so no store seed) so the screen's mount GET coalesces
-            // instead of landing cold from a push tap. (P2)
-            warmTracking(data.booking_id as string);
-            router.push(
-              `/(customer)/tracking/${data.booking_id as string}`,
-            );
-          }
-          break;
-        case 'payment':
-          router.push('/(customer)/wallet');
-          break;
-        case 'chat':
-          if (data.booking_id) {
-            router.push(
-              `/(customer)/chat/${data.booking_id as string}`,
-            );
-          }
-          break;
-        // sos was missing here, so tapping that row in the list did nothing
-        // while tapping the SAME push navigated. Mirror the push-tap routing
-        // (useNotifications) so the in-app list and push agree.
-        case 'sos':
-          if (data.booking_id) {
-            router.push(`/(customer)/tracking/${data.booking_id as string}`);
-          }
-          break;
-        default:
-          break;
+      // Same destinations as the device push (utils/notificationRoute), so a
+      // row and its push can never disagree. Rows with nowhere further to go
+      // (a staff announcement) stay put — marking them read is the action.
+      const target = notificationRoute(notification, 'customer', 'inbox');
+      if (!target) return;
+      // Warm the tracking fetch before navigating (only the id is known here,
+      // so no store seed) so the screen's mount GET coalesces instead of
+      // landing cold. (P2)
+      const bookingId = notification.data?.booking_id;
+      if (target.startsWith('/(customer)/tracking/') && typeof bookingId === 'string') {
+        warmTracking(bookingId);
       }
+      router.push(target as never);
     },
     [router, markRead, closeOpenRow],
   );

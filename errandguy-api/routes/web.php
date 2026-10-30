@@ -1,5 +1,6 @@
 <?php
 
+use App\Http\Controllers\Admin\SosAlarmController;
 use App\Http\Controllers\BookingMediaController;
 use App\Http\Controllers\HealthController;
 use App\Http\Controllers\PublicTripController;
@@ -35,6 +36,16 @@ Route::middleware('web')
 Route::middleware('web')
     ->get('/internal/runner-documents/{document}/file', [RunnerDocumentFileController::class, 'adminShow'])
     ->name('admin.runner-documents.file');
+
+/*
+| SOS alarm feed for the admin panel: the open SOS alerts, polled by the alarm
+| script on every admin page (resources/views/filament/sos-alarm.blade.php).
+| Admin session only, safety roles only (403 otherwise); outside the Filament
+| `/admin` prefix for the same reason as the KYC viewer above.
+*/
+Route::middleware('web')
+    ->get('/internal/admin/sos-alarm', SosAlarmController::class)
+    ->name('admin.sos-alarm');
 
 /*
 | Payment return bridge.

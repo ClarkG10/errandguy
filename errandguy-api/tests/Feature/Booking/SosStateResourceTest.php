@@ -4,15 +4,16 @@ namespace Tests\Feature\Booking;
 
 use App\Models\Booking;
 use App\Models\ErrandType;
+use App\Models\SOSAlert;
 use App\Models\User;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Tests\TestCase;
 
 /**
- * CONTRACT-1 regression: BookingResource must expose sos_triggered so a
- * participant's app can rehydrate the SOS-active banner after a reload/poll.
- * The mobile runner + customer screens read booking.sos_triggered; before this
- * the resource never emitted it, so the restore effect was dead code.
+ * CONTRACT-1 regression: BookingResource must expose sos_triggered so the app
+ * of the person who pressed SOS can rehydrate its SOS-active banner after a
+ * reload/poll. It is true ONLY for that person: the other person on the errand
+ * is never told (they may be the danger).
  */
 class SosStateResourceTest extends TestCase
 {
@@ -49,14 +50,36 @@ class SosStateResourceTest extends TestCase
         ]);
     }
 
-    public function test_participant_sees_active_sos_state(): void
+    private function raiseSos(Booking $booking, User $by, string $role): void
+    {
+        SOSAlert::create([
+            'booking_id' => $booking->id, 'customer_id' => $booking->customer_id, 'runner_id' => $booking->runner_id,
+            'triggered_by' => $by->id, 'triggered_by_role' => $role, 'triggered_at' => now(),
+            'live_link_token' => str_repeat('s', 64), 'live_link_expires_at' => now()->addHour(), 'status' => 'active',
+        ]);
+    }
+
+    public function test_the_person_who_pressed_sos_sees_it_active(): void
     {
         $booking = $this->makeBooking(sos: true);
+        $this->raiseSos($booking, $this->customer, 'customer');
 
         $this->actingAs($this->customer)
             ->getJson("/api/v1/bookings/{$booking->id}")
             ->assertOk()
             ->assertJsonPath('data.sos_triggered', true);
+    }
+
+    public function test_the_other_person_on_the_errand_is_not_shown_the_sos(): void
+    {
+        // The customer pressed SOS; the runner's app must not learn of it.
+        $booking = $this->makeBooking(sos: true);
+        $this->raiseSos($booking, $this->customer, 'customer');
+
+        $this->actingAs($this->runner)
+            ->getJson("/api/v1/runner/errand/{$booking->id}")
+            ->assertOk()
+            ->assertJsonPath('data.sos_triggered', false);
     }
 
     public function test_participant_sees_inactive_sos_state_as_false(): void

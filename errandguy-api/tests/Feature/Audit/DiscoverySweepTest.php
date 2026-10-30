@@ -43,7 +43,7 @@ class DiscoverySweepTest extends TestCase
             'user_id' => $this->runner->id, 'verification_status' => 'approved', 'is_online' => true,
             'vehicle_type' => 'motorcycle',
             'current_lat' => 14.60, 'current_lng' => 120.98, 'preferred_types' => [],
-            'acceptance_rate' => 100.00, 'completion_rate' => 100.00, 'total_errands' => 0, 'total_earnings' => 0.00,
+            'completion_rate' => 100.00, 'total_errands' => 0, 'total_earnings' => 0.00,
             'last_location_at' => now(),
         ]);
 
@@ -87,35 +87,6 @@ class DiscoverySweepTest extends TestCase
         $this->actingAs($this->runner)
             ->postJson("/api/v1/runner/errand/{$this->booking->id}/verify-pin", ['pin' => '4821'])
             ->assertNotFound();
-    }
-
-    public function test_support_report_rejects_a_foreign_booking(): void
-    {
-        $stranger = User::factory()->create(['role' => 'customer', 'status' => 'active']);
-        $foreign = Booking::create([
-            'booking_number' => 'EG-20260331-FRGN', 'customer_id' => $stranger->id,
-            'errand_type_id' => $this->errandType->id, 'status' => 'pending',
-            'pickup_address' => '1 A', 'pickup_lat' => 14.60, 'pickup_lng' => 120.98,
-            'dropoff_address' => '2 B', 'dropoff_lat' => 14.55, 'dropoff_lng' => 121.02,
-            'schedule_type' => 'now', 'pricing_mode' => 'fixed', 'vehicle_type_rate' => 'motorcycle',
-            'distance_km' => 5.0, 'base_fee' => 50, 'distance_fee' => 50, 'service_fee' => 15,
-            'surcharge' => 0, 'total_amount' => 115, 'runner_payout' => 85, 'is_transportation' => false,
-        ]);
-
-        // Referencing a stranger's booking is rejected...
-        $this->actingAs($this->customer)
-            ->postJson('/api/v1/support/report', [
-                'booking_id' => $foreign->id, 'subject' => 'x', 'description' => 'y', 'category' => 'other',
-            ])
-            ->assertStatus(422)
-            ->assertJsonValidationErrors(['booking_id']);
-
-        // ...but the caller's own booking is accepted.
-        $this->actingAs($this->customer)
-            ->postJson('/api/v1/support/report', [
-                'booking_id' => $this->booking->id, 'subject' => 'x', 'description' => 'y', 'category' => 'other',
-            ])
-            ->assertCreated();
     }
 
     public function test_decline_excludes_the_declining_runner_from_the_immediate_rematch(): void

@@ -37,7 +37,7 @@ class EarningsTipsTest extends TestCase
         $this->runner = User::factory()->create(['role' => 'runner', 'status' => 'active']);
         RunnerProfile::create([
             'user_id' => $this->runner->id, 'verification_status' => 'approved', 'is_online' => true,
-            'preferred_types' => [], 'acceptance_rate' => 100.00, 'completion_rate' => 100.00,
+            'preferred_types' => [], 'completion_rate' => 100.00,
             'total_errands' => 0, 'total_earnings' => 0.00,
         ]);
         $this->errandType = ErrandType::create([

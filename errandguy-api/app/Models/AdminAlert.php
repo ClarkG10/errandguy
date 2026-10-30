@@ -39,7 +39,7 @@ class AdminAlert extends Model
      * isn't migrated on this environment yet) must NEVER break the caller's
      * flow (SOS triggering, runner matching).
      *
-     * @param  string       $type      sos | no_runner | stalled_errand | dispute | …
+     * @param  string       $type      sos | sos_delivery | no_runner | stalled_errand | …
      * @param  string       $severity  critical | warning | info
      * @param  string|null  $subjectId related record id, for the deep-link
      */

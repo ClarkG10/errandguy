@@ -20,7 +20,6 @@ import {
   ChevronRight,
   ArrowUpRight,
   Mail,
-  Phone,
   Search,
   Headphones,
   X,
@@ -91,7 +90,7 @@ const FAQS: FAQ[] = [
   {
     question: 'When do I get paid?',
     answer:
-      'Earnings are credited to your in-app wallet once a customer confirms delivery. You can request a payout to your GCash, Maya or bank account anytime from the Earnings tab. On a cash errand you keep the cash you collect and the platform fee comes out of your wallet; anything you owe from cash errands is cleared automatically from your next prepaid earnings.',
+      'Earnings are credited to your in-app wallet when the errand is completed. Request a payout from the Earnings tab; our team reviews each one and sends it to the GCash, Maya or bank account you saved, usually within 1–3 business days. On a cash errand you keep the cash you collect and the platform fee comes out of your wallet; anything you owe from cash errands is cleared automatically from your next prepaid earnings.',
   },
   {
     question: 'How do I update my documents?',
@@ -104,9 +103,19 @@ const FAQS: FAQ[] = [
       'If a customer cancels after you accepted the errand and a cancellation fee applies, the fee goes to you — it lands in your wallet as a "Cancellation fee" and you can withdraw it with your next payout.',
   },
   {
+    question: 'What if I can’t finish an errand?',
+    answer:
+      'Once you accept an errand it stays yours — you can’t hand it back in the app. If something stops you (the store is closed, the customer is unreachable, you’re in trouble), tap "Report an issue" on the errand and our team will reassign or cancel it. In an emergency use SOS or call 911.',
+  },
+  {
+    question: 'How do I get offers?',
+    answer:
+      'Each offer goes to the nearest available runner whose vehicle suits the errand. Your rating doesn’t change which offers you get.',
+  },
+  {
     question: 'How is my rating calculated?',
     answer:
-      'Your rating is the average of all customer reviews. Maintaining a rating above 4.0 keeps you eligible for priority errand assignments.',
+      'Your rating is the average of all customer reviews. Customers see it when you’re matched to their errand.',
   },
 ];
 
@@ -293,7 +302,7 @@ export default function HelpScreen() {
             android_ripple={ROW_RIPPLE}
             accessibilityRole="button"
             accessibilityLabel="Email Support, support@errandguyph.com"
-            className="flex-row items-center gap-3 p-4 border-b border-divider"
+            className="flex-row items-center gap-3 p-4"
           >
             <View className="w-10 h-10 rounded-full bg-surfaceMuted items-center justify-center">
               <Mail size={18} color={LightColors.primary} strokeWidth={1.8} />
@@ -307,28 +316,6 @@ export default function HelpScreen() {
             <ArrowUpRight size={16} color={LightColors.textMuted} strokeWidth={1.8} />
           </Pressable>
 
-          <Pressable
-            onPress={() => openLink('tel:+639123456789', "Couldn't open your phone app.")}
-            style={rowPressed}
-            android_ripple={ROW_RIPPLE}
-            accessibilityRole="button"
-            accessibilityLabel="Phone Support, +63 912 345 6789"
-            className="flex-row items-center gap-3 p-4"
-          >
-            <View className="w-10 h-10 rounded-full bg-surfaceMuted items-center justify-center">
-              <Phone size={18} color={LightColors.primary} strokeWidth={1.8} />
-            </View>
-            <View className="flex-1">
-              <Text className="text-[14px] font-montserrat-semi text-textPrimary">Phone Support</Text>
-              <Text
-                className="text-sm font-inter text-textSecondary"
-                style={{ fontVariant: ['tabular-nums'] }}
-              >
-                +63 912 345 6789
-              </Text>
-            </View>
-            <ArrowUpRight size={16} color={LightColors.textMuted} strokeWidth={1.8} />
-          </Pressable>
         </Card>
       </ScrollView>
     </View>

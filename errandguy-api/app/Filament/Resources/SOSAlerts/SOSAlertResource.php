@@ -39,7 +39,7 @@ class SOSAlertResource extends Resource
 
     public static function getEloquentQuery(): Builder
     {
-        return parent::getEloquentQuery()->with(['booking', 'customer', 'runner']);
+        return parent::getEloquentQuery()->with(['booking', 'customer', 'runner', 'triggeredBy']);
     }
 
     public static function getRelations(): array

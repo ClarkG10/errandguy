@@ -11,7 +11,7 @@ import { useResponsive } from '../../../constants/responsive';
 const SECTIONS: { title: string; content: string; deletionLink?: boolean }[] = [
   {
     title: 'Terms of Service',
-    content: `By using ErrandGuy as a Runner, you agree to these terms. You are an independent contractor, not an employee. You must maintain valid identification, comply with local traffic and delivery regulations, and provide honest, timely service to customers.\n\nErrandGuy reserves the right to suspend or terminate accounts that violate community guidelines, receive consistently low ratings, or engage in fraudulent activity.`,
+    content: `By using ErrandGuy as a Runner, you agree to these terms. You are an independent contractor, not an employee. You must maintain valid identification, comply with local traffic and delivery regulations, and provide honest, timely service to customers.\n\nPrices are fixed by ErrandGuy; your payout for each errand is shown before you accept. Once you accept an errand it stays yours — if you can't finish it, contact support and our team will reassign or cancel it. If a customer cancels after you accepted and a cancellation fee applies, the fee goes to you. Payouts are reviewed by our team and sent to the account you choose, usually within 1–3 business days.\n\nErrandGuy reserves the right to suspend or terminate accounts that violate community guidelines, receive consistently low ratings, or engage in fraudulent activity.`,
   },
   {
     title: 'Privacy Policy',

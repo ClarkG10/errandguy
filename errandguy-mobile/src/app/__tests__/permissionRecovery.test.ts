@@ -27,7 +27,8 @@ const SETTINGS_ROUTE = /Linking\.openSettings\(\)/;
 describe('every permission-denied path offers a settings route', () => {
   const cases: Array<{ name: string; file: string }> = [
     { name: 'registration avatar', file: 'app/(auth)/register.tsx' },
-    { name: 'import from contacts', file: 'app/(customer)/trusted-contacts/index.tsx' },
+    // Shared by both apps; the (customer) and (runner) routes are thin wrappers.
+    { name: 'import from contacts', file: 'components/safety/TrustedContactsScreen.tsx' },
     // The two that already had it — pinned so they can't regress.
     { name: 'photo proof', file: 'components/runner/PhotoProofModal.tsx' },
     { name: 'receipt capture', file: 'components/runner/ReceiptCaptureModal.tsx' },
@@ -60,7 +61,7 @@ describe('the registration avatar is no longer silent', () => {
 });
 
 describe('contacts import no longer gives advice it cannot support', () => {
-  const source = read('app/(customer)/trusted-contacts/index.tsx');
+  const source = read('components/safety/TrustedContactsScreen.tsx');
 
   it('dropped the unactionable message', () => {
     expect(source).not.toContain('Allow contacts access to import a contact.');

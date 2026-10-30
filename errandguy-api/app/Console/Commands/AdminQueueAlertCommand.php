@@ -3,11 +3,10 @@
 namespace App\Console\Commands;
 
 use App\Mail\AdminQueueDigest;
-use App\Models\DisputeTicket;
 use App\Models\RunnerProfile;
-use App\Models\SOSAlert;
 use App\Models\SupportTicket;
 use App\Models\SystemConfig;
+use App\Support\OpsAlertRecipients;
 use App\Models\WalletTransaction;
 use Illuminate\Console\Command;
 use Illuminate\Support\Carbon;
@@ -20,11 +19,13 @@ use Illuminate\Support\Facades\Mail;
  *
  * Today every one of those queues is watched only from inside /admin: the
  * ActionQueue widget polls every 30s in the browser and the resource nav badges
- * render per page load. AdminAlert::raise (SOS, no_runner, job failures) also
- * only surfaces in the panel. So overnight or off-hours a runner's KYC, a payout
- * request, a dispute or an unanswered support thread can age for many hours for
- * one reason only: nobody was looking. Meanwhile the app already has a working
- * mail transport (Gmail API, AppServiceProvider) used for OTP + password reset.
+ * render per page load. So overnight or off-hours a runner's KYC, a payout
+ * request or an unanswered support thread can age for many hours for one reason
+ * only: nobody was looking. Meanwhile the app already has a working mail
+ * transport (Gmail API, AppServiceProvider) used for OTP + password reset.
+ *
+ * A new SOS is NOT part of this digest: it is emailed (and texted) to staff the
+ * moment it is raised, by NotifySosContactsJob.
  *
  * This command closes that loop with NO new service: it re-runs the same queue
  * queries the ActionQueue widget encodes, and emails the ops address when a
@@ -48,7 +49,7 @@ class AdminQueueAlertCommand extends Command
     protected $signature = 'errandguy:admin-queue-alert
         {--dry-run : Print what would be emailed without sending or consuming the throttle}';
 
-    protected $description = 'Email the ops address when a user-blocking admin queue (SOS, KYC, payouts, disputes, support) breaches its SLA. Inert until ADMIN_ALERT_EMAIL / system_config admin_alert_email is set.';
+    protected $description = 'Email the ops addresses when a user-blocking admin queue (KYC, payouts, support) breaches its SLA. Inert until the ops_alert_emails setting is filled in.';
 
     /** Hours a breached queue stays silent after it mails, unless overridden. */
     private const DEFAULT_THROTTLE_HOURS = 6;
@@ -72,7 +73,7 @@ class AdminQueueAlertCommand extends Command
         if ($recipients === []) {
             // Deliberately quiet: an unconfigured alert address is a setup state,
             // not an error, and this runs every 15 minutes.
-            $this->line('<comment>'.count($breaches).' queue(s) breached, but no alert address is configured</comment> — set system_config `admin_alert_email` (or ADMIN_ALERT_EMAIL) to enable emails.');
+            $this->line('<comment>'.count($breaches).' queue(s) breached, but no alert address is configured</comment> — fill in the ops_alert_emails setting in the admin panel to enable emails.');
 
             return self::SUCCESS;
         }
@@ -147,42 +148,15 @@ class AdminQueueAlertCommand extends Command
     }
 
     /**
-     * Where the digest goes. Resolution order, first non-empty wins:
-     *   1. system_config `admin_alert_email` — changeable without a deploy;
-     *   2. config('mail.admin_alert_address') — config:cache-safe hook if/when
-     *      it is added to config/mail.php (see the report's follow-up);
-     *   3. env('ADMIN_ALERT_EMAIL') — works locally / uncached; note that with
-     *      `config:cache` Laravel skips .env loading, so (1) or (2) is the
-     *      production path.
-     * Accepts a comma-separated list. Invalid entries are dropped; an empty
-     * result keeps the command inert.
+     * Where the digest goes: the ops_alert_emails setting (see
+     * OpsAlertRecipients for the older fallbacks). An empty list keeps the
+     * command inert.
      *
      * @return array<int,string>
      */
     public static function recipients(): array
     {
-        $raw = null;
-        try {
-            $raw = SystemConfig::getValue('admin_alert_email');
-        } catch (\Throwable $e) {
-            // Table missing / DB unreachable — fall through to config + env.
-        }
-        if (! is_string($raw) || trim($raw) === '') {
-            $raw = config('mail.admin_alert_address') ?: env('ADMIN_ALERT_EMAIL');
-        }
-        if (! is_string($raw) || trim($raw) === '') {
-            return [];
-        }
-
-        $emails = [];
-        foreach (explode(',', $raw) as $candidate) {
-            $candidate = trim($candidate);
-            if ($candidate !== '' && filter_var($candidate, FILTER_VALIDATE_EMAIL)) {
-                $emails[] = $candidate;
-            }
-        }
-
-        return array_values(array_unique($emails));
+        return OpsAlertRecipients::emails();
     }
 
     /** Hours between repeat alerts for the same queue (system_config tunable). */
@@ -216,15 +190,6 @@ class AdminQueueAlertCommand extends Command
     {
         $breaches = [];
 
-        // Threshold 0 → any active alert alerts immediately (life-safety; the
-        // ActionQueue widget likewise paints SOS red the moment it is non-zero).
-        $breaches[] = self::evaluate(
-            'sos', 'Active SOS', 0, 'immediately',
-            'A user has an SOS alert open. Respond now.',
-            fn () => SOSAlert::where('status', 'active'),
-            'triggered_at',
-        );
-
         // 24h mirrors ActionQueue's amber escalation for pending verifications.
         // Same definition as the panel card this email points at: READY
         // applications only (both required docs uploaded, none rejected). The
@@ -242,13 +207,6 @@ class AdminQueueAlertCommand extends Command
             'payouts', 'Pending payouts', 720, '12 hours',
             'Runners are waiting on money already debited from their wallet.',
             fn () => WalletTransaction::where('type', 'payout')->where('status', 'pending'),
-        );
-
-        // 4h mirrors ActionQueue's dispute escalation.
-        $breaches[] = self::evaluate(
-            'disputes', 'Open disputes', 240, '4 hours',
-            'A customer or runner is contesting an errand outcome.',
-            fn () => DisputeTicket::unresolved(),
         );
 
         // Same definition as the panel's "Needs reply" tab: never answered, OR

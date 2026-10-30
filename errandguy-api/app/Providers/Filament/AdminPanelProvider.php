@@ -92,6 +92,11 @@ class AdminPanelProvider extends PanelProvider
             ->renderHook(PanelsRenderHook::AUTH_LOGIN_FORM_BEFORE, fn (): string => view('filament.login-hero')->render())
             ->renderHook(PanelsRenderHook::AUTH_LOGIN_FORM_AFTER, fn (): string => view('filament.login-footer')->render())
             ->renderHook(PanelsRenderHook::SIDEBAR_FOOTER, fn (): string => view('filament.sidebar-footer')->render())
+            // SOS alarm: every admin page of staff who handle safety beeps and
+            // raises a browser notification when a new SOS comes in.
+            ->renderHook(PanelsRenderHook::BODY_END, fn (): string => (auth('admin')->user()?->canHandleSupport() ?? false)
+                ? view('filament.sos-alarm')->render()
+                : '')
             ->discoverResources(in: app_path('Filament/Resources'), for: 'App\Filament\Resources')
             ->discoverPages(in: app_path('Filament/Pages'), for: 'App\Filament\Pages')
             ->pages([

@@ -33,9 +33,37 @@ module.exports = ({ config }) => {
       ],
       'expo-updates',
       'expo-secure-store',
-      'expo-location',
-      'expo-camera',
-      'expo-image-picker',
+      // Foreground location only. The app never asks for background location
+      // (no background task, no requestBackgroundPermissionsAsync), so the
+      // "Always" usage strings are deleted outright (`false`) instead of being
+      // filled with the plugin's defaults, and no background mode is added.
+      [
+        'expo-location',
+        {
+          locationAlwaysAndWhenInUsePermission: false,
+          locationAlwaysPermission: false,
+          isIosBackgroundLocationEnabled: false,
+          isAndroidBackgroundLocationEnabled: false,
+        },
+      ],
+      // No microphone anywhere: photos only (image picker `mediaTypes:
+      // ['images']`), no video, no in-app calls. Both plugins default to
+      // adding NSMicrophoneUsageDescription / RECORD_AUDIO, so turn that off;
+      // expo-camera's own AndroidManifest still merges RECORD_AUDIO, which is
+      // why app.json also lists it under android.blockedPermissions.
+      [
+        'expo-camera',
+        {
+          microphonePermission: false,
+          recordAudioAndroid: false,
+        },
+      ],
+      [
+        'expo-image-picker',
+        {
+          microphonePermission: false,
+        },
+      ],
       [
         // Registers the native contacts module + injects the iOS
         // NSContactsUsageDescription and Android READ_CONTACTS permission.

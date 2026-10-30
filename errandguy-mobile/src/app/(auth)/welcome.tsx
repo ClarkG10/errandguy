@@ -56,7 +56,7 @@ const slides = [
     eyebrow: 'WHY YOU CAN TRUST IT',
     title: 'Safe & secure',
     description:
-      'Verified runners, cashless payments, SOS alerts and trip sharing — every errand has your back.',
+      'Verified runners, fixed prices, an SOS button that reaches our safety team, and trip sharing — every errand has your back.',
     image: 'onboarding-safety' as const,
   },
 ];

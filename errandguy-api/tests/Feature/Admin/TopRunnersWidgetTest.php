@@ -33,7 +33,7 @@ class TopRunnersWidgetTest extends TestCase
             $u = User::factory()->create(['role' => 'runner', 'status' => 'active', 'full_name' => "Runner {$suffix}"]);
             RunnerProfile::create([
                 'user_id' => $u->id, 'verification_status' => 'approved', 'is_online' => true,
-                'preferred_types' => [], 'acceptance_rate' => 100.00, 'completion_rate' => 100.00,
+                'preferred_types' => [], 'completion_rate' => 100.00,
                 'total_errands' => 5, 'total_earnings' => $earnings,
             ]);
         }

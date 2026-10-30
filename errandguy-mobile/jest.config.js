@@ -14,6 +14,10 @@ const config = {
     '**/?(*.)+(spec|test).[jt]s?(x)',
   ],
   collectCoverage: false,
+  // Full-screen render suites (wallet, payout, home) take a few seconds each
+  // under parallel workers; the 5 s default turned a busy machine or a slow
+  // CI runner into failures. 20 s still catches a test that hangs.
+  testTimeout: 20000,
 };
 
 module.exports = config;

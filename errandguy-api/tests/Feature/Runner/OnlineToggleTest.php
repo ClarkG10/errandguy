@@ -28,7 +28,6 @@ class OnlineToggleTest extends TestCase
             'vehicle_type' => 'motorcycle',
             'is_online' => false,
             'preferred_types' => ['delivery'],
-            'acceptance_rate' => 100.00,
             'completion_rate' => 100.00,
             'total_errands' => 0,
             'total_earnings' => 0.00,

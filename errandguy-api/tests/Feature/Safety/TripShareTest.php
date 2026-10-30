@@ -214,4 +214,48 @@ class TripShareTest extends TestCase
 
         $this->getJson('/api/v1/trip/null-expiry-token')->assertOk();
     }
+
+    public function test_sharing_again_hands_back_the_same_live_link(): void
+    {
+        // The first link may already be with family; replacing it would
+        // silently break it.
+        $first = $this->actingAs($this->customer)
+            ->postJson("/api/v1/bookings/{$this->booking->id}/share-trip")
+            ->assertOk()
+            ->json('data');
+
+        $this->travel(2)->hours();
+
+        $second = $this->actingAs($this->customer)
+            ->postJson("/api/v1/bookings/{$this->booking->id}/share-trip")
+            ->assertOk()
+            ->json('data');
+
+        $this->assertSame($first['token'], $second['token']);
+        $this->assertSame($first['link'], $second['link']);
+        $this->getJson("/api/v1/trip/{$first['token']}")->assertOk();
+        // The expiry is pushed out from the second share.
+        $this->assertTrue($this->booking->fresh()->trip_share_expires_at->greaterThan(now()->addHours(23)));
+    }
+
+    public function test_a_new_link_is_made_after_revoking_or_expiry(): void
+    {
+        $first = $this->actingAs($this->customer)
+            ->postJson("/api/v1/bookings/{$this->booking->id}/share-trip")
+            ->json('data.token');
+
+        $this->actingAs($this->customer)->deleteJson("/api/v1/bookings/{$this->booking->id}/share-trip")->assertOk();
+
+        $afterRevoke = $this->actingAs($this->customer)
+            ->postJson("/api/v1/bookings/{$this->booking->id}/share-trip")
+            ->json('data.token');
+        $this->assertNotSame($first, $afterRevoke, 'a revoked link stays dead');
+
+        $this->booking->update(['trip_share_expires_at' => now()->subMinute()]);
+
+        $afterExpiry = $this->actingAs($this->customer)
+            ->postJson("/api/v1/bookings/{$this->booking->id}/share-trip")
+            ->json('data.token');
+        $this->assertNotSame($afterRevoke, $afterExpiry, 'an expired link is not revived');
+    }
 }

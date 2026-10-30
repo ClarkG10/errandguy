@@ -12,7 +12,7 @@ use App\Services\NotificationService;
  * latency for a push that has no bearing on the response:
  *   - a runner matched to a fixed-price booking — dispatched from MatchRunnerJob,
  *     which is itself dispatchSync'd inside the customer's create request (P4);
- *   - admin runner-verification approve/reject and dispute resolve (P33).
+ *   - admin runner-verification approve/reject (P33).
  *
  * Mirrors the existing ShouldQueue SendBookingStatusNotification listener: the
  * durable state is written by the caller; only the notification is deferred.

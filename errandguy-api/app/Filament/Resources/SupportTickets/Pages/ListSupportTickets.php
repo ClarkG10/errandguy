@@ -30,7 +30,7 @@ class ListSupportTickets extends ListRecords
             // so a replied-to ticket used to be indistinguishable from one
             // genuinely awaiting the user, and the only way to tell was to open
             // every pending ticket. Oldest-unanswered first, the same SLA idiom
-            // as the dispute and KYC queues (the asc clause lands on the base
+            // as the KYC queue (the asc clause lands on the base
             // query ahead of the table's last_message_at,desc default and, being
             // the first orderBy on that column, wins). Its own 60s cached count
             // — ListTabs::counts only groups by status, which is precisely the

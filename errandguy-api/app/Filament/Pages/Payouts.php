@@ -202,7 +202,7 @@ class Payouts extends Page implements HasTable
             // who has been waiting longest for their own money is the one to pay
             // next. A flat created_at DESC put them at the very bottom, so the
             // longest wait was served last (the same defect already fixed on the
-            // dispute queues).
+            // KYC and support queues).
             //
             // Settled rows keep newest-first underneath, because for them this
             // page is a ledger being browsed, not a queue being worked.

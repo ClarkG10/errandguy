@@ -8,8 +8,10 @@ use App\Filament\Support\ExportCsv;
 use App\Models\SupportTicket;
 use Filament\Actions\ViewAction;
 use Filament\Tables\Columns\TextColumn;
+use Filament\Tables\Filters\Filter;
 use Filament\Tables\Filters\SelectFilter;
 use Filament\Tables\Table;
+use Illuminate\Database\Eloquent\Builder;
 
 class SupportTicketsTable
 {
@@ -24,6 +26,13 @@ class SupportTicketsTable
                 TextColumn::make('user.full_name')
                     ->searchable(),
                 TextColumn::make('category')
+                    ->formatStateUsing(fn (?string $state): ?string => $state === SupportTicket::CATEGORY_REPORT_USER ? 'Report about a person' : $state)
+                    ->badge()
+                    ->color(fn (?string $state): string => $state === SupportTicket::CATEGORY_REPORT_USER ? 'danger' : 'gray')
+                    ->toggleable(),
+                TextColumn::make('reportedUser.full_name')
+                    ->label('Reported person')
+                    ->placeholder('—')
                     ->toggleable(),
                 TextColumn::make('status')
                     ->badge()
@@ -76,6 +85,11 @@ class SupportTicketsTable
                         'resolved' => 'Resolved',
                         'closed' => 'Closed',
                     ]),
+                // "Report this person" tickets, filed from an errand.
+                Filter::make('reports')
+                    ->label('Reports about a person')
+                    ->toggle()
+                    ->query(fn (Builder $query): Builder => $query->where('category', SupportTicket::CATEGORY_REPORT_USER)),
                 DateRangeFilter::make('created_at', 'Created'),
             ])
             ->headerActions([
@@ -83,6 +97,7 @@ class SupportTicketsTable
                     'Subject' => fn (SupportTicket $r): ?string => $r->subject,
                     'User' => fn (SupportTicket $r): ?string => $r->user?->full_name,
                     'Category' => fn (SupportTicket $r): ?string => $r->category,
+                    'Reported person' => fn (SupportTicket $r): ?string => $r->reportedUser?->full_name,
                     'Status' => fn (SupportTicket $r): ?string => $r->status,
                     'Last message' => fn (SupportTicket $r) => $r->last_message_at,
                     'Created' => fn (SupportTicket $r) => $r->created_at,
@@ -93,6 +108,7 @@ class SupportTicketsTable
                     'Subject' => fn (SupportTicket $r): ?string => $r->subject,
                     'User' => fn (SupportTicket $r): ?string => $r->user?->full_name,
                     'Category' => fn (SupportTicket $r): ?string => $r->category,
+                    'Reported person' => fn (SupportTicket $r): ?string => $r->reportedUser?->full_name,
                     'Status' => fn (SupportTicket $r): ?string => $r->status,
                     'Last message' => fn (SupportTicket $r) => $r->last_message_at,
                     'Created' => fn (SupportTicket $r) => $r->created_at,

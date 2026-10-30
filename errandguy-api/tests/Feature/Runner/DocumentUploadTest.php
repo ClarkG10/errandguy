@@ -131,6 +131,47 @@ class DocumentUploadTest extends TestCase
         $this->actingAs($owner)->get($url)->assertOk();
     }
 
+    /**
+     * The app attaches its bearer token only to /internal/runner-documents/
+     * image loads, so download_url must be that route and it must accept the
+     * runner's own login (it used to point at the /api twin, which the app
+     * loaded without a token — the preview never showed).
+     */
+    public function test_the_runner_loads_their_own_document_from_download_url_with_their_login(): void
+    {
+        Storage::fake('kyc');
+        $owner = $this->runner();
+        $profile = RunnerProfile::create(['user_id' => $owner->id, 'verification_status' => 'pending']);
+        Storage::disk('kyc')->put($path = "runner-documents/{$owner->id}/government_id/x.jpg", 'IMG');
+        $doc = RunnerDocument::create([
+            'runner_id' => $profile->id, 'document_type' => 'government_id',
+            'file_path' => $path, 'file_url' => null, 'status' => 'pending',
+        ]);
+
+        $downloadUrl = (new \App\Http\Resources\RunnerDocumentResource($doc))->resolve()['download_url'];
+        $this->assertSame("/internal/runner-documents/{$doc->id}/file", $downloadUrl);
+
+        // No login → refused, never a redirect to a login page.
+        $this->get($downloadUrl)->assertForbidden();
+
+        // The owner's app token → the file, kept out of caches.
+        $token = $owner->createToken('app')->plainTextToken;
+        $response = $this->withToken($token)->get($downloadUrl)->assertOk();
+        $this->assertSame('IMG', $response->streamedContent());
+        $this->assertStringContainsString('no-store', (string) $response->headers->get('Cache-Control'));
+
+        // Another runner's token → refused.
+        $other = $this->runner();
+        RunnerProfile::create(['user_id' => $other->id, 'verification_status' => 'pending']);
+        $this->app['auth']->forgetGuards();
+        $this->withToken($other->createToken('app')->plainTextToken)->get($downloadUrl)->assertForbidden();
+
+        // A customer token → refused.
+        $customer = User::factory()->create(['role' => 'customer', 'status' => 'active']);
+        $this->app['auth']->forgetGuards();
+        $this->withToken($customer->createToken('app')->plainTextToken)->get($downloadUrl)->assertForbidden();
+    }
+
     public function test_replacing_a_rejected_document_deletes_the_old_private_file(): void
     {
         Storage::fake('kyc');

@@ -25,6 +25,20 @@ class SystemConfig extends Model
     /** Settings the cached /errand-types catalog is built from. */
     private const CATALOG_KEYS = ['shopping_budget_max'];
 
+    /**
+     * Staff-only settings: never sent to the app by GET /config/app (which
+     * serves the rest of this table to every signed-in user).
+     */
+    public const PRIVATE_KEYS = [
+        'ops_alert_emails',
+        'ops_alert_phone',
+        'admin_alert_email',
+        'admin_alert_throttle_hours',
+    ];
+
+    /** Settings staff may leave empty in the admin panel (empty = off). */
+    public const BLANK_ALLOWED_KEYS = ['ops_alert_emails', 'ops_alert_phone'];
+
     protected static function booted(): void
     {
         // Every save — staff editing a setting in the admin panel included —
@@ -48,6 +62,14 @@ class SystemConfig extends Model
         return [
             'updated_at' => 'datetime',
         ];
+    }
+
+    /** Every setting the app may read: the whole table minus PRIVATE_KEYS. */
+    public static function publicValues(): \Illuminate\Support\Collection
+    {
+        return static::query()
+            ->whereNotIn('key', self::PRIVATE_KEYS)
+            ->pluck('value', 'key');
     }
 
     public static function getValue(string $key, $default = null): ?string

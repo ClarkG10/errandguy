@@ -7,7 +7,11 @@ use App\Http\Controllers\Controller;
 use App\Http\Requests\UpdateProfileRequest;
 use App\Http\Requests\UploadAvatarRequest;
 use App\Http\Resources\UserResource;
+use App\Models\Review;
 use App\Models\RunnerProfile;
+use App\Models\SOSAlert;
+use App\Models\SupportMessage;
+use App\Models\SupportTicket;
 use App\Models\WalletTransaction;
 use App\Services\WalletService;
 use App\Support\CashDebtPolicy;
@@ -20,6 +24,9 @@ use Illuminate\Support\Str;
 
 class ProfileController extends Controller
 {
+    /** What a deleted account's support messages and ticket subjects become. */
+    private const ERASED_TEXT = '[Deleted with the account]';
+
     public function show(Request $request): JsonResponse
     {
         return response()->json([
@@ -320,6 +327,24 @@ class ProfileController extends Controller
                     'contact_phone' => null,
                 ]);
             }
+
+            // What they wrote elsewhere. The rows stay — a support thread, a
+            // review's star rating and an SOS record are history the other
+            // side and staff still need — but the words and places are erased.
+            SupportMessage::where('sender_id', $user->id)
+                ->where('sender_type', 'user')
+                ->update(['content' => self::ERASED_TEXT, 'image_url' => null]);
+            SupportTicket::where('user_id', $user->id)->update(['subject' => self::ERASED_TEXT]);
+            // Comments only: the rating is unchanged, so no average moves.
+            Review::where('reviewer_id', $user->id)->whereNotNull('comment')->update(['comment' => null]);
+            SOSAlert::where('triggered_by', $user->id)->update([
+                'trigger_lat' => null,
+                'trigger_lng' => null,
+                'trigger_accuracy_m' => null,
+                'live_link_token' => null,
+            ]);
+            SOSAlert::where('customer_id', $user->id)->update(['customer_lat' => null, 'customer_lng' => null]);
+            SOSAlert::where('runner_id', $user->id)->update(['runner_lat' => null, 'runner_lng' => null]);
 
             // Anonymize the account row itself. Only these columns are written
             // (the balance was just debited through the ledger on its own row).

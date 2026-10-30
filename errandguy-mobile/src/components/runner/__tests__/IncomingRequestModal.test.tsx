@@ -42,8 +42,8 @@ describe('IncomingRequestModal countdown', () => {
 
     tickSeconds(4);
 
-    // A timeout is not a decision: POST /decline recomputes acceptance_rate,
-    // which also ranks the runner inside MatchingService.
+    // A timeout is not a decision: POST /decline records a decline the runner
+    // never made.
     expect(onExpire).toHaveBeenCalledTimes(1);
     expect(onDecline).not.toHaveBeenCalled();
   });

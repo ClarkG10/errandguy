@@ -17,6 +17,7 @@ import {
   Info,
   Accessibility,
   Package,
+  Users,
   type LucideIcon,
 } from 'lucide-react-native';
 import * as Haptics from 'expo-haptics';
@@ -80,34 +81,32 @@ const VERIFICATION_LABELS: Record<string, string> = {
   resubmit: 'Action needed',
 };
 
-type MetricKey = 'acceptance' | 'completion' | 'rating';
+type MetricKey = 'completion' | 'rating';
 
 /**
  * Per-metric coaching + explainer copy. `coaching` is the single actionable
  * line shown *only* while the metric sits in its warning tier; `why` /
  * `target` power the tap-through explainer sheet. Rating copy mirrors the
  * "How is my rating calculated?" FAQ in settings/help.tsx.
+ *
+ * Says only what these numbers do. Offers go to the nearest free runner with
+ * a suitable vehicle — neither number buys priority or costs offers, so the
+ * copy promises neither.
  */
 const METRIC_EXPLAINERS: Record<
   MetricKey,
   { title: string; coaching: string; why: string; target: string }
 > = {
-  acceptance: {
-    title: 'Acceptance rate',
-    coaching: 'Accept more nearby offers to lift acceptance above 70%.',
-    why: 'This is the share of offers you accept. A higher acceptance rate signals reliability, so the matching engine sends you fresh errands ahead of runners who decline often.',
-    target: 'Aim for 70% or higher.',
-  },
   completion: {
     title: 'Completion rate',
     coaching: 'Finish the errands you accept to keep completion above 80%.',
-    why: 'This is the share of accepted errands you actually complete. Cancelling after you have accepted drops this rate and can pause new offers coming your way.',
+    why: 'This is the share of your errands that ended completed rather than cancelled. Once you accept an errand it stays yours — if you can’t finish it, contact support and our team will sort it out.',
     target: 'Aim for 80% or higher.',
   },
   rating: {
     title: 'Customer rating',
     coaching: 'Communicate clearly and deliver on time to lift your rating above 4.5.',
-    why: 'Your rating is the average of all customer reviews. Keeping it above 4.5 keeps you eligible for priority errand assignments.',
+    why: 'Your rating is the average of all customer reviews. Customers see it when you’re matched to their errand.',
     target: 'Aim for 4.5 stars or higher.',
   },
 };
@@ -215,8 +214,8 @@ export default function RunnerProfileScreen() {
     setExplainer(metric);
   }, []);
 
-  // Pull both the runner profile (acceptance_rate, completion_rate,
-  // total_errands) and the user record (wallet_balance, avg_rating)
+  // Pull both the runner profile (completion_rate, total_errands) and the
+  // user record (wallet_balance, avg_rating)
   // in parallel — either alone leaves part of the screen stale.
   const refreshAll = useCallback(async () => {
     try {
@@ -323,9 +322,7 @@ export default function RunnerProfileScreen() {
   // colour and whether a coaching line renders. A metric only coaches
   // when it is actually under threshold (rating never coaches while
   // "New"/unrated — there's nothing to lift yet).
-  const acceptanceRate = Number(runnerProfile?.acceptance_rate ?? 0);
   const completionRate = Number(runnerProfile?.completion_rate ?? 0);
-  const acceptanceWarn = acceptanceRate < 70;
   const completionWarn = completionRate < 80;
   const ratingWarn = !isUnrated && !ratingIsGood;
 
@@ -365,6 +362,8 @@ export default function RunnerProfileScreen() {
     },
     { label: 'Payout Settings', icon: Wallet, route: '/(runner)/payout' },
     { label: 'Preferred Errand Types', icon: ListChecks, route: '/(runner)/settings/preferred-types' },
+    // The people the cockpit's SOS card and no-signal sheet offer one tap away.
+    { label: 'Trusted Contacts', icon: Users, route: '/(runner)/settings/trusted-contacts' },
   ];
 
   const settingsMenu: MenuItem[] = [
@@ -527,20 +526,9 @@ export default function RunnerProfileScreen() {
           ) : (
             <>
               {/* Full-width metric bars (was three cramped ring gauges).
-                  Acceptance + Completion are rates → colour-coded fill bars;
-                  Rating is not a rate → its value + read-only stars. */}
+                  Completion is a rate → colour-coded fill bar; Rating is not
+                  a rate → its value + read-only stars. */}
               <View className="py-4 border-y border-divider" style={{ gap: 18 }}>
-                <StatBar
-                  label="Acceptance"
-                  value={`${Math.round(acceptanceRate)}%`}
-                  fraction={acceptanceRate / 100}
-                  fill={acceptanceWarn ? LightColors.warning : LightColors.success}
-                  valueColor={
-                    acceptanceWarn ? LightColors.warningDark : LightColors.successDark
-                  }
-                  coaching={acceptanceWarn ? METRIC_EXPLAINERS.acceptance.coaching : undefined}
-                  onPress={() => openExplainer('acceptance')}
-                />
                 <StatBar
                   label="Completion"
                   value={`${Math.round(completionRate)}%`}
@@ -691,15 +679,8 @@ export default function RunnerProfileScreen() {
                 ? isUnrated
                   ? 'New'
                   : `${avgRating.toFixed(1)} ★`
-                : `${Math.round(
-                    explainer === 'acceptance' ? acceptanceRate : completionRate,
-                  )}%`;
-            const inWarning =
-              explainer === 'acceptance'
-                ? acceptanceWarn
-                : explainer === 'completion'
-                  ? completionWarn
-                  : ratingWarn;
+                : `${Math.round(completionRate)}%`;
+            const inWarning = explainer === 'completion' ? completionWarn : ratingWarn;
             return (
               <View className="pt-1">
                 <View className="flex-row items-center justify-between mb-4">

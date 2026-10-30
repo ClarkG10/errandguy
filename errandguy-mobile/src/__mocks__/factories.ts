@@ -87,7 +87,6 @@ export function makeRunnerProfile(overrides: Partial<RunnerProfile> = {}): Runne
     is_online: false,
     current_lat: null,
     current_lng: null,
-    acceptance_rate: 95,
     completion_rate: 98,
     avg_rating: 4.9,
     total_errands: 120,

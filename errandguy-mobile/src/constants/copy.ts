@@ -70,6 +70,7 @@ export const copy = {
   support: {
     createFailed: 'Couldn’t open your support ticket. Please try again.',
     messageSendFailed: 'Couldn’t send your message. Please try again.',
+    reportFailed: 'Couldn’t send your report. Please try again.',
   },
   safety: {
     sosFailed: 'Couldn’t trigger SOS. Please try again, or call for help directly.',

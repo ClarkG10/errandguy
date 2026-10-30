@@ -15,7 +15,6 @@ class AdminCache
 {
     public const STATS = 'admin:stats:overview';
     public const BADGE_SOS = 'admin:badge:sos';
-    public const BADGE_DISPUTES = 'admin:badge:disputes';
     public const BADGE_SUPPORT = 'admin:badge:support';
     public const BADGE_PAYOUTS = 'admin:badge:payouts';
     public const BADGE_VERIFICATIONS = 'admin:badge:verifications';
@@ -30,7 +29,6 @@ class AdminCache
     private const KEYS = [
         self::STATS,
         self::BADGE_SOS,
-        self::BADGE_DISPUTES,
         self::BADGE_SUPPORT,
         self::BADGE_PAYOUTS,
         self::BADGE_VERIFICATIONS,

@@ -27,7 +27,7 @@
     </p>
 
     @foreach ($queues as $queue)
-        <div style="border:1px solid #e5e7eb;border-left:4px solid {{ $queue['key'] === 'sos' ? '#dc2626' : '#d99a0b' }};border-radius:8px;padding:14px 16px;margin:0 0 12px;">
+        <div style="border:1px solid #e5e7eb;border-left:4px solid #d99a0b;border-radius:8px;padding:14px 16px;margin:0 0 12px;">
             <p style="margin:0 0 6px;font-size:16px;font-weight:600;">
                 {{ $queue['label'] }} — {{ number_format($queue['count']) }} waiting
             </p>
@@ -50,8 +50,8 @@
     <p style="margin:0;font-size:12px;line-height:1.6;color:#9ca3af;">
         Generated {{ $generatedAt }}. Each queue is alerted at most once per throttle
         window (system_config <code>admin_alert_throttle_hours</code>), so this is not
-        a per-run repeat. Change the recipient with system_config
-        <code>admin_alert_email</code>.
+        a per-run repeat. Change who gets it with the admin panel setting
+        <code>ops_alert_emails</code>.
     </p>
 
 </div>

@@ -17,7 +17,7 @@ import { parseActiveBookings } from '../utils/activeBookings';
 import type { Booking, Conversation, Message } from '../types';
 
 // Mirrors the AsyncStorage key used by the trusted-contacts screen
-// (which doesn't go through useQuery — see trusted-contacts/index.tsx).
+// (which doesn’t go through useQuery — see components/safety/TrustedContactsScreen.tsx).
 const TRUSTED_CONTACTS_LEGACY_KEY = '@trusted_contacts_cache';
 
 /**
@@ -433,6 +433,26 @@ async function seedCustomerHome(userId: string): Promise<void> {
  * and rely on the axios layer's in-flight dedupe so they coalesce
  * with any duplicate fetch the screen kicks off in race.
  */
+/**
+ * Trusted contacts use a legacy AsyncStorage cache (not useQuery), written
+ * directly in its key shape. It is also what every SOS surface offers as
+ * tap-to-call — including the no-signal sheet, which can't fetch — so BOTH
+ * roles warm it: a runner who never opened the screen this session still has
+ * their people one tap away.
+ */
+async function warmTrustedContactsCache(): Promise<void> {
+  try {
+    const r = await userService.getTrustedContacts();
+    const list = (r.data?.data ?? r.data ?? []) as any[];
+    const sorted = Array.isArray(list)
+      ? [...list].sort((a, b) => (a.priority ?? 0) - (b.priority ?? 0))
+      : [];
+    await AsyncStorage.setItem(TRUSTED_CONTACTS_LEGACY_KEY, JSON.stringify(sorted));
+  } catch {
+    // Best-effort; the screen falls back to its own fetch.
+  }
+}
+
 export async function preloadCustomerEssentials(userId: string) {
   // Above-the-fold Home data — the ONLY set the interactive login / register
   // paths await before raising the success curtain, so the
@@ -505,21 +525,7 @@ export async function preloadCustomerEssentials(userId: string) {
         },
         CacheTTL.LONG,
       ),
-    // Trusted contacts uses a legacy AsyncStorage cache (not useQuery),
-    // so write directly to its key shape so the screen paints instantly.
-    () =>
-      (async () => {
-        try {
-          const r = await userService.getTrustedContacts();
-          const list = (r.data?.data ?? r.data ?? []) as any[];
-          const sorted = Array.isArray(list)
-            ? [...list].sort((a, b) => (a.priority ?? 0) - (b.priority ?? 0))
-            : [];
-          await AsyncStorage.setItem(TRUSTED_CONTACTS_LEGACY_KEY, JSON.stringify(sorted));
-        } catch {
-          // Best-effort; the screen falls back to its own fetch.
-        }
-      })(),
+    () => warmTrustedContactsCache(),
   ];
 
   // Await ONLY the above-fold set (what Home needs to paint); fire the rest
@@ -781,6 +787,7 @@ export async function preloadRunnerEssentials(userId: string) {
         CacheTTL.MEDIUM,
       ),
     () => preloadConversationsList(userId),
+    () => warmTrustedContactsCache(),
   ];
 
   await runPool(aboveFold);

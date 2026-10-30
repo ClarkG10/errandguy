@@ -31,14 +31,14 @@ const roles: RoleOption[] = [
     icon: Package,
     title: 'Customer',
     subtitle: 'I need errands done',
-    features: ['Post any errand', 'Track runners live', 'Secure payments'],
+    features: ['Fixed prices, shown upfront', 'Track runners live', 'Pay cash, GCash or Maya'],
   },
   {
     role: 'runner',
     icon: Bike,
     title: 'Errand Runner',
     subtitle: 'I want to earn money',
-    features: ['Accept errands nearby', 'Earn on your schedule', 'Instant payouts'],
+    features: ['Accept errands nearby', 'Earn on your schedule', 'Payouts to GCash, Maya or bank'],
   },
 ];
 

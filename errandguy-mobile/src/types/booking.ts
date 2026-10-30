@@ -1,3 +1,5 @@
+import type { VehicleType, VerificationStatus } from './runner';
+
 export type BookingStatus =
   | 'pending'
   | 'matched'
@@ -181,6 +183,13 @@ export interface Booking {
     avatar_url?: string | null;
     avg_rating?: number | string | null;
     total_ratings?: number | null;
+    /** The runner's profile as UserResource nests it — vehicle, plate and
+     *  verification. Absent on realtime payloads and older reads. */
+    runner_profile?: {
+      vehicle_type?: VehicleType | null;
+      vehicle_plate?: string | null;
+      verification_status?: VerificationStatus | null;
+    } | null;
   } | null;
   /** Loaded for the runner-facing endpoints so the runner can fall back
    *  to the customer's account phone when no pickup/dropoff contact is set. */

@@ -21,7 +21,7 @@ use Illuminate\Support\Facades\Log;
  * i.e. an in-app notification row + a live `notifications.{userId}` Reverb
  * broadcast + a best-effort Expo/FCM device push. Queued (not inline) so the
  * admin's reply request never blocks on outbound Expo latency — the same
- * reasoning as the admin verify/dispute-resolve call sites.
+ * reasoning as the admin runner-verification call sites.
  *
  * CONTRACT with the mobile app (it keys its thread refresh on these exact
  * `data.type` values, so do not rename them):

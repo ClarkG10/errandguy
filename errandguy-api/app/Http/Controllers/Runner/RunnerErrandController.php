@@ -385,13 +385,6 @@ class RunnerErrandController extends Controller
         if ($reverted) {
             $booking = $reverted;
 
-            $profile = $user->runnerProfile;
-            if ($profile) {
-                $totalOffers = max(1, $profile->total_errands + 1);
-                $newAcceptanceRate = max(0, ($profile->acceptance_rate * $profile->total_errands) / $totalOffers);
-                $profile->update(['acceptance_rate' => round($newAcceptanceRate, 2)]);
-            }
-
             // Surface the matched → pending revert to the customer live, so
             // their tracking screen drops back to "finding a runner" instead of
             // showing a runner who just walked away. The old WAL-tail feed used to

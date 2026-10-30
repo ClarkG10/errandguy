@@ -31,7 +31,6 @@ class RunnerProfileResource extends JsonResource
             'current_lat' => $this->when($isSelf, $this->current_lat),
             'current_lng' => $this->when($isSelf, $this->current_lng),
             'last_location_at' => $this->when($isSelf, $this->last_location_at),
-            'acceptance_rate' => $this->acceptance_rate,
             'completion_rate' => $this->completion_rate,
             'total_errands' => $this->total_errands,
             'total_earnings' => $this->when($isSelf, $this->total_earnings),

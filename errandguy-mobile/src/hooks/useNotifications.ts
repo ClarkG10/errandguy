@@ -6,6 +6,8 @@ import { router } from 'expo-router';
 import { userService } from '../services/user.service';
 import { useAuthStore } from '../stores/authStore';
 import { useNotificationStore } from '../stores/notificationStore';
+import { noteSosNotification } from '../services/sosActive';
+import { notificationRoute } from '../utils/notificationRoute';
 
 Notifications.setNotificationHandler({
   handleNotification: async () => ({
@@ -89,8 +91,14 @@ export function useNotifications(enabled = true) {
 
   useEffect(() => {
     notificationListener.current =
-      Notifications.addNotificationReceivedListener(() => {
-        // Foreground notification — handled by setNotificationHandler above
+      Notifications.addNotificationReceivedListener((notification) => {
+        // Presentation is setNotificationHandler's job (above). The one thing
+        // read here: staff closing this device's SOS, so the card says so
+        // even if the realtime socket missed it.
+        const data = notification?.request?.content?.data as
+          | Record<string, unknown>
+          | undefined;
+        if (data?.type === 'sos') void noteSosNotification({ type: 'sos', data });
       });
 
     responseListener.current =
@@ -167,75 +175,24 @@ function handleNotificationTapped(
   response: Notifications.NotificationResponse,
 ): void {
   const data = response.notification.request.content.data as
-    | Record<string, string>
+    | Record<string, unknown>
     | undefined;
   if (!data?.type) {
     return;
   }
 
+  // An "SOS resolved" push can be the first this device hears of staff
+  // closing the alert — note it before navigating to the errand.
+  void noteSosNotification({ type: String(data.type), data });
+
   // The same notification `type` is sent to BOTH parties (e.g. booking_update
   // is a customer status ping AND the runner's job-offer / completion push),
   // so route by the recipient's role — otherwise a runner tapping a push lands
-  // on a customer-only screen (e.g. the job offer opened the customer tracking
-  // screen instead of the runner errand screen). Mirrors the in-app list
-  // handlers in (runner)/notifications.tsx and (customer)/notifications.tsx.
-  const isRunner = useAuthStore.getState().role === 'runner';
-
-  switch (data.type) {
-    case 'booking_update':
-      if (data.booking_id) {
-        router.push(
-          (isRunner
-            ? `/(runner)/errand/${data.booking_id}`
-            : `/(customer)/tracking/${data.booking_id}`) as never,
-        );
-      }
-      break;
-    case 'payment':
-      // Land on the thing that was PAID FOR. A booking charge's push
-      // ("Payment confirmed for booking EG-1234" / "Payment failed — try
-      // again") carries booking_id, and the wallet shows nothing about it — the
-      // customer had to back out and hunt for the errand themselves at exactly
-      // the moment they were promised context. Withdrawals, payouts, a
-      // runner's cancellation fee and any push without a booking keep the
-      // wallet/earnings landing.
-      if (!isRunner && data.booking_id) {
-        router.push(`/(customer)/tracking/${data.booking_id}` as never);
-        break;
-      }
-      router.push((isRunner ? '/(runner)/(tabs)/earnings' : '/(customer)/wallet/') as never);
-      break;
-    // Both land on the document screen: one is an admin decision on a
-    // submitted document, the other is the reminder for an application left
-    // unfinished (errandguy:send-onboarding-reminders). The reminder keeps its
-    // own type so the server can read its own cadence history off the
-    // notifications table, but the destination is the same screen.
-    case 'document_update':
-    case 'onboarding_reminder':
-      if (isRunner) router.push('/(runner)/settings/documents' as never);
-      break;
-    case 'chat':
-      if (data.booking_id) {
-        router.push(
-          (isRunner
-            ? `/(runner)/chat/${data.booking_id}`
-            : `/(customer)/chat/${data.booking_id}`) as never,
-        );
-      }
-      break;
-    case 'sos':
-      // Role-branch like 'chat' above. An SOS alerts the OTHER participant, so
-      // for a runner this notification is always about a customer's alarm —
-      // and it used to push them unconditionally at the customer-only tracking
-      // route, which cannot load their booking. They landed on a dead screen
-      // during the one event where seconds matter.
-      if (data.booking_id) {
-        router.push(
-          (isRunner
-            ? `/(runner)/errand/${data.booking_id}`
-            : `/(customer)/tracking/${data.booking_id}`) as never,
-        );
-      }
-      break;
-  }
+  // on a customer-only screen. The in-app inboxes route through the same map
+  // (utils/notificationRoute), so a push and its inbox row always agree; a push
+  // with nowhere specific to go (a staff announcement) opens the inbox rather
+  // than dead-ending on whatever screen was already open.
+  const role = useAuthStore.getState().role === 'runner' ? 'runner' : 'customer';
+  const target = notificationRoute({ type: String(data.type), data }, role, 'push');
+  if (target) router.push(target as never);
 }

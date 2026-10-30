@@ -39,8 +39,9 @@ use Illuminate\Support\Facades\Log;
  *   - a scheduled booking accepted a day early is NOT stalled, so a scheduled
  *     booking only ages from its own `scheduled_at` (same anchor rule as
  *     ReapStrandedBookingsCommand::scheduleAwareWindow);
- *   - a booking with a live SOS is skipped — that alarm already has its own
- *     critical alert and fan-out; and
+ *   - a booking with an open SOS is still checked: an SOS nobody acts on
+ *     is exactly when an errand also stops moving, and staff need both
+ *     signals; and
  *   - one alert per booking, claimed atomically with Cache::add, so a re-run,
  *     a second server, or a later status stalling too cannot re-raise.
  *
@@ -149,7 +150,6 @@ class DetectStalledErrandsCommand extends Command
             $query = Booking::query()
                 ->where('status', $status)
                 ->whereNotNull('runner_id')
-                ->where('sos_triggered', false)
                 ->where('updated_at', '<', $cutoff)
                 // A scheduled booking a runner accepted well in advance is
                 // waiting, not stalled: age it from its own scheduled_at.

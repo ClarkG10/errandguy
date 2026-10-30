@@ -2,6 +2,7 @@ import api from './api';
 import { invalidateQuery } from '../hooks/useQuery';
 import { compressProofImage } from '../utils/proofImage';
 import type { PaymentMethodType } from '../types';
+import { sosBody, type SosCoords } from '../utils/sosLocation';
 
 const invalidateBookingsCaches = (id?: string) => {
   // Fire-and-forget — cache wipes shouldn't block the UI.
@@ -298,11 +299,13 @@ export const bookingService = {
    * Pull the alarm. `timeoutMs` lets the SOS retry loop (`sosIntent.ts`) fail
    * fast and try again instead of hanging on the 30s client default — replay is
    * safe because SOSService returns the EXISTING active alert under a row lock.
-   * Callers should go through `raiseSos()`, not this directly, so the intent is
-   * persisted and retried.
+   * `coords` is the phone's own position at the press (lat, lng, accuracy); a
+   * server that predates the fields ignores the body. Callers should go
+   * through `raiseSos()`, not this directly, so the intent is persisted and
+   * retried.
    */
-  triggerSOS(id: string, opts?: { timeoutMs?: number }) {
-    return api.post(`/bookings/${id}/sos`, undefined, {
+  triggerSOS(id: string, opts?: { timeoutMs?: number; coords?: SosCoords | null }) {
+    return api.post(`/bookings/${id}/sos`, sosBody(opts?.coords), {
       ...(opts?.timeoutMs ? { timeout: opts.timeoutMs } : {}),
     });
   },

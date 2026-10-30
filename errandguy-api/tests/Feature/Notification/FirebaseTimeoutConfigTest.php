@@ -9,7 +9,7 @@ use Tests\TestCase;
  * applies withTimeOut() when http_client_options.timeout is truthy; the vendor
  * default is env('FIREBASE_HTTP_CLIENT_TIMEOUT') which is unset -> null -> no
  * timeout -> Guzzle waits indefinitely and a hung googleapis.com pins the caller
- * (Filament PushBroadcast web request / a queue worker). This guards the sole
+ * (a queue worker sending the push). This guards the sole
  * mechanism of the fix — the config value the manager consumes. (audit v4)
  */
 class FirebaseTimeoutConfigTest extends TestCase

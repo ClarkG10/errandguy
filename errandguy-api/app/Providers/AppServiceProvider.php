@@ -4,6 +4,9 @@ namespace App\Providers;
 
 use App\Mail\Transport\GmailApiTransport;
 use App\Models\AdminUser;
+use App\Services\Sms\LogSmsSender;
+use App\Services\Sms\SemaphoreSmsSender;
+use App\Services\Sms\SmsSender;
 use App\Support\JobFailureReporter;
 use App\Support\RequestMetrics;
 use Google\Auth\Credentials\ServiceAccountCredentials;
@@ -22,6 +25,22 @@ class AppServiceProvider extends ServiceProvider
     {
         // One counter instance per request (standard, non-Octane lifecycle).
         $this->app->singleton(RequestMetrics::class);
+
+        // Texts go through Semaphore once SEMAPHORE_API_KEY is set; until then
+        // the log sender sends nothing and says so.
+        $this->app->bind(SmsSender::class, function (): SmsSender {
+            $key = (string) config('services.semaphore.api_key', '');
+
+            return $key === ''
+                ? new LogSmsSender()
+                : new SemaphoreSmsSender(
+                    apiKey: $key,
+                    senderName: config('services.semaphore.sender_name') ?: null,
+                    priority: (bool) config('services.semaphore.priority', true),
+                    baseUrl: (string) config('services.semaphore.base_url', 'https://api.semaphore.co/api/v4'),
+                    timeoutSeconds: max(1, (int) config('services.semaphore.timeout', 10)),
+                );
+        });
     }
 
     public function boot(): void

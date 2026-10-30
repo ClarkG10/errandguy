@@ -23,9 +23,12 @@ const stripComments = (src: string) =>
 const TRACKING = read('(customer)', 'tracking', '[id].tsx');
 const COCKPIT = read('(runner)', 'errand', '[id].tsx');
 const SHEET = readSrc('components', 'safety', 'SosPendingSheet.tsx');
+const CARD = readSrc('components', 'safety', 'SosActiveCard.tsx');
+const EMERGENCY = readSrc('components', 'safety', 'emergency.ts');
 const TRACKING_CODE = stripComments(TRACKING);
 const COCKPIT_CODE = stripComments(COCKPIT);
 const SHEET_CODE = stripComments(SHEET);
+const CARD_CODE = stripComments(CARD);
 
 describe('both surfaces raise SOS through the durable loop', () => {
   it('neither calls the raw trigger endpoint any more', () => {
@@ -63,15 +66,19 @@ describe('the queued state never claims an alert was sent', () => {
   it('says "not sent yet" rather than showing the SOS-active card', () => {
     expect(TRACKING).toContain('SOS not sent yet');
     expect(SHEET).toContain('Alert not sent yet');
-    // The active card stays gated on a server-acknowledged raise.
+    // The active card stays gated on a server-acknowledged raise: it renders
+    // from the per-errand record sosIntent writes on the ack, never from a
+    // queued intent.
     expect(TRACKING_CODE).toContain('{!sosActive && !!queuedSos && (');
-    expect(TRACKING_CODE).toContain('{sosActive && (');
+    expect(TRACKING_CODE).toContain('{sosActive && sosRecord && (');
+    expect(TRACKING_CODE).toContain('const sosRecord = useSosActive(id);');
+    expect(TRACKING_CODE).toContain('const sosActive = !!sosRecord && !sosRecord.resolvedAt;');
   });
 
   it('offers the two things that work without data', () => {
-    expect(SHEET_CODE).toContain("const EMERGENCY_NUMBER = '911'");
-    expect(SHEET).toContain('Call 911');
-    expect(SHEET_CODE).toContain('Linking.openURL(tel)');
+    expect(EMERGENCY).toContain("export const EMERGENCY_NUMBER = '911'");
+    expect(EMERGENCY).toContain('Linking.openURL(tel)');
+    expect(SHEET_CODE).toContain('dialNumber(EMERGENCY_NUMBER)');
     // Contacts come from the on-device cache, not a fetch we can't make.
     expect(TRACKING_CODE).toContain("AsyncStorage.getItem('@trusted_contacts_cache')");
     expect(COCKPIT_CODE).toContain("AsyncStorage.getItem('@trusted_contacts_cache')");
@@ -98,17 +105,28 @@ describe('the queued state never claims an alert was sent', () => {
   });
 });
 
-describe('neither surface promises a trusted-contact SMS the backend cannot send', () => {
-  it('drops the SMS claim from the runner confirm (no provider is wired)', () => {
-    // NotifySosContactsJob::notifySMSContact only logs a breadcrumb.
+describe('neither surface promises more than the server says happened', () => {
+  it('the runner confirm claims only staff + location, nothing about contacts or the customer', () => {
+    // Trusted contacts are texted only when the server has SMS set up, and the
+    // other person on the errand is no longer alerted automatically — neither
+    // is the app's to promise before the fact.
     expect(COCKPIT_CODE).not.toContain('live trip link via SMS');
     expect(COCKPIT_CODE).not.toContain('Emergency contacts notified');
-    expect(COCKPIT).toContain('ErrandGuy safety is alerted immediately');
+    expect(COCKPIT_CODE).not.toContain('the customer is notified');
+    expect(COCKPIT_CODE).toContain('This alerts the ErrandGuy safety team');
   });
 
-  it('the customer surface still only claims contacts the SERVER listed', () => {
-    expect(TRACKING_CODE).toContain('SOS sent to ErrandGuy support');
-    expect(TRACKING_CODE).toContain('result.contacts');
+  it('neither confirm claims support "has your live location"', () => {
+    for (const code of [TRACKING_CODE, COCKPIT_CODE]) {
+      expect(code).not.toMatch(/with your live location/);
+      expect(code).toContain('current location if it’s available');
+      expect(code).toContain('call 911');
+    }
+  });
+
+  it('the sent toast repeats who the SERVER says it alerted', () => {
+    expect(TRACKING_CODE).toContain('toast.success(`SOS sent. ${sosAlertedText(result)}`)');
+    expect(COCKPIT_CODE).toContain('toast.success(`SOS sent. ${sosAlertedText(result)}`)');
   });
 
   // The rule above was correct and was still defeated end-to-end: the SERVER
@@ -126,22 +144,62 @@ describe('neither surface promises a trusted-contact SMS the backend cannot send
     );
   });
 
-  it('the LIVE sos card offers tap-to-call and disowns auto-notifying', () => {
-    // The banner says "Alerted {sosAlertedLabel}" — which resolves to
-    // "ErrandGuy support" alone now — so the contacts row has to state
-    // plainly that reaching them is the user's own action.
-    expect(TRACKING_CODE).toContain(
-      "We don&apos;t contact these people for you — tap to call:",
-    );
-    expect(TRACKING_CODE).toContain('Linking.openURL(`tel:${c.phone}`)');
+  it('BOTH live surfaces render the shared card: 911, tap-to-call contacts, "I\'m safe"', () => {
+    expect(TRACKING_CODE).toContain('<SosActiveCard');
+    expect(COCKPIT_CODE).toContain('<SosActiveCard');
+    expect(CARD_CODE).toContain('dialNumber(EMERGENCY_NUMBER)');
+    expect(CARD_CODE).toContain('dialNumber(c.phone)');
+    expect(CARD_CODE).toContain('label="I’m safe — cancel alert"');
+    // Who it reached comes from the server's own sentence, never a guess.
+    expect(CARD_CODE).toContain('if (record.alertedLine) return record.alertedLine;');
   });
 
   it('the trusted-contacts screen does not promise we notify them', () => {
-    const CONTACTS = read('(customer)', 'trusted-contacts', 'index.tsx');
+    // Shared by both apps now; the route files are thin wrappers.
+    const CONTACTS = readSrc('components', 'safety', 'TrustedContactsScreen.tsx');
     const CONTACTS_CODE = stripComments(CONTACTS);
     expect(CONTACTS_CODE).not.toContain('to be notified during emergencies');
     expect(CONTACTS_CODE).not.toContain('called first during SOS emergencies');
-    expect(CONTACTS_CODE).toContain('ErrandGuy doesn’t message them for you');
+    expect(CONTACTS_CODE).toContain('Don’t count on ErrandGuy to message them');
+    expect(read('(customer)', 'trusted-contacts', 'index.tsx')).toContain('<TrustedContactsScreen');
+    expect(read('(runner)', 'settings', 'trusted-contacts.tsx')).toContain('<TrustedContactsScreen');
+  });
+});
+
+describe('the SOS-active card survives leaving and reopening the screen', () => {
+  it('both surfaces hydrate the per-errand records on mount', () => {
+    expect(TRACKING_CODE).toContain('void hydrateSosActive();');
+    expect(COCKPIT_CODE).toContain('void hydrateSosActive();');
+  });
+
+  it('only this device\'s successful stand-down removes the record', () => {
+    // Cleared AFTER the DELETE lands (or when nothing was ever sent) — a failed
+    // stand-down must leave the card, and "I'm safe", on screen.
+    for (const code of [TRACKING_CODE, COCKPIT_CODE]) {
+      const standDown = code.slice(code.indexOf('const handleStandDown'));
+      const del = standDown.search(/(bookingService|runnerService)\.deactivateSOS\(id\)/);
+      expect(del).toBeGreaterThan(-1);
+      expect(standDown.indexOf('clearSosActive(id)')).toBeGreaterThan(del);
+    }
+  });
+
+  it('both surfaces reconcile against fresh server reads and show a staff close', () => {
+    expect(TRACKING_CODE).toContain('reconcileSosActive(id, b?.sos_triggered)');
+    expect(COCKPIT_CODE).toContain('reconcileSosActive(id, fresh.sos_triggered)');
+    expect(TRACKING_CODE).toContain('<SosResolvedNotice');
+    expect(COCKPIT_CODE).toContain('<SosResolvedNotice');
+  });
+
+  it('the runner never mistakes the CUSTOMER\'s alert for their own', () => {
+    // booking.sos_triggered is set by either side's alert.
+    expect(COCKPIT_CODE).not.toContain('if (booking?.sos_triggered) setSosActive(true)');
+    expect(COCKPIT_CODE).toContain('const sosRecord = useSosActive(id);');
+  });
+
+  it('the runner can stand down their own sent SOS, from the top bar or the banner', () => {
+    expect(COCKPIT_CODE).toContain('onStandDown={handleStandDown}');
+    expect(COCKPIT_CODE).toContain("'SOS active — open emergency options'");
+    expect(COCKPIT_CODE).not.toContain("'SOS already triggered'");
   });
 });
 

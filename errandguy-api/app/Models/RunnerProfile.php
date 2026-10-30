@@ -39,7 +39,6 @@ class RunnerProfile extends Model
         'current_lat',
         'current_lng',
         'last_location_at',
-        'acceptance_rate',
         'completion_rate',
         'total_errands',
         'total_earnings',
@@ -69,7 +68,6 @@ class RunnerProfile extends Model
             'online_since' => 'datetime',
             'preferred_types' => 'array',
             'total_earnings' => 'decimal:2',
-            'acceptance_rate' => 'decimal:2',
             'completion_rate' => 'decimal:2',
             'current_lat' => 'decimal:7',
             'current_lng' => 'decimal:7',
@@ -242,6 +240,24 @@ class RunnerProfile extends Model
     }
 
     /**
+     * Whether every required document (government ID and selfie) has been
+     * APPROVED — the condition for approving the runner. A pending, rejected
+     * or missing document blocks it: approving a runner never approves their
+     * documents for them.
+     */
+    public function hasApprovedRequiredDocuments(): bool
+    {
+        $approvedTypes = $this->documents()
+            ->whereIn('document_type', self::REQUIRED_DOCUMENT_TYPES)
+            ->where('status', 'approved')
+            ->pluck('document_type')
+            ->unique()
+            ->all();
+
+        return count($approvedTypes) === count(self::REQUIRED_DOCUMENT_TYPES);
+    }
+
+    /**
      * The exact complement of readyForReview(): at least one required document
      * is still missing (or was rejected and not replaced). Kept as its own scope
      * so the "Incomplete" bucket stays visible with its own count — nothing
@@ -279,6 +295,11 @@ class RunnerProfile extends Model
             'documents as required_documents_count' => fn ($documents) => $documents
                 ->whereIn('document_type', self::REQUIRED_DOCUMENT_TYPES)
                 ->where('status', '!=', 'rejected'),
+            // Gates the list's "Approve runner" button without a query per
+            // row; the action itself re-checks hasApprovedRequiredDocuments().
+            'documents as approved_required_documents_count' => fn ($documents) => $documents
+                ->whereIn('document_type', self::REQUIRED_DOCUMENT_TYPES)
+                ->where('status', 'approved'),
         ]);
     }
 }

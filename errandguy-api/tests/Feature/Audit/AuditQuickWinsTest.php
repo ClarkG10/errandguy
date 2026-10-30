@@ -4,7 +4,6 @@ namespace Tests\Feature\Audit;
 
 use App\Models\AdminUser;
 use App\Models\Booking;
-use App\Models\DisputeTicket;
 use App\Models\ErrandType;
 use App\Models\User;
 use App\Models\WalletTransaction;
@@ -15,8 +14,8 @@ use Tests\TestCase;
 
 /**
  * Covers the safe quick-wins surfaced by the 2026-08-13 production-readiness
- * audit: a deep /health probe, short-lived admin tokens, the wallet-ledger
- * gateway-internal leak, and the ops dispute-count blindspot.
+ * audit: a deep /health probe, short-lived admin tokens and the wallet-ledger
+ * gateway-internal leak.
  */
 class AuditQuickWinsTest extends TestCase
 {

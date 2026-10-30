@@ -330,11 +330,10 @@ class PushCopyConsistencyTest extends TestCase
         // regressed: some sit past comments between the arguments, and one is a
         // raw Notification::create, which is where a naive regex scanner breaks
         // first.
-        $this->assertGreaterThan(5, count($titles), 'the push-title scanner found almost nothing — it has stopped working');
+        $this->assertGreaterThanOrEqual(5, count($titles), 'the push-title scanner found almost nothing — it has stopped working');
 
         foreach ([
-            'app/Jobs/NotifySosContactsJob.php' => 'SOS alert',
-            'app/Services/SOSService.php' => 'SOS resolved',
+            'app/Services/SOSService.php' => 'Your SOS alert was closed',
             'app/Listeners/SendBookingCancelledNotification.php' => 'Errand cancelled',
             // A RAW Notification::create — a different code shape entirely, and
             // the blind spot that was hiding a Title-Case title on the first

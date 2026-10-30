@@ -5,7 +5,9 @@ import { network, useNetworkStore } from '../stores/networkStore';
 import { bookingService } from './booking.service';
 import { runnerService } from './runner.service';
 import { errorMessage } from '../utils/errorCatalog';
+import { locateForSos, readSosCoords, type SosCoords } from '../utils/sosLocation';
 import { copy } from '../constants/copy';
+import { recordSosActive, type SosRole } from './sosActive';
 
 /**
  * ── The panic button, made durable ────────────────────────────────────────
@@ -40,9 +42,15 @@ import { copy } from '../constants/copy';
  *
  * Stand-down MUST drop the intent first (`standDownSos`) — otherwise a queued
  * replay would re-raise an alert the user already cancelled.
+ *
+ * The phone's own GPS goes with the raise (`coords`), read once at the press
+ * under a short budget and stored WITH the queued intent, so a replay from a
+ * dead zone reports where the person was when they pressed — not wherever the
+ * phone is when signal comes back. An acknowledged raise is handed to
+ * `sosActive.ts`, which keeps the "SOS active" card alive across screens.
  */
 
-export type SosRole = 'customer' | 'runner';
+export type { SosRole };
 
 /** Unsent SOS. Written to disk the moment the button is pressed. */
 export interface SosIntent {
@@ -52,6 +60,8 @@ export interface SosIntent {
   triggeredAt: number;
   attempts: number;
   lastAttemptAt: number | null;
+  /** Where the phone was at the press (null: no permission / no fix). */
+  coords?: SosCoords | null;
 }
 
 /** Server acknowledgement of a raise — including one that landed on a retry. */
@@ -60,10 +70,12 @@ export interface SosAck {
   acknowledgedAt: number;
   /** Contact ids the server recorded on the alert (may be empty). */
   contacts: string[];
+  /** The server's own sentence about who it alerted, or null (see readAlertedLine). */
+  alertedLine: string | null;
 }
 
 export type SosRaiseResult =
-  | { status: 'sent'; contacts: string[] }
+  | { status: 'sent'; contacts: string[]; alertedLine: string | null }
   /** Not sent yet; the intent is on disk and the loop keeps trying. */
   | { status: 'queued'; error: unknown }
   /** The server refused on its own terms (errand closed, not ours) — dropped. */
@@ -135,10 +147,12 @@ const isPermanentError = (err: any): boolean => {
   );
 };
 
-const postSos = (intent: SosIntent) =>
-  intent.role === 'runner'
-    ? runnerService.triggerSOS(intent.bookingId, { timeoutMs: SOS_TIMEOUT_MS })
-    : bookingService.triggerSOS(intent.bookingId, { timeoutMs: SOS_TIMEOUT_MS });
+const postSos = (intent: SosIntent) => {
+  const opts = { timeoutMs: SOS_TIMEOUT_MS, coords: intent.coords ?? null };
+  return intent.role === 'runner'
+    ? runnerService.triggerSOS(intent.bookingId, opts)
+    : bookingService.triggerSOS(intent.bookingId, opts);
+};
 
 /** Best-effort stand-down used ONLY by the in-flight race below. */
 const postStandDown = (role: SosRole, bookingId: string) => {
@@ -171,6 +185,28 @@ const readContacts = (res: any): string[] => {
     : [];
 };
 
+/**
+ * The sentence an older server sent with EVERY raise, whether or not anybody
+ * had been contacted — no SMS provider was ever wired behind it. Never shown.
+ */
+export const LEGACY_SOS_MESSAGE = 'SOS alert triggered. Emergency contacts have been notified.';
+
+/**
+ * Who the server says it alerted, in its own words. The current server writes
+ * exactly who was reached (staff by email/phone; trusted contacts by SMS only
+ * when SMS is set up), so the app repeats it rather than guessing. The legacy
+ * blanket claim above, a blank, or an absurdly long string yields null and the
+ * surfaces fall back to the support-only line.
+ */
+export const readAlertedLine = (res: any): string | null => {
+  const raw = res?.data?.message;
+  if (typeof raw !== 'string') return null;
+  const line = raw.trim();
+  if (!line || line.length > 280) return null;
+  if (line === LEGACY_SOS_MESSAGE) return null;
+  return line;
+};
+
 const dropIntent = (reason: 'sent' | 'stood_down' | 'rejected' | 'expired') => {
   clearTimer();
   set({
@@ -195,6 +231,7 @@ async function attempt(intent: SosIntent): Promise<SosRaiseResult> {
   try {
     const res = await postSos(attempting);
     const contacts = readContacts(res);
+    const alertedLine = readAlertedLine(res);
     // Stood down while this very attempt was on the wire: the server now holds
     // an alert the user already cancelled. Cancel it for real and never show
     // it as active.
@@ -210,17 +247,26 @@ async function attempt(intent: SosIntent): Promise<SosRaiseResult> {
         error: { status: 409, kind: 'conflict', message: 'Alert cancelled' },
       };
     }
+    // Persist BEFORE announcing: whichever screen reacts to the ack renders
+    // its "SOS active" card from this record, and it must survive a remount.
+    recordSosActive({
+      bookingId: attempting.bookingId,
+      role: attempting.role,
+      contacts,
+      alertedLine,
+    });
     set({
       lastAck: {
         bookingId: attempting.bookingId,
         acknowledgedAt: Date.now(),
         contacts,
+        alertedLine,
       },
       lastRejection: null,
       lastError: null,
     });
     dropIntent('sent');
-    return { status: 'sent', contacts };
+    return { status: 'sent', contacts, alertedLine };
   } catch (err) {
     set({ sending: false, lastError: err });
     if (isPermanentError(err)) {
@@ -302,7 +348,8 @@ export function retryNow(): void {
 }
 
 /**
- * Pull the alarm. Persists the intent first, then fires one short attempt and
+ * Pull the alarm. Persists the intent first, reads the phone's position under
+ * a short budget (stored with the intent), then fires one short attempt and
  * resolves with what actually happened — the caller keeps its modal open and
  * honest on `queued` instead of showing a dead-end toast.
  */
@@ -326,8 +373,29 @@ export async function raiseSos(
           lastAttemptAt: null,
         };
   set({ intent, lastError: null, lastRejection: null });
+  // On disk before the GPS read: an app kill inside the locate budget must not
+  // lose the press.
   await persist(intent);
-  return attempt(intent);
+  let toSend = intent;
+  if (!intent.coords) {
+    const coords = await locateForSos().catch(() => null);
+    const live = get().intent;
+    // Stood down (or superseded) while we were locating — nothing to send.
+    if (!live || live.bookingId !== bookingId || live.triggeredAt !== intent.triggeredAt) {
+      return {
+        status: 'rejected',
+        error: { status: 409, kind: 'conflict', message: 'Alert cancelled' },
+      };
+    }
+    if (coords) {
+      toSend = { ...live, coords };
+      set({ intent: toSend });
+      await persist(toSend);
+    } else {
+      toSend = live;
+    }
+  }
+  return attempt(toSend);
 }
 
 /**
@@ -373,6 +441,7 @@ export async function resumeSosIntent(): Promise<SosIntent | null> {
       await persist(null);
       return null;
     }
+    parsed.coords = readSosCoords(parsed.coords);
     if (Date.now() - parsed.triggeredAt >= MAX_INTENT_AGE_MS) {
       await persist(null);
       return null;

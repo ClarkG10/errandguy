@@ -153,11 +153,9 @@ class PaymentsTable
 
                             // Tell the CUSTOMER. Money arriving (or leaving, back
                             // to a card) with no explanation is a guaranteed
-                            // support ticket — and the dispute-driven refund path
-                            // already pushes, so silence here was an
-                            // inconsistency, not a policy. Placed on the ACTION
-                            // (not in PaymentService) so the cancel/dispute paths,
-                            // which notify via their own events, can't
+                            // support ticket. Placed on the ACTION (not in
+                            // PaymentService) so the cancel paths, which
+                            // notify via their own events, can't
                             // double-push. Cache flag keeps a re-run silent even
                             // though refundToWallet/refundPayment already reject a
                             // second refund. The admin's raw reason is a gateway

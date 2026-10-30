@@ -15,7 +15,13 @@ export type NotificationType =
   // (errandguy:send-onboarding-reminders). Routes to the document screen like
   // document_update; it needs its own type so the SERVER can read its own
   // send cadence off the notifications table.
-  | 'onboarding_reminder';
+  | 'onboarding_reminder'
+  // Support desk (SupportTicketNotifier): an agent replied in a ticket thread,
+  // or changed its status. Both carry `ticket_id`.
+  | 'support_reply'
+  | 'support_status'
+  // A staff announcement sent from the admin panel (PushBroadcast).
+  | 'broadcast';
 
 export interface AppNotification {
   id: string;

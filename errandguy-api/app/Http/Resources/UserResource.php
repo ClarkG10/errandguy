@@ -7,6 +7,19 @@ use Illuminate\Http\Resources\Json\JsonResource;
 
 class UserResource extends JsonResource
 {
+    private bool $hidePhone = false;
+
+    /**
+     * Send phone as null — e.g. the customer, to a runner who has only been
+     * offered the errand and not accepted it (see BookingResource).
+     */
+    public function withoutPhone(bool $hide = true): static
+    {
+        $this->hidePhone = $hide;
+
+        return $this;
+    }
+
     public function toArray(Request $request): array
     {
         // PII / financial fields are only revealed to the user themself.
@@ -19,8 +32,9 @@ class UserResource extends JsonResource
             'id' => $this->id,
             // Phone stays visible to the counterparty so they can call /
             // SMS during the errand — it's the whole point of the tracking
-            // screen's "Call" button.
-            'phone' => $this->phone,
+            // screen's "Call" button. Hidden from a runner who has only been
+            // offered the errand (withoutPhone).
+            'phone' => $this->hidePhone ? null : $this->phone,
             'email' => $this->when($isSelf, $this->email),
             'full_name' => $this->full_name,
             'avatar_url' => $this->avatar_url,

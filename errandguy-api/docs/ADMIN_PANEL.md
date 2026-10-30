@@ -18,12 +18,15 @@ Grouped in the sidebar:
   payouts, customer withdrawals and payouts queued by account deletion: "Send
   via Xendit", "Check with Xendit" for a sent payout, manual complete/fail for
   an unsent one), Wallet Transactions (ledger).
-- **Safety & Support** — SOS Alerts (resolve, with a live red badge), Disputes
-  (resolve/escalate), Support Tickets (threaded reply).
+- **Safety & Support** — SOS Alerts (resolve, with a live red badge; every
+  admin page of safety staff beeps and shows a browser notification on a new
+  SOS), Support Tickets (threaded reply; "Reports about a person" filter).
 - **System** *(super_admin)* — System Config, Platform Payment Methods,
   Push Broadcast, Notification log.
 - **Dashboard** — stats (customers/runners, active bookings, GMV today, pending
-  verifications, open disputes, **active SOS**) + latest bookings.
+  verifications, support waiting on us, **active SOS**) + latest bookings.
+- **SOS staff alerts** — set `ops_alert_emails` and `ops_alert_phone` under
+  System Config; texts need `SEMAPHORE_API_KEY` in the server env.
 
 ## Money/state safety
 

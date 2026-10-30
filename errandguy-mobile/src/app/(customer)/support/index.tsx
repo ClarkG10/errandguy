@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   View,
   Text,
@@ -10,10 +10,10 @@ import {
   KeyboardAvoidingView,
   Platform,
 } from 'react-native';
-import { useRouter } from 'expo-router';
+import { useLocalSearchParams, useRouter } from 'expo-router';
 import * as Haptics from 'expo-haptics';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { Plus, X, ChevronRight, Headphones } from 'lucide-react-native';
+import { Plus, X, ChevronRight, Headphones, Link2 } from 'lucide-react-native';
 import { useQuery } from '../../../hooks/useQuery';
 import { CacheTTL } from '../../../services/cache.service';
 import { useAuthStore } from '../../../stores/authStore';
@@ -38,6 +38,11 @@ import { errorMessage } from '../../../utils/errorCatalog';
 import { copy } from '../../../constants/copy';
 import { toast } from '../../../stores/toastStore';
 import { storage } from '../../../utils/storage';
+import {
+  SUPPORT_CATEGORIES as CATEGORIES,
+  composePrefillFromParams,
+  type LinkedErrand,
+} from '../../../utils/supportCompose';
 
 // Ticket status → Badge variant + human label. Mirrors the server's
 // SupportTicket status machine (open → pending → resolved/closed).
@@ -50,17 +55,6 @@ const STATUS_META: Record<
   resolved: { label: 'Resolved', variant: 'success' },
   closed: { label: 'Closed', variant: 'neutral' },
 };
-
-// Category chips offered in the composer. `key` is sent verbatim as the
-// ticket's `category` (free string server-side, max 50).
-const CATEGORIES: { key: string; label: string }[] = [
-  { key: 'general', label: 'General' },
-  { key: 'booking', label: 'A booking' },
-  { key: 'payment', label: 'Payments' },
-  { key: 'account', label: 'My account' },
-  { key: 'safety', label: 'Safety' },
-  { key: 'other', label: 'Other' },
-];
 
 /**
  * ── Compose draft ──────────────────────────────────────────────────────────
@@ -92,6 +86,9 @@ interface PersistedSupportDraft {
   subject: string;
   category: string;
   message: string;
+  /** The errand the ticket is about, when it was opened from one. A draft is
+   *  only restored into a composer about the SAME errand (or none). */
+  bookingId?: string | null;
   /** epoch ms */
   savedAt: number;
 }
@@ -155,6 +152,12 @@ function TicketsSkeleton() {
 
 export default function SupportTicketsScreen() {
   const router = useRouter();
+  const params = useLocalSearchParams<{
+    compose?: string;
+    category?: string;
+    booking_id?: string;
+    booking_number?: string;
+  }>();
   const insets = useSafeAreaInsets();
   const { contentMaxWidth } = useResponsive();
   const userId = useAuthStore((s) => s.user?.id ?? 'anon');
@@ -165,6 +168,9 @@ export default function SupportTicketsScreen() {
   const [subject, setSubject] = useState('');
   const [category, setCategory] = useState<string>('general');
   const [message, setMessage] = useState('');
+  // The errand this ticket is about — set when the composer was opened from
+  // one, sent as booking_id so support sees exactly which errand it is.
+  const [linkedErrand, setLinkedErrand] = useState<LinkedErrand | null>(null);
   const [submitting, setSubmitting] = useState(false);
   // Guards the EXPLICIT discard of a saved draft (dismissing the sheet keeps it).
   const [discardOpen, setDiscardOpen] = useState(false);
@@ -175,6 +181,10 @@ export default function SupportTicketsScreen() {
   // True when this compose session started from a restored draft — the one
   // thing worth telling the user, so the pre-filled fields aren't a surprise.
   const [draftRestored, setDraftRestored] = useState(false);
+  // True once there is something of the user's own in the composer (typed, or
+  // a restored draft). Until then nothing is saved — so opening a composer
+  // about one errand can't overwrite a draft written about another.
+  const [composeDirty, setComposeDirty] = useState(false);
 
   const ticketsQ = useQuery<SupportTicket[]>(
     ['support', 'tickets', userId],
@@ -199,59 +209,106 @@ export default function SupportTicketsScreen() {
     setSubject('');
     setCategory('general');
     setMessage('');
+    setLinkedErrand(null);
     setDraftRestored(false);
   }, []);
 
   // Open the sheet, then restore whatever was left half-typed. Restoring
   // AFTER the modal is visible keeps opening instant; the functional setters
   // mean a keystroke that beat the read (practically impossible, but free to
-  // guard) always wins over the stored value.
-  const openCompose = useCallback(() => {
-    setDraftHydrated(false);
-    setDraftRestored(false);
-    setComposeOpen(true);
-    void (async () => {
-      let restored = false;
-      try {
-        const raw = await storage.get(DRAFT_STORAGE_KEY);
-        if (raw) {
-          const d = (JSON.parse(raw) ?? {}) as Partial<PersistedSupportDraft>;
-          const mine = d.userId === userId;
-          const fresh =
-            typeof d.savedAt === 'number' && Date.now() - d.savedAt < DRAFT_MAX_AGE_MS;
-          const hasContent = !!(d.subject?.trim() || d.message?.trim());
-          if (mine && fresh && hasContent) {
-            setSubject((cur) => (cur ? cur : d.subject ?? ''));
-            setMessage((cur) => (cur ? cur : d.message ?? ''));
-            setCategory((cur) => (cur !== 'general' ? cur : d.category || 'general'));
-            restored = true;
-          } else {
-            // Stale, empty, or another account's — drop it rather than leave a
-            // row that can never be restored.
-            void storage.remove(DRAFT_STORAGE_KEY).catch(() => {});
+  // guard) always wins over the stored value. A prefill (opened from an
+  // errand) seeds the fields first; a draft about the SAME errand still wins,
+  // because those are the user's own words.
+  const openCompose = useCallback(
+    (prefill?: { category: string; subject: string; errand: LinkedErrand | null }) => {
+      const seedSubject = prefill?.subject ?? '';
+      const seedCategory = prefill?.category ?? 'general';
+      const errand = prefill?.errand ?? null;
+      setSubject(seedSubject);
+      setCategory(seedCategory);
+      setMessage('');
+      setLinkedErrand(errand);
+      setComposeDirty(false);
+      setDraftHydrated(false);
+      setDraftRestored(false);
+      setComposeOpen(true);
+      void (async () => {
+        let restored = false;
+        try {
+          const raw = await storage.get(DRAFT_STORAGE_KEY);
+          if (raw) {
+            const d = (JSON.parse(raw) ?? {}) as Partial<PersistedSupportDraft>;
+            const mine = d.userId === userId;
+            const fresh =
+              typeof d.savedAt === 'number' && Date.now() - d.savedAt < DRAFT_MAX_AGE_MS;
+            const hasContent = !!(d.subject?.trim() || d.message?.trim());
+            const sameErrand = (d.bookingId ?? null) === (errand?.id ?? null);
+            if (mine && fresh && hasContent && sameErrand) {
+              setSubject((cur) => (cur && cur !== seedSubject ? cur : d.subject || cur));
+              setMessage((cur) => (cur ? cur : d.message ?? ''));
+              setCategory((cur) => (cur !== seedCategory ? cur : d.category || seedCategory));
+              setComposeDirty(true);
+              restored = true;
+            } else if (mine && fresh && hasContent) {
+              // A draft about a different errand (or none): leave it on disk for
+              // the composer it belongs to rather than mixing the two.
+            } else {
+              // Stale, empty, or another account's — drop it rather than leave a
+              // row that can never be restored.
+              void storage.remove(DRAFT_STORAGE_KEY).catch(() => {});
+            }
           }
+        } catch {
+          // Unreadable / corrupt envelope — compose from scratch, never crash.
         }
-      } catch {
-        // Unreadable / corrupt envelope — compose from scratch, never crash.
-      }
-      setDraftRestored(restored);
-      setDraftHydrated(true);
-    })();
-  }, [userId]);
+        setDraftRestored(restored);
+        setDraftHydrated(true);
+      })();
+    },
+    [userId],
+  );
+
+  // "Report a problem" on an errand lands here with the errand in the params:
+  // open the composer about it straight away (once per arrival), not the inbox.
+  const {
+    compose: composeParam,
+    category: categoryParam,
+    booking_id: bookingIdParam,
+    booking_number: bookingNumberParam,
+  } = params;
+  const prefill = useMemo(
+    () =>
+      composePrefillFromParams({
+        compose: composeParam,
+        category: categoryParam,
+        booking_id: bookingIdParam,
+        booking_number: bookingNumberParam,
+      }),
+    [composeParam, categoryParam, bookingIdParam, bookingNumberParam],
+  );
+  const consumedPrefillRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!prefill) return;
+    const key = `${prefill.errand?.id ?? ''}|${prefill.category}`;
+    if (consumedPrefillRef.current === key) return;
+    consumedPrefillRef.current = key;
+    openCompose(prefill);
+  }, [prefill, openCompose]);
 
   // Auto-save while composing. Parked until hydration so the first (empty)
   // render can't clear the stored draft, and only while the sheet is open so
   // a submitted/discarded reset never writes a fresh empty envelope.
   useEffect(() => {
-    if (!composeOpen || !draftHydrated) return;
+    if (!composeOpen || !draftHydrated || !composeDirty) return;
     scheduleDraftPersist({
       userId,
       subject,
       category,
       message,
+      bookingId: linkedErrand?.id ?? null,
       savedAt: Date.now(),
     });
-  }, [composeOpen, draftHydrated, userId, subject, category, message]);
+  }, [composeOpen, draftHydrated, composeDirty, userId, subject, category, message, linkedErrand]);
 
   // Explicit discard (confirmed): wipe the draft everywhere and close.
   const dismissCompose = useCallback(() => {
@@ -267,14 +324,22 @@ export default function SupportTicketsScreen() {
   // 250ms still keeps what they typed.
   const closeCompose = useCallback(() => {
     if (submitting) return;
-    if (draftHydrated) {
-      flushDraftPersist({ userId, subject, category, message, savedAt: Date.now() });
+    if (draftHydrated && composeDirty) {
+      flushDraftPersist({
+        userId,
+        subject,
+        category,
+        message,
+        bookingId: linkedErrand?.id ?? null,
+        savedAt: Date.now(),
+      });
     }
     setComposeOpen(false);
-  }, [submitting, draftHydrated, userId, subject, category, message]);
+  }, [submitting, draftHydrated, composeDirty, userId, subject, category, message, linkedErrand]);
 
   const canSubmit = subject.trim().length > 0 && message.trim().length > 0;
-  const hasDraftContent = subject.trim().length > 0 || message.trim().length > 0;
+  const hasDraftContent =
+    composeDirty && (subject.trim().length > 0 || message.trim().length > 0);
 
   const handleSubmit = useCallback(async () => {
     if (!canSubmit || submitting) return;
@@ -284,6 +349,7 @@ export default function SupportTicketsScreen() {
         subject: subject.trim(),
         category,
         message: message.trim(),
+        ...(linkedErrand ? { booking_id: linkedErrand.id } : {}),
       });
       const ticket = r.data.data;
       Haptics.notificationAsync(
@@ -306,7 +372,7 @@ export default function SupportTicketsScreen() {
     } finally {
       setSubmitting(false);
     }
-  }, [canSubmit, submitting, subject, category, message, resetCompose, ticketsQ, router]);
+  }, [canSubmit, submitting, subject, category, message, linkedErrand, resetCompose, ticketsQ, router]);
 
   const renderTicket = useCallback(
     ({ item }: { item: SupportTicket }) => {
@@ -388,6 +454,7 @@ export default function SupportTicketsScreen() {
             onPress={() => {
               Haptics.selectionAsync().catch(() => {});
               setCategory(c.key);
+              setComposeDirty(true);
             }}
             hitSlop={{ top: 6, bottom: 6 }}
             accessibilityRole="button"
@@ -548,10 +615,27 @@ export default function SupportTicketsScreen() {
                   </View>
                 ) : null}
 
+                {linkedErrand ? (
+                  <View
+                    className="flex-row items-center bg-surfaceMuted rounded-xl px-3 py-2 mb-3"
+                    accessible
+                    accessibilityLabel={`About errand ${linkedErrand.number ?? ''}`}
+                  >
+                    <Link2 size={14} color={LightColors.textSecondary} strokeWidth={2} />
+                    <Text className="ml-2 text-[12px] font-montserrat-semi text-textSecondary">
+                      About errand{' '}
+                      <Text className="font-inter">{linkedErrand.number ?? 'linked'}</Text>
+                    </Text>
+                  </View>
+                ) : null}
+
                 <Input
                   label="Subject"
                   value={subject}
-                  onChangeText={setSubject}
+                  onChangeText={(t) => {
+                    setSubject(t);
+                    setComposeDirty(true);
+                  }}
                   placeholder="What's this about?"
                   helperText="A short summary of your issue."
                   maxLength={200}
@@ -569,7 +653,10 @@ export default function SupportTicketsScreen() {
                 </Text>
                 <TextInput
                   value={message}
-                  onChangeText={setMessage}
+                  onChangeText={(t) => {
+                    setMessage(t);
+                    setComposeDirty(true);
+                  }}
                   placeholder="Describe your issue…"
                   placeholderTextColor={LightColors.textMuted}
                   multiline

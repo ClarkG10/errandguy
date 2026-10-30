@@ -179,26 +179,6 @@ class NotificationService
         return $existing;
     }
 
-    public function sendToTopic(string $topic, string $title, string $body, array $data = []): void
-    {
-        try {
-            $messaging = app('firebase.messaging');
-            $message = \Kreait\Firebase\Messaging\CloudMessage::withTarget('topic', $topic)
-                ->withNotification([
-                    'title' => $title,
-                    'body' => $body,
-                ])
-                ->withData($data);
-
-            $messaging->send($message);
-        } catch (\Throwable $e) {
-            Log::error('FCM topic push failed', [
-                'topic' => $topic,
-                'error' => $e->getMessage(),
-            ]);
-        }
-    }
-
     /**
      * @param  array<int,string>  $tokens  one or more Expo push tokens
      */

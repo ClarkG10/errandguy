@@ -11,7 +11,13 @@
  *     can do harm;
  *   • a 4xx (errand closed → SOSController findOrFail 404) is final, never
  *     replayed;
- *   • an intent older than an hour is abandoned rather than replayed.
+ *   • an intent older than an hour is abandoned rather than replayed;
+ *   • the phone's GPS rides with the raise and with the QUEUED intent, so a
+ *     dead-zone replay reports where the person pressed, not where they are
+ *     when signal returns;
+ *   • an acknowledged raise is recorded per errand (sosActive), and the
+ *     server's legacy "Emergency contacts have been notified" blanket claim is
+ *     never repeated to the user.
  */
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import {
@@ -23,8 +29,18 @@ import {
   standDownSos,
   useSosIntentStore,
   MAX_INTENT_AGE_MS,
+  LEGACY_SOS_MESSAGE,
 } from '../sosIntent';
 import { useNetworkStore } from '../../stores/networkStore';
+import { resetSosActiveForTests, useSosActiveStore } from '../sosActive';
+
+const mockLocate = jest.fn();
+jest.mock('../../utils/sosLocation', () => ({
+  ...jest.requireActual('../../utils/sosLocation'),
+  locateForSos: (...a: unknown[]) => mockLocate(...a),
+}));
+
+const HERE = { lat: 14.5547, lng: 121.0244, accuracy: 12 };
 
 const mockCustomerSos = jest.fn();
 const mockRunnerSos = jest.fn();
@@ -55,6 +71,8 @@ beforeEach(async () => {
   useNetworkStore.setState({ isOffline: false, lastChangedAt: null });
   await AsyncStorage.clear();
   await clearSosIntent();
+  resetSosActiveForTests();
+  mockLocate.mockResolvedValue(HERE);
   mockCustomerSos.mockResolvedValue({
     data: { data: { id: 'alert-1', contacts_notified: ['c1', 'c2'] } },
   });
@@ -70,8 +88,8 @@ afterEach(async () => {
 describe('raiseSos — happy path', () => {
   it('sends immediately and reports the contacts the server recorded', async () => {
     const res = await raiseSos('bk-1', 'customer');
-    expect(res).toEqual({ status: 'sent', contacts: ['c1', 'c2'] });
-    expect(mockCustomerSos).toHaveBeenCalledWith('bk-1', { timeoutMs: 8000 });
+    expect(res).toEqual({ status: 'sent', contacts: ['c1', 'c2'], alertedLine: null });
+    expect(mockCustomerSos).toHaveBeenCalledWith('bk-1', { timeoutMs: 8000, coords: HERE });
     // Nothing left queued, nothing left on disk.
     expect(state().intent).toBeNull();
     expect(await AsyncStorage.getItem(STORAGE_KEY)).toBeNull();
@@ -80,8 +98,55 @@ describe('raiseSos — happy path', () => {
 
   it('routes the runner role to the runner endpoint', async () => {
     await raiseSos('bk-9', 'runner');
-    expect(mockRunnerSos).toHaveBeenCalledWith('bk-9', { timeoutMs: 8000 });
+    expect(mockRunnerSos).toHaveBeenCalledWith('bk-9', { timeoutMs: 8000, coords: HERE });
     expect(mockCustomerSos).not.toHaveBeenCalled();
+  });
+
+  it('still raises — without coordinates — when the phone has no fix', async () => {
+    mockLocate.mockResolvedValue(null);
+    const res = await raiseSos('bk-20', 'customer');
+    expect(res.status).toBe('sent');
+    expect(mockCustomerSos).toHaveBeenCalledWith('bk-20', { timeoutMs: 8000, coords: null });
+  });
+
+  it('a failing location lookup never blocks the alarm', async () => {
+    mockLocate.mockRejectedValue(new Error('location services off'));
+    const res = await raiseSos('bk-21', 'runner');
+    expect(res.status).toBe('sent');
+    expect(mockRunnerSos).toHaveBeenCalledWith('bk-21', { timeoutMs: 8000, coords: null });
+  });
+
+  it('records the acknowledged raise per errand so the card survives a remount', async () => {
+    await raiseSos('bk-22', 'runner');
+    const rec = useSosActiveStore.getState().records['bk-22'];
+    expect(rec).toMatchObject({ bookingId: 'bk-22', role: 'runner', resolvedAt: null });
+  });
+});
+
+describe('who the server says it alerted', () => {
+  it('repeats the server’s own sentence about who was reached', async () => {
+    mockCustomerSos.mockResolvedValue({
+      data: {
+        data: { id: 'a', contacts_notified: [] },
+        message: 'ErrandGuy safety staff have been alerted by email and phone.',
+      },
+    });
+    const res = await raiseSos('bk-30', 'customer');
+    expect(res).toMatchObject({
+      status: 'sent',
+      alertedLine: 'ErrandGuy safety staff have been alerted by email and phone.',
+    });
+    expect(useSosActiveStore.getState().records['bk-30'].alertedLine).toBe(
+      'ErrandGuy safety staff have been alerted by email and phone.',
+    );
+  });
+
+  it('never repeats the old server’s blanket "contacts have been notified" claim', async () => {
+    mockCustomerSos.mockResolvedValue({
+      data: { data: { id: 'a', contacts_notified: [] }, message: LEGACY_SOS_MESSAGE },
+    });
+    const res = await raiseSos('bk-31', 'customer');
+    expect(res).toMatchObject({ status: 'sent', alertedLine: null });
   });
 });
 
@@ -92,7 +157,21 @@ describe('raiseSos — no signal', () => {
     expect(res.status).toBe('queued');
     expect(state().intent).toMatchObject({ bookingId: 'bk-2', role: 'customer', attempts: 1 });
     const raw = await AsyncStorage.getItem(STORAGE_KEY);
-    expect(JSON.parse(raw as string)).toMatchObject({ bookingId: 'bk-2' });
+    expect(JSON.parse(raw as string)).toMatchObject({ bookingId: 'bk-2', coords: HERE });
+    // Not acknowledged → nothing may claim "SOS active".
+    expect(useSosActiveStore.getState().records['bk-2']).toBeUndefined();
+  });
+
+  it('a replay sends the coordinates captured at the PRESS, not a new reading', async () => {
+    mockCustomerSos.mockRejectedValueOnce({ status: 0, kind: 'offline' });
+    await raiseSos('bk-2b', 'customer');
+    mockLocate.mockResolvedValue({ lat: 1, lng: 1, accuracy: 5 });
+
+    retryNow();
+    await flush();
+
+    expect(mockCustomerSos).toHaveBeenLastCalledWith('bk-2b', { timeoutMs: 8000, coords: HERE });
+    expect(mockLocate).toHaveBeenCalledTimes(1);
   });
 
   it('a manual retry that succeeds ACKs and clears the queue', async () => {
@@ -271,8 +350,27 @@ describe('resumeSosIntent', () => {
     await resumeSosIntent();
     await flush();
 
-    expect(mockRunnerSos).toHaveBeenCalledWith('bk-12', { timeoutMs: 8000 });
+    expect(mockRunnerSos).toHaveBeenCalledWith('bk-12', { timeoutMs: 8000, coords: null });
     expect(state().intent).toBeNull();
+  });
+
+  it('replays the coordinates stored with an intent persisted before an app kill', async () => {
+    await AsyncStorage.setItem(
+      STORAGE_KEY,
+      JSON.stringify({
+        bookingId: 'bk-16',
+        role: 'customer',
+        triggeredAt: Date.now() - 30_000,
+        attempts: 1,
+        lastAttemptAt: Date.now() - 30_000,
+        coords: HERE,
+      }),
+    );
+
+    await resumeSosIntent();
+    await flush();
+
+    expect(mockCustomerSos).toHaveBeenCalledWith('bk-16', { timeoutMs: 8000, coords: HERE });
   });
 
   it('abandons an intent older than the max age rather than raising a stale alarm', async () => {

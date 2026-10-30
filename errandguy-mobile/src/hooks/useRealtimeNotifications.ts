@@ -8,6 +8,7 @@ import { useChatStore } from '../stores/chatStore';
 import { notificationService } from '../services/notification.service';
 import { chatService } from '../services/chat.service';
 import { echo, retainChannel, releaseChannel } from '../services/echo';
+import { noteSosNotification } from '../services/sosActive';
 import {
   notificationInvalidationKeys,
   type InvalidationKey,
@@ -254,6 +255,8 @@ export function useRealtimeNotifications(userId: string | null) {
     onEvent: (payload) => {
       const notification = payload as AppNotification;
       addNotification(notification);
+      // Staff closing this device's SOS flips its "SOS active" card to closed.
+      void noteSosNotification(notification);
       // The notification names the entity that changed — refresh it now rather
       // than leaving the user on a stale screen until its next poll.
       applyNotificationInvalidations({

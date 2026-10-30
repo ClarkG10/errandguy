@@ -51,7 +51,7 @@ export function useIncomingRequest(
       const offer = booking as Booking;
       setIncomingRequest({
         booking: offer,
-        // Prefer the SERVER's acceptance cutoff (matched_at +
+        // Prefer the SERVER's accept-by cutoff (matched_at +
         // matched_acceptance_timeout_seconds, default 90s) over the old
         // hardcoded 30s, which closed the offer a full minute before the
         // server stopped honouring the accept. The Reverb offer projection

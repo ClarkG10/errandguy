@@ -36,11 +36,10 @@ class SupportController extends Controller
 
     /**
      * POST /support/tickets — open a support ticket. Creates the ticket plus
-     * the first 'user' message in a single transaction.
-     *
-     * NOTE: This is the structured, threaded successor to the legacy one-shot
-     * /support/report closure (which files a DisputeTicket). That closure is
-     * intentionally left in place for backwards compatibility.
+     * the first 'user' message in a single transaction. The one complaint
+     * channel: "Report a problem" from an errand sends booking_id + category,
+     * and "Report this person" sends category 'report_user' with booking_id
+     * and reported_user_id (the other person on that errand).
      */
     public function store(CreateTicketRequest $request): JsonResponse
     {
@@ -53,6 +52,7 @@ class SupportController extends Controller
             $ticket = SupportTicket::create([
                 'user_id' => $userId,
                 'booking_id' => $validated['booking_id'] ?? null,
+                'reported_user_id' => $validated['reported_user_id'] ?? null,
                 'subject' => $validated['subject'],
                 'category' => $validated['category'],
                 'status' => 'open',

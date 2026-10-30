@@ -55,7 +55,6 @@ class CashDebtCeilingTest extends TestCase
             'current_lat' => 14.5995,
             'current_lng' => 120.9842,
             'preferred_types' => [],
-            'acceptance_rate' => 100.00,
             'completion_rate' => 100.00,
             'total_errands' => 0,
             'total_earnings' => 0.00,

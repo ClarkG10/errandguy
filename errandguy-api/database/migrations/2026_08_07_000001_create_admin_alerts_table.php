@@ -17,7 +17,7 @@ return new class extends Migration
     {
         Schema::create('admin_alerts', function (Blueprint $table) {
             $table->uuid('id')->primary();
-            $table->string('type');                       // sos | no_runner | dispute | …
+            $table->string('type');                       // sos | no_runner | stalled_errand | …
             $table->string('severity')->default('warning'); // critical | warning | info
             $table->string('title');
             $table->text('body')->nullable();

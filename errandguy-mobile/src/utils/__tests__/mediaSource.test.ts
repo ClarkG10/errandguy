@@ -25,6 +25,27 @@ describe('mediaSource', () => {
     });
   });
 
+  it('attaches the bearer to a runner’s OWN document stream (download_url)', () => {
+    // RunnerDocumentResource.download_url → GET /api/v1/runner/documents/{id}/file
+    // (auth:sanctum). Without the header the runner's own preview never loaded.
+    peek.mockReturnValue('tok123');
+    const OWN_DOC = 'https://api.errandguy.app/api/v1/runner/documents/9b1c-uuid/file';
+    expect(mediaSource(OWN_DOC)).toEqual({
+      uri: OWN_DOC,
+      headers: { Authorization: 'Bearer tok123' },
+    });
+    expect(mediaSource(`${OWN_DOC}?v=2`)).toEqual({
+      uri: `${OWN_DOC}?v=2`,
+      headers: { Authorization: 'Bearer tok123' },
+    });
+  });
+
+  it('does not treat look-alike paths as the document stream', () => {
+    peek.mockReturnValue('tok123');
+    const NOT_IT = 'https://cdn.example.com/runner/documents/9b1c/file-preview.jpg';
+    expect(mediaSource(NOT_IT)).toEqual({ uri: NOT_IT });
+  });
+
   it('degrades to no header for gated media when no token is cached', () => {
     peek.mockReturnValue(null);
     expect(mediaSource(GATED_MEDIA)).toEqual({ uri: GATED_MEDIA });

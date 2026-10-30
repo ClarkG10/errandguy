@@ -35,7 +35,6 @@ class StatusUpdateTest extends TestCase
             'verification_status' => 'approved',
             'is_online' => true,
             'preferred_types' => [],
-            'acceptance_rate' => 100.00,
             'completion_rate' => 100.00,
             'total_errands' => 0,
             'total_earnings' => 0.00,

@@ -72,7 +72,7 @@ class StuckErrandActionsTest extends TestCase
             'user_id' => $runner->id, 'verification_status' => 'approved', 'is_online' => true,
             'vehicle_type' => 'motorcycle', 'current_lat' => $lat, 'current_lng' => 120.98,
             'last_location_at' => now(), 'preferred_types' => [],
-            'total_errands' => 0, 'total_earnings' => 0, 'completion_rate' => 100, 'acceptance_rate' => 100,
+            'total_errands' => 0, 'total_earnings' => 0, 'completion_rate' => 100,
         ]);
 
         return $runner;

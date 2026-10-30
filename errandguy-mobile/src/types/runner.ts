@@ -22,7 +22,6 @@ export interface RunnerProfile {
   current_lat: number | null;
   current_lng: number | null;
   last_location_at: string | null;
-  acceptance_rate: number;
   completion_rate: number;
   total_errands: number;
   total_earnings: number;

@@ -308,16 +308,19 @@ Route::prefix('v1')->group(function () {
             Route::delete('/{id}', [NotificationController::class, 'destroy']);
         });
 
-        // Config routes (cached for performance)
+        // Config routes (cached for performance). Staff-only settings (who
+        // gets the ops alerts) are left out.
         Route::get('/config/app', function () {
             return response()->json([
                 'data' => \App\Services\CacheService::rememberStatic('app_config', fn () =>
-                    \App\Models\SystemConfig::pluck('value', 'key')
+                    \App\Models\SystemConfig::publicValues()
                 ),
             ]);
         });
 
-        // Live-support tickets (threaded successor to /support/report below).
+        // Support tickets — the one complaint channel: "Report a problem" from
+        // an errand (booking_id + category) and "Report this person"
+        // (category report_user + booking_id + reported_user_id).
         Route::prefix('support')->group(function () {
             Route::get('/tickets', [SupportController::class, 'index']);
             Route::post('/tickets', [SupportController::class, 'store'])->middleware('throttle:15,1');
@@ -327,42 +330,6 @@ Route::prefix('v1')->group(function () {
                 ->where('id', '[0-9a-fA-F-]{36}')
                 ->middleware('throttle:60,1');
         });
-
-        // Support report (legacy one-shot dispute intake — kept for back-compat)
-        Route::post('/support/report', function (\Illuminate\Http\Request $request) {
-            $validated = $request->validate([
-                // Scope by ownership so a user can't open a dispute referencing
-                // a stranger's booking (mirrors CreateTicketRequest). This is a
-                // route closure, so the subquery closure must `use ($request)`.
-                'booking_id' => [
-                    'nullable',
-                    'uuid',
-                    \Illuminate\Validation\Rule::exists('bookings', 'id')->where(function ($query) use ($request) {
-                        $query->where('customer_id', $request->user()->id)
-                            ->orWhere('runner_id', $request->user()->id);
-                    }),
-                ],
-                'subject' => ['required', 'string', 'max:200'],
-                'description' => ['required', 'string', 'max:2000'],
-                'category' => ['required', 'string', 'max:50'],
-            ]);
-
-            $ticket = \App\Models\DisputeTicket::create([
-                'booking_id' => $validated['booking_id'] ?? null,
-                'reported_by' => $request->user()->id,
-                'category' => $validated['category'],
-                'description' => "[{$validated['subject']}] {$validated['description']}",
-                'status' => 'open',
-            ]);
-
-            return response()->json([
-                'data' => $ticket,
-                'message' => 'Report submitted successfully.',
-            ], 201);
-        })->middleware('throttle:15,1');
-        // ^ Match the modern /support/tickets sibling: this legacy route also
-        //   writes a DisputeTicket into the ops moderation queue, so cap it the
-        //   same way instead of leaving it on the 240/min global api limiter.
     });
 
     // Webhook routes (no auth, token-verified)

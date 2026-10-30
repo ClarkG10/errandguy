@@ -42,7 +42,7 @@ const CONTENT: Record<
       },
       {
         heading: 'Bookings & Payments',
-        body: `The fare or offer you confirm before booking is the amount you will be charged, plus any reconciled shopping costs you approve. You can pay in cash, with GCash or Maya, or from your ErrandGuy wallet balance; GCash and Maya payments are processed securely by our payment partner.\n\nCancellation fees may apply once a runner has been matched and is on the way.`,
+        body: `Prices are fixed: the fare you confirm before booking is what you pay for the errand — there is no bidding or counter-offer. For a Buy-for-me errand you also repay the item cost in cash to the runner at the door, as shown on the receipt. You can pay in cash, with GCash or Maya, or from your ErrandGuy wallet balance; GCash and Maya payments are processed securely by our payment partner, and we don't save cards.\n\nCancelling is free until a runner accepts; after that a small cancellation fee may apply, shown before you confirm, and it goes to that runner. Refunds are credited to your ErrandGuy wallet, and you can ask to withdraw your balance to GCash or Maya — our team reviews withdrawals, usually within 1–3 business days.`,
       },
       {
         heading: 'Community Guidelines',

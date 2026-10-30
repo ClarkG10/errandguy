@@ -16,9 +16,13 @@ class SupportTicket extends Model
     public $incrementing = false;
     public $timestamps = false;
 
+    /** "Report this person": a ticket about the other person on an errand. */
+    public const CATEGORY_REPORT_USER = 'report_user';
+
     protected $fillable = [
         'user_id',
         'booking_id',
+        'reported_user_id',
         'subject',
         'category',
         'status',
@@ -57,6 +61,12 @@ class SupportTicket extends Model
     public function booking(): BelongsTo
     {
         return $this->belongsTo(Booking::class);
+    }
+
+    /** The person a report_user ticket is about. */
+    public function reportedUser(): BelongsTo
+    {
+        return $this->belongsTo(User::class, 'reported_user_id');
     }
 
     public function scopeForUser($query, string $userId)

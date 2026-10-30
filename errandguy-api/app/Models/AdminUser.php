@@ -120,7 +120,7 @@ class AdminUser extends Authenticatable implements FilamentUser, HasName
     }
 
     /**
-     * May act on support/safety surfaces (disputes, support tickets, SOS).
+     * May act on support/safety surfaces (support tickets, SOS).
      */
     public function canHandleSupport(): bool
     {
@@ -135,7 +135,7 @@ class AdminUser extends Authenticatable implements FilamentUser, HasName
     /**
      * May moderate accounts/errands and verify runners (user suspend/unsuspend,
      * booking cancel, runner approve/reject). Distinct from canHandleSupport:
-     * moderation EXCLUDES support (support handles disputes/tickets/SOS but not
+     * moderation EXCLUDES support (support handles tickets/SOS but not
      * account/booking moderation), mirroring the Filament Users/Bookings/
      * RunnerProfiles action gates (hasAnyRole super_admin/admin/ops).
      */

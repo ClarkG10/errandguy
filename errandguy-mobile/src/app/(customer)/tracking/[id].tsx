@@ -34,6 +34,7 @@ import {
   MapPin,
   SearchX,
   Flag,
+  UserX,
   X,
 } from 'lucide-react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -66,9 +67,21 @@ import {
   useSosIntentStore,
 } from '../../../services/sosIntent';
 import {
+  clearSosActive,
+  hydrateSosActive,
+  reconcileSosActive,
+  useSosActive,
+} from '../../../services/sosActive';
+import {
   SosPendingSheet,
   type SosCallableContact,
 } from '../../../components/safety/SosPendingSheet';
+import {
+  SosActiveCard,
+  SosResolvedNotice,
+  sosAlertedText,
+} from '../../../components/safety/SosActiveCard';
+import { ReportUserSheet } from '../../../components/safety/ReportUserSheet';
 import { useRunnerTracking } from '../../../hooks/useRunnerTracking';
 import { useBookingStatus } from '../../../hooks/useBookingStatus';
 import { useSmartPolling } from '../../../hooks/useSmartPolling';
@@ -83,7 +96,6 @@ import { RatingStars } from '../../../components/ui/RatingStars';
 import { StatusTimeline } from '../../../components/ui/StatusTimeline';
 import { JourneyBeads } from '../../../components/ui/JourneyBeads';
 import { Button } from '../../../components/ui/Button';
-import { SlideToConfirm } from '../../../components/ui/SlideToConfirm';
 import { Illustration } from '../../../components/ui/Illustration';
 import { ErrorState } from '../../../components/ui/ErrorState';
 import { ConfirmModal } from '../../../components/ui/ConfirmModal';
@@ -113,6 +125,7 @@ import {
 } from '../../../utils/bookingPayment';
 import { itemsCashDue, itemsCashReadyLine } from '../../../utils/shoppingMoney';
 import { formatRating } from '../../../utils/rating';
+import { isRunnerVerified, runnerVehicleLine } from '../../../utils/runnerVehicle';
 import { LightColors, Elevation } from '../../../constants/colors';
 import { copy } from '../../../constants/copy';
 
@@ -316,7 +329,13 @@ export default function TrackingScreen() {
   // fetch/network failure. Without this, a dropped request fell through
   // to the misleading "Booking not found" dead-end with no retry.
   const [loadError, setLoadError] = useState(false);
-  const [sosActive, setSosActive] = useState(false);
+  // The live alert for THIS errand, from the per-errand record sosIntent
+  // writes on the server's ack — so leaving and reopening the screen keeps the
+  // card (and its "I'm safe" control). A record with resolvedAt is an alert
+  // somebody else closed: staff, or the server no longer has it open.
+  const sosRecord = useSosActive(id);
+  const sosActive = !!sosRecord && !sosRecord.resolvedAt;
+  const sosResolved = !!sosRecord?.resolvedAt;
   // SlideToConfirm latches after a completed slide (its completedRef never
   // re-arms itself); bump this key on a FAILED stand-down so the slider
   // remounts fresh and the retry the toast promises actually works — mirrors
@@ -376,12 +395,7 @@ export default function TrackingScreen() {
     id && s.lastRejection?.bookingId === id ? s.lastRejection : null,
   );
   const [showSosPending, setShowSosPending] = useState(false);
-  // Live-SOS stand-down state. triggeredAt drives the elapsed readout; the
-  // notified list is whatever the alert response actually reached (the SMS
-  // job is a no-op today, so we only claim contacts when the server does);
   // sosNow ticks the elapsed clock; deactivatingSOS locks the "I'm safe" slide.
-  const [sosTriggeredAt, setSosTriggeredAt] = useState<number | null>(null);
-  const [sosContactsNotified, setSosContactsNotified] = useState<string[]>([]);
   // Full-size proof-photo preview. Opened IN-APP (bearer-aware ImageLightbox)
   // rather than Linking.openURL, which hands a gated /internal/media URL to the
   // OS browser with no auth header → guaranteed 403.
@@ -429,18 +443,20 @@ export default function TrackingScreen() {
   // Pick an SOS back up that never reached the server (app killed mid-request,
   // or still queued from a dead zone). Resuming is what makes the retry loop
   // outlive this screen; the server's active-alert idempotency makes it free.
+  // The acknowledged-alert records are loaded alongside, so a live alert's
+  // card is back the moment the screen is.
   useEffect(() => {
     void resumeSosIntent();
+    void hydrateSosActive();
   }, []);
 
   // A queued raise that lands on a BACKGROUND retry has to reach this screen —
   // otherwise it keeps saying "not sent yet" about an alert that is now live.
+  // The card itself renders from the record the ack wrote; this only closes
+  // the dialogs that were waiting on it.
   useEffect(() => {
     if (!sosAck) return;
-    setSosContactsNotified(sosAck.contacts);
-    setSosTriggeredAt((prev) => prev ?? sosAck.acknowledgedAt);
     setSosNow(Date.now());
-    setSosActive(true);
     setShowSosPending(false);
     setShowSOSModal(false);
   }, [sosAck]);
@@ -666,6 +682,8 @@ export default function TrackingScreen() {
         setBooking(b);
         setActiveBooking(b);
         setStatusLogs(b?.status_logs ?? []);
+        // A fresh read that says no alert is open closes a stale card.
+        reconcileSosActive(id, b?.sos_triggered);
         // Seed the realtime guard so the very first realtime UPDATE
         // (which carries the same status we just loaded) does not
         // trigger a redundant /track refetch.
@@ -702,6 +720,20 @@ export default function TrackingScreen() {
     // when the route id changes, not when the store updates afterwards.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id, setActiveBooking]);
+
+  // While an SOS is live, re-read the booking now and then so an alert closed
+  // elsewhere (staff, or a missed "resolved" notification) doesn't leave the
+  // card claiming "SOS active". Rare state, so a plain 30s tail is fine.
+  useSmartPolling(
+    () => {
+      if (!id) return;
+      return bookingService.getBooking(id).then((res) => {
+        const fresh = res.data?.data as Booking | undefined;
+        if (fresh) reconcileSosActive(id, fresh.sos_triggered);
+      });
+    },
+    { interval: 30_000, enabled: !!id && sosActive, runOnMount: false },
+  );
 
   // Poll chat unread counts every 30s while on the tracking screen so the
   // chat badge stays fresh without a websocket. Refresh once on mount too.
@@ -1345,21 +1377,13 @@ export default function TrackingScreen() {
       // so a dead-zone press is no longer lost. It never throws.
       const result = await raiseSos(id, 'customer');
       if (result.status === 'sent') {
-        // The backend SMS job is currently a no-op, so we only claim contacts
-        // were notified when the alert response actually lists them. Anything
-        // else falls back to the honest support-only messaging below.
-        const contacts = result.contacts;
-        setSosContactsNotified(contacts);
-        setSosTriggeredAt(Date.now());
+        // Who it reached is the SERVER's sentence (or, from an older server,
+        // only what it confirmed) — never an assumption. The card renders from
+        // the record raiseSos wrote.
         setSosNow(Date.now());
-        setSosActive(true);
         setShowSOSModal(false);
         haptics.warning();
-        toast.success(
-          contacts.length > 0
-            ? `SOS sent to ErrandGuy support and ${contacts.length} contact${contacts.length === 1 ? '' : 's'}`
-            : 'SOS sent to ErrandGuy support',
-        );
+        toast.success(`SOS sent. ${sosAlertedText(result)}`);
         return;
       }
       if (result.status === 'queued') {
@@ -1398,9 +1422,7 @@ export default function TrackingScreen() {
     const { hadUnsentIntent } = standDownSos(id);
     try {
       await bookingService.deactivateSOS(id);
-      setSosActive(false);
-      setSosTriggeredAt(null);
-      setSosContactsNotified([]);
+      clearSosActive(id);
       setShowSosPending(false);
       haptics.success();
       toast.success('Alert cancelled — glad you’re safe');
@@ -1409,9 +1431,7 @@ export default function TrackingScreen() {
         // Nothing had reached the server, and the intent is now gone, so there
         // is genuinely nothing left to stand down — even though the DELETE
         // (also offline) failed. Don't invite a retry that isn't needed.
-        setSosActive(false);
-        setSosTriggeredAt(null);
-        setSosContactsNotified([]);
+        clearSosActive(id);
         setShowSosPending(false);
         haptics.success();
         toast.success('Alert cancelled — it was never sent');
@@ -1427,22 +1447,28 @@ export default function TrackingScreen() {
     }
   }, [id, deactivatingSOS]);
 
-  // Report-a-problem deep link. Pre-seeds the support composer with this
-  // booking (category + booking_number). The composer doesn't consume these
-  // params yet (flagged in the report) — until it does the user lands on the
-  // support inbox and taps "New ticket". Passing the params now is harmless
-  // and makes the deep link light up the moment support reads them.
+  // Report-a-problem: opens a NEW ticket already linked to this errand
+  // (booking_id) with the category picked — the support screen opens its
+  // composer straight away instead of landing on the inbox.
   const handleReportProblem = useCallback(
     (category: 'booking' | 'safety') => {
       if (!booking) return;
       haptics.selection();
       router.push({
         pathname: '/(customer)/support',
-        params: { category, booking_number: booking.booking_number },
+        params: {
+          compose: '1',
+          category,
+          booking_id: booking.id,
+          booking_number: booking.booking_number,
+        },
       });
     },
     [booking, router],
   );
+
+  // "Report this person" — the runner on this errand, to ErrandGuy staff.
+  const [showReportUser, setShowReportUser] = useState(false);
 
   const handleCall = useCallback(() => {
     const phone = booking?.runner?.phone ?? null;
@@ -1847,23 +1873,15 @@ export default function TrackingScreen() {
   // promise contacts we can't confirm — the modal then leads with the honest
   // "no trusted contacts yet" copy and offers the add-a-contact link.
   const hasTrustedContacts = (trustedCount ?? 0) > 0;
-  // Elapsed since trigger, mm ss / ss. tabular-nums on the readout keeps it
-  // from twitching as the digits change.
+  // Elapsed since the server acknowledged it, mm ss / ss. tabular-nums on the
+  // readout keeps it from twitching as the digits change.
   const sosElapsedLabel = (() => {
-    if (!sosTriggeredAt) return null;
-    const secs = Math.max(0, Math.floor((sosNow - sosTriggeredAt) / 1000));
+    if (!sosActive || !sosRecord) return null;
+    const secs = Math.max(0, Math.floor((sosNow - sosRecord.acknowledgedAt) / 1000));
     const m = Math.floor(secs / 60);
     const s = secs % 60;
     return m > 0 ? `${m}m ${s}s` : `${s}s`;
   })();
-  // Who the alert actually reached. Only names contacts when the server
-  // confirmed them (contacts_notified); support is always in the loop.
-  const sosAlertedLabel =
-    sosContactsNotified.length > 0
-      ? `ErrandGuy support and ${sosContactsNotified.length} trusted contact${
-          sosContactsNotified.length === 1 ? '' : 's'
-        }`
-      : 'ErrandGuy support';
 
   // Receipt tone — glyph + wash per terminal outcome. Shape (Check / X /
   // SearchX) distinguishes the outcomes, not color alone.
@@ -1880,7 +1898,11 @@ export default function TrackingScreen() {
 
   // ── Runner card ─────────────────────────────────
   // Clean top row (large avatar + name/rating, verified) over a hairline
-  // divider, then a labelled action row of icon-chip buttons.
+  // divider, then a labelled action row of icon-chip buttons. The badge is
+  // earned (an approved runner only) and the vehicle + plate line is what the
+  // customer checks at the door.
+  const runnerVerified = isRunnerVerified(booking.runner);
+  const runnerVehicle = runnerVehicleLine(booking.runner);
   const runnerCard = booking.runner_id ? (
     <View className="bg-surface rounded-3xl p-4 mb-3" style={Elevation.sm}>
       <View className="flex-row items-center">
@@ -1888,7 +1910,7 @@ export default function TrackingScreen() {
           size="lg"
           uri={booking.runner?.avatar_url ?? undefined}
           name={booking.runner?.full_name}
-          isVerified
+          isVerified={runnerVerified}
         />
         <View className="flex-1 ml-3.5">
           <Text
@@ -1930,6 +1952,16 @@ export default function TrackingScreen() {
               </View>
             );
           })()}
+          {runnerVehicle ? (
+            <Text
+              className="text-[12px] font-inter-medium text-textSecondary mt-1"
+              numberOfLines={1}
+              accessibilityLabel={`Vehicle: ${runnerVehicle}`}
+              maxFontSizeMultiplier={1.3}
+            >
+              {runnerVehicle}
+            </Text>
+          ) : null}
         </View>
         {/* Phase chip is live-only — "In transit" on a finished receipt lies. */}
         {!isTerminalUi && (
@@ -2413,19 +2445,39 @@ export default function TrackingScreen() {
   // booking issue. Deliberately understated (textSecondary, no card) so it
   // never competes with the primary flow.
   const reportProblemLink = (
-    <Pressable
-      onPress={() => handleReportProblem(sosActive ? 'safety' : 'booking')}
-      accessibilityRole="button"
-      accessibilityLabel="Report a problem with this errand"
-      hitSlop={{ top: 12, bottom: 12, left: 8, right: 8 }}
-      className="flex-row items-center justify-center mt-4 mb-1"
-      style={({ pressed }) => pressFx(pressed)}
-    >
-      <Flag size={13} color={LightColors.textTertiary} strokeWidth={2} />
-      <Text className="ml-1.5 text-[12px] font-montserrat-semi text-textSecondary">
-        Report a problem
-      </Text>
-    </Pressable>
+    <View className="flex-row flex-wrap items-center justify-center mt-4 mb-1" style={{ columnGap: 20, rowGap: 8 }}>
+      <Pressable
+        onPress={() => handleReportProblem(sosActive ? 'safety' : 'booking')}
+        accessibilityRole="button"
+        accessibilityLabel="Report a problem with this errand"
+        hitSlop={{ top: 12, bottom: 12, left: 8, right: 8 }}
+        className="flex-row items-center"
+        style={({ pressed }) => pressFx(pressed)}
+      >
+        <Flag size={13} color={LightColors.textTertiary} strokeWidth={2} />
+        <Text className="ml-1.5 text-[12px] font-montserrat-semi text-textSecondary">
+          Report a problem
+        </Text>
+      </Pressable>
+      {booking.runner_id ? (
+        <Pressable
+          onPress={() => {
+            haptics.selection();
+            setShowReportUser(true);
+          }}
+          accessibilityRole="button"
+          accessibilityLabel="Report this person — your runner"
+          hitSlop={{ top: 12, bottom: 12, left: 8, right: 8 }}
+          className="flex-row items-center"
+          style={({ pressed }) => pressFx(pressed)}
+        >
+          <UserX size={13} color={LightColors.textTertiary} strokeWidth={2} />
+          <Text className="ml-1.5 text-[12px] font-montserrat-semi text-textSecondary">
+            Report this person
+          </Text>
+        </Pressable>
+      ) : null}
+    </View>
   );
 
   return (
@@ -3018,7 +3070,7 @@ export default function TrackingScreen() {
                         size="md"
                         uri={booking.runner?.avatar_url ?? undefined}
                         name={booking.runner?.full_name}
-                        isVerified
+                        isVerified={runnerVerified}
                       />
                       <Text
                         className="text-[12px] font-montserrat-semi text-textSecondary mt-0.5"
@@ -3063,7 +3115,7 @@ export default function TrackingScreen() {
           // (post-dropoff safety window) and only drops on
           // completed/cancelled/no_runner — isLiveBooking is exactly that set.
           // Terminal receipts with nothing to show render no footer at all.
-          (!sosActive && isLiveBooking) || sosActive || !!queuedSos || canCancel ? (
+          isLiveBooking || sosActive || sosResolved || !!queuedSos || canCancel ? (
             <View style={{ gap: 8 }}>
               {/* The one thing an unpaid GCash/Maya booking is waiting on —
                   reopens the same checkout, so it can never charge twice. */}
@@ -3118,87 +3170,26 @@ export default function TrackingScreen() {
                   </View>
                 </Pressable>
               )}
-              {sosActive && (
-                <View className="bg-dangerSoft border border-danger rounded-2xl p-4">
-                  <View className="flex-row items-center mb-1">
-                    <Shield size={18} color={LightColors.dangerDark} strokeWidth={2.4} />
-                    <Text className="ml-2 text-[15px] font-montserrat-bold text-dangerDark">
-                      SOS active
-                    </Text>
-                    {sosElapsedLabel ? (
-                      <Text
-                        className="ml-auto text-[12px] font-montserrat-semi text-dangerDark"
-                        style={{ fontVariant: ['tabular-nums'] }}
-                        maxFontSizeMultiplier={1.3}
-                      >
-                        {sosElapsedLabel}
-                      </Text>
-                    ) : null}
-                  </View>
-                  <Text
-                    className="text-[12px] font-montserrat text-dangerDark mb-3"
-                    style={{ lineHeight: 17 }}
-                    maxFontSizeMultiplier={1.3}
-                  >
-                    Alerted {sosAlertedLabel}. Stay safe — only stand down below
-                    once you&apos;re out of danger.
-                  </Text>
-                  {/* Your own people, one tap away. ErrandGuy does NOT contact
-                      them for you (no SMS provider is wired), and the copy says
-                      so rather than letting the reassuring "SOS active" header
-                      imply it — a promise nobody keeps is the worst thing this
-                      screen can make. Tapping places a call the USER makes,
-                      which is also the one channel that survives a dead data
-                      connection. Numbers come from the on-device cache, so this
-                      never blocks on a fetch mid-emergency. */}
-                  {trustedContacts && trustedContacts.length > 0 ? (
-                    <View className="mb-3">
-                      <Text
-                        className="text-[12px] font-montserrat-semi text-dangerDark mb-1.5"
-                        maxFontSizeMultiplier={1.3}
-                      >
-                        We don&apos;t contact these people for you — tap to call:
-                      </Text>
-                      {trustedContacts.map((c, i) => (
-                        <Pressable
-                          key={c.id ?? `${c.phone}-${i}`}
-                          accessibilityRole="button"
-                          accessibilityLabel={`Call ${c.name}`}
-                          onPress={() => {
-                            haptics.warning();
-                            Linking.openURL(`tel:${c.phone}`).catch(() =>
-                              toast.error('Could not start call'),
-                            );
-                          }}
-                          className="flex-row items-center rounded-xl border border-danger bg-white px-3 py-2.5 mb-1.5"
-                          style={({ pressed }) => ({ opacity: pressed ? 0.85 : 1 })}
-                        >
-                          <Phone size={15} color={LightColors.dangerDark} strokeWidth={2.4} />
-                          <Text
-                            className="flex-1 ml-2 text-[13px] font-montserrat-semi text-dangerDark"
-                            numberOfLines={1}
-                            maxFontSizeMultiplier={1.3}
-                          >
-                            {c.name}
-                          </Text>
-                          <Text
-                            className="text-[12px] font-montserrat text-dangerDark"
-                            maxFontSizeMultiplier={1.3}
-                          >
-                            {c.phone}
-                          </Text>
-                        </Pressable>
-                      ))}
-                    </View>
-                  ) : null}
-                  <SlideToConfirm
-                    key={`sos-standdown-${standDownResetKey}`}
-                    label="I’m safe — cancel alert"
-                    onComplete={handleStandDown}
-                    loading={deactivatingSOS}
-                    color={LightColors.dangerDark}
-                  />
-                </View>
+              {sosActive && sosRecord && (
+                <SosActiveCard
+                  record={sosRecord}
+                  elapsedLabel={sosElapsedLabel}
+                  contacts={trustedContacts ?? []}
+                  onStandDown={handleStandDown}
+                  standingDown={deactivatingSOS}
+                  standDownResetKey={standDownResetKey}
+                />
+              )}
+              {/* Closed by someone else (staff, or no longer open on the
+                  server). Said plainly, with when — and the SOS button above
+                  stays available for a new alert. */}
+              {sosResolved && sosRecord && (
+                <SosResolvedNotice
+                  record={sosRecord}
+                  onDismiss={() => {
+                    if (id) clearSosActive(id);
+                  }}
+                />
               )}
               {canCancel && (
                 <Button
@@ -3439,14 +3430,14 @@ export default function TrackingScreen() {
                 style={{ lineHeight: 21 }}
                 maxFontSizeMultiplier={1.4}
               >
-                {/* Says only what actually happens. ErrandGuy support is alerted
-                    with the live location; trusted contacts are NOT messaged by
-                    us (no SMS provider is wired) — the next screen puts them one
-                    tap away instead. Do not restore the old "and your trusted
-                    contacts" wording without real delivery behind it. */}
+                {/* Says only what is certain before anything is sent: support
+                    gets the alert and, when the phone has a fix, where it is
+                    right now. Whether trusted contacts are texted is the
+                    SERVER's call (only when SMS is set up) and the card says
+                    so after the fact, quoting it — never promised here. */}
                 {hasTrustedContacts
-                  ? 'This alerts ErrandGuy support with your live location, and puts your trusted contacts one tap away to call. Continue?'
-                  : 'This alerts ErrandGuy support with your live location. You have no trusted contacts saved to call.'}
+                  ? 'This alerts ErrandGuy support and sends your phone’s current location if it’s available, and puts your trusted contacts one tap away to call. In immediate danger, call 911.'
+                  : 'This alerts ErrandGuy support and sends your phone’s current location if it’s available. In immediate danger, call 911. You have no trusted contacts saved to call.'}
               </Text>
               {!hasTrustedContacts && (
                 <Pressable
@@ -3511,6 +3502,22 @@ export default function TrackingScreen() {
         }}
         onClose={() => setShowSosPending(false)}
       />
+
+      {booking.runner_id ? (
+        <ReportUserSheet
+          visible={showReportUser}
+          onClose={() => setShowReportUser(false)}
+          bookingId={booking.id}
+          bookingNumber={booking.booking_number}
+          reportedUserId={booking.runner_id}
+          reportedName={booking.runner?.full_name?.split(' ')[0] ?? null}
+          counterpart="runner"
+          onSubmitted={(ticketId) => {
+            setShowReportUser(false);
+            if (ticketId) router.push(`/(customer)/support/${ticketId}`);
+          }}
+        />
+      ) : null}
 
       {/* Full-size proof-photo preview (bearer-aware; handles gated media). */}
       <ImageLightbox

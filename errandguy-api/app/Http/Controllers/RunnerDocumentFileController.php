@@ -3,6 +3,7 @@
 namespace App\Http\Controllers;
 
 use App\Models\RunnerDocument;
+use App\Models\User;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Storage;
 
@@ -14,18 +15,28 @@ use Illuminate\Support\Facades\Storage;
 class RunnerDocumentFileController extends Controller
 {
     /**
-     * Stream to an authenticated ADMIN (Filament session guard). Used by the
-     * admin panel's document viewer, whose <img>/link loads carry the admin
-     * session cookie.
+     * GET /internal/runner-documents/{document}/file — the one URL both sides
+     * load a KYC document from:
+     *
+     *   - an ADMIN through the panel's admin session cookie (moderation roles
+     *     only — super_admin/admin/ops; finance/support have no verification
+     *     duty and must not see runners' government IDs / selfies);
+     *   - the RUNNER who uploaded it, with their app login (sanctum bearer).
+     *     The app attaches its bearer token to /internal/runner-documents/
+     *     image loads (and only those), which is why RunnerDocumentResource
+     *     hands out this URL as download_url.
+     *
+     * This is the AUTHORITATIVE gate: the Filament Documents tab and
+     * relation-manager visibility are cosmetic; this route serves the bytes.
      */
     public function adminShow(RunnerDocument $document)
     {
-        // Only moderation roles (super_admin/admin/ops) may view KYC documents —
-        // finance/support have no verification duty and must not see runners'
-        // government IDs / selfies. This is the AUTHORITATIVE gate: the Filament
-        // Documents tab + relation-manager visibility are cosmetic; this stream
-        // route is what actually serves the file bytes, reachable by direct URL.
-        abort_unless(auth('admin')->user()?->canModerate() ?? false, 403);
+        $isModerator = auth('admin')->user()?->canModerate() ?? false;
+
+        if (! $isModerator) {
+            $user = auth('sanctum')->user();
+            abort_unless($user instanceof User && $this->owns($user, $document), 403);
+        }
 
         return $this->stream($document);
     }
@@ -36,11 +47,18 @@ class RunnerDocumentFileController extends Controller
      */
     public function ownerShow(Request $request, RunnerDocument $document)
     {
-        $profile = $request->user()?->runnerProfile;
+        $user = $request->user();
 
-        abort_unless($profile !== null && $document->runner_id === $profile->id, 403);
+        abort_unless($user instanceof User && $this->owns($user, $document), 403);
 
         return $this->stream($document);
+    }
+
+    private function owns(User $user, RunnerDocument $document): bool
+    {
+        $profile = $user->runnerProfile;
+
+        return $profile !== null && $document->runner_id === $profile->id;
     }
 
     private function stream(RunnerDocument $document)

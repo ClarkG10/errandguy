@@ -55,12 +55,18 @@ export const supportService = {
     });
   },
 
-  /** POST /support/tickets — open a ticket + its first message. */
+  /**
+   * POST /support/tickets — open a ticket + its first message. `booking_id`
+   * links the errand it is about; category 'report_user' with
+   * `reported_user_id` reports the other person on that errand (a server
+   * that predates the field files it against the errand alone).
+   */
   createTicket(data: {
     subject: string;
     category: string;
     message: string;
     booking_id?: string;
+    reported_user_id?: string;
   }) {
     const p = api.post<{ data: SupportTicket; message: string }>(
       '/support/tickets',

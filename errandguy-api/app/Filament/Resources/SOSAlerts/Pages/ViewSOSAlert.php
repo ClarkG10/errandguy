@@ -22,6 +22,7 @@ class ViewSOSAlert extends ViewRecord
                 ->icon(Heroicon::OutlinedShieldCheck)
                 ->color('success')
                 ->requiresConfirmation()
+                ->modalDescription('Closes this alert and tells the person who raised it by push.')
                 ->visible(fn (): bool => $this->getRecord()->status === 'active'
                     && (auth('admin')->user()?->canHandleSupport() ?? false))
                 ->schema([
@@ -33,25 +34,16 @@ class ViewSOSAlert extends ViewRecord
                     $record = $this->getRecord();
 
                     try {
-                        // Prefer the service so the booking flag flips and the
-                        // runner gets the "SOS resolved" broadcast. When the
-                        // alert has no booking, resolve the alert directly.
-                        if (filled($record->booking_id)) {
-                            app(SOSService::class)->deactivateSOS($record->booking_id);
-
-                            if (! empty($data['note'])) {
-                                $record->refresh();
-                                $record->update(['resolution_note' => $data['note']]);
-                            }
-                        } else {
-                            $record->update([
-                                'status' => 'resolved',
-                                'resolved_at' => now(),
-                                'resolution_note' => $data['note'] ?? null,
-                            ]);
-                        }
+                        $resolved = app(SOSService::class)
+                            ->resolveByStaff($record, auth('admin')->id(), $data['note'] ?? null);
 
                         $record->refresh();
+
+                        if (! $resolved) {
+                            AdminNotify::warning('This SOS alert was already closed');
+
+                            return;
+                        }
 
                         AdminNotify::success(
                             'SOS alert resolved',
@@ -59,6 +51,7 @@ class ViewSOSAlert extends ViewRecord
                             context: ['Booking' => $record->booking?->booking_number],
                             audit: 'sos.resolved',
                             properties: ['note' => $data['note'] ?? null],
+                            note: 'The person who raised it has been told.',
                         );
                     } catch (\Throwable $e) {
                         AdminNotify::error('Could not resolve SOS alert', $e, $record);

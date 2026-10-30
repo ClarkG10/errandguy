@@ -16,11 +16,6 @@ class SystemConfigSeeder extends Seeder
                 'description' => 'Platform fee percentage taken from each booking',
             ],
             [
-                'key' => 'runner_payout_percent',
-                'value' => '85',
-                'description' => 'Percentage of booking amount paid to runner',
-            ],
-            [
                 'key' => 'auto_cancel_timeout_minutes',
                 'value' => '5',
                 'description' => 'Minutes before unaccepted booking is auto-cancelled',
@@ -36,29 +31,19 @@ class SystemConfigSeeder extends Seeder
                 'description' => 'Seconds a matched runner has to accept before the booking is re-matched to someone else',
             ],
             [
-                'key' => 'sos_link_expiry_minutes',
-                'value' => '60',
-                'description' => 'Minutes before SOS live tracking link expires',
-            ],
-            [
-                'key' => 'location_update_interval_seconds',
-                'value' => '5',
-                'description' => 'Seconds between runner location updates',
-            ],
-            [
-                'key' => 'max_saved_addresses',
-                'value' => '10',
-                'description' => 'Maximum number of saved addresses per user',
-            ],
-            [
-                'key' => 'max_trusted_contacts',
-                'value' => '5',
-                'description' => 'Maximum number of trusted contacts per user',
-            ],
-            [
                 'key' => 'shopping_budget_max',
                 'value' => '3000',
                 'description' => 'Most a runner can pay for a customer’s “Buy for me” items, in pesos. The customer repays it in cash at the door.',
+            ],
+            [
+                'key' => 'ops_alert_emails',
+                'value' => '',
+                'description' => 'Email addresses (separate with commas) that get an email the moment someone presses SOS, and the ops digest. Leave empty to send none.',
+            ],
+            [
+                'key' => 'ops_alert_phone',
+                'value' => '',
+                'description' => 'Mobile numbers (separate with commas, e.g. 09171234567) that get a text the moment someone presses SOS. Needs the SMS service to be set up. Leave empty to send none.',
             ],
             [
                 'key' => 'enabled_payment_methods',

@@ -16,6 +16,8 @@ import {
   FileCheck2,
   Archive,
   Trash2,
+  Headphones,
+  Megaphone,
 } from 'lucide-react-native';
 import type { LucideIcon } from 'lucide-react-native';
 import * as Haptics from 'expo-haptics';
@@ -39,6 +41,7 @@ import { runOptimistic } from '../../utils/optimistic';
 import { queueable } from '../../services/mutationQueue';
 import { useQuery } from '../../hooks/useQuery';
 import { useReducedMotion } from '../../hooks/useReducedMotion';
+import { notificationRoute } from '../../utils/notificationRoute';
 import { CacheTTL } from '../../services/cache.service';
 import { formatRelativeTime } from '../../utils/formatDate';
 import { storage } from '../../utils/storage';
@@ -113,6 +116,26 @@ const TYPE_META: Record<
     textColor: LightColors.primary,
     chipClass: 'bg-surfaceMuted',
   },
+  // Support desk replies / status changes — open the ticket thread.
+  support_reply: {
+    icon: Headphones,
+    color: LightColors.primary,
+    textColor: LightColors.primary,
+    chipClass: 'bg-surfaceMuted',
+  },
+  support_status: {
+    icon: Headphones,
+    color: LightColors.primary,
+    textColor: LightColors.primary,
+    chipClass: 'bg-surfaceMuted',
+  },
+  // Staff announcement — informational, nowhere further to go.
+  broadcast: {
+    icon: Megaphone,
+    color: LightColors.primary,
+    textColor: LightColors.primary,
+    chipClass: 'bg-surfaceMuted',
+  },
 };
 
 // Short, capitalised label per type — reads as a tiny eyebrow on each
@@ -127,6 +150,9 @@ const TYPE_LABELS: Record<NotificationType, string> = {
   system: 'System',
   document_update: 'Document',
   onboarding_reminder: 'Sign-up',
+  support_reply: 'Support',
+  support_status: 'Support',
+  broadcast: 'ErrandGuy',
 };
 
 // One-time swipe-teaching flag (peek animation, or a caption above the
@@ -578,27 +604,11 @@ export default function RunnerNotificationsScreen() {
           // ignore
         }
       }
-      const data = n.data ?? {};
-      switch (n.type) {
-        case 'booking_update':
-          if (data.booking_id) {
-            router.push(`/(runner)/errand/${data.booking_id as string}` as any);
-          }
-          break;
-        case 'payment':
-          router.push('/(runner)/(tabs)/earnings');
-          break;
-        case 'chat':
-          if (data.booking_id) {
-            router.push(`/(runner)/chat/${data.booking_id as string}` as any);
-          }
-          break;
-        case 'document_update':
-          router.push('/(runner)/settings/documents' as any);
-          break;
-        default:
-          break;
-      }
+      // Same destinations as the device push (utils/notificationRoute) —
+      // support replies open their thread, an SOS opens the errand. Rows with
+      // nowhere further to go (a staff announcement) stay put.
+      const target = notificationRoute(n, 'runner', 'inbox');
+      if (target) router.push(target as never);
     },
     [router, markRead, closeOpenRow],
   );

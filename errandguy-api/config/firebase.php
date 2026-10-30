@@ -12,8 +12,8 @@ declare(strict_types=1);
 | app-level config file the vendor default is `env('FIREBASE_HTTP_CLIENT_TIMEOUT')`,
 | and that env var is unset, so FirebaseProjectManager applies NO timeout and the
 | underlying Guzzle client waits indefinitely. A slow/unreachable googleapis.com
-| then hangs whatever triggered the push — the Filament PushBroadcast web request
-| (sendToTopic) or a queue worker running a notification listener (sendFCMPush).
+| then hangs whatever triggered the push — a queue worker running a
+| notification listener (sendFCMPush).
 | The sibling Expo path (NotificationService::sendExpoPush) is already bounded;
 | FCM was the one outbound call left unbounded. (audit v4 reliability)
 |

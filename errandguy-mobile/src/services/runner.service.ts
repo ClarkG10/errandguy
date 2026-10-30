@@ -1,6 +1,7 @@
 import api from './api';
 import { invalidateQuery } from '../hooks/useQuery';
 import type { Coordinate, PayoutChannel } from '../types';
+import { sosBody, type SosCoords } from '../utils/sosLocation';
 
 const invalidateRunnerProfile = () => invalidateQuery(['runner', 'profile']);
 const invalidateRunnerErrands = () => {
@@ -109,11 +110,7 @@ export const runnerService = {
 
   acceptErrand(id: string) {
     const p = api.post(`/runner/errand/${id}/accept`);
-    p.then(() => {
-      invalidateRunnerErrands();
-      // Refresh the dashboard acceptance-rate stat after accept/decline.
-      invalidateRunnerProfile();
-    }).catch(() => {});
+    p.then(invalidateRunnerErrands).catch(() => {});
     return p;
   },
 
@@ -399,9 +396,10 @@ export const runnerService = {
   },
 
   /** Runner-side panic button. See bookingService.triggerSOS for why the
-   *  timeout is overridable and why replay is safe. Go through `raiseSos()`. */
-  triggerSOS(bookingId: string, opts?: { timeoutMs?: number }) {
-    return api.post(`/runner/errand/${bookingId}/sos`, undefined, {
+   *  timeout is overridable, why replay is safe and what `coords` carries.
+   *  Go through `raiseSos()`. */
+  triggerSOS(bookingId: string, opts?: { timeoutMs?: number; coords?: SosCoords | null }) {
+    return api.post(`/runner/errand/${bookingId}/sos`, sosBody(opts?.coords), {
       ...(opts?.timeoutMs ? { timeout: opts.timeoutMs } : {}),
     });
   },

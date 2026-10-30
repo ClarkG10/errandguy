@@ -63,7 +63,7 @@ class LiveAlertsWidget extends TableWidget
                 IconColumn::make('read_at')->label('Seen')->boolean(),
             ])
             ->recordUrl(fn (AdminAlert $record): ?string => match ($record->type) {
-                'sos' => $record->subject_id ? SOSAlertResource::getUrl('view', ['record' => $record->subject_id]) : null,
+                'sos', 'sos_delivery' => $record->subject_id ? SOSAlertResource::getUrl('view', ['record' => $record->subject_id]) : null,
                 // Every booking-subject alert deep-links to the booking — the
                 // operator's whole job on these rows is to open it. The stall
                 // monitor passes the booking id.

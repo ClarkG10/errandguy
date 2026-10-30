@@ -16,7 +16,7 @@ use Tests\TestCase;
  *
  * The table defaulted to created_at DESC, so the runner who had been waiting
  * longest for their own money sat at the very bottom and was served last — the
- * same defect already fixed on the dispute queues. Settled rows keep
+ * same defect already fixed on the KYC and support queues. Settled rows keep
  * newest-first underneath, because for those this page is a ledger being
  * browsed rather than a queue being worked.
  */

@@ -9,13 +9,13 @@ use ReflectionClass;
 /**
  * Safety arch-guard (mirrors the WalletService money-safety guard, QA-1).
  *
- * SOSService's alert-lifecycle methods (triggerSOS / deactivateSOS) must take a
+ * SOSService's alert-lifecycle methods (triggerSOS and every close) must take a
  * booking-row lock (lockForUpdate) INSIDE a DB::transaction. Two concurrent panic
  * presses for the same booking — the customer AND the runner, who are different
  * users so the per-user throttle does NOT serialize them — would otherwise each
- * read "no active alert" and each insert one, leaving a duplicate active alert
- * that deactivateSOS then orphans (active in getActiveSOS() while the booking's
- * sos_triggered flag is cleared).
+ * read "no active alert" and each insert one, leaving a duplicate active alert,
+ * or a close could clear the booking's sos_triggered flag while an alert is
+ * still open.
  *
  * A single-connection phpunit suite cannot reproduce the true two-transaction
  * race (a real two-connection harness is a heavier, MySQL-only follow-up), so
@@ -52,19 +52,26 @@ class SosServiceLockingGuardTest extends TestCase
         );
     }
 
-    public function test_deactivate_sos_locks_the_booking_in_a_transaction(): void
+    /**
+     * Every method that closes alerts and re-derives booking.sos_triggered
+     * must lock the booking row inside a transaction, so a concurrent trigger
+     * cannot interleave and leave the flag and the alerts inconsistent.
+     */
+    public function test_closing_an_sos_locks_the_booking_in_a_transaction(): void
     {
-        $body = $this->methodBody('deactivateSOS');
+        foreach (['cancelByRaiser', 'resolveByStaff', 'closeStale'] as $method) {
+            $body = $this->methodBody($method);
 
-        $this->assertStringContainsString(
-            'DB::transaction',
-            $body,
-            'SOSService::deactivateSOS must resolve active alerts + clear the flag inside a DB::transaction.',
-        );
-        $this->assertStringContainsString(
-            'lockForUpdate',
-            $body,
-            'SOSService::deactivateSOS must lockForUpdate the booking row so a concurrent trigger cannot interleave and leave the flag and the alerts inconsistent.',
-        );
+            $this->assertStringContainsString(
+                'DB::transaction',
+                $body,
+                "SOSService::{$method} must close alerts + re-derive the flag inside a DB::transaction.",
+            );
+            $this->assertStringContainsString(
+                'lockForUpdate',
+                $body,
+                "SOSService::{$method} must lockForUpdate the booking row so a concurrent trigger cannot interleave.",
+            );
+        }
     }
 }

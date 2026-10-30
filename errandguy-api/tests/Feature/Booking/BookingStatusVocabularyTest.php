@@ -104,7 +104,7 @@ class BookingStatusVocabularyTest extends TestCase
             // Payment/wallet/document/ticket statuses share words like
             // 'completed' and 'pending' with the booking column, so files whose
             // subject is a different status machine would produce pure noise.
-            if (preg_match('#(Payment|Wallet|Payout|Dispute|Support|Kyc|Document|Enums)#i', $rel)) {
+            if (preg_match('#(Payment|Wallet|Payout|Support|Kyc|Document|Enums)#i', $rel)) {
                 continue;
             }
 

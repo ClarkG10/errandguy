@@ -13,6 +13,15 @@ class ListSOSAlerts extends ListRecords
 {
     protected static string $resource = SOSAlertResource::class;
 
+    /**
+     * Open alerts first. (This used to be a default status filter, which
+     * stacked on the tabs and left Resolved and Cancelled always empty.)
+     */
+    public function getDefaultActiveTab(): string|int|null
+    {
+        return 'active';
+    }
+
     public function getTabs(): array
     {
         $c = ListTabs::counts('sos', SOSAlert::class, 'status');
@@ -25,6 +34,9 @@ class ListSOSAlerts extends ListRecords
             'resolved' => Tab::make('Resolved')->icon('heroicon-m-check-circle')->badgeColor('success')
                 ->badge(ListTabs::sum($c, 'resolved'))
                 ->modifyQueryUsing(fn (Builder $query): Builder => $query->where('status', 'resolved')),
+            'cancelled' => Tab::make('Cancelled by them')->icon('heroicon-m-x-circle')
+                ->badge(ListTabs::sum($c, 'cancelled'))
+                ->modifyQueryUsing(fn (Builder $query): Builder => $query->where('status', 'cancelled')),
         ];
     }
 }

@@ -53,7 +53,6 @@ class RunnerHomeAggregateTest extends TestCase
             'current_lat' => 14.60,
             'current_lng' => 120.98,
             'preferred_types' => [],
-            'acceptance_rate' => 95,
             'completion_rate' => 99,
             'total_errands' => 12,
             'approved_at' => now()->subMonth(),

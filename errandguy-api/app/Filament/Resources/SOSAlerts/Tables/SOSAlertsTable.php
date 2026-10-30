@@ -24,12 +24,17 @@ class SOSAlertsTable
                     ->label('Triggered')
                     ->dateTime()
                     ->sortable(),
-                TextColumn::make('customer.full_name')
+                TextColumn::make('triggeredBy.full_name')
+                    ->label('Raised by')
+                    ->description(fn (SOSAlert $record): ?string => $record->triggered_by_role)
                     ->searchable(),
+                TextColumn::make('customer.full_name')
+                    ->label('Customer')
+                    ->searchable()
+                    ->toggleable(),
                 TextColumn::make('runner.full_name')
-                    ->label('Runner'),
-                TextColumn::make('triggered_by_role')
-                    ->badge(),
+                    ->label('Runner')
+                    ->toggleable(),
                 TextColumn::make('booking.booking_number')
                     ->label('Booking')
                     ->toggleable(),
@@ -39,6 +44,10 @@ class SOSAlertsTable
                         'active' => 'danger',
                         'resolved' => 'success',
                         default => 'gray',
+                    })
+                    ->formatStateUsing(fn (string $state): string => match ($state) {
+                        'cancelled' => 'Cancelled by them',
+                        default => ucfirst($state),
                     }),
                 TextColumn::make('resolved_at')
                     ->dateTime()
@@ -49,12 +58,14 @@ class SOSAlertsTable
                     ->options([
                         'active' => 'Active',
                         'resolved' => 'Resolved',
-                    ])
-                    ->default('active'),
+                        'cancelled' => 'Cancelled by them',
+                    ]),
             ])
             ->headerActions([
                 ExportCsv::make('sos-alerts', [
                     'Booking' => fn (SOSAlert $r): ?string => $r->booking?->booking_number,
+                    'Raised by' => fn (SOSAlert $r): ?string => $r->triggeredBy?->full_name,
+                    'Role' => fn (SOSAlert $r): ?string => $r->triggered_by_role,
                     'Customer' => fn (SOSAlert $r): ?string => $r->customer?->full_name,
                     'Runner' => fn (SOSAlert $r): ?string => $r->runner?->full_name,
                     'Status' => fn (SOSAlert $r): ?string => $r->status,
@@ -78,11 +89,13 @@ class SOSAlertsTable
                     ])
                     ->action(function (array $data, $record): void {
                         try {
-                            app(\App\Services\SOSService::class)->deactivateSOS($record->booking_id);
+                            $resolved = app(\App\Services\SOSService::class)
+                                ->resolveByStaff($record, auth('admin')->id(), $data['note'] ?? null);
 
-                            if (! empty($data['note'])) {
-                                $record->refresh();
-                                $record->update(['resolution_note' => $data['note']]);
+                            if (! $resolved) {
+                                AdminNotify::warning('This SOS alert was already closed');
+
+                                return;
                             }
 
                             AdminNotify::success(
@@ -91,6 +104,7 @@ class SOSAlertsTable
                                 context: ['Booking' => $record->booking?->booking_number],
                                 audit: 'sos.resolved',
                                 properties: ['note' => $data['note'] ?? null],
+                                note: 'The person who raised it has been told.',
                             );
                         } catch (\Throwable $e) {
                             AdminNotify::error('Could not resolve SOS alert', $e, $record);

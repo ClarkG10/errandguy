@@ -129,6 +129,71 @@ class AccountErasureTest extends TestCase
         $this->assertSame(0, $deleted->tokens()->count());
     }
 
+    /**
+     * What the person wrote elsewhere is erased too — support messages, ticket
+     * subjects, review comments, SOS coordinates — while the rows (and the
+     * star ratings) stay for the other side and for staff. The other person's
+     * words are never touched.
+     */
+    public function test_account_deletion_erases_what_they_wrote_and_where_they_were(): void
+    {
+        $user = User::factory()->create(['role' => 'customer', 'status' => 'active', 'wallet_balance' => 0]);
+        $runner = User::factory()->create(['role' => 'runner', 'status' => 'active']);
+        $booking = $this->makeBooking(['customer_id' => $user->id, 'runner_id' => $runner->id]);
+
+        $ticket = \App\Models\SupportTicket::create([
+            'user_id' => $user->id, 'booking_id' => $booking->id, 'subject' => 'My address is 12 Secret St',
+            'category' => 'booking', 'status' => 'open', 'last_message_at' => now(),
+        ]);
+        $mine = \App\Models\SupportMessage::create([
+            'ticket_id' => $ticket->id, 'sender_id' => $user->id, 'sender_type' => 'user',
+            'content' => 'Call me on 09171234567', 'image_url' => 'https://example.test/x.jpg',
+        ]);
+        $agent = \App\Models\SupportMessage::create([
+            'ticket_id' => $ticket->id, 'sender_id' => null, 'sender_type' => 'agent', 'content' => 'We are on it.',
+        ]);
+
+        $written = \App\Models\Review::create([
+            'booking_id' => $booking->id, 'reviewer_id' => $user->id, 'reviewee_id' => $runner->id,
+            'rating' => 4, 'comment' => 'He was late, I live at 12 Secret St',
+        ]);
+        $received = \App\Models\Review::create([
+            'booking_id' => $booking->id, 'reviewer_id' => $runner->id, 'reviewee_id' => $user->id,
+            'rating' => 5, 'comment' => 'Lovely customer',
+        ]);
+
+        $alert = \App\Models\SOSAlert::create([
+            'booking_id' => $booking->id, 'customer_id' => $user->id, 'runner_id' => $runner->id,
+            'triggered_by' => $user->id, 'triggered_by_role' => 'customer', 'triggered_at' => now()->subDay(),
+            'customer_lat' => 14.55, 'customer_lng' => 121.02, 'runner_lat' => 14.56, 'runner_lng' => 121.03,
+            'trigger_lat' => 14.5501, 'trigger_lng' => 121.0201, 'trigger_accuracy_m' => 9, 'trigger_location_source' => 'device',
+            'live_link_token' => str_repeat('e', 64), 'live_link_expires_at' => now()->subHours(23), 'status' => 'resolved',
+        ]);
+
+        $this->actingAs($user)->deleteJson('/api/v1/user/account')->assertOk();
+
+        $mine->refresh();
+        $this->assertSame('[Deleted with the account]', $mine->content);
+        $this->assertNull($mine->image_url);
+        $this->assertSame('We are on it.', $agent->fresh()->content, 'staff replies stay');
+        $this->assertSame('[Deleted with the account]', $ticket->fresh()->subject);
+
+        $this->assertNull($written->fresh()->comment);
+        $this->assertSame(4, $written->fresh()->rating, 'the star rating stays');
+        $this->assertSame('Lovely customer', $received->fresh()->comment, 'the other person’s words stay');
+        $this->assertEqualsWithDelta(4.0, (float) $runner->fresh()->avg_rating, 0.001, 'no average moves');
+
+        $alert->refresh();
+        $this->assertNull($alert->trigger_lat);
+        $this->assertNull($alert->trigger_lng);
+        $this->assertNull($alert->trigger_accuracy_m);
+        $this->assertNull($alert->customer_lat);
+        $this->assertNull($alert->customer_lng);
+        $this->assertNull($alert->live_link_token);
+        $this->assertEqualsWithDelta(14.56, (float) $alert->runner_lat, 0.001, 'the runner’s position is not theirs to erase');
+        $this->assertSame('resolved', $alert->status, 'the safety record itself stays');
+    }
+
     public function test_account_deletion_removes_private_kyc_documents_from_the_kyc_disk(): void
     {
         // New KYC docs live on the private 'kyc' disk (file_path, no public

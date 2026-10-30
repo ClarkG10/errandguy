@@ -6,26 +6,45 @@ use App\Http\Controllers\Controller;
 use App\Models\Booking;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 
 class TripShareController extends Controller
 {
+    /**
+     * Share the trip. Sharing again while a link is live hands back THAT link
+     * (with its expiry pushed out) instead of minting a new one — replacing it
+     * silently broke the link already sent to family or friends.
+     */
     public function share(Request $request, string $id): JsonResponse
     {
-        $booking = Booking::where('customer_id', $request->user()->id)
-            ->where('status', '!=', 'completed')
-            ->where('status', '!=', 'cancelled')
-            ->findOrFail($id);
+        $customerId = $request->user()->id;
 
-        $token = Str::random(64);
+        // Locked so two taps at once can't each mint a different link.
+        $token = DB::transaction(function () use ($id, $customerId): string {
+            $booking = Booking::where('customer_id', $customerId)
+                ->where('status', '!=', 'completed')
+                ->where('status', '!=', 'cancelled')
+                ->lockForUpdate()
+                ->findOrFail($id);
 
-        $booking->update([
-            'trip_share_token' => $token,
-            'trip_share_active' => true,
-            // Privacy backstop: the link stops resolving after this TTL even if
-            // the errand is somehow still non-terminal. See config/safety.php.
-            'trip_share_expires_at' => now()->addHours((int) config('safety.trip_share_ttl_hours', 24)),
-        ]);
+            $live = $booking->trip_share_active
+                && filled($booking->trip_share_token)
+                && ($booking->trip_share_expires_at === null || $booking->trip_share_expires_at->isFuture());
+
+            $token = $live ? $booking->trip_share_token : Str::random(64);
+
+            $booking->update([
+                'trip_share_token' => $token,
+                'trip_share_active' => true,
+                // Privacy backstop: the link stops resolving after this TTL even
+                // if the errand is somehow still non-terminal. See
+                // config/safety.php.
+                'trip_share_expires_at' => now()->addHours((int) config('safety.trip_share_ttl_hours', 24)),
+            ]);
+
+            return $token;
+        });
 
         $link = config('app.url') . "/trip/{$token}";
 

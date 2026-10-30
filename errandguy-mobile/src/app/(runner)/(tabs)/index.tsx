@@ -175,9 +175,9 @@ function nextPeakLabel(
  *   • Status hero — combines the online toggle WITH today's earnings
  *     in a single tall card. Going online is the primary job-to-be-done
  *     here; the toggle dominates and the earnings figure rides under
- *     it as the secondary anchor. Lifetime stats (errands, rating,
- *     acceptance) sit as tiny captions below the divider, NOT as a
- *     separate icon-tile row.
+ *     it as the secondary anchor. Lifetime stats (errands, rating) sit
+ *     as tiny captions below the divider, NOT as a separate icon-tile
+ *     row.
  *   • Active errand — only when one exists, full-width.
  *   • Recent — at most 3 hairline rows with a "See all" inline link.
  *
@@ -498,7 +498,7 @@ export default function RunnerHomeScreen() {
     lastSeenMatchIdRef.current = fresh.id;
     useRunnerStore.getState().setIncomingRequest({
       booking: fresh,
-      // Server's real acceptance cutoff when it sent one; the old hardcoded
+      // Server's real accept-by deadline when it sent one; the old hardcoded
       // 30s only as a fallback.
       expiresAt: offerExpiresAt(deadline),
     });
@@ -1539,21 +1539,6 @@ export default function RunnerHomeScreen() {
                 style={{ letterSpacing: 1 }}
               >
                 Rating
-              </Text>
-            </View>
-            <View className="w-px bg-divider" />
-            <View className="flex-1 items-center">
-              <Text
-                className="text-[20px] font-inter-semi tabular-nums text-textPrimary"
-                style={{ letterSpacing: -0.3 }}
-              >
-                {Math.round(runnerProfile?.acceptance_rate ?? 0)}%
-              </Text>
-              <Text
-                className="text-[10px] font-montserrat uppercase text-textSecondary mt-1"
-                style={{ letterSpacing: 1 }}
-              >
-                Acceptance
               </Text>
             </View>
           </View>

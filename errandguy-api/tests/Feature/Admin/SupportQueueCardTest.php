@@ -15,7 +15,7 @@ use Tests\TestCase;
 /**
  * Support belongs on the dashboard.
  *
- * SOS, stuck errands, KYC, disputes and payouts all had a card in the action
+ * SOS, stuck errands, KYC and payouts all had a card in the action
  * queue. Support did not — so a customer waiting on a first reply was invisible
  * from the one screen an operator actually opens, and the only way to notice
  * was to remember to visit the tickets list. The "Waiting on us" tab already

@@ -15,7 +15,6 @@ class EarningsResource extends JsonResource
             'total_tips' => $this->resource['total_tips'] ?? 0,
             'total_errands' => $this->resource['total_errands'],
             'avg_per_errand' => $this->resource['avg_per_errand'],
-            'acceptance_rate' => $this->resource['acceptance_rate'],
             'completion_rate' => $this->resource['completion_rate'],
             'online_hours' => $this->resource['online_hours'] ?? null,
         ];

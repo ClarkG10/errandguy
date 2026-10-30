@@ -4,7 +4,6 @@ namespace Tests\Feature\Admin;
 
 use App\Models\AdminUser;
 use App\Models\Booking;
-use App\Models\DisputeTicket;
 use App\Models\ErrandType;
 use App\Models\User;
 use Illuminate\Foundation\Testing\RefreshDatabase;
@@ -13,9 +12,9 @@ use Tests\TestCase;
 
 /**
  * Admin queues gate real people: a stranded errand is a customer with no
- * runner, an open dispute is a customer waiting on a decision. Two frictions
- * fixed here — work queues sorted newest-first (so the longest-waiting person
- * sat on the last page) and re-running matching being a per-row modal.
+ * runner. Two frictions fixed here — work queues sorted newest-first (so the
+ * longest-waiting person sat on the last page) and re-running matching being a
+ * per-row modal.
  */
 class AdminQueueTriageTest extends TestCase
 {
@@ -65,42 +64,5 @@ class AdminQueueTriageTest extends TestCase
         $this->get('/admin/bookings')
             ->assertOk()
             ->assertSee('Re-run matching for selected');
-    }
-
-    public function test_open_disputes_are_ordered_oldest_first(): void
-    {
-        $booking = $this->seedBooking('completed', now()->subDays(5));
-        // The list renders the reporter's name, so distinguish the rows by who
-        // filed them rather than by description (not a column).
-        $waitingLongest = User::factory()->create([
-            'role' => 'customer', 'full_name' => 'Waiting Threedays',
-        ]);
-        $justArrived = User::factory()->create([
-            'role' => 'customer', 'full_name' => 'Just Cameinnow',
-        ]);
-
-        $oldest = DisputeTicket::create([
-            'booking_id' => $booking->id, 'reported_by' => $waitingLongest->id,
-            'category' => 'item_damaged', 'description' => 'Waiting three days', 'status' => 'open',
-        ]);
-        $oldest->forceFill(['created_at' => now()->subDays(3)])->save();
-
-        $newest = DisputeTicket::create([
-            'booking_id' => $booking->id, 'reported_by' => $justArrived->id,
-            'category' => 'item_damaged', 'description' => 'Just came in', 'status' => 'open',
-        ]);
-        $newest->forceFill(['created_at' => now()->subMinutes(5)])->save();
-
-        $html = $this->get('/admin/dispute-tickets?tab=open')->assertOk()->getContent();
-
-        $posOldest = strpos($html, 'Waiting Threedays');
-        $posNewest = strpos($html, 'Just Cameinnow');
-        $this->assertNotFalse($posOldest, 'the longest-waiting dispute should be on the page');
-        $this->assertNotFalse($posNewest);
-        $this->assertLessThan(
-            $posNewest,
-            $posOldest,
-            'the customer waiting longest must be at the top of the queue',
-        );
     }
 }

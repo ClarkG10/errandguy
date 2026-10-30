@@ -7,6 +7,7 @@ import { geocodingService } from '../services/geocoding.service';
 import { apiCache } from '../services/api';
 import { clearRecentRecipients } from './recentRecipients';
 import { clearMutationQueue } from '../services/mutationQueue';
+import { clearAllSosActive } from '../services/sosActive';
 
 /** Unsent support-ticket text. Written only by the support compose screen,
  *  which keeps the key local to itself — mirrored here because the draft is
@@ -50,6 +51,9 @@ const TRUSTED_CONTACTS_KEY = '@trusted_contacts_cache';
  *     here) user A's queued profile edit or new address would be replayed
  *     under user B's session — overwriting B's name, filing A's address in B's
  *     address book. clearMutationQueue() existed with no callers.
+ *   • acknowledged-SOS records (@sos_active_v1) — the previous account's
+ *     "SOS active" cards, keyed by errand; the next user must not inherit an
+ *     alarm (or an "I'm safe" control) for an errand that isn't theirs.
  *   • CacheService (persisted query cache) + apiCache (in-memory) + recent
  *     destinations — cached network responses / addresses of the prior user.
  */
@@ -69,6 +73,7 @@ export async function clearAccountScopedState(): Promise<void> {
     AsyncStorage.removeItem(SUPPORT_DRAFT_KEY),
     AsyncStorage.removeItem(TRUSTED_CONTACTS_KEY),
     clearMutationQueue(),
+    clearAllSosActive(),
   ]);
   apiCache.clear();
 }

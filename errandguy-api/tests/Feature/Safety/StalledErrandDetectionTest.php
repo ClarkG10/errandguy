@@ -16,8 +16,8 @@ use Tests\TestCase;
  *
  * Before it, a runner who went dark reached no human at all. These tests pin
  * that errandguy:detect-stalled-errands raises exactly one operator alert per
- * stalled booking, and stays quiet for fresh, SOS'd, not-yet-due-scheduled and
- * config-disabled cases.
+ * stalled booking (an open SOS included), and stays quiet for fresh,
+ * not-yet-due-scheduled and config-disabled cases.
  *
  * Everything here is notify-only by design: no test asserts a status change, a
  * cancellation or any money movement, because the command performs none.
@@ -108,14 +108,16 @@ class StalledErrandDetectionTest extends TestCase
         $this->assertSame(1, $this->stalledAlerts(), 'The cache flag must make the alert once-per-booking.');
     }
 
-    public function test_a_booking_with_a_live_sos_is_skipped(): void
+    public function test_an_open_sos_does_not_silence_the_stall_monitor(): void
     {
+        // An SOS nobody acts on is exactly when an errand also stops moving:
+        // staff need the stall signal too, not just the SOS.
         $booking = $this->makeErrand(['sos_triggered' => true]);
         $this->idleFor($booking, 90);
 
         $this->artisan('errandguy:detect-stalled-errands')->assertSuccessful();
 
-        $this->assertSame(0, $this->stalledAlerts(), 'An SOS already has its own critical alert — do not pile on.');
+        $this->assertSame(1, $this->stalledAlerts(), 'A stalled errand with an open SOS must still raise its stall alert.');
     }
 
     public function test_a_scheduled_errand_accepted_early_is_waiting_not_stalled(): void

@@ -86,6 +86,16 @@ class CheckProductionConfig extends Command
             $issues[] = ['level' => 'warning', 'message' => 'SENTRY_LARAVEL_DSN is empty — error monitoring is inert, so production crashes/500s are reported nowhere and no alert fires. Paste the project DSN to activate it (no code change needed).'];
         }
 
+        // SOS: with no SMS key nothing is texted (trusted contacts, staff), and
+        // with no ops_alert_emails no staff email goes out — an SOS then reaches
+        // only an admin who happens to have the panel open.
+        if (blank(config('services.semaphore.api_key'))) {
+            $issues[] = ['level' => 'warning', 'message' => 'SEMAPHORE_API_KEY is empty — an SOS texts nobody: not the person’s trusted contacts, not the ops_alert_phone numbers. Set the Semaphore API key to switch texts on.'];
+        }
+        if (\App\Support\OpsAlertRecipients::emails() === []) {
+            $issues[] = ['level' => 'warning', 'message' => 'No ops alert email is set — an SOS emails no one and the ops digest is off. Fill in the ops_alert_emails setting in the admin panel (System → System configs).'];
+        }
+
         // Realtime is CONFIGURED but not CREDENTIALED: broadcasting.default is
         // 'reverb' yet the app key/secret/id are unset, so every broadcast
         // publish 500s server-side and no client can authenticate — chat, live

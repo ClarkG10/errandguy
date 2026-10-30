@@ -2,137 +2,195 @@
 
 namespace App\Jobs;
 
-use App\Models\Booking;
+use App\Mail\SosStaffAlert;
+use App\Models\AdminAlert;
 use App\Models\SOSAlert;
 use App\Models\TrustedContact;
-use App\Services\NotificationService;
+use App\Services\Sms\SmsSender;
+use App\Support\OpsAlertRecipients;
+use App\Support\PhilippinePhone;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Mail;
 
 /**
- * Fan an SOS alert OUT to trusted contacts (SMS), the participants' realtime
- * channel (Reverb broadcast), and the admin safety topic (FCM) — off the
- * request thread.
+ * Gets a new SOS to people outside the app:
  *
- * The durable safety record — the SOSAlert row, the `sos_triggered` flag, and
- * `contacts_notified` — is written synchronously by SOSService::triggerSOS.
- * Only this outbound fan-out is deferred, so the panic button returns as soon
- * as the record is persisted instead of blocking on the Reverb broadcast + Firebase
- * round-trips (and, once wired, one SMS HTTP call per trusted contact — which
- * would make emergency-alert latency scale linearly with contact count). (P7)
+ *   1. a text with the live-location link to each of the raiser's trusted
+ *      contacts;
+ *   2. a text to the staff numbers in the ops_alert_phone setting;
+ *   3. an email to the staff addresses in the ops_alert_emails setting.
+ *
+ * SOSService dispatches this AFTER THE RESPONSE, in the same process: the
+ * panic button returns at once and nothing waits on a queue worker that may be
+ * down. Each channel is tried on its own, so one failing never stops the
+ * others. Whatever did not go out — a send that failed, or a channel that is
+ * not set up — is listed in one critical admin alert, so staff know to call
+ * people themselves.
+ *
+ * The other person on the errand is deliberately NOT told: they may be the
+ * danger. Staff decide whom to involve.
+ *
+ * `contacts_notified` is written here and only here, with just the contacts
+ * the SMS provider accepted a text for — the app shows it to the person in the
+ * emergency as who their alert reached.
  */
 class NotifySosContactsJob extends BaseJob
 {
+    /** One attempt: a retry would text everyone a second time. */
+    public int $tries = 1;
+
     public function __construct(public string $alertId) {}
 
-    public function handle(NotificationService $notifications): void
+    public function handle(SmsSender $sms): void
     {
-        $alert = SOSAlert::with('booking')->find($this->alertId);
-        if (!$alert || !$alert->booking || $alert->status !== 'active') {
+        $alert = SOSAlert::with(['booking.errandType', 'triggeredBy'])->find($this->alertId);
+        if (! $alert || ! $alert->booking || $alert->status !== SOSAlert::STATUS_ACTIVE) {
             return;
         }
 
-        $booking = $alert->booking;
-        $role = $alert->triggered_by_role;
-        $triggeredBy = $alert->triggered_by;
-        $liveLink = config('app.url') . "/trip/{$alert->live_link_token}";
+        /** @var array<int,string> $gaps what did not go out, in plain words */
+        $gaps = [];
 
-        // Record ONLY the contacts a message was genuinely delivered to. The
-        // alert row is created with an empty `contacts_notified` and this is the
-        // single place it is ever filled, so the field can never claim more than
-        // actually happened (see SOSService::triggerSOS). With no SMS provider
-        // wired every attempt returns false, so it correctly stays empty and the
-        // app tells the user only that ErrandGuy support was alerted.
-        $contacts = TrustedContact::where('user_id', $triggeredBy)
+        $this->textTrustedContacts($alert, $sms, $gaps);
+        $this->textStaff($alert, $sms, $gaps);
+        $this->emailStaff($alert, $gaps);
+
+        if ($gaps !== []) {
+            AdminAlert::raise(
+                'sos_delivery',
+                'critical',
+                'SOS: some alerts did not go out',
+                'Booking '.($alert->booking->booking_number ?? $alert->booking_id).' — '.implode(' ', $gaps)
+                    .' Call the person and their trusted contacts from the alert page.',
+                $alert->id,
+            );
+        }
+    }
+
+    /** @param  array<int,string>  $gaps */
+    private function textTrustedContacts(SOSAlert $alert, SmsSender $sms, array &$gaps): void
+    {
+        $contacts = TrustedContact::where('user_id', $alert->triggered_by)
+            ->where('is_active', true)
+            ->orderBy('priority')
             ->orderBy('created_at')
             ->get();
-        $delivered = [];
-        foreach ($contacts as $contact) {
-            if ($this->notifySMSContact($contact, $liveLink, $booking)) {
-                $delivered[] = $contact->id;
-            }
+
+        if ($contacts->isEmpty()) {
+            return;
         }
+
+        if (! $sms->isConfigured()) {
+            $gaps[] = 'Texts to '.$contacts->count().' trusted '.($contacts->count() === 1 ? 'contact' : 'contacts').' were not sent: SMS is not set up.';
+
+            return;
+        }
+
+        try {
+            $result = $sms->send($contacts->pluck('phone')->all(), $this->contactMessage($alert));
+        } catch (\Throwable $e) {
+            Log::error('SOS trusted-contact texts failed', ['alert_id' => $alert->id, 'error' => $e->getMessage()]);
+            $gaps[] = 'Texts to trusted contacts failed.';
+
+            return;
+        }
+
+        $delivered = $contacts
+            ->filter(fn (TrustedContact $contact): bool => $result->wasAccepted($contact->phone))
+            ->pluck('id')
+            ->values()
+            ->all();
+
         if ($delivered !== []) {
             $alert->update(['contacts_notified' => $delivered]);
         }
 
-        // Live in-app SOS banner to the OTHER participant, over their
-        // `notifications.{userId}` Reverb channel. Replaces the old realtime
-        // table insert (broadcastSOSAlert). Broadcast-only, matching prior
-        // behaviour — the admin FCM topic push below is the out-of-app alert.
-        $counterpartId = $triggeredBy === $booking->customer_id
-            ? $booking->runner_id
-            : $booking->customer_id;
-        if ($counterpartId) {
-            // sendPush, NOT notifyInApp: the counterpart is the one person
-            // physically present at the emergency, and they are typically
-            // driving with the app backgrounded. notifyInApp only writes the
-            // row and broadcasts, so the alert arrived as a silent +1 on the
-            // notification bell — nothing rang, and they learned of it
-            // whenever they next happened to open the app. sendPush keeps the
-            // in-app row and the live broadcast, and adds the device wake.
-            //
-            // The payload deliberately DROPS live_link. sendPush uses one data
-            // bag for both the stored row and the device push, and a push sits
-            // in the OS notification store (and, on Android, a lock-screen
-            // preview) — no place for what is effectively a bearer credential
-            // to a live location feed. Nothing is lost: the app never read
-            // live_link from a notification, it resolves the token from the
-            // SOS alert itself.
-            $notifications->sendPush(
-                $counterpartId,
-                'SOS alert',
-                'An emergency alert has been triggered.',
-                [
-                    'type' => 'sos',
-                    'booking_id' => $booking->id,
-                    'alert_id' => $alert->id,
-                    'status' => 'active',
-                    'triggered_by_role' => $role,
-                ],
-            );
-        }
-
-        $notifications->sendToTopic(
-            'admin_safety',
-            '🚨 SOS Alert',
-            "Emergency triggered by {$role} for booking #{$booking->booking_number}",
-            [
-                'type' => 'sos',
-                'booking_id' => $booking->id,
+        $missed = $contacts->count() - count($delivered);
+        if ($missed > 0) {
+            Log::warning('SOS trusted-contact texts not all sent', [
                 'alert_id' => $alert->id,
-                'triggered_by_role' => $role,
-            ]
-        );
+                'sent' => count($delivered),
+                'not_sent' => $missed,
+                'error' => $result->error,
+            ]);
+            $gaps[] = $missed.' of '.$contacts->count().' trusted contacts could not be texted'
+                .($result->error ? ' ('.$result->error.')' : '').'.';
+        }
     }
 
-    /**
-     * Attempt SMS delivery to ONE trusted contact.
-     *
-     * @return bool true only when a message was genuinely handed to a provider.
-     *              The caller records `contacts_notified` from this return
-     *              value, and the mobile client renders that field verbatim to
-     *              a person in an emergency ("your alert reached …") — so
-     *              returning true without real delivery is a safety lie, not a
-     *              cosmetic one. It stays false until a provider is wired.
-     */
-    private function notifySMSContact(TrustedContact $contact, string $liveLink, Booking $booking): bool
+    /** @param  array<int,string>  $gaps */
+    private function textStaff(SOSAlert $alert, SmsSender $sms, array &$gaps): void
     {
-        // SMS delivery to trusted contacts is not yet wired to a provider. Do
-        // NOT log the live-link token or the contact's phone number — the token
-        // grants unauthenticated access to the victim's live location, and the
-        // phone is PII. Emit only a non-sensitive breadcrumb. See
-        // SYSTEM_AUDIT_2026-07.md (C3): this must send a real SMS before SOS can
-        // claim "contacts notified".
-        //
-        // TO WIRE A PROVIDER: send here and `return true` ONLY on a confirmed
-        // accept from the provider. Everything downstream — the alert record,
-        // the admin panel, and the customer-facing "who we reached" line — keys
-        // off that boolean and needs no other change.
-        Log::warning('SOS trusted-contact SMS not delivered (no SMS provider configured)', [
-            'booking_id' => $booking->id,
-            'contact_id' => $contact->id,
-        ]);
+        $phones = OpsAlertRecipients::phones();
+        if ($phones === []) {
+            $gaps[] = 'No staff text was sent: the ops_alert_phone setting is empty.';
 
-        return false;
+            return;
+        }
+
+        if (! $sms->isConfigured()) {
+            $gaps[] = 'No staff text was sent: SMS is not set up.';
+
+            return;
+        }
+
+        try {
+            $result = $sms->send($phones, $this->staffMessage($alert));
+        } catch (\Throwable $e) {
+            Log::error('SOS staff text failed', ['alert_id' => $alert->id, 'error' => $e->getMessage()]);
+            $gaps[] = 'The staff text failed.';
+
+            return;
+        }
+
+        if (count($result->accepted) < count($phones)) {
+            $gaps[] = 'The staff text reached '.count($result->accepted).' of '.count($phones).' numbers'
+                .($result->error ? ' ('.$result->error.')' : '').'.';
+        }
+    }
+
+    /** @param  array<int,string>  $gaps */
+    private function emailStaff(SOSAlert $alert, array &$gaps): void
+    {
+        $emails = OpsAlertRecipients::emails();
+        if ($emails === []) {
+            $gaps[] = 'No staff email was sent: the ops_alert_emails setting is empty.';
+
+            return;
+        }
+
+        try {
+            Mail::to($emails)->send(SosStaffAlert::forAlert($alert));
+        } catch (\Throwable $e) {
+            Log::error('SOS staff email failed', [
+                'alert_id' => $alert->id,
+                'recipients' => count($emails),
+                'error' => $e->getMessage(),
+            ]);
+            $gaps[] = 'The staff email failed to send.';
+        }
+    }
+
+    private function contactMessage(SOSAlert $alert): string
+    {
+        $name = trim((string) strtok((string) ($alert->triggeredBy?->full_name ?? ''), ' ')) ?: 'Someone you know';
+        $link = rtrim((string) config('app.url'), '/').'/trip/'.$alert->live_link_token;
+
+        return "ErrandGuy SOS: {$name} pressed the emergency button and may need help. "
+            ."See where they are: {$link} Call them now. If you can't reach them, call 911.";
+    }
+
+    private function staffMessage(SOSAlert $alert): string
+    {
+        $person = $alert->triggeredBy;
+        $role = $alert->triggered_by_role === 'runner' ? 'runner' : 'customer';
+        $phone = PhilippinePhone::normalize($person?->phone) ?? ($person?->phone ?: 'no phone');
+        $time = ($alert->triggered_at ?? now())->copy()
+            ->timezone(config('app.business_timezone', 'Asia/Manila'))
+            ->format('g:i A');
+        $where = $alert->triggerMapUrl() ?? 'location unknown';
+
+        return "ErrandGuy SOS {$time}: ".($person?->full_name ?: 'A user')." ({$role}, {$phone}), errand "
+            .($alert->booking?->booking_number ?? $alert->booking_id).". {$where} Open the admin panel now.";
     }
 }

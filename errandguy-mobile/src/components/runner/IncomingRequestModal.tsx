@@ -32,9 +32,8 @@ interface IncomingRequestModalProps {
   onDecline: () => void | Promise<void>;
   /**
    * The window LOCALLY ran out. Deliberately separate from `onDecline`:
-   * a timeout is not a decision, and reporting it to POST /decline
-   * permanently lowered the runner's acceptance_rate — the stat that also
-   * ranks them in MatchingService — for a phone that was in their pocket.
+   * a timeout is not a decision, and reporting it to POST /decline recorded
+   * a decline the runner never made, for a phone that was in their pocket.
    * Falls back to `onDecline` only when a caller doesn't supply it.
    */
   onExpire?: () => void | Promise<void>;
@@ -147,8 +146,7 @@ export function IncomingRequestModal({
     if (remaining <= 0) {
       // The window simply closed — that is NOT a decline. Dismiss locally and
       // let the server's own ExpireStaleMatchesJob re-match the booking; POSTing
-      // /decline here recalculated (and permanently lowered) the runner's
-      // acceptance rate for a decision they never made.
+      // /decline here recorded a decision the runner never made.
       toast.info('Time’s up — that request went to another runner.');
       void (onExpireRef.current ?? onDeclineRef.current)();
       return;

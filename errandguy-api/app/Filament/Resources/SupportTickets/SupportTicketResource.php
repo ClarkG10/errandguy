@@ -44,7 +44,7 @@ class SupportTicketResource extends Resource
      */
     public static function getEloquentQuery(): Builder
     {
-        return parent::getEloquentQuery()->with(['user', 'latestMessage']);
+        return parent::getEloquentQuery()->with(['user', 'reportedUser', 'latestMessage']);
     }
 
     public static function getRelations(): array

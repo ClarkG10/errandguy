@@ -47,7 +47,6 @@ class BusinessTimezoneWindowsTest extends TestCase
             'verification_status' => 'approved',
             'is_online' => true,
             'preferred_types' => [],
-            'acceptance_rate' => 100.00,
             'completion_rate' => 100.00,
         ]);
         $this->errandType = ErrandType::create([

@@ -3,6 +3,7 @@
 namespace App\Http\Resources;
 
 use App\Models\AdminUser;
+use App\Models\SOSAlert;
 use App\Models\User;
 use App\Services\BookingService;
 use Illuminate\Http\Request;
@@ -21,6 +22,14 @@ class BookingResource extends JsonResource
         $isParticipant = $this->isParticipant();
         $isAdmin = $request->user() instanceof AdminUser;
         $canSeeContacts = $isParticipant || $isAdmin;
+
+        // A runner who has only been OFFERED the errand ('matched') has not
+        // taken it and may decline: no phone numbers — the customer's or the
+        // pick-up / drop-off contacts' — until they accept.
+        $isOfferedRunner = $this->status === 'matched'
+            && $request->user() instanceof User
+            && $request->user()->id === $this->runner_id;
+        $canSeePhones = $canSeeContacts && ! $isOfferedRunner;
 
         // Runner-facing operational metadata (payment method type, cash to
         // collect, distance to pickup). Scoped to runner/admin viewers: the
@@ -74,20 +83,21 @@ class BookingResource extends JsonResource
             ),
             'customer' => $this->when(
                 $this->relationLoaded('customer') && $this->customer,
-                fn () => new UserResource($this->customer),
+                fn () => (new UserResource($this->customer))->withoutPhone($isOfferedRunner),
             ),
             'pickup_address' => $this->pickup_address,
             'pickup_lat' => $this->pickup_lat,
             'pickup_lng' => $this->pickup_lng,
             'pickup_contact_name' => $this->when($canSeeContacts, $this->pickup_contact_name),
-            'pickup_contact_phone' => $this->when($canSeeContacts, $this->pickup_contact_phone),
+            'pickup_contact_phone' => $this->when($canSeeContacts, $canSeePhones ? $this->pickup_contact_phone : null),
             'dropoff_address' => $this->dropoff_address,
             'dropoff_lat' => $this->dropoff_lat,
             'dropoff_lng' => $this->dropoff_lng,
             'dropoff_contact_name' => $this->when($canSeeContacts, $this->dropoff_contact_name),
-            'dropoff_contact_phone' => $this->when($canSeeContacts, $this->dropoff_contact_phone),
+            'dropoff_contact_phone' => $this->when($canSeeContacts, $canSeePhones ? $this->dropoff_contact_phone : null),
             // Multi-stop: extra destinations after the primary dropoff. Contacts
-            // follow the same non-participant masking as the dropoff contact.
+            // follow the same masking as the dropoff contact (non-participants
+            // see none; an offered runner sees no phone).
             // Kept as [] (not omitted) when loaded-but-empty so the mobile
             // `stops: BookingStop[]` contract holds.
             'stops' => $this->when(
@@ -99,7 +109,7 @@ class BookingResource extends JsonResource
                     'lat' => $stop->lat,
                     'lng' => $stop->lng,
                     'contact_name' => $canSeeContacts ? $stop->contact_name : null,
-                    'contact_phone' => $canSeeContacts ? $stop->contact_phone : null,
+                    'contact_phone' => $canSeePhones ? $stop->contact_phone : null,
                     'note' => $stop->note,
                     'completed_at' => $stop->completed_at,
                 ])->values(),
@@ -234,12 +244,12 @@ class BookingResource extends JsonResource
                 $this->trip_share_active && $this->isParticipant(),
                 $this->trip_share_token,
             ),
-            // Whether an SOS is currently active on this booking, so a
-            // participant's app can restore the SOS banner after a reload or a
-            // poll refresh. The mobile runner/customer screens already read
-            // this; without it in the resource, that restore was dead code
-            // (CONTRACT-1). Boolean-cast on the model; participant/admin-gated.
-            'sos_triggered' => $this->when($canSeeContacts, (bool) $this->sos_triggered),
+            // Whether the VIEWER has an open SOS on this booking, so their app
+            // can restore its SOS banner after a reload or a poll refresh
+            // (CONTRACT-1). Only ever true for the person who pressed it: the
+            // other person on the errand is never told (they may be the
+            // danger). Admins see the booking-wide flag. Participant/admin-gated.
+            'sos_triggered' => $this->when($canSeeContacts, fn (): bool => $this->sosOpenFor($request)),
             'status_logs' => $this->when(
                 $this->relationLoaded('statusLogs'),
                 fn () => $this->statusLogs->map(fn ($log) => [
@@ -375,6 +385,28 @@ class BookingResource extends JsonResource
             max(0, (float) $this->total_amount - (float) $this->cancellation_fee),
             2,
         );
+    }
+
+    /**
+     * Whether the viewer may see an open SOS on this booking: an admin sees
+     * the booking flag; a participant only an alert they raised themselves.
+     * Queries only when the booking flag is set (rare).
+     */
+    protected function sosOpenFor(Request $request): bool
+    {
+        if (! $this->sos_triggered) {
+            return false;
+        }
+
+        $viewer = $request->user();
+        if ($viewer instanceof AdminUser) {
+            return true;
+        }
+
+        return $viewer !== null && SOSAlert::where('booking_id', $this->id)
+            ->where('triggered_by', $viewer->id)
+            ->where('status', SOSAlert::STATUS_ACTIVE)
+            ->exists();
     }
 
     /**

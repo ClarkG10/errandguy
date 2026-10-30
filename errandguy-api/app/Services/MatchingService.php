@@ -157,7 +157,7 @@ class MatchingService
             // synchronous create request). Squared planar distance is a fine
             // proxy for ranking within this small box; the exact haversine +
             // preferred-type filter below still runs over the nearest $limit
-            // rows, and re-sorts by (distance, acceptance_rate). (P5)
+            // rows, and re-sorts by exact distance. (P5)
             ->orderByRaw(
                 '((current_lat - ?) * (current_lat - ?)) + ((current_lng - ?) * (current_lng - ?)) asc',
                 [$lat, $lat, $lng, $lng]
@@ -193,11 +193,8 @@ class MatchingService
             return true;
         });
 
-        // Sort by: distance (nearest), acceptance_rate (highest), rating (highest)
-        return $eligible->sortBy([
-            ['distance_km', 'asc'],
-            ['acceptance_rate', 'desc'],
-        ])->values();
+        // Nearest first.
+        return $eligible->sortBy('distance_km')->values();
     }
 
     private function haversineDistance(float $lat1, float $lng1, float $lat2, float $lng2): float

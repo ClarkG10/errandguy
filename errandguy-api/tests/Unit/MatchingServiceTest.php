@@ -173,7 +173,6 @@ class MatchingServiceTest extends TestCase
             'current_lat' => 14.6000, // Very close
             'current_lng' => 120.9845,
             'preferred_types' => [],
-            'acceptance_rate' => 90.00,
         ]);
 
         $farRunner = User::factory()->create(['role' => 'runner', 'status' => 'active']);
@@ -185,7 +184,6 @@ class MatchingServiceTest extends TestCase
             'current_lat' => 14.6100, // Farther
             'current_lng' => 120.9900,
             'preferred_types' => [],
-            'acceptance_rate' => 95.00,
         ]);
 
         $result = $this->service->findRunner($this->booking->id);

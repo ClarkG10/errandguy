@@ -69,7 +69,6 @@ class CustomerHomeAggregateTest extends TestCase
             'vehicle_type' => 'motorcycle',
             'vehicle_plate' => 'ABC 1234',
             'is_online' => true,
-            'acceptance_rate' => 95,
             'completion_rate' => 99,
             'total_errands' => 12,
             'approved_at' => now()->subMonth(),
