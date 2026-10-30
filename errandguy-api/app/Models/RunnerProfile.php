@@ -2,6 +2,7 @@
 
 namespace App\Models;
 
+use App\Support\PayoutDestination;
 use Illuminate\Database\Eloquent\Concerns\HasUuids;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
@@ -50,6 +51,8 @@ class RunnerProfile extends Model
         'bank_account_number',
         'ewallet_number',
         'payout_channel_code',
+        'payout_channel',
+        'payout_account_name',
         'approved_at',
     ];
 
@@ -117,6 +120,61 @@ class RunnerProfile extends Model
         // Read the RAW column so a legacy/undecryptable value still counts as
         // "on file" (the accessor would throw / mask it as absent).
         return filled($this->getRawOriginal('bank_account_number'));
+    }
+
+    /**
+     * Where this runner's payouts go, or null when nothing sendable is saved.
+     *
+     * A runner who saved their method through the payout-method endpoint has an
+     * explicit payout_channel (gcash | maya | bank). The app build already on
+     * phones only saves numbers, so without a channel the e-wallet number wins
+     * over a bank account, exactly as it always has, and staff pick GCash or
+     * Maya when sending. A bank needs BOTH the bank name and an account number.
+     *
+     * @param  string|null  $fallbackName  account holder when none is saved
+     *                                     (the runner's own name)
+     * @return array<string, ?string>|null  see App\Support\PayoutDestination
+     */
+    public function payoutDestination(?string $fallbackName = null): ?array
+    {
+        $name = $this->payout_account_name ?: $fallbackName;
+        $bankNumber = $this->readableBankAccountNumber();
+        $bankReady = filled($this->bank_name) && filled($bankNumber);
+        // payout_channel_code is staff-set and may name either kind of channel;
+        // only ever pair it with the matching kind of account.
+        $ewalletChannel = PayoutDestination::channelForCode($this->payout_channel_code);
+        $bankCode = $ewalletChannel === null ? $this->payout_channel_code : null;
+
+        return match ($this->payout_channel) {
+            'gcash', 'maya' => filled($this->ewallet_number)
+                ? PayoutDestination::make($this->payout_channel, (string) $this->ewallet_number, $name)
+                : null,
+            'bank' => $bankReady
+                ? PayoutDestination::make('bank', (string) $bankNumber, $name, $this->bank_name, $bankCode)
+                : null,
+            default => match (true) {
+                filled($this->ewallet_number) => PayoutDestination::make(
+                    $ewalletChannel ?? 'ewallet',
+                    (string) $this->ewallet_number,
+                    $name,
+                ),
+                $bankReady => PayoutDestination::make('bank', (string) $bankNumber, $name, $this->bank_name, $bankCode),
+                default => null,
+            },
+        };
+    }
+
+    /** The decrypted bank account number, or null if absent or unreadable. */
+    private function readableBankAccountNumber(): ?string
+    {
+        try {
+            return $this->bank_account_number;
+        } catch (\Throwable) {
+            // A legacy row written before the Crypt setter holds plaintext.
+            $raw = $this->getRawOriginal('bank_account_number');
+
+            return is_string($raw) && preg_match('/^\d{4,}$/', $raw) ? $raw : null;
+        }
     }
 
     public function user(): BelongsTo

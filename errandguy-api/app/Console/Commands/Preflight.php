@@ -145,7 +145,6 @@ class Preflight extends Command
         $required = [
             'wallet_transactions' => 'uq_wallet_tx_user_reference_type',
             'payments' => 'uq_payments_gateway_tx',
-            'referrals' => 'uq_referrals_referee_id',
         ];
 
         try {

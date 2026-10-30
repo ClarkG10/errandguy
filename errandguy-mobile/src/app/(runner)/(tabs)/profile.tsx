@@ -1,5 +1,5 @@
 import React, { useCallback, useState } from 'react';
-import { View, Text, ScrollView, Pressable, Modal, TextInput, KeyboardAvoidingView, Platform } from 'react-native';
+import { View, Text, ScrollView, Pressable } from 'react-native';
 import { useRouter, useFocusEffect } from 'expo-router';
 import {
   ChevronRight,
@@ -22,7 +22,6 @@ import {
 import * as Haptics from 'expo-haptics';
 import { Avatar } from '../../../components/ui/Avatar';
 import { Card } from '../../../components/ui/Card';
-import { Button } from '../../../components/ui/Button';
 import { ErrorState } from '../../../components/ui/ErrorState';
 import { LogoutSplash } from '../../../components/ui/LogoutSplash';
 import { InlineLogoutLink } from '../../../components/auth/InlineLogoutLink';
@@ -33,6 +32,7 @@ import { ConfirmModal } from '../../../components/ui/ConfirmModal';
 import { Eyebrow } from '../../../components/ui/Typography';
 import { RatingStars } from '../../../components/ui/RatingStars';
 import { VerificationBanner } from '../../../components/runner/VerificationBanner';
+import { DeleteAccountSheet } from '../../../components/settings/DeleteAccountSheet';
 import { useRunnerStore } from '../../../stores/runnerStore';
 import { useAuthStore } from '../../../stores/authStore';
 import { runnerService } from '../../../services/runner.service';
@@ -206,8 +206,6 @@ export default function RunnerProfileScreen() {
   const [refreshing, setRefreshing] = useState(false);
   const [showDeleteModal, setShowDeleteModal] = useState(false);
   const [loggingOut, setLoggingOut] = useState(false);
-  const [deleteConfirmText, setDeleteConfirmText] = useState('');
-  const [deleting, setDeleting] = useState(false);
   const [loadFailed, setLoadFailed] = useState(false);
   // Which performance metric's explainer sheet is open (null = closed).
   const [explainer, setExplainer] = useState<MetricKey | null>(null);
@@ -259,23 +257,11 @@ export default function RunnerProfileScreen() {
     }
   }, [logout, router]);
 
-  const handleDeleteAccount = useCallback(async () => {
-    if (deleteConfirmText !== 'DELETE') return;
-    setDeleting(true);
-    Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning).catch(() => {});
-    try {
-      await userService.deleteAccount();
-      await logout();
-      router.replace('/(auth)/welcome' as any);
-    } catch (err: any) {
-      haptics.error();
-      toast.error(errorMessage(err, copy.profile.deleteAccountFailed));
-    } finally {
-      setDeleting(false);
-      setShowDeleteModal(false);
-      setDeleteConfirmText('');
-    }
-  }, [deleteConfirmText, logout, router]);
+  const onAccountDeleted = useCallback(async () => {
+    setShowDeleteModal(false);
+    await logout();
+    router.replace('/(auth)/welcome' as any);
+  }, [logout, router]);
 
   // ── Mode switch (runner → customer) ─────────────────────────────────────
   // role-select promises "you can switch anytime" and until now nothing in the
@@ -681,74 +667,13 @@ export default function RunnerProfileScreen() {
         </Pressable>
       </ScrollView>
 
-      {/* Delete Account Modal */}
-      <Modal
+      <DeleteAccountSheet
         visible={showDeleteModal}
-        transparent
-        animationType="slide"
-        onRequestClose={() => { setShowDeleteModal(false); setDeleteConfirmText(''); }}
-      >
-        <KeyboardAvoidingView
-          style={{ flex: 1 }}
-          behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-        >
-          <Pressable
-            className="flex-1 bg-black/40 justify-end"
-            accessibilityRole="button"
-            accessibilityLabel="Dismiss delete account dialog"
-            onPress={() => { setShowDeleteModal(false); setDeleteConfirmText(''); }}
-          >
-            <Pressable
-              className="bg-surface rounded-t-3xl px-7 pt-6 pb-12"
-              accessible={false}
-              onPress={() => {}}
-            >
-              <View className="w-10 h-1 rounded-full bg-divider self-center mb-5" />
-              <Text className="text-base font-montserrat-bold text-textPrimary mb-1">
-                Delete your account?
-              </Text>
-              <Text className="text-sm font-montserrat text-textTertiary mb-5">
-                This can't be undone. Your earnings, errand history, and data will be permanently removed.
-              </Text>
-              <Text className="text-xs font-montserrat-bold text-textSecondary mb-2">
-                Type DELETE to confirm
-              </Text>
-              <View className="border border-divider rounded-xl px-4 h-12 justify-center mb-5 bg-background">
-                <TextInput
-                  value={deleteConfirmText}
-                  onChangeText={setDeleteConfirmText}
-                  placeholder="DELETE"
-                  placeholderTextColor={LightColors.textMuted}
-                  autoCapitalize="characters"
-                  accessibilityLabel="Type DELETE to confirm account deletion"
-                  style={{
-                    fontFamily: 'Quicksand_400Regular',
-                    fontSize: 15,
-                    color: LightColors.textPrimary,
-                  }}
-                />
-              </View>
-              <Button
-                title="Delete Account"
-                variant="danger"
-                fullWidth
-                loading={deleting}
-                loadingTitle="Deleting…"
-                disabled={deleteConfirmText !== 'DELETE'}
-                onPress={handleDeleteAccount}
-              />
-              <Pressable
-                className="mt-3 py-3 items-center"
-                accessibilityRole="button"
-                accessibilityLabel="Cancel"
-                onPress={() => { setShowDeleteModal(false); setDeleteConfirmText(''); }}
-              >
-                <Text className="text-sm font-montserrat-bold text-textTertiary">Cancel</Text>
-              </Pressable>
-            </Pressable>
-          </Pressable>
-        </KeyboardAvoidingView>
-      </Modal>
+        onClose={() => setShowDeleteModal(false)}
+        description="This can't be undone. Your profile, documents, earnings history and errand history will be permanently removed."
+        allowBank
+        onDeleted={onAccountDeleted}
+      />
 
       {/* Performance explainer — short "what this is / why it matters"
           sheet opened by tapping any metric. Current value + target keep

@@ -4,6 +4,7 @@ namespace Tests\Feature\Booking;
 
 use App\Jobs\AutoCancelBookingJob;
 use App\Jobs\SendPushJob;
+use App\Models\Booking;
 use App\Models\ErrandType;
 use App\Models\IdempotencyKey;
 use App\Models\PaymentMethod;
@@ -12,6 +13,7 @@ use App\Models\User;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Bus;
 use Illuminate\Support\Facades\Event;
+use Illuminate\Support\Facades\Http;
 use Tests\TestCase;
 
 /**
@@ -78,25 +80,28 @@ class BookingCreateHardeningTest extends TestCase
             ->assertStatus(409);
     }
 
-    public function test_cash_booking_with_a_saved_method_id_is_not_charged_online(): void
+    public function test_a_booking_naming_a_saved_payment_account_is_refused_and_nothing_is_charged(): void
     {
+        // Saved cards / linked accounts are retired. The app build already on
+        // phones only sends an id when its customer picked one; it is refused
+        // with a clear message instead of being charged some other way.
         Bus::fake();
+        Http::fake();
         $method = PaymentMethod::create([
             'user_id' => $this->customer->id, 'type' => 'card', 'status' => 'active',
             'label' => 'Visa •• 42', 'gateway_ref' => 'pm_test_123',
         ]);
 
-        $response = $this->actingAs($this->customer)->postJson('/api/v1/bookings', [
+        $this->actingAs($this->customer)->postJson('/api/v1/bookings', [
             ...$this->validData, // payment_method: cash
             'payment_method_id' => $method->id,
-        ]);
+        ])
+            ->assertStatus(422)
+            ->assertJsonPath('message', 'Saved payment accounts are no longer available — please pay with GCash, Maya or cash.')
+            ->assertJsonValidationErrors(['payment_method_id']);
 
-        $response->assertStatus(201)->assertJsonPath('checkout_url', null);
-        $this->assertDatabaseHas('bookings', [
-            'id' => $response->json('data.id'),
-            'payment_method' => 'cash',
-            'payment_status' => 'unpaid', // never online-settled
-        ]);
+        $this->assertSame(0, Booking::count());
+        Http::assertNothingSent();
     }
 
     public function test_immediate_booking_response_reflects_the_matched_status(): void

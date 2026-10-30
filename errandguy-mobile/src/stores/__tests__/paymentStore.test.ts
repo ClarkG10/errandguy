@@ -26,12 +26,12 @@ describe('paymentStore', () => {
   it('mints a fresh attempt with an idempotency key and preparing status', () => {
     let key: string | undefined;
     act(() => {
-      const a = usePaymentStore.getState().beginAttempt({ kind: 'topup', amount: 500 });
+      const a = usePaymentStore.getState().beginAttempt({ kind: 'tip', amount: 500 });
       key = a.idempotencyKey;
     });
     const a = usePaymentStore.getState().attempt!;
     expect(a).toBeTruthy();
-    expect(a.kind).toBe('topup');
+    expect(a.kind).toBe('tip');
     expect(a.amount).toBe(500);
     expect(a.status).toBe('preparing');
     expect(a.idempotencyKey).toBeTruthy();
@@ -54,7 +54,7 @@ describe('paymentStore', () => {
   it('reuses the SAME key across status changes of one attempt (retry-safe)', () => {
     let key = '';
     act(() => {
-      key = usePaymentStore.getState().beginAttempt({ kind: 'topup', amount: 300 }).idempotencyKey;
+      key = usePaymentStore.getState().beginAttempt({ kind: 'booking', amount: 300 }).idempotencyKey;
     });
     act(() => usePaymentStore.getState().linkPayment('pay_1'));
     act(() => usePaymentStore.getState().setStatus('verifying', { reference: 'inv_1' }));
@@ -66,7 +66,7 @@ describe('paymentStore', () => {
   });
 
   it('tracks active vs terminal correctly', () => {
-    act(() => usePaymentStore.getState().beginAttempt({ kind: 'topup', amount: 50 }));
+    act(() => usePaymentStore.getState().beginAttempt({ kind: 'tip', amount: 50 }));
     expect(isAttemptActive(usePaymentStore.getState().attempt)).toBe(true);
     expect(isAttemptTerminal(usePaymentStore.getState().attempt)).toBe(false);
 
@@ -86,7 +86,7 @@ describe('paymentStore', () => {
     // A 'preparing' attempt was persisted before the create response returned
     // (e.g. the app was force-quit mid-create). It holds no server reference,
     // so it can never advance or verify — keeping it would hold the
-    // one-payment lock forever and silently block every booking AND top-up.
+    // one-payment lock forever and silently block every booking AND tip.
     const now = Date.now();
     await AsyncStorage.setItem(
       STORAGE_KEY,
@@ -127,6 +127,61 @@ describe('paymentStore', () => {
     expect(a).toBeTruthy();
     expect(a!.status).toBe('pending');
     expect(a!.paymentId).toBe('pay_9');
+  });
+
+  describe('an attempt saved by the app build before the launch simplification', () => {
+    const save = (attempt: Record<string, unknown>) => {
+      const now = Date.now();
+      return AsyncStorage.setItem(
+        STORAGE_KEY,
+        JSON.stringify({
+          attemptId: 'a3', idempotencyKey: 'k3', amount: 500,
+          startedAt: now, updatedAt: now, ...attempt,
+        }),
+      );
+    };
+
+    it('drops an in-flight wallet top-up instead of holding the payment lock', async () => {
+      // Top-ups are retired: nothing here can resume one, and keeping it
+      // "active" would refuse every booking and tip. The server still settles
+      // the charge and the wallet history still lists it.
+      await save({ kind: 'topup', topupId: 'tx-1', status: 'pending', method: 'gcash' });
+
+      await act(async () => {
+        await usePaymentStore.getState().loadFromStorage();
+      });
+
+      expect(usePaymentStore.getState().attempt).toBeNull();
+      expect(isAttemptActive(usePaymentStore.getState().attempt)).toBe(false);
+      expect(usePaymentStore.getState().isHydrated).toBe(true);
+      expect(await AsyncStorage.getItem(STORAGE_KEY)).toBeNull();
+    });
+
+    it('keeps verifying a tip charge, moving its id from topupId to transactionId', async () => {
+      await save({ kind: 'tip', topupId: 'tx-9', status: 'awaiting_gateway', method: 'maya' });
+
+      await act(async () => {
+        await usePaymentStore.getState().loadFromStorage();
+      });
+
+      const a = usePaymentStore.getState().attempt!;
+      expect(a.kind).toBe('tip');
+      expect(a.transactionId).toBe('tx-9');
+      expect(a).not.toHaveProperty('topupId');
+      expect(a.status).toBe('pending');
+    });
+
+    it('still verifies a card booking charge started on the old build', async () => {
+      // A card checkout started on the old build is still a real booking
+      // charge with a payment id, so it is verified like any other.
+      await save({ kind: 'booking', paymentId: 'pay_card', method: 'card', status: 'verifying' });
+
+      await act(async () => {
+        await usePaymentStore.getState().loadFromStorage();
+      });
+
+      expect(usePaymentStore.getState().attempt?.paymentId).toBe('pay_card');
+    });
   });
 
   it('beginAttempt reuses a RETAINED idempotency key when one is supplied', () => {

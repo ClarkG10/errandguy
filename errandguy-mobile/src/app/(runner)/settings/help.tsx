@@ -91,7 +91,7 @@ const FAQS: FAQ[] = [
   {
     question: 'When do I get paid?',
     answer:
-      'Earnings are credited to your in-app wallet once a customer confirms delivery. You can request a payout anytime from the Earnings tab.',
+      'Earnings are credited to your in-app wallet once a customer confirms delivery. You can request a payout to your GCash, Maya or bank account anytime from the Earnings tab. On a cash errand you keep the cash you collect and the platform fee comes out of your wallet; anything you owe from cash errands is cleared automatically from your next prepaid earnings.',
   },
   {
     question: 'How do I update my documents?',
@@ -101,7 +101,7 @@ const FAQS: FAQ[] = [
   {
     question: 'What if a customer cancels?',
     answer:
-      'If the customer cancels after you have started the errand, you may receive a partial cancellation fee depending on the stage of the errand.',
+      'If a customer cancels after you accepted the errand and a cancellation fee applies, the fee goes to you — it lands in your wallet as a "Cancellation fee" and you can withdraw it with your next payout.',
   },
   {
     question: 'How is my rating calculated?',

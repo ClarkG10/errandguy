@@ -6,14 +6,13 @@ import { LinearGradient } from 'expo-linear-gradient';
 import * as Haptics from 'expo-haptics';
 import {
   Wallet,
-  CreditCard,
   Smartphone,
+  Landmark,
   Clock,
   CheckCircle2,
   XCircle,
   RotateCcw,
   AlertTriangle,
-  Check,
   ChevronRight,
 } from 'lucide-react-native';
 import { Card } from '../../../components/ui/Card';
@@ -26,15 +25,23 @@ import { RunnerEmptyState } from '../../../components/ui/RunnerEmptyState';
 import { Illustration } from '../../../components/ui/Illustration';
 import { SuccessCheck } from '../../../components/ui/SuccessCheck';
 import { WalletActivityRow } from '../../../components/runner/WalletActivityRow';
+import { PayoutDestinationForm } from '../../../components/payout/PayoutDestinationForm';
+import { PaymentBrandMark } from '../../../components/customer/PaymentBrandMark';
 import {
-  PH_BANKS,
-  OTHER_BANK,
-  isKnownBank,
-  maskedAccount,
   payoutMinimum,
   resolvePayoutMethod,
+  type PayoutMethodState,
   type SelfRunnerProfile,
 } from '../../../components/runner/payoutMethod';
+import {
+  EMPTY_PAYOUT_DESTINATION,
+  payoutDestinationServerErrors,
+  toPayoutDestinationPayload,
+  validatePayoutDestination,
+  type PayoutDestinationDraft,
+  type PayoutDestinationErrors,
+} from '../../../utils/payoutDestination';
+import { cashDebtText } from '../../../utils/cashDebt';
 import { useRunnerStore } from '../../../stores/runnerStore';
 import { useAuthStore } from '../../../stores/authStore';
 import { userService } from '../../../services/user.service';
@@ -49,10 +56,33 @@ import { toast } from '../../../stores/toastStore';
 import { errorMessage } from '../../../utils/errorCatalog';
 import { copy } from '../../../constants/copy';
 import { haptics } from '../../../utils/haptics';
-import { Radius } from '../../../constants/radius';
-import type { WalletTransaction } from '../../../types';
+import type { PayoutChannel, WalletTransaction } from '../../../types';
 import { LightColors, Elevation } from '../../../constants/colors';
 import { PAYOUT_ACTIVITY_PREVIEW } from '../../../services/preload.service';
+
+/** A runner can be paid to GCash, Maya or a bank account. */
+const RUNNER_PAYOUT_CHANNELS: readonly PayoutChannel[] = ['gcash', 'maya', 'bank'];
+
+/** The form, pre-filled from what is saved (a bank account number never
+ *  comes back from the server, so it is always typed fresh — which is exactly
+ *  what a bank saved without one needs). */
+function draftFromMethod(
+  method: PayoutMethodState,
+  profile: SelfRunnerProfile | null,
+  fallbackName: string,
+): PayoutDestinationDraft {
+  const channel =
+    method.channel ?? (method.blocker === 'incomplete_bank' ? 'bank' : null);
+  const isEwallet = channel === 'gcash' || channel === 'maya';
+  return {
+    ...EMPTY_PAYOUT_DESTINATION,
+    channel,
+    accountNumber:
+      isEwallet || method.needsChannel ? (profile?.ewallet_number ?? '').trim() : '',
+    accountName: method.accountName ?? fallbackName,
+    bankName: channel === 'bank' ? method.bankName ?? '' : '',
+  };
+}
 
 /** How many ledger rows the inline "Wallet activity" preview shows. */
 // Owned by preload.service so the prefetch and this screen cannot request
@@ -121,46 +151,35 @@ export default function PayoutScreen() {
   const owesCommission = balance < 0;
 
   // Everything the payout REQUEST is really gated on, mirrored from
-  // RunnerPayoutController so the runner is told before they submit.
+  // RunnerProfile::payoutDestination so the runner is told before they submit.
   const method = useMemo(() => resolvePayoutMethod(runnerProfile), [runnerProfile]);
 
   const [refreshing, setRefreshing] = useState(false);
   const [requesting, setRequesting] = useState(false);
   const [showRequestModal, setShowRequestModal] = useState(false);
-  // Bank name is a picker, not free text — typos used to route real payouts
-  // into manual admin fixes. `OTHER_BANK` reveals the one typed escape hatch.
-  const [bankChoice, setBankChoice] = useState<string>(() =>
-    !runnerProfile?.bank_name
-      ? ''
-      : isKnownBank(runnerProfile.bank_name)
-        ? (PH_BANKS.find(
-            (b) => b.toLowerCase() === runnerProfile.bank_name!.trim().toLowerCase(),
-          ) as string)
-        : OTHER_BANK,
+  // The method form shows when nothing usable is saved, or after "Change".
+  const [editingMethod, setEditingMethod] = useState(false);
+  const showMethodForm = editingMethod || !method.ready;
+  const [methodDraft, setMethodDraft] = useState<PayoutDestinationDraft>(() =>
+    draftFromMethod(method, runnerProfile, user?.full_name ?? ''),
   );
-  const [customBank, setCustomBank] = useState(() =>
-    runnerProfile?.bank_name && !isKnownBank(runnerProfile.bank_name)
-      ? runnerProfile.bank_name
-      : '',
-  );
-  const [bankAccount, setBankAccount] = useState('');
-  const [ewalletNumber, setEwalletNumber] = useState(runnerProfile?.ewallet_number ?? '');
+  const [methodErrors, setMethodErrors] = useState<PayoutDestinationErrors>({});
   const [saving, setSaving] = useState(false);
+  const [removing, setRemoving] = useState(false);
+  const [showRemoveModal, setShowRemoveModal] = useState(false);
   const [amountInput, setAmountInput] = useState('');
   // Brief SuccessCheck overlay after a payout request is accepted.
   const [showPayoutSuccess, setShowPayoutSuccess] = useState(false);
 
-  const resolvedBankName =
-    bankChoice === OTHER_BANK ? customBank.trim() : bankChoice.trim();
-
-  // Once the runner starts editing the method form, a background profile
-  // refresh (the mount fetch, or the one after a save) must not overwrite what
-  // they typed. Cleared after a successful save so the canonical server values
-  // flow back in.
+  // Until the runner starts typing, the form follows the saved method — the
+  // mount refresh may land after the first render (an incomplete bank then
+  // pre-fills its name). Once touched, a background refresh never overwrites
+  // what they typed; a save or a cancel hands control back.
   const methodFormTouched = useRef(false);
-  const touchMethodForm = useCallback(() => {
-    methodFormTouched.current = true;
-  }, []);
+  useEffect(() => {
+    if (methodFormTouched.current) return;
+    setMethodDraft(draftFromMethod(method, runnerProfile, user?.full_name ?? ''));
+  }, [method, runnerProfile, user?.full_name]);
 
   const requestedAmount = parseFloat(amountInput) || 0;
 
@@ -232,35 +251,19 @@ export default function PayoutScreen() {
   );
   const activity = activityQ.data ?? [];
 
-  useEffect(() => {
-    if (runnerProfile && !methodFormTouched.current) {
-      const saved = runnerProfile.bank_name ?? '';
-      setBankChoice(
-        !saved
-          ? ''
-          : isKnownBank(saved)
-            ? ((PH_BANKS.find((b) => b.toLowerCase() === saved.trim().toLowerCase()) ??
-                OTHER_BANK) as string)
-            : OTHER_BANK,
-      );
-      setCustomBank(saved && !isKnownBank(saved) ? saved : '');
-      // Do NOT reset the account number from the profile: it's write-only —
-      // encrypted at rest + $hidden, so the API never returns the number
-      // itself. Prefilling from the (always-undefined) field cleared what the
-      // runner typed and, after a save+refetch, reset it to '' as if only the
-      // account number failed. `bank_account_last4` now proves an account IS
-      // on file without ever putting digits back in the input.
-      setEwalletNumber(runnerProfile.ewallet_number ?? '');
-    }
-  }, [runnerProfile]);
+  // Bumped by every payout-method save/remove. A profile READ that started
+  // before one (the mount refresh, a pull-to-refresh) answers with the old
+  // method, so it must not overwrite the saved one when it lands after it.
+  const profileWriteSeq = useRef(0);
 
   // wallet_balance in authStore can be stale if the runner completed jobs
   // elsewhere — refresh the withdrawable number on mount so they never act
   // on an outdated balance (under-withdraw or hit a server rejection). This
   // is the most trust-critical figure on the screen. The runner profile comes
-  // with it: bank_account_last4 and payout_minimum both gate this screen.
+  // with it: the payout method and payout_minimum both gate this screen.
   useEffect(() => {
     let cancelled = false;
+    const seq = profileWriteSeq.current;
     (async () => {
       try {
         const [me, prof] = await Promise.allSettled([
@@ -269,7 +272,11 @@ export default function PayoutScreen() {
         ]);
         if (cancelled) return;
         if (me.status === 'fulfilled' && me.value.data?.data) setUser(me.value.data.data);
-        if (prof.status === 'fulfilled' && prof.value.data?.data) {
+        if (
+          prof.status === 'fulfilled' &&
+          prof.value.data?.data &&
+          profileWriteSeq.current === seq
+        ) {
           setRunnerProfile(prof.value.data.data);
         }
       } catch {}
@@ -283,6 +290,7 @@ export default function PayoutScreen() {
 
   const onRefresh = useCallback(async () => {
     setRefreshing(true);
+    const seq = profileWriteSeq.current;
     try {
       // Refresh BOTH the runner profile (for payout method fields) and
       // the user record (for the wallet_balance display), plus the
@@ -294,48 +302,74 @@ export default function PayoutScreen() {
         payoutsQ.refresh(),
         activityQ.refresh(),
       ]);
-      setRunnerProfile(prof.data.data);
+      if (profileWriteSeq.current === seq) setRunnerProfile(prof.data.data);
       if (prof2.data?.data) setUser(prof2.data.data);
     } catch {}
     setRefreshing(false);
   }, [setRunnerProfile, setUser, payoutsQ, activityQ]);
 
-  const handleSavePayoutInfo = async () => {
-    if (bankChoice === OTHER_BANK && !customBank.trim()) {
+  const startEditingMethod = () => {
+    Haptics.selectionAsync().catch(() => {});
+    methodFormTouched.current = false;
+    setMethodDraft(draftFromMethod(method, runnerProfile, user?.full_name ?? ''));
+    setMethodErrors({});
+    setEditingMethod(true);
+  };
+
+  const cancelEditingMethod = () => {
+    methodFormTouched.current = false;
+    setMethodErrors({});
+    setEditingMethod(false);
+  };
+
+  // PUT /runner/payout-method — one explicit method (GCash, Maya or a bank),
+  // saved whole: the server clears the other channel's number, so there is
+  // never a second saved account that staff could send to by mistake.
+  const methodSaveLatch = useRef(false);
+  const handleSaveMethod = async () => {
+    if (methodSaveLatch.current) return;
+    const errors = validatePayoutDestination(methodDraft, RUNNER_PAYOUT_CHANNELS);
+    setMethodErrors(errors);
+    if (Object.keys(errors).length > 0) {
       haptics.warning();
-      toast.error('Type your bank’s name, or pick one from the list.');
       return;
     }
+    methodSaveLatch.current = true;
     setSaving(true);
     try {
-      // Previously skipped ewallet_number, so the field on screen was
-      // purely decorative. Send it now so payouts can route to GCash/Maya.
-      await runnerService.updateRunnerProfile({
-        bank_name: resolvedBankName || undefined,
-        bank_account_number: bankAccount.trim() || undefined,
-        ewallet_number: ewalletNumber.trim() || undefined,
-      });
-      setBankAccount('');
-      // Saved → let the canonical server values (including the fresh
-      // bank_account_last4) flow back into the form again.
+      const res = await runnerService.savePayoutMethod(toPayoutDestinationPayload(methodDraft));
+      profileWriteSeq.current += 1;
+      if (res.data?.data) setRunnerProfile(res.data.data);
       methodFormTouched.current = false;
-      toast.success('Payout information updated');
-      await onRefresh();
-      // Mirror the server's own rule out loud: a bank needs BOTH the name and
-      // an account number. Saving just the bank name looks like progress but
-      // leaves the payout unsendable, which is exactly how runners ended up
-      // rejected at request time.
-      const saved = resolvePayoutMethod(
-        useRunnerStore.getState().runnerProfile as SelfRunnerProfile | null,
-      );
-      if (!saved.ready && saved.blocker === 'incomplete_bank') {
-        toast.info('Add your account number too — we can’t send a bank payout without it.');
-      }
+      setEditingMethod(false);
+      haptics.success();
+      toast.success(res.data?.message ?? 'Payout method saved.');
+    } catch (err: any) {
+      haptics.error();
+      setMethodErrors(payoutDestinationServerErrors(err));
+      toast.error(errorMessage(err, copy.profile.saveFailed));
+    } finally {
+      setSaving(false);
+      methodSaveLatch.current = false;
+    }
+  };
+
+  const confirmRemoveMethod = async () => {
+    if (removing) return;
+    setRemoving(true);
+    try {
+      const res = await runnerService.removePayoutMethod();
+      profileWriteSeq.current += 1;
+      if (res.data?.data) setRunnerProfile(res.data.data);
+      methodFormTouched.current = false;
+      setEditingMethod(false);
+      setShowRemoveModal(false);
+      toast.success(res.data?.message ?? 'Payout method removed.');
     } catch (err: any) {
       haptics.error();
       toast.error(errorMessage(err, copy.profile.saveFailed));
     } finally {
-      setSaving(false);
+      setRemoving(false);
     }
   };
 
@@ -451,9 +485,7 @@ export default function PayoutScreen() {
             </Text>
             {owesCommission ? (
               <Text className="text-[11px] font-montserrat text-white/85 mt-1.5">
-                You owe {formatCurrency(Math.abs(balance))} in platform fees from cash errands.
-                It’s settled automatically from your next online earnings — nothing to pay
-                separately.
+                {cashDebtText(balance, runnerProfile)}
               </Text>
             ) : belowMinimum ? (
               // Progress toward the payout minimum — reuses the daily-goal
@@ -553,7 +585,7 @@ export default function PayoutScreen() {
               <Text className="text-xs font-montserrat text-textSecondary mt-1 mb-3">
                 {method.blocker === 'incomplete_bank'
                   ? 'We can’t see an account number saved for it. Enter your account number below and save — then you can request a payout.'
-                  : 'Save a bank account or an e-wallet number below so we know where to send your money.'}
+                  : 'Choose GCash, Maya or a bank account below so we know where to send your money.'}
               </Text>
               <Button
                 title={
@@ -603,7 +635,7 @@ export default function PayoutScreen() {
           <View className="flex-row items-center justify-between mb-3">
             <Text className="text-[11px] font-montserrat text-textTertiary">
               Min {formatCurrency(minPayout)}
-              {method.destination ? ` · to ${method.destination}` : ''}
+              {method.label ? ` · to ${method.label}` : ''}
             </Text>
             {balance > 0 && (
               <Pressable
@@ -888,159 +920,100 @@ export default function PayoutScreen() {
           )}
         </View>
 
-        {/* Bank Account */}
+        {/* Payout method — ONE explicit destination (GCash, Maya or a bank),
+            shown as the place the money will actually go. The form only
+            appears when nothing usable is saved, or after "Change". */}
         <View
           className="px-5 mb-4"
           onLayout={(e) => {
             methodSectionY.current = e.nativeEvent.layout.y;
           }}
         >
+          <Text className="text-xs font-montserrat-bold text-textSecondary uppercase tracking-wider mb-2">
+            Payout method
+          </Text>
           <Card className="p-4">
-            <View className="flex-row items-center mb-3">
-              <View className="w-10 h-10 rounded-full bg-surfaceMuted items-center justify-center mr-3">
-                <CreditCard size={18} color={LightColors.primary} strokeWidth={1.8} />
-              </View>
-              <Text className="text-sm font-montserrat-bold text-textPrimary">
-                Bank Account
-              </Text>
-            </View>
-            <Text className="text-xs font-montserrat text-textSecondary mb-2">Bank</Text>
-            {/* A picker, not free text: hand-typed bank names ("BDo",
-                "metro bank") routed real payouts into manual admin fixes. */}
-            <View
-              className="flex-row flex-wrap gap-2 mb-3"
-              accessibilityRole="radiogroup"
-              accessibilityLabel="Bank"
-            >
-              {[...PH_BANKS, OTHER_BANK].map((bank) => {
-                const selected = bankChoice === bank;
-                return (
-                  <Pressable
-                    key={bank}
-                    onPress={() => {
-                      Haptics.selectionAsync().catch(() => {});
-                      touchMethodForm();
-                      setBankChoice(selected ? '' : bank);
-                    }}
-                    android_ripple={{ color: `${LightColors.primary}14`, borderless: false }}
-                    accessibilityRole="radio"
-                    accessibilityLabel={bank}
-                    accessibilityState={{ selected }}
-                    // Layout stays in className — a Pressable styled only via
-                    // style={() => [obj]} drops flexDirection/backgroundColor.
-                    className="flex-row items-center px-3 py-2"
-                    style={({ pressed }) => [
-                      {
-                        borderRadius: Radius.chip,
-                        borderWidth: 1.5,
-                        borderColor: selected ? LightColors.primary : LightColors.divider,
-                        backgroundColor: selected
-                          ? LightColors.primaryLight
-                          : LightColors.surface,
-                        overflow: 'hidden',
-                        minHeight: 40,
-                      },
-                      pressed ? { opacity: 0.92 } : null,
-                    ]}
-                  >
-                    {selected && (
-                      <Check size={13} color={LightColors.primary} style={{ marginRight: 4 }} />
-                    )}
-                    <Text
-                      className={`text-[13px] ${
-                        selected ? 'font-montserrat-bold text-primary' : 'font-montserrat-semi text-textSecondary'
-                      }`}
-                    >
-                      {bank}
+            {!showMethodForm ? (
+              <>
+                <View className="flex-row items-center">
+                  {method.channel === 'gcash' || method.channel === 'maya' ? (
+                    <PaymentBrandMark type={method.channel} size={40} />
+                  ) : (
+                    <View className="w-10 h-10 rounded-xl bg-surfaceMuted items-center justify-center">
+                      {method.channel === 'bank' ? (
+                        <Landmark size={18} color={LightColors.primary} strokeWidth={1.8} />
+                      ) : (
+                        <Smartphone size={18} color={LightColors.primary} strokeWidth={1.8} />
+                      )}
+                    </View>
+                  )}
+                  <View className="flex-1 ml-3">
+                    <Text className="text-[11px] font-montserrat text-textSecondary">
+                      Payouts go to
                     </Text>
-                  </Pressable>
-                );
-              })}
-            </View>
-            {bankChoice === OTHER_BANK && (
-              <TextInput
-                className="bg-surface border border-divider rounded-lg px-3 py-3 text-sm font-montserrat text-textPrimary mb-3"
-                style={{ minHeight: 48 }}
-                placeholder="Type your bank's name"
-                placeholderTextColor={LightColors.textMuted}
-                value={customBank}
-                onChangeText={(v) => {
-                  touchMethodForm();
-                  setCustomBank(v);
-                }}
-                autoCapitalize="words"
-                accessibilityLabel="Bank name"
-              />
+                    <Text className="text-sm font-montserrat-bold text-textPrimary">
+                      {method.label}
+                    </Text>
+                    {method.accountName ? (
+                      <Text className="text-xs font-montserrat text-textSecondary mt-0.5">
+                        {method.accountName}
+                      </Text>
+                    ) : null}
+                  </View>
+                </View>
+                {/* Saved by an older app version, which never asked which
+                    e-wallet the number belongs to. */}
+                {method.needsChannel ? (
+                  <Text className="text-[11px] font-montserrat-semi text-warningDark mt-3">
+                    Is this number GCash or Maya? Update it so your payouts go the right way.
+                  </Text>
+                ) : null}
+                <View className="flex-row mt-4" style={{ gap: 12 }}>
+                  <Button
+                    title={method.needsChannel ? 'Update' : 'Change'}
+                    variant="outline"
+                    onPress={startEditingMethod}
+                    style={{ flex: 1 }}
+                  />
+                  <Button
+                    title="Remove"
+                    variant="ghost"
+                    onPress={() => setShowRemoveModal(true)}
+                    style={{ flex: 1 }}
+                  />
+                </View>
+              </>
+            ) : (
+              <>
+                <Text className="text-xs font-montserrat text-textSecondary mb-3">
+                  {method.ready
+                    ? 'Choose where your payouts should go instead. Payouts you already requested keep their destination.'
+                    : 'Where should we send your payouts?'}
+                </Text>
+                <PayoutDestinationForm
+                  value={methodDraft}
+                  onChange={(next) => {
+                    methodFormTouched.current = true;
+                    setMethodDraft(next);
+                    setMethodErrors({});
+                  }}
+                  channels={RUNNER_PAYOUT_CHANNELS}
+                  errors={methodErrors}
+                />
+                <Button
+                  title="Save payout method"
+                  onPress={handleSaveMethod}
+                  loading={saving}
+                  loadingTitle="Saving…"
+                  disabled={!methodDraft.channel}
+                  fullWidth
+                />
+                {method.ready ? (
+                  <Button title="Cancel" variant="ghost" onPress={cancelEditingMethod} fullWidth />
+                ) : null}
+              </>
             )}
-            <Text className="text-xs font-montserrat text-textSecondary mb-1">Account Number</Text>
-            <TextInput
-              className="bg-surface border border-divider rounded-lg px-3 py-3 text-sm font-inter tabular-nums text-textPrimary"
-              style={{ minHeight: 48 }}
-              placeholder={
-                method.bankLast4 ? 'Enter a new number to replace it' : 'Enter account number'
-              }
-              placeholderTextColor={LightColors.textMuted}
-              value={bankAccount}
-              onChangeText={(v) => {
-                touchMethodForm();
-                setBankAccount(v);
-              }}
-              keyboardType="number-pad"
-              accessibilityLabel="Bank account number"
-            />
-            {/* The number itself is encrypted + $hidden, so the field is blank
-                forever and runners re-entered it "just in case" every visit.
-                The last 4 digits prove an account IS on file. */}
-            {method.bankLast4 ? (
-              <Text className="text-[11px] font-montserrat text-textTertiary mt-1.5">
-                {maskedAccount(method.bankLast4)} on file · leave blank to keep it
-              </Text>
-            ) : bankChoice ? (
-              <Text className="text-[11px] font-montserrat-semi text-warningDark mt-1.5">
-                We can’t send a bank payout without an account number.
-              </Text>
-            ) : null}
           </Card>
-        </View>
-
-        {/* E-Wallet */}
-        <View className="px-5 mb-4">
-          <Card className="p-4">
-            <View className="flex-row items-center mb-3">
-              <View className="w-10 h-10 rounded-full bg-surfaceMuted items-center justify-center mr-3">
-                <Smartphone size={18} color={LightColors.primary} strokeWidth={1.8} />
-              </View>
-              <Text className="text-sm font-montserrat-bold text-textPrimary">
-                E-Wallet
-              </Text>
-            </View>
-            <Text className="text-xs font-montserrat text-textSecondary mb-1">E-Wallet Number</Text>
-            <TextInput
-              className="bg-surface border border-divider rounded-lg px-3 py-3 text-sm font-inter tabular-nums text-textPrimary"
-              style={{ minHeight: 48 }}
-              placeholder="e.g. GCash, Maya number"
-              placeholderTextColor={LightColors.textMuted}
-              value={ewalletNumber}
-              onChangeText={(v) => {
-                touchMethodForm();
-                setEwalletNumber(v);
-              }}
-              keyboardType="phone-pad"
-              accessibilityLabel="E-wallet number"
-            />
-          </Card>
-        </View>
-
-        {/* Save */}
-        <View className="px-5">
-          <Button
-            title="Save Payout Info"
-            variant="outline"
-            onPress={handleSavePayoutInfo}
-            loading={saving}
-            loadingTitle="Saving…"
-            fullWidth
-          />
         </View>
       </ScrollView>
       </KeyboardAvoidingView>
@@ -1064,12 +1037,10 @@ export default function PayoutScreen() {
       <ConfirmModal
         visible={showRequestModal}
         title="Request payout?"
-        // Name the destination the money will ACTUALLY go to — the server
-        // resolves ewallet_number before bank_account_number, so a runner with
-        // both saved used to be promised "your saved account" and paid to the
-        // e-wallet.
+        // Name the destination the money will ACTUALLY go to — the saved
+        // method, exactly as the server will record it on the payout.
         message={`Submit a payout request for ${formatCurrency(requestedAmount)}? Funds will be transferred to ${
-          method.destination ?? 'your saved account'
+          method.label ?? 'your saved account'
         } within 1–3 business days.`}
         confirmLabel="Request"
         confirmLoadingLabel="Requesting…"
@@ -1077,6 +1048,21 @@ export default function PayoutScreen() {
         loading={requesting}
         onConfirm={confirmRequestPayout}
         onCancel={() => setShowRequestModal(false)}
+      />
+
+      <ConfirmModal
+        visible={showRemoveModal}
+        title="Remove payout method?"
+        message={`You’ll need to add one again before you can request a payout. Payouts you already requested still go to ${
+          method.label ?? 'the account they were requested to'
+        }.`}
+        confirmLabel="Remove"
+        confirmLoadingLabel="Removing…"
+        cancelLabel="Keep it"
+        destructive
+        loading={removing}
+        onConfirm={confirmRemoveMethod}
+        onCancel={() => setShowRemoveModal(false)}
       />
     </View>
   );

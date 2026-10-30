@@ -120,17 +120,48 @@ class PaymentSafetyFoundationTest extends TestCase
 
     // ── payment_id in create response + status endpoint ─────────────────────
 
+    /** A GCash charge whose customer hasn't approved it yet. */
+    private function fakeGcashCharge(string $id): void
+    {
+        Http::fake([
+            'api.xendit.co/payment_requests' => Http::response([
+                'id' => $id, 'status' => 'REQUIRES_ACTION',
+                'actions' => [['url' => "https://gcash.example/authorize/{$id}"]],
+            ], 200),
+            "api.xendit.co/payment_requests/{$id}" => Http::response(['id' => $id, 'status' => 'REQUIRES_ACTION'], 200),
+        ]);
+    }
+
+    /**
+     * A card checkout started before cards were retired: its hosted-invoice
+     * webhooks must still settle it.
+     */
+    private function legacyCardPaymentId(string $invoiceId): string
+    {
+        $booking = Booking::create([
+            'booking_number' => 'EG-20261030-'.strtoupper(substr(md5($invoiceId), 0, 6)),
+            'customer_id' => $this->customer->id, 'errand_type_id' => $this->deliveryType->id,
+            'status' => 'pending', 'payment_method' => 'card', 'payment_status' => 'pending',
+            'pickup_address' => '123 Main St, Manila', 'pickup_lat' => 14.5995, 'pickup_lng' => 120.9842,
+            'dropoff_address' => '456 Oak Ave, Makati', 'dropoff_lat' => 14.5547, 'dropoff_lng' => 121.0244,
+            'schedule_type' => 'now', 'pricing_mode' => 'fixed', 'vehicle_type_rate' => 'motorcycle',
+            'distance_km' => 5.0, 'base_fee' => 50, 'distance_fee' => 50, 'service_fee' => 15,
+            'surcharge' => 0, 'total_amount' => 115, 'runner_payout' => 100, 'is_transportation' => false,
+        ]);
+
+        return Payment::create([
+            'booking_id' => $booking->id, 'customer_id' => $this->customer->id, 'amount' => 115,
+            'currency' => 'PHP', 'method' => 'card', 'status' => 'processing', 'gateway_tx_id' => $invoiceId,
+        ])->id;
+    }
+
     public function test_booking_create_returns_payment_id_and_status_endpoint_reports_it(): void
     {
         Bus::fake();
-        Http::fake([
-            'api.xendit.co/v2/invoices' => Http::response([
-                'id' => 'inv_status', 'invoice_url' => 'https://checkout.xendit.co/inv_status',
-            ], 200),
-        ]);
+        $this->fakeGcashCharge('pr-status');
 
         $res = $this->actingAs($this->customer)
-            ->postJson('/api/v1/bookings', [...$this->base, 'payment_method' => 'card'])
+            ->postJson('/api/v1/bookings', [...$this->base, 'payment_method' => 'gcash'])
             ->assertCreated();
 
         $paymentId = $res->json('payment_id');
@@ -142,18 +173,16 @@ class PaymentSafetyFoundationTest extends TestCase
 
         $status->assertJsonPath('data.status', 'processing')
             ->assertJsonPath('data.payment_id', $paymentId)
-            ->assertJsonPath('data.method', 'card')
-            ->assertJsonPath('data.reference', 'inv_status');
+            ->assertJsonPath('data.method', 'gcash')
+            ->assertJsonPath('data.reference', 'pr-status');
     }
 
     public function test_payment_status_is_ownership_scoped(): void
     {
         Bus::fake();
-        Http::fake([
-            'api.xendit.co/v2/invoices' => Http::response(['id' => 'inv_o', 'invoice_url' => 'https://x/inv_o'], 200),
-        ]);
+        $this->fakeGcashCharge('pr-o');
         $paymentId = $this->actingAs($this->customer)
-            ->postJson('/api/v1/bookings', [...$this->base, 'payment_method' => 'card'])
+            ->postJson('/api/v1/bookings', [...$this->base, 'payment_method' => 'gcash'])
             ->json('payment_id');
 
         $stranger = User::factory()->create(['role' => 'customer', 'status' => 'active']);
@@ -167,11 +196,9 @@ class PaymentSafetyFoundationTest extends TestCase
     public function test_payment_status_probe_emits_canonical_contract(): void
     {
         Bus::fake();
-        Http::fake([
-            'api.xendit.co/v2/invoices' => Http::response(['id' => 'inv_c', 'invoice_url' => 'https://x/inv_c'], 200),
-        ]);
+        $this->fakeGcashCharge('pr-c');
         $paymentId = $this->actingAs($this->customer)
-            ->postJson('/api/v1/bookings', [...$this->base, 'payment_method' => 'card'])
+            ->postJson('/api/v1/bookings', [...$this->base, 'payment_method' => 'gcash'])
             ->json('payment_id');
 
         $this->actingAs($this->customer)
@@ -241,16 +268,10 @@ class PaymentSafetyFoundationTest extends TestCase
 
     // ── invoice.expired ─────────────────────────────────────────────────────
 
-    public function test_invoice_expired_moves_booking_payment_to_expired_and_notifies(): void
+    public function test_invoice_expired_moves_a_legacy_card_booking_payment_to_expired_and_notifies(): void
     {
         Bus::fake();
-        Http::fake([
-            'api.xendit.co/v2/invoices' => Http::response(['id' => 'inv_exp', 'invoice_url' => 'https://x/inv_exp'], 200),
-        ]);
-        $payment = null;
-        $paymentId = $this->actingAs($this->customer)
-            ->postJson('/api/v1/bookings', [...$this->base, 'payment_method' => 'card'])
-            ->json('payment_id');
+        $paymentId = $this->legacyCardPaymentId('inv_exp');
 
         $this->postJson('/api/v1/webhooks/xendit', [
             'event' => 'invoice.expired',
@@ -275,15 +296,13 @@ class PaymentSafetyFoundationTest extends TestCase
         ]);
     }
 
-    public function test_invoice_expired_fails_pending_topup(): void
+    public function test_invoice_expired_fails_a_legacy_pending_topup(): void
     {
-        Http::fake([
-            'api.xendit.co/v2/invoices' => Http::response(['id' => 'inv_tu', 'invoice_url' => 'https://x/inv_tu'], 200),
+        // A top-up started before top-ups were retired.
+        $tx = WalletTransaction::create([
+            'user_id' => $this->customer->id, 'type' => 'top_up', 'amount' => 500, 'balance_after' => 0,
+            'status' => 'pending', 'gateway_ref' => 'inv_tu', 'description' => 'Wallet top-up (awaiting payment)',
         ]);
-        $this->actingAs($this->customer)
-            ->postJson('/api/v1/wallet/top-up', ['amount' => 500])
-            ->assertCreated();
-        $tx = WalletTransaction::where('user_id', $this->customer->id)->firstOrFail();
 
         $this->postJson('/api/v1/webhooks/xendit', [
             'event' => 'invoice.expired',
@@ -300,12 +319,7 @@ class PaymentSafetyFoundationTest extends TestCase
     public function test_webhook_records_event_and_writes_transition(): void
     {
         Bus::fake();
-        Http::fake([
-            'api.xendit.co/v2/invoices' => Http::response(['id' => 'inv_dedupe', 'invoice_url' => 'https://x/inv_dedupe'], 200),
-        ]);
-        $paymentId = $this->actingAs($this->customer)
-            ->postJson('/api/v1/bookings', [...$this->base, 'payment_method' => 'card'])
-            ->json('payment_id');
+        $paymentId = $this->legacyCardPaymentId('inv_dedupe');
 
         $payload = [
             'event' => 'invoice.paid',

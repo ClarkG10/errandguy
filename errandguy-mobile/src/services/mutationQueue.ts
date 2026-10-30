@@ -5,7 +5,6 @@ import { network, useNetworkStore } from '../stores/networkStore';
 import { invalidateQuery } from '../hooks/useQuery';
 import { notificationService } from './notification.service';
 import { userService } from './user.service';
-import { paymentService } from './payment.service';
 import { runnerService } from './runner.service';
 import { bookingService } from './booking.service';
 
@@ -113,9 +112,6 @@ const HANDLERS: Record<string, (payload: any) => Promise<unknown>> = {
   'user.addTrustedContact': (data) => userService.addTrustedContact(data),
   'user.updateTrustedContact': ({ id, data }) => userService.updateTrustedContact(id, data),
   'user.deleteTrustedContact': ({ id }) => userService.deleteTrustedContact(id),
-
-  // Default payment method — display-only preference, no money moves.
-  'payment.setDefaultMethod': ({ id }) => paymentService.setDefaultMethod(id),
 
   // Runner settings — preferred types and other profile fields.
   'runner.updateProfile': (data) => runnerService.updateRunnerProfile(data),

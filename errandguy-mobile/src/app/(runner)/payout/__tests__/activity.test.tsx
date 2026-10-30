@@ -105,3 +105,42 @@ describe('runner wallet activity balance hero', () => {
     await waitFor(() => expect(getByText('₱470.00')).toBeTruthy());
   });
 });
+
+describe('runner wallet activity rows', () => {
+  it('shows a cancellation fee as money in, under the server’s label', async () => {
+    mockGetTransactions.mockResolvedValue({
+      data: {
+        data: [
+          {
+            id: 'tx-fee',
+            type: 'cancel_fee',
+            amount: 50,
+            balance_after: 535,
+            status: 'completed',
+            display_description: 'ErrandGuy · Cancellation fee',
+            created_at: '2026-10-30T10:00:00Z',
+          },
+        ],
+      },
+    });
+    const { getByText } = renderScreen();
+
+    await waitFor(() => expect(getByText('ErrandGuy · Cancellation fee')).toBeTruthy());
+    expect(getByText('+₱50.00')).toBeTruthy();
+  });
+
+  it('explains a negative balance in the server’s cash-debt words', async () => {
+    mockGetProfile.mockResolvedValue({ data: { data: { ...freshUser, wallet_balance: -240 } } });
+    const { getByText, queryByText } = renderScreen();
+
+    await waitFor(() =>
+      expect(
+        getByText(
+          'You owe ₱240.00 from cash errands. It’s cleared automatically from your next prepaid earnings; cash errands pause at ₱1,000.',
+        ),
+      ).toBeTruthy(),
+    );
+    expect(getByText('Owed from cash errands')).toBeTruthy();
+    expect(queryByText(/nothing to pay separately/)).toBeNull();
+  });
+});

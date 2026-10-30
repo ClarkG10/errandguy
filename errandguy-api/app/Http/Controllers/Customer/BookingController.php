@@ -17,7 +17,6 @@ use App\Models\Booking;
 use App\Models\BookingStatusLog;
 use App\Models\BookingStop;
 use App\Models\Payment;
-use App\Models\PaymentMethod;
 use App\Models\RunnerLocation;
 use App\Services\BookingService;
 use App\Services\CancellationPolicy;
@@ -223,10 +222,13 @@ class BookingController extends Controller
 
         // ── Payment ──────────────────────────────────────────────────────
         // Capture the chosen settlement method and collect payment.
-        //  - wallet : deduct now (fail the booking if the balance is short)
-        //  - cash   : leave unpaid; the runner collects on completion
-        //  - online : create a Xendit hosted invoice and return its URL; the
-        //             booking is marked paid by the invoice.paid webhook
+        //  - wallet      : deduct now (fail the booking if the balance is short)
+        //  - cash        : leave unpaid; the runner collects on completion
+        //  - gcash / maya: a one-time Xendit e-wallet charge; the booking is
+        //                  marked paid by the payment.succeeded webhook (or
+        //                  the status-poll reconciler)
+        // Validation only lets these four through: cards, GrabPay and linked
+        // accounts are retired (see CreateBookingRequest).
         $paymentMethod = $validated['payment_method'];
         $amount = (float) $booking->total_amount;
         $checkoutUrl = null;
@@ -235,72 +237,7 @@ class BookingController extends Controller
         $paymentId = null;
         $booking->update(['payment_method' => $paymentMethod]);
 
-        // A previously-linked reusable method (e.g. Maya/GrabPay) chosen for a
-        // one-tap charge — usually needs no redirect. Only honour it when the
-        // DECLARED method is online: a client sending payment_method:'cash'/'wallet'
-        // WITH a linked method id would otherwise get a real gateway charge while
-        // the booking + payment both record 'cash' — a contradictory state the COD
-        // completion path then mis-settles (debits commission on money already paid).
-        $savedMethod = (! empty($validated['payment_method_id']) && ! in_array($paymentMethod, ['cash', 'wallet'], true))
-            ? PaymentMethod::where('id', $validated['payment_method_id'])
-                ->where('user_id', $user->id)
-                ->where('status', 'active')
-                ->whereNotNull('gateway_ref')
-                ->first()
-            : null;
-
-        if ($savedMethod) {
-            $payment = Payment::create([
-                'booking_id' => $booking->id,
-                'customer_id' => $user->id,
-                'amount' => $amount,
-                'currency' => 'PHP',
-                'method' => $paymentMethod,
-                'status' => 'pending',
-            ]);
-            $paymentId = $payment->id;
-            try {
-                $charge = app(PaymentService::class)->chargeSavedMethod(
-                    $savedMethod->gateway_ref,
-                    $amount,
-                    "booking-{$payment->id}",
-                    "ErrandGuy booking {$booking->booking_number}",
-                );
-                $chargeStatus = strtoupper($charge['status'] ?? '');
-
-                if ($chargeStatus === 'SUCCEEDED') {
-                    $payment->transitionTo(PaymentStatus::Completed, extra: [
-                        'gateway_tx_id' => $charge['id'] ?? null,
-                        'gateway_response' => $charge,
-                        'paid_at' => now(),
-                    ]);
-                    $booking->update(['payment_status' => 'paid']);
-                } elseif (in_array($chargeStatus, ['FAILED', 'EXPIRED', 'VOIDED'], true)) {
-                    throw new \RuntimeException('Charge was declined.');
-                } else {
-                    // PENDING / REQUIRES_ACTION — first charge may need a quick
-                    // auth this time; the payment.succeeded webhook confirms it.
-                    $payment->transitionTo(PaymentStatus::Processing, extra: [
-                        'gateway_tx_id' => $charge['id'] ?? null,
-                        'gateway_response' => $charge,
-                    ]);
-                    $booking->update(['payment_status' => 'pending']);
-                    $checkoutUrl = PaymentService::extractActionUrl($charge);
-                }
-            } catch (\Throwable $e) {
-                $payment->transitionTo(PaymentStatus::Failed, reason: 'Saved-method charge failed');
-                $this->failBooking($booking, $user->id, 'Payment failed: saved-method charge declined');
-                \Illuminate\Support\Facades\Log::error('Booking saved-method charge failed', [
-                    'booking_number' => $booking->booking_number,
-                    'error' => $e->getMessage(),
-                ]);
-                $message = 'We couldn’t charge your saved payment method. You weren’t charged — try another method.';
-                if (config('app.debug') && $e instanceof PaymentGatewayException) {
-                    $message = "Payment gateway error: {$e->reason()}";
-                }
-                return $this->fail(ErrorCode::PAYMENT_GATEWAY_ERROR, $message);
-            }
-        } elseif ($paymentMethod === 'wallet') {
+        if ($paymentMethod === 'wallet') {
             try {
                 // ONE transaction for the debit AND the booking's paid flag.
                 //
@@ -346,12 +283,13 @@ class BookingController extends Controller
                 // a Payment row may already reference it, which on Postgres would
                 // raise an FK error).
                 $this->failBooking($booking, $user->id, 'Payment failed: insufficient wallet balance');
-                $balance = number_format((float) $user->fresh()->wallet_balance, 2);
+                $fresh = $user->fresh();
+                $balance = number_format((float) $fresh->wallet_balance + (float) $fresh->bonus_balance, 2);
 
                 return $this->fail(
                     ErrorCode::INSUFFICIENT_WALLET_BALANCE,
                     'This booking costs ₱'.number_format((float) $amount, 2).' but your wallet balance is ₱'.$balance
-                        .'. Top up or choose another payment method — you weren’t charged.',
+                        .'. Please pay with GCash, Maya or cash instead — you weren’t charged.',
                 );
             }
         } elseif ($paymentMethod === 'cash') {
@@ -365,16 +303,15 @@ class BookingController extends Controller
             ]);
             $paymentId = $payment->id;
             $booking->update(['payment_status' => 'unpaid']);
-        } elseif ($paymentMethod === 'gcash' || $paymentMethod === 'maya') {
-            // Direct e-wallet charge via the Payment Requests API. The returned
-            // action URL deep-links STRAIGHT into the GCash/Maya app to approve
-            // — no Xendit hosted invoice page and no second method pick (the
-            // channel is fixed here). The only remaining hop is the wallet's own
-            // authorization, which no integration can remove. Settles via the
-            // payment.succeeded webhook (matched on the payment_request id we
-            // store as gateway_tx_id); the pull reconciler already GETs
-            // /payment_requests/{id}, so this also fixes the reconcile mismatch
-            // that the hosted-invoice path had for e-wallets.
+        } else {
+            // GCash / Maya: a direct e-wallet charge via the Payment Requests
+            // API. The returned action URL deep-links STRAIGHT into the
+            // GCash/Maya app to approve — no Xendit hosted invoice page and no
+            // second method pick (the channel is fixed here). The only remaining
+            // hop is the wallet's own authorization, which no integration can
+            // remove. Settles via the payment.succeeded webhook (matched on the
+            // payment_request id we store as gateway_tx_id); the pull reconciler
+            // GETs /payment_requests/{id} for the same charge.
             $payment = Payment::create([
                 'booking_id' => $booking->id,
                 'customer_id' => $user->id,
@@ -423,50 +360,7 @@ class BookingController extends Controller
                     'error' => $e->getMessage(),
                 ]);
                 $message = 'We couldn’t start your GCash/Maya payment. You weren’t charged — try again or choose another method.';
-                if (config('app.debug') && $e instanceof \App\Exceptions\PaymentGatewayException) {
-                    $message = "Payment gateway error: {$e->reason()}";
-                }
-                return $this->fail(ErrorCode::PAYMENT_GATEWAY_ERROR, $message);
-            }
-        } else {
-            // Card → Xendit hosted invoice. Cards are a small PH share and the
-            // hosted page keeps card entry, 3DS, and PCI scope entirely inside
-            // Xendit at zero cost; a native in-app card form is a later phase.
-            $payment = Payment::create([
-                'booking_id' => $booking->id,
-                'customer_id' => $user->id,
-                'amount' => $amount,
-                'currency' => 'PHP',
-                'method' => $paymentMethod,
-                'status' => 'pending',
-            ]);
-            $paymentId = $payment->id;
-            try {
-                $invoice = app(PaymentService::class)->createInvoice(
-                    $amount,
-                    "booking-{$payment->id}",
-                    "ErrandGuy booking {$booking->booking_number}",
-                    (string) ($user->email ?? ''),
-                    // Bridge page → app deep link so the in-app sheet auto-closes.
-                    url('/payment/complete'),
-                );
-                $payment->transitionTo(PaymentStatus::Processing, extra: [
-                    'gateway_tx_id' => $invoice['id'] ?? null,
-                    'gateway_response' => $invoice,
-                ]);
-                $checkoutUrl = $invoice['invoice_url'] ?? null;
-                $booking->update(['payment_status' => 'pending']);
-            } catch (\Throwable $e) {
-                $payment->transitionTo(PaymentStatus::Failed, reason: 'Gateway invoice creation failed');
-                $this->failBooking($booking, $user->id, 'Payment failed: could not create gateway invoice');
-                \Illuminate\Support\Facades\Log::error('Booking online payment failed', [
-                    'booking_number' => $booking->booking_number,
-                    'error' => $e->getMessage(),
-                ]);
-                // Friendly line in production; the real gateway reason in debug
-                // so it's diagnosable from the app itself.
-                $message = 'We couldn’t start your payment. You weren’t charged — try again or choose another method.';
-                if (config('app.debug') && $e instanceof \App\Exceptions\PaymentGatewayException) {
+                if (config('app.debug') && $e instanceof PaymentGatewayException) {
                     $message = "Payment gateway error: {$e->reason()}";
                 }
                 return $this->fail(ErrorCode::PAYMENT_GATEWAY_ERROR, $message);
@@ -527,8 +421,8 @@ class BookingController extends Controller
 
         return response()->json([
             'data' => new BookingResource($booking),
-            // For online payments the client must open this hosted-checkout
-            // URL to pay; null for cash/wallet (already settled/deferred).
+            // For GCash/Maya the client must open this authorization URL to
+            // pay; null for cash/wallet (already settled/deferred).
             'checkout_url' => $checkoutUrl,
             // Lets the app poll GET /payments/{id}/status to verify settlement
             // rather than assuming success from the checkout redirect.
@@ -695,10 +589,20 @@ class BookingController extends Controller
                 'trip_share_active' => false,
             ]);
 
+            // The fee goes to the runner who accepted (below). Lock both wallets
+            // up front in a deterministic order, like every other two-wallet
+            // path, so this can't deadlock against one.
+            $paysRunnerFee = $effectiveFee > 0 && $fresh['tier'] === 'flat' && $locked->runner_id;
+            if ($paysRunnerFee) {
+                $walletIds = [(string) $locked->customer_id, (string) $locked->runner_id];
+                sort($walletIds);
+                \App\Models\User::withTrashed()->whereIn('id', $walletIds)->orderBy('id')->lockForUpdate()->get();
+            }
+
             // Refund money already collected, minus the cancellation fee, to the
             // customer's wallet. Applies to wallet AND online bookings that were
             // already paid; cash bookings collected nothing so there's nothing to
-            // refund. The kept fee is the platform/runner compensation.
+            // refund.
             if ($locked->payment_status === 'paid') {
                 $refundable = round(max(0, (float) $locked->total_amount - $effectiveFee), 2);
                 if ($refundable > 0) {
@@ -723,7 +627,15 @@ class BookingController extends Controller
                 $locked->update(['payment_status' => 'refunded']);
             }
 
-            return null;
+            // The fee compensates the runner who accepted the errand and may
+            // already be on the way, so it is credited to THEIR withdrawable
+            // wallet — once, in this same transaction (the platform used to
+            // keep it).
+            $runnerFee = $paysRunnerFee
+                ? app(WalletService::class)->creditCancellationFee($locked, $effectiveFee)
+                : null;
+
+            return $runnerFee ? ['runner_fee' => $runnerFee] : null;
         });
 
         // The booking advanced out of the cancellable window between the unlocked
@@ -750,6 +662,17 @@ class BookingController extends Controller
 
         event(new BookingCancelled($booking));
 
+        // Tell the runner they were paid for the trip, after commit.
+        if (is_array($outcome) && isset($outcome['runner_fee'])) {
+            \App\Jobs\SendPushJob::dispatch(
+                $outcome['runner_fee']->user_id,
+                'Cancellation fee added',
+                'The customer cancelled errand #'.$booking->booking_number.' after you accepted it. ₱'
+                    .number_format((float) $outcome['runner_fee']->amount, 2).' was added to your wallet.',
+                ['type' => 'payment', 'booking_id' => $booking->id, 'wallet_transaction_id' => $outcome['runner_fee']->id],
+            );
+        }
+
         $booking->load(['errandType', 'statusLogs', 'stops']);
 
         // State what actually moved. A refund was credited to the wallet inside
@@ -764,16 +687,21 @@ class BookingController extends Controller
             ? round(max(0, (float) $booking->total_amount - $fee), 2)
             : 0.0;
 
+        // Say where the fee went: to the runner who had accepted.
+        $feeLine = is_array($outcome) && isset($outcome['runner_fee'])
+            ? ' cancellation fee went to your runner'
+            : ' cancellation fee was applied';
+
         if ($refunded > 0) {
             $newBalance = number_format((float) $request->user()->fresh()->wallet_balance, 2);
             $message = $fee > 0
-                ? 'Booking cancelled. A ₱'.number_format($fee, 2).' cancellation fee was applied and ₱'
+                ? 'Booking cancelled. A ₱'.number_format($fee, 2).$feeLine.' and ₱'
                     .number_format($refunded, 2).' was refunded to your ErrandGuy wallet (new balance ₱'.$newBalance.').'
                 : 'Booking cancelled. ₱'.number_format($refunded, 2)
                     .' was refunded to your ErrandGuy wallet (new balance ₱'.$newBalance.').';
         } elseif ($fee > 0) {
-            $message = 'Booking cancelled. A ₱'.number_format($fee, 2)
-                .' cancellation fee was applied. Nothing else was collected, so there is no refund.';
+            $message = 'Booking cancelled. A ₱'.number_format($fee, 2).$feeLine
+                .'. Nothing else was collected, so there is no refund.';
         } else {
             $message = 'Booking cancelled — no fee was charged.';
         }
@@ -1181,19 +1109,30 @@ class BookingController extends Controller
     }
 
     /**
-     * Start a GATEWAY-funded tip (GCash / Maya / card) for a completed errand.
+     * Start a GATEWAY-funded tip (GCash / Maya) for a completed errand.
      *
-     * This is the zero-wallet / COD path: the customer pays the tip directly via
-     * an online method — no wallet balance required — and the runner is credited
-     * only after Xendit confirms via webhook ({@see WalletService::
+     * This is the zero-wallet / cash-errand path: the customer pays the tip
+     * directly with GCash or Maya — no wallet balance required — and the runner
+     * is credited only after Xendit confirms ({@see WalletService::
      * completeGatewayTip()}). The instant wallet-funded path is {@see
      * self::tip()}. Returns a `checkout_url` the app opens to pay.
+     *
+     * Every call starts a NEW charge with its own row, so switching from GCash
+     * to Maya never loses track of the first charge: whichever succeeds first
+     * pays the runner and any other that also succeeds is refunded to the
+     * customer's wallet.
      */
     public function tipCheckout(Request $request, string $id): JsonResponse
     {
+        if ($retired = \App\Services\PaymentMethodCatalog::retiredMessage($request->input('method'), 'GCash, Maya or your ErrandGuy wallet')) {
+            return $this->fail(ErrorCode::VALIDATION_FAILED, $retired, errors: ['method' => [$retired]]);
+        }
+
         $data = $request->validate([
             'amount' => ['required', 'numeric', 'min:1', 'max:5000'],
-            'method' => ['required', 'string', \Illuminate\Validation\Rule::in(['gcash', 'maya', 'card'])],
+            'method' => ['required', 'string', \Illuminate\Validation\Rule::in(['gcash', 'maya'])],
+        ], [
+            'method.in' => 'Please tip with GCash, Maya or your ErrandGuy wallet.',
         ]);
         $amount = round((float) $data['amount'], 2);
 
@@ -1207,20 +1146,34 @@ class BookingController extends Controller
         if (! $booking->runner_id) {
             return $this->fail(ErrorCode::BOOKING_STATE_INVALID, 'This errand had no runner to tip.');
         }
+
+        // A charge started earlier for this errand may already have been paid
+        // with its notice still on the way. Ask Xendit about the recent ones
+        // first (throttled per charge) so a tip that has in fact landed blocks
+        // a second charge instead of being refunded after the fact.
+        $wallet = app(WalletService::class);
+        \App\Models\WalletTransaction::where('user_id', $booking->customer_id)
+            ->where('type', 'tip_payment')
+            ->where('status', 'pending')
+            ->where(fn ($q) => $q->where('booking_id', $booking->id)->orWhere('reference_id', $booking->id))
+            ->latest('created_at')
+            ->limit(3)
+            ->get()
+            ->each(fn ($pending) => $wallet->reconcilePendingTopUp($pending));
+
         // One tip per errand — same guard as the wallet path. Once a tip
         // (wallet OR gateway) has settled, tip_amount is set and this rejects a
         // second charge before any money is collected.
-        if ((float) $booking->tip_amount > 0) {
+        if ((float) $booking->fresh()->tip_amount > 0) {
             return $this->fail(ErrorCode::CONFLICT, 'You’ve already tipped this errand.');
         }
 
         try {
-            $result = app(WalletService::class)->initiateGatewayTip(
+            $result = $wallet->initiateGatewayTip(
                 $booking->id,
                 $booking->customer_id,
                 $amount,
                 $data['method'],
-                $request->user()->email,
                 // After paying, Xendit redirects here; the bridge forwards to the
                 // app deep link so the in-app checkout sheet auto-closes.
                 url('/payment/complete'),
@@ -1239,7 +1192,7 @@ class BookingController extends Controller
 
         return $this->created($result['transaction'], merge: [
             // Client opens this to pay; the runner is credited only after the
-            // webhook confirms settlement.
+            // gateway confirms settlement.
             'checkout_url' => $result['checkout_url'],
         ]);
     }

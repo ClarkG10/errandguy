@@ -1,10 +1,6 @@
 export type NotificationType =
   | 'booking_update'
   | 'payment'
-  // Referral reward credited to the wallet. A real backend notification type —
-  // omitting it made referral rows fall back to the generic "system" icon/label
-  // and stop routing on tap.
-  | 'referral'
   | 'system'
   | 'sos'
   | 'chat'

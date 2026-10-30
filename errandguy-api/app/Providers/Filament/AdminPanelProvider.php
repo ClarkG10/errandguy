@@ -29,7 +29,7 @@ class AdminPanelProvider extends PanelProvider
     {
         // Amber BRAND accent = the "Guy" half of the wordmark. Registered as a
         // named colour (Color::hex builds the full 50→950 ramp) so ratings,
-        // rewards, referral and money-highlight surfaces can opt into brand gold.
+        // rewards and money-highlight surfaces can opt into brand gold.
         // Pinned to #fbbf24 (amber-400) — deliberately ONE RUNG LIGHTER than
         // `warning` (Color::Amber = amber-500 #f59e0b) so a gold rating star and
         // an amber "pending" badge stay distinguishable. accent = brand, never

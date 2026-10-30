@@ -270,7 +270,8 @@ class BookingResource extends JsonResource
 
     /**
      * Settlement method type for runner-facing screens: 'cash' | 'wallet' |
-     * 'gcash' | 'maya' | 'card' (whatever the operator-enabled catalog allows).
+     * 'gcash' | 'maya' ('card' on older bookings, from before cards were
+     * retired).
      * Reads the booking column the admin screens read, falling back to the
      * payment row's method only when that relation is already loaded (never
      * triggers an extra query).

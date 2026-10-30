@@ -434,7 +434,7 @@ class BookingService
         Cache::forget("runner_active_booking_id:{$booking->runner_id}");
 
         // Same post-commit event as the runner's completion: customer + runner
-        // notices, the referral reward, live status for both apps.
+        // notices, live status for both apps.
         event(new BookingStatusChanged($booking, $oldStatus, 'completed'));
     }
 

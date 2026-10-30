@@ -7,7 +7,6 @@ import { useBookingStore } from '../../../../stores/bookingStore';
 import { bookingService } from '../../../../services/booking.service';
 import { configService } from '../../../../services/config.service';
 import { paymentService } from '../../../../services/payment.service';
-import { userService } from '../../../../services/user.service';
 import type { Booking, ErrandType, User } from '../../../../types';
 
 jest.mock('../../../../services/booking.service', () => ({
@@ -18,9 +17,6 @@ jest.mock('../../../../services/config.service', () => ({
 }));
 jest.mock('../../../../services/payment.service', () => ({
   paymentService: { getWalletBalance: jest.fn() },
-}));
-jest.mock('../../../../services/user.service', () => ({
-  userService: { getReferral: jest.fn() },
 }));
 jest.mock('../../../../services/preload.service', () => ({
   warmTracking: jest.fn(),
@@ -122,7 +118,6 @@ beforeEach(() => {
   (paymentService.getWalletBalance as jest.Mock).mockResolvedValue({
     data: { data: { balance: 0 } },
   });
-  (userService.getReferral as jest.Mock).mockResolvedValue({ data: { data: null } });
   (bookingService.getBookings as jest.Mock).mockResolvedValue({ data: { data: [] } });
   setActive([]);
 });

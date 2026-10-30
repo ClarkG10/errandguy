@@ -167,4 +167,50 @@ describe('prefetch coverage', () => {
     // looking at a key family that exists.
     expect(warmed.has('runner/errand')).toBe(true);
   });
+
+  /**
+   * Saved payment methods, wallet top-ups and the referral program are
+   * retired: their screens, the Home invite pill and the warms that fed them
+   * are gone, and the server only keeps stub endpoints for the app build
+   * already on phones. Pinned on both sides — the cache keys AND the endpoints
+   * — so a revived reader, seed or call shows up here.
+   */
+  it('neither warms, reads nor calls the retired payment-method, top-up and referral surfaces', () => {
+    for (const key of ['payment-methods', 'user/referral']) {
+      expect(warmed.has(key)).toBe(false);
+      expect(consumed.has(key)).toBe(false);
+    }
+
+    const retiredEndpoints = [
+      /['"`]\/payments\/methods/,
+      /['"`]\/wallet\/top-up/,
+      /['"`]\/user\/referral/,
+    ];
+    const files = sourceFiles(['app', 'components', 'hooks', 'services', 'stores', 'utils']);
+    expect(files.length).toBeGreaterThan(100);
+
+    const offenders = files
+      .filter((f) => {
+        const src = fs.readFileSync(f, 'utf8');
+        return retiredEndpoints.some((re) => re.test(src));
+      })
+      .map((f) => path.relative(SRC, f));
+
+    expect(offenders).toEqual([]);
+    // The live neighbours of those endpoints are still called, so the patterns
+    // above are looking at the right kind of string.
+    expect(read('services/payment.service.ts')).toMatch(/['"`]\/payments\/available-methods/);
+    expect(read('services/payment.service.ts')).toMatch(/['"`]\/wallet\/withdraw/);
+  });
+
+  /**
+   * The Review payment selector offers the wallet only once it knows the
+   * balance (and bonus credit) covers the errand, so a cold read there makes a
+   * wallet regular watch the selector open on Cash and then hop. The funnel
+   * warms it on entry; the boot snapshot only carries the bare balance.
+   */
+  it('warms the wallet summary the Review payment selector reads', () => {
+    expect(warmed.has('wallet/summary')).toBe(true);
+    expect(consumed.has('wallet/summary')).toBe(true);
+  });
 });

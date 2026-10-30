@@ -1,27 +1,16 @@
 import React, { useCallback, useMemo, useState } from 'react';
-import {
-  View,
-  Text,
-  ScrollView,
-  Pressable,
-  Modal,
-  TextInput,
-  KeyboardAvoidingView,
-  Platform,
-} from 'react-native';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { View, Text, ScrollView, Pressable } from 'react-native';
 import { useRouter, useFocusEffect } from 'expo-router';
 import {
   BadgeCheck,
   ChevronRight,
   Wallet,
+  ArrowUpFromLine,
   UserRound,
   MapPin,
   Users,
-  CreditCard,
   HelpCircle,
   Flag,
-  Gift,
   RefreshCw,
   Info,
   Accessibility,
@@ -30,7 +19,6 @@ import {
 import type { LucideIcon } from 'lucide-react-native';
 import * as Haptics from 'expo-haptics';
 import { Avatar } from '../../../components/ui/Avatar';
-import { Button } from '../../../components/ui/Button';
 import { Card } from '../../../components/ui/Card';
 import { BrandRefreshControl } from '../../../components/ui/BrandRefreshControl';
 import { GradientHeader } from '../../../components/ui/GradientHeader';
@@ -39,6 +27,7 @@ import { InlineLogoutLink } from '../../../components/auth/InlineLogoutLink';
 import { Eyebrow, Hairline } from '../../../components/ui/Typography';
 import { ConfirmModal } from '../../../components/ui/ConfirmModal';
 import { EditProfileModal } from '../../../components/customer/EditProfileModal';
+import { DeleteAccountSheet } from '../../../components/settings/DeleteAccountSheet';
 import { useAuthStore } from '../../../stores/authStore';
 import { useBookingStore } from '../../../stores/bookingStore';
 import { useAuth } from '../../../hooks/useAuth';
@@ -47,7 +36,6 @@ import { userService } from '../../../services/user.service';
 import { bookingService } from '../../../services/booking.service';
 import { CacheTTL } from '../../../services/cache.service';
 import { parseActiveBookings } from '../../../utils/activeBookings';
-import { prefetchReferral } from '../../../services/preload.service';
 import { formatCurrency } from '../../../utils/formatCurrency';
 import { LightColors } from '../../../constants/colors';
 import { copy } from '../../../constants/copy';
@@ -73,7 +61,6 @@ const lightTap = () =>
 
 export default function CustomerProfileScreen() {
   const router = useRouter();
-  const insets = useSafeAreaInsets();
   const user = useAuthStore((s) => s.user);
   const setUser = useAuthStore((s) => s.setUser);
   const { logout } = useAuth();
@@ -85,8 +72,6 @@ export default function CustomerProfileScreen() {
   const [switchingRole, setSwitchingRole] = useState(false);
   const [loggingOut, setLoggingOut] = useState(false);
   const [showDeleteModal, setShowDeleteModal] = useState(false);
-  const [deleteConfirmText, setDeleteConfirmText] = useState('');
-  const [deleting, setDeleting] = useState(false);
 
   // Refresh the user record (notably wallet_balance) every time the
   // profile tab gains focus so the wallet figure isn't stale.
@@ -100,12 +85,7 @@ export default function CustomerProfileScreen() {
   useFocusEffect(
     useCallback(() => {
       refreshUser();
-      // Warm the one-tap-away Referral screen so it paints instantly when
-      // opened from here (it is deliberately excluded from the first-wave auth
-      // warm-up). Best-effort. (P32)
-      const uid = user?.id;
-      if (uid) prefetchReferral(uid);
-    }, [refreshUser, user?.id]),
+    }, [refreshUser]),
   );
 
   const onRefresh = useCallback(async () => {
@@ -176,25 +156,11 @@ export default function CustomerProfileScreen() {
     }
   }, [router, setUser]);
 
-  const handleDeleteAccount = useCallback(async () => {
-    if (deleteConfirmText !== 'DELETE') return;
-    setDeleting(true);
-    Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
-    try {
-      await userService.deleteAccount();
-      // Close/reset only on success — after a transient failure the sheet
-      // stays open with the typed text intact so the user just retries.
-      setShowDeleteModal(false);
-      setDeleteConfirmText('');
-      await logout();
-      router.replace('/(auth)/welcome' as any);
-    } catch (err) {
-      haptics.error();
-      toast.error(errorMessage(err, copy.profile.deleteAccountFailed));
-    } finally {
-      setDeleting(false);
-    }
-  }, [deleteConfirmText, logout, router]);
+  const onAccountDeleted = useCallback(async () => {
+    setShowDeleteModal(false);
+    await logout();
+    router.replace('/(auth)/welcome' as any);
+  }, [logout, router]);
 
   // Profile completion — computed client-side from the user record.
   // Five checks: photo, email added, email verified, phone added,
@@ -242,18 +208,9 @@ export default function CustomerProfileScreen() {
       icon: Wallet,
       route: '/(customer)/wallet',
     },
-    {
-      label: 'Payment Methods',
-      icon: CreditCard,
-      route: '/(customer)/payment-methods',
-    },
   ];
 
-  const earnMenu: MenuItem[] = [
-    { label: 'Invite friends', icon: Gift, route: '/(customer)/referral' },
-  ];
-
-  // Its own section: this is a mode change, not a reward or a setting, and it
+  // Its own section: this is a mode change, not a setting, and it
   // has to be findable by someone who meant to sign up as a runner.
   const modeMenu: MenuItem[] = [
     {
@@ -306,7 +263,7 @@ export default function CustomerProfileScreen() {
     },
   ];
 
-  const renderMenuItem = (item: MenuItem, isLast: boolean, accent = false) => {
+  const renderMenuItem = (item: MenuItem, isLast: boolean) => {
     const RowIcon = item.icon;
     return (
       <React.Fragment key={item.label}>
@@ -319,18 +276,9 @@ export default function CustomerProfileScreen() {
           accessibilityRole="button"
           accessibilityLabel={item.label}
         >
-          {/* Leading icon chip — soft blue circle + primary icon; the
-              EARN & SAVE (rewards) section instead gets a gold chip. */}
-          <View
-            className={`w-10 h-10 rounded-full items-center justify-center mr-3 ${
-              accent ? 'bg-accentSoft' : 'bg-surfaceMuted'
-            }`}
-          >
-            <RowIcon
-              size={18}
-              color={accent ? LightColors.accentStrong : LightColors.primary}
-              strokeWidth={1.9}
-            />
+          {/* Leading icon chip — soft blue circle + primary icon. */}
+          <View className="w-10 h-10 rounded-full items-center justify-center mr-3 bg-surfaceMuted">
+            <RowIcon size={18} color={LightColors.primary} strokeWidth={1.9} />
           </View>
           <Text className="flex-1 text-[15px] font-montserrat-semi text-textPrimary">
             {item.label}
@@ -346,15 +294,13 @@ export default function CustomerProfileScreen() {
 
   // Section blocks — an eyebrow label above a white Card that groups
   // the rows, hairline-separated, per the grouped-list reference.
-  const renderSection = (label: string, items: MenuItem[], accent = false) => (
+  const renderSection = (label: string, items: MenuItem[]) => (
     <View className="px-5 mb-5">
       <Eyebrow className="mb-2">{label}</Eyebrow>
       {/* overflow-hidden clips the rows' pressed wash/ripple to the
           card's rounded corners. */}
       <Card padding="none" className="px-4 py-1">
-        {items.map((item, idx) =>
-          renderMenuItem(item, idx === items.length - 1, accent),
-        )}
+        {items.map((item, idx) => renderMenuItem(item, idx === items.length - 1))}
       </Card>
     </View>
   );
@@ -470,8 +416,9 @@ export default function CustomerProfileScreen() {
         )}
 
         {/* Wallet — NOT a colored hero card. Hairline-bounded row with
-            an asymmetric layout: large numeric balance left, top-up
-            CTA right. The numeric is in Inter for crispness. */}
+            an asymmetric layout: large numeric balance left, withdraw
+            CTA right (only when there is something to withdraw). The
+            numeric is in Inter for crispness. */}
         <View className="mx-5 mb-6 py-4 border-y border-divider flex-row items-end">
           <Pressable
             className="flex-1"
@@ -488,29 +435,30 @@ export default function CustomerProfileScreen() {
               {formatCurrency(user?.wallet_balance ?? 0)}
             </Text>
           </Pressable>
-          <Pressable
-            onPress={() => {
-              lightTap();
-              router.push('/(customer)/wallet/top-up' as any);
-            }}
-            // Quiet primaryLight pill (~40pt tall) + 4pt slop clears the
-            // 44pt target minimum and matches the menu rows' chip language.
-            className="flex-row items-center gap-1.5 px-3 py-2.5 rounded-full bg-primaryLight"
-            style={({ pressed }) => ({ opacity: pressed ? 0.6 : 1 })}
-            hitSlop={4}
-            accessibilityRole="button"
-            accessibilityLabel="Add money to wallet"
-          >
-            <Wallet size={14} color={LightColors.primary} />
-            <Text className="text-[13px] font-montserrat-bold text-primary">
-              Add money
-            </Text>
-          </Pressable>
+          {Number(user?.wallet_balance ?? 0) > 0 ? (
+            <Pressable
+              onPress={() => {
+                lightTap();
+                router.push('/(customer)/wallet/withdraw' as any);
+              }}
+              // Quiet primaryLight pill (~40pt tall) + 4pt slop clears the
+              // 44pt target minimum and matches the menu rows' chip language.
+              className="flex-row items-center gap-1.5 px-3 py-2.5 rounded-full bg-primaryLight"
+              style={({ pressed }) => ({ opacity: pressed ? 0.6 : 1 })}
+              hitSlop={4}
+              accessibilityRole="button"
+              accessibilityLabel="Withdraw to GCash or Maya"
+            >
+              <ArrowUpFromLine size={14} color={LightColors.primary} />
+              <Text className="text-[13px] font-montserrat-bold text-primary">
+                Withdraw
+              </Text>
+            </Pressable>
+          ) : null}
         </View>
 
         {renderSection('ACCOUNT', accountMenu)}
         {renderSection('PAYMENT', paymentMenu)}
-        {renderSection('EARN & SAVE', earnMenu, true)}
         {renderSection('MODE', modeMenu)}
         {renderSection('SUPPORT', supportMenu)}
 
@@ -542,84 +490,15 @@ export default function CustomerProfileScreen() {
         </View>
       </ScrollView>
 
-      {/* Delete Account Modal */}
-      <Modal
+      <DeleteAccountSheet
         visible={showDeleteModal}
-        transparent
-        animationType="slide"
-        statusBarTranslucent
-        onRequestClose={() => {
-          setShowDeleteModal(false);
-          setDeleteConfirmText('');
-        }}
-      >
-        <KeyboardAvoidingView
-          style={{ flex: 1 }}
-          behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-        >
-          <Pressable
-            className="flex-1 bg-black/40 justify-end"
-            onPress={() => {
-              setShowDeleteModal(false);
-              setDeleteConfirmText('');
-            }}
-            accessibilityRole="button"
-            accessibilityLabel="Dismiss delete account dialog"
-            accessibilityHint="Closes the dialog without deleting your account"
-          >
-            <Pressable
-              className="bg-surface rounded-t-3xl px-5 pt-6"
-              style={{ paddingBottom: insets.bottom + 16 }}
-              onPress={() => {}}
-            >
-              <View className="w-10 h-1 rounded-full bg-divider self-center mb-5" />
-              <Text className="text-base font-montserrat-bold text-textPrimary mb-1">
-                Delete your account?
-              </Text>
-              <Text className="text-sm font-montserrat text-textTertiary mb-5">
-                This can't be undone. Your bookings, wallet, and data will be
-                permanently removed.
-              </Text>
-              <Text className="text-xs font-montserrat-bold text-textSecondary mb-2">
-                Type DELETE to confirm
-              </Text>
-              <View className="border border-divider rounded-xl px-4 h-12 justify-center mb-5 bg-background">
-                <TextInput
-                  value={deleteConfirmText}
-                  onChangeText={setDeleteConfirmText}
-                  placeholder="DELETE"
-                  placeholderTextColor={LightColors.textMuted}
-                  autoCapitalize="characters"
-                  style={{
-                    fontFamily: 'Quicksand_400Regular',
-                    fontSize: 15,
-                    color: LightColors.textPrimary,
-                  }}
-                />
-              </View>
-              <Button
-                title="Delete Account"
-                variant="danger"
-                fullWidth
-                loading={deleting}
-                loadingTitle="Deleting…"
-                disabled={deleteConfirmText !== 'DELETE'}
-                onPress={handleDeleteAccount}
-              />
-              <Button
-                title="Cancel"
-                variant="ghost"
-                fullWidth
-                onPress={() => {
-                  lightTap();
-                  setShowDeleteModal(false);
-                  setDeleteConfirmText('');
-                }}
-              />
-            </Pressable>
-          </Pressable>
-        </KeyboardAvoidingView>
-      </Modal>
+        onClose={() => setShowDeleteModal(false)}
+        description="This can't be undone. Your profile, errand history and saved details will be permanently removed."
+        // An account that also has a runner profile can send its balance to a
+        // bank, like the server allows.
+        allowBank={isRunnerAlready}
+        onDeleted={onAccountDeleted}
+      />
 
       {/* Become-a-runner confirm. Reversible (the runner profile carries the
           way back), so not destructive — but it does change which app the

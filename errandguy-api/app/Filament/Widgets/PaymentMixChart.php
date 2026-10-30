@@ -38,6 +38,7 @@ class PaymentMixChart extends ChartWidget
         'wallet' => ['Wallet', '#2563eb'],
         'gcash' => ['GCash', '#0ea5e9'],
         'maya' => ['Maya', '#10b981'],
+        // Retired; kept so older card bookings still chart.
         'card' => ['Card', '#8b5cf6'],
         'cash' => ['Cash', '#ea580c'],
     ];

@@ -6,7 +6,7 @@ import {
   Bike,
   CalendarClock,
   Car,
-  CreditCard,
+  Wallet,
   PersonStanding,
   Route,
 } from 'lucide-react-native';
@@ -93,7 +93,7 @@ export function PaymentChip({ booking }: { booking: Booking }) {
 
   return (
     <OfferChip
-      Icon={type === 'cash' ? Banknote : CreditCard}
+      Icon={type === 'cash' ? Banknote : Wallet}
       label={type === 'cash' ? 'Cash' : `Prepaid · ${label}`}
       bg={LightColors.surfaceMuted}
       fg={LightColors.textSecondary}

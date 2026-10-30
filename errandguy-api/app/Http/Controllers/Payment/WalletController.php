@@ -2,9 +2,11 @@
 
 namespace App\Http\Controllers\Payment;
 
+use App\Exceptions\WithdrawalException;
 use App\Http\Controllers\Controller;
 use App\Models\WalletTransaction;
 use App\Services\WalletService;
+use App\Support\PayoutDestination;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 
@@ -25,95 +27,75 @@ class WalletController extends Controller
 
     public function balance(Request $request): JsonResponse
     {
-        $balance = $this->walletService->getBalance($request->user()->id);
-
-        return $this->ok(['balance' => $balance]);
-    }
-
-    public function topUp(Request $request): JsonResponse
-    {
         $user = $request->user();
+        $balance = $this->walletService->getBalance($user->id);
 
-        $validated = $request->validate([
-            'amount' => ['required', 'numeric', 'min:50', 'max:50000'],
-            // Optional in-app method choice. GCash/Maya → a direct charge that
-            // deep-links into the wallet app (no hosted page); card or omitted →
-            // the Xendit hosted invoice (unchanged; card entry stays in Xendit).
-            'method' => ['nullable', 'string', \Illuminate\Validation\Rule::in(['gcash', 'maya', 'card'])],
-            // Optional: the Xendit hosted invoice lets the customer choose
-            // GCash / Maya / card at checkout, so a saved method isn't
-            // required. When supplied it must still belong to the caller.
-            'payment_method_id' => [
-                'nullable',
-                'string',
-                \Illuminate\Validation\Rule::exists('payment_methods', 'id')
-                    ->where(fn ($q) => $q->where('user_id', $user->id)),
-            ],
-        ], [
-            'payment_method_id.exists' => 'Selected payment method is not available on your account.',
-            'amount.min' => 'The minimum top-up is ₱50. Please enter ₱50 or more.',
-            'amount.max' => 'The maximum top-up is ₱50,000. Please enter a smaller amount.',
-        ]);
-
-        // Idempotency guard: reuse an existing PENDING top-up of the same
-        // amount created in the last 60s (network retry / double-tap) rather
-        // than opening a second invoice.
-        //
-        // ONLY when no explicit method was chosen. With a method, the stored
-        // checkout_url is channel-specific (a GCash/Maya deep-link vs an invoice
-        // page), so reusing a same-amount pending row would hand back the wrong
-        // channel's URL on a method switch. Method-specific double-taps are
-        // already deduped by the `idempotent` middleware (same Idempotency-Key)
-        // and the client submit-latch; and since only the charge the customer
-        // actually authorizes ever settles, an extra abandoned pending row is
-        // money-safe (completeTopUp credits exactly once, per charge).
-        if (empty($validated['method'])) {
-            $duplicate = WalletTransaction::where('user_id', $user->id)
-                ->where('type', 'top_up')
-                ->where('status', 'pending')
-                ->where('amount', $validated['amount'])
-                ->where('created_at', '>=', now()->subSeconds(60))
-                ->whereNotNull('checkout_url')
-                ->latest('created_at')
-                ->first();
-
-            if ($duplicate) {
-                return $this->ok($duplicate, merge: [
-                    'checkout_url' => $duplicate->checkout_url,
-                    'idempotent' => true,
-                ]);
-            }
-        }
-
-        // A gateway rejection throws PaymentGatewayException, which
-        // ApiExceptionRenderer renders as a clean 422 with honest "you weren’t
-        // charged" copy — NEVER a Cloudflare-masked 502. Any other failure
-        // becomes the standardized 500 envelope. The real gateway reason is
-        // logged by WalletService and echoed into the error envelope's
-        // meta.debug when APP_DEBUG is on.
-        $result = $this->walletService->initiateTopUp(
-            $user->id,
-            (float) $validated['amount'],
-            $user->email,
-            // After paying, Xendit redirects here; the bridge page forwards
-            // to the app deep link so the in-app checkout sheet auto-closes.
-            url('/payment/complete'),
-            $validated['method'] ?? null,
-            // Failure return carries ?status=failed so the bridge shows
-            // honest copy instead of a green "Payment received".
-            url('/payment/complete?status=failed'),
-        );
-
-        return $this->created($result['transaction'], merge: [
-            // Client must open this URL to actually pay; the wallet is
-            // credited only after Xendit confirms via webhook.
-            'checkout_url' => $result['checkout_url'],
+        return $this->ok([
+            // The withdrawable wallet balance (negative for a runner who owes
+            // money from cash errands). Unchanged — every client reads it.
+            'balance' => $balance,
+            // Additive: what can actually be withdrawn (never below zero), and
+            // the non-withdrawable promotional credit from the retired referral
+            // program, which is still spent first on errands until used up.
+            'withdrawable' => max(0.0, round($balance, 2)),
+            'bonus_balance' => round((float) $user->bonus_balance, 2),
         ]);
     }
 
     /**
+     * POST /wallet/withdraw — a customer withdraws their wallet balance to
+     * GCash or Maya.
+     *
+     * The same pending-then-staff-sends flow a runner's payout uses
+     * (WalletService::createPendingPayout): the withdrawable balance is debited
+     * now and the payout waits in the admin Payouts queue for "Send via
+     * Xendit"; the customer is told when it is sent, or if it bounces (the
+     * money then comes back). Only the withdrawable balance can go — bonus
+     * credit never. No minimum for customers; an account with a runner
+     * profile keeps the runner minimum, so switching mode can't dodge it.
+     *
+     * `idempotent:required` + the Idempotency-Key as the payout's reference
+     * make a double-tap or retry return the first withdrawal, never a second.
+     */
+    public function withdraw(Request $request): JsonResponse
+    {
+        $user = $request->user();
+
+        $validated = $request->validate([
+            'amount' => ['required', 'numeric', 'min:1', 'max:1000000'],
+            ...PayoutDestination::rules($request->input('channel'), allowBank: false),
+        ], [
+            'amount.min' => 'Enter at least ₱1.00 to withdraw.',
+            ...PayoutDestination::messages(allowBank: false),
+        ]);
+
+        $destination = PayoutDestination::fromInput($validated);
+
+        try {
+            $transaction = $this->walletService->createPendingPayout(
+                $user->id,
+                (float) $validated['amount'],
+                (string) $request->header('Idempotency-Key'),
+                $destination,
+                $user->runnerProfile ? WalletService::runnerPayoutMinimum() : 0.0,
+                'Withdrawal request',
+            );
+        } catch (WithdrawalException $e) {
+            return $this->fail($e->errorCode, $e->getMessage());
+        }
+
+        return $this->created(
+            $transaction,
+            'Withdrawal of ₱'.number_format(abs((float) $transaction->amount), 2).' to '
+                .PayoutDestination::label($destination).' requested. It usually arrives within 1–3 business days '
+                .'— we’ll notify you the moment it’s sent.',
+        );
+    }
+
+    /**
      * Authoritative status probe for a single wallet transaction (used by the
-     * app to VERIFY a top-up after checkout). Ownership scoped by user_id.
+     * app to VERIFY a GCash/Maya tip charge after checkout, and a legacy
+     * top-up started before top-ups were retired). Ownership scoped by user_id.
      */
     public function transactionStatus(Request $request, string $id): JsonResponse
     {
@@ -121,12 +103,13 @@ class WalletController extends Controller
 
         // Confirm settlement directly with the gateway so a delayed/undelivered
         // webhook (or local dev, where webhooks can't reach us) never leaves a
-        // genuinely-paid top-up stuck 'pending'. Same pull-reconcile the booking
+        // genuinely-paid charge stuck 'pending'. Same pull-reconcile the booking
         // charge already gets in PaymentStatusController::show.
         //
         // The implementation lives in WalletService because the scheduled sweep
         // (errandguy:reconcile-topups) needs the identical logic for the case
         // this endpoint can't cover: a customer who paid and never came back.
+        // ('kind' stays 'wallet_topup' for the app build already on phones.)
         $tx = $this->walletService->reconcilePendingTopUp($tx);
 
         // Terminal non-success states. WalletTransaction only ever emits

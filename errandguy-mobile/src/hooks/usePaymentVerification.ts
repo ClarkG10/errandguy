@@ -52,15 +52,15 @@ export function attemptToStage(status?: AttemptStatus | null): PaymentStage | nu
 }
 
 function pollId(attempt: PaymentAttempt): string | null {
-  // 'tip' rides its wallet_transaction id in topupId (same status endpoint).
-  if (attempt.kind === 'topup' || attempt.kind === 'tip') return attempt.topupId ?? null;
+  // A tip is a wallet_transaction, polled by its own id.
+  if (attempt.kind === 'tip') return attempt.transactionId ?? null;
   return attempt.paymentId ?? attempt.bookingId ?? null;
 }
 
 async function fetchProbe(attempt: PaymentAttempt): Promise<any | null> {
-  if (attempt.kind === 'topup' || attempt.kind === 'tip') {
-    if (!attempt.topupId) return null;
-    const res = await paymentService.getTopUpStatus(attempt.topupId);
+  if (attempt.kind === 'tip') {
+    if (!attempt.transactionId) return null;
+    const res = await paymentService.getTransactionStatus(attempt.transactionId);
     return res?.data?.data ?? res?.data ?? null;
   }
   if (attempt.paymentId) {

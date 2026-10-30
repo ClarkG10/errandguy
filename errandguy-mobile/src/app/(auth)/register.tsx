@@ -40,7 +40,6 @@ interface RegisterFormData {
   password: string;
   confirm_password: string;
   default_address: string;
-  referral_code: string;
   terms: boolean;
 }
 
@@ -77,7 +76,6 @@ export default function RegisterScreen() {
   const [termsAccepted, setTermsAccepted] = useState(false);
   const [termsError, setTermsError] = useState(false);
   const [legalDoc, setLegalDoc] = useState<LegalDocument | null>(null);
-  const [showReferral, setShowReferral] = useState(false);
 
   // Return-key chaining — each field's "next" hands focus down the form.
   const phoneRef = useRef<InputHandle>(null);
@@ -129,7 +127,6 @@ export default function RegisterScreen() {
       password: '',
       confirm_password: '',
       default_address: '',
-      referral_code: '',
     },
   });
 
@@ -231,20 +228,6 @@ export default function RegisterScreen() {
             lng: selectedAddress.center[0],
             is_default: true,
             created_at: new Date().toISOString(),
-          })
-          .catch(() => {});
-      }
-
-      // Redeem an entered referral code — the backend register endpoint
-      // doesn't accept one, so we apply it right after sign-up. Purely
-      // fire-and-forget: a bad/duplicate code must never block onboarding,
-      // and we only celebrate on a confirmed 201.
-      const referralCode = data.referral_code?.trim();
-      if (referralCode) {
-        userService
-          .applyReferral(referralCode)
-          .then(() => {
-            toast.success('Referral code applied — enjoy your reward!');
           })
           .catch(() => {});
       }
@@ -667,50 +650,6 @@ export default function RegisterScreen() {
                 </Pressable>
               ))}
             </View>
-          )}
-
-          {/* Referral is a low-frequency path — keep it behind a one-tap
-              disclosure so the form reads one field shorter for everyone
-              else. Submit behavior is unchanged: the field defaults to ''
-              and is only redeemed when non-empty. */}
-          {showReferral ? (
-            <Controller
-              control={control}
-              name="referral_code"
-              rules={{
-                maxLength: { value: 12, message: 'Maximum 12 characters' },
-              }}
-              render={({ field: { onChange, onBlur, value } }) => (
-                <Input
-                  label="Referral Code (Optional)"
-                  value={value}
-                  onChangeText={(t) => onChange(t.toUpperCase())}
-                  onBlur={onBlur}
-                  placeholder="Enter a friend's code"
-                  autoCapitalize="characters"
-                  autoCorrect={false}
-                  maxLength={12}
-                  autoFocus
-                  returnKeyType="done"
-                  error={errors.referral_code?.message}
-                />
-              )}
-            />
-          ) : (
-            <Pressable
-              className="self-start"
-              onPress={() => {
-                Haptics.selectionAsync().catch(() => {});
-                setShowReferral(true);
-              }}
-              hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
-              accessibilityRole="button"
-              accessibilityLabel="Have a referral code?"
-            >
-              <Text className="text-[13px] font-montserrat-semi text-primary mb-4">
-                Have a referral code?
-              </Text>
-            </Pressable>
           )}
 
           {/* Terms Checkbox */}

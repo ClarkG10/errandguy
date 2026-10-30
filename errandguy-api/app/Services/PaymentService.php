@@ -5,8 +5,6 @@ namespace App\Services;
 use App\Enums\PaymentStatus;
 use App\Exceptions\PaymentGatewayException;
 use App\Models\Payment;
-use App\Models\PaymentMethod;
-use App\Models\User;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Http;
@@ -52,7 +50,7 @@ class PaymentService
             ->connectTimeout(8)
             ->timeout(12);
 
-        // Gateway-level idempotency: a retried charge/invoice/refund creation
+        // Gateway-level idempotency: a retried charge/payout/refund creation
         // that carries the same key collapses to the SAME Xendit object rather
         // than creating a second one. Keys are derived deterministically from a
         // pre-created row id (see call sites) so they're stable across retries.
@@ -63,28 +61,37 @@ class PaymentService
         return $client;
     }
 
+    /**
+     * Start a one-time GCash or Maya charge (Xendit Payment Requests). The
+     * returned `actions` carry the URL that deep-links into the e-wallet app.
+     * The only online methods are GCash and Maya; cards and GrabPay are
+     * retired.
+     */
     public function createPaymentRequest(float $amount, string $referenceId, string $method, string $description = '', ?string $successRedirectUrl = null, ?string $failureRedirectUrl = null): array
     {
+        $channelCode = match ($method) {
+            'gcash' => 'GCASH',
+            'maya' => 'PAYMAYA',
+            default => throw new \InvalidArgumentException("Unsupported online payment method: {$method}"),
+        };
+
         $payload = [
             'reference_id' => $referenceId,
             'amount' => round($amount, 2),
             'currency' => 'PHP',
             'description' => $description,
             'payment_method' => [
-                'type' => $this->mapPaymentMethod($method),
+                'type' => 'EWALLET',
                 'reusability' => 'ONE_TIME_USE',
+                'ewallet' => [
+                    'channel_code' => $channelCode,
+                    'channel_properties' => [
+                        'success_return_url' => $successRedirectUrl ?? config('app.url') . '/payment/success',
+                        'failure_return_url' => $failureRedirectUrl ?? config('app.url') . '/payment/failed',
+                    ],
+                ],
             ],
         ];
-
-        if ($method === 'gcash' || $method === 'maya') {
-            $payload['payment_method']['ewallet'] = [
-                'channel_code' => $method === 'gcash' ? 'GCASH' : 'PAYMAYA',
-                'channel_properties' => [
-                    'success_return_url' => $successRedirectUrl ?? config('app.url') . '/payment/success',
-                    'failure_return_url' => $failureRedirectUrl ?? config('app.url') . '/payment/failed',
-                ],
-            ];
-        }
 
         $response = $this->http("pr-{$referenceId}")
             ->post("{$this->baseUrl}/payment_requests", $payload);
@@ -105,271 +112,9 @@ class PaymentService
         return $response->json();
     }
 
-    public function createInvoice(float $amount, string $externalId, string $description = '', string $payerEmail = '', ?string $successRedirectUrl = null): array
-    {
-        // Fail fast with a clear reason if the key is missing (env not set, or
-        // config cache not refreshed after setting it on the server).
-        if (blank($this->secretKey)) {
-            Log::error('Xendit: secret key is not configured (XENDIT_SECRET_KEY empty).');
-            throw new PaymentGatewayException(
-                'Failed to create invoice.',
-                'XENDIT_SECRET_KEY is empty — set it in the server env and run `php artisan config:clear`.',
-                'NOT_CONFIGURED',
-            );
-        }
-
-        $payload = [
-            'external_id' => $externalId,
-            'amount' => round($amount, 2),
-            'currency' => 'PHP',
-            'description' => $description,
-            // Intentionally NOT pinning `payment_methods`. Xendit then offers
-            // every channel ACTIVATED on the account (GCash, Maya, cards, etc).
-            // Hardcoding a list makes the WHOLE invoice fail if any one of
-            // those channels isn't activated for the current mode.
-        ];
-
-        if ($payerEmail) {
-            $payload['payer_email'] = $payerEmail;
-        }
-
-        if ($successRedirectUrl) {
-            $payload['success_redirect_url'] = $successRedirectUrl;
-        }
-
-        $response = $this->http("inv-{$externalId}")
-            ->post("{$this->baseUrl}/v2/invoices", $payload);
-
-        if (!$response->successful()) {
-            $body = $response->json();
-            Log::error('Xendit: Failed to create invoice', [
-                'status' => $response->status(),
-                'response' => $body,
-            ]);
-            throw new PaymentGatewayException(
-                'Failed to create invoice.',
-                is_array($body) ? ($body['message'] ?? null) : null,
-                is_array($body) ? ($body['error_code'] ?? null) : null,
-            );
-        }
-
-        return $response->json();
-    }
-
-    // ── Linked / saved payment methods (Stage 2) ─────────────────────────────
-
     /**
-     * Get (or lazily create) the Xendit customer for a user. Reusable payment
-     * methods (linked e-wallets, saved cards) are tied to a customer.
-     */
-    public function getOrCreateXenditCustomer(User $user): string
-    {
-        if (! blank($user->xendit_customer_id)) {
-            return $user->xendit_customer_id;
-        }
-
-        if (blank($this->secretKey)) {
-            throw new PaymentGatewayException(
-                'Payment gateway is not configured.',
-                'XENDIT_SECRET_KEY is empty — set it in the server env and run `php artisan config:clear`.',
-                'NOT_CONFIGURED',
-            );
-        }
-
-        $response = $this->http()
-            ->post("{$this->baseUrl}/customers", [
-                'reference_id' => "user-{$user->id}",
-                'type' => 'INDIVIDUAL',
-                'individual_detail' => [
-                    'given_names' => $user->name ?: ($user->first_name ?? 'ErrandGuy Customer'),
-                ],
-                'email' => $user->email ?: null,
-            ]);
-
-        if (! $response->successful()) {
-            $body = $response->json();
-            Log::error('Xendit: Failed to create customer', [
-                'status' => $response->status(),
-                'response' => $body,
-            ]);
-            throw new PaymentGatewayException(
-                'Failed to set up your payment profile.',
-                is_array($body) ? ($body['message'] ?? null) : null,
-                is_array($body) ? ($body['error_code'] ?? null) : null,
-            );
-        }
-
-        $customerId = (string) $response->json('id');
-        $user->update(['xendit_customer_id' => $customerId]);
-
-        return $customerId;
-    }
-
-    /**
-     * Start linking a reusable e-wallet (GCash/Maya/GrabPay). Returns the
-     * Xendit payment-method object; its `actions[].url` is where the customer
-     * authorizes the link. The method becomes ACTIVE via the
-     * `payment_method.activated` webhook.
-     */
-    public function createLinkedEwallet(User $user, string $channelCode, string $successUrl, string $failureUrl): array
-    {
-        if (blank($this->secretKey)) {
-            throw new PaymentGatewayException(
-                'Payment gateway is not configured.',
-                'XENDIT_SECRET_KEY is empty — set it in the server env and run `php artisan config:clear`.',
-                'NOT_CONFIGURED',
-            );
-        }
-
-        $customerId = $this->getOrCreateXenditCustomer($user);
-
-        // Xendit's e-wallet linking requires a `cancel_return_url` alongside
-        // success/failure — a missing one is rejected with API_VALIDATION_ERROR
-        // ("field 'cancel_return_url' is required"). Reuse the same in-app
-        // return bridge for all three outcomes; the app re-checks the method's
-        // status on any return, so cancel and failure can land the same place.
-        $channelProperties = [
-            'success_return_url' => $successUrl,
-            'failure_return_url' => $failureUrl,
-            'cancel_return_url' => $failureUrl,
-        ];
-
-        // GrabPay spans several SEA markets, so Xendit requires an explicit
-        // `country` for it ("country is required for channel_code 'GRABPAY'").
-        // GCash/Maya are PH-only and do NOT take this field, so scope it to
-        // GrabPay to avoid rejecting those two.
-        if ($channelCode === 'GRABPAY') {
-            $channelProperties['country'] = 'PH';
-        }
-
-        $payload = [
-            'type' => 'EWALLET',
-            'reusability' => 'MULTIPLE_USE',
-            'customer_id' => $customerId,
-            'ewallet' => [
-                'channel_code' => $channelCode,
-                'channel_properties' => $channelProperties,
-            ],
-        ];
-
-        $response = $this->http()
-            ->post("{$this->baseUrl}/v2/payment_methods", $payload);
-
-        if (! $response->successful()) {
-            $body = $response->json();
-            Log::error('Xendit: Failed to link e-wallet', [
-                'status' => $response->status(),
-                'channel' => $channelCode,
-                'response' => $body,
-            ]);
-            throw new PaymentGatewayException(
-                'Failed to link this payment method.',
-                is_array($body) ? ($body['message'] ?? null) : null,
-                is_array($body) ? ($body['error_code'] ?? null) : null,
-            );
-        }
-
-        return $response->json();
-    }
-
-    /**
-     * Confirm a still-`pending` linked method against Xendit and advance it.
-     *
-     * Linking otherwise activates ONLY via the `payment_method.activated`
-     * webhook — so if that webhook is delayed, dropped, or (in test mode) never
-     * configured for the active key's mode, the method the customer just
-     * authorized sits `pending` forever and "linking doesn't work". This pulls
-     * the method's REAL status directly from the gateway, exactly as
-     * reconcileBookingPayment() does for charges, so linking completes without
-     * depending on webhook delivery.
-     *
-     * Safe to call on every payment-methods list read:
-     *   • no-op unless the method is `pending` with a gateway ref;
-     *   • a gateway hiccup never throws — it just stays pending, retries later;
-     *   • throttled per method so frequent list refetches don't hammer Xendit;
-     *   • only ever moves the method to the state the gateway itself reports.
-     */
-    public function reconcileLinkedMethod(PaymentMethod $method): PaymentMethod
-    {
-        if ($method->status !== 'pending' || blank($method->gateway_ref) || blank($this->secretKey)) {
-            return $method;
-        }
-
-        // Rate-limit the gateway pull per method (the app refetches the list on
-        // return, and pull-to-refresh can fire it repeatedly while pending).
-        if (! Cache::add("payment_method_reconcile_pull:{$method->id}", 1, self::RECONCILE_PULL_THROTTLE_SECONDS)) {
-            return $method;
-        }
-
-        try {
-            $response = $this->http()->get("{$this->baseUrl}/v2/payment_methods/{$method->gateway_ref}");
-            if (! $response->successful()) {
-                return $method;
-            }
-            $gatewayStatus = strtoupper((string) ($response->json('status') ?? ''));
-        } catch (\Throwable $e) {
-            return $method; // gateway unreachable/transient — never fail the read
-        }
-
-        $local = match ($gatewayStatus) {
-            'ACTIVE' => 'active',
-            'EXPIRED' => 'expired',
-            'FAILED', 'INACTIVE' => 'failed',
-            default => null, // PENDING / REQUIRES_ACTION — customer hasn't finished
-        };
-
-        if ($local === null || $local === $method->status) {
-            return $method;
-        }
-
-        $method->status = $local;
-        if ($local === 'active') {
-            // Parity with link(): the first active method becomes the default.
-            $method->is_default = ! PaymentMethod::where('user_id', $method->user_id)
-                ->where('status', 'active')
-                ->where('id', '!=', $method->id)
-                ->exists();
-        }
-        $method->save();
-
-        return $method;
-    }
-
-    /**
-     * Charge a previously-linked payment method by its Xendit id — no redirect
-     * for MULTIPLE_USE tokens. Returns the payment_request object; a first-time
-     * charge may come back REQUIRES_ACTION with an auth URL in `actions`.
-     */
-    public function chargeSavedMethod(string $xenditPaymentMethodId, float $amount, string $referenceId, string $description = ''): array
-    {
-        $response = $this->http("pr-{$referenceId}")
-            ->post("{$this->baseUrl}/payment_requests", [
-                'reference_id' => $referenceId,
-                'currency' => 'PHP',
-                'amount' => round($amount, 2),
-                'payment_method_id' => $xenditPaymentMethodId,
-                'description' => $description,
-            ]);
-
-        if (! $response->successful()) {
-            $body = $response->json();
-            Log::error('Xendit: Failed to charge saved method', [
-                'status' => $response->status(),
-                'response' => $body,
-            ]);
-            throw new PaymentGatewayException(
-                'Failed to charge your saved payment method.',
-                is_array($body) ? ($body['message'] ?? null) : null,
-                is_array($body) ? ($body['error_code'] ?? null) : null,
-            );
-        }
-
-        return $response->json();
-    }
-
-    /**
-     * Pull the customer-facing authorization URL out of a Xendit payment-method
-     * or payment-request `actions` array (the link/authorize step).
+     * Pull the customer-facing authorization URL out of a Xendit
+     * payment-request `actions` array (the GCash/Maya authorize step).
      */
     public static function extractActionUrl(array $data): ?string
     {
@@ -384,51 +129,114 @@ class PaymentService
     }
 
     /**
-     * Send a runner payout to their bank / e-wallet via Xendit Payouts (v2).
+     * Send a pending payout to a bank / e-wallet via Xendit Payouts (v2).
      *
-     * Money-safe: the wallet is already debited when the payout row is created
-     * (runner request or admin-initiated), so we do NOT mark it completed here.
-     * We store the Xendit payout id and let the payout.succeeded /
-     * payout.failed webhook settle it (a failure re-credits the wallet).
-     * Idempotency-key = po-{tx} so a retry collapses to the same Xendit payout
-     * instead of double-sending real money.
+     * Money-safe: the wallet is already debited when the payout row is created,
+     * so we do NOT mark it completed here — the payout.succeeded /
+     * payout.failed webhook (or a fresh lookup) settles it, and a failure
+     * re-credits the wallet. Idempotency-key = po-{tx} so a retry collapses to
+     * the same Xendit payout instead of double-sending real money.
      *
-     * @throws \RuntimeException on a gateway rejection.
+     * The row is marked SENT (payout_sent_at) and the destination actually used
+     * is recorded on it BEFORE the request leaves, under a row lock:
+     *   • it can't be sent twice (a second send finds it already sent);
+     *   • if Xendit's answer never arrives (timeout, crash) the payout still
+     *     reads as sent, so nobody can mark it failed by hand and re-credit a
+     *     wallet Xendit is paying out of — only a fresh lookup can settle it;
+     *   • only a definite rejection (a 4xx: nothing was created) clears the
+     *     mark again so the payout can be corrected and re-sent.
+     *
+     * @throws \RuntimeException on a rejection or an unanswered send (the
+     *                           message says which).
      */
     public function createPayout(string $walletTxId, string $channelCode, string $accountNumber, string $accountHolderName): array
     {
-        $tx = \App\Models\WalletTransaction::where('type', 'payout')->findOrFail($walletTxId);
-
-        if ($tx->status !== 'pending') {
-            throw new \RuntimeException('Only a pending payout can be sent.');
-        }
-
         if (blank($this->secretKey)) {
             throw new \RuntimeException('Xendit is not configured (XENDIT_SECRET_KEY empty).');
         }
 
+        $tx = DB::transaction(function () use ($walletTxId, $channelCode, $accountNumber, $accountHolderName) {
+            $tx = \App\Models\WalletTransaction::where('type', 'payout')->lockForUpdate()->findOrFail($walletTxId);
+
+            if ($tx->status !== 'pending') {
+                throw new \RuntimeException('Only a pending payout can be sent.');
+            }
+            if ($tx->isSentToGateway()) {
+                throw new \RuntimeException('This payout was already sent to Xendit. Use “Check with Xendit” to see where it is.');
+            }
+
+            // What is actually sent is what the payout records from now on
+            // (staff may have corrected the requested details).
+            $channel = \App\Support\PayoutDestination::channelForCode($channelCode) ?? 'bank';
+            $recordedBank = $this->recordedDestination($tx)['bank_name'] ?? null;
+            $tx->forceFill([
+                'payout_sent_at' => now(),
+                'payout_destination' => \App\Support\PayoutDestination::make(
+                    $channel,
+                    $accountNumber,
+                    $accountHolderName,
+                    $channel === 'bank' ? ($recordedBank ?? \App\Support\PayoutDestination::CHANNEL_CODES[$channelCode] ?? null) : null,
+                    $channelCode,
+                ),
+            ])->save();
+
+            return $tx;
+        });
+
+        // Send exactly what was recorded (spaces/dashes stripped, +63 → 0).
+        $accountNumber = (string) $tx->payout_destination['account_number'];
+
         $amount = abs((float) $tx->amount);
 
-        $response = $this->http("po-{$tx->id}")
-            ->post("{$this->baseUrl}/v2/payouts", [
-                'reference_id' => "payout-{$tx->id}",
-                'channel_code' => $channelCode,
-                'channel_properties' => [
-                    'account_holder_name' => $accountHolderName,
-                    'account_number' => $accountNumber,
-                ],
-                'amount' => round($amount, 2),
-                'currency' => 'PHP',
-                'description' => 'ErrandGuy runner payout',
+        try {
+            $response = $this->http("po-{$tx->id}")
+                ->post("{$this->baseUrl}/v2/payouts", [
+                    'reference_id' => "payout-{$tx->id}",
+                    'channel_code' => $channelCode,
+                    'channel_properties' => [
+                        'account_holder_name' => $accountHolderName,
+                        'account_number' => $accountNumber,
+                    ],
+                    'amount' => round($amount, 2),
+                    'currency' => 'PHP',
+                    'description' => 'ErrandGuy payout',
+                ]);
+        } catch (\Throwable $e) {
+            Log::error('Xendit: payout request went unanswered — left marked as sent', [
+                'wallet_tx' => $tx->id,
+                'error' => $e->getMessage(),
             ]);
+            throw new \RuntimeException(
+                'Xendit didn’t answer, so we can’t tell yet whether this payout went out. It stays marked as sent — '
+                .'use “Check with Xendit” in a few minutes before doing anything else.',
+                previous: $e,
+            );
+        }
 
         if (! $response->successful()) {
             Log::error('Xendit: payout request failed', [
                 'wallet_tx' => $tx->id,
+                'status' => $response->status(),
                 'response' => $response->json(),
             ]);
+
+            // A 4xx is a definite rejection — Xendit created nothing — so the
+            // payout goes back to "not sent" and can be fixed and re-sent. A
+            // 5xx is not definite: it stays marked as sent until a lookup says.
+            // 409 is the exception: a duplicate idempotency key / reference
+            // means a payout under this id already EXISTS at Xendit, so it must
+            // stay marked as sent or it could be sent twice.
+            if ($response->clientError() && $response->status() !== 409) {
+                \App\Models\WalletTransaction::whereKey($tx->id)
+                    ->whereNull('gateway_ref')
+                    ->update(['payout_sent_at' => null]);
+
+                throw new \RuntimeException($response->json('message') ?? 'Xendit rejected this payout.');
+            }
+
             throw new \RuntimeException(
-                $response->json('message') ?? 'Failed to send payout via Xendit.'
+                'Xendit had a problem, so we can’t tell yet whether this payout went out. It stays marked as sent — '
+                .'use “Check with Xendit” in a few minutes before doing anything else.'
             );
         }
 
@@ -436,19 +244,28 @@ class PaymentService
 
         // Record the gateway payout id so the webhook can settle this row; it
         // stays 'pending' until payout.succeeded / payout.failed arrives.
-        $tx->update(['gateway_ref' => $data['id'] ?? $tx->gateway_ref]);
+        \App\Models\WalletTransaction::whereKey($tx->id)->update(['gateway_ref' => $data['id'] ?? $tx->gateway_ref]);
 
         return $data;
+    }
+
+    /** The destination recorded on a payout, or null (none, or unreadable). */
+    private function recordedDestination(\App\Models\WalletTransaction $tx): ?array
+    {
+        try {
+            return $tx->payout_destination;
+        } catch (\Throwable) {
+            return null;
+        }
     }
 
     /**
      * Authoritative status read for a payout already sent to Xendit.
      *
      * The counterpart to getPaymentRequest() on the money-OUT side. createPayout
-     * leaves the row `pending` and relies entirely on the payout.succeeded /
-     * payout.failed webhook to settle it — so with no pull path, a webhook that
-     * never arrives strands the runner's money indefinitely (the wallet is
-     * already debited at creation).
+     * leaves the row `pending` for the payout.succeeded / payout.failed webhook;
+     * this is the pull path for when that webhook never arrives (the wallet is
+     * already debited at creation) — see WalletService::refreshSentPayout.
      *
      * @return array<string,mixed>
      */
@@ -464,7 +281,31 @@ class PaymentService
     }
 
     /**
+     * Find a payout by the reference it was sent with ("payout-{tx}") — for a
+     * send whose answer never came back, so we never learned its Xendit id.
+     *
+     * @return array<string,mixed>|null  the payout, or null if Xendit has none
+     */
+    public function findPayoutByReference(string $referenceId): ?array
+    {
+        $response = $this->http()->get("{$this->baseUrl}/v2/payouts", ['reference_id' => $referenceId]);
+
+        if (! $response->successful()) {
+            throw new \RuntimeException('Failed to look up payout.');
+        }
+
+        $payouts = $response->json();
+        $first = is_array($payouts) ? (array_is_list($payouts) ? ($payouts[0] ?? null) : ($payouts['data'][0] ?? null)) : null;
+
+        return is_array($first) ? $first : null;
+    }
+
+    /**
      * Issue a REAL, FULL gateway reversal to source via Xendit.
+     *
+     * Legacy: only card payments are refunded this way (staff "Refund" on the
+     * Payments page), and cards are retired — this stays for card payments
+     * made before that. GCash/Maya refunds go to the wallet (refundToWallet).
      *
      * Locked + status-guarded: the payment row is locked for the duration so
      * concurrent refunds of the same payment serialize, and a second attempt
@@ -585,61 +426,6 @@ class PaymentService
         }
 
         return $response->json();
-    }
-
-    public function processBookingPayment(
-        string $bookingId,
-        string $customerId,
-        float $amount,
-        string $method,
-        ?string $gatewayToken = null
-    ): Payment {
-        $payment = Payment::create([
-            'booking_id' => $bookingId,
-            'customer_id' => $customerId,
-            'amount' => $amount,
-            'currency' => 'PHP',
-            'method' => $method,
-            'status' => 'pending',
-        ]);
-
-        if ($method === 'cash') {
-            return $payment;
-        }
-
-        if ($method === 'wallet') {
-            app(WalletService::class)->deduct(
-                $customerId,
-                $amount,
-                $payment->id,
-                "Payment for booking {$bookingId}"
-            );
-            $payment->transitionTo(PaymentStatus::Completed, extra: ['paid_at' => now()]);
-            return $payment;
-        }
-
-        try {
-            $paymentRequest = $this->createPaymentRequest(
-                $amount,
-                "booking-{$bookingId}",
-                $method,
-                "Booking {$bookingId}"
-            );
-
-            $payment->transitionTo(PaymentStatus::Processing, extra: [
-                'gateway_tx_id' => $paymentRequest['id'],
-                'gateway_response' => $paymentRequest,
-            ]);
-        } catch (\Throwable $e) {
-            Log::error('Payment processing failed', [
-                'booking_id' => $bookingId,
-                'error' => $e->getMessage(),
-            ]);
-
-            $payment->transitionTo(PaymentStatus::Failed, reason: 'Gateway charge failed');
-        }
-
-        return $payment;
     }
 
     /**
@@ -817,15 +603,5 @@ class PaymentService
             ]);
             return $payment->fresh() ?? $payment;
         }
-    }
-
-    private function mapPaymentMethod(string $method): string
-    {
-        return match ($method) {
-            'gcash', 'maya' => 'EWALLET',
-            'card' => 'CARD',
-            'grab_pay' => 'EWALLET',
-            default => 'EWALLET',
-        };
     }
 }

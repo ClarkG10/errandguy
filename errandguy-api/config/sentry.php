@@ -65,7 +65,7 @@ return [
     // CRITICAL for a payments app. The SDK captures the request body
     // INDEPENDENTLY of send_default_pii (RequestIntegration::captureRequestBody
     // runs unconditionally; the default 'medium' attaches up to 10KB of body).
-    // For POST /login, /verify-otp, /wallet/top-up, /saved-addresses etc. that
+    // For POST /login, /verify-otp, /wallet/withdraw, /saved-addresses etc. that
     // body is exactly the PII we must not ship. 'none' suppresses the body
     // entirely — and also closes the raw-string-body path (non-array bodies the
     // key-based scrubber can't recurse into). Leave this 'none'.

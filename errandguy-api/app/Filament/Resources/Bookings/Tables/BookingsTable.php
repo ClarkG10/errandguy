@@ -101,8 +101,9 @@ class BookingsTable
                     'wallet' => 'Wallet',
                     'gcash' => 'GCash',
                     'maya' => 'Maya',
-                    'card' => 'Card',
                     'cash' => 'Cash',
+                    // Retired; older bookings keep it.
+                    'card' => 'Card (legacy)',
                 ]),
                 DateRangeFilter::make('created_at', 'Date placed'),
             ])

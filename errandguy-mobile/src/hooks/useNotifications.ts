@@ -196,15 +196,13 @@ function handleNotificationTapped(
       // ("Payment confirmed for booking EG-1234" / "Payment failed — try
       // again") carries booking_id, and the wallet shows nothing about it — the
       // customer had to back out and hunt for the errand themselves at exactly
-      // the moment they were promised context. Top-ups, payouts and any push
-      // without a booking keep the wallet/earnings landing.
+      // the moment they were promised context. Withdrawals, payouts, a
+      // runner's cancellation fee and any push without a booking keep the
+      // wallet/earnings landing.
       if (!isRunner && data.booking_id) {
         router.push(`/(customer)/tracking/${data.booking_id}` as never);
         break;
       }
-      router.push((isRunner ? '/(runner)/(tabs)/earnings' : '/(customer)/wallet/') as never);
-      break;
-    case 'referral':
       router.push((isRunner ? '/(runner)/(tabs)/earnings' : '/(customer)/wallet/') as never);
       break;
     // Both land on the document screen: one is an admin decision on a

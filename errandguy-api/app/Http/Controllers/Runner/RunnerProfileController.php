@@ -41,7 +41,20 @@ class RunnerProfileController extends Controller
             ]);
         }
 
-        $profile->update($request->validated());
+        $data = $request->validated();
+
+        // The app build already on phones saves payout numbers here without
+        // saying which channel they are, so such a save goes back to the
+        // original rule (the e-wallet number wins over a bank account). The
+        // explicit method lives at PUT /runner/payout-method.
+        if (array_intersect_key($data, array_flip(['bank_name', 'bank_account_number', 'ewallet_number'])) !== []
+            && $profile->payout_channel !== null) {
+            // The channel code came from that explicit method, so it goes too.
+            $data['payout_channel'] = null;
+            $data['payout_channel_code'] = null;
+        }
+
+        $profile->update($data);
 
         $profile->load('documents');
 

@@ -10,86 +10,38 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import { LinearGradient } from 'expo-linear-gradient';
 import * as Haptics from 'expo-haptics';
-import {
-  ArrowUpCircle,
-  ArrowDownCircle,
-  RotateCcw,
-  Star,
-  Wallet,
-  Check,
-  Plus,
-  Download,
-  Gift,
-  ChevronRight,
-  Coins,
-  SlidersHorizontal,
-  Clock,
-} from 'lucide-react-native';
+import { Wallet, Download, ChevronRight, Clock, Gift } from 'lucide-react-native';
 import { toast } from '../../../stores/toastStore';
-import type { LucideIcon } from 'lucide-react-native';
 import { useWalletStore } from '../../../stores/walletStore';
 import { useAuthStore } from '../../../stores/authStore';
 import { usePaymentStore, isAttemptActive } from '../../../stores/paymentStore';
 import { paymentService } from '../../../services/payment.service';
-import { openCheckoutUrl, PAYMENT_RETURN_URL } from '../../../utils/browser';
-import { useQuery, invalidateQuery } from '../../../hooks/useQuery';
+import { useQuery } from '../../../hooks/useQuery';
+import { useWalletSummary } from '../../../hooks/useWalletSummary';
 import { CacheTTL } from '../../../services/cache.service';
-import { Card } from '../../../components/ui/Card';
 import { EmptyState } from '../../../components/ui/EmptyState';
 import { Illustration } from '../../../components/ui/Illustration';
 import { ErrorState } from '../../../components/ui/ErrorState';
 import { GradientHeader } from '../../../components/ui/GradientHeader';
 import { SyncIndicator } from '../../../components/ui/SyncIndicator';
 import { Skeleton } from '../../../components/ui/Skeleton';
-import { Hairline, Eyebrow } from '../../../components/ui/Typography';
+import { Eyebrow } from '../../../components/ui/Typography';
 import { BrandRefreshControl } from '../../../components/ui/BrandRefreshControl';
 import { formatCurrency } from '../../../utils/formatCurrency';
 import { formatRelativeTime } from '../../../utils/formatDate';
+import { cashDebtMessage } from '../../../utils/cashDebt';
 import { LightColors, Elevation } from '../../../constants/colors';
+import { ledgerIcon, isLedgerCredit, signedLedgerAmount } from '../../../utils/walletLedger';
 import type { WalletTransaction, WalletTransactionType } from '../../../types';
-
-const TX_ICONS: Record<WalletTransactionType, { icon: LucideIcon; color: string }> = {
-  top_up: { icon: ArrowUpCircle, color: LightColors.success },
-  payment: { icon: ArrowDownCircle, color: LightColors.danger },
-  refund: { icon: RotateCcw, color: LightColors.primary },
-  payout: { icon: ArrowDownCircle, color: LightColors.warning },
-  bonus: { icon: Star, color: LightColors.accentStrong },
-  tip: { icon: Gift, color: LightColors.accentStrong },
-  earning: { icon: Coins, color: LightColors.success },
-  adjustment: { icon: SlidersHorizontal, color: LightColors.primary },
-};
 
 // Transaction type filter — maps 1:1 onto the server's `type` query param
 // (WalletController::transactions), so filtering is done server-side
 // instead of hiding rows client-side. `null` = no filter.
 const TX_FILTERS: { key: WalletTransactionType | null; label: string }[] = [
   { key: null, label: 'All' },
-  { key: 'top_up', label: 'Top-ups' },
   { key: 'payment', label: 'Payments' },
   { key: 'refund', label: 'Refunds' },
-];
-
-// Live "ways to earn credit" mechanics, each pointing at a real screen.
-// A mechanic is only surfaced when its target route file exists in the
-// app tree (checked at build time — see the routes below), so this list
-// never renders a row that would push into a dead route. The reward
-// surface uses the amber accent family (credit / rewards), never a
-// status colour.
-const EARN_MECHANICS: {
-  key: string;
-  icon: LucideIcon;
-  title: string;
-  description: string;
-  route: string;
-}[] = [
-  {
-    key: 'referral',
-    icon: Gift,
-    title: 'Refer a friend',
-    description: 'Earn wallet credit when they join',
-    // src/app/(customer)/referral.tsx
-    route: '/(customer)/referral',
-  },
+  { key: 'payout', label: 'Withdrawals' },
 ];
 
 /** Placeholder rows painted while the first transactions fetch runs so
@@ -133,15 +85,6 @@ function getFileSystem(): any | null {
   fileSystemCache = tryRequire('expo-file-system/legacy');
   return fileSystemCache;
 }
-
-// A positive (credit) movement in the ledger.
-const isCreditType = (t: WalletTransactionType) =>
-  t === 'top_up' || t === 'refund' || t === 'bonus';
-
-// Types whose stored `amount` is signed both ways (an admin adjustment, a tip,
-// a runner earning): the sign of the amount — not the type — decides
-// credit-vs-debit, so a positive one is a credit and a negative one a debit.
-const SIGNED_TYPES: ReadonlySet<string> = new Set(['tip', 'earning', 'adjustment']);
 
 // RFC-4180-ish escaping: quote fields containing comma / quote / newline.
 const csvCell = (value: string | number | null | undefined): string => {
@@ -197,19 +140,13 @@ async function fetchAllTransactions(
 function buildTransactionsCsv(rows: WalletTransaction[]): string {
   const header = ['Date', 'Description', 'Type', 'Status', 'Amount', 'Balance'];
   const lines = rows.map((t) => {
-    // Only a settled row moved money. A pending/failed top-up exports as 0 so a
-    // cancelled top-up can't inflate the signed total in a spreadsheet.
-    const settled = t.status !== 'pending' && t.status !== 'failed';
-    // Signed types already carry their direction in `amount`; fixed-direction
-    // types derive it from the type + magnitude.
-    const signed = settled
-      ? SIGNED_TYPES.has(t.type)
-        // `amount` is a Laravel decimal → JSON string; Number() it so the
-        // `.toFixed(2)` below doesn't throw on tip/earning/adjustment rows
-        // (the other branch already coerces via Math.abs). (CSV export crash)
-        ? Number(t.amount)
-        : (isCreditType(t.type) ? 1 : -1) * Math.abs(t.amount)
-      : 0;
+    // Only money that actually moved counts, so the signed column sums to the
+    // real change in balance. A debit always moved: a withdrawal leaves the
+    // balance the moment it is requested, and one that fails is put back by
+    // its own refund row. A credit only lands once completed (a pending or
+    // failed top-up from before they were retired never did).
+    const moved = !isLedgerCredit(t) || (t.status !== 'pending' && t.status !== 'failed');
+    const signed = moved ? signedLedgerAmount(t) : 0;
     return [
       csvCell(t.created_at),
       csvCell(t.display_description ?? t.description ?? t.type.replace('_', ' ')),
@@ -228,7 +165,7 @@ export default function WalletScreen() {
   const { balance, transactions, setBalance, setTransactions } =
     useWalletStore();
   const userId = useAuthStore((s) => s.user?.id ?? 'anon');
-  // The persisted in-flight money attempt (booking charge or top-up), so a
+  // The persisted in-flight money attempt (a booking charge or a tip), so a
   // payment that outlived its screen has somewhere to be seen.
   const pendingAttempt = usePaymentStore((s) => s.attempt);
   const [refreshing, setRefreshing] = useState(false);
@@ -244,6 +181,12 @@ export default function WalletScreen() {
     },
     { staleTime: 30_000, ttl: CacheTTL.MEDIUM },
   );
+  // Withdrawable amount and bonus credit. The hero paints from the bare
+  // balance above (warm from the boot snapshot); this fills in the rest — the
+  // two coalesce into one request.
+  const summaryQ = useWalletSummary();
+  const withdrawable = summaryQ.data?.withdrawable ?? null;
+  const bonusCredit = summaryQ.data?.bonus_balance ?? 0;
 
   const txQ = useQuery<WalletTransaction[]>(
     ['wallet', 'transactions', userId, txFilter ?? 'all'],
@@ -273,9 +216,22 @@ export default function WalletScreen() {
 
   const onRefresh = useCallback(async () => {
     setRefreshing(true);
-    await Promise.all([balanceQ.refresh(), txQ.refresh()]);
+    await Promise.all([balanceQ.refresh(), summaryQ.refresh(), txQ.refresh()]);
     setRefreshing(false);
-  }, [balanceQ, txQ]);
+  }, [balanceQ, summaryQ, txQ]);
+
+  const openWithdraw = useCallback(() => {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
+    if (withdrawable != null && withdrawable <= 0) {
+      toast.info(
+        bonusCredit > 0
+          ? 'Bonus credit can’t be withdrawn — spend it on your next errands.'
+          : 'There’s nothing to withdraw yet. Refunds and other credits land here.',
+      );
+      return;
+    }
+    router.push('/(customer)/wallet/withdraw');
+  }, [withdrawable, bonusCredit, router]);
 
   const [exporting, setExporting] = useState(false);
 
@@ -383,269 +339,101 @@ export default function WalletScreen() {
     // slice after the customer switches filter.
   }, [exporting, txList, txFilter]);
 
-  // Which ledger row is mid-action (resume / status probe), so its label can
-  // say so instead of looking inert while a round-trip runs.
-  const [busyTxId, setBusyTxId] = useState<string | null>(null);
+  const renderTransaction = useCallback(({ item }: { item: WalletTransaction }) => {
+    const config = ledgerIcon(item.type);
+    const Icon = config.icon;
+    const isCredit = isLedgerCredit(item);
+    // A row only reads as settled money when its lifecycle says so: a
+    // withdrawal is 'pending' until staff send it, and 'failed' if it bounced
+    // (the money then comes back on its own refund row).
+    const isPending = item.status === 'pending';
+    const isFailed = item.status === 'failed';
+    const settled = !isPending && !isFailed;
+    const isWithdrawal = item.type === 'payout';
 
-  /**
-   * Ask the server what actually happened to a top-up row.
-   *
-   * A pending top-up used to be a dead end: no way to re-check, no way to
-   * reopen the invoice, so customers started a SECOND top-up (a second pending
-   * row) or gave up on money they had already sent. The status endpoint is the
-   * same authoritative probe the checkout screen polls.
-   */
-  const probeTopUp = useCallback(
-    async (txId: string) => {
-      try {
-        const res = await paymentService.getTopUpStatus(txId);
-        const status: string | undefined = res.data?.data?.status ?? res.data?.status;
-        if (status === 'completed') {
-          toast.success('Top-up confirmed — your balance is up to date.');
-        } else if (status && status !== 'pending') {
-          toast.info("That top-up didn't go through — you weren't charged.");
-        } else {
-          toast.info(
-            "Still confirming with your provider. We'll credit your balance the moment it lands.",
-          );
-        }
-        // Other screens (the home balance pill, the payment selector) read the
-        // same keys, so heal them too — not just this list.
-        void invalidateQuery(['wallet']);
-        await Promise.all([balanceQ.refresh(), txQ.refresh()]);
-      } catch {
-        toast.error("Couldn't check that top-up just now. Please try again.");
-      }
-    },
-    [balanceQ, txQ],
-  );
+    const amountClass = !settled
+      ? 'text-textMuted'
+      : isCredit
+        ? 'text-success'
+        : 'text-textPrimary';
+    // No +/− on an unsettled row — a sign implies the money moved for good.
+    const sign = !settled ? '' : isCredit ? '+' : '−';
 
-  const checkTopUpStatus = useCallback(
-    async (txId: string) => {
-      if (busyTxId) return;
-      setBusyTxId(txId);
-      Haptics.selectionAsync().catch(() => {});
-      try {
-        await probeTopUp(txId);
-      } finally {
-        setBusyTxId(null);
-      }
-    },
-    [busyTxId, probeTopUp],
-  );
-
-  /**
-   * Reopen a still-payable top-up invoice. The server already stores and
-   * serializes `checkout_url` on every pending top-up row, so resuming costs no
-   * backend work — and it reuses the SAME invoice, so it can never double-charge.
-   *
-   * No payment attempt is armed here on purpose: that would take the app-wide
-   * one-payment-at-a-time lock and block booking. The gateway stays the
-   * authority — we probe the row once the sheet closes, and the webhook settles
-   * it regardless of what the sheet reported.
-   */
-  const resumeTopUp = useCallback(
-    async (txId: string, url: string) => {
-      if (busyTxId) return;
-      setBusyTxId(txId);
-      try {
-        const outcome = await openCheckoutUrl(url, PAYMENT_RETURN_URL);
-        if (outcome === 'failed') {
-          // A one-time e-wallet authorization URL dies with its charge, so
-          // "reopen" can genuinely have nowhere to go. Say so honestly.
-          toast.error(
-            "Couldn't reopen that payment — it may have expired. Add money again to start a fresh one.",
-          );
-          return;
-        }
-        if (outcome === 'opened') {
-          // System-browser fallback: this resolved the moment the browser
-          // opened, so the customer is still out there paying. Probing now
-          // would only report the pending state we already show.
-          void invalidateQuery(['wallet']);
-          toast.info(
-            'Finish the payment in your browser — your balance updates automatically.',
-          );
-          return;
-        }
-        // Back in the app (paid, or the sheet dismissed — which does NOT prove
-        // they didn't pay): ask the server what actually happened.
-        await probeTopUp(txId);
-      } finally {
-        setBusyTxId(null);
-      }
-    },
-    [busyTxId, probeTopUp],
-  );
-
-  const renderTransaction = useCallback(
-    ({ item }: { item: WalletTransaction }) => {
-      const config = TX_ICONS[item.type] ?? TX_ICONS.payment;
-      const Icon = config.icon;
-      const isCredit = SIGNED_TYPES.has(item.type)
-        ? item.amount >= 0
-        : item.type === 'top_up' || item.type === 'refund' || item.type === 'bonus';
-      // A row only reads as settled money when its lifecycle says so. top_ups
-      // are written 'pending' BEFORE Xendit confirms, and flip to 'failed' when
-      // the customer abandons checkout / the invoice expires. A pending or
-      // failed top-up must NOT paint as a completed green credit — that's what
-      // made a cancelled top-up look "successful" in the log.
-      const isPending = item.status === 'pending';
-      const isFailed = item.status === 'failed';
-      const settled = !isPending && !isFailed;
-      // A top-up is the only row the customer can still act on: pending ones
-      // can be resumed or re-checked, failed ones re-attempted. The resume URL
-      // is already on the wire (WalletTransaction.checkout_url) — narrowed
-      // locally rather than widening the shared type.
-      const isTopUp = item.type === 'top_up';
-      const resumeUrl =
-        (item as WalletTransaction & { checkout_url?: string | null }).checkout_url ?? null;
-      const busy = busyTxId === item.id;
-
-      const amountClass = !settled
-        ? 'text-textMuted'
-        : isCredit
-          ? 'text-success'
-          : 'text-textPrimary';
-      // No +/− on an unsettled row — a sign implies money moved.
-      const sign = !settled ? '' : isCredit ? '+' : '−';
-
-      return (
-        <View className="flex-row items-center px-5 py-3.5 border-b border-divider">
-          {/* Soft muted chip keeps the type icon glanceable while the
-              amount on the right carries the visual weight. Unsettled rows use
-              a neutral glyph so a pending top-up doesn't flash a success green. */}
-          <View className="w-9 h-9 rounded-full bg-surfaceMuted items-center justify-center">
-            <Icon
-              size={17}
-              color={settled ? config.color : LightColors.textMuted}
-              strokeWidth={1.8}
-            />
-          </View>
-          <View className="flex-1 ml-3">
-            <Text
-              className="text-[14px] font-montserrat-bold text-textPrimary"
-              numberOfLines={1}
-            >
-              {item.display_description ?? item.description ?? item.type.replace('_', ' ')}
-            </Text>
-            <View className="flex-row items-center mt-0.5">
-              <Text className="text-[11px] font-montserrat text-textSecondary">
-                {formatRelativeTime(item.created_at)}
-              </Text>
-              {isPending ? (
-                <Text
-                  className="text-[11px] font-montserrat-semi ml-1.5"
-                  // *Dark rung: base `warning` is ~2.1:1 on this canvas at 11px,
-                  // under the 4.5:1 AA floor for small status text (colors.ts).
-                  style={{ color: LightColors.warningDark }}
-                >
-                  · Pending
-                </Text>
-              ) : isFailed ? (
-                <Text
-                  className="text-[11px] font-montserrat-semi ml-1.5"
-                  // *Dark rung: base `danger` is ~3.8:1 on this canvas at 11px,
-                  // under the 4.5:1 AA floor for small status text (colors.ts).
-                  style={{ color: LightColors.dangerDark }}
-                >
-                  · Failed
-                </Text>
-              ) : null}
-            </View>
-
-            {/* Recovery affordances. A pending top-up row used to be inert —
-                the customer could neither reopen the invoice they had already
-                been sent to, nor ask what happened, so the only move left was
-                starting a duplicate top-up. Layout lives in className (a
-                Pressable styled only through the style callback loses
-                flexDirection). */}
-            {isTopUp && isPending ? (
-              <View className="mt-1.5">
-                <View className="flex-row items-center" style={{ gap: 16 }}>
-                  {resumeUrl ? (
-                    <Pressable
-                      onPress={() => resumeTopUp(item.id, resumeUrl)}
-                      disabled={busy}
-                      hitSlop={{ top: 10, bottom: 10, left: 6, right: 6 }}
-                      accessibilityRole="button"
-                      accessibilityLabel={`Continue paying this ${formatCurrency(Math.abs(item.amount))} top-up`}
-                      accessibilityState={{ disabled: busy, busy }}
-                      style={({ pressed }) => (pressed || busy ? { opacity: 0.6 } : null)}
-                    >
-                      <Text className="text-[11px] font-montserrat-bold text-primary">
-                        Continue payment
-                      </Text>
-                    </Pressable>
-                  ) : null}
-                  <Pressable
-                    onPress={() => checkTopUpStatus(item.id)}
-                    disabled={busy}
-                    hitSlop={{ top: 10, bottom: 10, left: 6, right: 6 }}
-                    accessibilityRole="button"
-                    accessibilityLabel="Check this top-up's status now"
-                    accessibilityState={{ disabled: busy, busy }}
-                    style={({ pressed }) => (pressed || busy ? { opacity: 0.6 } : null)}
-                  >
-                    <Text className="text-[11px] font-montserrat-bold text-primary">
-                      {busy ? 'Checking…' : 'Check status'}
-                    </Text>
-                  </Pressable>
-                </View>
-                <Text className="text-[10px] font-montserrat text-textTertiary mt-1">
-                  Unpaid top-ups expire on their own — you&apos;re never charged twice.
-                </Text>
-              </View>
-            ) : isTopUp && isFailed ? (
-              <View className="mt-1.5">
-                {item.failure_reason ? (
-                  <Text
-                    className="text-[10px] font-montserrat text-textTertiary mb-1"
-                    numberOfLines={2}
-                  >
-                    {item.failure_reason}
-                  </Text>
-                ) : null}
-                <Pressable
-                  onPress={() => {
-                    Haptics.selectionAsync().catch(() => {});
-                    router.push('/(customer)/wallet/top-up');
-                  }}
-                  hitSlop={{ top: 10, bottom: 10, left: 6, right: 6 }}
-                  accessibilityRole="button"
-                  accessibilityLabel="Try this top-up again"
-                  style={({ pressed }) => (pressed ? { opacity: 0.6 } : null)}
-                >
-                  <Text className="text-[11px] font-montserrat-bold text-primary">
-                    Try again
-                  </Text>
-                </Pressable>
-              </View>
-            ) : null}
-          </View>
-          <View className="items-end">
-            <Text
-              className={`text-[15px] font-inter-semi tabular-nums ${amountClass}`}
-            >
-              {sign}
-              {formatCurrency(Math.abs(item.amount))}
-            </Text>
-            {/* balance_after is only meaningful once the row settled; a pending
-                top-up carries the PRE-payment balance, so hide it there. */}
-            {settled ? (
-              <Text className="text-[10px] font-inter tabular-nums text-textMuted mt-0.5">
-                {formatCurrency(item.balance_after)}
-              </Text>
-            ) : null}
-          </View>
+    return (
+      <View className="flex-row items-center px-5 py-3.5 border-b border-divider">
+        {/* Soft muted chip keeps the type icon glanceable while the amount on
+            the right carries the visual weight. Unsettled rows use a neutral
+            glyph so a pending row doesn't flash a status colour. */}
+        <View className="w-9 h-9 rounded-full bg-surfaceMuted items-center justify-center">
+          <Icon
+            size={17}
+            color={settled ? config.color : LightColors.textMuted}
+            strokeWidth={1.8}
+          />
         </View>
-      );
-    },
-    [busyTxId, checkTopUpStatus, resumeTopUp, router],
-  );
+        <View className="flex-1 ml-3">
+          <Text
+            className="text-[14px] font-montserrat-bold text-textPrimary"
+            numberOfLines={1}
+          >
+            {item.display_description ?? item.description ?? item.type.replace('_', ' ')}
+          </Text>
+          <View className="flex-row items-center mt-0.5">
+            <Text className="text-[11px] font-montserrat text-textSecondary">
+              {formatRelativeTime(item.created_at)}
+            </Text>
+            {isPending ? (
+              <Text
+                className="text-[11px] font-montserrat-semi ml-1.5"
+                // *Dark rung: base `warning` is ~2.1:1 on this canvas at 11px,
+                // under the 4.5:1 AA floor for small status text (colors.ts).
+                style={{ color: LightColors.warningDark }}
+              >
+                · Pending
+              </Text>
+            ) : isFailed ? (
+              <Text
+                className="text-[11px] font-montserrat-semi ml-1.5"
+                // *Dark rung: base `danger` is ~3.8:1 on this canvas at 11px,
+                // under the 4.5:1 AA floor for small status text (colors.ts).
+                style={{ color: LightColors.dangerDark }}
+              >
+                · Failed
+              </Text>
+            ) : null}
+          </View>
+          {/* A withdrawal is the one row with a wait attached, so it says what
+              happens next rather than leaving "Pending" to be decoded. */}
+          {isWithdrawal && isPending ? (
+            <Text className="text-[10px] font-montserrat text-textTertiary mt-1">
+              On its way — usually arrives within 1–3 business days.
+            </Text>
+          ) : isWithdrawal && isFailed ? (
+            <Text className="text-[10px] font-montserrat text-textTertiary mt-1" numberOfLines={2}>
+              Didn’t go through — the money is back in your balance.
+              {item.failure_reason ? ` ${item.failure_reason}` : ''}
+            </Text>
+          ) : null}
+        </View>
+        <View className="items-end">
+          <Text className={`text-[15px] font-inter-semi tabular-nums ${amountClass}`}>
+            {sign}
+            {formatCurrency(Math.abs(item.amount))}
+          </Text>
+          {/* The running balance is real once the money left or landed — a
+              pending withdrawal is already debited, so it shows there too. */}
+          {settled || (isPending && isWithdrawal) ? (
+            <Text className="text-[10px] font-inter tabular-nums text-textMuted mt-0.5">
+              {formatCurrency(item.balance_after)}
+            </Text>
+          ) : null}
+        </View>
+      </View>
+    );
+  }, []);
 
-  // The hub scrolls as ONE unit: the balance hero, payment-methods
-  // card, Transactions eyebrow and filter chips ride in the list header
+  // The hub scrolls as ONE unit: the balance hero, Transactions eyebrow
+  // and filter chips ride in the list header
   // so they scroll away and give the ledger full height on small phones
   // (SE / 360dp Android) instead of pinning it to ~1 visible row.
   const listHeader = (
@@ -730,23 +518,66 @@ export default function WalletScreen() {
           if (numericBalance == null) {
             return <View className="mt-2 h-10 w-44 rounded-lg bg-white/15" />;
           }
+          // An account that is also a runner can owe money from cash errands;
+          // the balance is then negative and says so in the server's words.
+          if (numericBalance < 0) {
+            return (
+              <>
+                <Text
+                  className="text-4xl font-inter-semi tabular-nums text-white mt-1"
+                  numberOfLines={1}
+                  adjustsFontSizeToFit
+                  minimumFontScale={0.6}
+                >
+                  −{formatCurrency(Math.abs(numericBalance))}
+                </Text>
+                <Text className="text-[11px] font-montserrat text-white/85 mt-1.5">
+                  {cashDebtMessage(Math.abs(numericBalance))}
+                </Text>
+              </>
+            );
+          }
           // Single-line guard: a seven-figure balance shrinks to fit
           // rather than wrapping and breaking the hero's proportions.
           return (
-            <Text
-              className="text-4xl font-inter-semi tabular-nums text-white mt-1"
-              numberOfLines={1}
-              adjustsFontSizeToFit
-              minimumFontScale={0.6}
-            >
-              {formatCurrency(numericBalance)}
-            </Text>
+            <>
+              <Text
+                className="text-4xl font-inter-semi tabular-nums text-white mt-1"
+                numberOfLines={1}
+                adjustsFontSizeToFit
+                minimumFontScale={0.6}
+              >
+                {formatCurrency(numericBalance)}
+              </Text>
+              {withdrawable != null ? (
+                <Text className="text-[11px] font-montserrat text-white/85 mt-1.5">
+                  {formatCurrency(withdrawable)} can be withdrawn to GCash or Maya
+                </Text>
+              ) : null}
+              {/* Credit left from the retired referral program: it pays for
+                  errands (first, before the balance) but can never be cashed
+                  out, so it sits apart from the withdrawable figure. */}
+              {bonusCredit > 0 ? (
+                <View className="flex-row items-start mt-1.5 pr-16">
+                  <Gift
+                    size={12}
+                    color="rgba(255,255,255,0.85)"
+                    strokeWidth={2}
+                    style={{ marginTop: 2 }}
+                  />
+                  <Text className="flex-1 ml-1.5 text-[11px] font-montserrat text-white/85">
+                    +{formatCurrency(bonusCredit)} bonus credit — spend it on errands. It
+                    can’t be withdrawn.
+                  </Text>
+                </View>
+              ) : null}
+            </>
           );
         })()}
 
         <View className="mt-5 flex-row gap-2">
           <Pressable
-            onPress={() => router.push('/(customer)/wallet/top-up')}
+            onPress={openWithdraw}
             className="flex-1 bg-white py-3.5 items-center"
             style={({ pressed }) => [
               { borderRadius: 16, overflow: 'hidden' },
@@ -754,10 +585,10 @@ export default function WalletScreen() {
             ]}
             android_ripple={{ color: 'rgba(0,0,0,0.06)' }}
             accessibilityRole="button"
-            accessibilityLabel="Add money to wallet"
+            accessibilityLabel="Withdraw to GCash or Maya"
           >
             <Text className="text-sm font-montserrat-bold text-textPrimary">
-              Add money
+              Withdraw
             </Text>
           </Pressable>
           <Pressable
@@ -783,7 +614,7 @@ export default function WalletScreen() {
       {/* In-flight payment. The verification hook is mounted on only a handful
           of screens, so an attempt that survived a kill (routine on low-RAM
           Androids during the GCash app hop) had NO surface at all — its only
-          symptom was the next Add-money tap being refused. The wallet is where
+          symptom was the next booking or tip being refused. The wallet is where
           a customer looks for missing money, so it says so here and links to
           /payment-complete, which owns the full outcome UI (and whose "Got it"
           releases the one-payment-at-a-time lock). Scoped to non-terminal
@@ -800,7 +631,7 @@ export default function WalletScreen() {
             className="flex-row items-center rounded-2xl bg-warningSoft px-4 py-3"
             accessibilityRole="button"
             accessibilityLabel={`Confirming your ${formatCurrency(pendingAttempt.amount)} ${
-              pendingAttempt.kind === 'topup' ? 'top-up' : 'payment'
+              pendingAttempt.kind === 'tip' ? 'tip' : 'payment'
             }. Tap to check its status.`}
             style={({ pressed }) => (pressed ? { opacity: 0.75 } : null)}
           >
@@ -811,7 +642,7 @@ export default function WalletScreen() {
                 style={{ color: LightColors.warningDark }}
               >
                 Confirming your {formatCurrency(pendingAttempt.amount)}{' '}
-                {pendingAttempt.kind === 'topup' ? 'top-up' : 'payment'}
+                {pendingAttempt.kind === 'tip' ? 'tip' : 'payment'}
               </Text>
               <Text className="text-[11px] font-montserrat text-textSecondary mt-0.5">
                 No need to pay again — tap to check its status.
@@ -826,99 +657,13 @@ export default function WalletScreen() {
           above the ledger. Purely informational. */}
       <View className="px-5 mb-2">
         <SyncIndicator
-          syncing={balanceQ.isStale || txQ.isStale}
+          syncing={balanceQ.isStale || summaryQ.isStale || txQ.isStale}
           updatedAt={balanceQ.updatedAt}
           error={!!balanceQ.error}
           onRetry={onRefresh}
           align="flex-start"
         />
       </View>
-
-      {/* Payment Methods — white card of rows (icon chip • label •
-          check) with an "+ Add payment method" footer row in primary
-          text, matching the reference wallet layout. */}
-      <View className="px-5 mb-2">
-        <Eyebrow className="mb-2">Payment methods</Eyebrow>
-        <Card padding="none" className="px-4">
-          <View className="flex-row items-center py-3.5">
-            <View className="w-10 h-10 rounded-full bg-surfaceMuted items-center justify-center mr-3">
-              <Wallet size={18} color={LightColors.primary} strokeWidth={1.9} />
-            </View>
-            <View className="flex-1">
-              <Text className="text-[14px] font-montserrat-semi text-textPrimary">
-                ErrandGuy Wallet
-              </Text>
-              <Text className="text-[11px] font-montserrat text-textSecondary mt-0.5">
-                Pay errands with your balance
-              </Text>
-            </View>
-            <Check size={18} color={LightColors.primary} strokeWidth={2.2} />
-          </View>
-          <Hairline />
-          {/* Opens the linked/saved e-wallet manager — the row adds a
-              payment METHOD, not money (Add money lives on the hero). */}
-          <Pressable
-            onPress={() => router.push('/(customer)/payment-methods')}
-            className="flex-row items-center py-3.5"
-            style={({ pressed }) => pressed && { opacity: 0.6 }}
-            accessibilityRole="button"
-            accessibilityLabel="Add payment method"
-          >
-            <View className="w-10 h-10 rounded-full bg-surfaceMuted items-center justify-center mr-3">
-              <Plus size={18} color={LightColors.primary} strokeWidth={2.2} />
-            </View>
-            <Text className="flex-1 text-[14px] font-montserrat-bold text-primary">
-              Add payment method
-            </Text>
-          </Pressable>
-        </Card>
-      </View>
-
-      {/* Ways to earn credit — a compact reward surface pointing at the
-          live earn mechanics (today: refer a friend). The ledger
-          already renders a gold-star `bonus` row when credit lands; this
-          card closes the loop by telling the customer HOW to earn it.
-          Rendered only when at least one mechanic's screen exists, so it
-          gracefully vanishes rather than showing a dead row. Amber accent
-          chips (accentSoft) mark it as a rewards surface, not a status. */}
-      {EARN_MECHANICS.length > 0 && (
-        <View className="px-5 mb-2">
-          <Eyebrow className="mb-2">Ways to earn credit</Eyebrow>
-          <Card padding="none" className="px-4">
-            {EARN_MECHANICS.map((m, i) => {
-              const Icon = m.icon;
-              return (
-                <View key={m.key}>
-                  {i > 0 && <Hairline />}
-                  <Pressable
-                    onPress={() => {
-                      Haptics.selectionAsync().catch(() => {});
-                      router.push(m.route as any);
-                    }}
-                    className="flex-row items-center py-3.5"
-                    style={({ pressed }) => pressed && { opacity: 0.6 }}
-                    accessibilityRole="button"
-                    accessibilityLabel={`${m.title}. ${m.description}`}
-                  >
-                    <View className="w-10 h-10 rounded-full bg-accentSoft items-center justify-center mr-3">
-                      <Icon size={18} color={LightColors.accentStrong} strokeWidth={1.9} />
-                    </View>
-                    <View className="flex-1">
-                      <Text className="text-[14px] font-montserrat-semi text-textPrimary">
-                        {m.title}
-                      </Text>
-                      <Text className="text-[11px] font-montserrat text-textSecondary mt-0.5">
-                        {m.description}
-                      </Text>
-                    </View>
-                    <ChevronRight size={18} color={LightColors.textTertiary} strokeWidth={2} />
-                  </Pressable>
-                </View>
-              );
-            })}
-          </Card>
-        </View>
-      )}
 
       {/* Transactions section header — typographic eyebrow above the
           list. Section bucket headers below render as smaller eyebrows

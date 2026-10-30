@@ -82,8 +82,10 @@ class WalletServiceLockingGuardTest extends TestCase
         $names = array_map(fn ($m) => $m[0], $this->balanceMutatingMethods());
 
         $this->assertNotEmpty($names, 'The arch-guard found no balance-mutating methods — its detection is broken.');
-        // A few known movers must be present.
-        foreach (['deduct', 'refund', 'payout', 'adjust'] as $expected) {
+        // A few known movers must be present. (payout() no longer appears: it
+        // moves money through createPendingPayout → the ledger primitive,
+        // whose callers are checked by the test below.)
+        foreach (['deduct', 'refund', 'failPayout', 'adjust'] as $expected) {
             $this->assertContains($expected, $names, "Expected WalletService::{$expected} to be detected as a balance mutator.");
         }
     }

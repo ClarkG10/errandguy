@@ -12,7 +12,7 @@ use Symfony\Component\HttpFoundation\Response;
 
 /**
  * Durable idempotency guard for money-mutation endpoints (booking create,
- * wallet top-up, payout request). The client sends a stable `Idempotency-Key`
+ * wallet withdrawal, payout request). The client sends a stable `Idempotency-Key`
  * per payment attempt and reuses it on retry; this middleware guarantees that
  * a replay of the SAME attempt returns the SAME outcome instead of charging /
  * booking twice.

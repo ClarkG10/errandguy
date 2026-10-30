@@ -30,8 +30,8 @@ use App\Http\Controllers\Payment\PaymentHistoryController;
 use App\Http\Controllers\Payment\PaymentStatusController;
 use App\Http\Controllers\Payment\XenditWebhookController;
 use App\Http\Controllers\Payment\WalletController;
+use App\Http\Controllers\RetiredEndpointController;
 // Phase 3 additions
-use App\Http\Controllers\Customer\ReferralController;
 use App\Http\Controllers\Customer\ShoppingListController;
 use App\Http\Controllers\Runner\ShoppingChecklistController;
 use App\Http\Controllers\Runner\HeatmapController;
@@ -124,13 +124,14 @@ Route::prefix('v1')->group(function () {
             Route::put('/trusted-contacts/{id}', [TrustedContactController::class, 'update']);
             Route::delete('/trusted-contacts/{id}', [TrustedContactController::class, 'destroy']);
 
-            // Referral program
-            Route::get('/referral', [ReferralController::class, 'show']);
-            Route::post('/referral/apply', [ReferralController::class, 'apply'])->middleware('throttle:10,1');
+            // Retired: the referral program has ended. 422 stubs for the app
+            // build already on phones; delete once the app update is out.
+            Route::get('/referral', [RetiredEndpointController::class, 'referral']);
+            Route::post('/referral/apply', [RetiredEndpointController::class, 'referral'])->middleware('throttle:10,1');
         });
 
         // Customer Home in ONE round trip (errand types + active booking +
-        // recent bookings + wallet balance + referral). Each section
+        // recent bookings + wallet balance). Each section
         // is byte-identical to the individual endpoint that still serves it,
         // so the app seeds its existing caches from this and keeps the
         // per-resource routes as revalidation paths. (A7)
@@ -161,9 +162,10 @@ Route::prefix('v1')->group(function () {
             Route::post('/{id}/review', [ReviewController::class, 'store']);
             Route::post('/{id}/rebook', [BookingController::class, 'rebook']);
             Route::post('/{id}/tip', [BookingController::class, 'tip'])->middleware('throttle:10,1');
-            // Gateway-funded tip (GCash/Maya/card) — the zero-wallet / COD path.
-            // Returns a checkout_url; the runner is credited on the Xendit webhook.
-            Route::post('/{id}/tip-checkout', [BookingController::class, 'tipCheckout'])->middleware('throttle:10,1');
+            // Gateway-funded tip (GCash/Maya) — the zero-wallet / cash-errand
+            // path. Returns a checkout_url; the runner is credited once Xendit
+            // confirms. `idempotent` replays a double-tap's first charge.
+            Route::post('/{id}/tip-checkout', [BookingController::class, 'tipCheckout'])->middleware(['throttle:10,1', 'idempotent']);
             // Retry-match is rate-limited tighter than the broader booking
             // endpoints — a frantically tapping user shouldn't be able to
             // re-dispatch MatchRunnerJob more than once every few seconds.
@@ -221,6 +223,10 @@ Route::prefix('v1')->group(function () {
             // reference_id so the DB unique guard is the final backstop (P0-8).
             Route::post('/payout/request', [RunnerPayoutController::class, 'requestPayout'])
                 ->middleware(['throttle:10,1', 'idempotent:required']);
+            // Where payouts go: GCash, Maya or a bank account, with the account
+            // number and holder's name. Saving replaces; deleting removes.
+            Route::put('/payout-method', [RunnerPayoutController::class, 'saveMethod'])->middleware('throttle:20,1');
+            Route::delete('/payout-method', [RunnerPayoutController::class, 'removeMethod'])->middleware('throttle:20,1');
 
             // Runner toggles shopping-checklist ticks while shopping.
             Route::patch('/errand/{id}/shopping-items', [ShoppingChecklistController::class, 'update']);
@@ -251,15 +257,18 @@ Route::prefix('v1')->group(function () {
 
         // Payment routes
         Route::prefix('payments')->group(function () {
-            // Platform-offered methods (operator-managed via admin).
+            // Platform-offered methods (operator-managed via admin): cash,
+            // GCash, Maya, wallet.
             Route::get('/available-methods', [PaymentMethodController::class, 'available']);
-            Route::get('/methods', [PaymentMethodController::class, 'index']);
-            Route::post('/methods', [PaymentMethodController::class, 'store']);
-            // Link a reusable e-wallet (GCash/Maya/GrabPay) → returns an
-            // authorization URL the app opens in an in-app sheet.
-            Route::post('/methods/link', [PaymentMethodController::class, 'link'])->middleware('throttle:10,1');
-            Route::delete('/methods/{id}', [PaymentMethodController::class, 'destroy']);
-            Route::put('/methods/{id}/default', [PaymentMethodController::class, 'setDefault']);
+            // Retired: saved cards and linked GCash/Maya/GrabPay accounts. The
+            // list answers empty (the app build already on phones waits for it
+            // before picking a default); the rest are 422 stubs. Delete once
+            // the app update is out.
+            Route::get('/methods', [RetiredEndpointController::class, 'savedPaymentMethods']);
+            Route::post('/methods', [RetiredEndpointController::class, 'saveMethod']);
+            Route::post('/methods/link', [RetiredEndpointController::class, 'linkAccount'])->middleware('throttle:10,1');
+            Route::delete('/methods/{id}', [RetiredEndpointController::class, 'savedAccountAction']);
+            Route::put('/methods/{id}/default', [RetiredEndpointController::class, 'savedAccountAction']);
             Route::get('/history', [PaymentHistoryController::class, 'index']);
             // Cheap status probe the app polls to verify a charge (never assume).
             Route::get('/{id}/status', [PaymentStatusController::class, 'show'])
@@ -272,13 +281,17 @@ Route::prefix('v1')->group(function () {
         // Wallet routes
         Route::prefix('wallet')->group(function () {
             Route::get('/balance', [WalletController::class, 'balance']);
-            // Financial endpoint — strict rate-limit on top-up to deter
-            // abuse / accidental double-tap charges. `idempotent` makes a
-            // retried top-up with the same key return the original pending
-            // invoice instead of opening a second one.
-            Route::post('/top-up', [WalletController::class, 'topUp'])->middleware(['throttle:5,1', 'idempotent']);
+            // Retired: wallet top-ups. 422 stub for the app build already on
+            // phones; delete once the app update is out.
+            Route::post('/top-up', [RetiredEndpointController::class, 'topUp'])->middleware('throttle:5,1');
+            // Money-OUT: a customer withdraws their balance to GCash or Maya.
+            // `idempotent:required` refuses a keyless request (428) rather than
+            // risk a double debit; the key becomes the payout's reference.
+            Route::post('/withdraw', [WalletController::class, 'withdraw'])
+                ->middleware(['role:customer', 'throttle:10,1', 'idempotent:required']);
             Route::get('/transactions', [WalletController::class, 'transactions']);
-            // Status probe for a single top-up (the app polls to verify).
+            // Status probe for a single tip charge or legacy top-up (the app
+            // polls to verify).
             Route::get('/transactions/{id}/status', [WalletController::class, 'transactionStatus'])
                 ->where('id', '[0-9a-fA-F-]{36}');
         });

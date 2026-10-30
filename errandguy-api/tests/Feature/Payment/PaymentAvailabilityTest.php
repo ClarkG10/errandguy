@@ -28,11 +28,14 @@ class PaymentAvailabilityTest extends TestCase
         ]);
     }
 
-    public function test_available_methods_returns_full_set_by_default(): void
+    public function test_available_methods_are_cash_gcash_maya_and_wallet(): void
     {
         $res = $this->actingAs($this->customer)->getJson('/api/v1/payments/available-methods');
         $res->assertOk();
-        $this->assertCount(5, $res->json('data'));
+        $this->assertEqualsCanonicalizing(
+            ['wallet', 'gcash', 'maya', 'cash'],
+            collect($res->json('data'))->pluck('type')->all(),
+        );
     }
 
     public function test_available_methods_reflects_operator_selection(): void

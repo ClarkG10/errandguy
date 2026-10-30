@@ -12,7 +12,8 @@ use Illuminate\Support\Facades\Log;
 class WalletService
 {
     /**
-     * Minimum seconds between gateway pulls for the SAME top-up.
+     * Minimum seconds between gateway pulls for the SAME charge (a GCash/Maya
+     * tip, or a legacy top-up).
      *
      * The app polls the status endpoint every ~3s and each pull is a blocking
      * Xendit GET occupying an FPM worker, while the webhook remains the primary
@@ -81,27 +82,23 @@ class WalletService
     }
 
     /**
-     * Pull-based settlement reconciliation for ONE pending top-up.
+     * Pull-based settlement reconciliation for ONE pending gateway charge held
+     * on a wallet row: a gateway tip charge ('tip_payment'), or — legacy — a
+     * wallet top-up started before top-ups were retired.
      *
-     * Top-up was the one money-in flow with no pull path: the booking probe
-     * asks Xendit when a webhook lags, but the wallet endpoint only re-read the
-     * DB row. So a delayed or dropped webhook left a customer whose money had
-     * already left GCash on "Payment is being processed" forever — and they
-     * usually started a second top-up.
-     *
-     * Lives HERE, not in the controller, because two callers need it: the
-     * status endpoint the app polls after checkout, and the scheduled sweep
-     * that catches the case the endpoint cannot — a customer who paid and then
-     * never reopened the app, whose money would otherwise sit in limbo with
-     * nothing on either side reconciling it.
+     * Two callers need it: the status endpoint the app polls after checkout,
+     * and the scheduled sweep (errandguy:reconcile-topups) that catches the
+     * customer who paid and never reopened the app.
      *
      * Deliberately narrow and additive:
-     *   • no-op unless this is a pending top_up with a pullable gateway ref;
+     *   • no-op unless this is a pending top_up / tip_payment with a pullable
+     *     gateway ref;
      *   • throttled per-transaction so a 3s poll can't hammer the gateway or
      *     drain the FPM pool;
-     *   • settles ONLY through completeTopUp / expireTopUp — both row-locked,
-     *     idempotent, and carrying their own settled-in-full guard — so this
-     *     cannot credit twice or credit an under-settled charge;
+     *   • settles ONLY through completeTopUp / expireTopUp or
+     *     completeGatewayTip / expireGatewayTip — all row-locked, idempotent,
+     *     and carrying their own settled-in-full guard — so this cannot credit
+     *     twice or credit an under-settled charge;
      *   • only ever moves the row to the state the GATEWAY itself reports;
      *   • a gateway hiccup NEVER fails the caller (stays pending, retries next).
      *
@@ -124,15 +121,14 @@ class WalletService
             return $tx;
         }
 
-        // Only the DIRECT e-wallet charge (GCash/Maya) can be pulled today: its
+        // Only the DIRECT e-wallet charge (GCash/Maya) can be pulled: its
         // gateway_ref is a Payment Requests id ("pr-…"), which PaymentService
-        // already knows how to GET. A hosted card invoice's id would need a
-        // /v2/invoices/{id} read that PaymentService doesn't expose, so those
-        // stay webhook-only (unchanged behaviour, never a wrong answer).
+        // knows how to GET. A legacy hosted card invoice (from before cards
+        // were retired) has no pull path and stays webhook-only.
         //
         // The prefix is a safe discriminator, not a guess: an invoice id is a
         // hex ObjectId, which cannot begin with "pr". If Xendit ever renamed
-        // the prefix this would simply stop pulling and fall back to today's
+        // the prefix this would simply stop pulling and fall back to
         // webhook-only behaviour — it can never mis-address a lookup.
         if (! str_starts_with((string) $tx->gateway_ref, 'pr')) {
             return $tx;
@@ -197,123 +193,22 @@ class WalletService
     }
 
     /**
-     * Start a wallet top-up.
-     *
-     * Creates a PENDING transaction and a Xendit invoice, and returns both
-     * (with the hosted checkout URL). The balance is DELIBERATELY NOT
-     * credited here — money is only added once Xendit confirms payment via
-     * the `invoice.paid` webhook (see completeTopUp). This closes the
-     * previous "free money" hole where top-up credited the wallet with no
-     * real charge.
-     *
-     * @return array{transaction: WalletTransaction, checkout_url: ?string}
-     */
-    public function initiateTopUp(
-        string $userId,
-        float $amount,
-        ?string $payerEmail = null,
-        ?string $successRedirectUrl = null,
-        ?string $method = null,
-        ?string $failureRedirectUrl = null,
-    ): array {
-        $user = User::findOrFail($userId);
-
-        // Pending row first, so we have a stable id to key the charge's
-        // external_id on. balance_after mirrors the CURRENT balance because
-        // nothing has moved yet; it's rewritten when the webhook completes it.
-        $transaction = WalletTransaction::create([
-            'user_id' => $userId,
-            'type' => 'top_up',
-            'amount' => $amount,
-            'balance_after' => (float) $user->wallet_balance,
-            'status' => 'pending',
-            'description' => 'Wallet top-up (awaiting payment)',
-        ]);
-
-        // GCash/Maya → direct Payment Requests charge: the action URL deep-links
-        // straight into the wallet app, no Xendit hosted invoice page (mirrors
-        // the booking checkout). Settles via the payment.succeeded webhook,
-        // matched on the payment_request id we store as gateway_ref. Anything
-        // else (card, or no method chosen) → the hosted invoice, which keeps
-        // card/PCI inside Xendit and preserves the pre-selector behaviour.
-        $isEwallet = in_array($method, ['gcash', 'maya'], true);
-
-        try {
-            if ($isEwallet) {
-                $pr = app(PaymentService::class)->createPaymentRequest(
-                    $amount,
-                    "topup-{$transaction->id}",
-                    $method,
-                    'ErrandGuy wallet top-up',
-                    $successRedirectUrl,
-                    $failureRedirectUrl ?? $successRedirectUrl,
-                );
-
-                $checkoutUrl = PaymentService::extractActionUrl($pr);
-                if (blank($checkoutUrl)) {
-                    throw new \RuntimeException('Gateway returned no authorization action for the e-wallet top-up.');
-                }
-
-                $transaction->update([
-                    'gateway_ref' => $pr['id'] ?? null,
-                    'checkout_url' => $checkoutUrl,
-                ]);
-
-                return ['transaction' => $transaction, 'checkout_url' => $checkoutUrl];
-            }
-
-            $invoice = app(PaymentService::class)->createInvoice(
-                $amount,
-                "topup-{$transaction->id}",
-                'ErrandGuy wallet top-up',
-                $payerEmail ?? (string) ($user->email ?? ''),
-                $successRedirectUrl,
-            );
-
-            $transaction->update([
-                'gateway_ref' => $invoice['id'] ?? null,
-                'checkout_url' => $invoice['invoice_url'] ?? null,
-            ]);
-
-            return [
-                'transaction' => $transaction,
-                'checkout_url' => $invoice['invoice_url'] ?? null,
-            ];
-        } catch (\Throwable $e) {
-            // Couldn't reach the gateway — mark the pending row failed so it
-            // doesn't linger as a fake "pending top-up" forever.
-            $transaction->update([
-                'status' => 'failed',
-                'failure_reason' => 'Could not start the payment.',
-                'processed_at' => now(),
-            ]);
-            Log::error('Wallet top-up: charge creation failed', [
-                'transaction_id' => $transaction->id,
-                'method' => $method,
-                'error' => $e->getMessage(),
-            ]);
-            throw $e;
-        }
-    }
-
-    /**
      * Pull-based settlement reconciliation for ONE pending PAYOUT.
      *
      * The money-OUT mirror of reconcilePendingTopUp, and the more painful of the
      * two: the wallet is debited the moment the payout row is created, and the
      * row then stays `pending` until payout.succeeded / payout.failed arrives.
-     * With no pull path, a webhook that never lands means the runner's money has
-     * left their balance, nothing confirms it, and — because the app swaps the
-     * CTA to "View payout status" whenever a pending payout exists — they cannot
-     * request another one. Only an admin could unstick it, by hand, if the runner
-     * knew to ask.
+     * With no pull path, a webhook that never lands means the money has left
+     * the balance, nothing confirms it, and — because the app swaps the CTA to
+     * "View payout status" whenever a pending payout exists — they cannot
+     * request another one.
      *
      * Same shape and same guarantees as the top-up reconcile:
-     *   • no-op unless this is a pending payout with a gateway ref;
+     *   • no-op unless this is a pending payout already handed to Xendit;
      *   • throttled per-transaction so a poll can't hammer the gateway;
-     *   • settles ONLY through completePayout / failPayout — both row-locked and
-     *     pending-guarded, and failPayout is what re-credits the wallet — so this
-     *     cannot double-pay or double-credit;
+     *   • settles ONLY through refreshSentPayout → completePayout / failPayout —
+     *     both row-locked and pending-guarded, and failPayout is what re-credits
+     *     the wallet — so this cannot double-pay or double-credit;
      *   • only ever moves the row to the state the GATEWAY itself reports;
      *   • a gateway hiccup never fails the caller (stays pending, retries later).
      *
@@ -323,7 +218,7 @@ class WalletService
         WalletTransaction $tx,
         ?int $throttleSeconds = null,
     ): WalletTransaction {
-        if ($tx->type !== 'payout' || $tx->status !== 'pending' || blank($tx->gateway_ref)) {
+        if ($tx->type !== 'payout' || $tx->status !== 'pending' || ! $tx->isSentToGateway()) {
             return $tx;
         }
 
@@ -335,44 +230,112 @@ class WalletService
             return $tx;
         }
 
+        return $this->refreshSentPayout($tx)['transaction'];
+    }
+
+    /**
+     * How long a payout whose send went unanswered must wait before a
+     * "Xendit has no record of it" lookup is believed. Xendit can take a
+     * moment to show a payout it is still creating; reading that as "never
+     * sent" and re-crediting the wallet is exactly the double payment this
+     * guards against.
+     */
+    public const UNANSWERED_SEND_GRACE_MINUTES = 10;
+
+    /**
+     * Ask Xendit, now, what happened to a payout already handed to it, and
+     * settle the row to match. Besides the webhook this is the ONLY way a sent
+     * payout settles: the reconcile sweep, the wallet-list heal and staff
+     * "Check with Xendit" all come through here, so a payout Xendit may have
+     * paid is never marked failed on anyone's say-so but Xendit's.
+     *
+     * A payout whose send went unanswered has no Xendit id, so it is looked up
+     * by the reference it was sent with. When Xendit has no record of it at
+     * all, it was never created: with $releaseIfUnknown (staff only) and once
+     * the grace window has passed, the "sent" mark is cleared so staff can send
+     * it again (same idempotency key) or mark it failed.
+     *
+     * @return array{transaction: WalletTransaction, gateway_status: string}
+     *   gateway_status is Xendit's status (SUCCEEDED, FAILED, ACCEPTED, …),
+     *   NOT_FOUND when Xendit has no such payout, UNREACHABLE when the lookup
+     *   itself failed, or NOT_SENT when there was nothing to look up.
+     */
+    public function refreshSentPayout(WalletTransaction $tx, bool $releaseIfUnknown = false): array
+    {
+        if ($tx->type !== 'payout' || $tx->status !== 'pending' || ! $tx->isSentToGateway()) {
+            return ['transaction' => $tx, 'gateway_status' => 'NOT_SENT'];
+        }
+
+        $gateway = app(PaymentService::class);
+
         try {
-            $payout = app(PaymentService::class)->getPayout((string) $tx->gateway_ref);
+            $payout = filled($tx->gateway_ref)
+                ? $gateway->getPayout((string) $tx->gateway_ref)
+                : $gateway->findPayoutByReference("payout-{$tx->id}");
         } catch (\Throwable $e) {
             // Gateway unreachable / not configured / transient — the webhook is
             // still the primary settlement path.
-            return $tx;
+            return ['transaction' => $tx, 'gateway_status' => 'UNREACHABLE'];
+        }
+
+        if ($payout === null) {
+            $released = false;
+            if ($releaseIfUnknown && $tx->payout_sent_at?->lte(now()->subMinutes(self::UNANSWERED_SEND_GRACE_MINUTES))) {
+                $released = WalletTransaction::whereKey($tx->id)
+                    ->where('status', 'pending')
+                    ->whereNull('gateway_ref')
+                    ->update(['payout_sent_at' => null]) > 0;
+            }
+
+            return [
+                'transaction' => $released ? ($tx->fresh() ?? $tx) : $tx,
+                'gateway_status' => 'NOT_FOUND',
+            ];
+        }
+
+        // An unanswered send that Xendit did create: keep its id from now on.
+        if (blank($tx->gateway_ref) && filled($payout['id'] ?? null)) {
+            WalletTransaction::whereKey($tx->id)->whereNull('gateway_ref')->update(['gateway_ref' => $payout['id']]);
+            $tx->gateway_ref = $payout['id'];
         }
 
         $status = strtoupper((string) ($payout['status'] ?? ''));
+        $reason = (string) ($payout['failure_code'] ?? 'Payout '.strtolower($status).' at gateway');
 
         try {
             // ACCEPTED / PENDING / LOCKED mean the disbursement is still in
             // flight at the gateway — nothing to settle yet.
             $settled = match ($status) {
                 'SUCCEEDED' => $this->completePayout($tx->id),
-                'FAILED', 'REVERSED', 'CANCELLED' => $this->failPayout(
-                    $tx->id,
-                    (string) ($payout['failure_code'] ?? 'Payout '.strtolower($status).' at gateway'),
-                ),
+                'FAILED', 'REVERSED', 'CANCELLED' => $this->failPayout($tx->id, $reason, confirmedByGateway: true),
                 default => null,
             };
         } catch (\App\Exceptions\PayoutStateException) {
             // Settled by a racing webhook between our read and our write.
-            return $tx->fresh() ?? $tx;
+            return ['transaction' => $tx->fresh() ?? $tx, 'gateway_status' => $status];
         } catch (\Throwable $e) {
             Log::warning('Xendit payout reconcile failed', [
                 'transaction_id' => $tx->id,
                 'error' => $e->getMessage(),
             ]);
 
-            return $tx->fresh() ?? $tx;
+            return ['transaction' => $tx->fresh() ?? $tx, 'gateway_status' => $status];
         }
 
-        return $settled ?? $tx;
+        if ($settled?->status === 'failed') {
+            $this->notifyPayoutBounced($settled, $reason);
+        }
+
+        return ['transaction' => $settled ?? $tx, 'gateway_status' => $status];
     }
 
     /**
-     * Complete a top-up once Xendit confirms the invoice was paid.
+     * Legacy: complete a top-up started before top-ups were retired, once
+     * Xendit confirms it was paid, so a customer who paid around the deploy
+     * still gets their money. Nothing starts a top-up any more; delete this
+     * (with expireTopUp and the webhook/sweep branches that call them) once no
+     * pending top_up rows remain.
+     *
      * Idempotent: a replayed webhook is a no-op after the first credit.
      */
     public function completeTopUp(string $transactionId, array $gatewayData = []): ?WalletTransaction
@@ -463,9 +426,9 @@ class WalletService
     }
 
     /**
-     * Mark a pending top-up failed because its invoice expired before payment
-     * (fired from the invoice.expired webhook). Idempotent: a top-up that's no
-     * longer pending is left untouched.
+     * Legacy: mark a pending top-up failed because its charge expired or
+     * failed before payment (see completeTopUp). Idempotent: a top-up that's
+     * no longer pending is left untouched.
      */
     public function expireTopUp(string $transactionId, string $reason = 'Invoice expired'): ?WalletTransaction
     {
@@ -603,20 +566,21 @@ class WalletService
     }
 
     /**
-     * Start a GATEWAY-funded tip: the customer pays the tip directly via an
-     * online method (GCash/Maya/card) — no wallet balance required — and the
-     * runner is credited only after Xendit confirms via webhook. This is the
-     * zero-wallet / COD path that the wallet-funded {@see self::tip()} can't
-     * serve.
+     * Start a GATEWAY-funded tip: the customer pays the tip directly with GCash
+     * or Maya — no wallet balance required — and the runner is credited only
+     * after Xendit confirms the charge. This is the zero-wallet / cash-errand
+     * path the wallet-funded {@see self::tip()} can't serve.
      *
-     * Mirrors {@see self::initiateTopUp()}: a pending 'tip_payment' row holds
-     * the charge (its id keys the gateway external_id `tip-{id}`), then the
-     * webhook flips it via {@see self::completeGatewayTip()}. The row is a
-     * SINGLETON per (customer, booking) — the uq_wallet_tx_user_reference_type
-     * index guarantees it — so we reuse/reset it across retries instead of
-     * opening a second parallel charge. It is NOT a wallet movement (the money
-     * never enters the customer's ErrandGuy balance), so its amount is recorded
-     * for the receipt but balance_after stays the customer's untouched balance.
+     * EVERY started charge gets its own pending 'tip_payment' row (its id keys
+     * the gateway reference `tip-{id}`), linked to the errand by booking_id.
+     * One row used to be reused for every attempt, so switching from GCash to
+     * Maya overwrote the first charge's reference: approving that first charge
+     * later took the customer's money and credited nobody. Now each charge
+     * settles on its own row — the first to succeed credits the runner, and any
+     * other that also succeeds is refunded to the customer's wallet (see
+     * completeGatewayTip). The row is not a wallet movement (the money never
+     * enters the customer's balance), so balance_after stays their current
+     * balance.
      *
      * @throws \App\Exceptions\PaymentGatewayException on a gateway rejection.
      * @return array{transaction: WalletTransaction, checkout_url: ?string}
@@ -626,78 +590,47 @@ class WalletService
         string $customerId,
         float $amount,
         string $method,
-        ?string $payerEmail = null,
         ?string $successRedirectUrl = null,
         ?string $failureRedirectUrl = null,
     ): array {
+        if (! in_array($method, ['gcash', 'maya'], true)) {
+            throw new \InvalidArgumentException('A gateway tip is paid with GCash or Maya.');
+        }
+
         $customer = User::findOrFail($customerId);
 
-        // Singleton per (customer, booking): reuse the existing 'tip_payment'
-        // row (reset a terminal one back to pending) instead of inserting a
-        // second — the unique index would otherwise reject the insert, and two
-        // live charges could double-collect. balance_after mirrors the CURRENT
-        // balance because a gateway tip never moves the customer's wallet.
-        $transaction = WalletTransaction::firstOrNew([
+        $transaction = WalletTransaction::create([
             'user_id' => $customerId,
-            'reference_id' => $bookingId,
             'type' => 'tip_payment',
-        ]);
-        $transaction->fill([
+            'booking_id' => $bookingId,
             'amount' => $amount,
             'balance_after' => (float) $customer->wallet_balance,
             'status' => 'pending',
             'description' => 'Tip (awaiting payment)',
-            'gateway_ref' => null,
-            'checkout_url' => null,
-            'failure_reason' => null,
-            'processed_at' => null,
         ]);
-        $transaction->save();
-
-        $description = 'Tip for your runner';
-        $isEwallet = in_array($method, ['gcash', 'maya'], true);
 
         try {
-            if ($isEwallet) {
-                $pr = app(PaymentService::class)->createPaymentRequest(
-                    $amount,
-                    "tip-{$transaction->id}",
-                    $method,
-                    $description,
-                    $successRedirectUrl,
-                    $failureRedirectUrl ?? $successRedirectUrl,
-                );
-
-                $checkoutUrl = PaymentService::extractActionUrl($pr);
-                if (blank($checkoutUrl)) {
-                    throw new \RuntimeException('Gateway returned no authorization action for the e-wallet tip.');
-                }
-
-                $transaction->update([
-                    'gateway_ref' => $pr['id'] ?? null,
-                    'checkout_url' => $checkoutUrl,
-                ]);
-
-                return ['transaction' => $transaction, 'checkout_url' => $checkoutUrl];
-            }
-
-            $invoice = app(PaymentService::class)->createInvoice(
+            $pr = app(PaymentService::class)->createPaymentRequest(
                 $amount,
                 "tip-{$transaction->id}",
-                $description,
-                $payerEmail ?? (string) ($customer->email ?? ''),
+                $method,
+                'Tip for your runner',
                 $successRedirectUrl,
+                $failureRedirectUrl ?? $successRedirectUrl,
             );
 
-            $transaction->update([
-                'gateway_ref' => $invoice['id'] ?? null,
-                'checkout_url' => $invoice['invoice_url'] ?? null,
-            ]);
+            // Keep the charge reference even if there is no action to open, so
+            // the charge stays traceable and reconcilable.
+            $transaction->update(['gateway_ref' => $pr['id'] ?? null]);
 
-            return [
-                'transaction' => $transaction,
-                'checkout_url' => $invoice['invoice_url'] ?? null,
-            ];
+            $checkoutUrl = PaymentService::extractActionUrl($pr);
+            if (blank($checkoutUrl)) {
+                throw new \RuntimeException('Gateway returned no authorization action for the e-wallet tip.');
+            }
+
+            $transaction->update(['checkout_url' => $checkoutUrl]);
+
+            return ['transaction' => $transaction, 'checkout_url' => $checkoutUrl];
         } catch (\Throwable $e) {
             $transaction->update([
                 'status' => 'failed',
@@ -715,82 +648,116 @@ class WalletService
     }
 
     /**
-     * Settle a gateway-funded tip once Xendit confirms payment. Credits the
-     * RUNNER's wallet (never the customer's — the customer paid real money that
-     * never entered their ErrandGuy balance) and stamps booking.tip_amount.
+     * Settle a gateway tip charge once Xendit confirms it was paid.
      *
-     * Idempotent + money-safe, mirroring {@see self::completeTopUp()}:
-     *   • the pending 'tip_payment' row is row-locked and only settled once;
-     *   • an under-settlement is left pending (never credits short);
-     *   • the runner credit is the SAME (runner, booking, 'tip') row shape the
-     *     wallet-funded tip writes — the unique index guarantees the runner is
-     *     credited at most once per booking regardless of funding source;
-     *   • a booking that is somehow already tipped is NOT double-credited — the
-     *     collected charge is flagged CRITICAL for a manual refund instead.
+     * The charge was real money from the customer, so it ALWAYS ends somewhere
+     * on the ledger — never silently dropped:
+     *   • this row's charge, errand not yet tipped → credited to the RUNNER's
+     *     withdrawable wallet (the same (runner, booking, 'tip') row shape the
+     *     wallet-funded tip writes, so the unique index allows one per errand)
+     *     and booking.tip_amount is stamped;
+     *   • the errand was already tipped (another charge, or a wallet tip, got
+     *     there first), or there is no runner to credit → the money is
+     *     refunded to the customer's ErrandGuy wallet (withdrawable) and the
+     *     row is marked 'refunded';
+     *   • a charge that is NOT this row's own (an older app build reused one
+     *     row for every attempt, overwriting the first charge's reference) →
+     *     refunded to the customer's wallet too, keyed on that charge;
+     *   • an under-settled charge is left pending (never credits short).
+     *
+     * Idempotent: the row is locked and settles once; each refund is keyed so a
+     * replay can't refund twice. Customer and runner are told AFTER commit.
      */
     public function completeGatewayTip(string $transactionId, array $gatewayData = []): ?WalletTransaction
     {
-        $notify = null; // [runnerId, amount, bookingNumber] set only on a real credit
+        $notifyRunner = null; // [runnerId, amount, bookingNumber, bookingId]
+        $notifyRefund = null; // [customerId, amount, refundTxId, why]
 
-        $transaction = DB::transaction(function () use ($transactionId, $gatewayData, &$notify) {
+        $transaction = DB::transaction(function () use ($transactionId, $gatewayData, &$notifyRunner, &$notifyRefund) {
             $transaction = WalletTransaction::where('id', $transactionId)
                 ->lockForUpdate()
                 ->first();
 
-            if (! $transaction || $transaction->status !== 'pending' || $transaction->type !== 'tip_payment') {
+            if (! $transaction || $transaction->type !== 'tip_payment') {
                 return $transaction;
+            }
+
+            // Which charge is this? A Payment Requests webhook names both the
+            // payment ("py-…", data.id) and its request ("pr-…"); a pull or an
+            // invoice carries one id. Earlier deliveries may have stored either.
+            $chargeRefs = array_values(array_filter([
+                $gatewayData['payment_request_id'] ?? null,
+                $gatewayData['id'] ?? null,
+            ], 'is_string'));
+            $isThisRowsCharge = $chargeRefs === [] || in_array($transaction->gateway_ref, $chargeRefs, true);
+            $confirmed = $gatewayData['paid_amount'] ?? $gatewayData['amount'] ?? null;
+
+            if (! $isThisRowsCharge) {
+                $amount = round((float) ($confirmed ?? $transaction->amount), 2);
+                $refund = $this->refundTipChargeLocked(
+                    $transaction->user_id,
+                    $amount,
+                    (string) \Ramsey\Uuid\Uuid::uuid5(\Ramsey\Uuid\Uuid::NAMESPACE_URL, 'xendit-charge:'.$chargeRefs[0]),
+                );
+                if ($refund) {
+                    $notifyRefund = [$transaction->user_id, $amount, $refund->id, 'This tip payment was replaced by a newer one'];
+                    Log::critical('Gateway tip charge settled on a row it no longer owned — refunded to the customer wallet', [
+                        'transaction_id' => $transaction->id,
+                        'charge' => $chargeRefs[0],
+                        'amount' => $amount,
+                    ]);
+                }
+
+                return $transaction;
+            }
+
+            if ($transaction->status !== 'pending') {
+                return $transaction; // a replay of the charge that already settled it
             }
 
             // Never credit a runner for LESS than the tip we recorded. A short
             // settle is left pending for the pull-reconciler / a human.
-            $confirmed = $gatewayData['paid_amount'] ?? $gatewayData['amount'] ?? null;
             if ($confirmed !== null && (float) $confirmed + 0.01 < (float) $transaction->amount) {
                 Log::critical('Xendit gateway-tip settlement BELOW recorded amount — left pending, NOT credited', [
                     'transaction_id' => $transaction->id,
-                    'booking_id' => $transaction->reference_id,
+                    'booking_id' => $transaction->tipBookingId(),
                     'expected' => (float) $transaction->amount,
                     'gateway_confirmed' => (float) $confirmed,
                 ]);
+
                 return $transaction;
             }
 
             $amount = round((float) $transaction->amount, 2);
-            $bookingId = (string) $transaction->reference_id;
+            $bookingId = (string) $transaction->tipBookingId();
             $booking = Booking::whereKey($bookingId)->lockForUpdate()->first();
+            $settledRef = $transaction->gateway_ref ?? ($chargeRefs[0] ?? null);
 
-            if (! $booking || ! $booking->runner_id) {
-                $transaction->update([
-                    'status' => 'failed',
-                    'failure_reason' => 'No runner to credit for this tip.',
-                    'processed_at' => now(),
-                    'gateway_ref' => $gatewayData['id'] ?? $transaction->gateway_ref,
-                ]);
-                return $transaction;
-            }
-
-            // Duplicate guard: if this errand was somehow already tipped (a
-            // racing wallet tip, or a second gateway charge), do NOT credit the
-            // runner twice. The charge WAS collected, so the row is marked
-            // completed, but a CRITICAL alarm flags it for a manual refund.
-            $alreadyTipped = (float) $booking->tip_amount > 0
+            $alreadyTipped = $booking && $booking->runner_id && (
+                (float) $booking->tip_amount > 0
                 || WalletTransaction::where('user_id', $booking->runner_id)
                     ->where('reference_id', $bookingId)
                     ->where('type', 'tip')
-                    ->exists();
-            if ($alreadyTipped) {
-                Log::critical('Gateway tip collected for an already-tipped errand — MANUAL REFUND REQUIRED', [
-                    'transaction_id' => $transaction->id,
-                    'booking_id' => $bookingId,
-                    'customer_id' => $transaction->user_id,
-                    'amount' => $amount,
-                ]);
+                    ->exists()
+            );
+
+            if (! $booking || ! $booking->runner_id || $alreadyTipped) {
+                $refund = $this->refundTipChargeLocked($transaction->user_id, $amount, $transaction->id);
                 $transaction->update([
-                    'status' => 'completed',
+                    'status' => 'refunded',
                     'processed_at' => now(),
-                    'description' => 'Tip (duplicate — refund pending)',
-                    'failure_reason' => 'Duplicate tip payment — refund required.',
-                    'gateway_ref' => $gatewayData['id'] ?? $transaction->gateway_ref,
+                    'gateway_ref' => $settledRef,
+                    'description' => 'Tip (refunded to your wallet)',
+                    'failure_reason' => $alreadyTipped
+                        ? 'This errand was already tipped.'
+                        : 'No runner to credit for this tip.',
                 ]);
+                if ($refund) {
+                    $notifyRefund = [$transaction->user_id, $amount, $refund->id, $alreadyTipped
+                        ? 'Your runner already has a tip for this errand'
+                        : 'This errand has no runner to tip'];
+                }
+
                 return $transaction;
             }
 
@@ -799,16 +766,7 @@ class WalletService
             // withTrashed: the tip can settle after the runner soft-deleted their
             // account; still book it to the ledger rather than 500-loop the hook.
             $runner = User::withTrashed()->lockForUpdate()->findOrFail($booking->runner_id);
-            $runnerNewBalance = (float) $runner->wallet_balance + $amount;
-            $runner->update(['wallet_balance' => $runnerNewBalance]);
-            WalletTransaction::create([
-                'user_id' => $booking->runner_id,
-                'type' => 'tip',
-                'amount' => $amount,
-                'balance_after' => $runnerNewBalance,
-                'reference_id' => $bookingId,
-                'description' => 'Tip from your customer',
-            ]);
+            $this->applyLedgerDelta($runner, 'tip', $amount, $bookingId, 'Tip from your customer');
 
             $booking->update(['tip_amount' => $amount]);
 
@@ -818,26 +776,68 @@ class WalletService
                 'status' => 'completed',
                 'processed_at' => now(),
                 'description' => 'Tip paid to your runner',
-                'gateway_ref' => $gatewayData['id'] ?? $transaction->gateway_ref,
+                'gateway_ref' => $settledRef,
             ]);
 
-            $notify = [$booking->runner_id, $amount, $booking->booking_number];
+            $notifyRunner = [$booking->runner_id, $amount, $booking->booking_number, $booking->id];
+
             return $transaction;
         });
 
-        // Notify the runner AFTER commit (never push inside the lock), only on a
-        // real credit — a replayed webhook leaves $notify null.
-        if ($notify) {
-            [$runnerId, $amount, $bookingNumber] = $notify;
+        // Notify AFTER commit (never push inside the lock), only on a real
+        // credit or refund — a replayed webhook leaves both null.
+        if ($notifyRunner) {
+            [$runnerId, $amount, $bookingNumber, $bookingId] = $notifyRunner;
             \App\Jobs\SendPushJob::dispatch(
                 $runnerId,
                 'You received a tip!',
                 'Your customer added a ₱'.number_format($amount, 2)." tip for errand #{$bookingNumber}.",
-                ['type' => 'payment', 'booking_id' => (string) $transaction?->reference_id],
+                ['type' => 'payment', 'booking_id' => (string) $bookingId],
+            );
+        }
+
+        if ($notifyRefund) {
+            [$customerId, $amount, $refundId, $why] = $notifyRefund;
+            \App\Jobs\SendPushJob::dispatch(
+                $customerId,
+                'Tip refunded to your wallet',
+                "{$why}, so this ₱".number_format($amount, 2)
+                    .' payment was added to your ErrandGuy wallet. You can use it or withdraw it any time.',
+                ['type' => 'payment', 'status' => 'refunded', 'wallet_transaction_id' => $refundId],
+            );
+            \App\Models\AdminAlert::raise(
+                'tip_refunded',
+                'warning',
+                'Extra tip payment refunded to a customer wallet',
+                'A ₱'.number_format($amount, 2).' GCash/Maya tip payment could not go to a runner ('.lcfirst($why)
+                    .'), so it was credited back to the customer’s wallet automatically.',
+                $refundId,
             );
         }
 
         return $transaction;
+    }
+
+    /**
+     * Refund a collected tip charge to the customer's withdrawable wallet,
+     * once per $reference. Runs inside the caller's transaction.
+     *
+     * @return WalletTransaction|null  the refund row, or null if this reference
+     *                                 was already refunded
+     */
+    private function refundTipChargeLocked(string $customerId, float $amount, string $reference): ?WalletTransaction
+    {
+        $customer = User::withTrashed()->lockForUpdate()->findOrFail($customerId);
+
+        $already = WalletTransaction::where('user_id', $customerId)
+            ->where('reference_id', $reference)
+            ->where('type', 'refund')
+            ->exists();
+        if ($already || $amount <= 0) {
+            return null;
+        }
+
+        return $this->applyLedgerDelta($customer, 'refund', $amount, $reference, 'Refund: extra tip payment');
     }
 
     /**
@@ -1016,18 +1016,42 @@ class WalletService
     }
 
     /**
-     * Debit the wallet and create a pending payout (admin-initiated path).
+     * Debit a withdrawal and queue it as a PENDING payout — the one way money
+     * leaves a wallet. Every entry point comes through here: a runner's payout
+     * request, a customer's withdrawal, the payout queued while deleting an
+     * account, and staff "Pay a runner". Staff then send it with "Send via
+     * Xendit"; the payout webhook settles it (a failure re-credits the wallet).
      *
-     * @param  string|null  $reference  Stable idempotency token. When supplied, a
-     *   second call with the same (user, reference) returns the original payout
-     *   instead of debiting again — the DB backstop is the partial unique index
-     *   on (user_id, reference_id, type). The admin "Pay a runner" form threads a
-     *   per-modal token so a double-submit can't double-debit + double-disburse
-     *   (payment review P0-8 follow-up). NULL preserves the legacy behaviour.
+     * Money-safe:
+     *   • the user row is locked, and the balance re-read under that lock, so
+     *     two concurrent requests can't both pass a stale balance check;
+     *   • only the WITHDRAWABLE balance can be paid out — bonus credit never;
+     *   • $reference makes it idempotent: a second call with the same (user,
+     *     reference) returns the original payout instead of debiting again,
+     *     and the (user_id, reference_id, type) unique index backs that up;
+     *   • the destination is recorded on the payout itself, so it can still be
+     *     sent after the account's own details change or are erased.
+     *
+     * Safe to call inside a caller's transaction that already holds the user
+     * row (account deletion): it then runs as a savepoint of that transaction.
+     *
+     * @param  string|null  $reference    stable idempotency token (uuid), or null
+     * @param  array|null   $destination  see App\Support\PayoutDestination
+     * @param  float        $minimum      the smallest payout allowed (0 = none)
+     *
+     * @throws \App\Exceptions\WithdrawalException before any money moves
      */
-    public function payout(string $userId, float $amount, ?string $reference = null): WalletTransaction
-    {
-        return DB::transaction(function () use ($userId, $amount, $reference) {
+    public function createPendingPayout(
+        string $userId,
+        float $amount,
+        ?string $reference,
+        ?array $destination,
+        float $minimum,
+        string $description,
+    ): WalletTransaction {
+        $amount = round($amount, 2);
+
+        return DB::transaction(function () use ($userId, $amount, $reference, $destination, $minimum, $description) {
             $user = User::lockForUpdate()->findOrFail($userId);
 
             // Idempotent replay: a payout already exists for this reference →
@@ -1042,40 +1066,54 @@ class WalletService
                 }
             }
 
-            // Read the floor from the SAME SystemConfig key the runner-request
-            // path uses (RunnerPayoutController), not a hardcoded literal — else
-            // raising the configured minimum silently desynchronises the two
-            // payout entry points (the admin/Filament path kept accepting ₱100).
-            $minPayout = (float) \App\Models\SystemConfig::getValue('min_payout_amount', '100');
-            if ($amount < $minPayout) {
-                throw new \RuntimeException("Minimum payout amount is ₱" . number_format($minPayout, 2) . ".");
+            if ($amount <= 0) {
+                throw \App\Exceptions\WithdrawalException::invalidAmount();
+            }
+            if ($minimum > 0 && $amount < $minimum) {
+                throw \App\Exceptions\WithdrawalException::belowMinimum($minimum);
             }
 
-            if ((float) $user->wallet_balance < $amount) {
-                throw new \RuntimeException('Insufficient wallet balance.');
+            $balance = round((float) $user->wallet_balance, 2);
+            if ($amount > $balance) {
+                throw \App\Exceptions\WithdrawalException::insufficient($amount, $balance);
             }
 
-            $newBalance = (float) $user->wallet_balance - $amount;
-            $user->update(['wallet_balance' => $newBalance]);
-
-            return WalletTransaction::create([
-                'user_id' => $userId,
-                'type' => 'payout',
-                // A payout is 'pending' until it is actually disbursed. The status
-                // column DEFAULTS to 'completed' (correct for system-earned rows),
-                // so it MUST be set explicitly here — otherwise createPayout()
-                // rejects the row ('Only a pending payout can be sent.') AFTER this
-                // debit is already committed in its own transaction, losing the
-                // runner's money with no recovery (complete/fail/re-send are all
-                // gated on status='pending'). Mirrors the runner-request path
-                // (RunnerPayoutController), which sets 'pending' explicitly.
+            // 'pending' is explicit: the status column defaults to 'completed'
+            // (right for system-earned rows), but a payout is not disbursed
+            // until Xendit confirms, and createPayout refuses a non-pending row.
+            return $this->applyLedgerDelta($user, 'payout', -$amount, $reference, $description, [
                 'status' => 'pending',
-                'amount' => -$amount,
-                'balance_after' => $newBalance,
-                'reference_id' => $reference,
-                'description' => 'Payout to bank/e-wallet',
+                'payout_destination' => $destination,
             ]);
         });
+    }
+
+    /**
+     * The configured payout minimum, applied to runners only. Customers can
+     * withdraw any amount (their balance is refunds and the like, often small).
+     */
+    public static function runnerPayoutMinimum(): float
+    {
+        return (float) \App\Models\SystemConfig::getValue('min_payout_amount', '100');
+    }
+
+    /**
+     * Staff-initiated payout ("Pay a runner"): debit + queue a pending payout,
+     * with the runner minimum. See createPendingPayout.
+     *
+     * @param  string|null  $reference  per-modal idempotency token, so a
+     *   double-submit can't double-debit + double-disburse (payment review P0-8).
+     */
+    public function payout(string $userId, float $amount, ?string $reference = null, ?array $destination = null): WalletTransaction
+    {
+        return $this->createPendingPayout(
+            $userId,
+            $amount,
+            $reference,
+            $destination,
+            self::runnerPayoutMinimum(),
+            'Payout to bank/e-wallet',
+        );
     }
 
     /**
@@ -1117,21 +1155,33 @@ class WalletService
     }
 
     /**
-     * Mark a pending payout failed and re-credit the runner's wallet.
+     * Mark a pending payout failed and re-credit the wallet.
      *
      * The refund + status update are atomic so a bounced disbursement never
-     * leaves the runner double-debited. Mirrors the original
-     * AdminPayoutController::markFailed logic exactly.
+     * leaves the user double-debited.
+     *
+     * A payout already handed to Xendit can only be failed on Xendit's word
+     * ($confirmedByGateway: the payout webhook or a fresh lookup in
+     * refreshSentPayout). Marking one failed by hand re-credited the wallet
+     * while Xendit went on to pay it — the same money paid out twice, with the
+     * later "paid" notice ignored.
      */
-    public function failPayout(string $txId, string $reason): WalletTransaction
+    public function failPayout(string $txId, string $reason, bool $confirmedByGateway = false): WalletTransaction
     {
-        return DB::transaction(function () use ($txId, $reason) {
+        return DB::transaction(function () use ($txId, $reason, $confirmedByGateway) {
             $tx = WalletTransaction::where('type', 'payout')
                 ->lockForUpdate()
                 ->findOrFail($txId);
 
             if ($tx->status !== 'pending') {
                 throw new \App\Exceptions\PayoutStateException('Only pending payouts can be marked failed.');
+            }
+
+            if (! $confirmedByGateway && $tx->isSentToGateway()) {
+                throw new \App\Exceptions\PayoutStateException(
+                    'This payout was already sent to Xendit, so only Xendit can say it failed. '
+                    .'Use “Check with Xendit” to get its current status.'
+                );
             }
 
             // withTrashed: a payout.failed can arrive after the runner soft-
@@ -1231,6 +1281,112 @@ class WalletService
             ]);
 
             return $tx->fresh();
+        });
+    }
+
+    /**
+     * Tell the user their payout bounced, and that the money is back.
+     *
+     * completePayout() pushes "Payout sent"; without this the failure/reversal
+     * paths only re-credited the wallet and wrote failure_reason, so the user
+     * kept believing a transfer was in flight and then found their balance
+     * mysteriously higher. In-app row + device push via SendPushJob, the same
+     * `payment` type + wallet_transaction_id payload as the success push.
+     *
+     * MUST be called after the money transaction has committed (never inside
+     * the lock). Latched per payout in the cache, so every path that settles a
+     * payout into failed/reversed — the payout webhook, a fresh Xendit lookup,
+     * staff "Mark failed" — can call it and the user still hears it once.
+     */
+    public function notifyPayoutBounced(WalletTransaction $tx, ?string $reason = null): void
+    {
+        // Cache::add is atomic: the first caller wins, everyone else no-ops.
+        if (! Cache::add("payout_bounced_notified:{$tx->id}", true, now()->addDay())) {
+            return;
+        }
+
+        $amount = number_format(abs((float) $tx->amount), 2);
+        $reversed = $tx->status === 'reversed';
+        $reason = \Illuminate\Support\Str::limit(trim((string) ($reason ?? $tx->failure_reason ?? '')), 140);
+
+        $body = $reversed
+            ? "Your ₱{$amount} payout was returned, so the money is back in your wallet."
+            : "Your ₱{$amount} payout couldn’t be sent, so the money is back in your wallet.";
+
+        if ($reason !== '') {
+            $body .= " Reason: {$reason}.";
+        }
+
+        $body .= ' Check your payout details, then request it again.';
+
+        \App\Jobs\SendPushJob::dispatch(
+            $tx->user_id,
+            $reversed ? 'Payout returned' : 'Payout couldn’t be sent',
+            $body,
+            [
+                'type' => 'payment',
+                'status' => $reversed ? 'reversed' : 'failed',
+                'wallet_transaction_id' => $tx->id,
+            ],
+        );
+
+        // A deleted account can't request it again (its contact details are
+        // erased), so the money now sits in a closed wallet: staff must
+        // re-send it to the destination recorded on the payout.
+        if (User::onlyTrashed()->whereKey($tx->user_id)->exists()) {
+            \App\Models\AdminAlert::raise(
+                'payout_bounced_deleted_account',
+                'critical',
+                'A deleted account’s payout bounced',
+                "A ₱{$amount} payout for a deleted account came back, so the money is in that closed wallet. "
+                    .'Check the destination on the payout and send it again by hand.',
+                $tx->id,
+            );
+        }
+    }
+
+    /**
+     * Pay the runner the cancellation fee a customer was charged for cancelling
+     * after the runner accepted (or set off to the pickup).
+     *
+     * The fee used to be kept by the platform, although it exists to
+     * compensate the runner who accepted the job and may already be on the
+     * way. Credited to their WITHDRAWABLE wallet as a 'cancel_fee' row, once
+     * per booking (the (user, reference, type) unique index backs the check).
+     *
+     * CONTRACT: call inside the cancel transaction that holds the booking's row
+     * lock, after the customer's refund. Returns the credit, or null when there
+     * is nothing to pay (no runner, no fee, already paid, or a self-dealt
+     * booking).
+     */
+    public function creditCancellationFee(Booking $booking, float $fee): ?WalletTransaction
+    {
+        $fee = round($fee, 2);
+        if ($fee <= 0 || ! $booking->runner_id || (string) $booking->runner_id === (string) $booking->customer_id) {
+            return null;
+        }
+
+        return DB::transaction(function () use ($booking, $fee) {
+            $runner = User::withTrashed()->lockForUpdate()->find($booking->runner_id);
+            if (! $runner) {
+                return null;
+            }
+
+            $already = WalletTransaction::where('user_id', $runner->id)
+                ->where('reference_id', $booking->id)
+                ->where('type', 'cancel_fee')
+                ->exists();
+            if ($already) {
+                return null;
+            }
+
+            return $this->applyLedgerDelta(
+                $runner,
+                'cancel_fee',
+                $fee,
+                $booking->id,
+                "Cancellation fee for errand #{$booking->booking_number}",
+            );
         });
     }
 }

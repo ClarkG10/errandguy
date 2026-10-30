@@ -4,16 +4,19 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { GradientHeader } from '../../../components/ui/GradientHeader';
 import { Card } from '../../../components/ui/Card';
 import { SectionHeader } from '../../../components/ui/Typography';
+import { DeleteAccountPageLink } from '../../../components/settings/DeleteAccountPageLink';
 import { useResponsive } from '../../../constants/responsive';
 
-const SECTIONS = [
+/** `deletionLink` adds the public account-deletion page under the content. */
+const SECTIONS: { title: string; content: string; deletionLink?: boolean }[] = [
   {
     title: 'Terms of Service',
     content: `By using ErrandGuy as a Runner, you agree to these terms. You are an independent contractor, not an employee. You must maintain valid identification, comply with local traffic and delivery regulations, and provide honest, timely service to customers.\n\nErrandGuy reserves the right to suspend or terminate accounts that violate community guidelines, receive consistently low ratings, or engage in fraudulent activity.`,
   },
   {
     title: 'Privacy Policy',
-    content: `We collect location data while you are online to match you with errands and provide real-time tracking to customers. Your personal information (name, phone, email, documents) is stored securely and never shared with third parties for marketing.\n\nYou can request deletion of your data at any time by contacting support or using the Delete Account option in your profile.`,
+    content: `We collect location data while you are online to match you with errands and provide real-time tracking to customers. Your personal information (name, phone, email, documents) is stored securely and never shared with third parties for marketing.\n\nYou can request deletion of your data at any time using the Delete Account option in your profile, on the web, or by contacting support. Any money left in your wallet is paid out to the GCash, Maya or bank account you choose.`,
+    deletionLink: true,
   },
   {
     title: 'Community Guidelines',
@@ -48,6 +51,7 @@ export default function TermsScreen() {
               <Text className="text-[14px] font-montserrat text-textSecondary leading-[22px]">
                 {section.content}
               </Text>
+              {section.deletionLink ? <DeleteAccountPageLink className="mt-3" /> : null}
             </Card>
           </View>
         ))}

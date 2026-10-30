@@ -1,10 +1,52 @@
-import { describeError, errorMessage } from '../errorCatalog';
+import { describeError, errorMessage, ERROR_CATALOG } from '../errorCatalog';
 
 describe('describeError', () => {
   it('leads with an exact backend code when we have better copy', () => {
-    const info = describeError({ status: 422, code: 'INSUFFICIENT_WALLET_BALANCE', message: 'nope' });
-    expect(info.title).toBe('Not enough balance');
-    expect(info.action?.kind).toBe('topup');
+    const info = describeError({ status: 409, code: 'BOOKING_STALE', kind: 'conflict', message: 'nope' });
+    expect(info.title).toBe('This errand just changed');
+    expect(info.message).not.toBe('nope');
+  });
+
+  // The money refusals carry the most specific sentence there is — amounts,
+  // minimums, what is owed — so the catalog must never overrule them with a
+  // vaguer fixed line (the old INSUFFICIENT_WALLET_BALANCE entry also told
+  // customers to "Top up", which no longer exists).
+  it.each([
+    [
+      'INSUFFICIENT_WALLET_BALANCE',
+      422,
+      'You requested ₱500.00 but your available balance is ₱120.00. Lower the amount and try again.',
+    ],
+    [
+      'PAYOUT_MIN_AMOUNT',
+      422,
+      'The minimum payout is ₱100.00. Please request at least that amount.',
+    ],
+    [
+      'CASH_DEBT_OUTSTANDING',
+      422,
+      'You owe ₱1,250.00 from cash errands. It’s cleared automatically from your next prepaid earnings; cash errands pause at ₱1,000.',
+    ],
+    // The cash-errand accept refusal is a 409 (the errand can't be taken).
+    [
+      'CASH_DEBT_OUTSTANDING',
+      409,
+      'You owe ₱1,000.00 from cash errands. It’s cleared automatically from your next prepaid earnings; cash errands pause at ₱1,000.',
+    ],
+    [
+      'PAYOUT_METHOD_REQUIRED',
+      422,
+      'Your wallet has ₱80.00. Tell us where to send it — a GCash or Maya number — and we’ll send it to you as part of deleting your account.',
+    ],
+  ])('passes the server message through for %s (%i)', (code, status, message) => {
+    const kind = status === 409 ? 'conflict' : 'validation';
+    expect(errorMessage({ status, code, kind, message }, 'fallback')).toBe(message);
+  });
+
+  it('offers no top-up action anywhere in the catalog', () => {
+    for (const code of Object.keys(ERROR_CATALOG)) {
+      expect(JSON.stringify(ERROR_CATALOG[code]).toLowerCase()).not.toMatch(/top.?up/);
+    }
   });
 
   it('delegates payment/gateway failures to the single payment copy source', () => {

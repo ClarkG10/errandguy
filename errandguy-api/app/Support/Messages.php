@@ -32,6 +32,7 @@ final class Messages
         ErrorCode::FORBIDDEN->value => 'You don’t have permission to do that.',
         ErrorCode::NOT_FOUND->value => 'We couldn’t find what you were looking for.',
         ErrorCode::METHOD_NOT_ALLOWED->value => 'That action isn’t available here.',
+        ErrorCode::FEATURE_RETIRED->value => 'This feature is no longer available. Please update the app.',
         ErrorCode::CONFLICT->value => 'This was just updated somewhere else. Refresh and try again.',
         ErrorCode::RATE_LIMITED->value => 'You’re doing that a bit too fast. Please wait a moment and try again.',
         ErrorCode::PAYLOAD_TOO_LARGE->value => 'That upload is too large. Please choose a smaller file.',
@@ -50,12 +51,12 @@ final class Messages
         ErrorCode::PHONE_ALREADY_REGISTERED->value => 'This phone number is already registered. Try signing in instead.',
 
         // Wallet / payments
-        ErrorCode::INSUFFICIENT_WALLET_BALANCE->value => 'Your wallet balance is too low for this. Top up or choose another payment method.',
+        ErrorCode::INSUFFICIENT_WALLET_BALANCE->value => 'Your wallet balance is too low for this. Please choose another payment method.',
         ErrorCode::PAYMENT_GATEWAY_ERROR->value => 'We couldn’t start your payment right now. You weren’t charged — please try again in a moment.',
-        ErrorCode::TOPUP_MIN_AMOUNT->value => 'That amount is below the minimum top-up. Please enter a larger amount.',
         ErrorCode::PAYOUT_MIN_AMOUNT->value => 'That amount is below the minimum payout. Please request a larger amount.',
         ErrorCode::PAYOUT_METHOD_REQUIRED->value => 'Add a bank account or e-wallet before requesting a payout.',
         ErrorCode::PAYOUT_STATE_INVALID->value => 'This payout can’t be changed from its current state.',
+        ErrorCode::CASH_DEBT_OUTSTANDING->value => 'You owe money from cash errands. It’s cleared automatically from your next prepaid earnings.',
         ErrorCode::PAYMENT_METHOD_NOT_FOUND->value => 'That payment method isn’t available on your account.',
         ErrorCode::PAYMENT_ALREADY_SETTLED->value => 'This payment has already been settled.',
         ErrorCode::REFUND_NOT_ALLOWED->value => 'This payment can’t be refunded here.',

@@ -62,7 +62,6 @@ jest.mock('../user.service', () => ({
     getCustomerHome: jest.fn(() => Promise.resolve({ data: { data: null } })),
     getAddresses: jest.fn(() => Promise.resolve({ data: { data: [] } })),
     getTrustedContacts: jest.fn(() => Promise.resolve({ data: { data: [] } })),
-    getReferral: jest.fn(() => Promise.resolve({ data: { data: null } })),
   },
 }));
 jest.mock('../config.service', () => ({
@@ -80,7 +79,6 @@ jest.mock('../payment.service', () => ({
   paymentService: {
     getWalletBalance: jest.fn(() => Promise.resolve({ data: { data: { balance: 0 } } })),
     getWalletTransactions: jest.fn(() => Promise.resolve({ data: { data: [] } })),
-    getPaymentMethods: jest.fn(() => Promise.resolve({ data: { data: [] } })),
   },
 }));
 jest.mock('../notification.service', () => ({

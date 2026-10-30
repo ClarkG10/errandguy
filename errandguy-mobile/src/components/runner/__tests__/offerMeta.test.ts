@@ -108,8 +108,13 @@ describe('paymentMethodLabel', () => {
     expect(paymentMethodLabel('cash')).toBe('Cash');
     expect(paymentMethodLabel('gcash')).toBe('GCash');
     expect(paymentMethodLabel('maya')).toBe('Maya');
-    expect(paymentMethodLabel('card')).toBe('Card');
     expect(paymentMethodLabel('wallet')).toBe('Wallet');
+  });
+
+  it('still names a method from before the launch simplification', () => {
+    // A booking paid by card before cards were retired can still be on the
+    // books; it reads plainly rather than vanishing.
+    expect(paymentMethodLabel('card')).toBe('Card');
   });
 
   it('title-cases an unknown method rather than hiding it', () => {

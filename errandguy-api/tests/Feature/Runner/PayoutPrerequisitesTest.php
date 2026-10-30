@@ -142,7 +142,7 @@ class PayoutPrerequisitesTest extends TestCase
 
         $res = $this->requestPayout($runner, 500)->assertOk();
 
-        $this->assertStringContainsString('BDO account', $res->json('message'));
+        $this->assertStringContainsString('BDO •••• 7890', $res->json('message'));
         $this->assertEquals(500.0, (float) $runner->fresh()->wallet_balance);
         $this->assertSame(1, WalletTransaction::where('user_id', $runner->id)->where('type', 'payout')->count());
     }

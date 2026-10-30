@@ -154,12 +154,6 @@ class CustomerHomeAggregateTest extends TestCase
             $home['wallet_balance'],
             'wallet_balance drifted from GET /wallet/balance',
         );
-
-        $this->assertSame(
-            $this->actingAs($this->customer)->getJson('/api/v1/user/referral')->assertOk()->json('data'),
-            $home['referral'],
-            'referral drifted from GET /user/referral',
-        );
     }
 
     public function test_payload_carries_exactly_the_expected_sections(): void
@@ -169,7 +163,9 @@ class CustomerHomeAggregateTest extends TestCase
         // `active_bookings` is the additive sibling of `active_booking` (see
         // ActiveBookingsListTest) — the singular key is unchanged and still
         // authoritative; the list is the stack the home card can page through.
-        // `promos` is a compat stub, see test_promos_is_an_empty_compat_stub.
+        // `promos` and `referral` are compat stubs, see
+        // test_promos_is_an_empty_compat_stub and
+        // test_referral_is_a_null_compat_stub.
         $this->assertSame(
             [
                 'errand_types', 'active_booking', 'active_bookings', 'recent_bookings',
@@ -253,7 +249,6 @@ class CustomerHomeAggregateTest extends TestCase
 
         $this->assertSame([], $home['recent_bookings']);
         $this->assertNull($home['active_booking']);
-        $this->assertIsArray($home['referral']);
     }
 
     /**
@@ -267,6 +262,20 @@ class CustomerHomeAggregateTest extends TestCase
         $this->assertSame([], $this->home()['promos']);
 
         $this->actingAs($this->customer)->getJson('/api/v1/promos')->assertNotFound();
+    }
+
+    /**
+     * The referral program is retired. The app build already on phones also
+     * requires the `referral` KEY to accept the snapshot, and reads null as
+     * "nothing to show" (no Invite pill); its own GET /user/referral is now a
+     * 422 stub.
+     */
+    public function test_referral_is_a_null_compat_stub(): void
+    {
+        $home = $this->home();
+
+        $this->assertArrayHasKey('referral', $home);
+        $this->assertNull($home['referral']);
     }
 
     // ── gating ──────────────────────────────────────────────────────────

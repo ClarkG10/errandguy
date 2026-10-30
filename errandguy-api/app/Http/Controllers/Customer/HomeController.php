@@ -14,7 +14,7 @@ use Illuminate\Http\Request;
  *
  * The app's Home screen fires five separate authenticated GETs on every cold
  * start (/errand-types, /bookings?per_page=N, /bookings/active,
- * /wallet/balance, /user/referral), each paying a full framework boot +
+ * /wallet/balance), each paying a full framework boot +
  * Sanctum auth on Forge, and the login warm-up fires most of them a second
  * time. This endpoint returns all of those sections at once so the client can
  * seed its existing useQuery cache keys from a single response.
@@ -27,8 +27,9 @@ use Illuminate\Http\Request;
  * route and unwrapping its `data` key, so the eager-loads, resource classes
  * and conditional fields can never diverge. The one exception is
  * `errand_types`, whose route is a closure — it reuses the same CacheService
- * SWR key/TTLs/query, so it literally reads the same cache entry. (`promos` is
- * not a real section: promo codes are retired and it is a temporary empty stub.)
+ * SWR key/TTLs/query, so it literally reads the same cache entry. (`promos` and
+ * `referral` are not real sections: both features are retired and they are
+ * temporary empty stubs.)
  *
  * The individual endpoints stay exactly as they are; they remain the
  * per-screen revalidation paths. This is additive and read-only — no money
@@ -97,7 +98,10 @@ class HomeController extends Controller
             'wallet_balance' => (float) ($wallet['balance'] ?? 0),
             // Promos are retired; the shipped app discards this payload without the key. Delete once the app update is out.
             'promos' => [],
-            'referral' => $this->section(app(ReferralController::class)->show($request)),
+            // The referral program is retired too; the shipped app discards this
+            // payload without the key, and treats null as "nothing to show".
+            // Delete once the app update is out.
+            'referral' => null,
         ]);
     }
 

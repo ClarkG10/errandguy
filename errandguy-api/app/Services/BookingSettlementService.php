@@ -23,8 +23,7 @@ use Illuminate\Support\Facades\Log;
  *
  *   - booking already COMPLETED  → the runner earning that settleCompletion
  *     could not credit (because the charge was still pending at completion) is
- *     BACK-FILLED now (MONEY-1). Mirrors the existing referral back-fill that
- *     already runs on this path.
+ *     BACK-FILLED now (MONEY-1).
  *
  *   - booking already CANCELLED  → a charge that landed after cancellation is
  *     auto-REFUNDED (minus the cancellation fee that was actually recorded),
@@ -32,7 +31,7 @@ use Illuminate\Support\Facades\Log;
  *
  * Every path is idempotent and race-safe (runner-row / booking-row locks plus
  * the uq_wallet_tx_user_reference_type unique index as the DB backstop), so it
- * is safe to call from every settlement site (invoice.paid webhook,
+ * is safe to call from every settlement site (the legacy invoice.paid webhook,
  * payment.succeeded webhook, and the status-poll reconciler) and to replay.
  */
 class BookingSettlementService
@@ -199,25 +198,6 @@ class BookingSettlementService
 
         if ($booking->status === 'completed') {
             $this->backfillRunnerEarning($booking);
-
-            // Re-attempt the first-errand referral reward on THIS settlement
-            // path too. The webhook handlers call rewardReferralIfEligible
-            // separately, but reconcileBookingPayment (the status-poll fallback
-            // used when a webhook is never delivered) reaches settlement ONLY
-            // through here — so without this, a referee whose qualifying charge
-            // settles via the poll would never have their (or the referrer's)
-            // bonus granted. reward() locks the referral row and no-ops if it
-            // was already rewarded, so the webhook path calling both is safe.
-            if ($booking->customer_id) {
-                try {
-                    app(ReferralService::class)->reward($booking->customer_id);
-                } catch (\Throwable $e) {
-                    Log::warning('Referral reward re-attempt failed during settlement', [
-                        'booking_id' => $booking->id,
-                        'error' => $e->getMessage(),
-                    ]);
-                }
-            }
         }
     }
 

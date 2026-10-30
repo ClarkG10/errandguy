@@ -1,6 +1,7 @@
 import api from './api';
 import { invalidateQuery } from '../hooks/useQuery';
 import { compressProofImage } from '../utils/proofImage';
+import type { PaymentMethodType } from '../types';
 
 const invalidateBookingsCaches = (id?: string) => {
   // Fire-and-forget — cache wipes shouldn't block the UI.
@@ -136,8 +137,7 @@ export const bookingService = {
     vehicle_type_rate: string;
     schedule_type: 'now' | 'scheduled';
     scheduled_at?: string;
-    payment_method?: string;
-    payment_method_id?: string;
+    payment_method?: PaymentMethodType;
     items?: Array<{ name: string; quantity: number; estimated_price?: number }>;
     // Structured shopping checklist (name + qty). Sent alongside the
     // human-readable `description` serialization so the runner's synced
@@ -204,13 +204,19 @@ export const bookingService = {
     return p;
   },
 
-  /** Start a GATEWAY-funded tip (GCash / Maya / card) — the zero-wallet / COD
-   *  path. Returns a `checkout_url` the app opens; the runner is credited only
-   *  after Xendit confirms via webhook. `data.id` is the tip transaction id to
-   *  poll for verification (via getTopUpStatus). */
-  tipCheckout(id: string, amount: number, method: 'gcash' | 'maya' | 'card', opts?: { idempotencyKey?: string }) {
+  /** Start a GCash / Maya tip — the zero-wallet / cash-errand path. Returns
+   *  201 with a `checkout_url` the app opens; the runner is credited only once
+   *  Xendit confirms. `data.id` is the charge's transaction id to poll for
+   *  verification (paymentService.getTransactionStatus). The Idempotency-Key
+   *  makes a double-tap or retry of the same tip replay the first charge. */
+  tipCheckout(
+    id: string,
+    amount: number,
+    method: 'gcash' | 'maya',
+    opts: { idempotencyKey: string },
+  ) {
     const p = api.post(`/bookings/${id}/tip-checkout`, { amount, method }, {
-      idempotencyKey: opts?.idempotencyKey,
+      idempotencyKey: opts.idempotencyKey,
     });
     p.then(() => invalidateBookingsCaches(id)).catch(() => {});
     return p;

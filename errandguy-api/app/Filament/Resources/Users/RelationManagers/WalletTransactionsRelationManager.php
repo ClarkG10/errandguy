@@ -37,7 +37,7 @@ class WalletTransactionsRelationManager extends RelationManager
             ->paginated([10, 25])
             ->columns([
                 TextColumn::make('type')->badge()->color(fn (string $s): string => match ($s) {
-                    'top_up', 'earning', 'bonus' => 'success',
+                    'top_up', 'earning', 'bonus', 'tip', 'cancel_fee' => 'success',
                     'refund' => 'info',
                     'payout', 'payment' => 'warning',
                     default => 'gray',
@@ -53,8 +53,9 @@ class WalletTransactionsRelationManager extends RelationManager
             ])
             ->filters([
                 SelectFilter::make('type')->options([
-                    'top_up' => 'Top-up', 'payout' => 'Payout', 'earning' => 'Earning',
-                    'payment' => 'Payment', 'refund' => 'Refund',
+                    'payout' => 'Payout', 'earning' => 'Earning', 'cancel_fee' => 'Cancellation fee',
+                    'tip' => 'Tip', 'commission' => 'Cash commission', 'payment' => 'Payment', 'refund' => 'Refund',
+                    'top_up' => 'Top-up (legacy)',
                 ]),
             ]);
     }

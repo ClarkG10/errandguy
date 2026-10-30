@@ -47,19 +47,20 @@ interface Highlight {
 
 // Edit this list per release. Keep it to 1–3 punchy highlights. An empty list
 // disables the sheet entirely (the gate renders null).
+// Shown to customers and runners alike (it mounts at the root), so nothing
+// here may assume a role or link into one role's screens.
 const HIGHLIGHTS: Highlight[] = [
   {
-    id: 'faster-matching',
+    id: 'simpler-payments',
     icon: Sparkles,
-    title: 'Faster runner matching',
-    body: 'We find you a nearby runner quicker, with fewer taps to book.',
+    title: 'Simpler ways to pay',
+    body: 'Pay with cash, GCash, Maya or your ErrandGuy wallet balance — no cards or saved accounts to manage.',
   },
   {
-    id: 'wallet-topups',
+    id: 'money-out',
     icon: Wallet,
-    title: 'Smoother wallet top-ups',
-    body: 'Top up in a couple of taps and pay for errands straight from your balance.',
-    href: '/(customer)/wallet',
+    title: 'Your money, where you want it',
+    body: 'Customers can withdraw their wallet to GCash or Maya, and runners choose exactly where payouts go — GCash, Maya or a bank account.',
   },
   {
     id: 'safer-payments',
@@ -77,7 +78,7 @@ const HIGHLIGHTS: Highlight[] = [
  * would leave the sheet dormant for every OTA-delivered release. A hand-bumped
  * constant fires reliably regardless of OTA-vs-store delivery.
  */
-const CHANGELOG_VERSION = '1';
+const CHANGELOG_VERSION = '2';
 
 export function WhatsNewSheet() {
   const router = useRouter();

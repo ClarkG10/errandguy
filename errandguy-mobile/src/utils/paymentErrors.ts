@@ -20,11 +20,22 @@ export function mapFailureReason(reason?: string | null): PaymentErrorInfo {
   const r = (reason ?? '').toString().toLowerCase();
   if (!r) return DEFAULT;
 
+  // The charge went through and was then given back — e.g. a second GCash/Maya
+  // tip for an errand that was already tipped. "You weren't charged" would be
+  // untrue; the money is in the wallet.
+  if (r.includes('refund')) {
+    return {
+      title: 'Payment refunded',
+      message: 'This payment was refunded to your ErrandGuy wallet.',
+      retryable: false,
+    };
+  }
+
   if (r.includes('insufficient') || r.includes('balance')) {
     return {
       title: 'Insufficient funds',
       message:
-        "There wasn't enough balance to cover this payment. Top up or choose another method.",
+        "There wasn't enough balance to cover this payment. Choose another payment method.",
       retryable: true,
     };
   }

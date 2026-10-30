@@ -57,19 +57,22 @@ class CashDebtPolicy
     }
 
     /**
-     * What the runner is told, with the exact amount they need to settle to get
-     * back to work — a bare "you're blocked" leaves them with no next step.
+     * The one message for a runner who owes money from cash errands — the
+     * accept refusal, the profile's cash_debt_block, a payout request and an
+     * account-deletion refusal all say exactly this, so the runner hears one
+     * consistent story: how much, how it clears, and when cash work pauses.
      */
     public static function message(float $walletBalance): string
     {
         $owed = number_format(abs(round($walletBalance, 2)), 2);
-        $toSettle = number_format(
-            max(0, abs(round($walletBalance, 2)) - self::limit() + 0.01),
-            2,
-        );
+        $message = "You owe ₱{$owed} from cash errands. It’s cleared automatically from your next prepaid earnings";
 
-        return "You owe ₱{$owed} in platform commission from cash errands, which is over the ₱"
-            . number_format(self::limit(), 2) . " limit. Settle at least ₱{$toSettle} "
-            . 'to take cash errands again — prepaid and wallet errands still pay you as normal.';
+        if (! self::enabled()) {
+            return $message.'.';
+        }
+
+        $limit = self::limit();
+
+        return $message.'; cash errands pause at ₱'.number_format($limit, fmod($limit, 1.0) == 0.0 ? 0 : 2).'.';
     }
 }

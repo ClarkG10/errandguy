@@ -6,6 +6,12 @@ use Illuminate\Database\Eloquent\Concerns\HasUuids;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 
+/**
+ * Legacy: a saved card or linked (one-tap) GCash/Maya/GrabPay account. Both are
+ * retired — every online payment is a one-time GCash or Maya charge — so
+ * nothing lists, links or charges these any more. The rows stay; an erased
+ * account's rows are deleted with its other personal data.
+ */
 class PaymentMethod extends Model
 {
     use HasUuids;

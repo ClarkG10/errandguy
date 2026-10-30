@@ -3,7 +3,6 @@
 namespace App\Http\Requests\Booking;
 
 use App\Models\ErrandType;
-use App\Models\PaymentMethod;
 use App\Services\PaymentMethodCatalog;
 use App\Support\VehicleClass;
 use Illuminate\Foundation\Http\FormRequest;
@@ -35,23 +34,6 @@ class CreateBookingRequest extends FormRequest
     public function authorize(): bool
     {
         return true;
-    }
-
-    /**
-     * Accepted payment_method values: the operator-enabled one-time catalog
-     * PLUS the type of any reusable method the customer has already linked
-     * (a linked GrabPay isn't in the one-time catalog, but must be payable).
-     */
-    private function allowedPaymentMethods(): array
-    {
-        $saved = $this->user()
-            ? PaymentMethod::where('user_id', $this->user()->id)
-                ->where('status', 'active')
-                ->pluck('type')
-                ->all()
-            : [];
-
-        return array_values(array_unique([...PaymentMethodCatalog::enabledTypes(), ...$saved]));
     }
 
     public function rules(): array
@@ -125,17 +107,33 @@ class CreateBookingRequest extends FormRequest
             // validated().
             'pricing_mode' => ['nullable', Rule::in(['fixed'])],
             'vehicle_type_rate' => ['nullable', Rule::in(VehicleClass::LADDER)],
-            // Operator-enabled one-time methods, plus any type the customer has
-            // already linked (see allowedPaymentMethods()).
-            'payment_method' => ['required', Rule::in($this->allowedPaymentMethods())],
-            // Optional: online payments use a Xendit hosted invoice where the
-            // customer picks GCash/Maya/card, so a pre-saved method isn't
-            // required. When provided it must belong to the requesting user.
-            'payment_method_id' => [
-                'nullable',
+            // Cash, GCash, Maya or the wallet — whichever the operator has
+            // enabled. A retired method (card, GrabPay) that the app build
+            // already on phones can still offer gets its own clear refusal
+            // first ('bail' stops at it) instead of a bare "invalid value".
+            'payment_method' => [
+                'bail',
+                'required',
                 'string',
-                Rule::exists('payment_methods', 'id')
-                    ->where(fn ($q) => $q->where('user_id', $this->user()?->id)),
+                function (string $attribute, mixed $value, \Closure $fail): void {
+                    if ($message = PaymentMethodCatalog::retiredMessage((string) $value)) {
+                        $fail($message);
+                    }
+                },
+                Rule::in(PaymentMethodCatalog::enabledTypes()),
+            ],
+            // Linked (one-tap) GCash/Maya/GrabPay accounts and saved cards are
+            // retired: every online payment is a one-time charge. The app
+            // build already on phones only sends an id when the customer picked
+            // one of those saved accounts, so any id is refused with a clear
+            // message rather than silently charged some other way. Delete
+            // this rule once the app update is out.
+            'payment_method_id' => [
+                function (string $attribute, mixed $value, \Closure $fail): void {
+                    if (filled($value)) {
+                        $fail('Saved payment accounts are no longer available — please pay with GCash, Maya or cash.');
+                    }
+                },
             ],
         ];
     }
@@ -189,6 +187,7 @@ class CreateBookingRequest extends FormRequest
             'pickup_contact_phone.regex' => 'Pickup phone must be a valid Philippine mobile number.',
             'dropoff_contact_phone.regex' => 'Dropoff phone must be a valid Philippine mobile number.',
             'pricing_mode.in' => 'Name your price is no longer available. Please update the app and book at the fixed price.',
+            'payment_method.in' => 'That payment method isn’t available right now — please pay with GCash, Maya, cash or your ErrandGuy wallet.',
         ];
     }
 }

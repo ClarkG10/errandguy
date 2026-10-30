@@ -8,35 +8,37 @@ use App\Models\User;
 use App\Models\WalletTransaction;
 use App\Services\PaymentService;
 use App\Services\WalletService;
-use App\Support\AdminActivity;
+use App\Support\PayoutDestination;
 use BackedEnum;
 use Filament\Actions\Action;
-use Filament\Actions\BulkAction;
 use Filament\Forms\Components\Hidden;
 use Filament\Forms\Components\Select;
 use Filament\Forms\Components\TextInput;
 use Filament\Forms\Components\Textarea;
 use Filament\Pages\Page;
+use Filament\Schemas\Components\Utilities\Set;
 use Filament\Support\Icons\Heroicon;
 use Filament\Tables\Columns\TextColumn;
 use Filament\Tables\Concerns\InteractsWithTable;
 use Filament\Tables\Contracts\HasTable;
 use Filament\Tables\Filters\SelectFilter;
 use Filament\Tables\Table;
-use Illuminate\Support\Collection;
-use Illuminate\Support\Facades\Cache;
-use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Str;
 
 /**
  * Payout reconciliation + real disbursement.
  *
- * Payouts are WalletTransaction rows (type=payout). "Send via Xendit" actually
- * disburses to the runner's e-wallet/bank via PaymentService::createPayout;
- * the payout stays `pending` until the payout.succeeded / payout.failed webhook
- * settles it (failure re-credits the wallet). "Mark completed" / "Mark failed"
- * remain as manual overrides for out-of-band transfers. "Pay a runner" lets an
- * admin initiate a payout from a runner's balance without a runner request.
+ * Payouts are WalletTransaction rows (type=payout): a runner's payout request,
+ * a customer's withdrawal, a payout queued while deleting an account, or staff
+ * "Pay a runner". Each carries the destination it was requested with.
+ *
+ * "Send via Xendit" disburses it via PaymentService::createPayout and marks it
+ * SENT before the request leaves; it stays `pending` until the payout webhook
+ * settles it (a failure re-credits the wallet). Once a payout is sent, only
+ * Xendit can say what happened to it, so the manual "Mark completed" / "Mark
+ * failed" overrides (for money moved outside the system) are offered only
+ * for payouts that were never sent, and a sent one gets "Check with Xendit" —
+ * a fresh lookup that settles it to whatever Xendit reports.
  */
 class Payouts extends Page implements HasTable
 {
@@ -51,27 +53,6 @@ class Payouts extends Page implements HasTable
     protected static ?int $navigationSort = 15;
 
     protected static ?string $title = 'Payouts';
-
-    /**
-     * Common Xendit PH payout channel codes. Verify the exact set your account
-     * supports via Xendit's dashboard / GET /payout_channels.
-     */
-    public const CHANNELS = [
-        'PH_GCASH' => 'GCash',
-        'PH_PAYMAYA' => 'Maya',
-        'PH_GRABPAY' => 'GrabPay',
-        'PH_SHOPEEPAY' => 'ShopeePay',
-        'PH_BDO' => 'BDO',
-        'PH_BPI' => 'BPI',
-        'PH_UBP' => 'UnionBank',
-        'PH_METROBANK' => 'Metrobank',
-        'PH_LANDBANK' => 'Landbank',
-        'PH_PNB' => 'PNB',
-        'PH_RCBC' => 'RCBC',
-        'PH_SECURITY' => 'Security Bank',
-        'PH_CHINABANK' => 'China Bank',
-        'PH_EASTWEST' => 'EastWest',
-    ];
 
     public static function canAccess(): bool
     {
@@ -94,58 +75,43 @@ class Payouts extends Page implements HasTable
     }
 
     /**
-     * Tell the runner their payout bounced, and that the money is back.
+     * Where staff should send this payout: the destination recorded on it, or
+     * — for a payout requested before destinations were recorded — the
+     * runner's saved payout method.
      *
-     * completePayout() pushes "Payout sent"; the failure/reversal paths only
-     * re-credited the wallet and wrote failure_reason, so the runner kept
-     * believing a transfer was in flight for 1–3 business days and then found
-     * their balance mysteriously higher — the reason discoverable only by
-     * scrolling the payout history card. Symmetric events deserve symmetric
-     * notification: in-app row + device push via SendPushJob (which routes to
-     * NotificationService::sendPush, exactly like the success push), and the
-     * `payment` type + wallet_transaction_id payload mirror it too.
-     *
-     * MUST be called after the money transaction has committed (never inside
-     * the lock), and is latched per payout in the cache so a re-run of the
-     * admin action — or a later gateway callback for the same payout — can
-     * never send the runner a second "your payout bounced".
-     *
-     * Public on purpose: the OTHER two paths that settle a payout into
-     * failed/reversed (the Xendit payout.failed / payout.reversed webhook and
-     * any future admin surface) should route through this same
-     * latch instead of growing their own copy. Handles both states.
+     * @return array<string, ?string>|null
      */
-    public static function notifyRunnerOfBouncedPayout(WalletTransaction $tx, ?string $reason = null): void
+    public static function destinationFor(WalletTransaction $record): ?array
     {
-        // Cache::add is atomic: the first caller wins, everyone else no-ops.
-        if (! Cache::add("payout_bounced_notified:{$tx->id}", true, now()->addDay())) {
-            return;
+        try {
+            $recorded = $record->payout_destination;
+        } catch (\Throwable) {
+            $recorded = null;
         }
 
-        $amount = number_format(abs((float) $tx->amount), 2);
-        $reversed = $tx->status === 'reversed';
-        $reason = Str::limit(trim((string) ($reason ?? $tx->failure_reason ?? '')), 140);
+        return $recorded ?: $record->user?->runnerProfile?->payoutDestination($record->user?->full_name);
+    }
 
-        $body = $reversed
-            ? "Your ₱{$amount} payout was returned, so the money is back in your wallet."
-            : "Your ₱{$amount} payout couldn’t be sent, so the money is back in your wallet.";
+    /** The audit-log properties that say exactly where the money went. */
+    private static function destinationAudit(string $channelCode, string $accountNumber, string $accountName): array
+    {
+        return [
+            'channel' => PayoutDestination::channelForCode($channelCode) ?? 'bank',
+            'channel_code' => $channelCode,
+            'account_number' => $accountNumber,
+            'account_name' => $accountName,
+        ];
+    }
 
-        if ($reason !== '') {
-            $body .= " Reason: {$reason}.";
-        }
-
-        $body .= ' Check your payout details, then request it again.';
-
-        \App\Jobs\SendPushJob::dispatch(
-            $tx->user_id,
-            $reversed ? 'Payout returned' : 'Payout couldn’t be sent',
-            $body,
-            [
-                'type' => 'payment',
-                'status' => $reversed ? 'reversed' : 'failed',
-                'wallet_transaction_id' => $tx->id,
-            ],
-        );
+    /** @return array<int, \Filament\Schemas\Components\Component> */
+    private static function destinationFields(): array
+    {
+        return [
+            Select::make('channel_code')->label('Channel')->required()->searchable()->options(PayoutDestination::CHANNEL_CODES),
+            TextInput::make('account_number')->required()
+                ->helperText('E-wallet: the mobile number. Bank: the account number.'),
+            TextInput::make('account_holder_name')->label('Account name')->required(),
+        ];
     }
 
     protected function getHeaderActions(): array
@@ -166,12 +132,17 @@ class Payouts extends Page implements HasTable
                             ->orderBy('full_name')
                             ->pluck('full_name', 'id')
                             ->all())
-                        ->helperText('Only runners with a positive wallet balance are listed.'),
+                        ->helperText('Only runners with a positive wallet balance are listed. Their saved payout method fills in below.')
+                        ->live()
+                        ->afterStateUpdated(function (?string $state, Set $set): void {
+                            $runner = $state ? User::with('runnerProfile')->find($state) : null;
+                            $destination = $runner?->runnerProfile?->payoutDestination($runner->full_name);
+                            $set('channel_code', $destination['channel_code'] ?? null);
+                            $set('account_number', $destination['account_number'] ?? null);
+                            $set('account_holder_name', $destination['account_name'] ?? null);
+                        }),
                     TextInput::make('amount')->numeric()->prefix('₱')->required()->minValue(1),
-                    Select::make('channel_code')->label('Channel')->required()->searchable()->options(self::CHANNELS),
-                    TextInput::make('account_number')->required()
-                        ->helperText('E-wallet: the mobile number. Bank: the account number.'),
-                    TextInput::make('account_holder_name')->required(),
+                    ...self::destinationFields(),
                     // Per-modal idempotency token: generated when the form opens
                     // and resubmitted verbatim, so a double-click / re-fire of the
                     // SAME payout collapses to one debit + one disbursement, while
@@ -179,13 +150,20 @@ class Payouts extends Page implements HasTable
                     Hidden::make('idem')->default(fn (): string => (string) Str::uuid()),
                 ])
                 ->action(function (array $data): void {
+                    $destination = PayoutDestination::make(
+                        PayoutDestination::channelForCode($data['channel_code']) ?? 'bank',
+                        $data['account_number'],
+                        $data['account_holder_name'],
+                        channelCode: $data['channel_code'],
+                    );
+
                     try {
                         // Debit + create the pending payout (money-safe), then disburse.
-                        $tx = app(WalletService::class)->payout($data['user_id'], (float) $data['amount'], $data['idem'] ?? null);
+                        $tx = app(WalletService::class)->payout($data['user_id'], (float) $data['amount'], $data['idem'] ?? null, $destination);
                         app(PaymentService::class)->createPayout(
                             $tx->id,
                             $data['channel_code'],
-                            $data['account_number'],
+                            $destination['account_number'],
                             $data['account_holder_name'],
                         );
                         AdminNotify::success(
@@ -194,10 +172,13 @@ class Payouts extends Page implements HasTable
                             context: [
                                 'Runner' => $tx->user?->full_name,
                                 'Amount' => '₱'.number_format(abs((float) $tx->amount), 2),
-                                'Channel' => $data['channel_code'],
+                                'To' => PayoutDestination::label($destination),
                             ],
                             audit: 'payout.admin_initiated',
-                            properties: ['channel' => $data['channel_code'], 'amount' => $data['amount']],
+                            properties: [
+                                'amount' => $data['amount'],
+                                ...self::destinationAudit($data['channel_code'], $destination['account_number'], $data['account_holder_name']),
+                            ],
                             note: 'It will show as completed once Xendit confirms.',
                         );
                     } catch (\Throwable $e) {
@@ -213,10 +194,12 @@ class Payouts extends Page implements HasTable
     {
         return $table
             ->query(
-                WalletTransaction::query()->where('type', 'payout')->with('user:id,full_name,phone')
+                // runnerProfile: the destination fallback for payouts requested
+                // before destinations were recorded on the payout.
+                WalletTransaction::query()->where('type', 'payout')->with(['user:id,full_name,phone,role', 'user.runnerProfile'])
             )
-            // Pending work first, and OLDEST pending at the top — the runner who
-            // has been waiting longest for their own money is the one to pay
+            // Pending work first, and OLDEST pending at the top — the person
+            // who has been waiting longest for their own money is the one to pay
             // next. A flat created_at DESC put them at the very bottom, so the
             // longest wait was served last (the same defect already fixed on the
             // dispute queues).
@@ -231,19 +214,35 @@ class Payouts extends Page implements HasTable
                 ->orderByDesc('created_at'))
             ->columns([
                 TextColumn::make('created_at')->label('Requested')->dateTime()->sortable(),
-                TextColumn::make('user.full_name')->label('Runner')->searchable(),
+                TextColumn::make('user.full_name')->label('Account')->searchable()
+                    ->description(fn (WalletTransaction $record): string => ucfirst((string) ($record->user?->role ?? ''))),
                 TextColumn::make('user.phone')->toggleable(),
                 TextColumn::make('amount')
                     ->label('Amount')
                     ->formatStateUsing(fn ($state): string => '₱' . number_format(abs((float) $state), 2))
                     ->sortable(),
-                TextColumn::make('status')->badge()->color(fn (string $state): string => match ($state) {
-                    'completed' => 'success',
-                    'pending' => 'warning',
-                    'failed' => 'danger',
-                    'reversed' => 'gray',
-                    default => 'gray',
-                }),
+                TextColumn::make('destination')
+                    ->label('To')
+                    ->state(fn (WalletTransaction $record): string => PayoutDestination::label(self::destinationFor($record))),
+                // A sent payout is still `pending` in the ledger until Xendit
+                // confirms; say so, because it is no longer staff's to decide.
+                TextColumn::make('status')
+                    ->badge()
+                    ->formatStateUsing(fn (string $state, WalletTransaction $record): string => $state === 'pending' && $record->isSentToGateway()
+                        ? 'Sent to Xendit'
+                        : ucfirst($state))
+                    ->color(fn (string $state, WalletTransaction $record): string => match (true) {
+                        $state === 'pending' && $record->isSentToGateway() => 'info',
+                        $state === 'completed' => 'success',
+                        $state === 'pending' => 'warning',
+                        $state === 'failed' => 'danger',
+                        default => 'gray',
+                    }),
+                TextColumn::make('gateway_ref')
+                    ->label('Xendit reference')
+                    ->placeholder(fn (WalletTransaction $record): string => $record->payout_sent_at ? 'No answer yet' : '—')
+                    ->copyable()
+                    ->toggleable(),
                 TextColumn::make('processed_at')->dateTime()->toggleable(),
                 TextColumn::make('failure_reason')->limit(40)->toggleable(),
             ])
@@ -262,26 +261,21 @@ class Payouts extends Page implements HasTable
                     ->label('Send via Xendit')
                     ->icon(Heroicon::OutlinedPaperAirplane)
                     ->color('primary')
-                    ->visible(fn (WalletTransaction $record): bool => $record->status === 'pending')
+                    ->visible(fn (WalletTransaction $record): bool => $record->status === 'pending' && ! $record->isSentToGateway())
                     ->modalHeading('Send this payout via Xendit')
                     ->modalDescription(fn (WalletTransaction $record): string => 'Disburses ₱'
                         .number_format(abs((float) $record->amount), 2).' to '
-                        .($record->user?->full_name ?? 'the runner').' via Xendit. Real money leaves now.')
+                        .($record->user?->full_name ?? 'this account').' via Xendit. Real money leaves now.')
                     ->fillForm(function (WalletTransaction $record): array {
-                        $profile = $record->user?->runnerProfile;
+                        $destination = self::destinationFor($record);
 
                         return [
-                            'channel_code' => $profile?->payout_channel_code,
-                            'account_number' => $profile?->ewallet_number ?: $profile?->bank_account_number,
-                            'account_holder_name' => $record->user?->full_name,
+                            'channel_code' => $destination['channel_code'] ?? null,
+                            'account_number' => $destination['account_number'] ?? null,
+                            'account_holder_name' => $destination['account_name'] ?? $record->user?->full_name,
                         ];
                     })
-                    ->schema([
-                        Select::make('channel_code')->label('Channel')->required()->searchable()->options(self::CHANNELS),
-                        TextInput::make('account_number')->required()
-                            ->helperText('E-wallet: the mobile number. Bank: the account number.'),
-                        TextInput::make('account_holder_name')->required(),
-                    ])
+                    ->schema(self::destinationFields())
                     ->action(function (array $data, WalletTransaction $record): void {
                         try {
                             app(PaymentService::class)->createPayout(
@@ -290,23 +284,55 @@ class Payouts extends Page implements HasTable
                                 $data['account_number'],
                                 $data['account_holder_name'],
                             );
+                            $sent = $record->fresh()->payout_destination;
                             AdminNotify::success(
                                 'Payout sent to Xendit',
                                 $record,
                                 context: [
-                                    'Runner' => $record->user?->full_name,
+                                    'Account' => $record->user?->full_name,
                                     'Amount' => '₱'.number_format(abs((float) $record->amount), 2),
-                                    'Channel' => $data['channel_code'],
+                                    'To' => PayoutDestination::label($sent),
                                 ],
                                 audit: 'payout.sent',
-                                properties: ['channel' => $data['channel_code']],
+                                properties: self::destinationAudit($data['channel_code'], (string) $sent['account_number'], $data['account_holder_name']),
                                 note: 'It will show as completed once Xendit confirms.',
                             );
                         } catch (\Throwable $e) {
                             AdminNotify::error('Payout failed', $e, $record, context: [
-                                'Runner' => $record->user?->full_name,
+                                'Account' => $record->user?->full_name,
                             ]);
                         }
+                    }),
+                Action::make('checkWithXendit')
+                    ->label('Check with Xendit')
+                    ->icon(Heroicon::OutlinedArrowPath)
+                    ->color('gray')
+                    ->visible(fn (WalletTransaction $record): bool => $record->status === 'pending' && $record->isSentToGateway())
+                    ->action(function (WalletTransaction $record): void {
+                        ['transaction' => $tx, 'gateway_status' => $status] = app(WalletService::class)
+                            ->refreshSentPayout($record, releaseIfUnknown: true);
+
+                        $context = [
+                            'Account' => $record->user?->full_name,
+                            'Amount' => '₱'.number_format(abs((float) $record->amount), 2),
+                        ];
+
+                        match (true) {
+                            $tx->status === 'completed' => AdminNotify::success('Xendit paid this payout', $tx, $context,
+                                audit: 'payout.checked', properties: ['gateway_status' => $status],
+                                note: 'It is now marked completed.'),
+                            $tx->status === 'failed' => AdminNotify::success('Xendit says this payout failed', $tx, $context,
+                                audit: 'payout.checked', properties: ['gateway_status' => $status],
+                                note: 'The money is back in their wallet and they have been told.'),
+                            $status === 'NOT_FOUND' && ! $tx->isSentToGateway() => AdminNotify::success('Xendit has no record of this payout', $tx, $context,
+                                audit: 'payout.checked', properties: ['gateway_status' => $status],
+                                note: 'It was never sent, so it is back to “not sent”: send it again, or mark it failed.'),
+                            $status === 'NOT_FOUND' => AdminNotify::error('Xendit has no record of this payout yet',
+                                'Its send went unanswered moments ago. Check again in a few minutes — don’t send it again yet.', $tx, $context),
+                            $status === 'UNREACHABLE' => AdminNotify::error('Couldn’t reach Xendit', 'Nothing was changed. Try again in a moment.', $tx, $context),
+                            default => AdminNotify::success('Still in progress at Xendit', $tx, $context,
+                                note: "Xendit reports it as {$status}. It settles on its own once Xendit finishes."),
+                        };
                     }),
                 Action::make('complete')
                     ->label('Mark completed')
@@ -314,7 +340,7 @@ class Payouts extends Page implements HasTable
                     ->color('success')
                     ->requiresConfirmation()
                     ->modalDescription('Manual override: use only if you disbursed the funds outside the system.')
-                    ->visible(fn (WalletTransaction $record): bool => $record->status === 'pending')
+                    ->visible(fn (WalletTransaction $record): bool => $record->status === 'pending' && ! $record->isSentToGateway())
                     ->action(function (WalletTransaction $record): void {
                         try {
                             $tx = app(WalletService::class)->completePayout($record->id);
@@ -322,7 +348,7 @@ class Payouts extends Page implements HasTable
                                 'Payout marked completed',
                                 $tx,
                                 context: [
-                                    'Runner' => $tx->user?->full_name,
+                                    'Account' => $tx->user?->full_name,
                                     'Amount' => '₱'.number_format(abs((float) $tx->amount), 2),
                                 ],
                                 audit: 'payout.completed',
@@ -338,95 +364,35 @@ class Payouts extends Page implements HasTable
                     ->requiresConfirmation()
                     ->modalDescription(fn (WalletTransaction $record): string => 'Marks this payout failed and re-credits ₱'
                         .number_format(abs((float) $record->amount), 2).' to '
-                        .($record->user?->full_name ?? 'the runner').'’s wallet.')
+                        .($record->user?->full_name ?? 'the account').'’s wallet.')
                     ->schema([
                         Textarea::make('reason')->label('Failure reason')->required()->maxLength(500),
                     ])
-                    ->visible(fn (WalletTransaction $record): bool => $record->status === 'pending')
+                    // Never for a payout handed to Xendit — failPayout refuses
+                    // it too; only Xendit can fail a sent payout.
+                    ->visible(fn (WalletTransaction $record): bool => $record->status === 'pending' && ! $record->isSentToGateway())
                     ->action(function (array $data, WalletTransaction $record): void {
                         try {
-                            $tx = app(WalletService::class)->failPayout($record->id, $data['reason']);
-                            // Tell the runner — the money just reappeared in
-                            // their wallet and they were still expecting a
-                            // transfer. Dispatched AFTER failPayout committed.
-                            self::notifyRunnerOfBouncedPayout($tx, $data['reason']);
+                            $wallet = app(WalletService::class);
+                            $tx = $wallet->failPayout($record->id, $data['reason']);
+                            // Tell them — the money just reappeared in their
+                            // wallet and they were still expecting a transfer.
+                            // Dispatched AFTER failPayout committed.
+                            $wallet->notifyPayoutBounced($tx, $data['reason']);
                             AdminNotify::success(
                                 'Payout failed — wallet re-credited',
                                 $tx,
                                 context: [
-                                    'Runner' => $tx->user?->full_name,
+                                    'Account' => $tx->user?->full_name,
                                     'Amount' => '₱'.number_format(abs((float) $tx->amount), 2),
                                 ],
                                 audit: 'payout.failed',
                                 properties: ['reason' => $data['reason']],
-                                note: 'The runner has been told the money is back in their wallet, with your reason.',
+                                note: 'They have been told the money is back in their wallet, with your reason.',
                             );
                         } catch (PayoutStateException $e) {
                             AdminNotify::error('Could not mark payout failed', $e, $record);
                         }
-                    }),
-            ])
-            ->toolbarActions([
-                // Batch-disburse pending payouts to each runner's SAVED payout
-                // method. Idempotent per row (createPayout keys on po-{tx}), so a
-                // re-run never double-sends. Rows that aren't pending or lack
-                // saved details are skipped and counted — never silently dropped.
-                BulkAction::make('sendSelectedViaXendit')
-                    ->label('Send selected via Xendit')
-                    ->icon(Heroicon::OutlinedPaperAirplane)
-                    ->color('primary')
-                    ->requiresConfirmation()
-                    ->modalHeading('Send selected payouts via Xendit')
-                    ->modalDescription('Disburses every selected PENDING payout to the runner’s SAVED payout method. Rows that aren’t pending, or have no saved payout details, are skipped. Real money leaves now.')
-                    ->deselectRecordsAfterCompletion()
-                    ->action(function (Collection $records): void {
-                        $sent = 0;
-                        $skipped = 0;
-                        $failed = 0;
-
-                        foreach ($records as $record) {
-                            if ($record->status !== 'pending') {
-                                $skipped++;
-                                continue;
-                            }
-
-                            $profile = $record->user?->runnerProfile;
-                            $channel = $profile?->payout_channel_code;
-                            $account = $profile?->ewallet_number ?: $profile?->bank_account_number;
-                            $holder = $record->user?->full_name;
-
-                            if (blank($channel) || blank($account) || blank($holder)) {
-                                $skipped++;
-                                continue;
-                            }
-
-                            try {
-                                app(PaymentService::class)->createPayout($record->id, $channel, $account, $holder);
-                                AdminActivity::log('payout.sent', $record, ['channel' => $channel, 'via' => 'bulk']);
-                                $sent++;
-                            } catch (\Throwable $e) {
-                                Log::warning('Bulk payout: a row failed to send', [
-                                    'wallet_tx' => $record->id,
-                                    'error' => $e->getMessage(),
-                                ]);
-                                $failed++;
-                            }
-                        }
-
-                        $notes = [];
-                        if ($skipped) {
-                            $notes[] = "{$skipped} skipped (not pending, or no saved payout method).";
-                        }
-                        if ($failed) {
-                            $notes[] = "{$failed} failed to send — see logs.";
-                        }
-
-                        AdminNotify::success(
-                            $sent.' payout'.($sent === 1 ? '' : 's').' sent to Xendit',
-                            note: $notes === []
-                                ? 'They will show completed once Xendit confirms.'
-                                : implode(' ', $notes),
-                        );
                     }),
             ]);
     }

@@ -9,7 +9,7 @@ import {
   AccessibilityInfo,
 } from 'react-native';
 import { useRouter, useLocalSearchParams } from 'expo-router';
-import { CheckCircle, Repeat, Gift, Check } from 'lucide-react-native';
+import { CheckCircle, Repeat, Check } from 'lucide-react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import * as Haptics from 'expo-haptics';
 import { useBookingStore } from '../../../stores/bookingStore';
@@ -35,23 +35,29 @@ import { useResponsive } from '../../../constants/responsive';
 import { useReducedMotion } from '../../../hooks/useReducedMotion';
 import type { Booking } from '../../../types';
 import { toast } from '../../../stores/toastStore';
-import { paymentService } from '../../../services/payment.service';
 import { PaymentProgress } from '../../../components/ui/PaymentProgress';
-import { usePaymentStore, isAttemptActive } from '../../../stores/paymentStore';
+import {
+  usePaymentStore,
+  isAttemptActive,
+  shouldRetainIdempotencyKey,
+} from '../../../stores/paymentStore';
 import { usePaymentVerification } from '../../../hooks/usePaymentVerification';
+import { useWalletSummary } from '../../../hooks/useWalletSummary';
+import { newIdempotencyKey } from '../../../utils/idempotency';
 import { openCheckoutUrl, PAYMENT_RETURN_URL } from '../../../utils/browser';
 import { mapFailureReason } from '../../../utils/paymentErrors';
 import { invalidateQuery } from '../../../hooks/useQuery';
 import { formatCurrency } from '../../../utils/formatCurrency';
 import { fareLines } from '../../../utils/fareLines';
 
-// Tip is funded from the customer's wallet when the balance covers it, and
-// otherwise paid directly online (GCash / Maya / card) via Xendit — so a
-// zero-wallet / COD customer can still tip. 100% goes to the runner either way.
-const TIP_METHOD_LABEL: Record<'gcash' | 'maya' | 'card', string> = {
+// A tip is paid from the wallet (when its withdrawable balance covers it) or
+// with a one-time GCash / Maya checkout — so a zero-wallet / cash-errand
+// customer can still tip. 100% goes to the runner either way.
+type TipMethod = 'wallet' | 'gcash' | 'maya';
+const TIP_METHOD_LABEL: Record<TipMethod, string> = {
+  wallet: 'Wallet',
   gcash: 'GCash',
   maya: 'Maya',
-  card: 'Card',
 };
 
 // Quick compliment tags — tapping one appends the phrase into the
@@ -85,15 +91,20 @@ export default function RateScreen() {
   // never blocks the review and vice-versa.
   const [tipAmount, setTipAmount] = useState(0);
   const [tipStatus, setTipStatus] = useState<'idle' | 'sending' | 'done'>('idle');
-  const [tipMethod, setTipMethod] = useState<'gcash' | 'maya' | 'card'>('gcash');
-  // Wallet balance decides wallet-vs-gateway funding. null = still loading.
-  const [walletBalance, setWalletBalance] = useState<number | null>(null);
-  // Forced on when a wallet tip is rejected for insufficient balance — flips the
-  // UI to the online (gateway) method picker.
-  const [forceGateway, setForceGateway] = useState(false);
+  // null = not chosen yet, so the default follows the wallet balance once it
+  // loads (wallet when it covers the tip, GCash otherwise).
+  const [chosenTipMethod, setChosenTipMethod] = useState<TipMethod | null>(null);
+  // Set when a wallet tip is refused for insufficient balance — the wallet is
+  // then off the table for this screen.
+  const [walletRefused, setWalletRefused] = useState(false);
   const tipLatch = useRef(false);
+  // The GCash/Maya tip's Idempotency-Key, held across a failure whose outcome
+  // is unknown (timeout / offline / 5xx / 409) so the retry REPLAYS the first
+  // charge instead of opening a second one. Tied to the (amount, method) it was
+  // sent with: the server hashes the body, so a changed tip gets a fresh key.
+  const tipKeyRef = useRef<{ key: string; sig: string } | null>(null);
 
-  // Gateway-tip verification infra (shared with top-up / booking checkout).
+  // Gateway-tip verification infra (shared with booking checkout).
   const beginAttempt = usePaymentStore((s) => s.beginAttempt);
   const setAttemptStatus = usePaymentStore((s) => s.setStatus);
   const resolveAttempt = usePaymentStore((s) => s.resolve);
@@ -101,10 +112,10 @@ export default function RateScreen() {
   // Post-submit celebration overlay — shown briefly (SuccessCheck fires
   // its own success haptic), then we navigate home from onDone.
   const [showSuccess, setShowSuccess] = useState(false);
-  // Once the check animation settles we reveal a couple of calm, optional
-  // next-steps (Book again / Invite a friend) under the celebration. They
-  // never block the auto-return — a pending timer still carries the user
-  // home; tapping a step (or "Not now") just pre-empts and clears it.
+  // Once the check animation settles we reveal a calm, optional next step
+  // (Book again) under the celebration. It never blocks the auto-return — a
+  // pending timer still carries the user home; tapping it (or "Not now") just
+  // pre-empts and clears it.
   const [showNextSteps, setShowNextSteps] = useState(false);
   const autoReturnTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -159,13 +170,6 @@ export default function RateScreen() {
     );
   }, [cancelAutoReturn, clearDraft, setActiveBooking, router, booking?.errand_type_id]);
 
-  const handleInvite = useCallback(() => {
-    cancelAutoReturn();
-    haptics.light();
-    setActiveBooking(null);
-    router.replace('/(customer)/referral');
-  }, [cancelAutoReturn, setActiveBooking, router]);
-
   const handleSubmit = useCallback(async () => {
     // In-flight guard (defense-in-depth beyond the Button's disabled state): a
     // same-frame double-tap can fire two onPress calls before the re-render
@@ -217,32 +221,23 @@ export default function RateScreen() {
     finishAndGoHome();
   }, [finishAndGoHome]);
 
-  // Wallet balance decides whether the tip is funded instantly from the wallet
-  // or paid online. Best-effort — a failed fetch just defaults to the online
-  // (gateway) path, which works for everyone.
-  useEffect(() => {
-    let alive = true;
-    paymentService
-      .getWalletBalance()
-      .then((res: any) => {
-        if (alive) setWalletBalance(Number(res?.data?.data?.balance ?? 0));
-      })
-      .catch(() => {
-        if (alive) setWalletBalance(0);
-      });
-    return () => {
-      alive = false;
-    };
-  }, []);
-
   const runnerFirstName = booking?.runner?.full_name?.split(' ')[0];
-  // Wallet path only when we KNOW the balance covers the tip; otherwise (unknown
-  // or short, or forced after an insufficient-balance rejection) pay online.
-  const useWalletPath =
-    !forceGateway && walletBalance != null && walletBalance >= tipAmount;
+  // Tips come from the WITHDRAWABLE balance only — bonus credit never pays
+  // for one. The wallet is offered only when we KNOW it covers the tip.
+  const walletQ = useWalletSummary();
+  const withdrawable = walletQ.data?.withdrawable ?? null;
+  const walletCoversTip =
+    !walletRefused && withdrawable != null && tipAmount > 0 && withdrawable >= tipAmount;
+  const tipMethods: TipMethod[] = walletCoversTip ? ['wallet', 'gcash', 'maya'] : ['gcash', 'maya'];
+  const tipMethod: TipMethod =
+    chosenTipMethod && tipMethods.includes(chosenTipMethod)
+      ? chosenTipMethod
+      : walletCoversTip
+        ? 'wallet'
+        : 'gcash';
 
-  // Instant, wallet-funded tip. On an insufficient-balance rejection, flip to
-  // the online method picker instead of failing the whole action.
+  // Instant, wallet-funded tip. On an insufficient-balance rejection, fall
+  // back to GCash / Maya instead of failing the whole action.
   const sendWalletTip = useCallback(async () => {
     if (!bookingId || tipAmount <= 0 || tipLatch.current) return;
     tipLatch.current = true;
@@ -250,15 +245,15 @@ export default function RateScreen() {
     try {
       await bookingService.tip(bookingId, tipAmount);
       setTipStatus('done');
-      setWalletBalance((b) => (b == null ? b : Math.max(0, b - tipAmount)));
       invalidateQuery(['wallet']);
       haptics.success();
       toast.success('Tip sent — thank you!');
     } catch (err: any) {
       setTipStatus('idle');
       if (err?.code === 'INSUFFICIENT_WALLET_BALANCE') {
-        setForceGateway(true);
-        toast.info('Not enough wallet balance — pay the tip with GCash, Maya, or a card.');
+        setWalletRefused(true);
+        invalidateQuery(['wallet']);
+        toast.info('Not enough wallet balance — pay the tip with GCash or Maya.');
       } else if (err?.code === 'CONFLICT') {
         setTipStatus('done'); // already tipped elsewhere
         toast.info('You’ve already tipped this errand.');
@@ -271,9 +266,9 @@ export default function RateScreen() {
     }
   }, [bookingId, tipAmount]);
 
-  // Gateway-funded tip — pay the tip directly online (no wallet needed). Mirrors
-  // the top-up checkout: create the charge, open Xendit, VERIFY the outcome.
-  const payGatewayTip = useCallback(async () => {
+  // GCash / Maya tip — paid directly with a one-time checkout (no wallet
+  // needed): create the charge, open it, VERIFY the outcome.
+  const payGatewayTip = useCallback(async (method: 'gcash' | 'maya') => {
     if (!bookingId || tipAmount <= 0) return;
     if (isAttemptActive(usePaymentStore.getState().attempt)) {
       toast.info("We're still confirming your last payment — hang tight.");
@@ -281,12 +276,24 @@ export default function RateScreen() {
     }
     if (tipLatch.current) return;
     tipLatch.current = true;
-    const payAttempt = beginAttempt({ kind: 'tip', amount: tipAmount, method: tipMethod, bookingId });
+    const sig = `${tipAmount}|${method}`;
+    if (!tipKeyRef.current || tipKeyRef.current.sig !== sig) {
+      tipKeyRef.current = { key: newIdempotencyKey(), sig };
+    }
+    const payAttempt = beginAttempt({
+      kind: 'tip',
+      amount: tipAmount,
+      method,
+      bookingId,
+      idempotencyKey: tipKeyRef.current.key,
+    });
     setTipStatus('sending');
     try {
-      const res = await bookingService.tipCheckout(bookingId, tipAmount, tipMethod, {
+      const res = await bookingService.tipCheckout(bookingId, tipAmount, method, {
         idempotencyKey: payAttempt.idempotencyKey,
       });
+      // The server answered (a replay included): this key is spent.
+      tipKeyRef.current = null;
       const checkoutUrl: string | undefined = res.data?.checkout_url;
       const txId: string | undefined = res.data?.data?.id;
       if (!checkoutUrl) {
@@ -295,7 +302,7 @@ export default function RateScreen() {
         toast.error('Could not start the tip payment. Please try again.');
         return;
       }
-      setAttemptStatus('awaiting_gateway', { topupId: txId, checkoutUrl });
+      setAttemptStatus('awaiting_gateway', { transactionId: txId, checkoutUrl });
       const outcome = await openCheckoutUrl(checkoutUrl, PAYMENT_RETURN_URL);
       if (outcome === 'failed') {
         resolveAttempt();
@@ -313,14 +320,22 @@ export default function RateScreen() {
       // Back from checkout → let usePaymentVerification confirm the truth.
       setAttemptStatus('verifying');
     } catch (err: any) {
+      // Release the one-payment lock, but keep the key when the outcome is
+      // unknown so the next tap replays this charge rather than adding one.
       resolveAttempt();
+      if (!shouldRetainIdempotencyKey(err)) tipKeyRef.current = null;
       setTipStatus('idle');
       haptics.error();
       toast.error(errorMessage(err, 'Could not start the tip payment. You weren’t charged.'));
     } finally {
       tipLatch.current = false;
     }
-  }, [bookingId, tipAmount, tipMethod, beginAttempt, setAttemptStatus, resolveAttempt]);
+  }, [bookingId, tipAmount, beginAttempt, setAttemptStatus, resolveAttempt]);
+
+  const sendTip = () => {
+    if (tipMethod === 'wallet') void sendWalletTip();
+    else void payGatewayTip(tipMethod);
+  };
 
   // Shared pressed-state for the tag chips and Skip — same recipe as the
   // tracking chrome: scale + opacity, opacity only under Reduce Motion.
@@ -516,9 +531,9 @@ export default function RateScreen() {
             }
           />
 
-          {/* Optional tip — wallet-funded when the balance covers it, otherwise
-              paid online (GCash / Maya / card) so a zero-wallet / COD customer
-              can still tip. 100% goes to the runner either way. */}
+          {/* Optional tip — from the wallet when its balance covers it, or a
+              one-time GCash / Maya checkout so a zero-wallet / cash-errand
+              customer can still tip. 100% goes to the runner either way. */}
           {booking && booking.runner && (
             <View className="mt-4 pt-4 border-t border-divider">
               {tipStatus === 'done' ? (
@@ -571,72 +586,61 @@ export default function RateScreen() {
 
                   {tipAmount > 0 && (
                     <View className="mt-3">
-                      {useWalletPath ? (
-                        <>
-                          <Button
-                            title={`Send ₱${tipAmount} tip`}
-                            onPress={sendWalletTip}
-                            loading={tipStatus === 'sending'}
-                            loadingTitle="Sending…"
-                            fullWidth
-                          />
-                          <Text className="text-[11px] font-montserrat text-textMuted mt-2 text-center">
-                            Paid from your wallet
-                            {walletBalance != null ? ` (${formatCurrency(walletBalance)})` : ''} — 100% goes to your runner.
-                          </Text>
-                        </>
-                      ) : (
-                        <>
-                          <Text className="text-[11px] font-montserrat-semi text-textSecondary mb-2 text-center">
-                            Pay with
-                          </Text>
-                          <View className="flex-row justify-center gap-2 mb-3">
-                            {(['gcash', 'maya', 'card'] as const).map((m) => {
-                              const selected = tipMethod === m;
-                              return (
-                                <Pressable
-                                  key={m}
-                                  onPress={() => {
-                                    Haptics.selectionAsync().catch(() => {});
-                                    setTipMethod(m);
-                                  }}
-                                  hitSlop={{ top: 4, bottom: 4 }}
-                                  className={`px-3.5 py-2 rounded-full border ${
-                                    selected
-                                      ? 'bg-primaryLight border-primary'
-                                      : 'bg-surfaceMuted border-transparent'
-                                  }`}
-                                  style={({ pressed }) => [
-                                    { minHeight: 36, justifyContent: 'center' },
-                                    pressFx(pressed),
-                                  ]}
-                                  accessibilityRole="button"
-                                  accessibilityState={{ selected }}
-                                  accessibilityLabel={`Pay tip with ${TIP_METHOD_LABEL[m]}`}
-                                >
-                                  <Text
-                                    className={`text-xs font-montserrat-semi ${
-                                      selected ? 'text-primary' : 'text-textSecondary'
-                                    }`}
-                                  >
-                                    {TIP_METHOD_LABEL[m]}
-                                  </Text>
-                                </Pressable>
-                              );
-                            })}
-                          </View>
-                          <Button
-                            title={`Pay ₱${tipAmount} tip`}
-                            onPress={payGatewayTip}
-                            loading={tipStatus === 'sending'}
-                            loadingTitle="Starting…"
-                            fullWidth
-                          />
-                          <Text className="text-[11px] font-montserrat text-textMuted mt-2 text-center">
-                            Paid via {TIP_METHOD_LABEL[tipMethod]} — 100% goes to your runner.
-                          </Text>
-                        </>
-                      )}
+                      <Text className="text-[11px] font-montserrat-semi text-textSecondary mb-2 text-center">
+                        Pay with
+                      </Text>
+                      <View className="flex-row justify-center gap-2 mb-3">
+                        {tipMethods.map((m) => {
+                          const selected = tipMethod === m;
+                          return (
+                            <Pressable
+                              key={m}
+                              onPress={() => {
+                                Haptics.selectionAsync().catch(() => {});
+                                setChosenTipMethod(m);
+                              }}
+                              hitSlop={{ top: 4, bottom: 4 }}
+                              className={`px-3.5 py-2 rounded-full border ${
+                                selected
+                                  ? 'bg-primaryLight border-primary'
+                                  : 'bg-surfaceMuted border-transparent'
+                              }`}
+                              style={({ pressed }) => [
+                                { minHeight: 36, justifyContent: 'center' },
+                                pressFx(pressed),
+                              ]}
+                              accessibilityRole="button"
+                              accessibilityState={{ selected }}
+                              accessibilityLabel={`Pay tip with ${TIP_METHOD_LABEL[m]}`}
+                            >
+                              <Text
+                                className={`text-xs font-montserrat-semi ${
+                                  selected ? 'text-primary' : 'text-textSecondary'
+                                }`}
+                              >
+                                {TIP_METHOD_LABEL[m]}
+                              </Text>
+                            </Pressable>
+                          );
+                        })}
+                      </View>
+                      <Button
+                        title={
+                          tipMethod === 'wallet'
+                            ? `Send ₱${tipAmount} tip`
+                            : `Pay ₱${tipAmount} tip`
+                        }
+                        onPress={sendTip}
+                        loading={tipStatus === 'sending'}
+                        loadingTitle={tipMethod === 'wallet' ? 'Sending…' : 'Starting…'}
+                        fullWidth
+                      />
+                      <Text className="text-[11px] font-montserrat text-textMuted mt-2 text-center">
+                        {tipMethod === 'wallet' && withdrawable != null
+                          ? `Paid from your wallet (${formatCurrency(withdrawable)})`
+                          : `Paid via ${TIP_METHOD_LABEL[tipMethod]}`}{' '}
+                        — 100% goes to your runner.
+                      </Text>
                     </View>
                   )}
                 </>
@@ -694,9 +698,8 @@ export default function RateScreen() {
             Thanks for the feedback!
           </Text>
 
-          {/* Re-engage at peak satisfaction — two honest next-steps.
-              Rendered graceful: Book again only appears once we know the
-              errand type; Invite always works. Both fall through to the
+          {/* Re-engage at peak satisfaction — Book again only appears once
+              we know the errand type, and everything falls through to the
               auto-return if the user does nothing. */}
           {showNextSteps && (
             <View className="w-full px-8 mt-8 gap-3">
@@ -709,14 +712,6 @@ export default function RateScreen() {
                   fullWidth
                 />
               ) : null}
-              <Button
-                title="Invite a friend — you both earn credit"
-                variant="secondary"
-                icon={Gift}
-                onPress={handleInvite}
-                accessibilityHint="Share your referral code"
-                fullWidth
-              />
               <Pressable
                 className="items-center py-2 mt-1"
                 onPress={finishAndGoHome}
@@ -734,9 +729,10 @@ export default function RateScreen() {
         </View>
       )}
 
-      {/* Gateway-tip verification — same honest verify/success/failure overlay
-          as the top-up checkout. Only shown for an active 'tip' attempt; the
-          runner is credited solely on a backend-confirmed success. */}
+      {/* GCash/Maya tip verification — the same honest verify/success/failure
+          overlay as the booking checkout. Only shown for an active 'tip'
+          attempt; the runner is credited solely on a backend-confirmed
+          success. */}
       <PaymentProgress
         stage={
           attempt?.kind === 'tip' && verifyStage && verifyStage !== 'preparing'

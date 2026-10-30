@@ -1,7 +1,18 @@
+import { useEffect } from 'react';
 import { Stack } from 'expo-router';
 import { STACK_ANIMATION } from '../../../constants/navigation';
+import { useAuthStore } from '../../../stores/authStore';
+import { prefetchWalletSummary } from '../../../services/preload.service';
 
 export default function BookFlowLayout() {
+  const userId = useAuthStore((s) => s.user?.id);
+
+  // Every way into the funnel mounts this layout, so this is where the Review
+  // screen's payment selector gets its wallet balance warmed (best-effort).
+  useEffect(() => {
+    if (userId) prefetchWalletSummary(userId);
+  }, [userId]);
+
   return (
     <Stack
       screenOptions={{

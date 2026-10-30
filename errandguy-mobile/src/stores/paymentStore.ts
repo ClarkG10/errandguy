@@ -13,13 +13,12 @@ import { newIdempotencyKey } from '../utils/idempotency';
  * Mirrors the hand-rolled AsyncStorage + `isHydrated` pattern of bookingStore
  * (no zustand persist middleware, to match the codebase).
  */
-// 'tip' is a gateway-funded runner tip. It behaves like 'topup' for
-// verification — a wallet_transaction polled via the shared transaction-status
-// endpoint — so its transaction id rides in `topupId`.
-export type PaymentKind = 'booking' | 'topup' | 'payout' | 'tip';
+// 'tip' is a GCash/Maya runner tip: a wallet_transaction polled via the
+// transaction-status endpoint, so its id rides in `transactionId`.
+export type PaymentKind = 'booking' | 'payout' | 'tip';
 
 export type AttemptStatus =
-  | 'preparing' // creating the booking/top-up/payout on our server
+  | 'preparing' // creating the booking/tip/payout on our server
   | 'awaiting_gateway' // handed a checkout URL, user is in Xendit
   | 'verifying' // back from checkout, polling the backend for the truth
   | 'pending' // still unconfirmed after a while — safe to leave, we'll notify
@@ -32,7 +31,9 @@ export interface PaymentAttempt {
   idempotencyKey: string;
   kind: PaymentKind;
   bookingId?: string;
-  topupId?: string;
+  /** A tip charge's wallet_transaction id, polled at
+   *  /wallet/transactions/{id}/status. */
+  transactionId?: string;
   /** Filled from the create response so we can poll /payments/{id}/status. */
   paymentId?: string;
   amount: number;
@@ -93,6 +94,25 @@ export const shouldRetainIdempotencyKey = (err: unknown): boolean => {
 export const isAttemptActive = (a?: PaymentAttempt | null): boolean =>
   !!a && !TERMINAL.includes(a.status);
 
+/**
+ * Read an attempt persisted by THIS build or the one before it, or null when
+ * it can't be resumed.
+ *
+ * The build before the launch simplification also wrote wallet top-up
+ * attempts (kind 'topup'). Top-ups are retired, so one of those comes back as
+ * null and is dropped: it can't be resumed here, and holding it would keep the
+ * one-payment-at-a-time lock and block every booking. Nothing is lost — the
+ * server still settles that charge, and it stays in the wallet history. That
+ * build also kept a tip charge's id in `topupId`; it moves to `transactionId`
+ * so the tip is still verified.
+ */
+const fromStoredAttempt = (raw: unknown): PaymentAttempt | null => {
+  if (!raw || typeof raw !== 'object') return null;
+  const { topupId, ...rest } = raw as PaymentAttempt & { topupId?: string };
+  if (!(['booking', 'payout', 'tip'] as string[]).includes(rest.kind)) return null;
+  return rest.transactionId || !topupId ? rest : { ...rest, transactionId: topupId };
+};
+
 const persist = (attempt: PaymentAttempt | null) => {
   // Synchronous write — no debounce. Losing an in-flight money attempt to a
   // crash is worse than an extra AsyncStorage write.
@@ -121,7 +141,7 @@ interface PaymentStoreState {
     amount: number;
     method?: string;
     bookingId?: string;
-    topupId?: string;
+    transactionId?: string;
     idempotencyKey?: string;
   }) => PaymentAttempt;
   /** Record the server payment id once the create response returns. */
@@ -144,7 +164,7 @@ export const usePaymentStore = create<PaymentStoreState>((set, get) => ({
       idempotencyKey: init.idempotencyKey ?? newIdempotencyKey(),
       kind: init.kind,
       bookingId: init.bookingId,
-      topupId: init.topupId,
+      transactionId: init.transactionId,
       amount: init.amount,
       method: init.method,
       status: 'preparing',
@@ -185,18 +205,19 @@ export const usePaymentStore = create<PaymentStoreState>((set, get) => ({
         set({ isHydrated: true });
         return;
       }
-      const attempt = JSON.parse(raw) as PaymentAttempt;
+      const attempt = fromStoredAttempt(JSON.parse(raw));
       const stale =
         !attempt?.startedAt || Date.now() - attempt.startedAt > ATTEMPT_MAX_AGE_MS;
       // Drop stale, and drop already-concluded attempts — a terminal outcome
       // shouldn't re-hijack the UI on every relaunch. Also drop a rehydrated
       // 'preparing' attempt: it's the pre-create state, so it holds no server
-      // reference (paymentId/bookingId/topupId/checkoutUrl) to resume or verify
-      // and no gateway charge has happened yet — but it IS "active", so keeping
-      // it would hold the one-payment-at-a-time lock forever and silently block
-      // every future booking AND top-up (neither poll nor safety-net clears it).
-      // Live-session 'preparing' attempts are untouched (only rehydrate drops).
-      if (stale || isAttemptTerminal(attempt) || attempt?.status === 'preparing') {
+      // reference (paymentId/bookingId/transactionId/checkoutUrl) to resume or
+      // verify and no gateway charge has happened yet — but it IS "active", so
+      // keeping it would hold the one-payment-at-a-time lock forever and
+      // silently block every future booking AND tip (neither poll nor
+      // safety-net clears it). Live-session 'preparing' attempts are untouched
+      // (only rehydrate drops).
+      if (!attempt || stale || isAttemptTerminal(attempt) || attempt.status === 'preparing') {
         await AsyncStorage.removeItem(STORAGE_KEY).catch(() => {});
         set({ isHydrated: true });
         return;

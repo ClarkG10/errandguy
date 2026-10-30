@@ -8,11 +8,16 @@ use App\Models\SystemConfig;
  * The catalog of settlement methods the platform can offer, and which of
  * them are currently ENABLED (operator-controlled).
  *
- * "Available payment methods" are managed here: the enabled set is stored in
- * system_config under `enabled_payment_methods` (a CSV of type keys) so an
- * admin can turn GCash / Maya / Card / Wallet / Cash on or off without a
- * deploy. The customer app reads `enabled()` to decide what to show, and
- * booking/top-up validation rejects a disabled method.
+ * Launch methods: the ErrandGuy wallet (pay from an existing balance only —
+ * there are no top-ups), GCash and Maya (a one-time Xendit e-wallet charge),
+ * and cash. Cards, GrabPay and linked/one-tap e-wallets are retired; see
+ * {@see self::RETIRED} for what an older app build that still offers them is
+ * told.
+ *
+ * The enabled set is stored in system_config under `enabled_payment_methods`
+ * (a CSV of type keys) so an admin can turn a method off without a deploy.
+ * The customer app reads `enabled()` to decide what to show, and booking and
+ * tip validation reject anything else.
  */
 class PaymentMethodCatalog
 {
@@ -23,8 +28,18 @@ class PaymentMethodCatalog
         ['type' => 'wallet', 'label' => 'ErrandGuy Wallet', 'description' => 'Pay instantly from your wallet balance', 'online' => false],
         ['type' => 'gcash',  'label' => 'GCash',            'description' => 'Pay online via GCash',                  'online' => true],
         ['type' => 'maya',   'label' => 'Maya',             'description' => 'Pay online via Maya',                   'online' => true],
-        ['type' => 'card',   'label' => 'Credit / Debit Card', 'description' => 'Pay online with your card',          'online' => true],
         ['type' => 'cash',   'label' => 'Cash on Delivery', 'description' => 'Pay your runner directly on completion', 'online' => false],
+    ];
+
+    /**
+     * Retired method keys an older app build may still send, and the method
+     * name to put in the refusal. Kept so that build gets a clear 422 instead
+     * of a bare "invalid value"; delete once the app update is out.
+     */
+    public const RETIRED = [
+        'card' => 'Card payments',
+        'grabpay' => 'GrabPay',
+        'grab_pay' => 'GrabPay',
     ];
 
     /** All valid method type keys. */
@@ -48,6 +63,24 @@ class PaymentMethodCatalog
     public static function isEnabled(string $type): bool
     {
         return in_array($type, self::enabledTypes(), true);
+    }
+
+    /**
+     * The refusal for a retired method, or null when $type isn't one.
+     *
+     * @param  string  $alternatives  what the customer can use instead, e.g.
+     *                                "GCash, Maya or cash"
+     */
+    public static function retiredMessage(?string $type, string $alternatives = 'GCash, Maya or cash'): ?string
+    {
+        $name = self::RETIRED[strtolower(trim((string) $type))] ?? null;
+        if ($name === null) {
+            return null;
+        }
+
+        $verb = str_ends_with($name, 's') ? 'are' : 'is';
+
+        return "{$name} {$verb} no longer available — please pay with {$alternatives}.";
     }
 
     /** Enabled catalog entries (what the customer app should display). */

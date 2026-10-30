@@ -47,7 +47,7 @@ describe('clearAccountScopedState — on-device PII', () => {
     usePreferencesStore.setState({ reduceHaptics: true });
     usePreferencesStore
       .getState()
-      .setLastPaymentMethod('user-1', { id: '__gcash__', type: 'gcash' });
+      .setLastPaymentMethod('user-1', 'gcash');
 
     await clearAccountScopedState();
 
@@ -76,7 +76,7 @@ describe('clearAccountScopedState — on-device PII', () => {
   it('never lets a storage failure block the sign-out', async () => {
     usePreferencesStore
       .getState()
-      .setLastPaymentMethod('user-1', { id: '__gcash__', type: 'gcash' });
+      .setLastPaymentMethod('user-1', 'gcash');
     const getAllKeys = jest
       .spyOn(AsyncStorage, 'getAllKeys')
       .mockRejectedValue(new Error('disk full'));

@@ -570,7 +570,7 @@ export const apiCache = {
   // pull-to-refresh so an explicit pull always reads the network, without
   // spawning a duplicate of a request already in flight. URL-agnostic on
   // purpose — the semantic query key[0] does not reliably map to the REST URL
-  // (e.g. 'payment-methods' vs '/payments/methods'), so a per-prefix
+  // (e.g. 'available-methods' vs '/payments/available-methods'), so a per-prefix
   // invalidate would silently no-op on those screens.
   clearResponses() {
     microCache.clear();

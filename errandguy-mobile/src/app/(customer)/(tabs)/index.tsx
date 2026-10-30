@@ -24,7 +24,6 @@ import {
   ChevronRight,
   X,
   Wallet,
-  Gift,
 } from 'lucide-react-native';
 import type { LucideIcon } from 'lucide-react-native';
 import * as Haptics from 'expo-haptics';
@@ -37,7 +36,6 @@ import { bookingService } from '../../../services/booking.service';
 import { warmTracking } from '../../../services/preload.service';
 import { configService } from '../../../services/config.service';
 import { paymentService } from '../../../services/payment.service';
-import { userService, type ReferralInfo } from '../../../services/user.service';
 import { useQuery } from '../../../hooks/useQuery';
 import { useHideTabBarOnScroll } from '../../../hooks/useHideTabBarOnScroll';
 import { CacheTTL } from '../../../services/cache.service';
@@ -253,12 +251,11 @@ export default function CustomerHomeScreen() {
     { staleTime: 30_000, ttl: CacheTTL.SHORT, enabled: enabled && !!user?.id },
   );
 
-  // ── Rewards band sources ──────────────────────────────────────────────
-  // Both mirror the exact useQuery keys/shapes the Profile tab already
-  // prefetches (see preload.service: prefetchReferral and the
+  // ── Rewards band source ───────────────────────────────────────────────
+  // The exact useQuery key/shape the boot snapshot seeds (preload.service's
   // ['wallet','balance'] warm), so a returning user's band paints from cache
-  // with no extra network round-trip. Each degrades to empty on a missing
-  // backend, which collapses its pill (see rewardItems) rather than erroring.
+  // with no extra network round-trip. An empty or missing balance collapses
+  // the pill (see rewardItems) rather than erroring.
   const walletBalanceQ = useQuery<number>(
     ['wallet', 'balance', user?.id ?? 'anon'],
     async () => {
@@ -268,15 +265,6 @@ export default function CustomerHomeScreen() {
       return (res.data?.data?.balance ?? res.data?.balance ?? 0) as number;
     },
     { staleTime: 30_000, ttl: CacheTTL.SHORT, enabled: enabled && !!user?.id },
-  );
-
-  const referralQ = useQuery<ReferralInfo | null>(
-    ['user', 'referral', user?.id ?? 'anon'],
-    async () => {
-      const res = await userService.getReferral();
-      return (res.data?.data ?? null) as ReferralInfo | null;
-    },
-    { staleTime: 30_000, ttl: CacheTTL.MEDIUM, enabled: enabled && !!user?.id },
   );
 
   const errandTypes = useMemo(
@@ -402,7 +390,6 @@ export default function CustomerHomeScreen() {
       activeBookingQ.refresh(),
       activeBookingsQ.refresh(),
       walletBalanceQ.refresh(),
-      referralQ.refresh(),
     ]);
     setRefreshing(false);
   }, [
@@ -411,7 +398,6 @@ export default function CustomerHomeScreen() {
     activeBookingQ,
     activeBookingsQ,
     walletBalanceQ,
-    referralQ,
   ]);
 
   const greeting = (() => {
@@ -722,10 +708,10 @@ export default function CustomerHomeScreen() {
   ];
 
   // Rewards band — a slim, self-collapsing strip that surfaces value the user
-  // already holds: wallet credit and an invite teaser. Each entry only
-  // materializes when it has something real to say, so an empty band renders
-  // NOTHING (see the length guard in the JSX). Amber is the reward family here
-  // (accentSoft surface) with a blue chevron as the CTA.
+  // already holds: wallet credit. An entry only materializes when it has
+  // something real to say, so an empty band renders NOTHING (see the length
+  // guard in the JSX). Amber is the reward family here (accentSoft surface)
+  // with a blue chevron as the CTA.
   const rewardItems = useMemo(() => {
     const items: {
       key: string;
@@ -747,21 +733,8 @@ export default function CustomerHomeScreen() {
       });
     }
 
-    // Invite teaser — only once the referral endpoint has actually returned a
-    // shareable code. No referral data ⇒ no pill, so the band stays honest and
-    // can still fully collapse when there's genuinely nothing to show.
-    if (referralQ.data?.referral_code) {
-      items.push({
-        key: 'invite',
-        icon: Gift,
-        label: 'Invite & earn',
-        a11yLabel: 'Invite friends and earn rewards',
-        onPress: () => router.push('/(customer)/referral' as any),
-      });
-    }
-
     return items;
-  }, [walletBalanceQ.data, referralQ.data, router]);
+  }, [walletBalanceQ.data, router]);
 
   // Compact hero — just enough blue for the safe-area inset, the greeting +
   // search chrome, and a slim gradient band the destination card floats over.
@@ -1158,10 +1131,10 @@ export default function CustomerHomeScreen() {
         </ScrollView>
 
         {/* Rewards band — self-collapsing. Sits between the quick-action pills
-            and the service grid, surfacing wallet credit / an invite teaser
-            the user already holds. Renders NOTHING when there's nothing
-            to show; amber reward pills (accentSoft) with a blue chevron CTA
-            distinguish it from the neutral quick actions above. */}
+            and the service grid, surfacing wallet credit the user already
+            holds. Renders NOTHING when there's nothing to show; amber reward
+            pills (accentSoft) with a blue chevron CTA distinguish it from the
+            neutral quick actions above. */}
         {rewardItems.length > 0 && (
           <ScrollView
             horizontal

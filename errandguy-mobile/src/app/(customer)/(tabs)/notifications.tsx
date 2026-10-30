@@ -10,8 +10,7 @@ import { useRouter } from 'expo-router';
 import {
   Bell,
   Package,
-  CreditCard,
-  Gift,
+  Wallet,
   MessageCircle,
   AlertTriangle,
   Info,
@@ -53,7 +52,7 @@ import { toast } from '../../../stores/toastStore';
 
 // Per-type presentation: a lucide icon inside a soft-tinted chip plus
 // the accent used for the unread dot and glyph. Blue-first — only
-// payment/referral/sos borrow the existing status semantics. `textColor`
+// payment/sos borrow the existing status semantics. `textColor`
 // is the small-text rung (the 10px eyebrow needs the darker shade to
 // hit contrast; the 18px glyph keeps the brighter base tone).
 const TYPE_META: Record<
@@ -81,16 +80,10 @@ const TYPE_META: Record<
     chipClass: 'bg-surfaceMuted',
   },
   payment: {
-    icon: CreditCard,
+    icon: Wallet,
     color: LightColors.success,
     textColor: LightColors.successDark,
     chipClass: 'bg-successSoft',
-  },
-  referral: {
-    icon: Gift,
-    color: LightColors.accentStrong,
-    textColor: LightColors.accentDark,
-    chipClass: 'bg-accentSoft',
   },
   chat: {
     icon: MessageCircle,
@@ -137,7 +130,6 @@ const TYPE_LABELS: Record<NotificationType, string> = {
   system: 'System',
   document_update: 'Document',
   onboarding_reminder: 'Sign-up',
-  referral: 'Referral',
 };
 
 // Category filter chips — a coarser grouping over the TYPE_META types
@@ -156,7 +148,7 @@ const CATEGORIES: { key: CategoryKey; label: string }[] = [
 const CATEGORY_TYPES: Record<Exclude<CategoryKey, 'all'>, NotificationType[]> =
   {
     bookings: ['booking_update', 'shopping_items_updated', 'booking_stops_updated'],
-    payments: ['payment', 'referral'],
+    payments: ['payment'],
     // onboarding_reminder sits here with document_update: both are KYC-ish
     // nudges, and without an entry it appeared under "All" ONLY — invisible
     // the moment any chip was selected.
@@ -696,12 +688,9 @@ export default function NotificationsScreen() {
             );
           }
           break;
-        // referral + sos were missing here, so tapping those rows in the list
-        // did nothing while tapping the SAME push navigated. Mirror the push-tap
-        // routing (useNotifications) so the in-app list and push agree.
-        case 'referral':
-          router.push('/(customer)/wallet');
-          break;
+        // sos was missing here, so tapping that row in the list did nothing
+        // while tapping the SAME push navigated. Mirror the push-tap routing
+        // (useNotifications) so the in-app list and push agree.
         case 'sos':
           if (data.booking_id) {
             router.push(`/(customer)/tracking/${data.booking_id as string}`);

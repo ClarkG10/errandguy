@@ -73,7 +73,7 @@ const FAQS: FAQ[] = [
   {
     question: 'How do I pay?',
     answer:
-      'Cash on delivery, in-app wallet (Add Money), or any saved card. You can switch the payment method during booking. Refunds for cancelled errands return to your wallet.',
+      'Cash on delivery, GCash or Maya (you approve the payment in their app), or your ErrandGuy wallet balance. You choose on the review screen before you confirm. Refunds for cancelled errands return to your wallet, and you can withdraw your wallet balance to GCash or Maya anytime from the Wallet screen.',
   },
   {
     question: 'What if my runner cancels or never arrives?',

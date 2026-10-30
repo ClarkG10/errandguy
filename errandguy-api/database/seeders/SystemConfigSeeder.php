@@ -57,8 +57,8 @@ class SystemConfigSeeder extends Seeder
             ],
             [
                 'key' => 'enabled_payment_methods',
-                'value' => 'wallet,gcash,maya,card,cash',
-                'description' => 'CSV of payment methods offered to customers (managed via admin). Valid: wallet,gcash,maya,card,cash',
+                'value' => 'wallet,gcash,maya,cash',
+                'description' => 'CSV of payment methods offered to customers (managed via admin). Valid: wallet,gcash,maya,cash',
             ],
         ];
 

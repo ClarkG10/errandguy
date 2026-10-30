@@ -5,7 +5,7 @@ import { PaymentProgress } from '../PaymentProgress';
 
 /**
  * The money path's blocking overlay. It covers the screen for 10-60s while a
- * booking / top-up / tip is charged, so a screen-reader user who hears nothing
+ * booking or tip is charged, so a screen-reader user who hears nothing
  * cannot tell whether they have been charged.
  *
  * react-native's jest setup already replaces announceForAccessibility with a

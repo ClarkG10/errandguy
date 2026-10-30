@@ -223,7 +223,9 @@ function OfferWatcher() {
    * Accept the direct offer. Deliberately not optimistic: the server
    * serialises the claim with a row lock, so the UI waits for its answer.
    * Errors reuse the backend's honest codes (BOOKING_STALE = "it went to
-   * someone else", BOOKING_CONFLICT = "finish your active errand first").
+   * someone else", BOOKING_CONFLICT = "finish your active errand first",
+   * CASH_DEBT_OUTSTANDING = the server's own "you owe ₱X from cash errands"
+   * sentence, passed through as-is).
    */
   const handleAccept = useCallback(async () => {
     const offer = useRunnerStore.getState().incomingRequest?.booking;

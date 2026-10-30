@@ -23,7 +23,7 @@ class WalletTransactionsTable
                 TextColumn::make('type')
                     ->badge()
                     ->color(fn (string $state): string => match ($state) {
-                        'top_up', 'earning', 'bonus' => 'success',
+                        'top_up', 'earning', 'bonus', 'tip', 'cancel_fee' => 'success',
                         'refund' => 'info',
                         'payout', 'payment' => 'warning',
                         default => 'gray',
@@ -43,6 +43,7 @@ class WalletTransactionsTable
                         'completed' => 'success',
                         'pending' => 'warning',
                         'failed' => 'danger',
+                        'refunded' => 'info',
                         'reversed' => 'gray',
                         default => 'gray',
                     }),
@@ -58,12 +59,17 @@ class WalletTransactionsTable
             ->filters([
                 SelectFilter::make('type')
                     ->options([
-                        'top_up' => 'Top-up',
                         'payout' => 'Payout',
                         'earning' => 'Earning',
+                        'cancel_fee' => 'Cancellation fee',
+                        'tip' => 'Tip',
+                        'commission' => 'Cash commission',
                         'payment' => 'Payment',
                         'refund' => 'Refund',
-                        'bonus' => 'Bonus',
+                        // Legacy types: top-ups and referral bonuses are
+                        // retired, but their rows stay in the ledger.
+                        'top_up' => 'Top-up (legacy)',
+                        'bonus' => 'Bonus (legacy)',
                     ]),
                 SelectFilter::make('status')
                     ->options([

@@ -281,11 +281,14 @@ class RunnerErrandController extends Controller
             }
 
             if ($e->getMessage() === 'cash_debt') {
-                // Names the amount to settle — a bare refusal would leave the
-                // runner blocked with no idea what to do about it.
+                // Names the amount and how it clears — a bare refusal would
+                // leave the runner blocked with no idea what to do about it.
+                // Still a 409 (the errand can't be taken), with its own code so
+                // the app doesn't show its generic "errand in progress" copy.
                 return $this->fail(
-                    ErrorCode::BOOKING_CONFLICT,
+                    ErrorCode::CASH_DEBT_OUTSTANDING,
                     \App\Support\CashDebtPolicy::message((float) $user->fresh()->wallet_balance),
+                    409,
                 );
             }
 
@@ -393,9 +396,8 @@ class RunnerErrandController extends Controller
             // their tracking screen drops back to "finding a runner" instead of
             // showing a runner who just walked away. The old WAL-tail feed used to
             // deliver this automatically; now it's an explicit Reverb broadcast. The
-            // `pending` status has no push template (SendBookingStatusNotification)
-            // and the referral listener no-ops off `completed`, so this fires the
-            // broadcast only — no spurious notification.
+            // `pending` status has no push template (SendBookingStatusNotification),
+            // so this fires the broadcast only — no spurious notification.
             event(new BookingStatusChanged($booking, 'matched', 'pending'));
 
             // Re-dispatch matching. The declining runner is on the booking's
@@ -554,10 +556,9 @@ class RunnerErrandController extends Controller
         }
 
         // Dispatch AFTER the transaction commits (mirroring accept()/decline()),
-        // so the queued referral-reward listener — which counts the referee's
-        // COMPLETED bookings — sees the just-completed row persisted instead of
-        // racing an uncommitted write and dropping the bonus. The event itself
-        // is also ShouldDispatchAfterCommit as a belt-and-suspenders guard.
+        // so queued listeners see the just-completed row persisted instead of
+        // racing an uncommitted write. The event itself is also
+        // ShouldDispatchAfterCommit as a belt-and-suspenders guard.
         event(new BookingStatusChanged($booking, $oldStatus, $newStatus));
 
         $booking->load(['errandType', 'customer', 'statusLogs']);

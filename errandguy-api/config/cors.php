@@ -33,7 +33,7 @@ return [
         // The API's own middleware reads these custom request headers. Without
         // them here, a browser client (the Expo web build) has its CORS preflight
         // rejected before it can even reach the idempotency / conditional-GET
-        // logic — silently breaking booking-create / top-up / payout on the web.
+        // logic — silently breaking booking-create / withdraw / payout on the web.
         'Idempotency-Key',
         'If-None-Match',
     ],

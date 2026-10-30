@@ -1,69 +1,62 @@
 import api from './api';
 import { invalidateQuery } from '../hooks/useQuery';
+import type { WalletSummary } from '../types';
 
 const invalidateWallet = () => {
   invalidateQuery(['wallet']);
 };
-const invalidatePaymentMethods = () => {
-  invalidateQuery(['payment-methods']);
-};
+
+/** POST /wallet/withdraw body — a customer's withdrawal to GCash or Maya. */
+export interface WithdrawalRequest {
+  amount: number;
+  channel: 'gcash' | 'maya';
+  /** 09XXXXXXXXX or +639XXXXXXXXX */
+  account_number: string;
+  account_name: string;
+}
+
+/**
+ * GET /wallet/balance → `data`, normalized to numbers.
+ *
+ * Laravel serializes decimals as strings, and a server from before the launch
+ * simplification sends `balance` alone — so `withdrawable` is derived from it
+ * (never below zero) and a missing `bonus_balance` reads as none.
+ */
+export function parseWalletSummary(payload: unknown): WalletSummary {
+  const p = (payload ?? {}) as Partial<Record<keyof WalletSummary, unknown>>;
+  const num = (v: unknown) => {
+    const n = Number(v);
+    return Number.isFinite(n) ? n : 0;
+  };
+  const balance = num(p.balance);
+  return {
+    balance,
+    withdrawable: p.withdrawable != null ? Math.max(0, num(p.withdrawable)) : Math.max(0, balance),
+    bonus_balance: Math.max(0, num(p.bonus_balance)),
+  };
+}
 
 export const paymentService = {
-  getPaymentMethods() {
-    return api.get('/payments/methods', { cacheTtlMs: 30_000, silent: true });
-  },
-
-  // Platform-offered methods (operator-managed). The selector shows only these.
+  // Platform-offered methods (operator-managed): the enabled subset of
+  // wallet, gcash, maya and cash. The selector shows only these.
   getAvailableMethods() {
     return api.get('/payments/available-methods', { cacheTtlMs: 60_000, silent: true });
-  },
-
-  addPaymentMethod(data: {
-    type: 'card' | 'gcash' | 'maya';
-    gateway_token: string;
-    label?: string;
-  }) {
-    const p = api.post('/payments/methods', data);
-    p.then(invalidatePaymentMethods).catch(() => {});
-    return p;
-  },
-
-  // Start linking a reusable e-wallet (GCash/Maya/GrabPay). Returns an
-  // `action_url` the app opens for the customer to authorize; the method
-  // becomes usable once Xendit fires payment_method.activated.
-  linkEwallet(channel: 'gcash' | 'maya' | 'grabpay') {
-    const p = api.post('/payments/methods/link', { channel });
-    p.then(invalidatePaymentMethods).catch(() => {});
-    return p;
-  },
-
-  removePaymentMethod(id: string) {
-    const p = api.delete(`/payments/methods/${id}`);
-    p.then(invalidatePaymentMethods).catch(() => {});
-    return p;
-  },
-
-  setDefaultMethod(id: string) {
-    const p = api.put(`/payments/methods/${id}/default`);
-    p.then(invalidatePaymentMethods).catch(() => {});
-    return p;
   },
 
   getWalletBalance() {
     return api.get('/wallet/balance', { cacheTtlMs: 15_000, silent: true });
   },
 
-  // payment_method_id is optional — the Xendit hosted invoice lets the
-  // customer choose GCash / Maya / card at checkout. Returns a
-  // `checkout_url` the app must open; the wallet is credited only after
-  // Xendit confirms via webhook.
-  topUpWallet(
-    // `method` (gcash|maya|card): gcash/maya charge directly and deep-link into
-    // the wallet app (no hosted page); card / omitted → the hosted invoice.
-    data: { amount: number; method?: 'gcash' | 'maya' | 'card'; payment_method_id?: string },
-    opts?: { idempotencyKey?: string },
-  ) {
-    const p = api.post('/wallet/top-up', data, { idempotencyKey: opts?.idempotencyKey });
+  /**
+   * Withdraw wallet money to GCash or Maya (customers only).
+   *
+   * The Idempotency-Key is REQUIRED (the server answers 428 without one) and
+   * becomes the payout's reference, so a double-tap or a retry of the same
+   * withdrawal returns the first one instead of debiting twice. The money is
+   * debited now and staff send it, so the result is a PENDING payout row.
+   */
+  withdraw(data: WithdrawalRequest, opts: { idempotencyKey: string }) {
+    const p = api.post('/wallet/withdraw', data, { idempotencyKey: opts.idempotencyKey });
     p.then(invalidateWallet).catch(() => {});
     return p;
   },
@@ -89,8 +82,8 @@ export const paymentService = {
     });
   },
 
-  // Status probe for a single wallet top-up.
-  getTopUpStatus(transactionId: string) {
+  // Status probe for a single wallet transaction — a GCash/Maya tip charge.
+  getTransactionStatus(transactionId: string) {
     return api.get(`/wallet/transactions/${transactionId}/status`, {
       noCache: true,
       noDedupe: true,

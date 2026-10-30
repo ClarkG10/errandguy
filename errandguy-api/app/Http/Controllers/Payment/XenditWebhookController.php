@@ -63,22 +63,21 @@ class XenditWebhookController extends Controller
                 'payment.failed' => $this->handlePaymentFailed($data),
                 'payment.pending' => $this->handlePaymentPending($data),
                 'refund.succeeded' => $this->handleRefundSucceeded($data),
-                // v2 invoices (used for wallet top-ups) may fire these events.
+                // Legacy: v2 invoices (card payments, card tips and wallet
+                // top-ups started before those were retired) may fire these.
                 'invoice.paid' => $this->handleInvoicePaid($data ?: $payload),
                 'invoice.expired' => $this->handleInvoiceExpired($data ?: $payload),
-                // Linked e-wallet lifecycle (Stage 2 saved methods).
-                'payment_method.activated' => $this->handlePaymentMethodStatus($data, 'active'),
-                'payment_method.expired' => $this->handlePaymentMethodStatus($data, 'expired'),
-                'payment_method.failed' => $this->handlePaymentMethodStatus($data, 'failed'),
-                // Runner payouts (Xendit Payouts v2). Success marks the payout
-                // completed; failure/reversal re-credits the runner's wallet.
+                // Payouts (Xendit Payouts v2). Success marks the payout
+                // completed; failure/reversal re-credits the wallet.
                 'payout.succeeded' => $this->handlePayoutSucceeded($data),
                 'payout.failed', 'payout.reversed' => $this->handlePayoutFailed($data),
                 default => null,
             };
         } else {
-            // Classic Xendit INVOICE webhook: the invoice object is POSTed FLAT
-            // at the top level — { id, external_id, status: "PAID", ... }.
+            // Legacy: classic Xendit INVOICE webhook for a card payment / card
+            // tip / top-up started before those were retired — the invoice
+            // object is POSTed FLAT at the top level — { id, external_id,
+            // status: "PAID", ... }.
             $status = strtoupper((string) $payload['status']);
             if (in_array($status, ['PAID', 'SETTLED'], true)) {
                 $this->handleInvoicePaid($payload);
@@ -98,8 +97,27 @@ class XenditWebhookController extends Controller
     private function handlePayoutSucceeded(array $data): void
     {
         $tx = $this->findPayoutTransaction($data);
-        if (! $tx || $tx->status !== 'pending') {
+        if (! $tx) {
             return;
+        }
+
+        // Xendit paid a payout we had already marked failed — and failing it
+        // put the money back in the wallet. The user has been paid twice. That
+        // can't be undone automatically (they may already have spent or
+        // withdrawn the re-credit), so it must reach a person, loudly.
+        if ($tx->status === 'failed') {
+            $this->alertPaidAfterFailed($tx, $data);
+
+            return;
+        }
+
+        if ($tx->status !== 'pending') {
+            return;
+        }
+
+        // A send whose answer never came back has no Xendit id yet.
+        if (blank($tx->gateway_ref) && filled($data['id'] ?? null)) {
+            \App\Models\WalletTransaction::whereKey($tx->id)->whereNull('gateway_ref')->update(['gateway_ref' => $data['id']]);
         }
 
         try {
@@ -107,6 +125,34 @@ class XenditWebhookController extends Controller
         } catch (\App\Exceptions\PayoutStateException) {
             // Already settled by a racing delivery — no-op.
         }
+    }
+
+    /** Raise (once per payout) the staff alert for a payout paid after it was failed. */
+    private function alertPaidAfterFailed(\App\Models\WalletTransaction $tx, array $data): void
+    {
+        if (! \Illuminate\Support\Facades\Cache::add("payout_paid_after_failed:{$tx->id}", true, now()->addDays(7))) {
+            return;
+        }
+
+        $amount = number_format(abs((float) $tx->amount), 2);
+
+        Log::critical('Xendit paid a payout already marked failed and re-credited — paid twice', [
+            'wallet_tx' => $tx->id,
+            'user_id' => $tx->user_id,
+            'amount' => (float) $tx->amount,
+            'gateway_payout' => $data['id'] ?? null,
+            'failure_reason' => $tx->failure_reason,
+        ]);
+
+        \App\Models\AdminAlert::raise(
+            'payout_paid_after_failed',
+            'critical',
+            'Payout paid after it was marked failed',
+            "Xendit just confirmed a ₱{$amount} payout that had already been marked failed, and failing it put ₱{$amount} "
+                ."back in the user’s wallet — they have been paid twice. Recover ₱{$amount} (debit the wallet if it is "
+                .'still there, otherwise contact the user).',
+            $tx->id,
+        );
     }
 
     private function handlePayoutFailed(array $data): void
@@ -123,26 +169,26 @@ class XenditWebhookController extends Controller
             // Route by the payout's current state, not the event label — some
             // gateways send `payout.reversed` for both a pre-disbursement failure
             // and a post-success bounce:
-            //   - pending   → failPayout re-credits and marks it failed.
+            //   - pending   → failPayout re-credits and marks it failed (this IS
+            //     Xendit saying it failed, so a sent payout may be failed).
             //   - completed → reversePayout re-credits and marks it reversed
             //     (this is the money-loss MONEYX-1 was: a reversal after success
             //     used to hit failPayout's pending-only guard and be dropped).
             $updated = null;
             if ($tx->status === 'pending') {
-                $updated = $wallet->failPayout($tx->id, (string) $reason);
+                $updated = $wallet->failPayout($tx->id, (string) $reason, confirmedByGateway: true);
             } elseif ($tx->status === 'completed') {
                 $updated = $wallet->reversePayout($tx->id, (string) $reason);
             }
             // else: already failed/reversed → no-op.
 
-            // Tell the runner their money bounced back. failPayout/reversePayout
+            // Tell the user their money bounced back. failPayout/reversePayout
             // each commit their own transaction and return the settled row, so
             // this runs post-commit (never inside the lock). The helper is
-            // latched per payout in the cache, so a racing admin action or a
-            // duplicate gateway delivery can't send a second notice. (M1: this
-            // automated path previously re-credited silently.)
+            // latched per payout, so a racing admin action or a duplicate
+            // gateway delivery can't send a second notice.
             if ($updated) {
-                \App\Filament\Pages\Payouts::notifyRunnerOfBouncedPayout($updated, (string) $reason);
+                $wallet->notifyPayoutBounced($updated, (string) $reason);
             }
         } catch (\App\Exceptions\PayoutStateException) {
             // Raced to a terminal state by another delivery — no-op.
@@ -206,8 +252,10 @@ class XenditWebhookController extends Controller
     }
 
     /**
-     * Invoice paid — wallet top-up ("topup-{txId}") or a booking hosted-invoice
-     * charge ("booking-{paymentId}").
+     * Legacy: invoice paid — a card payment ("booking-{paymentId}"), card tip
+     * ("tip-{txId}") or wallet top-up ("topup-{txId}") started before cards and
+     * top-ups were retired. Kept so money already in flight at the deploy still
+     * settles; delete once no pending invoice rows remain.
      */
     private function handleInvoicePaid(array $data): void
     {
@@ -224,7 +272,7 @@ class XenditWebhookController extends Controller
 
         // Gateway-funded tip ("tip-{txId}"): credits the runner + stamps
         // booking.tip_amount, idempotently. Separate from the booking charge so
-        // a tip never touches payment_status / referral.
+        // a tip never touches payment_status.
         if (str_starts_with($externalId, 'tip-')) {
             $transactionId = substr($externalId, 4);
             app(\App\Services\WalletService::class)->completeGatewayTip($transactionId, $data);
@@ -254,7 +302,6 @@ class XenditWebhookController extends Controller
 
             if ($payment) {
                 $this->notifyPayment($payment, 'completed');
-                $this->rewardReferralIfEligible($payment);
             }
             // Self-healing settlement (MONEY-1/3): resolve the booking seam for
             // the Completed charge whether THIS delivery transitioned it or a
@@ -272,9 +319,9 @@ class XenditWebhookController extends Controller
     }
 
     /**
-     * Invoice expired before it was paid — the customer never completed
-     * checkout. Previously dropped; now moves the pending charge/top-up to a
-     * truthful terminal state so the app stops "verifying" forever.
+     * Legacy: invoice expired before it was paid (see handleInvoicePaid) —
+     * moves the pending charge/top-up to a truthful terminal state so the app
+     * stops "verifying" forever.
      */
     private function handleInvoiceExpired(array $data): void
     {
@@ -320,20 +367,6 @@ class XenditWebhookController extends Controller
         }
     }
 
-    /**
-     * Linked e-wallet lifecycle. Xendit sends the payment-method object; its
-     * `id` is what we stored as gateway_ref when the customer started linking.
-     */
-    private function handlePaymentMethodStatus(array $data, string $status): void
-    {
-        $id = $data['id'] ?? null;
-        if (! $id) {
-            return;
-        }
-
-        \App\Models\PaymentMethod::where('gateway_ref', $id)->update(['status' => $status]);
-    }
-
     private function handlePaymentSucceeded(array $data): void
     {
         $paymentRequestId = $data['payment_request_id'] ?? null;
@@ -367,7 +400,6 @@ class XenditWebhookController extends Controller
 
         if ($payment) {
             $this->notifyPayment($payment, 'completed');
-            $this->rewardReferralIfEligible($payment);
         }
         // Self-healing settlement (MONEY-1/3): run for the Completed booking
         // charge whether THIS delivery transitioned it or a prior one did, so a
@@ -380,54 +412,54 @@ class XenditWebhookController extends Controller
             return;
         }
 
-        // No booking charge matched this payment_request — it may be a DIRECT
-        // e-wallet wallet top-up (its payment_request id is stored on the
-        // WalletTransaction as gateway_ref). completeTopUp does its own
-        // settled-in-full guard + credit + notify, and is idempotent.
+        // No booking charge matched this payment_request — it may be a GCash/
+        // Maya tip charge (its payment_request id is stored on the
+        // 'tip_payment' row, which is also named in the charge's reference
+        // "tip-{txId}"). Matched by reference too, whatever the row's state:
+        // an older app build reused one row for every attempt, so a charge can
+        // arrive for a row that now holds another one — completeGatewayTip
+        // then refunds it to the customer's wallet instead of dropping it.
+        // Idempotent, with its own settled-in-full + credit + notify.
+        $tip = $this->findTipCharge($paymentRequestId, $data['reference_id'] ?? null);
+        if ($tip) {
+            app(\App\Services\WalletService::class)->completeGatewayTip($tip->id, $data);
+            return;
+        }
+
+        // Legacy: a direct e-wallet wallet top-up started before top-ups were
+        // retired (its payment_request id is stored as gateway_ref).
+        // completeTopUp does its own settled-in-full guard + credit + notify,
+        // and is idempotent.
         $topup = \App\Models\WalletTransaction::where('type', 'top_up')
             ->where('gateway_ref', $paymentRequestId)
             ->where('status', 'pending')
             ->first();
         if ($topup) {
             app(\App\Services\WalletService::class)->completeTopUp($topup->id, $data);
-            return;
-        }
-
-        // …or a DIRECT e-wallet gateway-funded tip (its payment_request id is
-        // stored on the 'tip_payment' row). completeGatewayTip is idempotent
-        // and does its own settled-in-full + runner-credit + notify.
-        $tip = \App\Models\WalletTransaction::where('type', 'tip_payment')
-            ->where('gateway_ref', $paymentRequestId)
-            ->where('status', 'pending')
-            ->first();
-        if ($tip) {
-            app(\App\Services\WalletService::class)->completeGatewayTip($tip->id, $data);
         }
     }
 
     /**
-     * Re-attempt a referral reward once an online charge actually settles.
-     *
-     * A referral only qualifies on a genuinely-paid non-cash booking. If the
-     * runner completed the errand BEFORE Xendit's webhook settled the charge
-     * (webhook lag / late checkout), the booking-completed listener ran while
-     * the Payment was still pending and no-op'd, permanently dropping the
-     * reward. This closes that window. Runs AFTER commit; ReferralService::
-     * reward is idempotent and re-checks the qualifying-booking gate itself.
+     * The 'tip_payment' row a Payment Requests charge belongs to: by the
+     * charge id stored on the row, else by the "tip-{txId}" reference the
+     * charge was created with.
      */
-    private function rewardReferralIfEligible(?Payment $payment): void
+    private function findTipCharge(string $paymentRequestId, mixed $reference): ?\App\Models\WalletTransaction
     {
-        $booking = $payment?->booking;
-        if ($booking && $booking->status === 'completed' && $booking->customer_id) {
-            try {
-                app(\App\Services\ReferralService::class)->reward($booking->customer_id);
-            } catch (\Throwable $e) {
-                \Illuminate\Support\Facades\Log::warning('Referral reward re-attempt failed after settlement', [
-                    'booking_id' => $booking->id,
-                    'error' => $e->getMessage(),
-                ]);
-            }
+        $tip = \App\Models\WalletTransaction::where('type', 'tip_payment')
+            ->where('gateway_ref', $paymentRequestId)
+            ->first();
+        if ($tip) {
+            return $tip;
         }
+
+        if (is_string($reference) && str_starts_with($reference, 'tip-')) {
+            return \App\Models\WalletTransaction::where('type', 'tip_payment')
+                ->whereKey(substr($reference, 4))
+                ->first();
+        }
+
+        return null;
     }
 
     private function handlePaymentFailed(array $data): void
@@ -470,26 +502,28 @@ class XenditWebhookController extends Controller
             return;
         }
 
-        // No booking charge — a direct e-wallet top-up may have failed. Mark the
-        // pending top-up failed so the app stops "verifying" (mirrors the
-        // invoice.expired path). Idempotent: a non-pending top-up is untouched.
-        $topup = \App\Models\WalletTransaction::where('type', 'top_up')
-            ->where('gateway_ref', $paymentRequestId)
-            ->where('status', 'pending')
-            ->first();
-        if ($topup) {
-            app(\App\Services\WalletService::class)->expireTopUp($topup->id, 'Payment failed');
-            return;
-        }
-
-        // …or a direct e-wallet gateway tip that failed — fail its pending row
-        // too so the app stops verifying (no runner credit ever happened).
+        // No booking charge — a GCash/Maya tip charge may have failed. Fail its
+        // pending row so the app stops verifying (no runner credit ever
+        // happened). Only the row's OWN charge: a failure of a charge some
+        // other attempt has since replaced changes nothing.
         $tip = \App\Models\WalletTransaction::where('type', 'tip_payment')
             ->where('gateway_ref', $paymentRequestId)
             ->where('status', 'pending')
             ->first();
         if ($tip) {
             app(\App\Services\WalletService::class)->expireGatewayTip($tip->id, 'Payment failed');
+            return;
+        }
+
+        // Legacy: a direct e-wallet top-up (started before top-ups were
+        // retired) failed. Mark it failed so the app stops "verifying".
+        // Idempotent: a non-pending top-up is untouched.
+        $topup = \App\Models\WalletTransaction::where('type', 'top_up')
+            ->where('gateway_ref', $paymentRequestId)
+            ->where('status', 'pending')
+            ->first();
+        if ($topup) {
+            app(\App\Services\WalletService::class)->expireTopUp($topup->id, 'Payment failed');
         }
     }
 

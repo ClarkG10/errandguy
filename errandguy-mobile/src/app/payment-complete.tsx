@@ -17,8 +17,8 @@ import { LightColors } from '../constants/colors';
  * If there's an in-flight payment attempt, this screen VERIFIES it against the
  * backend (never assumes success) and shows the honest outcome — confirmed
  * receipt, actionable failure, or "being processed, we'll notify you". With no
- * tracked attempt (e.g. an e-wallet linking return) it stays honest-neutral and
- * bounces the user home; the webhook remains the source of truth for balances.
+ * tracked attempt it stays honest-neutral and bounces the user home; the
+ * webhook remains the source of truth for balances.
  */
 export default function PaymentComplete() {
   const router = useRouter();
@@ -44,7 +44,6 @@ export default function PaymentComplete() {
     (a: PaymentAttempt) => {
       resolve();
       if (a.kind === 'booking' && a.bookingId) router.replace(`/(customer)/tracking/${a.bookingId}`);
-      else if (a.kind === 'topup') router.replace('/(customer)/wallet');
       else if (a.kind === 'payout') router.replace('/(runner)/payout');
       else goHome();
     },
@@ -54,8 +53,7 @@ export default function PaymentComplete() {
   const routeToOrigin = useCallback(
     (a: PaymentAttempt) => {
       resolve();
-      if (a.kind === 'topup') router.replace('/(customer)/wallet/top-up');
-      else if (a.kind === 'payout') router.replace('/(runner)/payout');
+      if (a.kind === 'payout') router.replace('/(runner)/payout');
       else goHome();
     },
     [resolve, router, goHome],
@@ -75,13 +73,7 @@ export default function PaymentComplete() {
         stage={stage}
         offline={isOffline}
         successTitle="Payment confirmed"
-        successCta={
-          attempt.kind === 'booking'
-            ? 'Return to booking'
-            : attempt.kind === 'topup'
-              ? 'View wallet'
-              : 'Done'
-        }
+        successCta={attempt.kind === 'booking' ? 'Return to booking' : 'Done'}
         receipt={{
           amount: attempt.amount,
           method: attempt.method,
@@ -139,7 +131,7 @@ function FinishingUp({ goHome }: { goHome: () => void }) {
           textAlign: 'center',
         }}
       >
-        Returning you to ErrandGuy — your balance updates once payment is confirmed.
+        Returning you to ErrandGuy — your payment shows up as soon as it’s confirmed.
       </Text>
       <View
         style={{ marginTop: 32, width: '100%', maxWidth: 360, alignSelf: 'center', paddingHorizontal: 8 }}

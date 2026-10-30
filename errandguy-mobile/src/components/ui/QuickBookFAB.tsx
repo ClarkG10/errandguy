@@ -51,7 +51,7 @@ const HIDDEN_PATH_PREFIXES = [
   '/chat/',          // chat thread — keyboard interaction
   '/navigate/',      // runner navigation
   '/errand/',        // runner active errand
-  '/wallet/top-up',  // payment confirmation
+  '/wallet/withdraw', // money-out form
 ];
 
 export function QuickBookFAB({

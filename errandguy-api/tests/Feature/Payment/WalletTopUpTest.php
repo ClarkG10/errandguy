@@ -8,6 +8,13 @@ use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Http;
 use Tests\TestCase;
 
+/**
+ * Wallet top-ups are retired: the wallet only spends a balance the customer
+ * already has. The endpoint answers the app build already on phones with a
+ * clear 422, and a top-up started BEFORE the retirement still settles — by
+ * webhook, by the status probe's pull and by the sweep — so no customer money
+ * paid in around the deploy is stranded.
+ */
 class WalletTopUpTest extends TestCase
 {
     use RefreshDatabase;
@@ -27,71 +34,35 @@ class WalletTopUpTest extends TestCase
         ]);
     }
 
-    public function test_top_up_creates_pending_transaction_and_does_not_credit_balance(): void
+    /** A top-up started before top-ups were retired, still awaiting payment. */
+    private function legacyTopUp(string $gatewayRef, float $amount = 500): WalletTransaction
     {
-        Http::fake([
-            'api.xendit.co/v2/invoices' => Http::response([
-                'id' => 'inv_123',
-                'invoice_url' => 'https://checkout.xendit.co/inv_123',
-            ], 200),
-        ]);
-
-        $response = $this->actingAs($this->user)
-            ->postJson('/api/v1/wallet/top-up', ['amount' => 500]);
-
-        $response->assertCreated()
-            ->assertJsonPath('checkout_url', 'https://checkout.xendit.co/inv_123')
-            ->assertJsonPath('data.status', 'pending');
-
-        // Balance must be UNCHANGED until the webhook confirms payment.
-        $this->assertEquals(100.00, (float) $this->user->fresh()->wallet_balance);
-
-        $this->assertDatabaseHas('wallet_transactions', [
-            'user_id' => $this->user->id,
-            'type' => 'top_up',
-            'status' => 'pending',
-            'gateway_ref' => 'inv_123',
+        return WalletTransaction::create([
+            'user_id' => $this->user->id, 'type' => 'top_up', 'amount' => $amount,
+            'balance_after' => 100, 'status' => 'pending', 'gateway_ref' => $gatewayRef,
+            'checkout_url' => "https://checkout.example/{$gatewayRef}",
+            'description' => 'Wallet top-up (awaiting payment)',
         ]);
     }
 
-    public function test_ewallet_topup_returns_a_direct_deep_link_not_a_hosted_invoice(): void
+    public function test_the_top_up_endpoint_is_retired_with_a_clear_message(): void
     {
-        // method=gcash → Payment Requests API: checkout_url is the wallet
-        // authorization deep-link, not a hosted invoice page.
-        Http::fake([
-            'api.xendit.co/payment_requests' => Http::response([
-                'id' => 'pr_tu', 'status' => 'PENDING',
-                'actions' => [['url' => 'https://gcash.example/authorize/pr_tu']],
-            ], 200),
-        ]);
+        Http::fake();
 
         $this->actingAs($this->user)
             ->postJson('/api/v1/wallet/top-up', ['amount' => 500, 'method' => 'gcash'])
-            ->assertCreated()
-            ->assertJsonPath('checkout_url', 'https://gcash.example/authorize/pr_tu')
-            ->assertJsonPath('data.status', 'pending');
+            ->assertStatus(422)
+            ->assertJsonPath('code', 'FEATURE_RETIRED')
+            ->assertJsonPath('message', 'Wallet top-ups are no longer available. You can still pay with GCash, Maya or cash, and spend any balance you already have.');
 
-        Http::assertSent(fn ($r) => str_contains($r->url(), '/payment_requests'));
-        Http::assertNotSent(fn ($r) => str_contains($r->url(), '/v2/invoices'));
-        // gateway_ref = payment_request id so payment.succeeded matches it.
-        $this->assertDatabaseHas('wallet_transactions', [
-            'user_id' => $this->user->id, 'type' => 'top_up', 'status' => 'pending', 'gateway_ref' => 'pr_tu',
-        ]);
+        $this->assertSame(0, WalletTransaction::count());
         $this->assertEquals(100.00, (float) $this->user->fresh()->wallet_balance);
+        Http::assertNothingSent();
     }
 
     public function test_payment_succeeded_webhook_credits_a_direct_ewallet_topup(): void
     {
-        Http::fake([
-            'api.xendit.co/payment_requests' => Http::response([
-                'id' => 'pr_tu2', 'status' => 'PENDING',
-                'actions' => [['url' => 'https://gcash.example/authorize/pr_tu2']],
-            ], 200),
-        ]);
-        $this->actingAs($this->user)
-            ->postJson('/api/v1/wallet/top-up', ['amount' => 500, 'method' => 'gcash'])
-            ->assertCreated();
-        $tx = WalletTransaction::where('user_id', $this->user->id)->firstOrFail();
+        $tx = $this->legacyTopUp('pr_tu2');
 
         // Xendit confirms via payment.succeeded (matched on gateway_ref).
         $this->postJson('/api/v1/webhooks/xendit', [
@@ -105,16 +76,7 @@ class WalletTopUpTest extends TestCase
 
     public function test_payment_failed_webhook_marks_a_direct_ewallet_topup_failed_without_crediting(): void
     {
-        Http::fake([
-            'api.xendit.co/payment_requests' => Http::response([
-                'id' => 'pr_tu3', 'status' => 'PENDING',
-                'actions' => [['url' => 'https://gcash.example/authorize/pr_tu3']],
-            ], 200),
-        ]);
-        $this->actingAs($this->user)
-            ->postJson('/api/v1/wallet/top-up', ['amount' => 500, 'method' => 'gcash'])
-            ->assertCreated();
-        $tx = WalletTransaction::where('user_id', $this->user->id)->firstOrFail();
+        $tx = $this->legacyTopUp('pr_tu3');
 
         $this->postJson('/api/v1/webhooks/xendit', [
             'event' => 'payment.failed',
@@ -127,18 +89,7 @@ class WalletTopUpTest extends TestCase
 
     public function test_invoice_paid_webhook_credits_wallet(): void
     {
-        Http::fake([
-            'api.xendit.co/v2/invoices' => Http::response([
-                'id' => 'inv_abc',
-                'invoice_url' => 'https://checkout.xendit.co/inv_abc',
-            ], 200),
-        ]);
-
-        $this->actingAs($this->user)
-            ->postJson('/api/v1/wallet/top-up', ['amount' => 500])
-            ->assertCreated();
-
-        $tx = WalletTransaction::where('user_id', $this->user->id)->firstOrFail();
+        $tx = $this->legacyTopUp('inv_abc');
 
         $webhook = $this->postJson('/api/v1/webhooks/xendit', [
             'event' => 'invoice.paid',
@@ -156,16 +107,7 @@ class WalletTopUpTest extends TestCase
     {
         // Real Xendit INVOICE callbacks POST the invoice object FLAT — no
         // {event, data} wrapper, just top-level fields incl. status: "PAID".
-        Http::fake([
-            'api.xendit.co/v2/invoices' => Http::response([
-                'id' => 'inv_flat', 'invoice_url' => 'https://checkout.xendit.co/inv_flat',
-            ], 200),
-        ]);
-
-        $this->actingAs($this->user)
-            ->postJson('/api/v1/wallet/top-up', ['amount' => 500])
-            ->assertCreated();
-        $tx = WalletTransaction::where('user_id', $this->user->id)->firstOrFail();
+        $tx = $this->legacyTopUp('inv_flat');
 
         $webhook = $this->postJson('/api/v1/webhooks/xendit', [
             'id' => 'inv_flat',
@@ -194,16 +136,7 @@ class WalletTopUpTest extends TestCase
 
     public function test_invoice_paid_webhook_is_idempotent(): void
     {
-        Http::fake([
-            'api.xendit.co/v2/invoices' => Http::response([
-                'id' => 'inv_xyz', 'invoice_url' => 'https://checkout.xendit.co/inv_xyz',
-            ], 200),
-        ]);
-
-        $this->actingAs($this->user)
-            ->postJson('/api/v1/wallet/top-up', ['amount' => 300])
-            ->assertCreated();
-        $tx = WalletTransaction::where('user_id', $this->user->id)->firstOrFail();
+        $tx = $this->legacyTopUp('inv_xyz', 300);
 
         $payload = [
             'event' => 'invoice.paid',
@@ -235,69 +168,16 @@ class WalletTopUpTest extends TestCase
             ->assertSee('errandguy://payment-complete');
     }
 
-    public function test_top_up_below_minimum_is_rejected(): void
-    {
-        $this->actingAs($this->user)
-            ->postJson('/api/v1/wallet/top-up', ['amount' => 10])
-            ->assertStatus(422);
-    }
-
-    public function test_gateway_rejection_returns_a_clean_422_never_a_masked_5xx(): void
-    {
-        // Simulate Xendit rejecting the request (e.g. the API key lacks the
-        // Invoice permission — the real-world REQUEST_FORBIDDEN_ERROR).
-        Http::fake([
-            'api.xendit.co/v2/invoices' => Http::response([
-                'error_code' => 'REQUEST_FORBIDDEN_ERROR',
-                'message' => 'The API key is forbidden to perform this request.',
-            ], 403),
-        ]);
-
-        $response = $this->actingAs($this->user)
-            ->postJson('/api/v1/wallet/top-up', ['amount' => 500]);
-
-        // A gateway rejection must surface as a clean, honest 422 through the
-        // standardized envelope — never a 502/503 (Cloudflare masks those and
-        // the mobile client discards >=500 messages). The friendly copy tells
-        // the user they weren't charged, and the raw gateway text never leaks.
-        $response->assertStatus(422)
-            ->assertJsonPath('success', false)
-            ->assertJsonPath('code', 'PAYMENT_GATEWAY_ERROR');
-        $this->assertStringContainsString('weren’t charged', (string) $response->json('message'));
-        $this->assertStringNotContainsString('API key is forbidden', (string) $response->json('message'));
-
-        // Balance untouched, and the pending row is marked failed (not left
-        // lingering as a fake "pending top-up").
-        $this->assertEquals(100.00, (float) $this->user->fresh()->wallet_balance);
-        $this->assertDatabaseHas('wallet_transactions', [
-            'user_id' => $this->user->id,
-            'type' => 'top_up',
-            'status' => 'failed',
-        ]);
-    }
-
     // ── Pull-reconcile on the top-up status probe ───────────────────────────
     // Top-up used to be the ONLY money-in flow with no pull path: the booking
     // probe asks Xendit when a webhook lags, but this endpoint just re-read the
     // DB row — so a delayed/dropped webhook stranded a customer whose money had
     // already left GCash on "Payment is being processed" indefinitely.
 
-    /** Create a pending e-wallet top-up and return its transaction. */
+    /** A pending legacy e-wallet top-up (its ref is a Payment Requests id). */
     private function pendingEwalletTopUp(string $prId, float $amount = 500): WalletTransaction
     {
-        Http::fake([
-            'api.xendit.co/payment_requests' => Http::response([
-                'id' => $prId, 'status' => 'PENDING',
-                'actions' => [['url' => "https://gcash.example/authorize/{$prId}"]],
-            ], 200),
-        ]);
-        $this->actingAs($this->user)
-            ->postJson('/api/v1/wallet/top-up', ['amount' => $amount, 'method' => 'gcash'])
-            ->assertCreated();
-
-        return WalletTransaction::where('user_id', $this->user->id)
-            ->where('gateway_ref', $prId)
-            ->firstOrFail();
+        return $this->legacyTopUp($prId, $amount);
     }
 
     public function test_status_probe_pulls_the_gateway_and_credits_a_topup_the_webhook_never_delivered(): void
@@ -434,15 +314,8 @@ class WalletTopUpTest extends TestCase
         // A card/hosted-invoice ref is not a payment_request id, so the pull is
         // skipped entirely (those remain webhook-settled) — no stray gateway
         // call, and certainly no mis-addressed lookup.
-        Http::fake([
-            'api.xendit.co/v2/invoices' => Http::response([
-                'id' => 'inv_reconcile_1', 'invoice_url' => 'https://checkout.xendit.co/inv_reconcile_1',
-            ], 200),
-        ]);
-        $this->actingAs($this->user)
-            ->postJson('/api/v1/wallet/top-up', ['amount' => 500])
-            ->assertCreated();
-        $tx = WalletTransaction::where('gateway_ref', 'inv_reconcile_1')->firstOrFail();
+        Http::fake();
+        $tx = $this->legacyTopUp('inv_reconcile_1');
 
         $this->actingAs($this->user)
             ->getJson("/api/v1/wallet/transactions/{$tx->id}/status")

@@ -35,8 +35,8 @@ export interface AppearancePreferences {
 }
 
 /**
- * The payment selection a booking was last SUCCESSFULLY created with, so the
- * next booking pre-selects it instead of resetting to saved-default-or-Cash.
+ * How a booking was last SUCCESSFULLY paid for, so the next booking
+ * pre-selects it instead of resetting to Cash.
  *
  * Display/convenience only: this is a PRE-selection the customer still sees
  * (and can change) on the review screen before confirming, and the amount is
@@ -44,13 +44,33 @@ export interface AppearancePreferences {
  * submitted `payment_method` is always whatever the selector is showing.
  */
 export interface LastPaymentMethod {
-  /** Selector id — a sentinel ('__gcash__') or a saved PaymentMethod id. */
-  id: string;
-  /** Settlement type at the time of that booking. */
   type: PaymentMethodType;
   /** Epoch ms of the booking that recorded it. */
   savedAt: number;
 }
+
+const PAYMENT_METHOD_TYPES: readonly string[] = ['gcash', 'maya', 'wallet', 'cash'];
+
+/**
+ * Keep only remembered methods that can still be offered.
+ *
+ * The build before the launch simplification stored `{ id, type }`, where the
+ * type could be a card or GrabPay and the id a saved card or linked account.
+ * Those are retired, so such an entry is dropped (the next booking falls back
+ * to the default pick); a GCash, Maya, wallet or cash memory carries over,
+ * minus the id nothing reads any more.
+ */
+const sanitizePaymentMemory = (raw: unknown): Record<string, LastPaymentMethod> => {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return {};
+  const out: Record<string, LastPaymentMethod> = {};
+  for (const [userId, entry] of Object.entries(raw as Record<string, unknown>)) {
+    const e = entry as Partial<LastPaymentMethod> | null;
+    if (e && typeof e.type === 'string' && PAYMENT_METHOD_TYPES.includes(e.type)) {
+      out[userId] = { type: e.type, savedAt: Number(e.savedAt) || 0 };
+    }
+  }
+  return out;
+};
 
 const STORAGE_KEY = '@appearance_prefs_v1';
 /** Kept OUT of the appearance blob: it's account-scoped, not device comfort. */
@@ -78,10 +98,7 @@ interface PreferencesStoreState extends AppearancePreferences {
 
   setReduceHaptics: (value: boolean) => void;
   setReduceMotionOverride: (value: boolean) => void;
-  setLastPaymentMethod: (
-    userId: string,
-    method: { id: string; type: PaymentMethodType },
-  ) => void;
+  setLastPaymentMethod: (userId: string, type: PaymentMethodType) => void;
   /** Wipe every remembered selection (account-scope reset / logout). */
   clearLastPaymentMethods: () => void;
   loadFromStorage: () => Promise<void>;
@@ -107,11 +124,11 @@ export const usePreferencesStore = create<PreferencesStoreState>((set, get) => (
     persist(snapshot(get()));
   },
 
-  setLastPaymentMethod: (userId, method) => {
-    if (!userId || !method?.id || !method?.type) return;
+  setLastPaymentMethod: (userId, type) => {
+    if (!userId || !type) return;
     const next = {
       ...get().lastPaymentMethods,
-      [userId]: { id: method.id, type: method.type, savedAt: Date.now() },
+      [userId]: { type, savedAt: Date.now() },
     };
     set({ lastPaymentMethods: next });
     persistPaymentMemory(next);
@@ -142,12 +159,9 @@ export const usePreferencesStore = create<PreferencesStoreState>((set, get) => (
       let lastPaymentMethods: Record<string, LastPaymentMethod> = {};
       try {
         const raw = byKey[PAYMENT_MEMORY_KEY];
-        const parsed = raw ? JSON.parse(raw) : null;
-        // Only accept a plain object map — a corrupt/legacy shape must not
-        // poison the selector's auto-pick.
-        if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
-          lastPaymentMethods = parsed as Record<string, LastPaymentMethod>;
-        }
+        // Only a plain object map of methods that still exist — a corrupt or
+        // retired entry must not poison the selector's auto-pick.
+        lastPaymentMethods = sanitizePaymentMemory(raw ? JSON.parse(raw) : null);
       } catch {
         /* corrupt payment memory — start empty */
       }

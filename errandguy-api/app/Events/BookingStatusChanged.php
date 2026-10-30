@@ -12,7 +12,7 @@ use Illuminate\Queue\SerializesModels;
 
 /**
  * Fired on every booking lifecycle transition. Two consumers:
- *  - queued listeners (push notifications, referral reward) — unchanged, and
+ *  - queued listeners (push notifications) — unchanged, and
  *  - the customer/runner mobile apps, via the broadcast below.
  *
  * Broadcasting replaces what the old realtime path used to deliver by tailing the
@@ -20,9 +20,8 @@ use Illuminate\Queue\SerializesModels;
  * so the queued broadcast reloads a persisted row — and `ShouldDispatchAfterCommit`
  * now ENFORCES that invariant: if any site dispatches while a DB transaction is
  * still open (as `RunnerErrandController::updateStatus` once did), the event is
- * held until commit instead of letting a queued listener — e.g. the referral
- * reward, which counts the referee's committed completed bookings — race a row
- * that isn't persisted yet and silently drop the reward.
+ * held until commit instead of letting a queued listener race a row that isn't
+ * persisted yet.
  */
 class BookingStatusChanged implements ShouldBroadcast, ShouldDispatchAfterCommit
 {

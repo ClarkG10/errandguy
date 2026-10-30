@@ -158,24 +158,58 @@ class BookingPaymentTest extends TestCase
         ]);
     }
 
-    public function test_card_booking_still_uses_the_hosted_invoice(): void
+    public function test_a_card_booking_is_refused_with_a_clear_message(): void
     {
-        // Cards keep the hosted invoice (PCI/3DS stay inside Xendit).
+        // Cards are retired. The app build already on phones can still offer
+        // one: it gets a clear 422, nothing is booked and nothing is charged.
         Bus::fake();
-        Http::fake([
-            'api.xendit.co/v2/invoices' => Http::response([
-                'id' => 'inv_bk', 'invoice_url' => 'https://checkout.xendit.co/inv_bk',
-            ], 200),
+        Http::fake();
+
+        $this->actingAs($this->customer)
+            ->postJson('/api/v1/bookings', [...$this->base, 'payment_method' => 'card'])
+            ->assertStatus(422)
+            ->assertJsonPath('code', 'VALIDATION_FAILED')
+            ->assertJsonPath('message', 'Card payments are no longer available — please pay with GCash, Maya or cash.');
+
+        $this->assertSame(0, Booking::count());
+        Http::assertNothingSent();
+    }
+
+    public function test_a_grabpay_booking_is_refused_with_a_clear_message(): void
+    {
+        Bus::fake();
+        Http::fake();
+
+        $this->actingAs($this->customer)
+            ->postJson('/api/v1/bookings', [...$this->base, 'payment_method' => 'grabpay'])
+            ->assertStatus(422)
+            ->assertJsonPath('message', 'GrabPay is no longer available — please pay with GCash, Maya or cash.');
+
+        $this->assertSame(0, Booking::count());
+        Http::assertNothingSent();
+    }
+
+    /**
+     * A card checkout started before cards were retired: a booking with a
+     * processing card Payment against a hosted invoice. Its invoice webhook
+     * must still settle it, so no customer money is stranded.
+     */
+    private function legacyCardCharge(string $invoiceId): Payment
+    {
+        $booking = Booking::create([
+            'booking_number' => 'EG-20261030-'.strtoupper(substr(md5($invoiceId), 0, 6)),
+            'customer_id' => $this->customer->id, 'errand_type_id' => $this->deliveryType->id,
+            'status' => 'pending', 'payment_method' => 'card', 'payment_status' => 'pending',
+            'pickup_address' => '123 Main St, Manila', 'pickup_lat' => 14.5995, 'pickup_lng' => 120.9842,
+            'dropoff_address' => '456 Oak Ave, Makati', 'dropoff_lat' => 14.5547, 'dropoff_lng' => 121.0244,
+            'schedule_type' => 'now', 'pricing_mode' => 'fixed', 'vehicle_type_rate' => 'motorcycle',
+            'distance_km' => 5.0, 'base_fee' => 50, 'distance_fee' => 50, 'service_fee' => 15,
+            'surcharge' => 0, 'total_amount' => 115, 'runner_payout' => 100, 'is_transportation' => false,
         ]);
 
-        $res = $this->actingAs($this->customer)
-            ->postJson('/api/v1/bookings', [...$this->base, 'payment_method' => 'card']);
-
-        $res->assertCreated()
-            ->assertJsonPath('checkout_url', 'https://checkout.xendit.co/inv_bk');
-        $booking = Booking::firstOrFail();
-        $this->assertDatabaseHas('payments', [
-            'booking_id' => $booking->id, 'method' => 'card', 'status' => 'processing', 'gateway_tx_id' => 'inv_bk',
+        return Payment::create([
+            'booking_id' => $booking->id, 'customer_id' => $this->customer->id, 'amount' => 115,
+            'currency' => 'PHP', 'method' => 'card', 'status' => 'processing', 'gateway_tx_id' => $invoiceId,
         ]);
     }
 
@@ -306,18 +340,10 @@ class BookingPaymentTest extends TestCase
         $this->assertEquals(4980.0, (float) $this->customer->fresh()->wallet_balance);
     }
 
-    public function test_invoice_paid_webhook_marks_booking_paid(): void
+    public function test_invoice_paid_webhook_still_settles_a_legacy_card_booking(): void
     {
         Bus::fake();
-        Http::fake([
-            'api.xendit.co/v2/invoices' => Http::response([
-                'id' => 'inv_bk2', 'invoice_url' => 'https://checkout.xendit.co/inv_bk2',
-            ], 200),
-        ]);
-        $this->actingAs($this->customer)
-            ->postJson('/api/v1/bookings', [...$this->base, 'payment_method' => 'card'])
-            ->assertCreated();
-        $payment = Payment::firstOrFail();
+        $payment = $this->legacyCardCharge('inv_bk2');
 
         $this->postJson('/api/v1/webhooks/xendit', [
             'event' => 'invoice.paid',
@@ -332,15 +358,7 @@ class BookingPaymentTest extends TestCase
     {
         Bus::fake();
         Log::spy();
-        Http::fake([
-            'api.xendit.co/v2/invoices' => Http::response([
-                'id' => 'inv_bk3', 'invoice_url' => 'https://checkout.xendit.co/inv_bk3',
-            ], 200),
-        ]);
-        $this->actingAs($this->customer)
-            ->postJson('/api/v1/bookings', [...$this->base, 'payment_method' => 'card'])
-            ->assertCreated();
-        $payment = Payment::firstOrFail();
+        $payment = $this->legacyCardCharge('inv_bk3');
 
         // Gateway reports a DIFFERENT amount than we expected to charge.
         $this->postJson('/api/v1/webhooks/xendit', [
@@ -368,15 +386,7 @@ class BookingPaymentTest extends TestCase
         // / a human, so a short-paid errand can't proceed as fully settled.
         Bus::fake();
         Log::spy();
-        Http::fake([
-            'api.xendit.co/v2/invoices' => Http::response([
-                'id' => 'inv_us', 'invoice_url' => 'https://checkout.xendit.co/inv_us',
-            ], 200),
-        ]);
-        $this->actingAs($this->customer)
-            ->postJson('/api/v1/bookings', [...$this->base, 'payment_method' => 'card'])
-            ->assertCreated();
-        $payment = Payment::firstOrFail();
+        $payment = $this->legacyCardCharge('inv_us');
 
         $this->postJson('/api/v1/webhooks/xendit', [
             'event' => 'invoice.paid',

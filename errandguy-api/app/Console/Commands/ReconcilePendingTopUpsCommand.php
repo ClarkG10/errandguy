@@ -9,23 +9,24 @@ use Illuminate\Console\Command;
 use Illuminate\Support\Facades\Log;
 
 /**
- * Settle top-ups the customer paid for and then walked away from.
+ * Settle GCash/Maya tip charges — and legacy wallet top-ups started before
+ * top-ups were retired — that the customer paid for and then walked away from.
  *
- * The status endpoint already pull-reconciles a pending top-up against the
+ * The status endpoint already pull-reconciles a pending charge against the
  * gateway — but ONLY while the app is polling it. That leaves the case nothing
  * covered: the customer completes payment in GCash, the webhook is delayed or
  * dropped, and they never reopen the app (or it crashed, or they force-quit
  * from the GCash return). Their money has left their e-wallet, the row stays
- * `pending` forever, and neither side is reconciling. The user's only visible
- * option is to top up a second time.
+ * `pending` forever, and neither side is reconciling.
  *
  * This is the safety net. It reuses WalletService::reconcilePendingTopUp, so
  * there is exactly ONE settlement path shared with the polling endpoint —
  * row-locked, idempotent, and only ever moving a row to the state the gateway
  * itself reports. It cannot credit twice and it cannot invent a payment.
  *
- * A top-up settled here means a webhook did not arrive, which is an OPS signal
+ * A charge settled here means a webhook did not arrive, which is an OPS signal
  * as much as a user-facing fix — so a late success raises an admin alert.
+ * (The command keeps its name so the deployed schedule doesn't change.)
  */
 class ReconcilePendingTopUpsCommand extends Command
 {
@@ -35,7 +36,7 @@ class ReconcilePendingTopUpsCommand extends Command
         {--limit=200 : Max transactions examined per run (bounds gateway calls per sweep)}
         {--dry-run : Report what would be reconciled without settling anything}';
 
-    protected $description = 'Reconcile pending wallet top-ups against the payment gateway';
+    protected $description = 'Reconcile pending GCash/Maya tip charges (and legacy top-ups) against the payment gateway';
 
     public function handle(WalletService $wallet): int
     {

@@ -87,6 +87,19 @@ return [
 
     /*
     |--------------------------------------------------------------------------
+    | Support Contact
+    |--------------------------------------------------------------------------
+    |
+    | Where customers and runners reach a person — shown on public pages such
+    | as /delete-account (the account-deletion request route Google Play
+    | requires).
+    |
+    */
+
+    'support_email' => env('SUPPORT_EMAIL', 'support@errandguyph.com'),
+
+    /*
+    |--------------------------------------------------------------------------
     | Application Locale Configuration
     |--------------------------------------------------------------------------
     |

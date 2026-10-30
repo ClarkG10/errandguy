@@ -4,6 +4,7 @@ import {
   Coins,
   Percent,
   Gift,
+  HandCoins,
   RotateCcw,
   ArrowUpRight,
   SlidersHorizontal,
@@ -21,23 +22,26 @@ import type { WalletTransaction } from '../../types';
  *
  * The runner app only ever listed `payout` rows, so the movements that
  * silently change a runner's balance — the cash-errand platform commission,
- * admin adjustments, failed-payout re-credits, tips, late-settled earnings —
- * had nowhere to be seen. This renders whatever `GET /wallet/transactions`
- * returns, including types the mobile `WalletTransactionType` union does not
- * declare yet (the server writes `commission` rows), which is why the icon
- * map is keyed by plain string with a neutral fallback.
+ * admin adjustments, failed-payout re-credits, tips, late-settled earnings,
+ * the cancellation fee paid when a customer cancels after the runner accepted
+ * — had nowhere to be seen. This renders whatever `GET /wallet/transactions`
+ * returns, keyed by plain string with a neutral fallback so a type the app
+ * doesn't know yet still draws (with the server's own label).
  */
 
 const TYPE_ICONS: Record<string, { icon: LucideIcon; color: string }> = {
   earning: { icon: Coins, color: LightColors.success },
   commission: { icon: Percent, color: LightColors.textSecondary },
   tip: { icon: Gift, color: LightColors.accentStrong },
+  // "ErrandGuy · Cancellation fee": a credit for a trip the customer cancelled.
+  cancel_fee: { icon: HandCoins, color: LightColors.success },
+  // Legacy rows: referral bonuses and wallet top-ups are retired.
   bonus: { icon: Star, color: LightColors.accentStrong },
   refund: { icon: RotateCcw, color: LightColors.primary },
   payout: { icon: ArrowUpRight, color: LightColors.primary },
   adjustment: { icon: SlidersHorizontal, color: LightColors.primary },
-  top_up: { icon: Wallet, color: LightColors.success },
   payment: { icon: Wallet, color: LightColors.textSecondary },
+  top_up: { icon: Wallet, color: LightColors.success },
 };
 
 /** Fallback label when the server sends no description for a row. */

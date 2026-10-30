@@ -40,7 +40,6 @@ jest.mock('../user.service', () => ({
     getCustomerHome: (...a: unknown[]) => mockGetCustomerHome(...a),
     getAddresses: jest.fn(() => Promise.resolve({ data: { data: [] } })),
     getTrustedContacts: jest.fn(() => Promise.resolve({ data: { data: [] } })),
-    getReferral: jest.fn(() => Promise.resolve({ data: { data: null } })),
   },
 }));
 jest.mock('../config.service', () => ({
@@ -58,7 +57,6 @@ jest.mock('../payment.service', () => ({
   paymentService: {
     getWalletBalance: (...a: unknown[]) => mockGetWalletBalance(...a),
     getWalletTransactions: jest.fn(() => Promise.resolve({ data: { data: [] } })),
-    getPaymentMethods: jest.fn(() => Promise.resolve({ data: { data: [] } })),
   },
 }));
 jest.mock('../notification.service', () => ({
@@ -84,12 +82,6 @@ const USER = 'user-1';
 const ERRAND_TYPES = [{ id: 't1', name: 'Delivery', is_active: true }];
 const ACTIVE_BOOKING = { id: 'b-active', status: 'in_transit' };
 const RECENT_BOOKINGS = [{ id: 'b1' }, { id: 'b2' }];
-const REFERRAL = {
-  referral_code: 'ABC123',
-  share_link: 'https://errandguy.ph/r/ABC123',
-  counts: { pending: 1, qualified: 2, rewarded: 3 },
-  total_earned: 150,
-};
 
 const aggregate = (overrides: Record<string, unknown> = {}) => ({
   data: {
@@ -98,7 +90,6 @@ const aggregate = (overrides: Record<string, unknown> = {}) => ({
       active_booking: ACTIVE_BOOKING,
       recent_bookings: RECENT_BOOKINGS,
       wallet_balance: 1234.5,
-      referral: REFERRAL,
       ...overrides,
     },
   },
@@ -160,20 +151,26 @@ describe('preloadCustomerEssentials — /customer/home aggregate fan-out', () =>
       value: RECENT_BOOKINGS,
       ttl: CacheTTL.LONG,
     });
-    expect(w[`q:user:referral:${USER}`]).toEqual({ value: REFERRAL, ttl: CacheTTL.MEDIUM });
   });
 
   /**
-   * Promo codes are retired. The server this replaces still sends a `promos`
-   * section and the new one omits it, so the snapshot has to be usable from
-   * BOTH during the rollout — rejecting either would silently drop every cold
-   * start back to the five per-endpoint requests. Neither may leave a promos
-   * cache key behind: nothing reads one any more.
+   * Promo codes and the referral program are retired. Until the old app build
+   * is gone the server sends empty `promos` and `referral` stubs, and once it
+   * is the stubs go — so the snapshot has to be usable from BOTH, or every cold
+   * start would silently drop back to the per-endpoint requests. Neither may
+   * leave a cache key behind: nothing reads one any more.
    */
   it.each([
-    ['a server that no longer sends promos', {}],
-    ['a server that still sends promos', { promos: [{ id: 'p1', code: 'SAVE10' }] }],
-  ])('accepts the aggregate from %s and seeds no promos key', async (_label, extra) => {
+    ['a server that no longer sends the retired sections', {}],
+    ['a server that still sends the empty stubs', { promos: [], referral: null }],
+    [
+      'a server from before the retirement',
+      {
+        promos: [{ id: 'p1', code: 'SAVE10' }],
+        referral: { referral_code: 'ABC123', share_link: 'https://errandguy.ph/r/ABC123' },
+      },
+    ],
+  ])('accepts the aggregate from %s and seeds no retired key', async (_label, extra) => {
     mockGetCustomerHome.mockResolvedValue(aggregate(extra));
 
     await preloadCustomerEssentials(USER);
@@ -185,7 +182,7 @@ describe('preloadCustomerEssentials — /customer/home aggregate fan-out', () =>
     expect(mockGetActiveBooking).not.toHaveBeenCalled();
     expect(mockGetWalletBalance).not.toHaveBeenCalled();
     expect(w[`q:wallet:balance:${USER}`]).toEqual({ value: 1234.5, ttl: CacheTTL.MEDIUM });
-    expect(Object.keys(w).filter((k) => k.includes('promo'))).toEqual([]);
+    expect(Object.keys(w).filter((k) => /promo|referral/.test(k))).toEqual([]);
   });
 
   it('seeds the wallet balance as a NUMBER, not the {balance} object', async () => {
@@ -207,19 +204,6 @@ describe('preloadCustomerEssentials — /customer/home aggregate fan-out', () =>
       value: null,
       ttl: CacheTTL.SHORT,
     });
-  });
-
-  it('leaves the referral key a cache MISS when the server sends none', async () => {
-    mockGetCustomerHome.mockResolvedValue(aggregate({ referral: null }));
-
-    await preloadCustomerEssentials(USER);
-    const w = writes();
-
-    // Pinning null there would show an empty referral card for the whole
-    // freshness window; a miss makes the screen fetch normally.
-    expect(w[`q:user:referral:${USER}`]).toBeUndefined();
-    // The rest of the snapshot still lands.
-    expect(w[`q:wallet:balance:${USER}`].value).toBe(1234.5);
   });
 
   /**
@@ -280,16 +264,17 @@ describe('preloadCustomerEssentials — /customer/home aggregate fan-out', () =>
     expect(writes()[`q:bookings:active-list:${USER}`]).toBeUndefined();
   });
 
-  it('still warms the below-the-fold set, unchanged', async () => {
+  it('still warms the below-the-fold set', async () => {
     await preloadCustomerEssentials(USER);
     await flush();
     const w = writes();
 
     expect(w[`q:wallet:transactions:${USER}:all`]).toBeDefined();
     expect(w[`q:user:addresses:${USER}`]).toBeDefined();
-    expect(w[`q:payment-methods:${USER}`]).toBeDefined();
     expect(w[`q:chat:conversations:${USER}`]).toBeDefined();
     expect(w[`q:bookings:activity:all:${USER}`]).toBeDefined();
+    // Saved payment methods are retired: no list to warm, no request for it.
+    expect(w[`q:payment-methods:${USER}`]).toBeUndefined();
   });
 
   /**

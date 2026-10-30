@@ -4,7 +4,7 @@ import api from './api';
 import { CacheService, CacheTTL } from './cache.service';
 import { configService } from './config.service';
 import { bookingService } from './booking.service';
-import { paymentService } from './payment.service';
+import { paymentService, parseWalletSummary } from './payment.service';
 import { runnerService } from './runner.service';
 import { supportService } from './support.service';
 import { notificationService } from './notification.service';
@@ -134,20 +134,20 @@ export function warmTracking(bookingOrId: Booking | string): void {
 }
 
 /**
- * Warm the Referral screen. It is one tap from the Profile tab, yet had no warm
- * entry, so the highest-intent entry always showed a spinner. Writes the exact
- * useQuery key/shape that screen reads (['user','referral', userId] →
- * ReferralInfo). Deliberately kept OUT of the first-wave auth warm-up.
- * Best-effort + silent. (P32)
+ * Warm the full wallet (withdrawable + bonus credit) when the booking funnel
+ * opens, so the Review screen's payment selector knows whether the wallet can
+ * pay before the customer gets there — instead of opening on Cash and hopping
+ * to the wallet a beat later for someone who always pays from it.
+ *
+ * On intent, not at boot: the /customer/home snapshot already carries the bare
+ * balance every other surface reads, and most customers never book from
+ * their wallet. Same parser as useWalletSummary, so the shapes can't drift.
  */
-export function prefetchReferral(userId: string): void {
-  // No `?? null` fallback: if the payload is missing, seed writes `undefined`,
-  // which useQuery treats as a cache miss and fetches normally (rather than
-  // pinning an empty referral card until revalidate).
+export function prefetchWalletSummary(userId: string): void {
   void seed(
-    ['user', 'referral', userId],
-    async () => (await userService.getReferral()).data?.data,
-    CacheTTL.MEDIUM,
+    ['wallet', 'summary', userId],
+    async () => parseWalletSummary((await paymentService.getWalletBalance()).data?.data),
+    CacheTTL.SHORT,
   );
 }
 
@@ -331,11 +331,12 @@ const customerAboveFoldSeeds = (userId: string): Array<() => Promise<unknown>> =
  * pin "no active errand" over a live one for the whole freshness window. We
  * therefore require every section to be present and of the right kind, and
  * fall back to the individual endpoints if anything is off. `active_booking`
- * and `referral` are nullable, so they're checked for PRESENCE, not truth.
+ * is nullable, so it's checked for PRESENCE, not truth.
  *
- * Promo codes are retired, so a `promos` section is NOT required: a server
- * from before the removal still sends one (ignored here, never seeded), and a
- * newer one omits it. Requiring it would throw the whole snapshot away.
+ * Promo codes and the referral program are retired, so neither a `promos` nor
+ * a `referral` section is required: a server that still sends the empty stubs
+ * has them ignored here (never seeded), and a newer one omits them. Requiring
+ * either would throw the whole snapshot away.
  */
 const isUsableHomeAggregate = (payload: unknown): payload is CustomerHomeAggregate => {
   if (!payload || typeof payload !== 'object') return false;
@@ -345,8 +346,7 @@ const isUsableHomeAggregate = (payload: unknown): payload is CustomerHomeAggrega
     Array.isArray(h.recent_bookings) &&
     typeof h.wallet_balance === 'number' &&
     Number.isFinite(h.wallet_balance) &&
-    'active_booking' in payload &&
-    'referral' in payload
+    'active_booking' in payload
   );
 };
 
@@ -357,8 +357,8 @@ const isUsableHomeAggregate = (payload: unknown): payload is CustomerHomeAggrega
  * on the screen itself), each paying a full framework boot + Sanctum auth on
  * Forge — two sequential waves through the 4-wide pool on PH mobile RTTs.
  * GET /customer/home returns every section at once, so warm-up is a single
- * round trip and the rewards band (referral / wallet), which was never
- * warmed above the fold at all, now paints from cache for free.
+ * round trip and the rewards band (wallet credit), which was never warmed
+ * above the fold at all, now paints from cache for free.
  *
  * The cache keys, value shapes and TTLs written here are IDENTICAL to the
  * per-endpoint seeds above — the screens' useQuery keys are untouched and the
@@ -392,11 +392,10 @@ async function seedCustomerHome(userId: string): Promise<void> {
       // Parsed with the SAME helper the screen's own fetcher uses, so the
       // seeded value cannot drift in shape from what it would have fetched —
       // the parity this whole snapshot depends on.
-      // Conditional for the same reason `referral` below is: an older API build
-      // omits the section, and seeding an empty array would pin "no active
-      // errand" over a live one for the whole freshness window. Absent → leave
-      // the key a miss and let the screen fetch, i.e. exactly today's
-      // behaviour, never worse.
+      // Conditional: an older API build omits the section, and seeding an
+      // empty array would pin "no active errand" over a live one for the whole
+      // freshness window. Absent → leave the key a miss and let the screen
+      // fetch, i.e. exactly today's behaviour, never worse.
       ...(Array.isArray(home.active_bookings)
         ? [
             write(
@@ -412,12 +411,6 @@ async function seedCustomerHome(userId: string): Promise<void> {
       write(['bookings', 'recent', userId], home.recent_bookings, CacheTTL.LONG),
       // The NUMBER, matching the wallet screen's fetcher (see the seed above).
       write(['wallet', 'balance', userId], home.wallet_balance, CacheTTL.MEDIUM),
-      // Referral is nullable on the wire but the screen caches an object; a
-      // null would pin an empty referral card, so leave the key a miss and let
-      // the screen fetch it normally (same reasoning as prefetchReferral).
-      ...(home.referral
-        ? [write(['user', 'referral', userId], home.referral, CacheTTL.MEDIUM)]
-        : []),
     ]);
   } catch {
     // Best-effort, exactly like every other warm-up path: degrade to the
@@ -444,14 +437,13 @@ export async function preloadCustomerEssentials(userId: string) {
   // Above-the-fold Home data — the ONLY set the interactive login / register
   // paths await before raising the success curtain, so the
   // "Logging in…" button releases as soon as Home can paint instead of blocking
-  // on the ENTIRE warm-up pool below (wallet history, notifications, chat
-  // threads, activity, addresses, payment methods, trusted contacts). Entries
-  // are thunks so the pool — not JS — decides when each fires. (P3)
+  // on the ENTIRE warm-up pool below (wallet, notifications, chat threads,
+  // activity, addresses, trusted contacts). Entries are thunks so the pool —
+  // not JS — decides when each fires. (P3)
   //
   // What used to be five separate requests here is now ONE — seedCustomerHome
-  // fans GET /customer/home out into the same five cache keys (plus referral,
-  // free in the same payload) and falls back to those five requests
-  // if the aggregate is unavailable. (P-M10)
+  // fans GET /customer/home out into the same cache keys and falls back to
+  // those requests if the aggregate is unavailable. (P-M10)
   const aboveFold: Array<() => Promise<unknown>> = [
     () => preloadCoreImages(),
     () => seedCustomerHome(userId),
@@ -502,15 +494,6 @@ export async function preloadCustomerEssentials(userId: string) {
           return (r.data?.data ?? r.data ?? []) as any[];
         },
         CacheTTL.LONG,
-      ),
-    () =>
-      seed(
-        ['payment-methods', userId],
-        async () => {
-          const r = await paymentService.getPaymentMethods();
-          return (r.data?.data ?? r.data ?? []) as any[];
-        },
-        CacheTTL.MEDIUM,
       ),
     () => preloadConversationsList(userId),
     () =>

@@ -15,7 +15,7 @@ import { formatCurrency } from '../../utils/formatCurrency';
  * can actually observe — there is no fabricated "authorizing with your bank"
  * theatre:
  *
- *   preparing   → creating the booking/top-up on our server
+ *   preparing   → creating the booking/tip on our server
  *   redirecting → opening the secure Xendit checkout
  *   verifying   → back from checkout, confirming with the backend (polling)
  *   pending     → still unconfirmed → "you can safely leave, we'll notify you"
@@ -67,15 +67,15 @@ interface PaymentProgressProps {
 const METHOD_LABELS: Record<string, string> = {
   gcash: 'GCash',
   maya: 'Maya',
-  grabpay: 'GrabPay',
-  card: 'Card',
   wallet: 'ErrandGuy Wallet',
   cash: 'Cash',
 };
 
 function formatMethod(method?: string | null): string | null {
   if (!method) return null;
-  return METHOD_LABELS[method] ?? method;
+  // Anything else (a method from before the launch simplification, resumed
+  // from storage) is shown as the server named it, capitalized.
+  return METHOD_LABELS[method] ?? method.charAt(0).toUpperCase() + method.slice(1);
 }
 
 function formatDateTime(iso?: string | null): string | null {
@@ -131,7 +131,7 @@ export function PaymentProgress({
 }: PaymentProgressProps) {
   // The one sentence this stage is worth saying out loud — '' for the two
   // sub-second stages we deliberately stay quiet through. Success speaks the
-  // caller's own title ("Tip sent", "Top-up confirmed") rather than the
+  // caller's own title ("Tip sent!", "Payment confirmed") rather than the
   // generic line, since that is what the user is waiting to hear.
   const liveMessage = !stage
     ? ''

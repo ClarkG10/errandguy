@@ -21,11 +21,14 @@ class WalletTransaction extends Model
         'bonus_portion',
         'balance_after',
         'reference_id',
+        'booking_id',
         'gateway_ref',
         'checkout_url',
+        'payout_destination',
         'description',
         'status',
         'processed_at',
+        'payout_sent_at',
         'failure_reason',
     ];
 
@@ -33,8 +36,13 @@ class WalletTransaction extends Model
     // client never needs; the wallet-ledger list endpoint returns raw models, so
     // hide it from serialization. Callers that genuinely need it read the
     // property directly (unaffected by $hidden). (audit security)
+    //
+    // payout_destination carries a full account number, so it never
+    // serializes either; the ledger shows the masked label in
+    // display_description instead.
     protected $hidden = [
         'gateway_ref',
+        'payout_destination',
     ];
 
     protected function casts(): array
@@ -45,7 +53,31 @@ class WalletTransaction extends Model
             'balance_after' => 'decimal:2',
             'created_at' => 'datetime',
             'processed_at' => 'datetime',
+            'payout_sent_at' => 'datetime',
+            // {channel, channel_code, account_number, account_name, bank_name}
+            // — see App\Support\PayoutDestination.
+            'payout_destination' => 'encrypted:array',
         ];
+    }
+
+    /**
+     * A payout handed to Xendit: it has a Xendit id, or the send started and
+     * its answer never came back. Either way the money may already be on its
+     * way, so only Xendit can say it failed (WalletService::failPayout).
+     */
+    public function isSentToGateway(): bool
+    {
+        return filled($this->gateway_ref) || $this->payout_sent_at !== null;
+    }
+
+    /**
+     * The errand a gateway tip charge ('tip_payment') is for. Each charge has
+     * its own row keyed by booking_id; rows from before that carry the errand
+     * in reference_id.
+     */
+    public function tipBookingId(): ?string
+    {
+        return $this->booking_id ?? $this->reference_id;
     }
 
     /**
@@ -112,11 +144,26 @@ class WalletTransaction extends Model
         }
 
         return match ($this->type) {
+            // Legacy: top-ups are retired, but older rows stay in the ledger.
             'top_up' => "{$brand} · Wallet top-up",
-            'payout' => "{$brand} · Payout to bank or e-wallet",
+            'payout' => "{$brand} · Payout to ".\App\Support\PayoutDestination::label($this->safePayoutDestination()),
+            // Legacy: referral bonuses are retired; older credits stay listed.
             'bonus' => "{$brand} · Promotional bonus",
+            'cancel_fee' => "{$brand} · Cancellation fee",
             default => $this->description ?? ucfirst(str_replace('_', ' ', (string) $this->type)),
         };
     }
-}
 
+    /**
+     * The payout destination, or null when there is none or it can't be
+     * decrypted — a label must never 500 the ledger.
+     */
+    private function safePayoutDestination(): ?array
+    {
+        try {
+            return $this->payout_destination;
+        } catch (\Throwable) {
+            return null;
+        }
+    }
+}

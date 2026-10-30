@@ -14,9 +14,10 @@ Grouped in the sidebar:
   a "Past promo code discount" line when it was made with one before then.
 - **People** — Users (suspend/unsuspend), Runner Profiles (approve/reject +
   documents), Trusted Contacts.
-- **Money** *(finance/super_admin)* — Payments (refund), Payouts (complete/fail),
-  Wallet Transactions (ledger), Referrals (reward), linked Payment Methods
-  (read-only).
+- **Money** *(finance/super_admin)* — Payments (refund), Payouts (runner
+  payouts, customer withdrawals and payouts queued by account deletion: "Send
+  via Xendit", "Check with Xendit" for a sent payout, manual complete/fail for
+  an unsent one), Wallet Transactions (ledger).
 - **Safety & Support** — SOS Alerts (resolve, with a live red badge), Disputes
   (resolve/escalate), Support Tickets (threaded reply).
 - **System** *(super_admin)* — System Config, Platform Payment Methods,
@@ -33,7 +34,10 @@ model writes:
   `Payment::transitionTo`; the action is only visible when `status === completed`).
 - Booking cancel → `BookingService::adminCancel()` (full wallet refund, no fee).
 - Payout complete/fail → `WalletService::completePayout()/failPayout()` (fail
-  re-credits the wallet atomically).
+  re-credits the wallet atomically). A payout already sent to Xendit can only
+  be failed on Xendit's word (`WalletService::refreshSentPayout()`, the payout
+  webhook); a "paid" notice for a payout already failed raises a critical
+  `payout_paid_after_failed` alert.
 - SOS resolve → `SOSService::deactivateSOS()`.
 
 Every sensitive action is recorded to the `admin` activity log

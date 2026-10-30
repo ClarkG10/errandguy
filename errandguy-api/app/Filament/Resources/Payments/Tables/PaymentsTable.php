@@ -83,8 +83,9 @@ class PaymentsTable
                         'wallet' => 'Wallet',
                         'gcash' => 'GCash',
                         'maya' => 'Maya',
-                        'card' => 'Card',
                         'cash' => 'Cash',
+                        // Retired; older payments keep it.
+                        'card' => 'Card (legacy)',
                     ]),
                 DateRangeFilter::make('created_at', 'Date'),
             ])
@@ -136,8 +137,9 @@ class PaymentsTable
                     ->action(function (array $data, $record): void {
                         try {
                             $service = app(\App\Services\PaymentService::class);
-                            // Hybrid: card reverses to source; wallet/GCash/Maya go to
-                            // the wallet; cash is rejected by the service (never held).
+                            // Hybrid: a (legacy, pre-retirement) card payment reverses
+                            // to source; wallet/GCash/Maya go to the wallet; cash is
+                            // rejected by the service (never held).
                             if ($record->method === 'card') {
                                 if (blank($record->gateway_tx_id)) {
                                     throw new \RuntimeException('This card payment has no gateway reference to reverse.');

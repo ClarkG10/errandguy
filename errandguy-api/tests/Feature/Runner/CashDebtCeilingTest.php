@@ -115,19 +115,50 @@ class CashDebtCeilingTest extends TestCase
         $this->assertSame('matched', $booking->fresh()->status);
     }
 
-    public function test_the_refusal_names_the_amount_to_settle(): void
+    public function test_the_refusal_names_the_debt_and_how_it_clears(): void
     {
         Event::fake();
         $this->indebt();
         $booking = $this->offer('cash', 'MSG');
 
-        $body = $this->actingAs($this->runner)
+        $res = $this->actingAs($this->runner)
             ->postJson("/api/v1/runner/errand/{$booking->id}/accept")
-            ->json('message');
+            ->assertStatus(409)
+            ->assertJsonPath('code', 'CASH_DEBT_OUTSTANDING');
 
-        // A bare refusal leaves the runner blocked with no next step.
-        $this->assertStringContainsString('1,500.00', (string) $body);
-        $this->assertStringContainsString('500.01', (string) $body, 'must state what to settle to get back to work');
+        // A bare refusal leaves the runner blocked with no next step. There is
+        // no way to pay it in (top-ups are retired): it clears from prepaid
+        // earnings, and the message is the same one every surface uses.
+        $this->assertSame(
+            'You owe ₱1,500.00 from cash errands. It’s cleared automatically from your next prepaid earnings; '
+                .'cash errands pause at ₱1,000.',
+            $res->json('message'),
+        );
+    }
+
+    public function test_the_profile_block_says_the_same_thing(): void
+    {
+        $this->indebt();
+
+        $block = $this->actingAs($this->runner)->getJson('/api/v1/runner/profile')->json('data.cash_debt_block');
+
+        $this->assertSame(\App\Support\CashDebtPolicy::message(-1500.00), $block['message']);
+        $this->assertStringStartsWith('You owe ₱1,500.00 from cash errands.', $block['message']);
+    }
+
+    public function test_a_payout_request_while_owing_gets_the_same_message(): void
+    {
+        $this->indebt(-250.00);
+        RunnerProfile::where('user_id', $this->runner->id)->update(['ewallet_number' => '09171234567']);
+
+        $this->actingAs($this->runner)
+            ->withHeader('Idempotency-Key', 'owing-payout')
+            ->postJson('/api/v1/runner/payout/request', ['amount' => 100])
+            ->assertStatus(422)
+            ->assertJsonPath('code', 'CASH_DEBT_OUTSTANDING')
+            ->assertJsonPath('message', \App\Support\CashDebtPolicy::message(-250.00));
+
+        $this->assertSame(-250.0, (float) $this->runner->fresh()->wallet_balance);
     }
 
     public function test_indebted_runner_can_still_accept_a_PREPAID_errand(): void

@@ -90,7 +90,7 @@ class PayoutFailureNotificationTest extends TestCase
         // A second run cannot re-fail the payout (failPayout is pending-only),
         // and the cache latch means even a direct re-notify is a no-op — so the
         // runner never gets a duplicate "your payout bounced".
-        Payouts::notifyRunnerOfBouncedPayout($payout->fresh(), 'bank rejected');
+        app(\App\Services\WalletService::class)->notifyPayoutBounced($payout->fresh(), 'bank rejected');
 
         $this->assertSame(1, Notification::where('user_id', $this->runner->id)->count());
     }
@@ -102,7 +102,7 @@ class PayoutFailureNotificationTest extends TestCase
         $payout = $this->pendingPayout(320);
         $payout->update(['status' => 'reversed', 'failure_reason' => 'Beneficiary account closed']);
 
-        Payouts::notifyRunnerOfBouncedPayout($payout->fresh(), null);
+        app(\App\Services\WalletService::class)->notifyPayoutBounced($payout->fresh(), null);
 
         $notification = Notification::where('user_id', $this->runner->id)->firstOrFail();
 

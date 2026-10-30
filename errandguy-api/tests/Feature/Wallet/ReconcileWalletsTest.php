@@ -132,4 +132,35 @@ class ReconcileWalletsTest extends TestCase
             ->expectsOutputToContain('0 mismatch(es)')
             ->assertExitCode(0);
     }
+
+    public function test_a_divergence_raises_one_staff_alert_per_day(): void
+    {
+        // A CRITICAL log line nobody reads is not an alarm: put it on the admin
+        // dashboard — once a day, however many times the check runs.
+        $u = $this->makeUser(150.00);
+        $this->ledger($u, 100.00);
+
+        $this->artisan('errandguy:reconcile-wallets')->assertExitCode(1);
+        $this->artisan('errandguy:reconcile-wallets')->assertExitCode(1);
+
+        $alerts = \App\Models\AdminAlert::where('type', 'wallet_reconcile_mismatch')->get();
+        $this->assertCount(1, $alerts);
+        $this->assertSame('critical', $alerts->first()->severity);
+        $this->assertStringContainsString('1 of 1 wallet(s)', (string) $alerts->first()->body);
+
+        // The next business day it is raised again if still unresolved.
+        $this->travel(1)->days();
+        $this->artisan('errandguy:reconcile-wallets')->assertExitCode(1);
+        $this->assertSame(2, \App\Models\AdminAlert::where('type', 'wallet_reconcile_mismatch')->count());
+    }
+
+    public function test_a_clean_run_raises_no_alert(): void
+    {
+        $u = $this->makeUser(100.00);
+        $this->ledger($u, 100.00);
+
+        $this->artisan('errandguy:reconcile-wallets')->assertExitCode(0);
+
+        $this->assertFalse(\App\Models\AdminAlert::where('type', 'wallet_reconcile_mismatch')->exists());
+    }
 }

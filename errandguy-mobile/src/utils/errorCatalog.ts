@@ -25,33 +25,19 @@ export interface ErrorInfo {
   message: string;
   retryable: boolean;
   /** Optional CTA hint a surface can wire to a route/action. */
-  action?: { label: string; kind: 'topup' | 'signin' | 'retry' | 'contact' };
+  action?: { label: string; kind: 'signin' | 'retry' | 'contact' };
 }
 
 /** Backend `code` (UPPER_SNAKE, matches Laravel App\Support\ErrorCode) → copy.
- *  Only entries where we can say something better than the backend message. */
+ *  Only entries where we can say something better than the backend message.
+ *
+ *  Deliberately absent: the money codes whose server message is already the
+ *  most specific thing to say — INSUFFICIENT_WALLET_BALANCE ("This booking
+ *  costs ₱X but your wallet balance is ₱Y…"), PAYOUT_MIN_AMOUNT (names the
+ *  minimum), CASH_DEBT_OUTSTANDING ("You owe ₱X from cash errands…") and
+ *  PAYOUT_METHOD_REQUIRED (says what is missing). A fixed line here would
+ *  overrule those amounts with something vaguer. */
 export const ERROR_CATALOG: Record<string, ErrorInfo> = {
-  INSUFFICIENT_WALLET_BALANCE: {
-    title: 'Not enough balance',
-    message: "Your wallet can't cover this. Top up or choose another payment method.",
-    retryable: true,
-    action: { label: 'Top up', kind: 'topup' },
-  },
-  TOPUP_MIN_AMOUNT: {
-    title: 'Amount too low',
-    message: "That's below the minimum top-up. Enter a larger amount to continue.",
-    retryable: true,
-  },
-  PAYOUT_MIN_AMOUNT: {
-    title: 'Amount too low',
-    message: "That's below the minimum payout. Request a larger amount to continue.",
-    retryable: true,
-  },
-  PAYMENT_METHOD_NOT_FOUND: {
-    title: 'Payment method unavailable',
-    message: "That payment method isn't on your account anymore. Pick another one.",
-    retryable: false,
-  },
   BOOKING_CONFLICT: {
     title: 'You already have an errand',
     message: 'Finish or cancel your errand in progress before starting another.',

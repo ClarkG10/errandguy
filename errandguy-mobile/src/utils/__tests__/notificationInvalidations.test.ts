@@ -111,7 +111,8 @@ describe('notificationInvalidationKeys', () => {
     it.each([
       ['system', { type: 'system', data: {} }],
       ['chat', { type: 'chat', data: { booking_id: 'bk-1' } }],
-      ['referral', { type: 'referral', data: {} }],
+      // Retired with the referral program — old inbox rows can still carry it.
+      ['the retired referral reward', { type: 'referral', data: {} }],
       // Retired with "name your price" — old inbox rows can still carry it.
       ['the retired incoming_request offer card', { type: 'incoming_request', data: {} }],
       ['a type we have never seen', { type: 'quantum_update', data: {} }],

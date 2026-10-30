@@ -733,7 +733,7 @@ export default function EarningsScreen() {
           <Card padding="md">
             <View className="flex-row items-start">
               <View className="flex-1 pr-3">
-                <Eyebrow>{balance < 0 ? 'Platform fees owed' : 'Available now'}</Eyebrow>
+                <Eyebrow>{balance < 0 ? 'Owed from cash errands' : 'Available now'}</Eyebrow>
                 <Text
                   className="text-[22px] font-inter-semi tabular-nums text-textPrimary mt-1"
                   numberOfLines={1}
@@ -745,7 +745,7 @@ export default function EarningsScreen() {
                 </Text>
                 <Text className="text-[11px] font-montserrat text-textTertiary mt-0.5">
                   {balance < 0
-                    ? 'From cash errands · settles from your next earnings'
+                    ? 'Cleared automatically from your next prepaid earnings'
                     : balance < minPayout
                       ? `Min ${formatCurrency(minPayout)} to cash out`
                       : 'Ready to withdraw'}

@@ -1,18 +1,35 @@
 import api from './api';
 import type { AxiosRequestConfig } from 'axios';
 import { invalidateQuery } from '../hooks/useQuery';
-import type { Booking, ErrandType, SavedAddress, TrustedContact } from '../types';
+import type {
+  Booking,
+  ErrandType,
+  PayoutChannel,
+  SavedAddress,
+  TrustedContact,
+} from '../types';
 
-/** Shape of GET /user/referral → `data` (ReferralController::show). */
-export interface ReferralInfo {
-  referral_code: string;
-  share_link: string;
-  counts: {
-    pending: number;
-    qualified: number;
-    rewarded: number;
-  };
-  total_earned: number;
+/**
+ * Where to send the wallet balance when an account is deleted. Customers can
+ * choose GCash or Maya; an account with a runner profile can also choose a bank
+ * (then `bank_name` is required).
+ */
+export interface DeletionPayoutDestination {
+  channel: PayoutChannel;
+  account_number: string;
+  account_name: string;
+  bank_name?: string;
+}
+
+/** DELETE /user/account → `data`: the payout queued from the balance, if any. */
+export interface AccountDeletionResult {
+  payout: {
+    id: string;
+    amount: number;
+    status: string;
+    /** "GCash •••• 4567" — never more than the last four digits. */
+    destination: string;
+  } | null;
 }
 
 /**
@@ -27,16 +44,17 @@ export interface ReferralInfo {
  *   active_booking  ← GET /bookings/active
  *   recent_bookings ← GET /bookings?per_page=5   (the data ARRAY, no paginator meta)
  *   wallet_balance  ← GET /wallet/balance → data.balance
- *   referral        ← GET /user/referral
  *
  * That parity is the whole point: `preload.service` seeds the existing
  * per-section useQuery cache keys straight from this payload, so any drift
  * would silently poison them. The individual endpoints stay as each screen's
  * revalidation path.
  *
- * A server from before promo codes were retired also sends a `promos` section.
- * It is deliberately left out of this type: nothing reads it, and the payload
- * guard in `preload.service` must accept the aggregate with or without it.
+ * Until the app build from before the launch simplification is gone, the
+ * server also sends empty `promos` and `referral` stubs (both features are
+ * retired). They are deliberately left out of this type: nothing reads them,
+ * and the payload guard in `preload.service` must accept the aggregate with or
+ * without them.
  */
 export interface CustomerHomeAggregate {
   errand_types: ErrandType[];
@@ -56,13 +74,11 @@ export interface CustomerHomeAggregate {
    * the object there once rendered "₱[object Object]" on cold start.
    */
   wallet_balance: number;
-  referral: ReferralInfo | null;
 }
 
 const invalidateProfile = () => invalidateQuery(['user', 'profile']);
 const invalidateAddresses = () => invalidateQuery(['user', 'addresses']);
 const invalidateContacts = () => invalidateQuery(['user', 'contacts']);
-const invalidateReferral = () => invalidateQuery(['user', 'referral']);
 
 export const userService = {
   getProfile(config?: AxiosRequestConfig) {
@@ -106,8 +122,14 @@ export const userService = {
     return api.put('/user/fcm-token', { fcm_token: token });
   },
 
-  deleteAccount() {
-    return api.delete('/user/account');
+  /**
+   * Erase the account. With money in the wallet the server needs to know where
+   * to send it: it answers 422 PAYOUT_METHOD_REQUIRED the first time, and the
+   * call is repeated with `destination`. The balance is then queued as a
+   * pending payout in the same step (see AccountDeletionResult).
+   */
+  deleteAccount(destination?: DeletionPayoutDestination) {
+    return api.delete('/user/account', destination ? { data: destination } : undefined);
   },
 
   getAddresses() {
@@ -158,29 +180,13 @@ export const userService = {
   },
 
   // ── Home aggregate ────────────────────────────────────────────────
-  // GET /customer/home — all six above-the-fold Home sections in one
-  // authenticated round trip instead of six (see CustomerHomeAggregate).
+  // GET /customer/home — every above-the-fold Home section in one
+  // authenticated round trip (see CustomerHomeAggregate).
   // Takes no parameters; the server ignores/strips any that are sent.
   // Silent so the cold-start warm-up never flashes the top progress bar,
   // and micro-cached briefly so a warm-up + an in-race screen fetch
   // coalesce rather than paying the round trip twice.
   getCustomerHome() {
     return api.get('/customer/home', { cacheTtlMs: 30_000, silent: true });
-  },
-
-  // ── Referral program ──────────────────────────────────────────────
-  // GET /user/referral returns the caller's own code, a shareable link,
-  // per-status counts of people they've referred, and total bonus earned.
-  getReferral() {
-    return api.get('/user/referral', { cacheTtlMs: 30_000, silent: true });
-  },
-
-  // POST /user/referral/apply — redeem someone else's code. Resolves 201
-  // on success; rejects with a 422 { message } on invalid / self / already
-  // referred (the caller surfaces `error.message`).
-  applyReferral(code: string) {
-    const p = api.post('/user/referral/apply', { code });
-    p.then(invalidateReferral).catch(() => {});
-    return p;
   },
 };

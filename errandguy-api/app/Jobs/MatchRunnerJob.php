@@ -236,8 +236,8 @@ class MatchRunnerJob implements ShouldQueue
                     // fail a matching run whose match already committed. The
                     // runner still learns of the offer from the persisted row + a REST
                     // fetch. (BookingStatusChanged below is intentionally NOT wrapped —
-                    // it drives real listeners incl. the referral reward, which must
-                    // not be silently swallowed.)
+                    // it drives real listeners, which must not be silently
+                    // swallowed.)
                     try {
                         SendPushJob::dispatch(
                             $runner->user_id,

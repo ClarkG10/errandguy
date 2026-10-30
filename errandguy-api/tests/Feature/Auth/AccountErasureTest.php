@@ -153,16 +153,21 @@ class AccountErasureTest extends TestCase
         Storage::disk('kyc')->assertMissing($path);
     }
 
-    public function test_deletion_blocked_with_unpaid_wallet_balance(): void
+    public function test_deletion_with_a_balance_and_nowhere_to_send_it_is_refused(): void
     {
-        // Guard still holds — nothing is erased if the runner has funds.
-        $user = User::factory()->create(['role' => 'runner', 'status' => 'active', 'wallet_balance' => 250.00]);
+        // Nothing is erased while money would be stranded: a positive balance
+        // must be paid out as part of deletion, so the request has to say where.
+        $user = User::factory()->create(['role' => 'customer', 'status' => 'active', 'wallet_balance' => 250.00]);
         $addr = SavedAddress::create(['user_id' => $user->id, 'label' => 'Home', 'address' => '1 A St', 'lat' => 14.6, 'lng' => 121.0]);
 
-        $this->actingAs($user)->deleteJson('/api/v1/user/account')->assertStatus(422);
+        $this->actingAs($user)->deleteJson('/api/v1/user/account')
+            ->assertStatus(422)
+            ->assertJsonPath('code', 'PAYOUT_METHOD_REQUIRED')
+            ->assertJsonPath('message', 'Your wallet has ₱250.00. Tell us where to send it — a GCash or Maya number — and we’ll send it to you as part of deleting your account.');
 
         $this->assertDatabaseHas('saved_addresses', ['id' => $addr->id]);
         $this->assertNull(User::withTrashed()->find($user->id)->deleted_at);
+        $this->assertEquals(250.0, (float) $user->fresh()->wallet_balance);
     }
 
     public function test_deletion_blocked_with_negative_wallet_balance_debt(): void
@@ -170,10 +175,14 @@ class AccountErasureTest extends TestCase
         // TEST-1: a cash errand leaves the runner owing the platform its service
         // fee (a NEGATIVE balance, netted from future earnings). Deleting would
         // anonymize the account and make that debt uncollectable, so it must be
-        // refused — the pre-existing guard only blocked positive balances.
+        // refused — with the one shared cash-debt message.
         $user = User::factory()->create(['role' => 'runner', 'status' => 'active', 'wallet_balance' => -15.00]);
 
-        $this->actingAs($user)->deleteJson('/api/v1/user/account')->assertStatus(422);
+        $this->actingAs($user)->deleteJson('/api/v1/user/account')
+            ->assertStatus(422)
+            ->assertJsonPath('code', 'CASH_DEBT_OUTSTANDING')
+            ->assertJsonPath('message', 'You owe ₱15.00 from cash errands. It’s cleared automatically from your next prepaid earnings; '
+                .'cash errands pause at ₱1,000. You can delete your account once it’s cleared.');
 
         $this->assertNull(User::withTrashed()->find($user->id)->deleted_at);
     }

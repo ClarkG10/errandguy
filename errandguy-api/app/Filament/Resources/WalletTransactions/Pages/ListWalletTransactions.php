@@ -19,9 +19,6 @@ class ListWalletTransactions extends ListRecords
 
         return [
             'all' => Tab::make('All')->badge(array_sum($c)),
-            'topups' => Tab::make('Top-ups')->icon('heroicon-m-arrow-down-circle')->badgeColor('success')
-                ->badge(ListTabs::sum($c, 'top_up'))
-                ->modifyQueryUsing(fn (Builder $query): Builder => $query->where('type', 'top_up')),
             'payouts' => Tab::make('Payouts')->icon('heroicon-m-arrow-up-circle')->badgeColor('warning')
                 ->badge(ListTabs::sum($c, 'payout'))
                 ->modifyQueryUsing(fn (Builder $query): Builder => $query->where('type', 'payout')),

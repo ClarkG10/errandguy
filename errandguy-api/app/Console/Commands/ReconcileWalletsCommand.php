@@ -2,6 +2,7 @@
 
 namespace App\Console\Commands;
 
+use App\Models\AdminAlert;
 use App\Models\User;
 use App\Models\WalletTransaction;
 use Illuminate\Console\Command;
@@ -23,13 +24,14 @@ use Illuminate\Support\Facades\Log;
  * DB, a manual DB edit, or a future code path that forgets the ledger. Catching
  * that early is the whole point: wallet_balance is real, withdrawable money.
  *
- * READ-ONLY: it never mutates money — it only compares and reports, so it is
- * always safe to run. It intentionally does NOT reconcile bonus_balance, which
+ * READ-ONLY: it never mutates money — it only compares and reports (a CRITICAL
+ * log line and one staff AdminAlert per day), so it is always safe to run. It intentionally does NOT reconcile bonus_balance, which
  * is a separate bucket (a documented follow-up).
  *
  * 'bonus' rows are EXCLUDED from the "latest wallet row" selection: a bonus
- * credit (ReferralService) records balance_after = the new bonus_balance total,
- * NOT wallet_balance, so counting it would flag every freshly-referred user.
+ * credit (written by the retired referral program; older rows remain) records
+ * balance_after = the bonus_balance total, NOT wallet_balance, so counting it
+ * would flag every user who was ever referred.
  * Every OTHER transaction type records balance_after = wallet_balance, so a
  * denylist (rather than an allowlist) also auto-covers any future wallet type.
  * Any future type that records a NON-wallet balance_after must be added here.
@@ -100,6 +102,7 @@ class ReconcileWalletsCommand extends Command
 
         if ($mismatches > 0) {
             Log::critical("Wallet reconciliation: {$mismatches} of {$checked} wallet(s) diverge from the ledger — investigate for out-of-band balance writes.");
+            $this->alertStaff($mismatches, $checked);
         }
 
         $this->info("Reconciled {$checked} wallet(s); {$mismatches} mismatch(es).");
@@ -107,5 +110,31 @@ class ReconcileWalletsCommand extends Command
         // Non-zero exit surfaces a divergence to the scheduler/monitoring on top
         // of the CRITICAL log; a clean run exits 0.
         return $mismatches > 0 ? self::FAILURE : self::SUCCESS;
+    }
+
+    /**
+     * A log line nobody reads is not an alarm: put it on the admin dashboard.
+     * At most one alert per business day, so a divergence that persists until
+     * someone fixes it doesn't bury the feed in copies (each run still logs).
+     */
+    private function alertStaff(int $mismatches, int $checked): void
+    {
+        $startOfDay = now(config('app.business_timezone'))->startOfDay()->utc();
+
+        $alreadyRaised = AdminAlert::where('type', 'wallet_reconcile_mismatch')
+            ->where('created_at', '>=', $startOfDay)
+            ->exists();
+        if ($alreadyRaised) {
+            return;
+        }
+
+        AdminAlert::raise(
+            'wallet_reconcile_mismatch',
+            'critical',
+            'Wallet balances don’t match the ledger',
+            "{$mismatches} of {$checked} wallet(s) hold a balance that differs from their own transaction history. "
+                .'Something moved money without a ledger entry — the CRITICAL log lines from errandguy:reconcile-wallets '
+                .'list each account. Investigate before paying any of them out.',
+        );
     }
 }

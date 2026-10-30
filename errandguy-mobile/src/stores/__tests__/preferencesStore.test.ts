@@ -63,60 +63,41 @@ describe('preferencesStore — appearance', () => {
 });
 
 describe('preferencesStore — last-used payment memory', () => {
-  it('records the selection per user id and persists it', async () => {
-    act(() =>
-      usePreferencesStore
-        .getState()
-        .setLastPaymentMethod('user-1', { id: '__gcash__', type: 'gcash' }),
-    );
+  it('records the method per user id and persists it', async () => {
+    act(() => usePreferencesStore.getState().setLastPaymentMethod('user-1', 'gcash'));
 
     const entry = usePreferencesStore.getState().lastPaymentMethods['user-1'];
-    expect(entry).toMatchObject({ id: '__gcash__', type: 'gcash' });
+    expect(entry).toMatchObject({ type: 'gcash' });
     expect(typeof entry.savedAt).toBe('number');
 
     const persisted = JSON.parse((await AsyncStorage.getItem(PAYMENT_MEMORY_KEY))!);
-    expect(persisted['user-1']).toMatchObject({ id: '__gcash__', type: 'gcash' });
+    expect(persisted['user-1']).toMatchObject({ type: 'gcash' });
   });
 
   it('keeps two accounts on one device separate', () => {
     act(() => {
-      usePreferencesStore
-        .getState()
-        .setLastPaymentMethod('user-1', { id: '__gcash__', type: 'gcash' });
-      usePreferencesStore
-        .getState()
-        .setLastPaymentMethod('user-2', { id: 'pm-77', type: 'card' });
+      usePreferencesStore.getState().setLastPaymentMethod('user-1', 'gcash');
+      usePreferencesStore.getState().setLastPaymentMethod('user-2', 'wallet');
     });
 
     const map = usePreferencesStore.getState().lastPaymentMethods;
-    expect(map['user-1'].id).toBe('__gcash__');
-    expect(map['user-2'].id).toBe('pm-77');
+    expect(map['user-1'].type).toBe('gcash');
+    expect(map['user-2'].type).toBe('wallet');
   });
 
   it('overwrites the same user rather than accumulating', () => {
     act(() => {
-      usePreferencesStore
-        .getState()
-        .setLastPaymentMethod('user-1', { id: '__cash__', type: 'cash' });
-      usePreferencesStore
-        .getState()
-        .setLastPaymentMethod('user-1', { id: '__maya__', type: 'maya' });
+      usePreferencesStore.getState().setLastPaymentMethod('user-1', 'cash');
+      usePreferencesStore.getState().setLastPaymentMethod('user-1', 'maya');
     });
 
     const map = usePreferencesStore.getState().lastPaymentMethods;
     expect(Object.keys(map)).toEqual(['user-1']);
-    expect(map['user-1']).toMatchObject({ id: '__maya__', type: 'maya' });
+    expect(map['user-1']).toMatchObject({ type: 'maya' });
   });
 
-  it('ignores a write with no user id or an incomplete method', async () => {
-    act(() => {
-      usePreferencesStore
-        .getState()
-        .setLastPaymentMethod('', { id: '__gcash__', type: 'gcash' });
-      usePreferencesStore
-        .getState()
-        .setLastPaymentMethod('user-1', { id: '', type: 'gcash' });
-    });
+  it('ignores a write with no user id', async () => {
+    act(() => usePreferencesStore.getState().setLastPaymentMethod('', 'gcash'));
 
     expect(usePreferencesStore.getState().lastPaymentMethods).toEqual({});
     expect(await AsyncStorage.getItem(PAYMENT_MEMORY_KEY)).toBeNull();
@@ -127,7 +108,7 @@ describe('preferencesStore — last-used payment memory', () => {
     // map that lands a tick later would be missed entirely.
     await AsyncStorage.setItem(
       PAYMENT_MEMORY_KEY,
-      JSON.stringify({ 'user-1': { id: '__maya__', type: 'maya', savedAt: 1 } }),
+      JSON.stringify({ 'user-1': { type: 'maya', savedAt: 1 } }),
     );
 
     await act(async () => {
@@ -136,10 +117,7 @@ describe('preferencesStore — last-used payment memory', () => {
 
     const s = usePreferencesStore.getState();
     expect(s.isHydrated).toBe(true);
-    expect(s.lastPaymentMethods['user-1']).toMatchObject({
-      id: '__maya__',
-      type: 'maya',
-    });
+    expect(s.lastPaymentMethods['user-1']).toEqual({ type: 'maya', savedAt: 1 });
   });
 
   it('starts empty on a corrupt or legacy-shaped memory blob', async () => {
@@ -153,12 +131,35 @@ describe('preferencesStore — last-used payment memory', () => {
     expect(usePreferencesStore.getState().isHydrated).toBe(true);
   });
 
-  it('clearLastPaymentMethods wipes memory and storage (account-scope reset)', async () => {
-    act(() =>
-      usePreferencesStore
-        .getState()
-        .setLastPaymentMethod('user-1', { id: '__gcash__', type: 'gcash' }),
+  it('restores what the build with saved methods remembered, minus the retired ones', async () => {
+    // That build stored { id, type }: a sentinel or a saved card / linked
+    // account id. A card or GrabPay memory can't be offered any more, so it is
+    // dropped and that customer gets the default pick; GCash (even a linked
+    // GCash account), Maya, wallet and cash carry over without the id.
+    await AsyncStorage.setItem(
+      PAYMENT_MEMORY_KEY,
+      JSON.stringify({
+        'user-card': { id: 'pm-77', type: 'card', savedAt: 5 },
+        'user-sentinel-card': { id: '__card__', type: 'card', savedAt: 5 },
+        'user-grab': { id: 'pm-88', type: 'grabpay', savedAt: 5 },
+        'user-linked-gcash': { id: 'pm-99', type: 'gcash', savedAt: 6 },
+        'user-cash': { id: '__cash__', type: 'cash', savedAt: 7 },
+        'user-broken': { id: '__wallet__' },
+      }),
     );
+
+    await act(async () => {
+      await usePreferencesStore.getState().loadFromStorage();
+    });
+
+    expect(usePreferencesStore.getState().lastPaymentMethods).toEqual({
+      'user-linked-gcash': { type: 'gcash', savedAt: 6 },
+      'user-cash': { type: 'cash', savedAt: 7 },
+    });
+  });
+
+  it('clearLastPaymentMethods wipes memory and storage (account-scope reset)', async () => {
+    act(() => usePreferencesStore.getState().setLastPaymentMethod('user-1', 'gcash'));
 
     act(() => usePreferencesStore.getState().clearLastPaymentMethods());
 
@@ -170,7 +171,7 @@ describe('preferencesStore — last-used payment memory', () => {
     usePreferencesStore.setState({ isHydrated: true });
     await AsyncStorage.setItem(
       PAYMENT_MEMORY_KEY,
-      JSON.stringify({ 'user-1': { id: '__card__', type: 'card', savedAt: 1 } }),
+      JSON.stringify({ 'user-1': { type: 'gcash', savedAt: 1 } }),
     );
 
     await act(async () => {

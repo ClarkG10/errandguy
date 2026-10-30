@@ -60,6 +60,12 @@ Route::get('/trip/{token}', [PublicTripController::class, 'page'])
     ->middleware('throttle:60,1')
     ->name('trip.public');
 
+/*
+| Account deletion (public, no sign-in). Google Play requires a web page that
+| explains how to delete an account and how to ask for it without the app.
+*/
+Route::view('/delete-account', 'delete-account')->name('account.delete');
+
 Route::get('/payment/complete', function () {
     return response(view('payment-complete'))
         ->header('Content-Type', 'text/html');

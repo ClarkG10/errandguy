@@ -38,9 +38,10 @@ export const copy = {
     rateFailed: 'Couldn’t submit your review. Please try again.',
   },
   wallet: {
-    topupStartFailed: 'Couldn’t start your top-up. Please try again in a moment.',
     payoutRequested: 'Payout requested — we’ll notify you when it’s sent.',
     payoutFailed: 'Couldn’t request your payout. Please try again.',
+    withdrawalRequested: 'Withdrawal requested — it usually arrives within 1–3 business days.',
+    withdrawalFailed: 'Couldn’t request your withdrawal. Please try again.',
   },
   profile: {
     saved: 'Your changes have been saved.',
@@ -69,9 +70,6 @@ export const copy = {
   support: {
     createFailed: 'Couldn’t open your support ticket. Please try again.',
     messageSendFailed: 'Couldn’t send your message. Please try again.',
-  },
-  payment: {
-    linkFailed: 'Couldn’t start linking that payment method. Please try again.',
   },
   safety: {
     sosFailed: 'Couldn’t trigger SOS. Please try again, or call for help directly.',

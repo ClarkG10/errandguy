@@ -4,6 +4,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { X } from 'lucide-react-native';
 import { Card } from '../ui/Card';
 import { Button } from '../ui/Button';
+import { DeleteAccountPageLink } from '../settings/DeleteAccountPageLink';
 import { LightColors } from '../../constants/colors';
 
 export type LegalDocument = 'terms' | 'privacy';
@@ -26,7 +27,11 @@ interface LegalModalProps {
  */
 const CONTENT: Record<
   LegalDocument,
-  { title: string; sections: { heading: string; body: string }[] }
+  {
+    title: string;
+    /** `deletionLink` adds the public account-deletion page under the body. */
+    sections: { heading: string; body: string; deletionLink?: boolean }[];
+  }
 > = {
   terms: {
     title: 'Terms of Service',
@@ -37,7 +42,7 @@ const CONTENT: Record<
       },
       {
         heading: 'Bookings & Payments',
-        body: `The fare or offer you confirm before booking is the amount you will be charged, plus any reconciled shopping costs you approve. Payments are processed securely through our payment partners; ErrandGuy never stores your full card details.\n\nCancellation fees may apply once a runner has been matched and is on the way.`,
+        body: `The fare or offer you confirm before booking is the amount you will be charged, plus any reconciled shopping costs you approve. You can pay in cash, with GCash or Maya, or from your ErrandGuy wallet balance; GCash and Maya payments are processed securely by our payment partner.\n\nCancellation fees may apply once a runner has been matched and is on the way.`,
       },
       {
         heading: 'Community Guidelines',
@@ -58,7 +63,8 @@ const CONTENT: Record<
       },
       {
         heading: 'Your Choices',
-        body: `You can update your profile, manage permissions from your device settings, and request deletion of your data at any time using the Delete Account option in your profile or by contacting support.`,
+        body: `You can update your profile, manage permissions from your device settings, and request deletion of your data at any time using the Delete Account option in your profile, on the web, or by contacting support.`,
+        deletionLink: true,
       },
     ],
   },
@@ -108,6 +114,7 @@ export function LegalModal({ visible, document, onClose, onAgree }: LegalModalPr
                 <Text className="text-sm font-montserrat text-textSecondary leading-5">
                   {section.body}
                 </Text>
+                {section.deletionLink ? <DeleteAccountPageLink className="mt-3" /> : null}
               </Card>
             </View>
           ))}

@@ -17,9 +17,10 @@ export type {
 } from './booking';
 export type {
   Payment,
-  PaymentMethod,
   PaymentMethodType,
   PaymentStatus,
+  PayoutChannel,
+  WalletSummary,
   WalletTransaction,
   WalletTransactionType,
 } from './payment';

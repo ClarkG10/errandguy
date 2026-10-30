@@ -49,7 +49,7 @@ export function readAmountToCollect(booking: Booking): number | null {
   return positiveNumber((booking as RunnerOpsBooking).amount_to_collect);
 }
 
-/** 'cash' | 'wallet' | 'gcash' | 'maya' | 'card' | … or null when unknown. */
+/** 'cash' | 'wallet' | 'gcash' | 'maya' | … (or an older booking's method), null when unknown. */
 export function readPaymentMethodType(booking: Booking): string | null {
   const raw = (booking as RunnerOpsBooking).payment_method_type;
   if (typeof raw === 'string' && raw.trim() !== '') return raw.trim();
@@ -113,9 +113,6 @@ const PAYMENT_LABELS: Record<string, string> = {
   gcash: 'GCash',
   maya: 'Maya',
   paymaya: 'Maya',
-  card: 'Card',
-  grab_pay: 'GrabPay',
-  grabpay: 'GrabPay',
 };
 
 /** Human label for a payment method type, or null when we don't know it. */

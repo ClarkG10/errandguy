@@ -24,9 +24,12 @@ use Illuminate\Support\Facades\Log;
  * who checks. This covers the one who doesn't — and the runner who is owed
  * money is exactly the person who eventually will.
  *
- * Settlement runs through WalletService::completePayout / failPayout only, both
- * row-locked and pending-guarded (failPayout is what re-credits the wallet), so
- * this can neither pay twice nor credit twice.
+ * Settlement runs through WalletService::refreshSentPayout →
+ * completePayout / failPayout only, both row-locked and pending-guarded
+ * (failPayout is what re-credits the wallet), so this can neither pay twice
+ * nor credit twice. Payouts whose send went unanswered are looked up by their
+ * reference; one Xendit has no record of is left for staff ("Check with
+ * Xendit").
  */
 class ReconcilePendingPayoutsCommand extends Command
 {
@@ -50,7 +53,8 @@ class ReconcilePendingPayoutsCommand extends Command
         $pending = WalletTransaction::query()
             ->where('type', 'payout')
             ->where('status', 'pending')
-            ->whereNotNull('gateway_ref')
+            // Sent to Xendit: with its id, or with an unanswered send.
+            ->where(fn ($q) => $q->whereNotNull('gateway_ref')->orWhereNotNull('payout_sent_at'))
             ->where('created_at', '<=', now()->subMinutes($minAgeMinutes))
             ->where('created_at', '>=', now()->subDays($maxAgeDays))
             ->orderBy('created_at')
@@ -100,7 +104,7 @@ class ReconcilePendingPayoutsCommand extends Command
                     'payout_reconciled',
                     'warning',
                     'Payout settled by reconciliation sweep',
-                    "A ₱{$tx->amount} runner payout was resolved as '{$settled->status}' by the gateway but no "
+                    "A ₱{$tx->amount} payout was resolved as '{$settled->status}' by the gateway but no "
                         .'webhook settled it. Repeated occurrences indicate a webhook-delivery problem.',
                     $tx->id,
                 );

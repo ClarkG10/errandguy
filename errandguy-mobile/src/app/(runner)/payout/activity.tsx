@@ -11,12 +11,14 @@ import { SyncIndicator } from '../../../components/ui/SyncIndicator';
 import { Spinner } from '../../../components/ui/Spinner';
 import { WalletActivityRow } from '../../../components/runner/WalletActivityRow';
 import { useAuthStore } from '../../../stores/authStore';
+import { useRunnerStore } from '../../../stores/runnerStore';
 import { paymentService } from '../../../services/payment.service';
 import { userService } from '../../../services/user.service';
 import { useQuery } from '../../../hooks/useQuery';
 import { CacheTTL } from '../../../services/cache.service';
 import { useResponsive } from '../../../constants/responsive';
 import { formatCurrency } from '../../../utils/formatCurrency';
+import { cashDebtText } from '../../../utils/cashDebt';
 import type { WalletTransaction } from '../../../types';
 import { LightColors } from '../../../constants/colors';
 
@@ -38,6 +40,7 @@ export default function WalletActivityScreen() {
   const userId = useAuthStore((s) => s.user?.id ?? 'anon');
   const setUser = useAuthStore((s) => s.setUser);
   const balance = Number(useAuthStore((s) => s.user?.wallet_balance) ?? 0);
+  const runnerProfile = useRunnerStore((s) => s.runnerProfile);
 
   // Page 1 is cached via useQuery (cache-first); later pages append.
   // Mirrors the runner history screen's pagination idiom.
@@ -164,7 +167,7 @@ export default function WalletActivityScreen() {
           <View className="px-5 pt-1 pb-3">
             <Card padding="lg" tone={balance < 0 ? 'tinted' : 'default'}>
               <Text className="text-[10px] font-montserrat-bold uppercase text-textSecondary" style={{ letterSpacing: 1.2 }}>
-                {balance < 0 ? 'Platform fees owed' : 'Current balance'}
+                {balance < 0 ? 'Owed from cash errands' : 'Current balance'}
               </Text>
               <Text className="text-[26px] font-inter-semi tabular-nums text-textPrimary mt-1">
                 {balance < 0 ? '−' : ''}
@@ -173,12 +176,10 @@ export default function WalletActivityScreen() {
               {balance < 0 ? (
                 // A cash-heavy runner goes negative BY DESIGN: the platform
                 // commission on a cash errand is debited from the wallet
-                // because the runner already pocketed the fare. Saying so is
-                // the whole point of this screen.
+                // because the runner already pocketed the fare. Saying so — in
+                // the server's own words — is the whole point of this screen.
                 <Text className="text-[12px] font-montserrat text-textSecondary mt-1.5">
-                  You collected these fares in cash, so the platform fee sits here as a balance
-                  owed. It’s settled automatically from your next online earnings — there’s
-                  nothing to pay separately.
+                  {cashDebtText(balance, runnerProfile)}
                 </Text>
               ) : (
                 <Text className="text-[12px] font-montserrat text-textSecondary mt-1.5">

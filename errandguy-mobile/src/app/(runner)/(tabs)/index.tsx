@@ -1333,9 +1333,9 @@ export default function RunnerHomeScreen() {
         {/* Cash-debt block. The server stops offering CASH errands and refuses
             them at accept once unsettled commission passes
             `runner_cash_debt_limit`, so WITHOUT this the runner just watches
-            work stop appearing and concludes the app is broken. Says the amount
-            owed and what to settle, and makes clear prepaid work still pays —
-            a block with no way out is worse than no block. */}
+            work stop appearing and concludes the app is broken. Shows the
+            server's own sentence — the amount owed and that it clears from the
+            next prepaid earnings — so a block always comes with its way out. */}
         {cashDebtBlock && (
           <View className="mx-5 -mt-3 mb-4 bg-danger/10 border border-danger/30 rounded-2xl px-4 py-3">
             <View className="flex-row items-center mb-1">

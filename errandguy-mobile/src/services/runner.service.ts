@@ -1,6 +1,6 @@
 import api from './api';
 import { invalidateQuery } from '../hooks/useQuery';
-import type { Coordinate } from '../types';
+import type { Coordinate, PayoutChannel } from '../types';
 
 const invalidateRunnerProfile = () => invalidateQuery(['runner', 'profile']);
 const invalidateRunnerErrands = () => {
@@ -19,12 +19,33 @@ export const runnerService = {
     vehicle_type?: string;
     vehicle_plate?: string;
     preferred_types?: string[];
-    bank_name?: string;
-    bank_account_number?: string;
-    bank_account_name?: string;
-    ewallet_number?: string;
   }) {
     const p = api.put('/runner/profile', data);
+    p.then(invalidateRunnerProfile).catch(() => {});
+    return p;
+  },
+
+  /**
+   * PUT /runner/payout-method — where payouts go: GCash, Maya or a bank
+   * account, with the account number and the holder's name. Saving replaces
+   * the previous method (a runner has exactly one). Resolves with the updated
+   * RunnerProfileResource (payout_channel, payout_account_name, …).
+   */
+  savePayoutMethod(data: {
+    channel: PayoutChannel;
+    account_number: string;
+    account_name: string;
+    /** Bank only. */
+    bank_name?: string;
+  }) {
+    const p = api.put('/runner/payout-method', data);
+    p.then(invalidateRunnerProfile).catch(() => {});
+    return p;
+  },
+
+  /** DELETE /runner/payout-method — payouts already requested keep theirs. */
+  removePayoutMethod() {
+    const p = api.delete('/runner/payout-method');
     p.then(invalidateRunnerProfile).catch(() => {});
     return p;
   },

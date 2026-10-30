@@ -20,16 +20,10 @@ import {
   Home,
   Briefcase,
   Star,
-  ArrowUpCircle,
-  ArrowDownCircle,
-  RotateCcw,
   Wallet,
   ClipboardList,
   MessageCircle,
   SearchX,
-  Gift,
-  Coins,
-  SlidersHorizontal,
 } from 'lucide-react-native';
 import type { LucideIcon } from 'lucide-react-native';
 import { bookingService } from '../../services/booking.service';
@@ -56,13 +50,8 @@ import { LightColors } from '../../constants/colors';
 import { formatCurrency } from '../../utils/formatCurrency';
 import { formatRelativeTime } from '../../utils/formatDate';
 import { STATUS_LABELS } from '../../constants/statusLabels';
-import type {
-  Booking,
-  Conversation,
-  SavedAddress,
-  WalletTransaction,
-  WalletTransactionType,
-} from '../../types';
+import { ledgerIcon, isLedgerCredit } from '../../utils/walletLedger';
+import type { Booking, Conversation, SavedAddress, WalletTransaction } from '../../types';
 
 // Persisted recent-search terms (last 6). Bumped key on shape change.
 const RECENT_KEY = 'search:recent:v1';
@@ -74,17 +63,6 @@ const ADDRESS_ICONS: Record<string, LucideIcon> = {
   home: Home,
   work: Briefcase,
   other: Star,
-};
-
-const TX_ICONS: Record<WalletTransactionType, { icon: LucideIcon; color: string }> = {
-  top_up: { icon: ArrowUpCircle, color: LightColors.success },
-  payment: { icon: ArrowDownCircle, color: LightColors.danger },
-  refund: { icon: RotateCcw, color: LightColors.primary },
-  payout: { icon: ArrowDownCircle, color: LightColors.warning },
-  bonus: { icon: Star, color: LightColors.accentStrong },
-  tip: { icon: Gift, color: LightColors.accentStrong },
-  earning: { icon: Coins, color: LightColors.success },
-  adjustment: { icon: SlidersHorizontal, color: LightColors.primary },
 };
 
 /** Primary result line with the matched substring emphasised, so the user
@@ -511,9 +489,9 @@ export default function SearchScreen() {
         }
         case 'transaction': {
           const t = item.tx;
-          const config = TX_ICONS[t.type] ?? TX_ICONS.payment;
+          const config = ledgerIcon(t.type);
           const Icon = config.icon;
-          const isPositive = t.type === 'top_up' || t.type === 'refund' || t.type === 'bonus';
+          const isPositive = isLedgerCredit(t);
           return (
             <View className="px-5">
               <Card

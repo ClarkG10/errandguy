@@ -1,20 +1,19 @@
-import type { RunnerProfile } from '../../types';
+import type { PayoutChannel, RunnerProfile } from '../../types';
+import { PAYOUT_CHANNEL_LABELS } from '../../utils/payoutDestination';
 
 /**
  * Payout-method truth shared by the runner payout screen and the earnings
  * tab's money strip.
  *
- * Everything here MIRRORS RunnerPayoutController::requestPayout — it never
- * relaxes it. The server stays the authority; the point is only to tell the
- * runner what is missing BEFORE they type an amount, tap Request, confirm a
- * modal and finally eat a PAYOUT_METHOD_REQUIRED rejection.
+ * Everything here MIRRORS RunnerProfile::payoutDestination() on the server —
+ * it never relaxes it. The server stays the authority; the point is only to
+ * tell the runner what is missing BEFORE they type an amount, tap Request,
+ * confirm a modal and finally eat a PAYOUT_METHOD_REQUIRED rejection.
  */
 
 /**
  * Fields RunnerProfileResource returns for the runner's OWN profile that the
- * shared `RunnerProfile` type does not declare yet (`bank_account_last4`,
- * `payout_minimum`). Declared locally so these screens stay strict-clean
- * without editing src/types/runner.ts (owned elsewhere this wave).
+ * shared `RunnerProfile` type does not declare.
  */
 export interface SelfRunnerProfile extends RunnerProfile {
   /** Last 4 digits of the saved bank account, computed at read; never stored.
@@ -24,6 +23,10 @@ export interface SelfRunnerProfile extends RunnerProfile {
   bank_account_last4?: string | null;
   /** SystemConfig `min_payout_amount`. The app used to hardcode ₱100. */
   payout_minimum?: number | null;
+  /** Saved through PUT /runner/payout-method. Null for a method saved by an
+   *  older app build, which never said which e-wallet a number belongs to. */
+  payout_channel?: PayoutChannel | null;
+  payout_account_name?: string | null;
 }
 
 /** Same fallback the server uses when SystemConfig has no row. */
@@ -38,87 +41,81 @@ export function payoutMinimum(profile: SelfRunnerProfile | null | undefined): nu
   return Number.isFinite(raw) && raw > 0 ? raw : PAYOUT_MIN_FALLBACK;
 }
 
-/**
- * Philippine banks that actually appear in runner payouts. Free text here used
- * to route real money into manual admin fixes ("BDo", "bpi savings", "Metro
- * bank"), so the picker is the input and `Other` is the only typed escape.
- */
-export const PH_BANKS = [
-  'BDO',
-  'BPI',
-  'Metrobank',
-  'Landbank',
-  'UnionBank',
-  'PNB',
-  'RCBC',
-  'Security Bank',
-  'Chinabank',
-  'EastWest',
-] as const;
-
-export const OTHER_BANK = 'Other';
-
-/** True when `name` is one of the picker's fixed options. */
-export function isKnownBank(name: string | null | undefined): boolean {
-  const v = (name ?? '').trim();
-  return PH_BANKS.some((b) => b.toLowerCase() === v.toLowerCase());
-}
-
 export type PayoutBlocker =
-  /** Nothing at all on file — the server rejects outright. */
+  /** Nothing sendable on file — the server rejects outright. */
   | 'no_method'
   /** A bank name with no account number we can see — the server rejects a
    *  bank payout without both halves. */
   | 'incomplete_bank';
 
 export interface PayoutMethodState {
-  hasEwallet: boolean;
-  hasBankName: boolean;
-  /** We can SEE an account number on file (last4 present). */
-  hasBankAccount: boolean;
   /** A payout can actually be requested right now. */
   ready: boolean;
   /** Null when ready; otherwise what to tell the runner up front. */
   blocker: PayoutBlocker | null;
-  bankLast4: string | null;
+  /** gcash | maya | bank — null for an e-wallet number an older build saved
+   *  without saying which (staff then pick GCash or Maya when sending). */
+  channel: PayoutChannel | null;
+  /** Where the money will actually land: "GCash •••• 4567", "BDO •••• 1234",
+   *  "E-wallet •••• 4567". Null when nothing sendable is saved. */
+  label: string | null;
+  accountName: string | null;
   bankName: string | null;
-  /** Where the money will actually land — mirrors the server's own
-   *  `ewallet_number ?: bank_account_number` resolution order. */
-  destination: string | null;
+  /** The saved e-wallet number doesn't say GCash or Maya yet. */
+  needsChannel: boolean;
 }
 
 const trimmed = (v: string | null | undefined): string => (v ?? '').trim();
+const last4 = (v: string) => v.replace(/\D/g, '').slice(-4);
 
 export function resolvePayoutMethod(
   profile: SelfRunnerProfile | null | undefined,
 ): PayoutMethodState {
+  const channel = profile?.payout_channel ?? null;
+  const ewallet = trimmed(profile?.ewallet_number);
   const bankName = trimmed(profile?.bank_name) || null;
   const bankLast4 = trimmed(profile?.bank_account_last4) || null;
-  const hasEwallet = trimmed(profile?.ewallet_number).length > 0;
-  const hasBankName = bankName !== null;
-  const hasBankAccount = bankLast4 !== null;
-  // Server rule: an e-wallet number alone is sendable; a bank needs BOTH the
-  // name and an account number.
-  const ready = hasEwallet || (hasBankName && hasBankAccount);
+  const bankReady = bankName !== null && bankLast4 !== null;
+  const accountName = trimmed(profile?.payout_account_name) || null;
 
-  return {
-    hasEwallet,
-    hasBankName,
-    hasBankAccount,
-    ready,
-    blocker: ready ? null : hasBankName ? 'incomplete_bank' : 'no_method',
-    bankLast4,
+  const ewalletState = (c: 'gcash' | 'maya' | null): PayoutMethodState => ({
+    ready: true,
+    blocker: null,
+    channel: c,
+    label: `${c ? PAYOUT_CHANNEL_LABELS[c] : 'E-wallet'} •••• ${last4(ewallet)}`,
+    accountName,
+    bankName: null,
+    needsChannel: c === null,
+  });
+  const bankState: PayoutMethodState = {
+    ready: true,
+    blocker: null,
+    channel: 'bank',
+    label: `${bankName} •••• ${bankLast4}`,
+    accountName,
     bankName,
-    destination: hasEwallet
-      ? 'your e-wallet'
-      : hasBankName && hasBankAccount
-        ? `your ${bankName} account`
-        : null,
+    needsChannel: false,
   };
-}
+  const notReady = (blocker: PayoutBlocker): PayoutMethodState => ({
+    ready: false,
+    blocker,
+    channel,
+    label: null,
+    accountName,
+    bankName,
+    needsChannel: false,
+  });
 
-/** "•••• 1234" — proof an account IS on file without ever showing the number. */
-export function maskedAccount(last4: string | null | undefined): string | null {
-  const v = trimmed(last4);
-  return v ? `•••• ${v}` : null;
+  // An explicit method is used exactly as saved.
+  if (channel === 'gcash' || channel === 'maya') {
+    return ewallet ? ewalletState(channel) : notReady('no_method');
+  }
+  if (channel === 'bank') {
+    return bankReady ? bankState : notReady(bankName ? 'incomplete_bank' : 'no_method');
+  }
+  // Saved by an older build: the e-wallet number wins over a bank account, as
+  // it always has on the server.
+  if (ewallet) return ewalletState(null);
+  if (bankReady) return bankState;
+  return notReady(bankName ? 'incomplete_bank' : 'no_method');
 }

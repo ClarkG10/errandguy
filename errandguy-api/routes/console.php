@@ -50,12 +50,13 @@ Schedule::command('errandguy:send-onboarding-reminders')
     ->timezone(config('app.business_timezone', 'Asia/Manila'))
     ->onOneServer();
 
-// Money-in safety net: settle top-ups the customer paid for and walked away
-// from. The status endpoint pull-reconciles against the gateway, but only while
-// the app is POLLING it — so a dropped webhook plus a customer who never
-// reopened the app left money out of their GCash and a row stuck 'pending'
-// forever, with nothing on either side reconciling it. Every 15 minutes: fast
-// enough that nobody waits long, and --limit bounds gateway calls per run.
+// Money-in safety net: settle GCash/Maya tip charges (and legacy top-ups) the
+// customer paid for and walked away from. The status endpoint pull-reconciles
+// against the gateway, but only while the app is POLLING it — so a dropped
+// webhook plus a customer who never reopened the app left money out of their
+// GCash and a row stuck 'pending' forever, with nothing on either side
+// reconciling it. Every 15 minutes: fast enough that nobody waits long, and
+// --limit bounds gateway calls per run.
 Schedule::command('errandguy:reconcile-topups')
     ->everyFifteenMinutes()
     ->onOneServer()

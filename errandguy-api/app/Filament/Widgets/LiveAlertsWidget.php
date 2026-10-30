@@ -2,6 +2,7 @@
 
 namespace App\Filament\Widgets;
 
+use App\Filament\Pages\Payouts;
 use App\Filament\Resources\Bookings\BookingResource;
 use App\Filament\Resources\SOSAlerts\SOSAlertResource;
 use App\Models\AdminAlert;
@@ -69,6 +70,8 @@ class LiveAlertsWidget extends TableWidget
                 'no_runner', 'stalled_errand' => $record->subject_id
                     ? BookingResource::getUrl('view', ['record' => $record->subject_id])
                     : null,
+                // Payout alerts are worked on the Payouts page.
+                'payout_paid_after_failed', 'payout_bounced_deleted_account', 'payout_reconciled' => Payouts::getUrl(),
                 default => null,
             })
             ->recordActions([

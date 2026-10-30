@@ -23,10 +23,7 @@ import {
   VehicleTypeSelector,
   type VehicleOption,
 } from '../../../components/customer/VehicleTypeSelector';
-import {
-  PaymentMethodSelector,
-  resolvePaymentMethodType,
-} from '../../../components/customer/PaymentMethodSelector';
+import { PaymentMethodSelector } from '../../../components/customer/PaymentMethodSelector';
 import { BookingStepIndicator } from '../../../components/customer/BookingStepIndicator';
 import { formatCurrency } from '../../../utils/formatCurrency';
 import { serializeChecklist } from '../../../utils/shoppingChecklist';
@@ -54,7 +51,7 @@ import { mapFailureReason } from '../../../utils/paymentErrors';
 import { getErrandTypeRule, type VehicleKey } from '../../../constants/errandTypeRules';
 import { useResponsive } from '../../../constants/responsive';
 import { LightColors } from '../../../constants/colors';
-import type { ErrandType, PaymentMethodType } from '../../../types';
+import type { ErrandType } from '../../../types';
 import { toast } from '../../../stores/toastStore';
 import { errorMessage } from '../../../utils/errorCatalog';
 import { copy } from '../../../constants/copy';
@@ -175,17 +172,9 @@ export default function ReviewScreen() {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [rule]);
-  // Saved (tokenised) methods can't be resolved from the id alone — their
-  // type arrives via the selector's onSelect once the methods list loads.
-  const [savedMethodType, setSavedMethodType] = useState<
-    PaymentMethodType | undefined
-  >();
-  // Sentinel ids ('__gcash__' etc.) resolve statically from the persisted
-  // draft id, so the submitted `payment_method` always matches the visible
-  // selection — including a rehydrated draft where no onSelect has fired
-  // yet. Callback-captured state alone silently booked those as cash.
-  const paymentMethodType =
-    resolvePaymentMethodType(draftBooking.payment_method_id) ?? savedMethodType;
+  // Read straight from the draft, so the submitted `payment_method` always
+  // matches the visible selection — including a restored draft.
+  const paymentMethodType = draftBooking.payment_method;
   const [isSubmitting, setIsSubmitting] = useState(false);
   // Drives the full-screen create overlay (BookingProgress) through the real
   // submit checkpoints, so the ~5-7s create round-trip shows staged progress
@@ -507,9 +496,9 @@ export default function ReviewScreen() {
       }
     }
     // Don't start a new payment while a previous one is still being verified.
-    // The blocking attempt can be a TOP-UP (or a booking from a previous
-    // launch), which this screen's overlay deliberately doesn't render — so the
-    // toast has to hand over an escape instead of being a dead end.
+    // The blocking attempt can be a TIP (or a booking from a previous launch),
+    // which this screen's overlay deliberately doesn't render — so the toast
+    // has to hand over an escape instead of being a dead end.
     // /payment-complete mounts the verifier, renders any attempt kind, and its
     // "Got it" resolves the attempt, which releases this lock.
     if (isAttemptActive(usePaymentStore.getState().attempt)) {
@@ -571,14 +560,9 @@ export default function ReviewScreen() {
         vehicle_type_rate: vehicleType,
         schedule_type: draftBooking.schedule_type ?? ('now' as const),
         scheduled_at: draftBooking.scheduled_at,
+        // GCash/Maya return a checkout_url (a one-time charge approved in
+        // their app); wallet is debited now; cash is collected by the runner.
         payment_method: paymentMethodType ?? 'cash',
-        // Sentinel ids (prefixed "__") are the universal choices
-        // (wallet/gcash/maya/card/cash) that have no saved PaymentMethod
-        // row — omit payment_method_id for them; online ones settle via a
-        // Xendit hosted checkout.
-        payment_method_id: draftBooking.payment_method_id?.startsWith('__')
-          ? undefined
-          : draftBooking.payment_method_id,
       };
 
       // Reuse the retained key when the body is byte-for-byte what it was last
@@ -648,26 +632,21 @@ export default function ReviewScreen() {
         );
       }
       // Remember HOW they paid so the next booking pre-selects it instead of
-      // resetting to saved-default-or-Cash (a GCash regular re-picked GCash on
-      // every single errand — sentinel options can never be a server default).
-      // Pre-selection only: the selector still shows it on Review and the
-      // Confirm button still carries the amount, and nothing here touches what
-      // the server charges. Recorded on create success, which is the point the
-      // customer's choice actually produced a booking. Read from the draft
-      // BEFORE clearDraft() wipes it.
-      if (userId && draftBooking.payment_method_id && paymentMethodType) {
-        setLastPaymentMethod(userId, {
-          id: draftBooking.payment_method_id,
-          type: paymentMethodType,
-        });
+      // resetting to Cash (a GCash regular re-picked GCash on every single
+      // errand). Pre-selection only: the selector still shows it on Review and
+      // the Confirm button still carries the amount, and nothing here touches
+      // what the server charges. Recorded on create success, which is the point
+      // the customer's choice actually produced a booking.
+      if (userId && paymentMethodType) {
+        setLastPaymentMethod(userId, paymentMethodType);
       }
       setActiveBooking(booking);
       clearDraft();
       if (checkoutUrl) {
-        // Online / saved-method charge: VERIFY, never assume. Stash the invoice
-        // URL so a failed "Try again" re-opens the SAME invoice (no duplicate
-        // booking). The inline PaymentProgress overlay drives navigation from
-        // here based on the verified outcome.
+        // GCash/Maya charge: VERIFY, never assume. Stash the checkout URL so
+        // "Resume payment" re-opens the SAME charge (no duplicate booking). The
+        // inline PaymentProgress overlay drives navigation from here based on
+        // the verified outcome.
         if (paymentId) linkPayment(paymentId);
         // Bridge from create to the gateway sheet; PaymentProgress takes over
         // from the verification stage onward (mutually exclusive — see render).
@@ -682,11 +661,10 @@ export default function ReviewScreen() {
 
         if (outcome === 'failed') {
           // The sheet never OPENED, so no payment can have started — verifying
-          // would just spin an overlay against an untouched invoice. Distinct
-          // from 'cancelled' below, and the same distinction wallet top-up
-          // already draws. The booking exists and is unpaid; the stashed
-          // checkout URL means "Try again" reopens the SAME invoice rather
-          // than creating a second booking.
+          // would just spin an overlay against an untouched charge. Distinct
+          // from 'cancelled' below. The booking exists and is unpaid; the
+          // stashed checkout URL means "Try again" reopens the SAME charge
+          // rather than creating a second booking.
           setAttemptStatus('failed', {
             bookingId: booking.id,
             checkoutUrl,
@@ -701,9 +679,9 @@ export default function ReviewScreen() {
           // to trap them behind a button-less spinner for the full 35s pending
           // timeout, then claim their payment "is being processed" — for a
           // payment they deliberately never made. Land on the actionable
-          // failure state instead (the same honest branch top-up already took):
-          // "Resume payment" re-opens the SAME invoice — no duplicate booking —
-          // and Close drops them on the errand to pay or cancel later.
+          // failure state instead: "Resume payment" re-opens the SAME charge —
+          // no duplicate booking — and Close drops them on the errand to pay or
+          // cancel later.
           //
           // iOS can report a cancel when the sheet is dismissed AFTER paying but
           // before the redirect, so the copy never claims the payment failed for
@@ -729,7 +707,7 @@ export default function ReviewScreen() {
         // PaymentMethodSelector keep a stale (too-high) balance for the
         // staleTime window and offer Wallet for a follow-up booking it can no
         // longer cover (server then rejects with INSUFFICIENT_WALLET_BALANCE).
-        // Harmless for cash. Mirrors top-up's finishTopUp invalidation.
+        // Harmless for cash.
         invalidateQuery(['wallet']);
         // Drop the create overlay before the confirm screen replaces us.
         setBookingStage(null);
@@ -772,12 +750,12 @@ export default function ReviewScreen() {
     resolveAttempt,
   ]);
 
-  // Re-open the SAME checkout URL on a failed-payment retry (never re-create
-  // the booking). Only safe for CARD: its hosted Xendit invoice stays payable
-  // until it expires, so re-opening re-offers the card form. GCash/Maya now use
-  // a ONE-TIME payment_request whose authorization URL is DEAD once the charge
-  // fails — re-opening it would land on a Xendit error page — so retry is not
-  // offered for e-wallets (see onRetry gate); the customer exits and rebooks.
+  // Re-open the SAME checkout URL on a retry (never re-create the booking). A
+  // GCash/Maya charge is a ONE-TIME payment_request, so this is a resume of
+  // that same charge: it works while it is still awaiting approval (a sheet
+  // that never opened, or one the customer backed out of), and can never
+  // charge twice. Once the charge itself has failed its URL is dead, and the
+  // customer pays again from the errand.
   const retryBookingPayment = useCallback(async () => {
     const url = usePaymentStore.getState().attempt?.checkoutUrl;
     if (!url) return;
@@ -1104,15 +1082,11 @@ export default function ReviewScreen() {
 
         {/* Payment Method */}
         <PaymentMethodSelector
-          selectedId={draftBooking.payment_method_id}
-          // The booking charges `totalAmount` up front, so the wallet must
-          // cover it — this lets the selector grey out the wallet when the
-          // balance is short.
+          selected={draftBooking.payment_method}
+          // The booking charges `totalAmount` up front, so the wallet is only
+          // offered when its balance covers it.
           amount={totalAmount}
-          onSelect={(id, type) => {
-            updateDraft({ payment_method_id: id });
-            setSavedMethodType(type);
-          }}
+          onSelect={(type) => updateDraft({ payment_method: type })}
         />
 
       </ScrollView>
@@ -1179,7 +1153,7 @@ export default function ReviewScreen() {
           two Modals never stack. */}
       <BookingProgress stage={createOverlayStage} />
 
-      {/* Honest payment verification for online / saved-method charges. Hidden
+      {/* Honest payment verification for GCash/Maya charges. Hidden
           during 'preparing' (BookingProgress covers the create call above); it
           takes over from the gateway hand-off onward. Wallet/cash resolve
           before this ever shows. PaymentProgress announces its own stages. */}
@@ -1206,10 +1180,10 @@ export default function ReviewScreen() {
               ? mapFailureReason(attempt.failureReason).message
               : undefined
         }
-        // Any stashed checkout URL is retryable, not just a card's: retry
-        // reopens the SAME invoice, so there is no duplicate-charge risk on
-        // GCash/Maya either — and without this an e-wallet failure (including
-        // a sheet that never opened) offered no way forward at all.
+        // Any stashed checkout URL is retryable: retry reopens the SAME charge,
+        // so there is no duplicate-charge risk — and without this a GCash/Maya
+        // failure (including a sheet that never opened) offered no way
+        // forward at all.
         onRetry={attempt?.checkoutUrl ? retryBookingPayment : undefined}
         // "Resume payment" reads truthfully after a deliberate back-out; "Try
         // again" only makes sense after a payment that actually failed.

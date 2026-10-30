@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import type { Booking, BookingStatus } from '../types';
+import type { Booking, BookingStatus, PaymentMethodType } from '../types';
 import type { ChecklistItem, DraftStop } from '../types/booking';
 
 /**
@@ -70,7 +70,8 @@ export interface DraftBooking {
   schedule_type?: 'now' | 'scheduled';
   scheduled_at?: string;
   vehicle_type_rate?: string;
-  payment_method_id?: string;
+  /** How the customer chose to pay on Review. */
+  payment_method?: PaymentMethodType;
   instructions?: string;
   items?: Array<{ name: string; quantity: number; estimated_price?: number }>;
 }
@@ -95,9 +96,33 @@ const RETIRED_DRAFT_FIELDS = [
   'offered_price',
 ] as const;
 
+/**
+ * The payment pick as older builds stored it: a selector id, either a sentinel
+ * for one of the universal options or the id of a saved card / linked account.
+ * Saved methods, cards and GrabPay are retired, so only the four sentinels
+ * below still name something payable; anything else is dropped and Review
+ * picks the default again.
+ */
+const LEGACY_PAYMENT_IDS: Record<string, PaymentMethodType> = {
+  __gcash__: 'gcash',
+  __maya__: 'maya',
+  __wallet__: 'wallet',
+  __cash__: 'cash',
+};
+
+const PAYMENT_METHOD_TYPES: readonly string[] = Object.values(LEGACY_PAYMENT_IDS);
+
 const withoutRetiredFields = (draft: DraftBooking): DraftBooking => {
   const clean: Record<string, unknown> = { ...draft };
   for (const field of RETIRED_DRAFT_FIELDS) delete clean[field];
+
+  const legacyId = clean.payment_method_id;
+  delete clean.payment_method_id;
+  if (typeof clean.payment_method !== 'string' || !PAYMENT_METHOD_TYPES.includes(clean.payment_method)) {
+    delete clean.payment_method;
+    const carried = typeof legacyId === 'string' ? LEGACY_PAYMENT_IDS[legacyId] : undefined;
+    if (carried) clean.payment_method = carried;
+  }
   return clean as DraftBooking;
 };
 

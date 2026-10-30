@@ -15,8 +15,9 @@ use Illuminate\Http\Request;
  * no optimistic state. Ownership is scoped by customer_id so a poll can never
  * read another user's payment.
  *
- * Contract (shared with WalletController::transactionStatus for top-ups):
- *   kind          'payment' here, 'wallet_topup' for top-up probes
+ * Contract (shared with WalletController::transactionStatus for wallet-row
+ * charges — GCash/Maya tips and legacy top-ups):
+ *   kind          'payment' here, 'wallet_topup' for wallet-row probes
  *   id            the settling row's id (canonical; payment_id kept as alias)
  *   status        the ONE success token is 'completed'; pending/processing are
  *                 non-terminal; failed/expired/cancelled/refunded are terminal

@@ -50,7 +50,6 @@ jest.mock('../../stores/authStore', () => ({
   useAuthStore: { getState: () => ({ user: mockUserId ? { id: mockUserId } : null }) },
 }));
 jest.mock('../user.service', () => ({ userService: {} }));
-jest.mock('../payment.service', () => ({ paymentService: {} }));
 
 const pending = () => useMutationQueueStore.getState().pending;
 
@@ -403,5 +402,44 @@ describe('cross-account safety', () => {
     await flushMutationQueue();
 
     expect(mockUpdateChecklistTicks).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('an entry queued by the app build that had saved payment methods', () => {
+  // The shipped build could queue "make this my default payment method" while
+  // offline. Saved methods are retired, so the kind is gone — a phone that
+  // updates with one still on disk must drain it quietly, never wedge the
+  // queue or hit the retired endpoint.
+  it('is no longer a queueable kind', () => {
+    expect(isQueueable('payment.setDefaultMethod')).toBe(false);
+  });
+
+  it('is discarded on flush, and the rest of the queue still drains', async () => {
+    useMutationQueueStore.setState({
+      pending: [
+        {
+          id: 'legacy-1',
+          kind: 'payment.setDefaultMethod',
+          payload: { id: 'pm-77' },
+          createdAt: Date.now(),
+          attempts: 0,
+          userId: 'user-a',
+        },
+        {
+          id: 'tick-1',
+          kind: 'runner.updateChecklistTicks',
+          payload: { bookingId: 'bk-1', items: [{ id: 'i1', checked: true }] },
+          createdAt: Date.now(),
+          attempts: 0,
+          userId: 'user-a',
+        },
+      ],
+    });
+    mockUserId = 'user-a';
+
+    await flushMutationQueue();
+
+    expect(mockUpdateChecklistTicks).toHaveBeenCalledTimes(1);
+    expect(pending()).toHaveLength(0);
   });
 });

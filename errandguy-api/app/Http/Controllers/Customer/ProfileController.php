@@ -8,7 +8,11 @@ use App\Http\Requests\UpdateProfileRequest;
 use App\Http\Requests\UploadAvatarRequest;
 use App\Http\Resources\UserResource;
 use App\Models\RunnerProfile;
+use App\Models\WalletTransaction;
+use App\Services\WalletService;
+use App\Support\CashDebtPolicy;
 use App\Support\ErrorCode;
+use App\Support\PayoutDestination;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Storage;
@@ -162,6 +166,22 @@ class ProfileController extends Controller
         ]);
     }
 
+    /**
+     * DELETE /user/account — erase the account.
+     *
+     * Money first, so none is ever stranded in an erased account:
+     *   • a POSITIVE withdrawable balance is paid out as part of the deletion:
+     *     the request says where (channel, account_number, account_name, and
+     *     bank_name for a runner's bank account — a runner's saved payout
+     *     method is used when it doesn't), and the FULL balance is queued as a
+     *     pending payout in the same locked step that erases the account. Staff
+     *     send it from the Payouts queue as usual; the destination is recorded
+     *     on the payout itself, because the account's own details are erased;
+     *   • a NEGATIVE balance is money owed from cash errands, and is refused —
+     *     erasing the identity would make it uncollectable;
+     *   • bonus credit (non-withdrawable) never blocks; it lapses with the
+     *     account.
+     */
     public function deleteAccount(Request $request): JsonResponse
     {
         $user = $request->user();
@@ -182,25 +202,15 @@ class ProfileController extends Controller
             ], 422);
         }
 
-        // Block deletion while the wallet balance is non-zero in EITHER
-        // direction — anonymizing the account makes the money unrecoverable.
-        $balance = (float) $user->wallet_balance;
-        if ($balance > 0) {
-            // Owed TO the runner — they must withdraw first.
-            return response()->json([
-                'message' => 'Your wallet balance is ₱'.number_format($balance, 2).'. Please withdraw it before deleting your account.',
-            ], 422);
-        }
-        if ($balance < 0) {
-            // A negative balance is a debt owed to the platform — e.g. the
-            // service fee on a cash errand, normally netted from future earnings.
-            // Deleting would erase the identity and make the debt uncollectable,
-            // so require it settled first (a cash runner sits negative until they
-            // earn it back). Without this the debt silently escapes on deletion.
-            return response()->json([
-                'message' => 'You have an outstanding balance of ₱'.number_format(abs($balance), 2).' owed to ErrandGuy. Please settle it before deleting your account.',
-            ], 422);
-        }
+        $profile = $user->runnerProfile;
+        $validated = $request->validate(
+            PayoutDestination::rules($request->input('channel'), allowBank: $profile !== null, required: false),
+            PayoutDestination::messages(allowBank: $profile !== null),
+        );
+
+        $destination = filled($validated['channel'] ?? null)
+            ? PayoutDestination::fromInput($validated)
+            : $profile?->payoutDestination($user->full_name);
 
         // ── Right to erasure (PH Data Privacy Act) — PRIV-1 ─────────────────
         // A soft delete leaves child PII intact (the FK cascade only fires on a
@@ -213,7 +223,6 @@ class ProfileController extends Controller
         // orphaning a live account's files should the transaction roll back.
         $filesToDelete = [];
         $kycFilesToDelete = [];
-        $profile = $user->runnerProfile;
         if ($profile) {
             foreach ($profile->documents as $doc) {
                 // KYC docs now live on the private kyc disk (file_path); legacy
@@ -230,8 +239,50 @@ class ProfileController extends Controller
             $filesToDelete[] = $this->publicDiskPath($user->avatar_url);
         }
 
-        \Illuminate\Support\Facades\DB::transaction(function () use ($user, $profile) {
+        $outcome = \Illuminate\Support\Facades\DB::transaction(function () use ($user, $profile, $destination) {
+            // The balance is decided under the account's row lock, so a payout,
+            // earning or refund landing at the same moment can't slip past it.
+            $locked = \App\Models\User::whereKey($user->id)->lockForUpdate()->first();
+            if (! $locked) {
+                return ['deleted' => true]; // a racing request already erased it
+            }
+
+            $balance = round((float) $locked->wallet_balance, 2);
+            if ($balance < 0) {
+                return ['error' => 'debt', 'balance' => $balance];
+            }
+
+            $payout = null;
+            if ($balance > 0) {
+                if ($destination === null) {
+                    return ['error' => 'destination', 'balance' => $balance];
+                }
+
+                $payout = app(WalletService::class)->createPendingPayout(
+                    $locked->id,
+                    $balance,
+                    (string) Str::uuid(),
+                    $destination,
+                    0.0,
+                    'Withdrawal on account deletion',
+                );
+            }
+
             if ($profile) {
+                // A payout requested before payout details were recorded on the
+                // payout itself is sent to the profile's details, which are
+                // about to be erased: copy them onto it first, or staff would
+                // have nowhere to send it.
+                $profileDestination = $profile->payoutDestination($user->full_name);
+                if ($profileDestination !== null) {
+                    WalletTransaction::where('user_id', $user->id)
+                        ->where('type', 'payout')
+                        ->where('status', 'pending')
+                        ->whereNull('payout_destination')
+                        ->get()
+                        ->each(fn (WalletTransaction $pending) => $pending->update(['payout_destination' => $profileDestination]));
+                }
+
                 // KYC identity documents (gov ID / selfie / licence). Deleting
                 // the rows (files below) also clears a deleted runner's
                 // world-readable documents — mitigating SEC-1 for the account.
@@ -241,12 +292,16 @@ class ProfileController extends Controller
                     'bank_account_number' => null,
                     'ewallet_number' => null,
                     'payout_channel_code' => null,
+                    'payout_channel' => null,
+                    'payout_account_name' => null,
                 ]);
             }
 
-            // Pure-PII child rows — no financial value.
+            // Pure-PII child rows — no financial value (a legacy linked
+            // payment account holds a gateway token, not money).
             $user->savedAddresses()->delete();
             $user->trustedContacts()->delete();
+            $user->paymentMethods()->delete();
 
             // Redact the contact PII the user entered on THEIR OWN (customer)
             // bookings — keep the booking (financial record), drop the personal
@@ -266,7 +321,8 @@ class ProfileController extends Controller
                 ]);
             }
 
-            // Anonymize the account row itself.
+            // Anonymize the account row itself. Only these columns are written
+            // (the balance was just debited through the ledger on its own row).
             $user->update([
                 'full_name' => 'Deleted User',
                 'email' => null,
@@ -285,7 +341,26 @@ class ProfileController extends Controller
 
             // Soft delete the account.
             $user->delete();
+
+            return ['payout' => $payout];
         });
+
+        if (($outcome['error'] ?? null) === 'debt') {
+            return $this->fail(
+                ErrorCode::CASH_DEBT_OUTSTANDING,
+                CashDebtPolicy::message($outcome['balance']).' You can delete your account once it’s cleared.',
+            );
+        }
+
+        if (($outcome['error'] ?? null) === 'destination') {
+            return $this->fail(
+                ErrorCode::PAYOUT_METHOD_REQUIRED,
+                'Your wallet has ₱'.number_format($outcome['balance'], 2).'. Tell us where to send it — '
+                    .($profile ? 'a GCash or Maya number, or a bank account' : 'a GCash or Maya number')
+                    .' — and we’ll send it to you as part of deleting your account.',
+                errors: ['channel' => ['Choose where to send your remaining balance.']],
+            );
+        }
 
         // Remove the collected PII files from disk (best-effort, post-commit).
         foreach ($filesToDelete as $path) {
@@ -299,9 +374,22 @@ class ProfileController extends Controller
             }
         }
 
-        return response()->json([
-            'message' => 'Account deleted successfully.',
-        ]);
+        $payout = $outcome['payout'] ?? null;
+
+        return $this->ok(
+            $payout ? [
+                'payout' => [
+                    'id' => $payout->id,
+                    'amount' => abs((float) $payout->amount),
+                    'status' => $payout->status,
+                    'destination' => PayoutDestination::label($payout->payout_destination),
+                ],
+            ] : null,
+            $payout
+                ? 'Account deleted. ₱'.number_format(abs((float) $payout->amount), 2).' is on its way to '
+                    .PayoutDestination::label($payout->payout_destination).' — it usually arrives within 1–3 business days.'
+                : 'Account deleted successfully.',
+        );
     }
 
     /**

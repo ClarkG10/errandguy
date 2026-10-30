@@ -47,6 +47,12 @@ class RunnerProfileResource extends JsonResource
             // accessor). Closure so a non-self serialization never decrypts.
             'bank_account_last4' => $this->when($isSelf, fn (): ?string => $this->bank_account_last4),
             'ewallet_number' => $this->when($isSelf, $this->ewallet_number),
+            // The saved payout method's channel (gcash | maya | bank) and
+            // account holder, set through PUT /runner/payout-method. null for a
+            // method saved by an older app build, which never said which
+            // e-wallet a number belongs to.
+            'payout_channel' => $this->when($isSelf, $this->payout_channel),
+            'payout_account_name' => $this->when($isSelf, $this->payout_account_name),
             // The payout floor the Request button is really gated on. The app
             // hardcoded ₱100 while the server reads min_payout_amount from
             // SystemConfig — an admin raising it silently broke the client's
