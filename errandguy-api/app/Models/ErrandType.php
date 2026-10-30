@@ -40,6 +40,17 @@ class ErrandType extends Model
      */
     public const REMOVED_SLUGS = ['bills_payment', 'transportation'];
 
+    /**
+     * Bookable shopping types ("Buy for me"): the runner pays for the items and
+     * the customer repays them in cash at the door. Nothing is charged online
+     * for items, so what a runner can be asked to front is capped
+     * (shoppingBudgetMax).
+     */
+    public const SHOPPING_SLUGS = ['purchase'];
+
+    /** Default for the staff-adjustable `shopping_budget_max` setting (₱). */
+    public const DEFAULT_SHOPPING_BUDGET_MAX = 3000;
+
     protected static function booted(): void
     {
         static::saving(function (ErrandType $type) {
@@ -82,6 +93,40 @@ class ErrandType extends Model
             'surcharge' => 'decimal:2',
             'created_at' => 'datetime',
         ];
+    }
+
+    /**
+     * The most a runner can be asked to pay for a customer's items (₱): the
+     * `shopping_budget_max` setting, or the default when it is missing or not
+     * a positive number.
+     */
+    public static function shoppingBudgetMax(): float
+    {
+        $value = SystemConfig::getValue('shopping_budget_max', (string) self::DEFAULT_SHOPPING_BUDGET_MAX);
+
+        return is_numeric($value) && (float) $value > 0
+            ? round((float) $value, 2)
+            : (float) self::DEFAULT_SHOPPING_BUDGET_MAX;
+    }
+
+    /**
+     * The bookable catalog the app reads (/errand-types and the customer home
+     * screen): active types in order, each shopping type carrying
+     * `shopping_budget_max` so the app can show and enforce the cap.
+     *
+     * @return list<array<string, mixed>>
+     */
+    public static function catalog(): array
+    {
+        $budgetMax = self::shoppingBudgetMax();
+
+        return self::where('is_active', true)
+            ->orderBy('sort_order')
+            ->get()
+            ->map(fn (self $type): array => in_array($type->slug, self::SHOPPING_SLUGS, true)
+                ? [...$type->toArray(), 'shopping_budget_max' => $budgetMax]
+                : $type->toArray())
+            ->all();
     }
 
     /** The slug to look for in a runner's preferred_types for an errand of this slug. */

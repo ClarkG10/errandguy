@@ -22,6 +22,12 @@ class BookingCancelled implements ShouldBroadcast
 
     public function __construct(
         public Booking $booking,
+        /**
+         * What to tell the customer, when the cancellation has a cause they
+         * should hear (an errand whose payment never arrived). Null keeps the
+         * cause-neutral "Your errand has been cancelled."
+         */
+        public ?string $customerMessage = null,
     ) {}
 
     public function broadcastOn(): PrivateChannel
@@ -42,6 +48,7 @@ class BookingCancelled implements ShouldBroadcast
             'runner_id' => $this->booking->runner_id,
             'cancelled_at' => optional($this->booking->cancelled_at)->toIso8601String(),
             'cancellation_reason' => $this->booking->cancellation_reason,
+            'cancellation_code' => $this->booking->cancellation_code,
         ];
     }
 }

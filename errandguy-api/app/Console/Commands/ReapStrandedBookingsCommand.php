@@ -3,6 +3,7 @@
 namespace App\Console\Commands;
 
 use App\Jobs\AutoCancelBookingJob;
+use App\Jobs\ExpireUnpaidBookingJob;
 use App\Models\Booking;
 use App\Models\SystemConfig;
 use App\Services\BookingService;
@@ -33,7 +34,9 @@ use Illuminate\Support\Facades\Log;
  * The window that gates each booking is schedule-aware, so a booking is only
  * reaped once its matching deadline (BookingService::matchingDeadline) and the
  * auto-cancel timeout have both passed:
- *   - immediate: created_at + auto_cancel_timeout;
+ *   - immediate: matching_started_at (or created_at, if matching never
+ *     started) + auto_cancel_timeout — a GCash/Maya errand's search starts
+ *     only once its payment is confirmed, and a slow payment must not eat it;
  *   - SCHEDULED: scheduled_at + the longer of auto_cancel_timeout and the
  *     matching grace (the search runs until after the scheduled time, so
  *     created_at is irrelevant — anchoring on it would wrongly cancel a valid
@@ -41,6 +44,10 @@ use Illuminate\Support\Facades\Log;
  * It covers every pricing mode: a negotiate-priced errand left open when that
  * mode was retired has no expiry job any more and is cancelled + refunded here
  * like any other unmatched errand.
+ *
+ * It ALSO backstops ExpireUnpaidBookingJob: a GCash/Maya errand still waiting
+ * for its payment when the payment window closes is cancelled here (no runner
+ * was ever involved), by the job's own handle().
  *
  * It ALSO recovers refund-failure orphans: the cancel jobs (and admin cancel)
  * commit the status→'cancelled' write and then refund in a SEPARATE
@@ -56,7 +63,7 @@ class ReapStrandedBookingsCommand extends Command
 {
     protected $signature = 'errandguy:reap-stranded-bookings';
 
-    protected $description = 'Cancel + refund prepaid bookings stranded past their auto-cancel window, independent of the delayed job (SCALE-REL-1/5).';
+    protected $description = 'Cancel + refund prepaid bookings stranded past their auto-cancel window, and cancel GCash/Maya errands never paid for, independent of the delayed jobs (SCALE-REL-1/5).';
 
     /**
      * Max bookings to process per branch per run. The command exists for
@@ -65,6 +72,9 @@ class ReapStrandedBookingsCommand extends Command
      * are taken first and the next scheduled run continues where this left off.
      */
     private const MAX_PER_RUN = 500;
+
+    /** Max unpaid GCash/Maya errands per run — each may cost one Xendit call. */
+    private const MAX_UNPAID_PER_RUN = 50;
 
     public function handle(): int
     {
@@ -80,6 +90,8 @@ class ReapStrandedBookingsCommand extends Command
         $immediateCutoff = now()->subMinutes($timeoutMinutes);
         $scheduledCutoff = now()->subMinutes(max($timeoutMinutes, BookingService::SCHEDULED_MATCH_GRACE_MINUTES));
         $pendingIds = Booking::whereIn('status', ['pending', 'no_runner'])
+            // Still waiting for a GCash/Maya payment: its own branch below.
+            ->whereNot(fn ($q) => $q->awaitingPayment())
             ->where(fn ($q) => $this->scheduleAwareWindow($q, $immediateCutoff, $scheduledCutoff))
             ->orderBy('created_at')
             ->limit(self::MAX_PER_RUN)
@@ -93,6 +105,31 @@ class ReapStrandedBookingsCommand extends Command
             } catch (\Throwable $e) {
                 $errors++;
                 Log::error('ReapStrandedBookingsCommand: failed to reap unmatched booking', [
+                    'booking_id' => $id, 'error' => $e->getMessage(),
+                ]);
+            }
+        }
+
+        // ── Unpaid GCash/Maya errands past their payment window ──
+        // Backstops the delayed ExpireUnpaidBookingJob. handle() asks Xendit
+        // first (a payment that did land starts matching instead) and then
+        // cancels under a row lock, so a payment confirmed meanwhile still
+        // wins. Each one can cost a gateway call, hence the smaller batch.
+        $unpaidIds = Booking::awaitingPayment()
+            ->whereNull('runner_id')
+            ->where('created_at', '<', now()->subMinutes(BookingService::PAYMENT_WINDOW_MINUTES))
+            ->orderBy('created_at')
+            ->limit(self::MAX_UNPAID_PER_RUN)
+            ->pluck('id');
+        $checked += $unpaidIds->count();
+        foreach ($unpaidIds as $id) {
+            try {
+                if (app()->call([new ExpireUnpaidBookingJob($id), 'handle'])) {
+                    $reaped++;
+                }
+            } catch (\Throwable $e) {
+                $errors++;
+                Log::error('ReapStrandedBookingsCommand: failed to cancel an unpaid booking', [
                     'booking_id' => $id, 'error' => $e->getMessage(),
                 ]);
             }
@@ -153,10 +190,11 @@ class ReapStrandedBookingsCommand extends Command
 
     /**
      * Constrain a query to bookings whose primary delayed job would already have
-     * fired, using the SAME anchor store() chose (BookingService::isScheduled):
+     * fired, using the SAME anchor BookingService::matchingDeadline uses:
      * scheduled bookings age from scheduled_at, everything else (immediate —
      * including a stray scheduled_at on a 'now' booking, or a 'scheduled' row
-     * missing scheduled_at) ages from created_at. Keying on schedule_type rather
+     * missing scheduled_at) ages from matching_started_at, or created_at when
+     * matching never started. Keying on schedule_type rather
      * than scheduled_at nullness means a malformed 'now'+scheduled_at booking
      * can't mis-anchor onto a far-future date.
      *
@@ -173,7 +211,12 @@ class ReapStrandedBookingsCommand extends Command
                 $immediate->where(function ($w) {
                     $w->where('schedule_type', '!=', 'scheduled')
                         ->orWhereNull('scheduled_at');
-                })->where('created_at', '<', $immediateCutoff);
+                })->where(function ($anchor) use ($immediateCutoff) {
+                    // The search window counts from when matching started.
+                    $anchor->where('matching_started_at', '<', $immediateCutoff)
+                        ->orWhere(fn ($never) => $never->whereNull('matching_started_at')
+                            ->where('created_at', '<', $immediateCutoff));
+                });
             });
         });
     }

@@ -15,19 +15,23 @@ use Illuminate\Support\Facades\Log;
  *
  * Settles an errand's money at completion ({@see self::settleCompletion()} —
  * the one path behind both the runner's own "completed" tap and staff "Mark
- * completed"), and resolves the two money seams that open when a booking's
- * gateway charge is confirmed paid AT A DIFFERENT TIME than the booking reaches
- * its resting state — i.e. the webhook / status-reconcile settles the charge
- * AFTER the runner already completed the errand, or AFTER the customer already
- * cancelled:
+ * completed"), and resolves what follows when a booking's gateway charge is
+ * confirmed paid ({@see self::settlePaidBooking()}):
+ *
+ *   - booking still PENDING      → it was waiting for this payment, so matching
+ *     starts now (a GCash/Maya errand is never offered to a runner before its
+ *     money arrives).
+ *
+ *   - booking already CANCELLED  → a charge that landed after cancellation (a
+ *     customer who paid after the payment window closed, or cancelled first) is
+ *     auto-REFUNDED to the wallet (minus any cancellation fee actually
+ *     recorded), instead of laundering a cancelled booking to `paid`
+ *     (MONEY-3 / MONEYX-2).
  *
  *   - booking already COMPLETED  → the runner earning that settleCompletion
  *     could not credit (because the charge was still pending at completion) is
- *     BACK-FILLED now (MONEY-1).
- *
- *   - booking already CANCELLED  → a charge that landed after cancellation is
- *     auto-REFUNDED (minus the cancellation fee that was actually recorded),
- *     instead of laundering a cancelled booking to `paid` (MONEY-3 / MONEYX-2).
+ *     BACK-FILLED now (MONEY-1). Only an errand booked before payment came
+ *     first (or one a staff refund un-paid mid-errand) can still reach this.
  *
  * Every path is idempotent and race-safe (runner-row / booking-row locks plus
  * the uq_wallet_tx_user_reference_type unique index as the DB backstop), so it
@@ -180,14 +184,22 @@ class BookingSettlementService
 
     /**
      * Call AFTER a booking's gateway charge has just been transitioned to
-     * Completed and the booking marked payment_status = 'paid'. No-ops for a
-     * booking still in-flight (pending/matched/accepted/…): that settles
-     * normally at completion.
+     * Completed and the booking marked payment_status = 'paid' — from every
+     * confirmation path (payment.succeeded webhook, the legacy invoice.paid
+     * webhook, and the gateway pull behind the status check and the reconcile
+     * sweep). A pending booking starts matching (exactly once, however many
+     * paths confirm it); one already matched/accepted/… settles normally at
+     * completion.
      */
     public function settlePaidBooking(?Payment $payment): void
     {
         $booking = $payment?->booking?->fresh();
         if (! $booking) {
+            return;
+        }
+
+        if ($booking->status === 'pending') {
+            app(BookingService::class)->startMatchingAfterPayment($booking->id);
             return;
         }
 
@@ -202,16 +214,14 @@ class BookingSettlementService
     }
 
     /**
-     * The mirror of settlePaidBooking for a charge that will NEVER arrive.
+     * The mirror of settlePaidBooking for a charge that will NEVER arrive: the
+     * customer declined in GCash/Maya, or the charge expired. The errand is
+     * cancelled at once (it is still waiting for its payment, so no runner was
+     * ever involved) and the customer is told the payment wasn't completed.
      *
-     * An online booking is matched (and can complete) BEFORE its charge is
-     * captured — MatchRunnerJob gates on status only and accept() has no payment
-     * gate — so a runner can be driving an order the customer never paid for. A
-     * failed/expired terminal transition is the moment we learn the money is not
-     * coming; without this the booking stays matched/accepted and nothing
-     * releases the runner (AutoCancelBookingJob and ReapStrandedBookingsCommand
-     * only reap 'pending'/'no_runner'), so the runner completes the errand and is
-     * credited nothing.
+     * An errand booked before payment came first can still be matched or
+     * accepted while unpaid; for those this also releases the runner, who would
+     * otherwise complete it and be credited nothing.
      *
      * This MUST be called from every terminal path, not just the webhook. The
      * pull-reconciler routinely beats the webhook (the app polls the status
@@ -220,22 +230,22 @@ class BookingSettlementService
      * teardown is silently dead exactly when the customer declines in-app.
      *
      * Cancels the still-live, genuinely unpaid booking under a row lock and
-     * dispatches BookingCancelled, whose listener pushes both parties an
-     * "Errand cancelled" notice. No refund is involved
-     * (nothing was ever captured). Idempotent + race-safe: a booking that already
-     * completed, was cancelled, found no runner, or whose charge actually settled
-     * on another path (payment_status 'paid' / a Completed payment row) is left
-     * untouched — a stale failed/expired delivery must never tear down a paid or
-     * finished errand.
+     * dispatches BookingCancelled, whose listener pushes the customer the
+     * reason (and any runner a neutral "Errand cancelled"). No refund is
+     * involved (nothing was ever captured). Idempotent + race-safe: a booking
+     * that already completed, was cancelled, found no runner, or whose charge
+     * actually settled on another path (payment_status 'paid' / a Completed
+     * payment row) is left untouched — a stale failed/expired delivery must
+     * never tear down a paid or finished errand.
      */
-    public function cancelUnpaidBooking(?Payment $payment, string $reason): void
+    public function cancelUnpaidBooking(?Payment $payment): void
     {
         $bookingId = $payment?->booking_id;
         if (! $bookingId) {
             return;
         }
 
-        $cancelled = DB::transaction(function () use ($bookingId, $reason) {
+        $cancelled = DB::transaction(function () use ($bookingId) {
             $booking = Booking::whereKey($bookingId)->lockForUpdate()->first();
             if (! $booking) {
                 return null;
@@ -254,13 +264,14 @@ class BookingSettlementService
             $booking->update([
                 'status' => 'cancelled',
                 'cancelled_at' => now(),
-                'cancellation_reason' => $reason,
+                'cancellation_reason' => BookingService::PAYMENT_NOT_COMPLETED,
+                'cancellation_code' => BookingService::PAYMENT_NOT_COMPLETED_CODE,
             ]);
             \App\Models\BookingStatusLog::create([
                 'booking_id' => $booking->id,
                 'status' => 'cancelled',
                 'changed_by' => null,
-                'note' => $reason,
+                'note' => 'Payment declined or expired',
             ]);
             if ($booking->runner_id) {
                 \Illuminate\Support\Facades\Cache::forget("runner_active_booking_id:{$booking->runner_id}");
@@ -270,30 +281,32 @@ class BookingSettlementService
         });
 
         if ($cancelled) {
-            // Post-commit: BookingCancelled's listener pushes both parties an
-            // "Errand cancelled" notice (SendBookingCancelledNotification).
-            event(new \App\Events\BookingCancelled($cancelled));
+            // Post-commit: BookingCancelled's listener pushes the customer the
+            // reason and any runner a neutral "Errand cancelled"
+            // (SendBookingCancelledNotification).
+            event(new \App\Events\BookingCancelled($cancelled, BookingService::paymentNotCompletedNotice($cancelled)));
         }
     }
 
     /**
-     * A gateway charge settled on a booking the customer had already cancelled.
+     * A gateway charge settled on a booking that was already cancelled — by the
+     * customer, or because its payment window closed before the money came in.
      * Return the money (minus whatever cancellation fee was actually recorded at
      * cancel time) to the customer's wallet and move the payment to Refunded —
-     * never leave the customer charged for a cancelled errand.
+     * never leave the customer charged for a cancelled errand — and tell them.
      */
     private function refundChargeOnCancelledBooking(Booking $booking, Payment $payment): void
     {
-        DB::transaction(function () use ($booking) {
+        $refunded = DB::transaction(function () use ($booking) {
             $locked = Booking::whereKey($booking->id)->lockForUpdate()->first();
             if (! $locked || $locked->status !== 'cancelled') {
-                return;
+                return null;
             }
 
             // Already refunded (e.g. it was paid at cancel time, or a replayed
             // webhook) — nothing to do.
             if ($locked->payment_status === 'refunded') {
-                return;
+                return null;
             }
 
             $fee = round((float) $locked->cancellation_fee, 2);
@@ -330,7 +343,31 @@ class BookingSettlementService
                 'refunded' => $refundable,
                 'cancellation_fee' => $fee,
             ]);
+
+            return $refundable > 0 ? [$locked, $refundable] : null;
         });
+
+        // Post-commit, and only from the call that actually refunded: the
+        // customer has just been told their payment was confirmed, for an
+        // errand that is cancelled.
+        if ($refunded) {
+            [$locked, $amount] = $refunded;
+            $number = $locked->booking_number ?? $locked->id;
+
+            \App\Jobs\SendPushJob::dispatch(
+                $locked->customer_id,
+                'Refund issued',
+                "Your payment for errand #{$number} came in after it was cancelled, so ₱"
+                    .number_format($amount, 2).' was refunded to your ErrandGuy wallet.',
+                [
+                    'type' => 'payment',
+                    'booking_id' => $locked->id,
+                    'status' => 'refunded',
+                    'refund_amount' => $amount,
+                    'refunded_to' => 'wallet',
+                ],
+            );
+        }
     }
 
     /**

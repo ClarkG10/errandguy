@@ -1,4 +1,5 @@
 import {
+  AWAITING_PAYMENT_LABEL,
   STATUS_LABELS,
   STATUS_COLORS,
   STATUS_TEXT_COLORS,
@@ -147,5 +148,26 @@ describe('statusHeadline (conversational register)', () => {
         expect(phrase).not.toContain('undefined');
       }
     }
+  });
+});
+
+/**
+ * A GCash/Maya booking is held back from every runner until it's paid, so
+ * while it waits nothing may claim a runner is being looked for.
+ */
+describe('a booking waiting for its GCash/Maya payment', () => {
+  it('headlines the payment, not the search', () => {
+    expect(statusHeadline('pending', { awaitingPayment: true })).toBe('Waiting for your payment');
+    expect(AWAITING_PAYMENT_LABEL).toBe('Waiting for payment');
+    expect(AWAITING_PAYMENT_LABEL).not.toMatch(/runner/i);
+  });
+
+  it('changes nothing once paid, or past pending', () => {
+    expect(statusHeadline('pending', { awaitingPayment: false })).toBe(
+      statusHeadline('pending'),
+    );
+    expect(statusHeadline('matched', { awaitingPayment: true, runnerFirstName: 'Ana' })).toBe(
+      statusHeadline('matched', { runnerFirstName: 'Ana' }),
+    );
   });
 });

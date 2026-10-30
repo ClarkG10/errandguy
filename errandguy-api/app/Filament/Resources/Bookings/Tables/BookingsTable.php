@@ -265,7 +265,7 @@ class BookingsTable
                     ->color('warning')
                     ->requiresConfirmation()
                     ->modalDescription(fn (Booking $record): string => 'Re-runs runner matching for '
-                        .$record->booking_number.'. Sends fresh offers to nearby runners — use only on a stuck errand with no runner assigned yet. Refused if its payment was refunded or it is scheduled for later.')
+                        .$record->booking_number.'. Sends fresh offers to nearby runners — use only on a stuck errand with no runner assigned yet. Refused if its payment was refunded or hasn’t arrived yet, or it is scheduled for later.')
                     ->schema([
                         TextInput::make('radius_km')
                             ->label('Search radius (km, optional)')

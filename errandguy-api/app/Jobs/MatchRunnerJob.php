@@ -75,6 +75,15 @@ class MatchRunnerJob implements ShouldQueue
             return;
         }
 
+        // Money before work: a GCash/Maya errand is never offered to a runner
+        // before its payment is confirmed. Whatever queued this run (a re-sweep,
+        // a lapsed offer's re-match, a "try again"), the confirmed payment is
+        // what starts its search (BookingService::startMatchingAfterPayment).
+        if (BookingService::unpaidOnline($current)) {
+            Log::info("MatchRunnerJob skipped: booking {$this->bookingId} is not paid yet");
+            return;
+        }
+
         // Record that matching has started for this booking (first run only).
         // The scheduled-errand sweep relies on it to tell a booking whose
         // delayed matching task was lost from one that is already searching.
@@ -104,8 +113,8 @@ class MatchRunnerJob implements ShouldQueue
                 // the same row from `pending` to `matched`.
                 $booking = Booking::whereKey($this->bookingId)->lockForUpdate()->first();
 
-                if (!$booking || $booking->status !== 'pending') {
-                    Log::info("MatchRunnerJob race-skipped: booking {$this->bookingId} no longer pending");
+                if (!$booking || $booking->status !== 'pending' || BookingService::unpaidOnline($booking)) {
+                    Log::info("MatchRunnerJob race-skipped: booking {$this->bookingId} no longer pending, or not paid");
                     return;
                 }
 

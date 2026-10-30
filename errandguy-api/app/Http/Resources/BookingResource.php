@@ -10,6 +10,9 @@ use Illuminate\Http\Resources\Json\JsonResource;
 
 class BookingResource extends JsonResource
 {
+    /** How item money is settled on a shopping errand, for both apps to show. */
+    public const ITEMS_PAYMENT_NOTE = 'Items are paid in cash to the runner at the door. They are not charged online.';
+
     public function toArray(Request $request): array
     {
         // If the viewer isn't a participant, hide pickup / dropoff contact
@@ -43,6 +46,12 @@ class BookingResource extends JsonResource
         // admin — tells the same story the cancel receipt told at the moment
         // of cancelling.
         $refundedAmount = $this->refundedAmount();
+
+        // A GCash/Maya errand still waiting for its payment (nothing is
+        // searched for until it lands). Only its own customer gets the way back
+        // into the checkout.
+        $awaitingPayment = BookingService::awaitingPayment($this->resource);
+        $isOwner = $viewer instanceof User && $viewer->id === $this->customer_id;
 
         return [
             'id' => $this->id,
@@ -102,11 +111,24 @@ class BookingResource extends JsonResource
             // Kept as [] (not omitted) so the mobile `string[]` contract holds.
             'item_photos' => $this->when($canSeeContacts, $this->item_photos, []),
             'estimated_item_value' => $this->estimated_item_value,
+            // "Buy for me" item money. The runner pays for the items out of
+            // pocket, up to shopping_budget (the customer's spending limit —
+            // nothing is held or charged against it), and reports what they
+            // actually paid (actual_item_cost) with the receipt. The customer
+            // repays exactly that, in cash at the door: item money is never
+            // charged online, never part of total_amount, and never refunded.
             'shopping_budget' => $this->shopping_budget,
             // Itemized shopping checklist (array of {id,name,qty,checked,checked_at}).
             // Null-safe: the `array` cast yields null when no list was ever set.
             'shopping_items' => $this->shopping_items ?? [],
             'actual_item_cost' => $this->actual_item_cost,
+            // What the customer owes the runner for the items, in cash — known
+            // once the runner reports it (else null).
+            'items_cash_due' => $this->actual_item_cost !== null ? round((float) $this->actual_item_cost, 2) : null,
+            // Shopping errands only; null otherwise.
+            'items_payment_note' => $this->shopping_budget !== null || $this->actual_item_cost !== null
+                ? self::ITEMS_PAYMENT_NOTE
+                : null,
             'receipt_photo_url' => $this->when($canSeeContacts, $this->receipt_photo_url),
             'schedule_type' => $this->schedule_type,
             'scheduled_at' => $this->scheduled_at,
@@ -186,6 +208,11 @@ class BookingResource extends JsonResource
             'completed_at' => $this->completed_at,
             'cancelled_at' => $this->cancelled_at,
             'cancellation_reason' => $this->cancellation_reason,
+            // Machine-readable cause, so the app never matches on the wording
+            // above: 'payment_not_completed' for a GCash/Maya errand whose
+            // payment never arrived; null for any other cancellation (and for
+            // older rows).
+            'cancellation_code' => $this->cancellation_code,
             'cancellation_fee' => $this->cancellation_fee,
             // Peso amount that came BACK, or null when no money was ever
             // returned on this booking. The fee has always been exposed; the
@@ -250,6 +277,16 @@ class BookingResource extends JsonResource
                 $reviews !== null,
                 fn () => ReviewResource::collection($reviews),
             ),
+            // True while a GCash/Maya errand waits for its payment: no runner
+            // is looked for until it lands, and it is cancelled if it hasn't
+            // within BookingService::PAYMENT_WINDOW_MINUTES of booking.
+            'awaiting_payment' => $awaitingPayment,
+            // The customer's way back into that unfinished payment (the
+            // GCash/Maya authorization URL). Owner only, and only while
+            // awaiting payment; null otherwise or when there is no open charge.
+            'checkout_url' => $awaitingPayment && $isOwner
+                ? BookingService::pendingCheckoutUrl($this->resource)
+                : null,
             'can_cancel' => in_array($this->status, ['pending', 'matched', 'accepted', 'heading_to_pickup']),
             // Whether POST /bookings/{id}/retry-match would actually be accepted
             // right now. The no-runner recovery screen previously showed a "Try
@@ -258,7 +295,7 @@ class BookingResource extends JsonResource
             // tapped a dead end instead of being sent to "Book again". Advisory
             // only — the endpoint re-checks this under a row lock.
             'can_retry_match' => $this->when(
-                $viewer instanceof User && $viewer->id === $this->customer_id,
+                $isOwner,
                 fn () => $viewer->can('retryMatch', $this->resource)
                     && BookingService::retryBlockReason($this->resource) === null,
             ),
@@ -296,11 +333,11 @@ class BookingResource extends JsonResource
      *     not settled yet deliberately reports NO fare: the runner must never be
      *     told to collect cash on a GCash/card/wallet job.
      *  2. FRONTED ITEM COST — `actual_item_cost` (what the runner actually paid
-     *     at the store/biller, capped at the customer's pre-authorised
-     *     shopping_budget). Item money never enters `total_amount` and is never
-     *     charged online, so the runner is out of pocket until the customer
-     *     reimburses them in person — on prepaid errands too. Only counted once
-     *     the runner has REPORTED it (the budget is a ceiling, not an amount).
+     *     at the store, capped at the customer's shopping_budget spending
+     *     limit). Item money never enters `total_amount` and is never charged
+     *     online, so the runner is out of pocket until the customer repays them
+     *     in cash at the door — on prepaid errands too. Only counted once the
+     *     runner has REPORTED it (the budget is a ceiling, not an amount).
      */
     protected function amountToCollect(): ?float
     {

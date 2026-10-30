@@ -52,7 +52,7 @@
         @else
             <div class="check ok">&checkmark;</div>
             <h1>Payment received</h1>
-            <p>Returning you to ErrandGuy&hellip; Your balance updates once the payment is confirmed.</p>
+            <p>Returning you to ErrandGuy&hellip; We&rsquo;ll confirm your payment there in a moment.</p>
         @endif
         <a class="btn" href="errandguy://payment-complete">Back to ErrandGuy</a>
     </div>

@@ -9,6 +9,7 @@ import {
 } from 'react-native';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import * as Haptics from 'expo-haptics';
+import { Wallet } from 'lucide-react-native';
 import { Illustration } from '../../../components/ui/Illustration';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -18,6 +19,7 @@ import { useBookingStatus } from '../../../hooks/useBookingStatus';
 import { useBackGuard } from '../../../hooks/useBackGuard';
 import { useForegroundInterval } from '../../../hooks/useForegroundInterval';
 import { useSmartPolling } from '../../../hooks/useSmartPolling';
+import { useCompleteBookingPayment } from '../../../hooks/useCompleteBookingPayment';
 import { bookingService } from '../../../services/booking.service';
 import { errorMessage } from '../../../utils/errorCatalog';
 import { haptics } from '../../../utils/haptics';
@@ -26,14 +28,30 @@ import { Button } from '../../../components/ui/Button';
 import { ConfirmModal } from '../../../components/ui/ConfirmModal';
 import { SuccessCheck } from '../../../components/ui/SuccessCheck';
 import { RunnerSearchAnimation } from '../../../components/customer/RunnerSearchAnimation';
-import type { BookingStatus } from '../../../types';
+import { PaymentProgress } from '../../../components/ui/PaymentProgress';
+import {
+  isAwaitingPayment,
+  paymentDeadlineLine,
+  UNPAID_CANCEL_TITLE,
+  unpaidCancelMessage,
+  wasCancelledForUnpaidPayment,
+} from '../../../utils/bookingPayment';
+import type { Booking, BookingStatus } from '../../../types';
 import { toast } from '../../../stores/toastStore';
 import { LightColors, Elevation } from '../../../constants/colors';
 import { useResponsive } from '../../../constants/responsive';
 import dayjs from 'dayjs';
 
 
-type SearchState = 'searching' | 'scheduled' | 'matched' | 'no_runner' | 'cancelled';
+// 'awaiting_payment': a GCash/Maya booking the server holds back from runners
+// until its payment is confirmed — nobody is being looked for yet.
+type SearchState =
+  | 'awaiting_payment'
+  | 'searching'
+  | 'scheduled'
+  | 'matched'
+  | 'no_runner'
+  | 'cancelled';
 
 // Rotating reassurance copy while searching — cycled every ~5s so a
 // longer wait never reads as a frozen screen.
@@ -45,6 +63,7 @@ const SEARCHING_LINES = [
 
 // Screen-reader announcements for each state transition.
 const STATE_ANNOUNCEMENTS: Record<SearchState, string> = {
+  awaiting_payment: 'Waiting for your payment. No runner is contacted until it goes through.',
   searching: 'Searching for a runner nearby',
   scheduled: 'Booking scheduled. We will match a runner near your scheduled time.',
   matched: 'Runner found. Redirecting to tracking.',
@@ -102,8 +121,16 @@ export default function ConfirmScreen() {
     scheduledAtMs > Date.now();
 
   const [state, setState] = useState<SearchState>(
-    isScheduledFuture ? 'scheduled' : 'searching',
+    isAwaitingPayment(activeBooking?.id === bookingId ? activeBooking : null)
+      ? 'awaiting_payment'
+      : isScheduledFuture
+        ? 'scheduled'
+        : 'searching',
   );
+  // The booking as it was when it ended. A cancelled booking is cleared from
+  // the store, but "Book again" still needs its details and the copy needs
+  // its reason.
+  const [endedBooking, setEndedBooking] = useState<Booking | null>(null);
 
   // Cost guard: HERE tiles bill for the whole search, so show the live map for
   // the first stretch of the wait, then fall back to the free gradient on a
@@ -164,7 +191,14 @@ export default function ConfirmScreen() {
   // rather than waiting up to 30s for the safety-net poll.
   const hydratingRef = useRef(false);
   useEffect(() => {
-    if (!bookingId || activeBooking?.id === bookingId || hydratingRef.current) {
+    if (
+      !bookingId ||
+      activeBooking?.id === bookingId ||
+      hydratingRef.current ||
+      // A cancelled booking is cleared from the store on purpose; fetching it
+      // back would re-run the cancel branch, clear it again, and loop.
+      state === 'cancelled'
+    ) {
       return;
     }
     hydratingRef.current = true;
@@ -182,7 +216,7 @@ export default function ConfirmScreen() {
       .finally(() => {
         hydratingRef.current = false;
       });
-  }, [bookingId, activeBooking?.id, setActiveBooking]);
+  }, [bookingId, activeBooking?.id, setActiveBooking, state]);
 
   // Rotating searching subtitle — plain setState on an interval, torn
   // down on unmount or as soon as we leave the searching state.
@@ -202,6 +236,12 @@ export default function ConfirmScreen() {
   useEffect(() => {
     if (prevStateRef.current === state) return;
     prevStateRef.current = state;
+    if (state === 'searching') {
+      // The search starts NOW — after a payment that took five minutes, the
+      // "still looking" clock must not already have run out.
+      searchStartedAtRef.current = Date.now();
+      setStillLooking(false);
+    }
     if (state === 'no_runner') {
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning).catch(
         () => {},
@@ -254,8 +294,10 @@ export default function ConfirmScreen() {
   // search — first press shows a hint, second press inside 2s falls
   // through. Cancellation should go through the explicit Cancel button.
   useBackGuard(
-    state === 'searching',
-    'Tap back again to leave — your booking will keep searching.',
+    state === 'searching' || state === 'awaiting_payment',
+    state === 'awaiting_payment'
+      ? 'Tap back again to leave — you can finish paying from your errand on Home.'
+      : 'Tap back again to leave — your booking will keep searching.',
   );
 
   // ── Realtime status updates ──
@@ -296,11 +338,22 @@ export default function ConfirmScreen() {
           }, 1200);
         }
       } else if (status === 'cancelled') {
+        setEndedBooking(booking);
         setState('cancelled');
         setActiveBooking(null);
       } else if ((status as string) === 'no_runner') {
         setState('no_runner');
         if (retriedAtMaxRef.current) setExhausted(true);
+      } else if (status === 'pending') {
+        // GCash/Maya: nobody is offered the errand until it's paid. The
+        // moment it is, the ordinary search (or scheduled wait) takes over.
+        setState((s) =>
+          isAwaitingPayment(booking)
+            ? 'awaiting_payment'
+            : s === 'awaiting_payment'
+              ? 'searching'
+              : s,
+        );
       }
     },
     [bookingId, router, setActiveBooking],
@@ -331,6 +384,34 @@ export default function ConfirmScreen() {
     enabled: !!bookingId && state === 'searching',
     runOnMount: false, // realtime already seeds status
   });
+
+  // Written through the store so the mirror effect above judges it — and so
+  // the store never keeps a stale `awaiting_payment` that a later realtime
+  // merge would resurrect.
+  const refreshBooking = useCallback(async () => {
+    if (!bookingId) return;
+    const res = await bookingService.getBooking(bookingId);
+    const fresh = res?.data?.data;
+    if (fresh?.id === bookingId) setActiveBooking(fresh);
+  }, [bookingId, setActiveBooking]);
+
+  // Waiting for a GCash/Maya payment. Its confirmation doesn't change the
+  // status (still `pending`), so no realtime event announces it — tail the
+  // booking instead: once on arrival (the stored copy may be the create
+  // response from before the customer paid), every 10s, and on every return
+  // to the app, which is exactly when a customer comes back from GCash/Maya.
+  useSmartPolling(refreshBooking, {
+    interval: 10_000,
+    enabled: !!bookingId && state === 'awaiting_payment',
+    runOnMount: true,
+  });
+
+  const { checkoutUrl, completePayment, opening, progress } = useCompleteBookingPayment(
+    activeBooking?.id === bookingId ? activeBooking : null,
+    // A verdict (or closing the overlay) re-reads the booking: a confirmed
+    // payment is what starts the search.
+    { onSettled: () => void refreshBooking().catch(() => {}) },
+  );
 
   const handleCancel = useCallback(() => {
     setShowCancelModal(true);
@@ -394,7 +475,7 @@ export default function ConfirmScreen() {
   // the failed booking and drop the user on the review step where the
   // details that matter for matching (vehicle, timing) are editable.
   const handleRebook = useCallback(() => {
-    const b = activeBooking;
+    const b = activeBooking ?? endedBooking;
     if (!b) {
       router.replace('/(customer)/book/type');
       return;
@@ -453,12 +534,16 @@ export default function ConfirmScreen() {
     setStep(3);
     setActiveBooking(null);
     router.replace('/(customer)/book/review');
-  }, [activeBooking, clearDraft, updateDraft, setStep, setActiveBooking, router]);
+  }, [activeBooking, endedBooking, clearDraft, updateDraft, setStep, setActiveBooking, router]);
+
+  const cancelledUnpaid = state === 'cancelled' && wasCancelledForUnpaidPayment(endedBooking);
 
   const liveAnnouncement =
     state === 'searching' && stillLooking
       ? STILL_LOOKING_ANNOUNCEMENT
-      : STATE_ANNOUNCEMENTS[state];
+      : cancelledUnpaid
+        ? `${UNPAID_CANCEL_TITLE}. ${unpaidCancelMessage(endedBooking)}`
+        : STATE_ANNOUNCEMENTS[state];
 
   return (
     <View style={{ flex: 1 }}>
@@ -566,6 +651,47 @@ export default function ConfirmScreen() {
             },
           ]}
         >
+          {state === 'awaiting_payment' && (
+            <>
+              <View style={cs.payBadge}>
+                <Wallet size={28} color={LightColors.primary} strokeWidth={2} />
+              </View>
+              <Text className="text-xl font-montserrat-bold text-textPrimary mt-4 text-center">
+                Waiting for your payment
+              </Text>
+              <Text className="text-sm font-montserrat text-textSecondary mt-1 text-center">
+                We&apos;ll start finding a runner the moment your payment goes
+                through. {paymentDeadlineLine(activeBooking, (ms) => dayjs(ms).format('h:mm A'))}
+              </Text>
+              <Text className="text-xs font-montserrat text-textTertiary mt-2 text-center">
+                Already paid? This updates by itself.
+              </Text>
+              {bookingNumber ? (
+                <Text className="text-xs font-inter text-textTertiary mt-2 text-center">
+                  Booking: {bookingNumber}
+                </Text>
+              ) : null}
+              <View className="mt-5 w-full gap-3">
+                {checkoutUrl ? (
+                  <Button
+                    title="Complete payment"
+                    onPress={completePayment}
+                    loading={opening}
+                    loadingTitle="Opening checkout…"
+                    fullWidth
+                  />
+                ) : null}
+                <Button
+                  title="Cancel Booking"
+                  variant="outline"
+                  onPress={handleCancel}
+                  disabled={isCancelling}
+                  fullWidth
+                />
+              </View>
+            </>
+          )}
+
           {state === 'searching' && (
             <>
               <Text className="text-xl font-montserrat-bold text-textPrimary text-center">
@@ -699,7 +825,31 @@ export default function ConfirmScreen() {
             </>
           )}
 
-          {state === 'cancelled' && (
+          {/* Cancelled because the GCash/Maya payment never went through —
+              said plainly, with the way forward, instead of a generic
+              "no longer active". */}
+          {cancelledUnpaid && (
+            <>
+              <Illustration name="error-payment-failed" size={150} style={{ alignSelf: 'center' }} />
+              <Text className="text-xl font-montserrat-bold text-textPrimary mt-4 text-center">
+                {UNPAID_CANCEL_TITLE}
+              </Text>
+              <Text className="text-sm font-montserrat text-textSecondary mt-1 text-center">
+                {unpaidCancelMessage(endedBooking)}
+              </Text>
+              <View className="mt-5 w-full gap-3">
+                <Button title="Book again" onPress={handleRebook} fullWidth />
+                <Button
+                  title="Go Home"
+                  variant="outline"
+                  onPress={() => router.replace('/(customer)/(tabs)')}
+                  fullWidth
+                />
+              </View>
+            </>
+          )}
+
+          {state === 'cancelled' && !cancelledUnpaid && (
             <>
               <Illustration name="booking-cancelled" size={150} style={{ alignSelf: 'center' }} />
               <Text className="text-xl font-montserrat-bold text-textPrimary mt-4 text-center">
@@ -728,17 +878,31 @@ export default function ConfirmScreen() {
         message="No fee will be charged — a runner hasn't accepted yet."
         confirmLabel="Cancel booking"
         confirmLoadingLabel="Cancelling…"
-        cancelLabel="Keep searching"
+        cancelLabel={state === 'awaiting_payment' ? 'Keep booking' : 'Keep searching'}
         destructive
         loading={isCancelling}
         onConfirm={handleConfirmCancel}
         onCancel={() => setShowCancelModal(false)}
       />
+
+      {/* Verifies a reopened GCash/Maya checkout ("Complete payment"). */}
+      <PaymentProgress {...progress} />
     </View>
   );
 }
 
 const cs = StyleSheet.create({
+  // Wallet glyph on the "Waiting for your payment" card — same 64pt disc and
+  // soft brand wash as the app's other status discs.
+  payBadge: {
+    alignSelf: 'center',
+    width: 64,
+    height: 64,
+    borderRadius: 32,
+    backgroundColor: LightColors.primary50,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
   // Sized box the pickup pin's search radar fills — RunnerSearchAnimation is
   // absolute-fill, so it needs a fixed parent, anchored on the pickup coord.
   searchPulse: {

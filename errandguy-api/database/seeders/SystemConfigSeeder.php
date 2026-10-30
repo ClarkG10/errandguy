@@ -56,6 +56,11 @@ class SystemConfigSeeder extends Seeder
                 'description' => 'Maximum number of trusted contacts per user',
             ],
             [
+                'key' => 'shopping_budget_max',
+                'value' => '3000',
+                'description' => 'Most a runner can pay for a customer’s “Buy for me” items, in pesos. The customer repays it in cash at the door.',
+            ],
+            [
                 'key' => 'enabled_payment_methods',
                 'value' => 'wallet,gcash,maya,cash',
                 'description' => 'CSV of payment methods offered to customers (managed via admin). Valid: wallet,gcash,maya,cash',

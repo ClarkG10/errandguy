@@ -18,6 +18,8 @@ import { useBookingStore, type DraftBooking } from '../../stores/bookingStore';
 import { toast } from '../../stores/toastStore';
 import { formatCurrency } from '../../utils/formatCurrency';
 import { fareLines } from '../../utils/fareLines';
+import { itemsCashDue, itemsCashReadyLine } from '../../utils/shoppingMoney';
+import { getErrandTypeRule } from '../../constants/errandTypeRules';
 import { formatFullDate, formatTime } from '../../utils/formatDate';
 import {
   statusLabel as statusLabelFor,
@@ -166,6 +168,24 @@ export function BookingDetailSheet({
   const statusLabel = statusLabelFor(booking.status, booking.errand_type?.slug);
 
   const priceItems = fareLines(booking, booking.promo_discount);
+
+  // Item money on a shopping errand sits outside the total: the runner pays
+  // at the store and the customer repays the receipt amount in cash at the
+  // door. Said under the bill so the total never reads as covering it.
+  const isShopping = getErrandTypeRule(booking.errand_type?.slug).requiresShoppingBudget;
+  const itemsNote = (() => {
+    if (!isShopping) return null;
+    const due = itemsCashDue(booking);
+    if (booking.status === 'completed') {
+      return due != null && due > 0
+        ? `Items: ${formatCurrency(due)}, repaid to your runner in cash — not part of the total.`
+        : null;
+    }
+    // Nothing bought (₱0 receipt): nothing to repay, nothing to say.
+    if (due === 0) return null;
+    const line = itemsCashReadyLine(booking);
+    return line ? `${line} — repaid to your runner at the door, not part of the total.` : null;
+  })();
 
   const handleRebook = () => {
     const draft = buildDraftFromBooking(booking);
@@ -373,7 +393,14 @@ export function BookingDetailSheet({
               ) : null}
             </View>
           ) : (
-            <PriceBreakdown items={priceItems} total={booking.total_amount} />
+            <>
+              <PriceBreakdown items={priceItems} total={booking.total_amount} />
+              {itemsNote ? (
+                <Text className="text-[12px] font-montserrat text-textSecondary mt-2">
+                  {itemsNote}
+                </Text>
+              ) : null}
+            </>
           )}
         </View>
 

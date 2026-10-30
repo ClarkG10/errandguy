@@ -2,12 +2,15 @@
 
 namespace App\Http\Controllers\Payment;
 
+use App\Enums\PaymentStatus;
 use App\Http\Controllers\Controller;
 use App\Models\Booking;
 use App\Models\Payment;
+use App\Services\BookingService;
 use App\Services\PaymentService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Log;
 
 /**
  * Cheap, authoritative status probe the mobile app polls to VERIFY a payment
@@ -41,10 +44,33 @@ class PaymentStatusController extends Controller
         // webhook (or local dev, where webhooks can't reach us) never leaves a
         // genuinely-paid charge stuck 'processing'. Idempotent + safe to poll.
         $payment = app(PaymentService::class)->reconcileBookingPayment($payment);
+        $this->startMatchingIfPaid($payment);
 
         return response()->json([
             'data' => $this->present($payment),
         ]);
+    }
+
+    /**
+     * A confirmed payment starts the errand's search. Whichever path confirmed
+     * it normally starts it too; this is the backstop for one that confirmed it
+     * and then died before matching began (the start is guarded, so it can
+     * only ever happen once). Never fails the poll.
+     */
+    private function startMatchingIfPaid(Payment $payment): void
+    {
+        if ($payment->status !== PaymentStatus::Completed->value || ! $payment->booking_id) {
+            return;
+        }
+
+        try {
+            app(BookingService::class)->startMatchingAfterPayment($payment->booking_id);
+        } catch (\Throwable $e) {
+            Log::warning('Could not start matching from the payment status check', [
+                'payment_id' => $payment->id,
+                'error' => $e->getMessage(),
+            ]);
+        }
     }
 
     /**
@@ -65,6 +91,7 @@ class PaymentStatusController extends Controller
             // Pull-based settlement confirmation (see show()) — makes the poll
             // self-sufficient even when the Xendit webhook hasn't arrived.
             $payment = app(PaymentService::class)->reconcileBookingPayment($payment);
+            $this->startMatchingIfPaid($payment);
 
             return response()->json(['data' => $this->present($payment)]);
         }

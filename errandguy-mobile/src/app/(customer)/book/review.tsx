@@ -41,6 +41,10 @@ import {
 import { newIdempotencyKey } from '../../../utils/idempotency';
 import { fareLines } from '../../../utils/fareLines';
 import { usePaymentVerification } from '../../../hooks/usePaymentVerification';
+import {
+  CHECKOUT_CANCELLED,
+  CHECKOUT_CANCELLED_MESSAGE,
+} from '../../../hooks/useCompleteBookingPayment';
 import { invalidateQuery, useQuery } from '../../../hooks/useQuery';
 import { configService } from '../../../services/config.service';
 import { CacheTTL } from '../../../services/cache.service';
@@ -48,6 +52,7 @@ import { useRetiredErrandTypeGuard } from '../../../hooks/useRetiredErrandTypeGu
 import { useAuthStore } from '../../../stores/authStore';
 import { usePreferencesStore } from '../../../stores/preferencesStore';
 import { mapFailureReason } from '../../../utils/paymentErrors';
+import { shoppingBudgetError, shoppingBudgetMax } from '../../../utils/shoppingMoney';
 import { getErrandTypeRule, type VehicleKey } from '../../../constants/errandTypeRules';
 import { useResponsive } from '../../../constants/responsive';
 import { LightColors } from '../../../constants/colors';
@@ -121,14 +126,6 @@ const BOOKING_STAGE_ANNOUNCEMENTS: Record<BookingStage, string> = {
   creating: 'Booking your errand. This can take a few seconds.',
   checkout: 'Opening secure checkout.',
 };
-
-/** Marks an attempt whose gateway sheet the customer dismissed without paying,
- *  so the failure overlay can offer "Resume payment" with honest copy instead
- *  of the generic "we couldn't confirm this payment". */
-const CHECKOUT_CANCELLED = 'checkout_cancelled';
-
-const CHECKOUT_CANCELLED_MESSAGE =
-  "You closed checkout before paying, so nothing was charged. Your errand is saved — resume the payment now, or pay later from the errand. If you did finish paying, it updates by itself.";
 
 export default function ReviewScreen() {
   const router = useRouter();
@@ -422,6 +419,12 @@ export default function ReviewScreen() {
     return words.charAt(0).toUpperCase() + words.slice(1);
   }, [errandTypesQ.data, draftBooking.errand_type_id, draftBooking.errand_type_slug]);
 
+  // The runner fronts the item money in cash, so the catalog caps the budget.
+  // Re-checked here because a rebook lands on Review without passing Details.
+  const budgetMax = shoppingBudgetMax(
+    errandTypesQ.data?.find((t) => t.id === draftBooking.errand_type_id),
+  );
+
   const scheduleLabel =
     draftBooking.schedule_type === 'scheduled' && draftBooking.scheduled_at
       ? `Scheduled · ${dayjs(draftBooking.scheduled_at).format('ddd, MMM D · h:mm A')}`
@@ -469,12 +472,15 @@ export default function ReviewScreen() {
       toast.warning('Please add a drop-off location.');
       return;
     }
-    if (
-      rule.requiresShoppingBudget &&
-      (draftBooking.shopping_budget == null || draftBooking.shopping_budget <= 0)
-    ) {
-      toast.warning('Please set a shopping budget for this errand.');
-      return;
+    if (rule.requiresShoppingBudget) {
+      const budgetProblem = shoppingBudgetError(draftBooking.shopping_budget, budgetMax);
+      if (budgetProblem) {
+        toast.warning(budgetProblem, {
+          actionLabel: 'Edit',
+          onAction: () => editStep('/(customer)/book/details'),
+        });
+        return;
+      }
     }
     // A scheduled time can drift out of the server's [now+30min, now+30d] window
     // between the schedule step and Confirm — the earliest slot is only ~30 min
@@ -680,8 +686,9 @@ export default function ReviewScreen() {
           // timeout, then claim their payment "is being processed" — for a
           // payment they deliberately never made. Land on the actionable
           // failure state instead: "Resume payment" re-opens the SAME charge —
-          // no duplicate booking — and Close drops them on the errand to pay or
-          // cancel later.
+          // no duplicate booking — and Close drops them on the waiting screen,
+          // whose "Complete payment" reopens that charge until the server
+          // cancels the unpaid errand.
           //
           // iOS can report a cancel when the sheet is dismissed AFTER paying but
           // before the redirect, so the copy never claims the payment failed for
@@ -737,6 +744,8 @@ export default function ReviewScreen() {
     vehicleType,
     paymentMethodType,
     rule,
+    budgetMax,
+    editStep,
     setActiveBooking,
     clearDraft,
     router,
@@ -754,8 +763,8 @@ export default function ReviewScreen() {
   // GCash/Maya charge is a ONE-TIME payment_request, so this is a resume of
   // that same charge: it works while it is still awaiting approval (a sheet
   // that never opened, or one the customer backed out of), and can never
-  // charge twice. Once the charge itself has failed its URL is dead, and the
-  // customer pays again from the errand.
+  // charge twice. Once the charge itself has failed its URL is dead and the
+  // server cancels the unpaid errand; the waiting screen then offers Book again.
   const retryBookingPayment = useCallback(async () => {
     const url = usePaymentStore.getState().attempt?.checkoutUrl;
     if (!url) return;
@@ -777,12 +786,21 @@ export default function ReviewScreen() {
   }, [setAttemptStatus]);
 
   const leaveForBooking = useCallback(
-    (opts?: { keepAttempt?: boolean }) => {
+    (opts?: { keepAttempt?: boolean; paid?: boolean }) => {
       const id = usePaymentStore.getState().attempt?.bookingId;
+      // The backend has just confirmed the charge, and a confirmed payment is
+      // what releases the booking to runners. The stored copy is the create
+      // response from before the customer paid, so without this the waiting
+      // screen would greet them with "Waiting for your payment" until its
+      // first re-read lands.
+      const stored = useBookingStore.getState().activeBooking;
+      if (opts?.paid && stored && stored.id === id && stored.awaiting_payment) {
+        setActiveBooking({ ...stored, awaiting_payment: false, checkout_url: null });
+      }
       if (!opts?.keepAttempt) resolveAttempt();
       if (id) router.replace(`/(customer)/book/confirm?bookingId=${id}`);
     },
-    [resolveAttempt, router],
+    [resolveAttempt, router, setActiveBooking],
   );
 
   return (
@@ -1056,26 +1074,29 @@ export default function ReviewScreen() {
           </View>
         )}
 
-        {/* Shopping budget — a real pre-authorized outlay on top of the
-            service fee, kept out of the fee Total (it's reconciled with a
-            receipt) but explicit at the moment of commitment. Typographic
-            row (not a card) so its amount sits in the same money column
-            as the PriceBreakdown lines above it. */}
+        {/* Item money — never part of the Total above and never charged
+            online: the runner pays at the store and the customer repays the
+            receipt amount in cash at the door, up to this budget. Said at the
+            moment of commitment so a GCash/Maya payer doesn't assume the app
+            covers the items too. Typographic row (not a card) so its amount
+            sits in the same money column as the PriceBreakdown lines above. */}
         {rule.requiresShoppingBudget && (draftBooking.shopping_budget ?? 0) > 0 && (
           <View className="mb-4 flex-row items-start justify-between">
             <View className="flex-1 pr-3">
               <Text className="text-sm font-montserrat text-textSecondary">
-                Shopping budget
+                Items, paid in cash at the door
               </Text>
               <Text className="text-[11px] font-montserrat text-textSecondary mt-0.5">
-                Advanced for items, on top of the fee — reconciled with the receipt
+                Your runner pays for the items. You repay the receipt amount in
+                cash when they arrive — never more than your budget, and not
+                part of the total above.
               </Text>
             </View>
             <Text
               className="text-sm font-inter text-textPrimary"
               style={{ fontVariant: ['tabular-nums'] }}
             >
-              {formatCurrency(draftBooking.shopping_budget!)}
+              up to {formatCurrency(draftBooking.shopping_budget!)}
             </Text>
           </View>
         )}
@@ -1172,7 +1193,7 @@ export default function ReviewScreen() {
               }
             : undefined
         }
-        onSuccessDone={() => leaveForBooking()}
+        onSuccessDone={() => leaveForBooking({ paid: true })}
         failureMessage={
           attempt?.failureReason === CHECKOUT_CANCELLED
             ? CHECKOUT_CANCELLED_MESSAGE

@@ -16,11 +16,11 @@ use Tests\TestCase;
 /**
  * The abandoned checkout that still sends a runner.
  *
- * An online booking is matched — and can be accepted and completed — BEFORE its
- * charge is captured: MatchRunnerJob gates on status only and accept() has no
- * payment gate. So when the customer opens GCash and taps decline, something has
- * to tear the booking down, or the runner drives out, completes the errand, and
- * is credited nothing.
+ * A GCash/Maya errand is no longer matched before its payment is confirmed
+ * (PaymentBeforeMatchingTest), but one booked before that change can still be
+ * accepted while unpaid. When its customer opens GCash and taps decline,
+ * something has to tear the booking down, or the runner drives out, completes
+ * the errand, and is credited nothing.
  *
  * The webhook path was given that teardown. The PULL RECONCILER was not — and it
  * is the path that usually wins: the app polls the status endpoint every 3s from

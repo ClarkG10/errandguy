@@ -7,6 +7,7 @@ use App\Enums\PaymentStatus;
 use App\Events\BookingCancelled;
 use App\Events\BookingStatusChanged;
 use App\Exceptions\BookingStateException;
+use App\Jobs\AutoCancelBookingJob;
 use App\Jobs\MatchRunnerJob;
 use App\Jobs\SendPushJob;
 use App\Models\Booking;
@@ -27,6 +28,22 @@ class BookingService
 
     /** …and keeps looking until this many minutes after it. */
     public const SCHEDULED_MATCH_GRACE_MINUTES = 15;
+
+    /**
+     * How long a GCash/Maya errand waits for its payment. Unpaid after this,
+     * it is cancelled (no runner was ever involved): see cancelAbandonedPayment.
+     */
+    public const PAYMENT_WINDOW_MINUTES = 15;
+
+    /**
+     * Why an errand whose payment never arrived was cancelled — the
+     * cancellation_reason the app shows, for a timed-out checkout and for a
+     * declined or expired charge alike.
+     */
+    public const PAYMENT_NOT_COMPLETED = "Payment wasn't completed, so your errand was cancelled.";
+
+    /** The machine-readable cancellation_code that goes with PAYMENT_NOT_COMPLETED. */
+    public const PAYMENT_NOT_COMPLETED_CODE = 'payment_not_completed';
 
     public function __construct(
         private PricingService $pricingService,
@@ -88,6 +105,8 @@ class BookingService
      *  - 'refunded'  : money was already returned (or never collected for a
      *                  non-cash charge) — reviving it would run the errand for
      *                  free. The customer must rebook instead (BOOK-1).
+     *  - 'unpaid'    : a GCash/Maya errand whose payment never arrived. Matching
+     *                  only ever starts once the money is in.
      *  - 'scheduled' : a scheduled errand whose matching window has not opened
      *                  yet — searching now would send a runner hours early.
      */
@@ -102,7 +121,77 @@ class BookingService
             return 'refunded';
         }
 
+        if (self::unpaidOnline($booking)) {
+            return 'unpaid';
+        }
+
         return self::matchingOpensAt($booking)->isFuture() ? 'scheduled' : null;
+    }
+
+    /**
+     * True for an errand paid through the gateway (GCash/Maya, or a card or
+     * GrabPay errand booked before those were retired). Cash and the wallet
+     * settle without it, and so does an older booking with no method recorded.
+     */
+    public static function paysOnline(Booking $booking): bool
+    {
+        return $booking->payment_method !== null
+            && ! in_array($booking->payment_method, ['cash', 'wallet'], true);
+    }
+
+    /**
+     * True when a gateway-paid errand's money has not arrived. No runner is
+     * searched for until it has: MatchRunnerJob refuses such an errand, and
+     * matching for it starts from startMatchingAfterPayment.
+     */
+    public static function unpaidOnline(Booking $booking): bool
+    {
+        return self::paysOnline($booking) && $booking->payment_status !== 'paid';
+    }
+
+    /**
+     * True while a placed GCash/Maya errand waits for the customer to pay:
+     * matching hasn't started and the money hasn't arrived. It ends one of two
+     * ways — the payment is confirmed and matching starts
+     * (startMatchingAfterPayment), or PAYMENT_WINDOW_MINUTES pass and the
+     * errand is cancelled (cancelAbandonedPayment). The no-runner auto-cancel
+     * leaves it alone. The app offers to resume the payment meanwhile
+     * (BookingResource `awaiting_payment` / `checkout_url`).
+     */
+    public static function awaitingPayment(Booking $booking): bool
+    {
+        return $booking->status === 'pending'
+            && $booking->matching_started_at === null
+            && self::unpaidOnline($booking);
+    }
+
+    /** When an unpaid GCash/Maya errand is given up on: PAYMENT_WINDOW_MINUTES after it was placed. */
+    public static function paymentDeadline(Booking $booking): Carbon
+    {
+        return Carbon::parse($booking->created_at ?? now())->addMinutes(self::PAYMENT_WINDOW_MINUTES);
+    }
+
+    /**
+     * The customer's own way back into an unfinished payment: the GCash/Maya
+     * authorization URL of the errand's open charge, or null when there is
+     * none (no open charge, or the gateway gave us no URL).
+     */
+    public static function pendingCheckoutUrl(Booking $booking): ?string
+    {
+        $payment = Payment::where('booking_id', $booking->id)
+            ->whereIn('status', [PaymentStatus::Pending->value, PaymentStatus::Processing->value])
+            ->whereNotNull('gateway_tx_id')
+            ->latest('created_at')
+            ->first();
+
+        if (! $payment) {
+            return null;
+        }
+
+        $response = (array) $payment->gateway_response;
+
+        // A card errand booked before cards were retired paid on a hosted invoice.
+        return PaymentService::extractActionUrl($response) ?? ($response['invoice_url'] ?? null);
     }
 
     /**
@@ -139,11 +228,14 @@ class BookingService
     /**
      * When matching gives up and the errand ends as "no runner" (and is
      * refunded): SCHEDULED_MATCH_GRACE_MINUTES after a scheduled errand's time,
-     * or `auto_cancel_timeout_minutes` after an immediate one was placed.
+     * or `auto_cancel_timeout_minutes` after matching started on an immediate
+     * one. It counts from matching_started_at, not creation, so a GCash/Maya
+     * errand doesn't lose search time to a slow payment (an errand whose
+     * matching has not started yet counts from creation).
      *
-     * Shared by MatchRunnerJob's search ladder, AutoCancelBookingJob and booking
-     * creation, so the search, the auto-cancel and the refund all agree on when
-     * the errand's time is up.
+     * Shared by MatchRunnerJob's search ladder, AutoCancelBookingJob and the
+     * stranded-booking reaper, so the search, the auto-cancel and the refund
+     * all agree on when the errand's time is up.
      */
     public static function matchingDeadline(Booking $booking): Carbon
     {
@@ -153,7 +245,180 @@ class BookingService
 
         $timeoutMinutes = (int) SystemConfig::getValue('auto_cancel_timeout_minutes', '30');
 
-        return Carbon::parse($booking->created_at ?? now())->addMinutes($timeoutMinutes);
+        return Carbon::parse($booking->matching_started_at ?? $booking->created_at ?? now())->addMinutes($timeoutMinutes);
+    }
+
+    /**
+     * Start looking for a runner: arm the no-runner auto-cancel for the end of
+     * the matching window, then search — right away (inside this request, so
+     * the customer doesn't depend on a healthy queue worker), or from the
+     * window opening for a scheduled errand that isn't due yet.
+     *
+     * The caller decides the errand may be matched (paid, or cash/wallet).
+     * Shared by booking creation and startMatchingAfterPayment.
+     */
+    public static function beginMatching(Booking $booking): void
+    {
+        $matchAt = self::matchingOpensAt($booking);
+
+        if ($matchAt->isFuture()) {
+            // The sweep in errandguy:start-due-scheduled-matching restarts it
+            // if this delayed task is ever lost.
+            AutoCancelBookingJob::dispatch($booking->id)->delay(self::matchingDeadline($booking));
+            MatchRunnerJob::dispatch($booking->id)->delay($matchAt);
+
+            return;
+        }
+
+        // Matching starts now, so the search window (and the auto-cancel armed
+        // for its end) counts from this moment.
+        if ($booking->matching_started_at === null) {
+            Booking::whereKey($booking->id)->whereNull('matching_started_at')->update(['matching_started_at' => now()]);
+            $booking->refresh();
+        }
+
+        // Armed BEFORE the search: it no-ops once the booking leaves
+        // 'pending', and if the search below dies the errand still ends (and
+        // is refunded) on time.
+        AutoCancelBookingJob::dispatch($booking->id)->delay(self::matchingDeadline($booking));
+
+        // A failure here (a deadlock under load, a listener throwing) must not
+        // fail the caller: by now the errand is paid for, and a booking request
+        // that errored would be tapped again and charged twice. The search is
+        // handed to the queue instead (MatchRunnerJob retries with backoff); if
+        // it never finds anyone, the auto-cancel above refunds the errand.
+        try {
+            MatchRunnerJob::dispatchSync($booking->id);
+        } catch (\Throwable $e) {
+            Log::error('Instant matching failed; retrying on the queue', [
+                'booking_number' => $booking->booking_number,
+                'error' => $e->getMessage(),
+            ]);
+            MatchRunnerJob::dispatch($booking->id)->delay(now()->addSeconds(10));
+        }
+    }
+
+    /**
+     * Start matching for a GCash/Maya errand whose payment has just been
+     * confirmed. A gateway-paid errand is never offered to a runner before its
+     * money arrives, so this is where its search begins — called from every
+     * place a payment is confirmed (the Xendit webhook and the gateway pull
+     * behind the app's status check and the 15-minute reconcile sweep, all via
+     * BookingSettlementService::settlePaidBooking, plus the status check and
+     * the sweep themselves as a backstop).
+     *
+     * Starts exactly once however many of them race: the booking is locked and
+     * claimed by stamping matching_started_at, and only an errand that is still
+     * pending with no runner, now paid, gateway-paid and never matched is
+     * claimed. A scheduled errand that isn't due yet is left alone —
+     * errandguy:start-due-scheduled-matching starts it at its time.
+     *
+     * @return bool true iff this call started matching.
+     */
+    public function startMatchingAfterPayment(string $bookingId): bool
+    {
+        $startable = fn (?Booking $booking): bool => $booking !== null
+            && $booking->status === 'pending'
+            && $booking->runner_id === null
+            && $booking->payment_status === 'paid'
+            && $booking->matching_started_at === null
+            && self::paysOnline($booking)
+            && ! self::matchingOpensAt($booking)->isFuture();
+
+        // Cheap unlocked look first: the status check calls this on every poll
+        // of a confirmed payment, and almost always there is nothing to start.
+        if (! $startable(Booking::find($bookingId))) {
+            return false;
+        }
+
+        $claimed = DB::transaction(function () use ($bookingId, $startable) {
+            $locked = Booking::whereKey($bookingId)->lockForUpdate()->first();
+
+            if (! $startable($locked)) {
+                return null;
+            }
+
+            $locked->update(['matching_started_at' => now()]);
+
+            return $locked;
+        });
+
+        if (! $claimed) {
+            return false;
+        }
+
+        Log::info('Payment confirmed; matching started', ['booking_id' => $claimed->id]);
+        self::beginMatching($claimed);
+
+        return true;
+    }
+
+    /**
+     * Cancel a GCash/Maya errand whose payment never arrived within
+     * PAYMENT_WINDOW_MINUTES. No runner was ever involved (none is searched for
+     * before the money is in), so nothing else needs undoing; the customer is
+     * told the payment wasn't completed.
+     *
+     * The charge itself is left open: Xendit's Payment Requests API offers no
+     * way to void a GCash/Maya charge. If the customer still pays it, the
+     * payment lands on a cancelled errand and is refunded in full to their
+     * ErrandGuy wallet (BookingSettlementService::settlePaidBooking).
+     *
+     * Locked and re-checked, so a payment confirmed at the same moment wins
+     * (the errand is paid, so it is matched instead).
+     *
+     * @return bool true iff this call cancelled the errand.
+     */
+    public function cancelAbandonedPayment(string $bookingId): bool
+    {
+        $cancelled = DB::transaction(function () use ($bookingId) {
+            $locked = Booking::whereKey($bookingId)->lockForUpdate()->first();
+
+            if (! $locked
+                || ! self::awaitingPayment($locked)
+                || $locked->runner_id !== null
+                || self::paymentDeadline($locked)->isFuture()) {
+                return null;
+            }
+
+            // The money arrived but the booking's flag isn't set yet.
+            if (Payment::where('booking_id', $locked->id)->where('status', PaymentStatus::Completed->value)->exists()) {
+                return null;
+            }
+
+            $locked->update([
+                'status' => 'cancelled',
+                'cancelled_at' => now(),
+                'cancellation_reason' => self::PAYMENT_NOT_COMPLETED,
+                'cancellation_code' => self::PAYMENT_NOT_COMPLETED_CODE,
+            ]);
+
+            BookingStatusLog::create([
+                'booking_id' => $locked->id,
+                'status' => 'cancelled',
+                'changed_by' => null,
+                'note' => 'Payment not completed in time',
+            ]);
+
+            return $locked;
+        });
+
+        if (! $cancelled) {
+            return false;
+        }
+
+        Log::info('Unpaid GCash/Maya errand cancelled', ['booking_id' => $cancelled->id]);
+        event(new BookingCancelled($cancelled, self::paymentNotCompletedNotice($cancelled)));
+
+        return true;
+    }
+
+    /** The customer's push for an errand cancelled because its payment never arrived. */
+    public static function paymentNotCompletedNotice(Booking $booking): string
+    {
+        $number = $booking->booking_number ?? $booking->id;
+
+        return "Payment wasn't completed, so your errand #{$number} was cancelled.";
     }
 
     /**
@@ -255,8 +520,9 @@ class BookingService
      * adminReturnToMatching for that).
      *
      * Refused, like the customer's own "try again", when the money was already
-     * returned (the errand would run for free) or when a scheduled errand's
-     * matching window has not opened yet (a runner would be sent hours early).
+     * returned or never arrived (the errand would run for free) or when a
+     * scheduled errand's matching window has not opened yet (a runner would be
+     * sent hours early).
      * Starts a fresh round of offers; runners who already turned it down are
      * still skipped. An optional wider radius helps when the default search
      * found nobody nearby.
@@ -278,6 +544,10 @@ class BookingService
                 'refunded' => throw new BookingStateException(
                     'This errand’s payment was refunded or never collected, so re-running matching '
                     .'would run it for free. Ask the customer to book again.'
+                ),
+                'unpaid' => throw new BookingStateException(
+                    'This errand hasn’t been paid for yet. Matching starts on its own once the customer’s '
+                    .'GCash/Maya payment is confirmed.'
                 ),
                 'scheduled' => throw new BookingStateException(
                     'This errand is scheduled for '.self::businessTime($locked->scheduled_at)
@@ -314,8 +584,8 @@ class BookingService
      * of offers right away — or at the window opening for a scheduled errand
      * that is not due yet.
      *
-     * Refused when the money for it was already returned, so a rescue can never
-     * set up an errand that runs for free.
+     * Refused when the money for it was already returned or never arrived, so
+     * a rescue can never set up an errand that runs for free.
      *
      * @throws BookingStateException with a staff-readable reason.
      */
@@ -330,7 +600,7 @@ class BookingService
                 );
             }
 
-            if (self::moneyReturned($locked)) {
+            if (self::moneyReturned($locked) || self::unpaidOnline($locked)) {
                 throw new BookingStateException(
                     'This errand’s payment was refunded or never collected, so it can’t be offered to another '
                     .'runner. Cancel it instead.'

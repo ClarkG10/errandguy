@@ -2532,7 +2532,7 @@ export default function ActiveErrandScreen() {
                     <View className="bg-warningLight border border-warningSoft rounded-xl p-3 mb-3 flex-row gap-2">
                       <ShoppingBag size={14} color={LightColors.warning} />
                       <Text className="flex-1 text-[11px] font-montserrat text-textSecondary leading-[15px]">
-                        Don't exceed {formatCurrency(booking.shopping_budget)}. Capture the receipt at pickup — the customer is charged the actual cost.
+                        Don't exceed {formatCurrency(booking.shopping_budget)}. You pay at the store; capture the receipt at pickup and the customer repays that exact amount in cash at the door.
                       </Text>
                     </View>
                   )}

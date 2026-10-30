@@ -16,20 +16,13 @@ class CreateBookingRequest extends FormRequest
      * errandTypeRules.ts singleLocation flag and
      * RunnerErrandController::SINGLE_LOCATION_SLUGS.
      *
-     * This list and SHOPPING_SLUGS name BOOKABLE slugs only — errand_type_id
-     * must be an active type. Retired slugs live on as runner-side legacy
-     * aliases (UpdateErrandStatusRequest, RunnerErrandController) so errands
-     * booked before the retirement can still finish.
+     * This list and ErrandType::SHOPPING_SLUGS name BOOKABLE slugs only —
+     * errand_type_id must be an active type. Retired slugs live on as
+     * runner-side legacy aliases (UpdateErrandStatusRequest,
+     * RunnerErrandController) so errands booked before the retirement can
+     * still finish.
      */
     private const SINGLE_LOCATION_SLUGS = ['queue'];
-
-    /**
-     * Errand types where the runner spends the customer's money against a cap
-     * and captures a receipt ("Buy for me") — matching UpdateErrandStatusRequest
-     * (receipt + actual cost required at pickup) and the mobile errandTypeRules
-     * budget rule.
-     */
-    private const SHOPPING_SLUGS = ['purchase'];
 
     public function authorize(): bool
     {
@@ -43,7 +36,7 @@ class CreateBookingRequest extends FormRequest
             : null;
         $isSingleLocation = $errandType && in_array($errandType->slug, self::SINGLE_LOCATION_SLUGS, true);
         $dropoffRule = $isSingleLocation ? 'nullable' : 'required';
-        $isShopping = $errandType && in_array($errandType->slug, self::SHOPPING_SLUGS, true);
+        $isShopping = $errandType && in_array($errandType->slug, ErrandType::SHOPPING_SLUGS, true);
 
         return [
             'errand_type_id' => [
@@ -81,13 +74,16 @@ class CreateBookingRequest extends FormRequest
             // but without it a value above the decimal(10,2) ceiling (₱99.99M)
             // would 500 the caller's own request under strict-mode MySQL.
             'estimated_item_value' => ['nullable', 'numeric', 'min:0', 'max:10000000'],
-            // Shopping budget is required for "Buy for me" so the runner has a
-            // spending cap before placing the order.
+            // "Buy for me": the most the runner may spend on the items. The
+            // runner pays out of pocket and the customer repays them in cash at
+            // the door, so it is required, and capped by the staff-adjustable
+            // shopping_budget_max setting (also served in the errand-types
+            // catalog so the app can enforce it up front).
             'shopping_budget' => [
                 $isShopping ? 'required' : 'nullable',
                 'numeric',
                 'min:1',
-                'max:50000',
+                'max:'.ErrandType::shoppingBudgetMax(),
             ],
             // Optional itemized shopping checklist the customer attaches up
             // front ("Buy for me"). Each element only needs a name;
@@ -181,6 +177,12 @@ class CreateBookingRequest extends FormRequest
         });
     }
 
+    /** ₱3,000 / ₱2,500.50 — no centavos when there are none. */
+    private static function peso(float $amount): string
+    {
+        return number_format($amount, fmod($amount, 1.0) === 0.0 ? 0 : 2);
+    }
+
     public function messages(): array
     {
         return [
@@ -188,6 +190,7 @@ class CreateBookingRequest extends FormRequest
             'dropoff_contact_phone.regex' => 'Dropoff phone must be a valid Philippine mobile number.',
             'pricing_mode.in' => 'Name your price is no longer available. Please update the app and book at the fixed price.',
             'payment_method.in' => 'That payment method isn’t available right now — please pay with GCash, Maya, cash or your ErrandGuy wallet.',
+            'shopping_budget.max' => 'The most a runner can pay for your items is ₱'.self::peso(ErrandType::shoppingBudgetMax()).'.',
         ];
     }
 }

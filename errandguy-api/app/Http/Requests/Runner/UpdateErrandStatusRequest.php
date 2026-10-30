@@ -132,7 +132,7 @@ class UpdateErrandStatusRequest extends FormRequest
             'delivery_photo.required_if' => 'A delivery photo is required when marking as delivered.',
             'signature.required_if' => 'A signature is required when marking as completed.',
             'actual_item_cost.required_if' => 'Please enter the actual amount you paid for the items.',
-            'actual_item_cost.max' => 'Amount cannot exceed the customer\u2019s pre-authorized budget.',
+            'actual_item_cost.max' => 'Amount cannot exceed the customer’s spending limit for the items.',
             'receipt_photo.required_if' => 'A photo of the receipt is required for shopping errands.',
         ];
     }

@@ -157,11 +157,11 @@ export function ReceiptCaptureModal({
             >
               {/* Budget banner */}
               <View style={s.budgetBanner}>
-                <Text style={s.budgetLabel}>Customer pre-authorized budget</Text>
+                <Text style={s.budgetLabel}>Customer&apos;s budget for items</Text>
                 <Text style={s.budgetAmount}>{formatCurrency(budget)}</Text>
                 <Text style={s.budgetHint}>
-                  You cannot charge more than this. If items cost less, only the actual
-                  amount will be charged to the customer.
+                  Don&apos;t spend more than this. The customer repays exactly what
+                  you enter here, in cash at the door.
                 </Text>
               </View>
 
@@ -199,7 +199,7 @@ export function ReceiptCaptureModal({
                     The budget can&apos;t be raised in the app
                   </Text>
                   <Text style={s.overBudgetBody}>
-                    We can only charge the customer up to{' '}
+                    The customer only agreed to repay up to{' '}
                     {formatCurrency(budget)} for items. Agree with them on what
                     to drop or swap, then enter the new total. If you&apos;re
                     stuck at the till, report it and support will take it from

@@ -72,7 +72,7 @@ Route::prefix('v1')->group(function () {
         // ~hourly so admin edits propagate without a 24h wait or a cron.
         $response = response()->json([
             'data' => \App\Services\CacheService::swr(\App\Services\CacheService::errandTypesKey(), 3600, 86400, fn () =>
-                \App\Models\ErrandType::where('is_active', true)->orderBy('sort_order')->get()->toArray()
+                \App\Models\ErrandType::catalog()
             ),
         ]);
 

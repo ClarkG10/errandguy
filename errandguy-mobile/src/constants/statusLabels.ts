@@ -34,6 +34,13 @@ export const STATUS_LABELS: Record<BookingStatus, string> = {
 };
 
 /**
+ * The terse label for a `pending` GCash/Maya booking still waiting for its
+ * payment (see utils/bookingPayment). Nobody is being looked for until it is
+ * paid, so "Finding a runner" would be a false promise.
+ */
+export const AWAITING_PAYMENT_LABEL = 'Waiting for payment';
+
+/**
  * Per-errand-type corrections to the terse vocabulary, keyed by errand_type
  * slug. Only statuses whose BASE label is factually WRONG for that flow are
  * listed — a queue errand has no parcel to have "Picked up". Everything else
@@ -95,9 +102,15 @@ export function statusLabel(
  */
 export function statusHeadline(
   status: BookingStatus | string,
-  opts: { errandSlug?: string | null; runnerFirstName?: string | null } = {},
+  opts: {
+    errandSlug?: string | null;
+    runnerFirstName?: string | null;
+    /** A pending GCash/Maya booking not yet paid — see AWAITING_PAYMENT_LABEL. */
+    awaitingPayment?: boolean;
+  } = {},
 ): string {
   const s = status as BookingStatus;
+  if (s === 'pending' && opts.awaitingPayment) return 'Waiting for your payment';
   // "Runner" as the fallback subject so the sentence still reads when the
   // payload has no runner attached yet.
   const name = opts.runnerFirstName ?? 'Runner';

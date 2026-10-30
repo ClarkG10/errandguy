@@ -84,7 +84,7 @@ class HomeController extends Controller
                 CacheService::errandTypesKey(),
                 3600,
                 86400,
-                fn () => ErrandType::where('is_active', true)->orderBy('sort_order')->get()->toArray(),
+                fn () => ErrandType::catalog(),
             ),
             'active_booking' => $this->section($active),
             // Additive sibling of `active_booking`, mirroring the same new key

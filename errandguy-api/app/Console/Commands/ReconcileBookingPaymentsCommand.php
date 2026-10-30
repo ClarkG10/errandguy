@@ -6,6 +6,7 @@ use App\Enums\PaymentStatus;
 use App\Models\AdminAlert;
 use App\Models\Booking;
 use App\Models\Payment;
+use App\Services\BookingService;
 use App\Services\PaymentService;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\Log;
@@ -21,24 +22,28 @@ use Illuminate\Support\Facades\Log;
  * walks away, nothing on either side reconciles the charge.
  *
  * Both directions of that leak cost real money:
- *   • a genuinely PAID booking stuck at 'pending' → completion credits the
- *     runner ₱0 (settleCompletion takes neither the paid nor the cash branch),
- *     and the back-fill that would fix it is only reachable from the webhook or
- *     the poll;
- *   • an ABANDONED checkout stays live → the runner works an errand nobody paid
- *     for (AutoCancelBookingJob and the stranded-booking reaper both only look at
- *     'pending'/'no_runner', so an accepted booking is invisible to them).
+ *   • a genuinely PAID GCash/Maya errand never starts matching (matching waits
+ *     for the confirmed payment) and is cancelled once its payment window
+ *     closes — the customer paid and got a wallet refund instead of the errand;
+ *   • a payment that lands after its errand was cancelled must be refunded,
+ *     which only a confirmation can trigger.
  *
  * This reuses PaymentService::reconcileBookingPayment, so there is exactly ONE
  * settlement path shared with the polling endpoint — row-locked, idempotent, and
  * only ever moving a charge to the state the gateway itself reports. Settling it
- * here also runs the same post-commit seams the poll does: back-fill the runner's
- * earning on success, tear the booking down on failure/expiry.
+ * here also runs the same post-commit seams the poll does: start matching (or
+ * refund a cancelled errand, or back-fill a runner's earning) on success, cancel
+ * the errand on failure/expiry.
  *
- * Second job: a cheap DETECTIVE control. Any booking that reached 'completed'
- * without its money is a service delivered for free, and no existing check can
- * see it (reconcile-wallets only asserts balance == ledger). One query surfaces
- * the whole family.
+ * It also starts matching for a paid errand whose search never began (the
+ * confirming path died between recording the payment and starting matching).
+ *
+ * Last, cheap DETECTIVE controls. Any booking that reached 'completed' without
+ * its money is a service delivered for free. Payment now comes before any
+ * runner is involved, so only an errand booked before that (or one a staff
+ * refund un-paid mid-errand) can still get there — but no other check could
+ * see it (reconcile-wallets only asserts balance == ledger), so the alert stays
+ * as a backstop. One query surfaces the whole family.
  */
 class ReconcileBookingPaymentsCommand extends Command
 {
@@ -111,7 +116,8 @@ class ReconcileBookingPaymentsCommand extends Command
                         'warning',
                         'Booking charge settled by reconciliation sweep',
                         "A ₱{$payment->amount} booking charge was confirmed paid at the gateway but no webhook settled it. "
-                            .'The runner earning has been back-filled. Repeated occurrences indicate a webhook-delivery problem.',
+                            .'It is settled now (its errand matched, or refunded if it was already cancelled). '
+                            .'Repeated occurrences indicate a webhook-delivery problem.',
                         $payment->id,
                     );
                 }
@@ -127,11 +133,49 @@ class ReconcileBookingPaymentsCommand extends Command
         }
 
         if (! $dryRun) {
+            $this->startPaidButUnmatched($minAgeMinutes);
             $this->flagCompletedButUnpaid();
             $this->flagChargedButNeverRefunded();
         }
 
         return self::SUCCESS;
+    }
+
+    /**
+     * Backstop: a GCash/Maya errand whose payment is confirmed but whose search
+     * never started — the webhook or status check that confirmed it died before
+     * matching began, and nobody is polling. Started through the same guarded
+     * entry point every confirmation uses, so it can't start twice. A scheduled
+     * errand that isn't due is left to errandguy:start-due-scheduled-matching.
+     */
+    private function startPaidButUnmatched(int $minAgeMinutes): void
+    {
+        $ids = Booking::query()
+            ->where('status', 'pending')
+            ->whereNull('runner_id')
+            ->whereNull('matching_started_at')
+            ->where('payment_status', 'paid')
+            ->paysOnline()
+            ->where('updated_at', '<=', now()->subMinutes($minAgeMinutes))
+            ->orderBy('created_at')
+            ->limit(50)
+            ->pluck('id');
+
+        $started = 0;
+        foreach ($ids as $id) {
+            try {
+                if (app(BookingService::class)->startMatchingAfterPayment($id)) {
+                    $started++;
+                }
+            } catch (\Throwable $e) {
+                Log::error('Could not start matching for a paid errand', ['booking_id' => $id, 'error' => $e->getMessage()]);
+            }
+        }
+
+        if ($started > 0) {
+            Log::warning("Started matching for {$started} paid errand(s) whose search never began");
+            $this->warn("Started matching for {$started} paid errand(s) whose search never began.");
+        }
     }
 
     /**

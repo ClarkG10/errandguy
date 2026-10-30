@@ -78,6 +78,7 @@ class Booking extends Model
         'completed_at',
         'cancelled_at',
         'cancellation_reason',
+        'cancellation_code',
         'cancellation_fee',
         'cancelled_by',
         'ride_pin',
@@ -234,6 +235,27 @@ class Booking extends Model
     {
         return $this->hasOne(Review::class)
             ->whereColumn('reviewer_id', 'runner_id');
+    }
+
+    /**
+     * Gateway-paid (GCash/Maya, or a retired card/GrabPay) errands — the query
+     * form of BookingService::paysOnline.
+     */
+    public function scopePaysOnline($query)
+    {
+        return $query->whereNotNull('payment_method')->whereNotIn('payment_method', ['cash', 'wallet']);
+    }
+
+    /**
+     * Errands waiting for their GCash/Maya payment before matching may start —
+     * the query form of BookingService::awaitingPayment.
+     */
+    public function scopeAwaitingPayment($query)
+    {
+        return $query->where('status', 'pending')
+            ->whereNull('matching_started_at')
+            ->paysOnline()
+            ->where('payment_status', '!=', 'paid');
     }
 
     public function scopeActive($query)

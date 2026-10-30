@@ -21,8 +21,8 @@ import { formatCurrency } from './formatCurrency';
  * Nothing here writes anything. These are pure functions over a list of
  * bookings; the caller decides when to apply the result, and the values must
  * land in VISIBLE inputs so the customer sees and can edit what was recalled
- * before it is ever submitted. (`shopping_budget` in particular is a spend
- * authorisation — it must never be a hidden draft value.)
+ * before it is ever submitted. (`shopping_budget` in particular is cash the
+ * customer agrees to repay at the door — it must never be a hidden draft value.)
  *
  * Kept RN-free (like `shoppingChecklist`) so it stays trivially unit-testable.
  */

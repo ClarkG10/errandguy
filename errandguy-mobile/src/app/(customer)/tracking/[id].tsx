@@ -21,6 +21,7 @@ import * as Haptics from 'expo-haptics';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import {
   ArrowLeft,
+  Banknote,
   MessageCircle,
   Phone,
   Share2,
@@ -75,6 +76,7 @@ import { useBackGuard } from '../../../hooks/useBackGuard';
 import { useKeepAwakeWhile } from '../../../hooks/useKeepAwakeWhile';
 import { useEta } from '../../../hooks/useEta';
 import { useReducedMotion } from '../../../hooks/useReducedMotion';
+import { useCompleteBookingPayment } from '../../../hooks/useCompleteBookingPayment';
 import { TrackingSkeleton } from '../../../components/ui/Skeleton';
 import { Avatar } from '../../../components/ui/Avatar';
 import { RatingStars } from '../../../components/ui/RatingStars';
@@ -86,6 +88,7 @@ import { Illustration } from '../../../components/ui/Illustration';
 import { ErrorState } from '../../../components/ui/ErrorState';
 import { ConfirmModal } from '../../../components/ui/ConfirmModal';
 import { ExpandableSheet } from '../../../components/ui/ExpandableSheet';
+import { PaymentProgress } from '../../../components/ui/PaymentProgress';
 import { formatTime } from '../../../utils/formatDate';
 import { formatCurrency } from '../../../utils/formatCurrency';
 import { mediaSource } from '../../../utils/mediaSource';
@@ -100,7 +103,15 @@ import { stopCompletionsFromNotification, mergeStopCompletions } from '../../../
 import { resolveImageUrl } from '../../../utils/resolveImageUrl';
 import { errorMessage } from '../../../utils/errorCatalog';
 import { haptics } from '../../../utils/haptics';
-import { STATUS_LABELS } from '../../../constants/statusLabels';
+import { AWAITING_PAYMENT_LABEL, STATUS_LABELS } from '../../../constants/statusLabels';
+import {
+  isAwaitingPayment,
+  paymentDeadlineLine,
+  UNPAID_CANCEL_TITLE,
+  unpaidCancelMessage,
+  wasCancelledForUnpaidPayment,
+} from '../../../utils/bookingPayment';
+import { itemsCashDue, itemsCashReadyLine } from '../../../utils/shoppingMoney';
 import { formatRating } from '../../../utils/rating';
 import { LightColors, Elevation } from '../../../constants/colors';
 import { copy } from '../../../constants/copy';
@@ -475,6 +486,9 @@ export default function TrackingScreen() {
   // render that follows a status change, and each input is cheap.
   const bookingStatus = booking?.status ?? null;
   const isTerminalUi = bookingStatus != null && TERMINAL_UI.includes(bookingStatus);
+  // A GCash/Maya booking the server holds back from runners until it's paid.
+  // Still `pending`, but nobody is being looked for — see utils/bookingPayment.
+  const awaitingPayment = isAwaitingPayment(booking);
   const mapAuto =
     bookingStatus != null &&
     (MAP_PHASES.includes(bookingStatus) ||
@@ -695,6 +709,31 @@ export default function TrackingScreen() {
   // reconnect. (backoffOnError:false — refreshUnread swallows its own errors,
   // so there's nothing to back off from.)
   useSmartPolling(refreshUnread, { interval: 30_000, backoffOnError: false });
+
+  // Waiting for a GCash/Maya payment: its confirmation leaves the status at
+  // `pending`, so no realtime event announces it and there is no runner for
+  // the /track poll below to follow. Tail the booking instead — every 10s and
+  // on each return to the app (when a customer comes back from GCash/Maya).
+  useSmartPolling(
+    () => {
+      if (!id) return;
+      return bookingService.getBooking(id).then((res) => {
+        const fresh = res.data?.data as Booking | undefined;
+        if (fresh) setActiveBooking(fresh);
+      });
+    },
+    { interval: 10_000, enabled: !!id && awaitingPayment, runOnMount: false },
+  );
+
+  // "Complete payment" — reopens this booking's own checkout and verifies the
+  // outcome; a verdict re-reads the booking, since a confirmed payment is what
+  // sends it to runners.
+  const {
+    checkoutUrl,
+    completePayment,
+    opening: openingCheckout,
+    progress: checkoutProgress,
+  } = useCompleteBookingPayment(booking, { onSettled: fetchBooking });
 
   // Polling fallback for the runner's live position. Reverb realtime
   // is the primary path (useRunnerTracking) but in production we have
@@ -1018,7 +1057,11 @@ export default function TrackingScreen() {
               Haptics.notificationAsync(
                 Haptics.NotificationFeedbackType.Warning,
               ).catch(() => {});
-              toast.error('This errand was cancelled. See the receipt below.');
+              toast.error(
+                wasCancelledForUnpaidPayment(activeBooking)
+                  ? "Your payment wasn't completed, so this errand was cancelled."
+                  : 'This errand was cancelled. See the receipt below.',
+              );
             }
             break;
           case 'no_runner':
@@ -1619,6 +1662,10 @@ export default function TrackingScreen() {
   // fields (refunded_amount / refund_destination / cancellation_fee).
   const money = bookingMoneyOutcome(booking);
   const hasReview = !!bookingReview(booking);
+  // Cancelled by the server because the GCash/Maya payment never went through.
+  const cancelledUnpaid = wasCancelledForUnpaidPayment(booking);
+  // The terse status for the pill: an unpaid booking isn't "Finding a runner".
+  const pillLabel = awaitingPayment ? AWAITING_PAYMENT_LABEL : STATUS_LABELS[booking.status];
 
   const timelineSteps = steps.map((status, index) => {
     const log = statusLogs.find((l) => l.status === status);
@@ -1641,7 +1688,16 @@ export default function TrackingScreen() {
     const runnerName = booking.runner?.full_name?.split(' ')[0];
     switch (booking.status) {
       case 'pending':
-        return { title: 'Finding you a runner', subtitle: 'Usually takes under a minute.', accent: 'warning' };
+        return awaitingPayment
+          ? {
+              title: 'Waiting for your payment',
+              subtitle: `We'll start finding a runner the moment your payment goes through. ${paymentDeadlineLine(
+                booking,
+                (ms) => formatTime(new Date(ms)),
+              )}`,
+              accent: 'warning',
+            }
+          : { title: 'Finding you a runner', subtitle: 'Usually takes under a minute.', accent: 'warning' };
       case 'no_runner':
         return { title: 'No runner available', subtitle: 'Try again in a few minutes.', accent: 'danger' };
       // `matched` is a transient state where the system has assigned a
@@ -1691,13 +1747,15 @@ export default function TrackingScreen() {
         // A one-word receipt left the customer to guess what it cost. Lead
         // with the money headline; the card below carries the figures.
         return {
-          title: 'Cancelled',
+          title: cancelledUnpaid ? UNPAID_CANCEL_TITLE : 'Cancelled',
           subtitle:
             money.refunded != null && money.refunded > 0
               ? 'Your money is already back in your ErrandGuy wallet.'
               : money.fee > 0
                 ? 'A cancellation fee was kept from what you paid.'
-                : 'Nothing was charged for this errand.',
+                : cancelledUnpaid
+                  ? unpaidCancelMessage(booking)
+                  : 'Nothing was charged for this errand.',
           accent: 'danger',
         };
       default:
@@ -1992,6 +2050,36 @@ export default function TrackingScreen() {
     </View>
   );
 
+  // Item money is cash at the door: the runner pays at the store and the
+  // customer repays the receipt amount in person. The exact figure once the
+  // runner has bought the items, the budget as a ceiling before that.
+  const itemsDue = isShopping ? itemsCashDue(booking) : null;
+  // A ₱0 receipt (nothing could be bought) leaves no cash to prepare.
+  const cashReadyLine = isShopping && itemsDue !== 0 ? itemsCashReadyLine(booking) : null;
+  // Kept above the collapsed trip details while the errand runs, in the same
+  // gold cash strip the runner sees for their side of the same handover —
+  // finding out at the door that you need ₱1,200 in cash is too late.
+  const itemsCashSection =
+    !isTerminalUi && cashReadyLine ? (
+      <View
+        className="mt-3 flex-row items-center rounded-xl px-3 py-2.5 bg-accentSoft border border-accentStrong"
+        accessible
+        accessibilityLabel={`${cashReadyLine}. Your runner pays at the store; you repay them in cash at the door.`}
+      >
+        <Banknote size={17} color={LightColors.accentDark} strokeWidth={2} />
+        <View className="flex-1 ml-2.5">
+          <Text className="text-[13px] font-montserrat-bold text-textPrimary">
+            {cashReadyLine}
+          </Text>
+          <Text className="text-[11px] font-montserrat text-textSecondary mt-0.5">
+            {itemsDue != null
+              ? 'Your runner paid at the store — repay them in cash at the door'
+              : 'Your runner pays at the store — repay the receipt amount in cash at the door'}
+          </Text>
+        </View>
+      </View>
+    ) : null;
+
   // Live shopping progress — the runner's ticks, mirrored read-only. Sits
   // OUTSIDE the collapsed "Trip details" disclosure while the errand is
   // running: "has my runner found the milk yet?" is the question the customer
@@ -2055,9 +2143,10 @@ export default function TrackingScreen() {
                 <ShoppingProgressCard items={booking.shopping_items} />
               </View>
             )}
-            {/* Shopping reconciliation card — visible whenever a shopping budget
-                was pre-authorized so the customer can see what was approved
-                and, after pickup, exactly what the runner spent. */}
+            {/* Shopping summary — the budget the customer set and, once the
+                runner has bought the items, the receipt amount. Item money is
+                repaid in cash at the door and never charged online, so there
+                is no hold, no refund and no top-up to show here. */}
             {isShopping && booking.shopping_budget != null && (
               <View className="bg-primary/5 border border-primary/30 rounded-xl p-4 mb-4">
                 <Text className="text-xs font-montserrat-bold text-primary uppercase mb-2">
@@ -2065,62 +2154,57 @@ export default function TrackingScreen() {
                 </Text>
                 <View className="flex-row items-center justify-between mb-1.5">
                   <Text className="text-sm font-montserrat text-textSecondary">
-                    Pre-authorized budget
+                    Your budget
                   </Text>
                   <Text className="text-sm font-montserrat-bold text-textPrimary">
                     {formatCurrency(booking.shopping_budget)}
                   </Text>
                 </View>
-                {booking.actual_item_cost != null ? (
+                {itemsDue != null && (
+                  <View className="flex-row items-center justify-between mb-1.5">
+                    <Text className="text-sm font-montserrat text-textSecondary">
+                      Receipt amount
+                    </Text>
+                    <Text className="text-sm font-montserrat-bold text-textPrimary">
+                      {formatCurrency(itemsDue)}
+                    </Text>
+                  </View>
+                )}
+                <View className="h-px bg-divider my-2" />
+                {/* Through `delivered`: the handover is when the cash changes
+                    hands. A finished receipt states the method instead. */}
+                {!isFinished && cashReadyLine ? (
                   <>
-                    <View className="flex-row items-center justify-between mb-1.5">
-                      <Text className="text-sm font-montserrat text-textSecondary">
-                        Actual receipt amount
-                      </Text>
-                      <Text className="text-sm font-montserrat-bold text-textPrimary">
-                        {formatCurrency(booking.actual_item_cost)}
-                      </Text>
-                    </View>
-                    <View className="h-px bg-divider my-2" />
-                    <View className="flex-row items-center justify-between">
-                      <Text className="text-sm font-montserrat-semi text-textPrimary">
-                        {Number(booking.actual_item_cost) <= Number(booking.shopping_budget)
-                          ? 'Refund to wallet'
-                          : 'Additional due'}
-                      </Text>
-                      <Text
-                        className={`text-base font-montserrat-bold ${
-                          Number(booking.actual_item_cost) <= Number(booking.shopping_budget)
-                            ? 'text-successDark'
-                            : 'text-warningDark'
-                        }`}
-                      >
-                        {formatCurrency(
-                          Math.abs(booking.shopping_budget - booking.actual_item_cost),
-                        )}
-                      </Text>
-                    </View>
-                    {booking.receipt_photo_url && (
-                      <Pressable
-                        onPress={() => setProofPhotoUri(booking.receipt_photo_url)}
-                        className="mt-3 flex-row items-center"
-                        style={({ pressed }) => pressFx(pressed)}
-                      >
-                        <Image
-                          source={mediaSource(booking.receipt_photo_url)}
-                          className="w-12 h-12 rounded-lg mr-2 bg-divider"
-                        />
-                        <Text className="text-xs font-montserrat-semi text-primary">
-                          View receipt
-                        </Text>
-                      </Pressable>
-                    )}
+                    <Text className="text-sm font-montserrat-semi text-textPrimary">
+                      {cashReadyLine}
+                    </Text>
+                    <Text className="text-xs font-montserrat text-textTertiary mt-1">
+                      {itemsDue != null
+                        ? 'Your runner paid at the store. Repay the receipt amount in cash at the door.'
+                        : 'Your runner pays at the store and uploads the receipt. You repay that exact amount in cash at the door.'}
+                    </Text>
                   </>
                 ) : (
-                  <Text className="text-xs font-montserrat text-textTertiary mt-1">
-                    The runner will upload a receipt at pickup so you can see the
-                    exact amount spent.
+                  <Text className="text-xs font-montserrat text-textTertiary">
+                    {itemsDue == null && isMoneyOutcome
+                      ? 'No items were bought, so there is nothing to repay.'
+                      : 'Items are repaid to your runner in cash at the door — never charged online.'}
                   </Text>
+                )}
+                {booking.receipt_photo_url && (
+                  <Pressable
+                    onPress={() => setProofPhotoUri(booking.receipt_photo_url)}
+                    className="mt-3 flex-row items-center"
+                    style={({ pressed }) => pressFx(pressed)}
+                  >
+                    <Image
+                      source={mediaSource(booking.receipt_photo_url)}
+                      className="w-12 h-12 rounded-lg mr-2 bg-divider"
+                    />
+                    <Text className="text-xs font-montserrat-semi text-primary">
+                      View receipt
+                    </Text>
+                  </Pressable>
                 )}
               </View>
             )}
@@ -2773,7 +2857,7 @@ export default function TrackingScreen() {
               entering={reduceMotion ? FadeIn.duration(120) : chromeEnter(40)}
               accessible
               accessibilityLiveRegion="polite"
-              accessibilityLabel={`${STATUS_LABELS[booking.status]}${
+              accessibilityLabel={`${pillLabel}${
                 booking.runner_id && !isTerminalUi
                   ? isConnected
                     ? ', live tracking connected'
@@ -2815,7 +2899,7 @@ export default function TrackingScreen() {
                   numberOfLines={1}
                   maxFontSizeMultiplier={1.3}
                 >
-                  {STATUS_LABELS[booking.status]}
+                  {pillLabel}
                 </Text>
                 {/* Degraded realtime is surfaced as TEXT, never color-only. */}
                 {booking.runner_id && !isConnected && !isTerminalUi ? (
@@ -2981,6 +3065,17 @@ export default function TrackingScreen() {
           // Terminal receipts with nothing to show render no footer at all.
           (!sosActive && isLiveBooking) || sosActive || !!queuedSos || canCancel ? (
             <View style={{ gap: 8 }}>
+              {/* The one thing an unpaid GCash/Maya booking is waiting on —
+                  reopens the same checkout, so it can never charge twice. */}
+              {awaitingPayment && checkoutUrl ? (
+                <Button
+                  title="Complete payment"
+                  onPress={completePayment}
+                  loading={openingCheckout}
+                  loadingTitle="Opening checkout…"
+                  fullWidth
+                />
+              ) : null}
               {!sosActive && !queuedSos && isLiveBooking && (
                 <Button
                   title="Emergency SOS"
@@ -3183,11 +3278,23 @@ export default function TrackingScreen() {
                     <Button title="Book again" onPress={handleRebook} fullWidth />
                   </View>
                 )}
+                {/* Never paid, so never started: booking it again IS the way
+                    forward, so it leads (primary), like no_runner's. */}
+                {cancelledUnpaid && (
+                  <View className="mt-4 w-full">
+                    <Button
+                      title="Book again"
+                      onPress={handleRebook}
+                      accessibilityHint="Starts a new booking pre-filled from this one"
+                      fullWidth
+                    />
+                  </View>
+                )}
                 {/* A cancelled errand's only remaining action used to be
                     "Report a problem" — even though the errand still needs
                     doing. Recovery variant (secondary), matching the Activity
                     sheet's own cancelled rebook. */}
-                {booking.status === 'cancelled' && (
+                {booking.status === 'cancelled' && !cancelledUnpaid && (
                   <View className="mt-4 w-full">
                     <Button
                       title="Rebook this errand"
@@ -3235,6 +3342,7 @@ export default function TrackingScreen() {
                 </View>
               ) : null}
               {runnerCard}
+              {itemsCashSection}
               {shoppingProgressSection}
               {stopsProgressSection}
               {tripRouteSection}
@@ -3245,6 +3353,9 @@ export default function TrackingScreen() {
           )}
         </ScrollView>
       </ExpandableSheet>
+
+      {/* Verifies a reopened GCash/Maya checkout ("Complete payment"). */}
+      <PaymentProgress {...checkoutProgress} />
 
       {/* Cancel confirmation */}
       <ConfirmModal

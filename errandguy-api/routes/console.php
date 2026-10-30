@@ -76,12 +76,12 @@ Schedule::command('errandguy:reconcile-payouts')
 // The same safety net for the PRIMARY revenue path, which had none. A booking
 // charge's only pull-reconcile was the customer's status poll, and that stops
 // the moment they dismiss the pending sheet — so a dropped webhook plus a
-// customer who walks away stranded the charge in both directions: a paid
-// booking left 'pending' credits the runner ₱0 at completion, and an abandoned
-// one stays live so a runner works an errand nobody paid for (the auto-cancel
-// job and stranded reaper only look at 'pending'/'no_runner', never 'accepted').
-// Also runs the completed-but-unpaid detective sweep — a delivered errand with
-// no settled payment is money already lost, and nothing else looks for it.
+// customer who walks away stranded the charge: a paid GCash/Maya errand never
+// started matching (matching waits for the confirmed payment), and a payment
+// landing on a cancelled errand was never refunded. Also starts a paid errand
+// whose search never began, and runs the completed-but-unpaid detective sweep
+// — a delivered errand with no settled payment is money already lost, and
+// nothing else looks for it.
 Schedule::command('errandguy:reconcile-booking-payments')
     ->everyFifteenMinutes()
     ->onOneServer()
@@ -128,7 +128,9 @@ Schedule::call(fn () => dispatch_sync(new \App\Jobs\ExpireStaleMatchesJob()))
     ->withoutOverlapping(10);
 
 // Matching: start the search for a scheduled errand whose one delayed matching
-// task was lost (worker down when it came due, queue flushed). Each errand is
+// task was lost (worker down when it came due, queue flushed), and for a paid
+// scheduled GCash/Maya errand as its window opens (nothing else starts those,
+// since matching waits for the payment). Each errand is
 // claimed once via bookings.matching_started_at, and the first search runs
 // INLINE so it survives a queue-worker outage. Every minute: the search window
 // is only 30 minutes long.
@@ -158,7 +160,8 @@ Schedule::command('errandguy:send-scheduled-reminders')
 
 // Money-safety backstop: cancel + refund prepaid bookings stranded past the
 // auto-cancel window when the DELAYED AutoCancelBookingJob never ran (worker
-// down, or a crash before it was dispatched). Uses Schedule::command (NOT
+// down, or a crash before it was dispatched), and cancel GCash/Maya errands
+// still unpaid after their payment window (ExpireUnpaidBookingJob's backstop). Uses Schedule::command (NOT
 // Schedule::job) so it runs in the scheduler process and survives a queue-worker
 // outage — the exact failure it guards against. onOneServer avoids a double-run
 // (double refund is idempotently blocked anyway) across a multi-server fleet;

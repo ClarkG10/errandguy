@@ -15,6 +15,7 @@ import { LightColors, Elevation } from '../../constants/colors';
 import { statusHeadline } from '../../constants/statusLabels';
 import { formatCurrency } from '../../utils/formatCurrency';
 import { formatRating } from '../../utils/rating';
+import { isAwaitingPayment } from '../../utils/bookingPayment';
 import type { Booking, BookingStatus } from '../../types';
 
 interface ActiveBookingCardProps {
@@ -87,15 +88,19 @@ export function ActiveBookingCard({ booking, onPress }: ActiveBookingCardProps) 
   // tracking hero it links into ("… is en route" vs "On the way to you") and
   // narrated a parcel on errands that have none. Both registers now come from
   // constants/statusLabels so the card, the hero and the push agree.
+  // An unpaid GCash/Maya booking isn't offered to anyone yet, so it must not
+  // pulse or say "Finding a runner" — the payment is what it's waiting on.
+  const awaitingPayment = isAwaitingPayment(booking);
   const headline = statusHeadline(booking.status, {
     errandSlug: booking.errand_type?.slug,
     runnerFirstName: runnerName,
+    awaitingPayment,
   });
   // no_runner shares the 'searching' phase but is NOT an active search —
   // exclude it so the dot stops pulsing and the caption doesn't claim
   // we're still "finding" one while the headline says none are available.
   const isNoRunner = booking.status === 'no_runner';
-  const isSearching = phase === 'searching' && !isNoRunner;
+  const isSearching = phase === 'searching' && !isNoRunner && !awaitingPayment;
   const isCancelled = phase === 'cancelled';
   const reduceMotion = useReducedMotion();
 
@@ -114,6 +119,8 @@ export function ActiveBookingCard({ booking, onPress }: ActiveBookingCardProps) 
   const stageCaption =
     isCancelled || isNoRunner
       ? null
+      : awaitingPayment
+      ? 'Tap to complete payment'
       : isSearching
       ? 'Finding a runner nearby'
       : `${stageWord} · step ${filled} of 4`;

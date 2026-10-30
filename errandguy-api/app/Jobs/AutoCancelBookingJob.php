@@ -56,8 +56,17 @@ class AutoCancelBookingJob implements ShouldQueue
                 return false;
             }
 
-            // The same deadline the matching ladder searches until: creation +
-            // auto_cancel_timeout for an immediate errand, the end of the
+            // A GCash/Maya errand still waiting for its payment has no search to
+            // time out yet; its payment window ends it instead
+            // (ExpireUnpaidBookingJob), with the right reason.
+            if (BookingService::awaitingPayment($booking)) {
+                Log::info("AutoCancelBookingJob skipped: booking {$this->bookingId} is waiting for its payment");
+                return false;
+            }
+
+            // The same deadline the matching ladder searches until:
+            // auto_cancel_timeout after matching started for an immediate
+            // errand (so a slow payment doesn't eat the search), the end of the
             // matching window for a scheduled one. Cancelling a scheduled
             // errand earlier would kill it mid-search.
             $deadline = BookingService::matchingDeadline($booking);

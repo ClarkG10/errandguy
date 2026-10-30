@@ -550,11 +550,12 @@ class PaymentService
                 return $locked;
             });
 
-            // AFTER commit: if this poll is what settled the charge, resolve the
-            // completion/cancel seams — back-fill a runner earning the errand's
-            // completion couldn't credit, or auto-refund a charge that landed on
-            // an already-cancelled booking (MONEY-1 / MONEY-3 / MONEYX-2). Never
-            // let this fail the status poll.
+            // AFTER commit: if this poll is what settled the charge, act on it —
+            // start matching for an errand that was waiting for this payment,
+            // auto-refund a charge that landed on an already-cancelled booking,
+            // or back-fill a runner earning the errand's completion couldn't
+            // credit (MONEY-1 / MONEY-3 / MONEYX-2). Never let this fail the
+            // status poll.
             if ($result instanceof Payment && $result->status === PaymentStatus::Completed->value) {
                 try {
                     app(\App\Services\BookingSettlementService::class)->settlePaidBooking($result);
@@ -570,21 +571,15 @@ class PaymentService
             // ALWAYS beats the webhook when the customer declines in-app (the app
             // polls every 3s from the moment checkout opens), and terminalizing
             // the charge here permanently disarms the webhook's own teardown
-            // (canAdvance=false ⇒ its post-commit block never runs). So without
-            // this, the single most common abandonment — open GCash, change your
-            // mind, decline — left the booking fully live: the runner drove out,
-            // completed the errand and was credited ₱0, and neither party was ever
-            // told the booking was void. Idempotent + race-safe (skips completed/
-            // cancelled/no_runner and anything actually paid). Never fail the poll.
+            // (canAdvance=false ⇒ its post-commit block never runs). So this is
+            // where the most common abandonment — open GCash, change your mind,
+            // decline — cancels the errand and tells the customer. Idempotent +
+            // race-safe (skips completed/cancelled/no_runner and anything
+            // actually paid). Never fail the poll.
             if ($result instanceof Payment
                 && in_array($result->status, [PaymentStatus::Failed->value, PaymentStatus::Expired->value], true)) {
                 try {
-                    app(\App\Services\BookingSettlementService::class)->cancelUnpaidBooking(
-                        $result,
-                        $result->status === PaymentStatus::Expired->value
-                            ? 'Checkout window expired before payment was completed'
-                            : 'Online payment was not completed',
-                    );
+                    app(\App\Services\BookingSettlementService::class)->cancelUnpaidBooking($result);
                 } catch (\Throwable $e) {
                     Log::warning('Unpaid-booking teardown failed after reconcile', [
                         'payment_id' => $result->id,

@@ -362,7 +362,7 @@ class XenditWebhookController extends Controller
 
             if ($payment) {
                 $this->notifyPayment($payment, 'expired');
-                app(\App\Services\BookingSettlementService::class)->cancelUnpaidBooking($payment,'Checkout window expired before payment was completed');
+                app(\App\Services\BookingSettlementService::class)->cancelUnpaidBooking($payment);
             }
         }
     }
@@ -498,7 +498,7 @@ class XenditWebhookController extends Controller
 
         if ($payment) {
             $this->notifyPayment($payment, 'failed');
-            app(\App\Services\BookingSettlementService::class)->cancelUnpaidBooking($payment,'Online payment was not completed');
+            app(\App\Services\BookingSettlementService::class)->cancelUnpaidBooking($payment);
             return;
         }
 

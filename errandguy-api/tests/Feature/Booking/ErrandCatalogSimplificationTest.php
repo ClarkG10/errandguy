@@ -219,13 +219,14 @@ class ErrandCatalogSimplificationTest extends TestCase
 
     public function test_the_migration_drops_the_ride_only_settings(): void
     {
-        foreach (['ride_duration_alert_multiplier', 'route_deviation_threshold_meters', 'platform_fee_percent'] as $key) {
+        $keys = ['ride_duration_alert_multiplier', 'route_deviation_threshold_meters', 'platform_fee_percent'];
+        foreach ($keys as $key) {
             DB::table('system_config')->insert(['key' => $key, 'value' => '1', 'description' => $key]);
         }
 
         $this->migrate();
 
-        $this->assertSame(['platform_fee_percent'], DB::table('system_config')->pluck('key')->all());
+        $this->assertSame(['platform_fee_percent'], DB::table('system_config')->whereIn('key', $keys)->pluck('key')->all());
     }
 
     public function test_the_app_sees_four_types_right_after_the_migration(): void

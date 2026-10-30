@@ -464,7 +464,7 @@ class RunnerErrandController extends Controller
         if (isset($updateData['actual_item_cost']) && $booking->shopping_budget !== null
             && (float) $updateData['actual_item_cost'] > (float) $booking->shopping_budget) {
             return response()->json([
-                'message' => 'Reported amount exceeds the customer’s pre-authorized budget.',
+                'message' => 'Reported amount exceeds the customer’s spending limit for the items.',
             ], 422);
         }
         // Mark picked_up_at even when there is no pickup_photo (e.g. queue, shopping).

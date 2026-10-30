@@ -226,8 +226,9 @@ export const runnerService = {
   /**
    * Picked-up update for shopping errands ("Buy for me", plus the legacy
    * food, grocery and bill-payment errands still in progress).
-   * Sends actual_item_cost and a receipt photo as multipart/form-data so the backend
-   * can reconcile against the customer's pre-authorized shopping_budget.
+   * Sends actual_item_cost and a receipt photo as multipart/form-data; the backend
+   * checks it against the customer's shopping_budget, and the customer repays it
+   * in cash at the door.
    */
   submitPickedUpWithReceipt(
     id: string,

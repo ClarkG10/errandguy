@@ -28,7 +28,7 @@ class SendBookingCancelledNotification implements ShouldQueue
                 // Alerts inbox showed "Your errand #x is on the way" and
                 // then "Booking Cancelled" for the very same errand.
                 'Errand cancelled',
-                "Your errand #{$number} has been cancelled.",
+                $event->customerMessage ?? "Your errand #{$number} has been cancelled.",
                 [
                     'type' => 'booking_update',
                     'booking_id' => $booking->id,

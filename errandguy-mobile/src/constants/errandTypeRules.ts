@@ -47,9 +47,10 @@ export interface ErrandTypeRule {
   singleLocation: boolean;
   /**
    * Runner buys items on the customer's behalf and the final cost is
-   * unknown up front. Surfaces a "shopping budget" input the customer
-   * pre-authorizes; the runner reconciles the actual cost with a receipt
-   * at completion.
+   * unknown up front. Surfaces a "shopping budget" input: the most the
+   * runner may spend. The runner pays at the store and the customer repays
+   * the receipt amount in cash at the door; nothing for items is charged
+   * online.
    */
   requiresShoppingBudget: boolean;
   /**
@@ -173,7 +174,7 @@ const RULES: Record<string, Partial<ErrandTypeRule>> = {
       arrived_at_dropoff: 'Hand over item',
     },
     helperNote:
-      'Set a maximum budget — the runner will not exceed this. The exact cost is reconciled with a receipt at delivery.',
+      'Your runner pays for the items with their own cash, up to the budget you set. Have cash ready to repay the receipt amount when they arrive.',
   },
 
   custom: {

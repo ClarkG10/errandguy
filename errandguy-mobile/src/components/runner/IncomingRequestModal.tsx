@@ -438,12 +438,13 @@ export function IncomingRequestModal({
               </View>
             ) : null}
 
-            {/* Shopping Budget banner — runner needs to know spend ceiling before accepting. */}
+            {/* Shopping Budget banner — the runner fronts the item money in
+                cash, so they need the ceiling before accepting. */}
             {isShopping && booking.shopping_budget != null && (
               <View className="flex-row items-center gap-2 bg-warningSoft border border-warning/40 rounded-xl p-2.5 mb-3">
                 <ShoppingBag size={14} color={LightColors.warning} />
                 <Text className="text-xs font-montserrat text-warningDark flex-1">
-                  Customer budget cap
+                  You pay for the items, repaid in cash · up to
                 </Text>
                 <Text className="text-sm font-inter-semi tabular-nums text-warningDark">
                   {formatCurrency(booking.shopping_budget)}

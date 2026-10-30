@@ -59,6 +59,7 @@ import type { Booking, ErrandType } from '../../../types';
 import { formatCurrency } from '../../../utils/formatCurrency';
 import { formatRelativeTime } from '../../../utils/formatDate';
 import { scheduledWindowLabel, SCHEDULED_MATCH_LEAD_MINUTES } from '../../../utils/scheduledBooking';
+import { isAwaitingPayment } from '../../../utils/bookingPayment';
 import {
   mergeActiveBookings,
   parseActiveBookings,
@@ -580,7 +581,9 @@ export default function CustomerHomeScreen() {
         warmTracking(booking);
         router.push(`/(customer)/tracking/${booking.id}`);
       };
-      const label = scheduledWindowLabel(booking);
+      // An unpaid GCash/Maya booking leads with its payment, scheduled or not
+      // — the live card is the one that says so.
+      const label = isAwaitingPayment(booking) ? null : scheduledWindowLabel(booking);
       return label ? (
         // Same destination as the live card so the tap target is consistent
         // (tracking owns cancel / details).

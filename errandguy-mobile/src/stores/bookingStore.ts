@@ -59,7 +59,8 @@ export interface DraftBooking {
   special_instructions?: string;
   item_photos?: string[];
   estimated_item_value?: number;
-  /** Pre-authorized maximum the runner may spend on items ("Buy for me"). */
+  /** Most the runner may spend on items ("Buy for me"); repaid in cash at
+   *  the door, never charged online. */
   shopping_budget?: number;
   /**
    * Client-side shopping checklist for errand types that require a

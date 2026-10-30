@@ -99,15 +99,44 @@ class MatchWideningLadderTest extends TestCase
             ['value' => '30'],
         );
 
-        // Created 30 minutes ago: the auto-cancel deadline is already here.
+        // Searching for 30 minutes: the auto-cancel deadline is already here.
         $booking = $this->makeBooking();
-        $booking->forceFill(['created_at' => now()->subMinutes(30)])->save();
+        $booking->forceFill([
+            'created_at' => now()->subMinutes(30),
+            'matching_started_at' => now()->subMinutes(30),
+        ])->save();
 
         (new MatchRunnerJob($booking->id))->handle(app(\App\Services\MatchingService::class));
 
         $booking->refresh();
         $this->assertSame('no_runner', $booking->status);
         Bus::assertNotDispatched(MatchRunnerJob::class);
+    }
+
+    /**
+     * The search window counts from when matching started, not from booking:
+     * a GCash/Maya errand whose payment took a while still gets its full
+     * search.
+     */
+    public function test_the_ladder_counts_from_when_matching_started_not_from_booking(): void
+    {
+        Bus::fake([MatchRunnerJob::class]);
+        SystemConfig::query()->updateOrCreate(
+            ['key' => 'auto_cancel_timeout_minutes'],
+            ['value' => '30'],
+        );
+
+        // Booked 30 minutes ago, but its search only started a minute ago.
+        $booking = $this->makeBooking();
+        $booking->forceFill([
+            'created_at' => now()->subMinutes(30),
+            'matching_started_at' => now()->subMinute(),
+        ])->save();
+
+        (new MatchRunnerJob($booking->id))->handle(app(\App\Services\MatchingService::class));
+
+        $this->assertSame('pending', $booking->fresh()->status);
+        Bus::assertDispatched(MatchRunnerJob::class, fn (MatchRunnerJob $job) => $job->attempt === 2);
     }
 
     /**

@@ -58,17 +58,19 @@ import { BookingStepIndicator } from '../../../components/customer/BookingStepIn
 import { getErrandTypeRule } from '../../../constants/errandTypeRules';
 import { LightColors, Elevation } from '../../../constants/colors';
 import { useResponsive } from '../../../constants/responsive';
-import type { Booking, SavedAddress } from '../../../types';
+import type { Booking, ErrandType, SavedAddress } from '../../../types';
 import { toast } from '../../../stores/toastStore';
 import { geocodingService } from '../../../services/geocoding.service';
 import { routeService } from '../../../services/route.service';
 import { bookingService } from '../../../services/booking.service';
+import { configService } from '../../../services/config.service';
 import { userService } from '../../../services/user.service';
 import { useQuery } from '../../../hooks/useQuery';
 import { useRetiredErrandTypeGuard } from '../../../hooks/useRetiredErrandTypeGuard';
 import { CacheTTL } from '../../../services/cache.service';
 import { useAuthStore } from '../../../stores/authStore';
 import { formatCurrency } from '../../../utils/formatCurrency';
+import { shoppingBudgetError, shoppingBudgetMax } from '../../../utils/shoppingMoney';
 import {
   addRecentRecipient,
   getRecentRecipients,
@@ -291,6 +293,21 @@ export default function TaskDetailsScreen() {
   const rule = useMemo(
     () => getErrandTypeRule(draftBooking.errand_type_slug),
     [draftBooking.errand_type_slug],
+  );
+
+  // The runner fronts the item money in cash, so shopping types carry a
+  // staff-set budget ceiling. Same ['errand-types'] entry the picker just
+  // warmed, so this is a cache read, not a fetch.
+  const errandTypesQ = useQuery<ErrandType[]>(
+    ['errand-types'],
+    async () => {
+      const res = await configService.getErrandTypes();
+      return (res.data?.data ?? []) as ErrandType[];
+    },
+    { staleTime: 60 * 60 * 1000, ttl: CacheTTL.STATIC, enabled: rule.requiresShoppingBudget },
+  );
+  const budgetMax = shoppingBudgetMax(
+    errandTypesQ.data?.find((t) => t.id === draftBooking.errand_type_id),
   );
 
   const initialPhase =
@@ -1021,7 +1038,7 @@ export default function TaskDetailsScreen() {
 
   /* ── "Same as last time", scoped to THIS errand type ──
      Every type makes the description REQUIRED, and "Buy for me" additionally
-     forces a checklist plus a pre-authorised budget — all of it starting blank
+     forces a checklist plus an items budget — all of it starting blank
      on every single booking. A customer queuing at the same office every
      month retyped the same purpose each time; a weekly grocery customer
      rebuilt the same eight rows. The only escape was "Repeat last", which clones whichever booking
@@ -1413,10 +1430,8 @@ export default function TaskDetailsScreen() {
       if (!draftBooking.shoppingItems?.some((it) => it.name.trim())) {
         newErrors.shoppingItems = 'Add at least one item to your list';
       }
-      const budget = draftBooking.shopping_budget;
-      if (budget == null || budget <= 0) {
-        newErrors.shopping_budget = 'Shopping budget is required';
-      }
+      const budgetProblem = shoppingBudgetError(draftBooking.shopping_budget, budgetMax);
+      if (budgetProblem) newErrors.shopping_budget = budgetProblem;
     } else if (rule.descriptionRequired && !draftBooking.description?.trim()) {
       newErrors.description = `${rule.descriptionLabel} is required`;
     }
@@ -1457,7 +1472,7 @@ export default function TaskDetailsScreen() {
     setTimeout(() => {
       navLatch.current = false;
     }, 700);
-  }, [draftBooking, rule, setStep, router, savedAddrUserId]);
+  }, [draftBooking, rule, budgetMax, setStep, router, savedAddrUserId]);
 
   /* ── Initial camera center ── */
   const [userLocation, setUserLocation] = useState<[number, number] | null>(null);
@@ -2477,14 +2492,22 @@ export default function TaskDetailsScreen() {
                     const clean = sanitizeAmount(v);
                     setBudgetText(clean);
                     const num = parseFloat(clean);
-                    updateDraft({ shopping_budget: isNaN(num) ? undefined : num });
-                    if (errors.shopping_budget && !isNaN(num) && num > 0) {
+                    const amount = isNaN(num) ? undefined : num;
+                    updateDraft({ shopping_budget: amount });
+                    // Over the ceiling says so while it's typed, not at
+                    // Continue; a corrected amount clears the error.
+                    if (amount != null && amount > budgetMax) {
+                      setErrors((e) => ({
+                        ...e,
+                        shopping_budget: shoppingBudgetError(amount, budgetMax) ?? '',
+                      }));
+                    } else if (errors.shopping_budget && amount != null && amount > 0) {
                       setErrors((e) => ({ ...e, shopping_budget: '' }));
                     }
                   }}
                   placeholder="₱0.00"
                   keyboardType="decimal-pad"
-                  helperText="Maximum amount the runner may spend"
+                  helperText={`Up to ${formatCurrency(budgetMax)}. Your runner pays for the items, and you repay the receipt amount in cash at the door.`}
                   error={errors.shopping_budget}
                   style={amountInputStyle}
                 />

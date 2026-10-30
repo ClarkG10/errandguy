@@ -66,6 +66,7 @@ class BookingStatusChanged implements ShouldBroadcast, ShouldDispatchAfterCommit
             'completed_at' => optional($this->booking->completed_at)->toIso8601String(),
             'cancelled_at' => optional($this->booking->cancelled_at)->toIso8601String(),
             'cancellation_reason' => $this->booking->cancellation_reason,
+            'cancellation_code' => $this->booking->cancellation_code,
         ];
     }
 }

@@ -11,6 +11,7 @@ use App\Http\Requests\Booking\CreateBookingRequest;
 use App\Http\Requests\Booking\EstimateRequest;
 use App\Http\Resources\BookingResource;
 use App\Jobs\AutoCancelBookingJob;
+use App\Jobs\ExpireUnpaidBookingJob;
 use App\Jobs\MatchRunnerJob;
 use App\Exceptions\PaymentGatewayException;
 use App\Models\Booking;
@@ -226,7 +227,8 @@ class BookingController extends Controller
         //  - cash        : leave unpaid; the runner collects on completion
         //  - gcash / maya: a one-time Xendit e-wallet charge; the booking is
         //                  marked paid by the payment.succeeded webhook (or
-        //                  the status-poll reconciler)
+        //                  the status-poll reconciler), and only then is a
+        //                  runner looked for (below)
         // Validation only lets these four through: cards, GrabPay and linked
         // accounts are retired (see CreateBookingRequest).
         $paymentMethod = $validated['payment_method'];
@@ -367,45 +369,20 @@ class BookingController extends Controller
             }
         }
 
-        // Arm the auto-cancel/refund safety net FIRST, for the end of the
-        // matching window (BookingService::matchingDeadline — creation + the
-        // timeout for an immediate errand, 15 minutes after the time for a
-        // scheduled one). This job is idempotent and no-ops once the booking
-        // leaves 'pending', so arming it early is harmless when matching
-        // succeeds.
-        AutoCancelBookingJob::dispatch($booking->id)
-            ->delay(BookingService::matchingDeadline($booking));
-
-        // A SCHEDULED booking is matched from 15 minutes before its time, so a
-        // runner isn't sent to the pickup hours early; the sweep in
-        // errandguy:start-due-scheduled-matching restarts it if this delayed
-        // task is ever lost.
-        $matchAt = BookingService::matchingOpensAt($booking);
-        if ($matchAt->isFuture()) {
-            MatchRunnerJob::dispatch($booking->id)->delay($matchAt);
+        // ── Matching ─────────────────────────────────────────────────────
+        // Money before work: a wallet errand is paid and a cash one is paid at
+        // the door, so they look for a runner now (a scheduled one from 15
+        // minutes before its time). A GCash/Maya errand waits for its payment:
+        // the webhook / status check / reconcile sweep that confirms it starts
+        // matching (BookingService::startMatchingAfterPayment). Unpaid after
+        // PAYMENT_WINDOW_MINUTES it is cancelled — no runner was ever involved.
+        // errandguy:reap-stranded-bookings does the same if this delayed task
+        // is lost.
+        if (BookingService::paysOnline($booking)) {
+            ExpireUnpaidBookingJob::dispatch($booking->id)
+                ->delay(BookingService::paymentDeadline($booking));
         } else {
-            // Immediate bookings: run the first search synchronously inside
-            // the request so the customer doesn't depend on a queue worker
-            // being healthy. The matching call is read-mostly and typically
-            // finishes in well under a second.
-            //
-            // By now the booking exists and may already be paid, so a failure
-            // here (a deadlock under load, a listener throwing) must NOT fail
-            // the request: the app would show an error, the customer would tap
-            // again, and the retry would create — and charge — a second
-            // booking. The booking stands, the response is the normal 201, and
-            // the search is handed to the queue (MatchRunnerJob retries with
-            // backoff). If that never finds anyone, the auto-cancel armed above
-            // refunds it.
-            try {
-                MatchRunnerJob::dispatchSync($booking->id);
-            } catch (\Throwable $e) {
-                \Illuminate\Support\Facades\Log::error('Instant matching failed at booking creation; retrying on the queue', [
-                    'booking_number' => $booking->booking_number,
-                    'error' => $e->getMessage(),
-                ]);
-                MatchRunnerJob::dispatch($booking->id)->delay(now()->addSeconds(10));
-            }
+            BookingService::beginMatching($booking);
         }
 
         // Fire booking created event
@@ -422,7 +399,9 @@ class BookingController extends Controller
         return response()->json([
             'data' => new BookingResource($booking),
             // For GCash/Maya the client must open this authorization URL to
-            // pay; null for cash/wallet (already settled/deferred).
+            // pay; null for cash/wallet (already settled/deferred). The booking
+            // keeps offering it (BookingResource checkout_url) until the payment
+            // is confirmed or the errand is cancelled.
             'checkout_url' => $checkoutUrl,
             // Lets the app poll GET /payments/{id}/status to verify settlement
             // rather than assuming success from the checkout redirect.
@@ -1003,6 +982,7 @@ class BookingController extends Controller
                 'matched_at' => null,
                 'cancelled_at' => null,
                 'cancellation_reason' => null,
+                'cancellation_code' => null,
                 // A fresh round of offers. Runners who already turned this
                 // errand down stay on offered_runner_ids and are still skipped.
                 'offer_count' => 0,
@@ -1022,6 +1002,15 @@ class BookingController extends Controller
             return $this->fail(
                 ErrorCode::BOOKING_CONFLICT,
                 'This booking was already refunded, so it can’t be retried. Please create a new booking to try again.',
+            );
+        }
+
+        if ($outcome === 'unpaid') {
+            return $this->fail(
+                ErrorCode::BOOKING_CONFLICT,
+                $booking->status === 'pending'
+                    ? 'This errand hasn’t been paid for yet. We start looking for a runner as soon as your GCash/Maya payment is confirmed.'
+                    : 'This errand was never paid for, so it can’t be retried. Please create a new booking to try again.',
             );
         }
 

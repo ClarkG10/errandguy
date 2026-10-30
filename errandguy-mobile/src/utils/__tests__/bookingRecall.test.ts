@@ -153,7 +153,7 @@ describe('findRecall', () => {
     expect(findRecall(list, { ...TEXT_OPTS, allowedVehicles: [...TEXT_OPTS.allowedVehicles] })).toBeNull();
   });
 
-  it('drops a zero / negative budget rather than pre-authorising nothing', () => {
+  it('drops a zero / negative budget rather than recalling an empty one', () => {
     const list = [booking({ id: 'z', shopping_budget: 0, shopping_items: [{ id: 'i', name: 'Milk', qty: 1 }] })];
     expect(findRecall(list, { ...SHOPPING_OPTS, allowedVehicles: [...SHOPPING_OPTS.allowedVehicles] })?.fields.shopping_budget).toBeUndefined();
   });

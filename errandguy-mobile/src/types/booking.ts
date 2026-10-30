@@ -75,6 +75,11 @@ export interface ErrandType {
   is_active: boolean;
   sort_order: number;
   created_at: string;
+  /** Shopping types only: the highest items budget a customer may set, since
+   *  the runner pays for the items with their own cash. Staff-adjustable;
+   *  absent on an older server (see DEFAULT_SHOPPING_BUDGET_MAX). Laravel may
+   *  send a decimal as a string. */
+  shopping_budget_max?: number | string | null;
 }
 
 export interface Booking {
@@ -102,7 +107,9 @@ export interface Booking {
   special_instructions: string | null;
   item_photos: string[];
   estimated_item_value: number | null;
-  /** Pre-authorized maximum the runner may spend on items. */
+  /** The most the runner may spend on items. The runner pays for them and the
+   *  customer repays the receipt amount in cash at the door; nothing for items
+   *  is charged online. */
   shopping_budget: number | null;
   /** Structured shopping checklist (server source-of-truth for runner ticks).
    *  Defaults to [] from BookingResource; null/absent for non-shopping errands. */
@@ -115,6 +122,9 @@ export interface Booking {
   }[] | null;
   /** Actual cost reported by runner from receipt. */
   actual_item_cost: number | null;
+  /** Cash the customer repays for the items at the door: actual_item_cost
+   *  once the runner has bought them, else null. Absent on an older server. */
+  items_cash_due?: number | string | null;
   receipt_photo_url: string | null;
   schedule_type: ScheduleType;
   scheduled_at: string | null;
@@ -136,6 +146,13 @@ export interface Booking {
   runner_payout: number | null;
   tip_amount: number | null;
   payment_method: string | null;
+  /** GCash/Maya: true until the payment is confirmed. No runner is offered the
+   *  errand before then, and one left unpaid is cancelled after
+   *  UNPAID_CHECKOUT_WINDOW_MINUTES. Absent on an older server. */
+  awaiting_payment?: boolean;
+  /** The booking's still-open checkout — sent only to its own customer, and
+   *  only while awaiting_payment. */
+  checkout_url?: string | null;
   pickup_photo_url: string | null;
   delivery_photo_url: string | null;
   signature_url: string | null;
@@ -145,6 +162,9 @@ export interface Booking {
   completed_at: string | null;
   cancelled_at: string | null;
   cancellation_reason: string | null;
+  /** Structured cancel cause; 'payment_not_completed' for an unpaid GCash/Maya
+   *  booking. Absent on servers older than the field. */
+  cancellation_code?: string | null;
   cancelled_by: string | null;
   sos_triggered: boolean;
   trip_share_token: string | null;
