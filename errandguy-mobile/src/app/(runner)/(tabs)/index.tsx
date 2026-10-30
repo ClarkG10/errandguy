@@ -11,6 +11,7 @@ import {
   TextInput,
   KeyboardAvoidingView,
   Linking,
+  AppState,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -31,7 +32,6 @@ import {
   ChevronRight,
   Wallet,
   History as HistoryIcon,
-  MapPinned,
   ListChecks,
   Power,
   TrendingUp,
@@ -39,9 +39,7 @@ import {
   RefreshCw,
   AlertTriangle,
 } from 'lucide-react-native';
-import { NegotiateOfferCard } from '../../../components/runner/NegotiateOfferCard';
 import { VerificationBanner } from '../../../components/runner/VerificationBanner';
-import { OfferDetailsSheet } from '../../../components/runner/OfferDetailsSheet';
 import { ShiftSummarySheet } from '../../../components/runner/ShiftSummarySheet';
 import { offerExpiresAt, readAcceptDeadline } from '../../../components/runner/offerMeta';
 import { ActiveRunnerErrandCard } from '../../../components/runner/ActiveRunnerErrandCard';
@@ -166,7 +164,7 @@ function nextPeakLabel(
  *
  * Old version stacked: header → verification banner → big online button
  * with huge vertical margin → active errand → snapshot stats card →
- * negotiate offers → recent errands. Six sections plus eyebrows.
+ * an offers list → recent errands. Six sections plus eyebrows.
  *
  * This version anchors the screen on ONE block: the runner's status.
  * Everything else is treated as supporting context that may or may not
@@ -181,8 +179,10 @@ function nextPeakLabel(
  *     acceptance) sit as tiny captions below the divider, NOT as a
  *     separate icon-tile row.
  *   • Active errand — only when one exists, full-width.
- *   • Negotiate offers — only when online + offers present.
  *   • Recent — at most 3 hairline rows with a "See all" inline link.
+ *
+ * Offers are never listed here: each one is sent to ONE runner as a direct
+ * offer and raised by OfferWatcher (app/(runner)/_layout.tsx).
  */
 /**
  * Shape of GET /runner/earnings `data` (RunnerEarningsController::summary).
@@ -206,8 +206,6 @@ export default function RunnerHomeScreen() {
     toggleOnline,
     currentErrand,
     incomingRequest,
-    clearIncomingRequest,
-    acceptErrand,
     earnings,
     setEarnings,
     runnerProfile,
@@ -227,16 +225,13 @@ export default function RunnerHomeScreen() {
   const neverPinged = useLocationStore((s) => s.lastPingAt == null);
   const locationPinging = useLocationStore((s) => s.isPinging);
   const unreadCount = useNotificationStore((s) => s.unreadCount);
+  const pushDenied = useNotificationStore((s) => s.pushPermission === 'denied');
   const hideOnScroll = useHideTabBarOnScroll();
 
   const [togglingOnline, setTogglingOnline] = useState(false);
   const [locationGranted, setLocationGranted] = useState<boolean | null>(null);
-  /** Open offer being previewed in the details sheet (null = sheet closed). */
-  const [previewOffer, setPreviewOffer] = useState<Booking | null>(null);
   /** What the shift just ended came to. Null = nothing to show. */
   const [shiftSummary, setShiftSummary] = useState<ShiftSummary | null>(null);
-  /** Id of the offer whose accept is in flight — locks every other claim. */
-  const [acceptingOfferId, setAcceptingOfferId] = useState<string | null>(null);
 
   // Pulse ring around the power button while online — a quiet "live"
   // signal. Frozen for users with the OS Reduce Motion preference.
@@ -300,11 +295,6 @@ export default function RunnerHomeScreen() {
     async () => ((await runnerService.getErrandHistory({ page: 1, per_page: 3 })).data.data ?? []) as Booking[],
     { staleTime: 60_000, ttl: CacheTTL.LONG, enabled },
   );
-  const offersQ = useQuery<Booking[]>(
-    ['runner', 'errand', 'available', userId],
-    async () => ((await runnerService.getAvailableErrands()).data.data ?? []) as Booking[],
-    { staleTime: 15_000, ttl: CacheTTL.SHORT, enabled: enabled && isOnline },
-  );
   const currentErrandQ = useQuery<Booking | null>(
     ['runner', 'errand', 'current', userId],
     async () => ((await runnerService.getCurrentErrand()).data.data ?? null) as Booking | null,
@@ -323,14 +313,11 @@ export default function RunnerHomeScreen() {
   // GROUP LAYOUT (OfferWatcher in app/(runner)/_layout.tsx) so an offer
   // reaches a runner who is reading Earnings, History or Busy-areas — these
   // tabs are freezeOnBlur, so a subscription owned by this screen went deaf
-  // the moment they switched away. The watcher invalidates
-  // ['runner','errand','available'] on every broadcast, which this screen's
-  // offersQ picks up in place. What stays here is the REST reconcile below:
-  // the fallback that raises (and widens the window on) a matched offer when
-  // realtime never delivered.
+  // the moment they switched away. What stays here is the REST reconcile
+  // below: the fallback that raises (and widens the window on) a matched
+  // offer when realtime never delivered.
 
   const recentErrands = (historyQ.data ?? []).slice(0, 3);
-  const negotiateOffers = offersQ.data ?? [];
   const activeErrand = currentErrand ?? currentErrandQ.data ?? null;
 
   // Polling fallback for the matched-but-not-yet-shown booking. See
@@ -349,28 +336,13 @@ export default function RunnerHomeScreen() {
     runOnMount: false,
   });
 
-  // Keep the open-offers list live while the runner sits here waiting. The
-  // screen literally says "we'll ping you the moment a nearby errand comes
-  // in", but the list had no poller and no realtime invalidation — a new
-  // broadcast only ticked the bell badge, so the runner had to pull-to-refresh
-  // to see first-come-first-served work. Same idiom as the current-errand poll
-  // above: foreground + online only, `revalidate()` (not `refresh()`) so it
-  // doesn't wipe the app-wide GET micro-cache, and off entirely once the
-  // runner has an errand in hand. The endpoint's own 5s response cache and the
-  // ETag conditional-GET keep the cost near zero.
-  useSmartPolling(() => offersQ.revalidate(), {
-    interval: 20_000,
-    enabled: enabled && isOnline && !activeErrand,
-    runOnMount: false,
-  });
-
   // ── The phantom active errand ──────────────────────────────────────────
   // `activeErrand = currentErrand ?? query` lets the store's copy shadow the
   // server forever: after a remote cancel the 30s poll fetches a fresh `null`
-  // and the hero card, the "waiting for requests" state and the OPEN-OFFERS
-  // POLL (gated on `!activeErrand`) all stayed frozen on a job that no longer
-  // existed — the runner was silently shut out of paid work with no visible
-  // cause. Two paths close it, and neither may erase a LIVE errand:
+  // and the hero card and the "waiting for requests" state stayed frozen on a
+  // job that no longer existed — the runner looked busy to themselves and was
+  // silently shut out of paid work with no visible cause. Two paths close it,
+  // and neither may erase a LIVE errand:
   //
   //  1. Realtime — the same `booking.{id}` / `booking.status` channel the
   //     cockpit uses, so a cancellation reaches Home in about a second. Only
@@ -393,7 +365,7 @@ export default function RunnerHomeScreen() {
     if (isTerminalStatus(incoming.status)) {
       if (isClosedStatus(incoming.status)) {
         // Clears currentErrand (runnerStore.updateErrandStatus), which re-arms
-        // the idle affordances and the open-offers poll.
+        // the idle affordances.
         store.updateErrandStatus(incoming.status);
       } else {
         useRunnerStore.setState({ currentErrand: null });
@@ -401,7 +373,7 @@ export default function RunnerHomeScreen() {
       void invalidateQuery(['runner', 'errand', 'current']);
       if (incoming.status === 'cancelled') {
         haptics.warning();
-        toast.warning('This errand was cancelled. You’re back on the offer feed.');
+        toast.warning('This errand was cancelled. You’ll get new offers again.');
       }
       return;
     }
@@ -450,7 +422,7 @@ export default function RunnerHomeScreen() {
         else useRunnerStore.setState({ currentErrand: null });
         if (fresh.status === 'cancelled') {
           haptics.warning();
-          toast.warning('This errand was cancelled. You’re back on the offer feed.');
+          toast.warning('This errand was cancelled. You’ll get new offers again.');
         }
       })
       .catch((err: any) => {
@@ -540,13 +512,24 @@ export default function RunnerHomeScreen() {
   // `runnerStore.isOnline` starts false and was only ever written by the
   // toggle handler, so after a restart / crash mid-shift the server still had
   // is_online = true while the app said "offline": the offer channel was not
-  // subscribed, the feed and the matched-booking poll were disabled, and GPS
-  // wasn't running — matches expired against a deaf app and the runner had to
-  // remember to re-toggle. The profile response has always carried the truth;
-  // nothing read it. Runs once per mount, from a value that is actually fresh
-  // (never a stale-offline cache read), and stands down while a toggle is in
-  // flight so it can't fight the runner's own tap.
+  // subscribed, the matched-booking poll was disabled, and GPS wasn't running
+  // — matches expired against a deaf app and the runner had to remember to
+  // re-toggle. The profile response has always carried the truth; nothing
+  // read it. Runs from a value that is actually fresh (never a stale-offline
+  // cache read), and stands down while a toggle is in flight so it can't fight
+  // the runner's own tap.
+  //
+  // It also runs again after every trip to the background, because the server
+  // now flips a runner OFFLINE itself after 30 minutes without a location —
+  // which is exactly what a locked phone produces. Without a second look the
+  // app came back still saying "ONLINE" to a runner nothing could reach.
   const onlineReconciledRef = React.useRef(false);
+  useEffect(() => {
+    const sub = AppState.addEventListener('change', (next) => {
+      if (next === 'background') onlineReconciledRef.current = false;
+    });
+    return () => sub.remove();
+  }, []);
   useEffect(() => {
     if (!enabled || onlineReconciledRef.current) return;
     if (togglingOnline) return;
@@ -561,6 +544,9 @@ export default function RunnerHomeScreen() {
     toggleOnline(serverOnline);
     if (!serverOnline) {
       stopTracking();
+      // The server ended the shift, not the runner (the push already said
+      // why) — confirm the app agrees, rather than just greying the toggle.
+      toast.info('You’ve been switched offline. Tap the power button when you’re ready for errands again.');
       return;
     }
     // Resume GPS so the customer's pin isn't frozen and matching keeps seeing
@@ -671,10 +657,9 @@ export default function RunnerHomeScreen() {
       earningsWeekQ.refresh(),
       historyQ.refresh(),
       currentErrandQ.refresh(),
-      isOnline ? offersQ.refresh() : Promise.resolve(),
     ]);
     setRefreshing(false);
-  }, [profileQ, earningsTodayQ, earningsWeekQ, historyQ, currentErrandQ, offersQ, isOnline]);
+  }, [profileQ, earningsTodayQ, earningsWeekQ, historyQ, currentErrandQ]);
 
   const handleToggleOnline = async (value: boolean) => {
     if (togglingOnline) return;
@@ -683,28 +668,18 @@ export default function RunnerHomeScreen() {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => {});
 
     // Going OFFLINE — optimistic instant flip. No GPS/tracking dependency, so
-    // turn the ring off + clear the offers list immediately, confirm in the
-    // background, and roll back to online if the server rejects. (Going ONLINE
-    // stays blocking below — it hard-depends on acquiring GPS + starting
-    // tracking, so it must await confirmation.)
+    // turn the ring off immediately, confirm in the background, and roll back
+    // to online if the server rejects. (Going ONLINE stays blocking below — it
+    // hard-depends on acquiring GPS + starting tracking, so it must await
+    // confirmation.)
     if (!value) {
-      // Snapshot the offers so rollback is the exact inverse of apply — if
-      // the toggle fails the runner is still online and their open offers
-      // must reappear, not stay cleared until the next revalidation.
-      const prevOffers = offersQ.data;
       // The shift summary rides back on the toggle response. runOptimistic's
       // onSuccess takes no argument, so capture it in the commit rather than
       // widening a helper that ~30 other call sites share.
       let shift: ShiftSummary | null = null;
       await runOptimistic({
-        apply: () => {
-          toggleOnline(false);
-          offersQ.mutate(() => []);
-        },
-        rollback: () => {
-          toggleOnline(true);
-          offersQ.mutate(() => prevOffers ?? []);
-        },
+        apply: () => toggleOnline(false),
+        rollback: () => toggleOnline(true),
         commit: async () => {
           const res = await runnerService.toggleOnline(false);
           shift = res.data?.data?.shift ?? null;
@@ -821,6 +796,13 @@ export default function RunnerHomeScreen() {
         router.push('/(runner)/settings/preferred-types' as any);
         return;
       }
+      // Matching only offers errands your vehicle can do, so going online
+      // without one on file would be a dead shift.
+      if (status === 422 && /vehicle/i.test(message)) {
+        toast.warning('Add your vehicle before going online, so we can send you errands it can do.');
+        router.push('/(runner)/settings/vehicle' as any);
+        return;
+      }
       if (status === 422 && /verif/i.test(message)) {
         toast.warning('Finish account verification before going online.');
         router.push('/(runner)/settings/documents' as any);
@@ -837,49 +819,9 @@ export default function RunnerHomeScreen() {
   };
 
   /**
-   * The ONE claim path, shared by the fixed-match modal and the open-offer
-   * surfaces. Accept was previously wired only to the modal, so a negotiate
-   * offer had no accept call site anywhere in the app — the runner could see
-   * a job, tap it, land on a 404 "Errand unavailable" screen, and watch it
-   * expire. Errors reuse the backend's honest codes (BOOKING_STALE = "someone
-   * got there first", BOOKING_CONFLICT = "finish your active errand first").
-   *
-   * Deliberately NOT optimistic: accept is a money-bearing claim the server
-   * serialises with a row lock, so the UI waits for its answer.
-   */
-  const claimOffer = useCallback(
-    async (offer: Booking) => {
-      if (acceptingOfferId) return;
-      setAcceptingOfferId(offer.id);
-      try {
-        const res = await runnerService.acceptErrand(offer.id);
-        // Server-confirmed accept — the success moment for this flow.
-        haptics.success();
-        const updated = (res?.data?.data ?? offer) as Booking;
-        acceptErrand(updated);
-        setPreviewOffer(null);
-        // Claimed — drop it from the open list right away rather than leaving
-        // a ghost card until the next revalidation.
-        void offersQ.mutate((prev) => (prev ?? []).filter((b) => b.id !== offer.id));
-        router.push(`/(runner)/errand/${offer.id}` as any);
-      } catch (err: any) {
-        haptics.error();
-        toast.error(errorMessage(err, copy.runner.acceptFailed));
-        setPreviewOffer(null);
-        clearIncomingRequest();
-        // Someone else claimed it, or it was cancelled — get the list honest.
-        void offersQ.revalidate();
-      } finally {
-        setAcceptingOfferId(null);
-      }
-    },
-    [acceptingOfferId, acceptErrand, clearIncomingRequest, offersQ, router],
-  );
-
-  /**
    * "Refresh my location" — the action behind the dispatch-visibility warning
    * on the hero. Sends one ping from a fresh fix (never prompting), which is
-   * all that matching's `last_location_at >= now()-5min` gate needs.
+   * all that matching's `last_location_at >= now()-15min` gate needs.
    */
   const handleRefreshVisibility = useCallback(async () => {
     haptics.selection();
@@ -944,14 +886,14 @@ export default function RunnerHomeScreen() {
     profileQ.error != null && profileQ.data == null && !runnerProfile;
 
   // ── Dispatch visibility (the honest half of "ONLINE") ─────────────────
-  // Matching only considers runners whose last_location_at is inside 5
-  // minutes (MatchingService). GPS is a foreground-only watch — background
-  // location is deliberately not implemented — and expo-location's
-  // timeInterval is Android-only, so a phone in a pocket OR a runner sitting
-  // perfectly still can stop emitting and age out of every match while this
-  // card insists "receiving requests". We can't follow them into the
-  // background; we CAN stop lying about it and offer the one tap that fixes
-  // it. Prefer our own send time (immune to clock skew) and fall back to the
+  // Matching only considers runners whose last_location_at is inside 15
+  // minutes (MatchingService), and the server switches a runner offline after
+  // 30 minutes with no location at all. GPS is a foreground-only watch —
+  // background location is deliberately not implemented — so a locked phone
+  // stops sending it: offers still arrive by push for a while, then matching
+  // stops considering the runner, then the shift ends. We can't follow them
+  // into the background; we CAN say so, and offer the one tap that fixes it.
+  // Prefer our own send time (immune to clock skew) and fall back to the
   // server's last_location_at only before the first ping of the session
   // (cold start against a server that still has them online).
   const dispatchStale =
@@ -965,7 +907,7 @@ export default function RunnerHomeScreen() {
     : isOnline && locationPinging && (dispatchStale || neverPinged)
     ? 'Reconnecting your location…'
     : isOnline && dispatchStale
-    ? 'Online, but customers can’t see you'
+    ? 'Location paused — you go offline after 30 min without it'
     : isOnline
     ? 'You’re online · receiving requests'
     : locationGranted === false
@@ -1010,8 +952,7 @@ export default function RunnerHomeScreen() {
   // Offline + it's a busy slot right now — the opportunity nudge.
   const showBusyNudge = canGoOnline && !activeErrand && !isOnline && isBusyNow;
   // Online + idle + we know when the next peak is — the softer hint.
-  const showPeakHint =
-    canGoOnline && !activeErrand && isOnline && negotiateOffers.length === 0 && !!upcomingPeak;
+  const showPeakHint = canGoOnline && !activeErrand && isOnline && !!upcomingPeak;
 
   return (
     <View className="flex-1 bg-background">
@@ -1322,7 +1263,7 @@ export default function RunnerHomeScreen() {
                   accessibilityRole={showVisibilityRefresh ? 'button' : 'text'}
                   accessibilityLabel={
                     showVisibilityRefresh
-                      ? 'Customers can’t see your location. Tap to refresh it.'
+                      ? 'We haven’t had your location lately, so offers may stop reaching you, and after 30 minutes without it you’re switched offline. Tap to refresh it.'
                       : statusCaption
                   }
                   className="flex-row items-center mt-4 pt-3 border-t border-white/20"
@@ -1389,8 +1330,8 @@ export default function RunnerHomeScreen() {
           </View>
         )}
 
-        {/* Cash-debt block. The server filters CASH errands out of the offer
-            feed and refuses them at accept once unsettled commission passes
+        {/* Cash-debt block. The server stops offering CASH errands and refuses
+            them at accept once unsettled commission passes
             `runner_cash_debt_limit`, so WITHOUT this the runner just watches
             work stop appearing and concludes the app is broken. Says the amount
             owed and what to settle, and makes clear prepaid work still pays —
@@ -1500,10 +1441,10 @@ export default function RunnerHomeScreen() {
 
         {/* Idle state — nothing in progress. A calm illustration fills the
             area under the toggle: OFFLINE nudges the runner to go online,
-            ONLINE-with-no-offers reassures that we're listening. Only for
-            verified runners with no active errand (verification banner and
-            active-errand card take priority otherwise). */}
-        {canGoOnline && !activeErrand && (!isOnline || negotiateOffers.length === 0) && (
+            ONLINE reassures that we're listening. Only for verified runners
+            with no active errand (verification banner and active-errand card
+            take priority otherwise). */}
+        {canGoOnline && !activeErrand && (
           <View className="px-5 pt-8 items-center">
             <Illustration
               name="runner-offline"
@@ -1517,14 +1458,18 @@ export default function RunnerHomeScreen() {
                 ? 'Sit tight — we’ll ping you the moment a nearby errand comes in.'
                 : 'Tap the power button above to start receiving errands.'}
             </Text>
-            {/* The one thing a waiting runner has to know and was never told:
-                visibility to dispatch depends on the app being open, because
-                location only streams in the foreground. Cheaper to say than to
-                let them wait out a busy hour they were invisible for. */}
+            {/* The one thing a waiting runner has to know: what a locked phone
+                does to their shift. Location only streams while the app is
+                open; offers keep coming by push for the 15 minutes matching
+                still trusts the last one, and 30 minutes without any ends the
+                shift. Only promises the push while notifications are actually
+                allowed. */}
             {isOnline ? (
               <Text className="text-[11px] font-montserrat text-textTertiary mt-2 text-center px-6">
-                Keep ErrandGuy open — we can only share your location while the
-                app is on screen.
+                {pushDenied
+                  ? 'Notifications are off, so offers only reach you while ErrandGuy is open.'
+                  : 'With your phone locked, offers still arrive as notifications for about 15 minutes.'}{' '}
+                After 30 minutes without your location, we switch you offline.
               </Text>
             ) : null}
             {/* Softer live-demand hint while online + idle: when the next busy
@@ -1615,49 +1560,6 @@ export default function RunnerHomeScreen() {
           )}
         </View>
 
-        {/* Open offers — only when online and offers exist. */}
-        {isOnline && negotiateOffers.length > 0 && (
-          <View className="px-5 pt-6">
-            <View className="flex-row items-baseline justify-between mb-2">
-              <Text
-                className="text-[10px] font-montserrat-bold uppercase text-textSecondary"
-                style={{ letterSpacing: 1.4 }}
-              >
-                Open offers
-              </Text>
-              <Text
-                className="text-[10px] font-montserrat-bold text-primary tabular-nums"
-                style={{ letterSpacing: 1.2 }}
-              >
-                {negotiateOffers.length} WAITING
-              </Text>
-            </View>
-            {/* The feed arrives nearest-first from the server (it sorts by the
-                pickup distance it already computes), so say so — otherwise the
-                order reads as arbitrary and the runner re-scans every card. */}
-            <Text className="text-[11px] font-montserrat text-textTertiary mb-2">
-              Nearest pickup first
-            </Text>
-            {negotiateOffers.map((offer) => (
-              <NegotiateOfferCard
-                key={offer.id}
-                booking={offer}
-                // Open the details SHEET, not the errand cockpit. That route
-                // fetches GET /runner/errand/{id}, which is scoped to the
-                // runner's own bookings — an open negotiate offer has
-                // runner_id = NULL, so it 404'd into "Errand unavailable ·
-                // Go Back" and the runner had no way to take the job at all.
-                // The sheet renders from the feed payload we already hold and
-                // can accept, so nothing is fetched and nothing new is exposed.
-                onPress={() => setPreviewOffer(offer)}
-                onAccept={() => claimOffer(offer)}
-                accepting={acceptingOfferId === offer.id}
-                busy={acceptingOfferId != null && acceptingOfferId !== offer.id}
-              />
-            ))}
-          </View>
-        )}
-
         {/* Shortcuts — 2x2 grid */}
         <View className="px-5 pt-6">
           <Text
@@ -1671,7 +1573,6 @@ export default function RunnerHomeScreen() {
               { label: 'Earnings', Icon: Wallet, route: '/(runner)/(tabs)/earnings' },
               { label: 'History', Icon: HistoryIcon, route: '/(runner)/(tabs)/history' },
               { label: 'Busy areas', Icon: TrendingUp, route: '/(runner)/demand' },
-              { label: 'Areas', Icon: MapPinned, route: '/(runner)/settings/working-areas' },
               { label: 'Errand types', Icon: ListChecks, route: '/(runner)/settings/preferred-types' },
             ].map(({ label, Icon, route }) => (
               <View
@@ -1773,18 +1674,10 @@ export default function RunnerHomeScreen() {
           OfferWatcher in app/(runner)/_layout.tsx, above the tabs, so it can
           also raise for a runner sitting on Earnings or History. */}
 
-      {/* Full detail + Accept for an OPEN (negotiate) offer. */}
       {/* Clocking off used to be silent: the runner had to open the earnings
           tab and work out which rows belonged to the hours they'd just
           worked. */}
       <ShiftSummarySheet shift={shiftSummary} onClose={() => setShiftSummary(null)} />
-
-      <OfferDetailsSheet
-        booking={previewOffer}
-        onClose={() => setPreviewOffer(null)}
-        onAccept={() => (previewOffer ? claimOffer(previewOffer) : undefined)}
-        accepting={previewOffer != null && acceptingOfferId === previewOffer.id}
-      />
 
       {/* Daily goal editor — bottom sheet, mirrors the delete-account
           modal language elsewhere in the app. */}

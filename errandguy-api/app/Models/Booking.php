@@ -87,6 +87,9 @@ class Booking extends Model
         'trip_share_token',
         'trip_share_active',
         'trip_share_expires_at',
+        'offered_runner_ids',
+        'offer_count',
+        'matching_started_at',
     ];
 
     protected function casts(): array
@@ -123,7 +126,35 @@ class Booking extends Model
             'picked_up_at' => 'datetime',
             'completed_at' => 'datetime',
             'cancelled_at' => 'datetime',
+            'offered_runner_ids' => 'array',
+            'offer_count' => 'integer',
+            'matching_started_at' => 'datetime',
         ];
+    }
+
+    /**
+     * Every runner this errand has been offered to. Matching never offers it to
+     * any of them again: each one either declined, let the offer lapse, or was
+     * taken off it by staff.
+     *
+     * @return list<string>
+     */
+    public function offeredRunnerIds(): array
+    {
+        return array_values(array_filter(
+            array_map('strval', (array) ($this->offered_runner_ids ?? [])),
+            fn (string $id) => $id !== '',
+        ));
+    }
+
+    /**
+     * offered_runner_ids with $runnerId appended (once).
+     *
+     * @return list<string>
+     */
+    public function withOfferedRunner(string $runnerId): array
+    {
+        return array_values(array_unique([...$this->offeredRunnerIds(), $runnerId]));
     }
 
     public function customer(): BelongsTo

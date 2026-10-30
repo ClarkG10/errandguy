@@ -10,7 +10,7 @@ use App\Models\SystemConfig;
  *
  * WHY THIS EXISTS. On a cash errand the runner collects the whole fare in
  * person and keeps their payout, so the platform's commission is taken by
- * DEBITING their wallet (see RunnerErrandController::handleCompletion). Nothing
+ * DEBITING their wallet (see BookingSettlementService::settleCompletion). Nothing
  * makes that balance non-negative and nothing stopped an indebted runner taking
  * more cash work, so a runner could collect cash indefinitely, drive their
  * balance arbitrarily negative, and simply stop using the app. The debt is real

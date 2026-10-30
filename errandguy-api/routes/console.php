@@ -116,14 +116,31 @@ Schedule::command('errandguy:reconcile-wallets')->daily()->onOneServer();
 // managed PITR exists. onOneServer so a multi-server fleet dumps once. (audit DR)
 Schedule::command('errandguy:backup-database')->dailyAt('02:30')->onOneServer();
 
-// Matching: rescue fixed-price bookings whose matched runner never accepted —
-// reset to pending and re-match instead of stranding the customer on "Runner
-// Found". Run INLINE so the status-reset survives a queue-worker outage (the
+// Matching: rescue bookings whose matched runner never accepted — reset to
+// pending and re-match instead of stranding the customer on "Runner Found". Run INLINE so the status-reset survives a queue-worker outage (the
 // re-match it then dispatches still needs the worker, but the booking is no
 // longer stuck on 'matched').
 Schedule::call(fn () => dispatch_sync(new \App\Jobs\ExpireStaleMatchesJob()))
     ->everyMinute()
     ->name('expire-stale-matches')
+    ->onOneServer()
+    ->withoutOverlapping(10);
+
+// Matching: start the search for a scheduled errand whose one delayed matching
+// task was lost (worker down when it came due, queue flushed). Each errand is
+// claimed once via bookings.matching_started_at, and the first search runs
+// INLINE so it survives a queue-worker outage. Every minute: the search window
+// is only 30 minutes long.
+Schedule::command('errandguy:start-due-scheduled-matching')
+    ->everyMinute()
+    ->onOneServer()
+    ->withoutOverlapping(10);
+
+// Honest online counts: a waiting runner silent for 30 minutes (app closed,
+// phone off) is switched offline and told by push. Runners holding an offer or
+// an errand are never touched.
+Schedule::command('errandguy:expire-stale-runner-presence')
+    ->everyFiveMinutes()
     ->onOneServer()
     ->withoutOverlapping(10);
 

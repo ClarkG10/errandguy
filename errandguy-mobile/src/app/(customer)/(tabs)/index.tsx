@@ -136,9 +136,7 @@ function buildDraftFromBooking(b: Booking): Partial<DraftBooking> {
       ? { estimated_item_value: b.estimated_item_value }
       : {}),
     ...(b.shopping_budget != null ? { shopping_budget: b.shopping_budget } : {}),
-    ...(b.pricing_mode ? { pricing_mode: b.pricing_mode } : {}),
     ...(b.vehicle_type_rate ? { vehicle_type_rate: b.vehicle_type_rate } : {}),
-    ...(b.customer_offer != null ? { customer_offer: b.customer_offer } : {}),
     ...(b.shopping_items && b.shopping_items.length > 0
       ? {
           shoppingItems: b.shopping_items.map((it) => ({

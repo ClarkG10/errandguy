@@ -8,6 +8,7 @@ use App\Http\Requests\UpdateProfileRequest;
 use App\Http\Requests\UploadAvatarRequest;
 use App\Http\Resources\UserResource;
 use App\Models\RunnerProfile;
+use App\Support\ErrorCode;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Storage;
@@ -26,6 +27,16 @@ class ProfileController extends Controller
     {
         $user = $request->user();
         $data = $request->validated();
+
+        // Switching between customer and runner mode mid-errand hides a live
+        // errand from the person working it or paying for it (each mode only
+        // has screens for its own side). The app blocks it; this is the
+        // server's copy of that rule, so an older build or a retried request
+        // can't slip through.
+        $switchingTo = isset($data['role']) && $data['role'] !== $user->role ? $data['role'] : null;
+        if ($switchingTo !== null && ($blocked = $this->roleSwitchBlocker($user, $switchingTo))) {
+            return $this->fail(ErrorCode::BOOKING_CONFLICT, $blocked);
+        }
 
         // A changed contact must lose its verified badge until re-confirmed via
         // OTP. Otherwise editing your email/phone keeps the "verified" checkmark
@@ -49,10 +60,36 @@ class ProfileController extends Controller
             ]);
         }
 
+        // Leaving runner mode takes them offline, so matching stops offering
+        // errands to an app that no longer shows a runner screen.
+        if ($switchingTo === 'customer') {
+            RunnerProfile::switchOffline($user->id);
+        }
+
         return response()->json([
             'data' => new UserResource($user->fresh()->load('runnerProfile.documents')),
             'message' => 'Profile updated successfully.',
         ]);
+    }
+
+    /**
+     * Why this user can't switch to $role right now, or null when they can.
+     * Mirrors the app's own guards: a customer with an errand still open
+     * (the same set GET /bookings/active lists) can't become a runner, and a
+     * runner holding an offer or an errand can't become a customer.
+     */
+    private function roleSwitchBlocker(\App\Models\User $user, string $role): ?string
+    {
+        if ($role === 'runner' && $user->customerBookings()->active()->exists()) {
+            return 'You have an errand in progress. Wait until it’s finished or cancel it before switching to runner mode.';
+        }
+
+        if ($role === 'customer'
+            && $user->runnerBookings()->whereIn('status', BookingStatus::RUNNER_HELD)->exists()) {
+            return 'You have an errand in progress. Finish it (or decline the offer) before switching to customer mode.';
+        }
+
+        return null;
     }
 
     public function uploadAvatar(UploadAvatarRequest $request): JsonResponse

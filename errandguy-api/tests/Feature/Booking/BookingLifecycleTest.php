@@ -33,7 +33,7 @@ class BookingLifecycleTest extends TestCase
             'slug' => 'delivery', 'name' => 'Delivery', 'description' => 'Send packages',
             'icon_name' => 'Package', 'base_fee' => 50.00, 'per_km_walk' => 15.00,
             'per_km_bicycle' => 12.00, 'per_km_motorcycle' => 10.00, 'per_km_car' => 18.00,
-            'surcharge' => 0.00, 'min_negotiate_fee' => 30.00, 'is_active' => true, 'sort_order' => 1,
+            'surcharge' => 0.00, 'is_active' => true, 'sort_order' => 1,
         ]);
 
         $this->booking = Booking::create([
@@ -212,7 +212,7 @@ class BookingLifecycleTest extends TestCase
 
         // Money-safety regression guard. rebook USED TO create a status=pending,
         // payment_status=unpaid booking and dispatch a runner without collecting
-        // any payment — the runner then completed it for free (handleCompletion
+        // any payment — the runner then completed it for free (settlement
         // credits nothing for a non-paid/non-cash booking). It must now create
         // NO booking and dispatch NO runner; the client re-books through the
         // normal paid store() flow using this prefill.

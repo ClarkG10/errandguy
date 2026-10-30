@@ -7,6 +7,7 @@ use App\Filament\Support\DateRangeFilter;
 use App\Filament\Support\ExportCsv;
 use App\Models\AdminUser;
 use App\Models\User;
+use App\Services\UserModerationService;
 use App\Support\AdminActivity;
 use Filament\Actions\Action;
 use Filament\Actions\BulkAction;
@@ -93,7 +94,7 @@ class UsersTable
                     ->icon(Heroicon::OutlinedShieldExclamation)
                     ->color('danger')
                     ->requiresConfirmation()
-                    ->modalDescription('Suspends every selected user that is still active, revokes their sessions, and records your reason against each.')
+                    ->modalDescription('Suspends every selected user that is still active, revokes their sessions, takes runners offline, and records your reason against each.')
                     ->schema([
                         Textarea::make('reason')->required()->maxLength(500),
                     ])
@@ -105,16 +106,11 @@ class UsersTable
                     ->deselectRecordsAfterCompletion()
                     ->action(function (array $data, Collection $records): void {
                         $suspended = 0;
+                        $moderation = app(UserModerationService::class);
                         foreach ($records as $record) {
-                            if ($record->status === 'suspended') {
+                            if (! $moderation->suspend($record, $data['reason'])) {
                                 continue;
                             }
-                            $record->update([
-                                'status' => 'suspended',
-                                'suspended_reason' => $data['reason'],
-                                'suspended_at' => now(),
-                            ]);
-                            $record->tokens()->delete();
                             AdminActivity::log('user.suspended', $record, ['reason' => $data['reason'], 'via' => 'bulk']);
                             $suspended++;
                         }
@@ -137,7 +133,7 @@ class UsersTable
                     ->color('danger')
                     ->requiresConfirmation()
                     ->modalDescription(fn (User $record): string => 'Suspends '
-                        .($record->full_name ?? 'this user').' and immediately revokes their active sessions.')
+                        .($record->full_name ?? 'this user').' and immediately revokes their active sessions. A runner is also taken offline and stops getting offers.')
                     ->schema([
                         Textarea::make('reason')->required()->maxLength(500),
                     ])
@@ -148,12 +144,7 @@ class UsersTable
                             AdminUser::ROLE_OPS,
                         ) ?? false))
                     ->action(function (array $data, $record): void {
-                        $record->update([
-                            'status' => 'suspended',
-                            'suspended_reason' => $data['reason'],
-                            'suspended_at' => now(),
-                        ]);
-                        $record->tokens()->delete();
+                        app(UserModerationService::class)->suspend($record, $data['reason']);
 
                         AdminNotify::success(
                             'User suspended',

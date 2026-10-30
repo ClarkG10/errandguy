@@ -40,7 +40,7 @@ class NotifySosContactsJobTest extends TestCase
         $errandType = ErrandType::create([
             'slug' => 'delivery', 'name' => 'Delivery', 'description' => 'Deliver', 'icon_name' => 'Package',
             'base_fee' => 50.00, 'per_km_walk' => 15.00, 'per_km_bicycle' => 12.00, 'per_km_motorcycle' => 10.00,
-            'per_km_car' => 18.00, 'min_negotiate_fee' => 30.00, 'is_active' => true, 'sort_order' => 1,
+            'per_km_car' => 18.00, 'is_active' => true, 'sort_order' => 1,
         ]);
         $this->booking = Booking::create([
             'booking_number' => 'EG-20260810-SOSJ',

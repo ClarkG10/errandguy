@@ -25,7 +25,7 @@ class PricingServiceTest extends TestCase
             'slug' => 'delivery', 'name' => 'Delivery', 'description' => 'Deliver',
             'icon_name' => 'Package', 'base_fee' => 50.00, 'per_km_walk' => 15.00,
             'per_km_bicycle' => 12.00, 'per_km_motorcycle' => 10.00, 'per_km_car' => 18.00,
-            'surcharge' => 0.00, 'min_negotiate_fee' => 30.00, 'is_active' => true, 'sort_order' => 1,
+            'surcharge' => 0.00, 'is_active' => true, 'sort_order' => 1,
         ]);
     }
 
@@ -43,34 +43,6 @@ class PricingServiceTest extends TestCase
         $this->assertArrayHasKey('total_amount', $result);
         $this->assertArrayHasKey('runner_payout', $result);
         $this->assertArrayHasKey('vehicle_type', $result);
-    }
-
-    public function test_apply_negotiate_offer_charges_offer_and_keeps_flat_fee(): void
-    {
-        $fixed = $this->service->calculate(
-            $this->deliveryType->id, 14.5995, 120.9842, 14.5547, 121.0244, 'motorcycle'
-        );
-
-        $negotiated = $this->service->applyNegotiateOffer($fixed, 250.00);
-
-        // The offer is exactly what the customer pays.
-        $this->assertEquals(250.00, $negotiated['total_amount']);
-        // Platform keeps the SAME flat computed service fee (not a % of the offer).
-        $this->assertEquals($fixed['service_fee'], $negotiated['service_fee']);
-        // Runner receives the offer minus that flat fee.
-        $this->assertEquals(round(250.00 - $fixed['service_fee'], 2), $negotiated['runner_payout']);
-    }
-
-    public function test_apply_negotiate_offer_never_makes_payout_negative(): void
-    {
-        $fixed = $this->service->calculate(
-            $this->deliveryType->id, 14.5995, 120.9842, 14.5547, 121.0244, 'motorcycle'
-        );
-
-        // An offer below the flat service fee clamps the runner payout at 0
-        // rather than going negative.
-        $negotiated = $this->service->applyNegotiateOffer($fixed, 0.01);
-        $this->assertEquals(0.0, $negotiated['runner_payout']);
     }
 
     public function test_base_fee_matches_errand_type(): void
@@ -138,9 +110,9 @@ class PricingServiceTest extends TestCase
         $this->assertArrayHasKey('motorcycle', $result);
         $this->assertArrayHasKey('car', $result);
 
-        // estimate() also returns top-level scalar/array metadata
-        // (distance_km, min_negotiate_fee, recommended_min/max, vehicle_types)
-        // alongside the per-vehicle breakdowns — only assert on the vehicles.
+        // estimate() also returns top-level metadata (distance_km, stops_count,
+        // vehicle_types) alongside the per-vehicle breakdowns — only assert on
+        // the vehicles here.
         foreach (['walk', 'bicycle', 'motorcycle', 'car'] as $type) {
             $this->assertArrayHasKey('total_amount', $result[$type]);
             $this->assertGreaterThan(0, $result[$type]['total_amount']);
@@ -175,14 +147,13 @@ class PricingServiceTest extends TestCase
     public function test_estimate_does_not_crash_for_a_walk_only_zero_base_config(): void
     {
         // A single-location, walk-only errand with a zero base/surcharge yields a
-        // total of exactly 0.0 for its only vehicle. array_filter drops that 0.0,
-        // so pre-fix min([]) threw a ValueError (500) on the estimate endpoint.
-        // It must instead fall back to the negotiate floor.
+        // total of exactly 0.0 for its only vehicle — once a ValueError (500) on
+        // the estimate endpoint. It must quote cleanly.
         $walkOnly = ErrandType::create([
             'slug' => 'queue', 'name' => 'Queue', 'description' => 'Wait in line',
             'icon_name' => 'Clock', 'base_fee' => 0.00, 'per_km_walk' => 15.00,
             'per_km_bicycle' => 0.00, 'per_km_motorcycle' => 0.00, 'per_km_car' => 0.00,
-            'surcharge' => 0.00, 'min_negotiate_fee' => 30.00, 'is_active' => true, 'sort_order' => 2,
+            'surcharge' => 0.00, 'is_active' => true, 'sort_order' => 2,
         ]);
 
         // No dropoff => distance 0 => walk total 0.0. This must not throw.
@@ -190,6 +161,18 @@ class PricingServiceTest extends TestCase
 
         $this->assertSame(['walk'], $estimates['vehicle_types']);
         $this->assertEquals(0.0, $estimates['walk']['total_amount']);
-        $this->assertEquals(30.0, $estimates['recommended_min']);
+    }
+
+    public function test_estimate_carries_no_name_your_price_fields(): void
+    {
+        $estimates = $this->service->estimate(
+            $this->deliveryType->id, 14.5995, 120.9842, 14.5547, 121.0244
+        );
+
+        foreach (['min_negotiate_fee', 'recommended_min', 'recommended_max'] as $retired) {
+            $this->assertArrayNotHasKey($retired, $estimates);
+        }
+        $this->assertArrayHasKey('distance_km', $estimates);
+        $this->assertArrayHasKey('vehicle_types', $estimates);
     }
 }

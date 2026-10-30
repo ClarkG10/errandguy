@@ -6,6 +6,8 @@ use App\Events\BookingStatusChanged;
 use App\Events\IncomingRequest;
 use App\Models\Booking;
 use App\Models\BookingStatusLog;
+use App\Models\SystemConfig;
+use App\Services\BookingService;
 use App\Services\MatchingService;
 use Illuminate\Bus\Queueable;
 use Illuminate\Contracts\Queue\ShouldQueue;
@@ -26,12 +28,24 @@ class MatchRunnerJob implements ShouldQueue
 
     /**
      * How many sweeps the automatic widening ladder gets in total (including
-     * this first one) before the booking is declared unmatchable, and how far
-     * apart they sit. Overridable via SystemConfig so operations can tune
-     * matching aggressiveness per market without a deploy.
+     * this first one) before an IMMEDIATE booking is declared unmatchable, and
+     * how far apart they sit. A scheduled booking keeps sweeping until its
+     * window closes instead (see nextLadderRadius). Overridable via SystemConfig
+     * so operations can tune matching aggressiveness per market without a
+     * deploy.
      */
     private const DEFAULT_LADDER_ATTEMPTS = 3;
     private const DEFAULT_LADDER_DELAY_SECONDS = 45;
+
+    /**
+     * How many runners one round of matching offers an errand to before giving
+     * up as "no runner" (and refunding). Every runner who declines or ignores
+     * the offer is skipped from then on, so without a cap an errand could still
+     * crawl through every runner in town while the customer waits. A
+     * customer's "try again" or a staff re-run starts a new round.
+     * Overridable via SystemConfig `matching_max_offers`.
+     */
+    private const DEFAULT_MAX_OFFERS = 5;
 
     /**
      * Radius multipliers per sweep, mirroring the manual "try again" ladder in
@@ -61,10 +75,22 @@ class MatchRunnerJob implements ShouldQueue
             return;
         }
 
+        // Record that matching has started for this booking (first run only).
+        // The scheduled-errand sweep relies on it to tell a booking whose
+        // delayed matching task was lost from one that is already searching.
+        if ($current->matching_started_at === null) {
+            Booking::whereKey($this->bookingId)
+                ->whereNull('matching_started_at')
+                ->update(['matching_started_at' => now()]);
+        }
+
         // Resolve the runner outside the transaction. Matching is read-only
         // and can be slow (haversine over many runners) — holding the row
-        // lock during it would serialize all incoming bookings.
-        $runner = $matchingService->findRunner($this->bookingId, $this->radiusOverrideKm, $this->excludeUserId);
+        // lock during it would serialize all incoming bookings. Not needed at
+        // all once this round's offers are spent.
+        $runner = $current->offer_count >= self::maxOffers()
+            ? null
+            : $matchingService->findRunner($this->bookingId, $this->radiusOverrideKm, $this->excludeUserId);
 
         try {
             $newStatus = null; // 'matched' | 'no_runner' | null (race-skipped)
@@ -83,7 +109,11 @@ class MatchRunnerJob implements ShouldQueue
                     return;
                 }
 
-                if ($runner) {
+                // Re-checked under the lock: once the round's offers are spent,
+                // end it honestly instead of offering it to yet another runner.
+                $offersSpent = $booking->offer_count >= self::maxOffers();
+
+                if ($runner && ! $offersSpent) {
                     // Serialize competing matches ON THE RUNNER, not just the
                     // booking: two bookings' jobs each lock their own (distinct)
                     // booking row, so without also locking the runner, both could
@@ -110,6 +140,10 @@ class MatchRunnerJob implements ShouldQueue
                         'runner_id' => $runner->user_id,
                         'status' => 'matched',
                         'matched_at' => now(),
+                        // Remembered so a decline or a lapsed offer never sends
+                        // this errand back to the same runner.
+                        'offered_runner_ids' => $booking->withOfferedRunner((string) $runner->user_id),
+                        'offer_count' => $booking->offer_count + 1,
                     ]);
 
                     BookingStatusLog::create([
@@ -140,7 +174,9 @@ class MatchRunnerJob implements ShouldQueue
                     // a wider radius, which the customer should not have to ask
                     // for. Leave the row `pending` ("Finding a runner…", the
                     // honest state) and re-sweep on a widening ladder instead.
-                    $nextRadius = $this->nextLadderRadius();
+                    // Once the round's offers are spent there is nothing left to
+                    // sweep for.
+                    $nextRadius = $offersSpent ? null : $this->nextLadderRadius($booking);
 
                     if ($nextRadius !== null) {
                         Log::info(
@@ -161,7 +197,9 @@ class MatchRunnerJob implements ShouldQueue
                         'booking_id' => $booking->id,
                         'status' => 'no_runner',
                         'changed_by' => null,
-                        'note' => 'No available runners found',
+                        'note' => $offersSpent
+                            ? "No runner accepted after {$booking->offer_count} offers"
+                            : 'No available runners found',
                     ]);
 
                     Log::info("No runners found for booking {$this->bookingId}");
@@ -174,8 +212,8 @@ class MatchRunnerJob implements ShouldQueue
             // listeners (notifications, push, audit) see the persisted row.
             // Without this, downstream side-effects never fire when the system
             // (vs. the runner) flips a booking out of `pending` — that was the
-            // root cause of "runner can't receive request" for fixed-mode
-            // bookings whose listeners depended on this event.
+            // root cause of "runner can't receive request" for bookings whose
+            // listeners depended on this event.
             if ($newStatus && $matchedBooking) {
                 // Bust the runner's active-booking cache so the very next
                 // /runner/location push tags the row with this booking_id.
@@ -195,7 +233,7 @@ class MatchRunnerJob implements ShouldQueue
                     // What we guard is the SYNCHRONOUS enqueue: this job is
                     // dispatchSync'd on the create path and the outer catch RE-THROWS,
                     // so a transient broadcast/queue hiccup at enqueue time must not
-                    // fail a booking whose payment + match already committed. The
+                    // fail a matching run whose match already committed. The
                     // runner still learns of the offer from the persisted row + a REST
                     // fetch. (BookingStatusChanged below is intentionally NOT wrapped —
                     // it drives real listeners incl. the referral reward, which must
@@ -217,12 +255,15 @@ class MatchRunnerJob implements ShouldQueue
                                 // no distance at all before a GPS fix landed.
                                 // Same values the REST payload carries, from the
                                 // same shared helper / matching computation.
-                                'accept_deadline' => \App\Services\BookingService::matchAcceptDeadline(
+                                'accept_deadline' => BookingService::matchAcceptDeadline(
                                     $matchedBooking->matched_at,
                                 ),
                                 'distance_to_pickup_km' => $runner->distance_km !== null
                                     ? round((float) $runner->distance_km, 1)
                                     : null,
+                                // The vehicle the customer paid for, so the
+                                // runner knows what the job needs before opening it.
+                                'vehicle_type' => $matchedBooking->vehicle_type_rate,
                             ],
                         );
                         IncomingRequest::dispatch($matchedBooking);
@@ -238,7 +279,7 @@ class MatchRunnerJob implements ShouldQueue
                 // transaction; cash/unpaid bookings collected nothing so this is
                 // a no-op for them.
                 if ($newStatus === 'no_runner') {
-                    app(\App\Services\BookingService::class)
+                    app(BookingService::class)
                         ->refundUnfulfilled($this->bookingId, 'No runner available — auto-refund');
 
                     // Live operator alert — a stuck errand needs a human to
@@ -282,61 +323,57 @@ class MatchRunnerJob implements ShouldQueue
      * The radius (km) the NEXT sweep should use, or null when the ladder is
      * finished and the booking should be declared `no_runner` now.
      *
-     * Two independent stops:
-     *  - the configured attempt count is spent, or
-     *  - the next sweep would land after the booking's auto-cancel deadline.
-     *    Past that point AutoCancelBookingJob (and the cron reaper behind it)
-     *    ends the booking anyway, so continuing would only delay the customer's
-     *    "no runner found" message and their refund. Better to tell them now.
+     * An immediate booking gets the configured number of sweeps; a scheduled
+     * one keeps sweeping (at the widest rung once it gets there) until its
+     * window closes, SCHEDULED_MATCH_GRACE_MINUTES after its time — the
+     * customer picked that time, and one 90-second search at the window opening
+     * gave up on them while runners were still coming online.
+     *
+     * Either way the ladder stops when the next sweep would land after the
+     * matching deadline (BookingService::matchingDeadline). Past that point
+     * AutoCancelBookingJob (and the cron reaper behind it) ends the booking
+     * anyway, so continuing would only delay the customer's "no runner found"
+     * message and their refund. Better to tell them now.
      */
-    private function nextLadderRadius(): ?float
+    private function nextLadderRadius(Booking $booking): ?float
     {
-        $maxAttempts = (int) \App\Models\SystemConfig::getValue(
-            'matching_retry_attempts',
-            (string) self::DEFAULT_LADDER_ATTEMPTS,
-        );
-
         $next = $this->attempt + 1;
 
-        if ($next > $maxAttempts || ! isset(self::LADDER_MULTIPLIERS[$next])) {
+        if (! BookingService::isScheduled($booking)) {
+            $maxAttempts = (int) SystemConfig::getValue(
+                'matching_retry_attempts',
+                (string) self::DEFAULT_LADDER_ATTEMPTS,
+            );
+
+            if ($next > $maxAttempts || ! isset(self::LADDER_MULTIPLIERS[$next])) {
+                return null;
+            }
+        }
+
+        $deadline = BookingService::matchingDeadline($booking);
+        if (now()->addSeconds(self::ladderDelaySeconds())->greaterThanOrEqualTo($deadline)) {
             return null;
         }
 
-        $booking = Booking::find($this->bookingId);
+        $rung = min($next, max(array_keys(self::LADDER_MULTIPLIERS)));
+        $baseRadius = (float) SystemConfig::getValue('matching_radius_km', '10');
 
-        if (! $booking) {
-            return null;
-        }
-
-        $timeoutMinutes = (int) \App\Models\SystemConfig::getValue('auto_cancel_timeout_minutes', '30');
-
-        // A SCHEDULED booking's clock starts when its window opens, not when it
-        // was created: BookingController::store defers matching to
-        // scheduled_at - 15min and delays AutoCancelBookingJob to matchAt +
-        // timeout, and ReapStrandedBookingsCommand::scheduleAwareWindow anchors
-        // the same way. Measuring from created_at would make a booking placed
-        // days ahead look long past its deadline on its very first sweep, so
-        // the ladder would never run for exactly the bookings whose window is
-        // narrowest.
-        $anchor = ($booking->schedule_type === 'scheduled' && $booking->scheduled_at)
-            ? $booking->scheduled_at
-            : $booking->created_at;
-        $deadline = $anchor?->copy()->addMinutes($timeoutMinutes);
-
-        if ($deadline && now()->addSeconds(self::ladderDelaySeconds())->greaterThanOrEqualTo($deadline)) {
-            return null;
-        }
-
-        $baseRadius = (float) \App\Models\SystemConfig::getValue('matching_radius_km', '10');
-
-        return round($baseRadius * self::LADDER_MULTIPLIERS[$next], 2);
+        return round($baseRadius * self::LADDER_MULTIPLIERS[$rung], 2);
     }
 
     private static function ladderDelaySeconds(): int
     {
-        return max(5, (int) \App\Models\SystemConfig::getValue(
+        return max(5, (int) SystemConfig::getValue(
             'matching_retry_delay_seconds',
             (string) self::DEFAULT_LADDER_DELAY_SECONDS,
+        ));
+    }
+
+    private static function maxOffers(): int
+    {
+        return max(1, (int) SystemConfig::getValue(
+            'matching_max_offers',
+            (string) self::DEFAULT_MAX_OFFERS,
         ));
     }
 }

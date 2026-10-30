@@ -75,6 +75,33 @@ enum BookingStatus: string
      */
     public const FINALIZED = ['completed', 'cancelled'];
 
+    /**
+     * "A runner has accepted this errand and has not finished it."
+     *
+     * The statuses staff can rescue (return to matching / mark completed) and
+     * the ones that make a runner busy.
+     *
+     * @return list<string>
+     */
+    public const IN_PROGRESS = [
+        'accepted',
+        'heading_to_pickup',
+        'arrived_at_pickup',
+        'picked_up',
+        'in_transit',
+        'arrived_at_dropoff',
+        'delivered',
+    ];
+
+    /**
+     * "A runner is holding this errand" — an offer they have not answered yet
+     * (`matched`) or one they are working. A runner with a booking in this set
+     * must not be switched offline or out of runner mode.
+     *
+     * @return list<string>
+     */
+    public const RUNNER_HELD = ['matched', ...self::IN_PROGRESS];
+
     /** Every legal status, as raw strings. */
     public static function values(): array
     {

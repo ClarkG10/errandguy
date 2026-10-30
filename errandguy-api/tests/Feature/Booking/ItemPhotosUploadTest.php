@@ -27,7 +27,7 @@ class ItemPhotosUploadTest extends TestCase
             'slug' => 'purchase', 'name' => 'Purchase', 'description' => 'Buy',
             'icon_name' => 'ShoppingBag', 'base_fee' => 50.00, 'per_km_walk' => 15.00,
             'per_km_bicycle' => 12.00, 'per_km_motorcycle' => 10.00, 'per_km_car' => 18.00,
-            'min_negotiate_fee' => 30.00, 'is_active' => true, 'sort_order' => 1,
+            'is_active' => true, 'sort_order' => 1,
         ]);
     }
 

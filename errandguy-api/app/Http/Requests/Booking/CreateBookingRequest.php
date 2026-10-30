@@ -5,6 +5,7 @@ namespace App\Http\Requests\Booking;
 use App\Models\ErrandType;
 use App\Models\PaymentMethod;
 use App\Services\PaymentMethodCatalog;
+use App\Support\VehicleClass;
 use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Validation\Rule;
 
@@ -115,13 +116,15 @@ class CreateBookingRequest extends FormRequest
             'shopping_items.*.qty' => ['nullable', 'integer', 'min:1', 'max:999'],
             'schedule_type' => ['required', Rule::in(['now', 'scheduled'])],
             'scheduled_at' => ['required_if:schedule_type,scheduled', 'nullable', 'date', 'after:+30 minutes'],
-            'pricing_mode' => ['required', Rule::in(['fixed', 'negotiate'])],
-            'vehicle_type_rate' => [
-                'required_if:pricing_mode,fixed',
-                'nullable',
-                Rule::in(['walk', 'bicycle', 'motorcycle', 'car']),
-            ],
-            'customer_offer' => ['required_if:pricing_mode,negotiate', 'nullable', 'numeric', 'min:0', 'max:10000000'],
+            // Every errand is fixed price. The app build already on phones may
+            // still send pricing_mode ("fixed", or "negotiate" for name your
+            // price). A missing or "fixed" mode books normally; "negotiate" is
+            // refused rather than quietly charging the full fare to a customer
+            // who chose to pay their own offer (a wallet booking is debited at
+            // once). customer_offer has no rule, so it never reaches
+            // validated().
+            'pricing_mode' => ['nullable', Rule::in(['fixed'])],
+            'vehicle_type_rate' => ['nullable', Rule::in(VehicleClass::LADDER)],
             // Operator-enabled one-time methods, plus any type the customer has
             // already linked (see allowedPaymentMethods()).
             'payment_method' => ['required', Rule::in($this->allowedPaymentMethods())],
@@ -141,19 +144,6 @@ class CreateBookingRequest extends FormRequest
     {
         $validator->after(function ($validator) {
             $errandType = ErrandType::find($this->input('errand_type_id'));
-
-            // Validate customer_offer against min_negotiate_fee. Guard on
-            // `!== null` (presence) NOT truthiness — an offer of exactly 0 is
-            // falsy in PHP, so a truthy guard skipped the floor check entirely
-            // and let a `customer_offer: 0` negotiate booking through for free.
-            if ($this->input('pricing_mode') === 'negotiate' && $this->input('customer_offer') !== null) {
-                if ($errandType && $this->input('customer_offer') < (float) $errandType->min_negotiate_fee) {
-                    $validator->errors()->add(
-                        'customer_offer',
-                        "Minimum offer is ₱{$errandType->min_negotiate_fee}."
-                    );
-                }
-            }
 
             // Multi-stop only applies to errands that HAVE a dropoff. A
             // single-location errand (queue) is done on-site, so extra stops
@@ -198,6 +188,7 @@ class CreateBookingRequest extends FormRequest
         return [
             'pickup_contact_phone.regex' => 'Pickup phone must be a valid Philippine mobile number.',
             'dropoff_contact_phone.regex' => 'Dropoff phone must be a valid Philippine mobile number.',
+            'pricing_mode.in' => 'Name your price is no longer available. Please update the app and book at the fixed price.',
         ];
     }
 }

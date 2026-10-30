@@ -63,7 +63,7 @@ class RunnerHomeAggregateTest extends TestCase
             'slug' => 'delivery', 'name' => 'Delivery', 'description' => 'Deliver',
             'icon_name' => 'Package', 'base_fee' => 50.00, 'per_km_walk' => 15.00,
             'per_km_bicycle' => 12.00, 'per_km_motorcycle' => 10.00, 'per_km_car' => 18.00,
-            'min_negotiate_fee' => 30.00, 'is_active' => true, 'sort_order' => 1,
+            'is_active' => true, 'sort_order' => 1,
         ]);
 
         // The in-flight errand (the `current_errand` section). Deliberately
@@ -106,11 +106,6 @@ class RunnerHomeAggregateTest extends TestCase
             'runner_id' => $this->runner->id,
             'cancelled_at' => now()->subDays(6),
         ], now()->subDays(6));
-
-        // Two open negotiate offers near the runner (the `available_errands`
-        // section), at different distances so the nearest-first sort is stable.
-        $this->makeOffer('EG-RH-OFF-1', 14.601, 120.981, now()->subMinutes(3));
-        $this->makeOffer('EG-RH-OFF-2', 14.630, 121.010, now()->subMinutes(2));
     }
 
     /** @param array<string,mixed> $overrides */
@@ -136,17 +131,6 @@ class RunnerHomeAggregateTest extends TestCase
         );
 
         return $booking->refresh();
-    }
-
-    private function makeOffer(string $number, float $lat, float $lng, Carbon $createdAt): Booking
-    {
-        return $this->makeBooking($number, [
-            'status' => 'pending',
-            'pricing_mode' => 'negotiate',
-            'negotiate_expires_at' => now()->addHour(),
-            'pickup_lat' => $lat,
-            'pickup_lng' => $lng,
-        ], $createdAt);
     }
 
     /** The aggregate, as the app will consume it. */
@@ -200,12 +184,6 @@ class RunnerHomeAggregateTest extends TestCase
         );
 
         $this->assertSame(
-            $this->actingAs($this->runner)->getJson('/api/v1/runner/errand/available')->assertOk()->json('data'),
-            $home['available_errands'],
-            'available_errands drifted from GET /runner/errand/available',
-        );
-
-        $this->assertSame(
             $this->actingAs($this->runner)->getJson('/api/v1/runner/errand/current')->assertOk()->json('data'),
             $home['current_errand'],
             'current_errand drifted from GET /runner/errand/current',
@@ -251,7 +229,6 @@ class RunnerHomeAggregateTest extends TestCase
 
         $this->assertNotEmpty($home['profile']);
         $this->assertCount(3, $home['recent_errands']);
-        $this->assertCount(2, $home['available_errands']);
         $this->assertSame('EG-RH-CUR', $home['current_errand']['booking_number']);
         $this->assertCount(7, $home['peak_hours']['grid']);
         $this->assertSame(30, $home['peak_hours']['days']);
@@ -277,23 +254,18 @@ class RunnerHomeAggregateTest extends TestCase
     }
 
     /**
-     * available() returns [] for an OFFLINE runner. The key must still be
-     * present and seeded with that empty list — omitting it would leave the
-     * client's ['runner','errand','available',userId] cache a miss and cost the
-     * screen the round trip this endpoint exists to save.
+     * The open list of errands runners picked from is gone (every offer goes to
+     * one runner and arrives by push), but the app build already on phones
+     * rejects the whole aggregate unless `available_errands` is an array — so
+     * it stays as an always-empty list, online or not, until that build is
+     * retired.
      */
-    public function test_available_errands_is_a_seeded_empty_array_when_offline(): void
+    public function test_available_errands_is_an_always_empty_compat_stub(): void
     {
+        $this->assertSame([], $this->home()['available_errands']);
+
         $this->runner->runnerProfile->update(['is_online' => false]);
-
-        $home = $this->home();
-
-        $this->assertArrayHasKey('available_errands', $home);
-        $this->assertSame([], $home['available_errands']);
-        $this->assertSame(
-            $this->actingAs($this->runner)->getJson('/api/v1/runner/errand/available')->assertOk()->json('data'),
-            $home['available_errands'],
-        );
+        $this->assertSame([], $this->home()['available_errands']);
     }
 
     public function test_current_errand_is_null_when_nothing_is_in_flight(): void

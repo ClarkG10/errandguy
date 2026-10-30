@@ -32,7 +32,7 @@ class DiscoverySweep4Test extends TestCase
         return ErrandType::create([
             'slug' => 'delivery', 'name' => 'Delivery', 'description' => 'x',
             'icon_name' => 'Package', 'base_fee' => 50, 'per_km_walk' => 15, 'per_km_bicycle' => 12,
-            'per_km_motorcycle' => 10, 'per_km_car' => 18, 'min_negotiate_fee' => 30, 'is_active' => true, 'sort_order' => 1,
+            'per_km_motorcycle' => 10, 'per_km_car' => 18, 'is_active' => true, 'sort_order' => 1,
         ]);
     }
 

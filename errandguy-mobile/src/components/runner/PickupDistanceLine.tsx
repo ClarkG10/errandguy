@@ -13,9 +13,9 @@ interface PickupDistanceLineProps {
   variant?: 'default' | 'onDark';
   /**
    * Server-measured km from the runner's last GPS ping to this pickup
-   * (`distance_to_pickup_km`, attached by RunnerErrandController to the offer
-   * feed and the matched offer). Used ONLY when there is no live fix yet —
-   * cold start, GPS still warming — so an offer card always states how far
+   * (`distance_to_pickup_km`, attached by RunnerErrandController to the
+   * matched offer). Used ONLY when there is no live fix yet — cold start, GPS
+   * still warming, a phone just unlocked — so an offer always states how far
    * away the job is instead of showing nothing at the exact moment the runner
    * is deciding. Labelled "approx." because the ping can be minutes old.
    */

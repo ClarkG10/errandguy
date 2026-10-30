@@ -112,7 +112,8 @@ describe('notificationInvalidationKeys', () => {
       ['system', { type: 'system', data: {} }],
       ['chat', { type: 'chat', data: { booking_id: 'bk-1' } }],
       ['referral', { type: 'referral', data: {} }],
-      ['incoming_request', { type: 'incoming_request', data: {} }],
+      // Retired with "name your price" — old inbox rows can still carry it.
+      ['the retired incoming_request offer card', { type: 'incoming_request', data: {} }],
       ['a type we have never seen', { type: 'quantum_update', data: {} }],
       ['no type at all', { data: { booking_id: 'bk-1' } }],
       ['an empty type', { type: '', data: {} }],

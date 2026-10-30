@@ -1,11 +1,11 @@
 import { computeEarningsBreakdown } from '../EarningsBreakdown';
 import type { Booking } from '../../../types';
 
-/** Minimal booking shaped like a completed runner earnings row. */
+/** Minimal booking shaped like a completed runner earnings row. Every new
+ *  booking is fixed-price and need not name a pricing mode at all. */
 const booking = (over: Record<string, unknown> = {}): Booking =>
   ({
     id: 'b1',
-    pricing_mode: 'fixed',
     distance_km: 3,
     base_fee: 50,
     distance_fee: 30,
@@ -13,7 +13,6 @@ const booking = (over: Record<string, unknown> = {}): Booking =>
     surcharge: 0,
     promo_discount: 0,
     total_amount: 120.75,
-    customer_offer: null,
     // PricingService: payout = base + vehicle_premium + distance + surcharge
     //               = 50 + 25 + 30 + 0 = 105
     runner_payout: 105,
@@ -31,6 +30,12 @@ describe('computeEarningsBreakdown — fixed pricing', () => {
     expect(b.mode).toBe('fixed');
     expect(sum(b.lines)).toBe(105);
     expect(b.payout).toBe(105);
+  });
+
+  it('reads an older row that still says pricing_mode "fixed" the same way', () => {
+    const b = computeEarningsBreakdown(booking({ pricing_mode: 'fixed', customer_offer: null }));
+    expect(b.mode).toBe('fixed');
+    expect(sum(b.lines)).toBe(105);
   });
 
   it('recovers the unstored vehicle premium as a residual line', () => {
@@ -84,7 +89,9 @@ describe('computeEarningsBreakdown — fixed pricing', () => {
   });
 });
 
-describe('computeEarningsBreakdown — negotiate pricing', () => {
+// Name-your-price is retired, but errands booked while it existed still show in
+// Earnings as 'negotiate' rows and must still reconcile.
+describe('computeEarningsBreakdown — legacy name-your-price bookings', () => {
   it('shows offer minus platform fee when the arithmetic checks out', () => {
     const b = computeEarningsBreakdown(
       booking({

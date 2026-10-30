@@ -2,7 +2,6 @@
 
 namespace Tests\Feature\Booking;
 
-use App\Jobs\BroadcastToRunnersJob;
 use App\Jobs\MatchRunnerJob;
 use App\Models\Booking;
 use App\Models\ErrandType;
@@ -39,7 +38,7 @@ class MultiStopTest extends TestCase
             'slug' => 'delivery', 'name' => 'Delivery', 'description' => 'Deliver',
             'icon_name' => 'Package', 'base_fee' => 50.00, 'per_km_walk' => 15.00,
             'per_km_bicycle' => 12.00, 'per_km_motorcycle' => 10.00, 'per_km_car' => 18.00,
-            'surcharge' => 0.00, 'min_negotiate_fee' => 30.00, 'is_active' => true, 'sort_order' => 1,
+            'surcharge' => 0.00, 'is_active' => true, 'sort_order' => 1,
         ]);
     }
 
@@ -189,7 +188,7 @@ class MultiStopTest extends TestCase
             'slug' => 'queue', 'name' => 'Queue', 'description' => 'Line up',
             'icon_name' => 'Users', 'base_fee' => 40.00, 'per_km_walk' => 10.00,
             'per_km_bicycle' => 10.00, 'per_km_motorcycle' => 10.00, 'per_km_car' => 10.00,
-            'surcharge' => 0.00, 'min_negotiate_fee' => 30.00, 'is_active' => true, 'sort_order' => 2,
+            'surcharge' => 0.00, 'is_active' => true, 'sort_order' => 2,
         ]);
 
         $this->actingAs($this->customer)->postJson('/api/v1/bookings', [

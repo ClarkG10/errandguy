@@ -23,8 +23,6 @@ class ErrandTypesTable
                 TextColumn::make('slug')->searchable()->toggleable()->color('gray'),
                 TextColumn::make('base_fee')->money('PHP')->sortable(),
                 TextColumn::make('surcharge')->money('PHP')->toggleable(isToggledHiddenByDefault: true),
-                TextColumn::make('min_negotiate_fee')->label('Min negotiate')->money('PHP')
-                    ->toggleable(isToggledHiddenByDefault: true),
                 IconColumn::make('is_active')->boolean()->sortable(),
                 TextColumn::make('created_at')->dateTime()->since()
                     ->toggleable(isToggledHiddenByDefault: true),

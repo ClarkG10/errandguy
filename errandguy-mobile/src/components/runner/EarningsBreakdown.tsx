@@ -35,6 +35,12 @@ import type { Booking } from '../../types';
  * moves (RunnerErrandController::settleEarnings: commission = total_amount −
  * runner_payout) — which keeps customer paid − platform fee === payout in
  * every mode, for old promo bookings and new (discount 0) ones alike.
+ *
+ * "Name your price" is retired the same way: every new booking is fixed-price,
+ * but an errand made while it existed is still a 'negotiate' row whose total
+ * IS the customer's own price. It keeps its own honest breakdown below, so an
+ * old earnings row still reconciles instead of being forced through the
+ * fixed-fare decomposition it was never priced by.
  */
 
 const round2 = (v: number) => Math.round(v * 100) / 100;
@@ -149,8 +155,8 @@ export function computeEarningsBreakdown(booking: Booking): EarningsBreakdownRes
   }
 
   if (isNegotiate) {
-    // Negotiate: the customer's offer IS the total, and the platform still
-    // takes its computed service fee (PricingService::applyNegotiateOffer).
+    // Legacy name-your-price row: the customer's offer IS the total, and the
+    // platform still took its computed service fee.
     const offer = booking.customer_offer != null ? num(booking.customer_offer) : totalAmount;
     if (offer == null || serviceFee == null || Math.abs(offer - serviceFee - payout) > 0.02) {
       return { ...base, itemized: false, mode: 'negotiate', lines: [] };

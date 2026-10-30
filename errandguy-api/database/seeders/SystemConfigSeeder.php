@@ -16,11 +16,6 @@ class SystemConfigSeeder extends Seeder
                 'description' => 'Platform fee percentage taken from each booking',
             ],
             [
-                'key' => 'max_negotiate_timeout_minutes',
-                'value' => '30',
-                'description' => 'Maximum time in minutes for negotiate pricing to expire',
-            ],
-            [
                 'key' => 'runner_payout_percent',
                 'value' => '85',
                 'description' => 'Percentage of booking amount paid to runner',

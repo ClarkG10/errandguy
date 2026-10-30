@@ -4,8 +4,6 @@ import {
   Text,
   ScrollView,
   Pressable,
-  KeyboardAvoidingView,
-  Platform,
   AccessibilityInfo,
 } from 'react-native';
 import * as Haptics from 'expo-haptics';
@@ -29,7 +27,6 @@ import {
   PaymentMethodSelector,
   resolvePaymentMethodType,
 } from '../../../components/customer/PaymentMethodSelector';
-import { OfferSlider } from '../../../components/customer/OfferSlider';
 import { BookingStepIndicator } from '../../../components/customer/BookingStepIndicator';
 import { formatCurrency } from '../../../utils/formatCurrency';
 import { serializeChecklist } from '../../../utils/shoppingChecklist';
@@ -57,7 +54,7 @@ import { mapFailureReason } from '../../../utils/paymentErrors';
 import { getErrandTypeRule, type VehicleKey } from '../../../constants/errandTypeRules';
 import { useResponsive } from '../../../constants/responsive';
 import { LightColors } from '../../../constants/colors';
-import type { ErrandType, PaymentMethodType, PricingMode } from '../../../types';
+import type { ErrandType, PaymentMethodType } from '../../../types';
 import { toast } from '../../../stores/toastStore';
 import { errorMessage } from '../../../utils/errorCatalog';
 import { copy } from '../../../constants/copy';
@@ -115,9 +112,6 @@ interface EstimateResult {
   motorcycle?: { total_amount: number; distance_fee: number; base_fee: number; service_fee: number; surcharge: number };
   car?: { total_amount: number; distance_fee: number; base_fee: number; service_fee: number; surcharge: number };
   distance_km?: number;
-  min_negotiate_fee?: number;
-  recommended_min?: number;
-  recommended_max?: number;
 }
 
 // Screen-reader copy for the full-screen create overlay (BookingProgress).
@@ -157,9 +151,6 @@ export default function ReviewScreen() {
   useRetiredErrandTypeGuard();
 
   const [estimate, setEstimate] = useState<EstimateResult | null>(null);
-  const [pricingMode, setPricingMode] = useState<PricingMode>(
-    draftBooking.pricing_mode ?? 'fixed',
-  );
 
   // Per-errand-type rule (allowed vehicles, default vehicle, etc.)
   const rule = useMemo(
@@ -195,9 +186,6 @@ export default function ReviewScreen() {
   // yet. Callback-captured state alone silently booked those as cash.
   const paymentMethodType =
     resolvePaymentMethodType(draftBooking.payment_method_id) ?? savedMethodType;
-  const [offerPrice, setOfferPrice] = useState(
-    draftBooking.customer_offer ?? 100,
-  );
   const [isSubmitting, setIsSubmitting] = useState(false);
   // Drives the full-screen create overlay (BookingProgress) through the real
   // submit checkpoints, so the ~5-7s create round-trip shows staged progress
@@ -306,10 +294,6 @@ export default function ReviewScreen() {
       estimateAttempt === 0 ? bookingService.getCachedEstimate(estimateInput) : null;
     if (cached) {
       setEstimate(cached);
-      // Preserve the offer seed: only when the user hasn't set one.
-      if (cached.min_negotiate_fee && draftBooking.customer_offer == null) {
-        setOfferPrice(cached.min_negotiate_fee);
-      }
       setEstimateError(false);
       setIsEstimateLoading(false);
       return;
@@ -324,11 +308,6 @@ export default function ReviewScreen() {
       .then((data) => {
         if (cancelled) return;
         setEstimate(data ?? null);
-        // Only seed offer if the user hasn't already set one — never
-        // overwrite their explicit choice with a server suggestion.
-        if (data?.min_negotiate_fee && draftBooking.customer_offer == null) {
-          setOfferPrice(data.min_negotiate_fee);
-        }
       })
       .catch(() => {
         if (cancelled) return;
@@ -345,8 +324,6 @@ export default function ReviewScreen() {
     return () => {
       cancelled = true;
     };
-    // draftBooking.customer_offer intentionally excluded — including it
-    // would refetch on every offer-slider movement.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
     draftBooking.errand_type_id,
@@ -510,10 +487,6 @@ export default function ReviewScreen() {
       toast.warning('Please set a shopping budget for this errand.');
       return;
     }
-    if (pricingMode === 'negotiate' && (!offerPrice || offerPrice <= 0)) {
-      toast.warning('Please set an offer amount.');
-      return;
-    }
     // A scheduled time can drift out of the server's [now+30min, now+30d] window
     // between the schedule step and Confirm — the earliest slot is only ~30 min
     // out, and a day-30 slot can exceed +30d by its time-of-day. Re-validate here,
@@ -549,7 +522,6 @@ export default function ReviewScreen() {
     // Synchronous latch closes the double-tap window before Button `loading`.
     if (submitLatch.current) return;
     submitLatch.current = true;
-    const paymentAmount = pricingMode === 'negotiate' ? offerPrice ?? 0 : totalAmount;
     setIsSubmitting(true);
     // Surface the full-screen staged overlay immediately on tap — "Checking
     // your details ✓ / Creating your errand ⟳" — instead of a lone button
@@ -596,9 +568,7 @@ export default function ReviewScreen() {
             : undefined,
         estimated_item_value: draftBooking.estimated_item_value,
         shopping_budget: draftBooking.shopping_budget,
-        pricing_mode: pricingMode,
-        vehicle_type_rate: pricingMode === 'fixed' ? vehicleType : undefined,
-        customer_offer: pricingMode === 'negotiate' ? offerPrice : undefined,
+        vehicle_type_rate: vehicleType,
         schedule_type: draftBooking.schedule_type ?? ('now' as const),
         scheduled_at: draftBooking.scheduled_at,
         payment_method: paymentMethodType ?? 'cash',
@@ -631,7 +601,7 @@ export default function ReviewScreen() {
       // never create two bookings / two charges from a double-tap or retry.
       const payAttempt = beginAttempt({
         kind: 'booking',
-        amount: paymentAmount,
+        amount: totalAmount,
         method: paymentMethodType ?? 'cash',
         idempotencyKey: createKey,
       });
@@ -786,9 +756,7 @@ export default function ReviewScreen() {
     }
   }, [
     draftBooking,
-    pricingMode,
     vehicleType,
-    offerPrice,
     paymentMethodType,
     rule,
     setActiveBooking,
@@ -860,14 +828,6 @@ export default function ReviewScreen() {
         </View>
       </View>
 
-      {/* Keyboard handling mirrors details.tsx — without persistTaps a tap
-          made while the offer-amount keyboard is up is swallowed by keyboard
-          dismissal (two taps to act), and bottom-half inputs hide under the
-          iOS keyboard. */}
-      <KeyboardAvoidingView
-        style={{ flex: 1 }}
-        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-      >
       <ScrollView
         className="flex-1 px-5"
         contentContainerStyle={{
@@ -880,9 +840,6 @@ export default function ReviewScreen() {
           paddingBottom: Math.max(insets.bottom, 12) + 96,
         }}
         showsVerticalScrollIndicator={false}
-        keyboardShouldPersistTaps="handled"
-        keyboardDismissMode={Platform.OS === 'ios' ? 'interactive' : 'on-drag'}
-        automaticallyAdjustKeyboardInsets={Platform.OS === 'ios'}
       >
         {/* Route Summary — typographic, ride-hailing-style two-line
             stack with a connecting hairline. No icon-tile chips. Rows are
@@ -1051,152 +1008,74 @@ export default function ReviewScreen() {
           </View>
         )}
 
-        {/* Pricing Mode — underline tab strip (replaces the segmented
-            pill so the screen carries one less rounded element). */}
-        <View
-          className="flex-row mb-5 border-b border-divider"
-          accessibilityRole="tablist"
-        >
-          {(['fixed', 'negotiate'] as PricingMode[]).map((mode) => {
-            const active = pricingMode === mode;
-            return (
-              <Pressable
-                key={mode}
-                accessibilityRole="tab"
-                accessibilityState={{ selected: active }}
-                accessibilityLabel={mode === 'fixed' ? 'Fixed price mode' : 'Make an offer mode'}
-                onPress={() => {
-                  if (active) return;
-                  Haptics.selectionAsync();
-                  setPricingMode(mode);
-                  updateDraft({ pricing_mode: mode });
-                  if (
-                    mode === 'negotiate' &&
-                    estimate?.min_negotiate_fee &&
-                    draftBooking.customer_offer == null
-                  ) {
-                    setOfferPrice(estimate.min_negotiate_fee);
-                    updateDraft({ customer_offer: estimate.min_negotiate_fee });
-                  }
-                }}
-                className="pr-5 pb-2.5 -mb-px"
-                style={({ pressed }) => [
-                  active
-                    ? { borderBottomWidth: 2, borderBottomColor: LightColors.primary }
-                    : null,
-                  pressed ? { opacity: 0.7 } : null,
-                ]}
-                // The tab itself is only ~28pt tall (13px label + 10px
-                // underline gap) — the vertical slop lifts it past 44pt.
-                hitSlop={{ top: 12, bottom: 12, left: 8, right: 8 }}
-              >
-                <Text
-                  className={`text-[13px] ${
-                    active
-                      ? 'font-montserrat-bold text-textPrimary'
-                      : 'font-montserrat-semi text-textSecondary'
-                  }`}
-                >
-                  {mode === 'fixed' ? 'Fixed price' : 'Make an offer'}
-                </Text>
-              </Pressable>
-            );
-          })}
-        </View>
-
-        {pricingMode === 'fixed' ? (
-          <>
-            {/* Single-location errands (queue) have no
-                travel distance, so vehicle pricing is identical for every
-                option. Hide the selector to avoid the confusing "all
-                vehicles cost the same" UX. */}
-            {!rule.singleLocation && vehicleOptions.length > 1 && (
-              <VehicleTypeSelector
-                options={vehicleOptions}
-                selectedKey={vehicleType}
-                onSelect={(key) => {
-                  setVehicleType(key);
-                  updateDraft({ vehicle_type_rate: key });
-                }}
-              />
-            )}
-
-            {currentVehicleEstimate ? (
-              <View className="mb-4">
-                <PriceBreakdown
-                  items={priceItems}
-                  total={totalAmount}
-                />
-              </View>
-            ) : estimateError ? (
-              /* Estimate failed — inline recovery in place of the
-                 skeleton so the user is never stuck on a dead
-                 "Calculating fare…" with no way forward. */
-              <View className="mb-4">
-                <ErrorState
-                  compact
-                  title="Couldn't calculate your fare"
-                  description="Check your connection and try again."
-                  onRetry={rerunEstimate}
-                />
-              </View>
-            ) : (
-              /* Estimate skeleton — mirrors the real PriceBreakdown's
-                 metrics (4 fee rows @ ~33pt, total row @ ~40pt) so the
-                 sections below don't reflow when the data arrives. */
-              <View className="mb-4" accessibilityLabel="Calculating fare">
-                {Array.from({ length: 4 }).map((_, i) => (
-                  <View
-                    key={`pb-skel-${i}`}
-                    className="flex-row items-center justify-between"
-                    style={{ height: 33 }}
-                  >
-                    <View
-                      className="h-3 rounded-full bg-divider"
-                      style={{ width: 90, opacity: 0.6 }}
-                    />
-                    <View
-                      className="h-3 rounded-full bg-divider"
-                      style={{ width: 60, opacity: 0.6 }}
-                    />
-                  </View>
-                ))}
-                <View
-                  className="border-t border-divider mt-1 pt-3 flex-row items-center justify-between"
-                  style={{ height: 40 }}
-                >
-                  <View
-                    className="h-4 rounded-full bg-divider"
-                    style={{ width: 50, opacity: 0.7 }}
-                  />
-                  <View
-                    className="h-4 rounded-full bg-divider"
-                    style={{ width: 80, opacity: 0.7 }}
-                  />
-                </View>
-              </View>
-            )}
-          </>
-        ) : (
-          <OfferSlider
-            value={offerPrice}
-            min={estimate?.min_negotiate_fee ?? 50}
-            max={
-              estimate?.recommended_max ??
-              // Fallback when backend doesn't yet emit recommended_max:
-              // 3x the most expensive vehicle estimate, floored at 1500.
-              Math.max(
-                ...vehicleOptions.map((v) => v.estimatedTotal ?? 0),
-                500,
-              ) * 3
-            }
-            recommendedMin={estimate?.recommended_min}
-            recommendedMax={estimate?.recommended_max}
-            onChange={(val) => {
-              setOfferPrice(val);
-              updateDraft({ customer_offer: val });
+        {/* Single-location errands (queue) have no travel distance, so
+            vehicle pricing is identical for every option. Hide the selector
+            to avoid the confusing "all vehicles cost the same" UX. */}
+        {!rule.singleLocation && vehicleOptions.length > 1 && (
+          <VehicleTypeSelector
+            options={vehicleOptions}
+            selectedKey={vehicleType}
+            onSelect={(key) => {
+              setVehicleType(key);
+              updateDraft({ vehicle_type_rate: key });
             }}
           />
+        )}
+
+        {currentVehicleEstimate ? (
+          <View className="mb-4">
+            <PriceBreakdown
+              items={priceItems}
+              total={totalAmount}
+            />
+          </View>
+        ) : estimateError ? (
+          /* Estimate failed — inline recovery in place of the
+             skeleton so the user is never stuck on a dead
+             "Calculating fare…" with no way forward. */
+          <View className="mb-4">
+            <ErrorState
+              compact
+              title="Couldn't calculate your fare"
+              description="Check your connection and try again."
+              onRetry={rerunEstimate}
+            />
+          </View>
+        ) : (
+          /* Estimate skeleton — mirrors the real PriceBreakdown's
+             metrics (4 fee rows @ ~33pt, total row @ ~40pt) so the
+             sections below don't reflow when the data arrives. */
+          <View className="mb-4" accessibilityLabel="Calculating fare">
+            {Array.from({ length: 4 }).map((_, i) => (
+              <View
+                key={`pb-skel-${i}`}
+                className="flex-row items-center justify-between"
+                style={{ height: 33 }}
+              >
+                <View
+                  className="h-3 rounded-full bg-divider"
+                  style={{ width: 90, opacity: 0.6 }}
+                />
+                <View
+                  className="h-3 rounded-full bg-divider"
+                  style={{ width: 60, opacity: 0.6 }}
+                />
+              </View>
+            ))}
+            <View
+              className="border-t border-divider mt-1 pt-3 flex-row items-center justify-between"
+              style={{ height: 40 }}
+            >
+              <View
+                className="h-4 rounded-full bg-divider"
+                style={{ width: 50, opacity: 0.7 }}
+              />
+              <View
+                className="h-4 rounded-full bg-divider"
+                style={{ width: 80, opacity: 0.7 }}
+              />
+            </View>
+          </View>
         )}
 
         {/* Shopping budget — a real pre-authorized outlay on top of the
@@ -1226,11 +1105,10 @@ export default function ReviewScreen() {
         {/* Payment Method */}
         <PaymentMethodSelector
           selectedId={draftBooking.payment_method_id}
-          // Fixed-price bookings charge `totalAmount` up front, so the wallet
-          // must cover it; negotiate bookings settle later at the agreed
-          // offer, so gate on that instead. This lets the selector grey out
-          // the wallet when the balance is short.
-          amount={pricingMode === 'fixed' ? totalAmount : offerPrice}
+          // The booking charges `totalAmount` up front, so the wallet must
+          // cover it — this lets the selector grey out the wallet when the
+          // balance is short.
+          amount={totalAmount}
           onSelect={(id, type) => {
             updateDraft({ payment_method_id: id });
             setSavedMethodType(type);
@@ -1238,7 +1116,6 @@ export default function ReviewScreen() {
         />
 
       </ScrollView>
-      </KeyboardAvoidingView>
 
       {/* Bottom CTA — clamped to the content column on tablets. */}
       <BottomActionBar>
@@ -1275,27 +1152,21 @@ export default function ReviewScreen() {
             title={
               showOfflineGate
                 ? 'Waiting for connection…'
-                : pricingMode === 'fixed'
-                  ? currentVehicleEstimate && !isEstimateLoading
-                    ? `Confirm ${formatCurrency(totalAmount)}`
-                    : estimateError
-                      ? 'Fare unavailable'
-                      : 'Calculating fare…'
-                  : `Send Offer ${formatCurrency(offerPrice)}`
+                : currentVehicleEstimate && !isEstimateLoading
+                  ? `Confirm ${formatCurrency(totalAmount)}`
+                  : estimateError
+                    ? 'Fare unavailable'
+                    : 'Calculating fare…'
             }
             onPress={handleSubmit}
             loading={isSubmitting}
-            loadingTitle={pricingMode === 'fixed' ? 'Creating booking…' : 'Sending offer…'}
-            // Don't let the user submit a fixed-price booking before the
-            // estimate has resolved — without it we'd be sending a
-            // payload with an indeterminate price expectation, and the
-            // server would 422 on `vehicle_type_rate` validation
-            // mismatch. Offline adds the second pre-empt (above).
-            disabled={
-              showOfflineGate ||
-              (pricingMode === 'fixed' &&
-                (isEstimateLoading || !currentVehicleEstimate))
-            }
+            loadingTitle="Creating booking…"
+            // Don't let the user submit before the estimate has resolved —
+            // without it we'd be sending a payload with an indeterminate
+            // price expectation, and the server would 422 on
+            // `vehicle_type_rate` validation mismatch. Offline adds the second
+            // pre-empt (above).
+            disabled={showOfflineGate || isEstimateLoading || !currentVehicleEstimate}
             fullWidth
           />
         </View>

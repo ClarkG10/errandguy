@@ -19,7 +19,6 @@ export const runnerService = {
     vehicle_type?: string;
     vehicle_plate?: string;
     preferred_types?: string[];
-    working_area?: string;
     bank_name?: string;
     bank_account_number?: string;
     bank_account_name?: string;
@@ -101,12 +100,6 @@ export const runnerService = {
     const p = api.post(`/runner/errand/${id}/decline`);
     p.then(invalidateRunnerErrands).catch(() => {});
     return p;
-  },
-
-  getAvailableErrands() {
-    // Silent: dashboard polls this; loader bar would otherwise flash
-    // every refresh tick.
-    return api.get('/runner/errand/available', { cacheTtlMs: 5_000, silent: true });
   },
 
   updateErrandStatus(id: string, status: string) {

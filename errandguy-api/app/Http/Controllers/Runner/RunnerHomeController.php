@@ -10,14 +10,14 @@ use Illuminate\Http\Request;
  * GET /runner/home — the runner dashboard in ONE authenticated round trip.
  *
  * The runner side never got the treatment the customer side did (see
- * {@see \App\Http\Controllers\Customer\HomeController}). Login warm-up still
- * awaits SIX separate authenticated GETs before the success curtain lifts
+ * {@see \App\Http\Controllers\Customer\HomeController}). Login warm-up
+ * awaited separate authenticated GETs before the success curtain lifted
  * (/runner/profile, /runner/earnings?period=today, /runner/earnings?period=this_week,
- * /runner/errands/history, /runner/errand/available, /runner/errand/current)
- * and the dashboard then declares a seventh on mount (/runner/peak-hours) —
- * each paying a full framework boot + Sanctum auth on Forge. This endpoint
- * returns all seven sections at once so the client can seed its EXISTING
- * useQuery cache keys from a single response.
+ * /runner/errands/history, /runner/errand/current) and the dashboard then
+ * declared another on mount (/runner/peak-hours) — each paying a full
+ * framework boot + Sanctum auth on Forge. This endpoint returns every section
+ * at once so the client can seed its EXISTING useQuery cache keys from a
+ * single response.
  *
  * SHAPE CONTRACT (the whole point — the client seeds per-section caches from
  * this payload, so any drift silently poisons them): every section is EXACTLY
@@ -33,7 +33,6 @@ use Illuminate\Http\Request;
  *   earnings_today    → ['runner','earnings','today',userId]
  *   earnings_week     → ['runner','earnings','week',userId]   (API period 'this_week')
  *   recent_errands    → ['runner','errands','recent',userId]
- *   available_errands → ['runner','errand','available',userId]
  *   current_errand    → ['runner','errand','current',userId]
  *   peak_hours        → ['runner','peak-hours',30]
  *
@@ -85,7 +84,6 @@ class RunnerHomeController extends Controller
         $peakRequest = $this->subRequest('/api/v1/runner/peak-hours', ['days' => self::PEAK_HOURS_DAYS], $user);
 
         $earnings = app(RunnerEarningsController::class);
-        $errands = app(RunnerErrandController::class);
 
         // Order matters here, which is why the profile section is resolved
         // BEFORE the array literal rather than inside it: a runner with no
@@ -104,13 +102,13 @@ class RunnerHomeController extends Controller
             'earnings_today' => $this->section($earnings->summary($earningsToday)),
             'earnings_week' => $this->section($earnings->summary($earningsWeek)),
             'recent_errands' => $this->section(app(RunnerErrandHistoryController::class)->index($recentRequest)) ?? [],
-            // available() legitimately returns [] for an OFFLINE runner
-            // (RunnerErrandController::available). The key must still be SEEDED
-            // with that empty list rather than omitted — the offer feed showing
-            // "no offers" is the correct cold state, and a missing key just
-            // costs the screen the round trip this endpoint exists to save.
-            'available_errands' => $this->section($errands->available($request)) ?? [],
-            'current_errand' => $this->section($errands->current($request)),
+            // Always empty: the open list of errands runners picked from (only
+            // ever filled by "name your price" errands) is gone — every offer
+            // now goes to one runner at a time and arrives by push. The app
+            // build already on phones still reads this key, so it stays as an
+            // empty list; delete it once the app update is out.
+            'available_errands' => [],
+            'current_errand' => $this->section(app(RunnerErrandController::class)->current($request)),
             // Shared across every runner and cached server-side under
             // `runner:peak_hours:30` (CacheService::swr, 15m soft / 30m hard),
             // so this section is a cache read, not a second GROUP BY.

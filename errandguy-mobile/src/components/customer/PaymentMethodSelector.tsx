@@ -21,7 +21,7 @@ interface PaymentMethodSelectorProps {
   onSelect: (id: string, type: PaymentMethodType) => void;
   /** Amount the booking will charge. Used to disable the wallet option when
    *  the balance can't cover it. Omit (or 0) to skip the balance check
-   *  (e.g. negotiate flow where the price isn't fixed yet). */
+   *  (e.g. while the fare is still being calculated). */
   amount?: number;
 }
 

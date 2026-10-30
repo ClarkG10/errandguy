@@ -101,3 +101,61 @@ describe('IncomingRequestModal countdown', () => {
     expect(onExpire).not.toHaveBeenCalled();
   });
 });
+
+/**
+ * Every booking is fixed-price now, so the vehicle the customer booked is what
+ * priced the job — a runner on a bicycle must see "Car booked" BEFORE taking a
+ * car fare, not at the doorstep.
+ */
+describe('IncomingRequestModal booked vehicle', () => {
+  beforeEach(() => jest.useFakeTimers());
+  afterEach(() => {
+    jest.clearAllTimers();
+    jest.useRealTimers();
+  });
+
+  const renderOffer = (booking: Booking) =>
+    render(
+      <IncomingRequestModal
+        booking={booking}
+        onAccept={jest.fn()}
+        onDecline={jest.fn()}
+        onExpire={jest.fn()}
+        timeoutSeconds={90}
+      />,
+    );
+
+  it('names the vehicle the offer was booked for', () => {
+    const { getByText } = renderOffer(
+      matchedOffer({ vehicle_type: 'car', vehicle_type_rate: null }),
+    );
+
+    expect(getByText('Car booked')).toBeTruthy();
+  });
+
+  it('reads the full booking payload’s vehicle_type_rate when the offer carries no vehicle_type', () => {
+    const { getByText } = renderOffer(matchedOffer({ vehicle_type_rate: 'bicycle' }));
+
+    expect(getByText('Bicycle booked')).toBeTruthy();
+  });
+
+  it('says nothing rather than guess when no known vehicle is named', () => {
+    const { queryByText } = renderOffer(
+      matchedOffer({ vehicle_type: 'hoverboard', vehicle_type_rate: null }),
+    );
+
+    expect(queryByText(/booked$/)).toBeNull();
+  });
+
+  it('leaves the vehicle off an on-site errand, where the customer never picks one', () => {
+    const { queryByText, getByText } = renderOffer(
+      matchedOffer({
+        vehicle_type: 'motorcycle',
+        errand_type: { id: 't-q', name: 'Queue / Pila', slug: 'queue' },
+      }),
+    );
+
+    expect(getByText('On-site')).toBeTruthy();
+    expect(queryByText('Motorcycle booked')).toBeNull();
+  });
+});

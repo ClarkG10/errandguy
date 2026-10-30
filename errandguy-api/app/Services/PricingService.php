@@ -96,32 +96,6 @@ class PricingService
     }
 
     /**
-     * Apply a negotiate-mode customer offer to a computed fixed-price
-     * breakdown.
-     *
-     * Product policy (confirmed): the customer's OFFER is the total they pay,
-     * and the platform still takes its FLAT computed service fee (the same fee
-     * the standard distance/vehicle calc produced) — the offer only changes the
-     * runner's share. The component fees (base/distance/vehicle/surcharge) are
-     * kept for reference/records but no longer sum to the total, since the
-     * offer overrides it.
-     *
-     * Without this, negotiate bookings were priced at the fixed fare and the
-     * customer_offer was cosmetic (stored + shown to runners but never charged).
-     *
-     * @param  array<string,mixed>  $pricing  a calculate() result
-     * @return array<string,mixed>
-     */
-    public function applyNegotiateOffer(array $pricing, float $offer): array
-    {
-        $offer = round($offer, 2);
-        $pricing['total_amount'] = $offer;
-        $pricing['runner_payout'] = max(0, round($offer - (float) $pricing['service_fee'], 2));
-
-        return $pricing;
-    }
-
-    /**
      * Estimate prices for all vehicle types.
      */
     /**
@@ -162,39 +136,14 @@ class PricingService
         }
 
         // Top-level metadata so the mobile app can show distance / time
-        // badges and seed the negotiate slider without hunting through
-        // each per-vehicle entry.
+        // badges without hunting through each per-vehicle entry.
         $distanceKm = ($dropoffLat !== null && $dropoffLng !== null)
             ? round($this->routeDistanceKm($pickupLat, $pickupLng, $dropoffLat, $dropoffLng, $extraStops), 2)
             : 0.0;
         $estimates['distance_km'] = $distanceKm;
         $estimates['stops_count'] = count($extraStops);
         if ($errandType) {
-            $minNegotiate = (float) $errandType->min_negotiate_fee;
-            $estimates['min_negotiate_fee'] = $minNegotiate;
             $estimates['vehicle_types'] = $vehicleTypes;
-
-            // Suggested negotiate band for the mobile slider. Without
-            // this the client falls back to a hard 500 PHP ceiling that
-            // is much too low for car / long-distance jobs.
-            //   recommended_min ≈ cheapest vehicle total
-            //   recommended_max ≈ 3× the most expensive vehicle total,
-            //                     floored at 1000 PHP for short hops.
-            $totals = array_map(
-                fn ($t) => (float) ($estimates[$t]['total_amount'] ?? 0),
-                $vehicleTypes,
-            );
-            $maxTotal = empty($totals) ? 0 : max($totals);
-            // Filter once, then GUARD before min(): array_filter drops 0.0 totals
-            // (e.g. walk on a zero-base, single-location errand), and min([]) throws
-            // a ValueError -> 500 on the estimate endpoint BEFORE the old
-            // `?: $minNegotiate` fallback could apply. All-zero falls back to the
-            // negotiate floor. Behaviour is otherwise identical (a filtered min is
-            // always > 0, so the old `?:` branch was unreachable). (audit v5)
-            $nonZeroTotals = array_filter($totals);
-            $minTotal = $nonZeroTotals === [] ? $minNegotiate : min($nonZeroTotals);
-            $estimates['recommended_min'] = max($minNegotiate, round($minTotal, 2));
-            $estimates['recommended_max'] = max(1000.0, round($maxTotal * 3, 2));
         }
 
         return $estimates;

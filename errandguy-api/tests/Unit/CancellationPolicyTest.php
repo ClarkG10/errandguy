@@ -10,7 +10,9 @@ use PHPUnit\Framework\TestCase;
  * Locks the cancellation-fee tiers (audit H24 — previously untested):
  *   pending/matched      → free
  *   accepted/heading     → flat ₱20
- *   arrived+/in-progress → 50% of total_amount
+ *   arrived+/in-progress → not cancellable in the app (BookingPolicy::cancel
+ *                          never allowed it, so the old 50% tier was
+ *                          unreachable and is gone)
  *   terminal             → not cancellable
  * Pure computation, so no DB is needed (in-memory Booking models).
  */
@@ -49,14 +51,34 @@ class CancellationPolicyTest extends TestCase
         }
     }
 
-    public function test_arrived_or_in_progress_charges_the_percentage(): void
+    public function test_arrived_or_in_progress_is_not_cancellable_and_never_quotes_a_percentage_fee(): void
     {
-        // 50% of ₱240 = ₱120.
         foreach (['arrived_at_pickup', 'picked_up', 'in_transit', 'arrived_at_dropoff', 'delivered'] as $status) {
             $p = CancellationPolicy::preview($this->booking($status, 240.0));
-            $this->assertSame(120.0, $p['fee'], $status);
-            $this->assertSame('percentage', $p['tier'], $status);
-            $this->assertTrue($p['cancellable'], $status);
+            $this->assertSame(0.0, $p['fee'], $status);
+            $this->assertSame('free', $p['tier'], $status);
+            $this->assertFalse($p['cancellable'], $status);
+            $this->assertStringNotContainsString('%', $p['reason'], $status);
+        }
+    }
+
+    public function test_the_policy_window_matches_who_may_cancel(): void
+    {
+        // BookingPolicy::cancel is the gate; the fee preview must agree with it
+        // on every status, or the app is quoted a fee for a cancel it can't make.
+        $policy = new \App\Policies\BookingPolicy();
+        $customer = new \App\Models\User();
+        $customer->id = 'customer-1';
+
+        foreach (\App\Enums\BookingStatus::values() as $status) {
+            $booking = $this->booking($status);
+            $booking->customer_id = 'customer-1';
+
+            $this->assertSame(
+                $policy->cancel($customer, $booking),
+                CancellationPolicy::preview($booking)['cancellable'],
+                $status,
+            );
         }
     }
 
@@ -67,13 +89,6 @@ class CancellationPolicyTest extends TestCase
             $this->assertSame(0.0, $p['fee'], $status);
             $this->assertFalse($p['cancellable'], $status);
         }
-    }
-
-    public function test_percentage_fee_rounds_to_two_decimals(): void
-    {
-        // 50% of ₱115.55 = ₱57.775 → 57.78.
-        $p = CancellationPolicy::preview($this->booking('in_transit', 115.55));
-        $this->assertSame(57.78, $p['fee']);
     }
 
     public function test_flat_fee_is_capped_at_a_cheap_fare(): void
@@ -92,7 +107,7 @@ class CancellationPolicyTest extends TestCase
         // PRICE-3: nothing is collected up front on a cash booking, so there is
         // no fee to charge — preview must not promise one that settlement won't
         // (and can't) collect.
-        foreach (['accepted', 'heading_to_pickup', 'in_transit', 'arrived_at_dropoff'] as $status) {
+        foreach (['accepted', 'heading_to_pickup'] as $status) {
             $p = CancellationPolicy::preview($this->booking($status, 200.0, 'unpaid'));
             $this->assertSame(0.0, $p['fee'], $status);
             $this->assertSame('free', $p['tier'], $status);

@@ -15,7 +15,7 @@ import type { LucideIcon } from 'lucide-react-native';
 import { MapPin, Navigation, Truck, ShoppingBag } from 'lucide-react-native';
 import { Button } from '../ui/Button';
 import { PickupDistanceLine } from './PickupDistanceLine';
-import { PaymentChip, ScheduledChip, StopsChip } from './OfferChips';
+import { PaymentChip, ScheduledChip, StopsChip, VehicleChip } from './OfferChips';
 import { readServerPickupKm } from './offerMeta';
 import { formatCurrency } from '../../utils/formatCurrency';
 import { formatRunnerPayout } from '../../utils/runnerPayout';
@@ -380,13 +380,16 @@ export function IncomingRequestModal({
 
             {/* Decision-critical facts the 30s modal used to omit entirely:
                 how the job settles (and how much cash the runner handles in
-                person), whether it is a SCHEDULED window rather than a job
-                starting now, and whether there are extra stops. A runner
-                accepting a T-15min scheduled job believing it was immediate,
-                or arriving at a doorstep not knowing to collect money, is the
-                expensive failure this row prevents. */}
+                person), the vehicle the customer booked (it priced the fare),
+                whether it is a SCHEDULED window rather than a job starting
+                now, and whether there are extra stops. A runner accepting a
+                T-15min scheduled job believing it was immediate, or arriving
+                at a doorstep not knowing to collect money, is the expensive
+                failure this row prevents. On-site errands skip the vehicle:
+                the customer never picks one for them. */}
             <View className="flex-row flex-wrap items-center gap-1.5 mb-3">
               <PaymentChip booking={booking} />
+              {!isSingleLocation && <VehicleChip booking={booking} />}
               <ScheduledChip booking={booking} />
               <StopsChip booking={booking} />
             </View>

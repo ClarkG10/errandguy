@@ -22,7 +22,7 @@ use Illuminate\Support\Facades\Log;
  *
  * Both directions of that leak cost real money:
  *   • a genuinely PAID booking stuck at 'pending' → completion credits the
- *     runner ₱0 (handleCompletion takes neither the paid nor the cash branch),
+ *     runner ₱0 (settleCompletion takes neither the paid nor the cash branch),
  *     and the back-fill that would fix it is only reachable from the webhook or
  *     the poll;
  *   • an ABANDONED checkout stays live → the runner works an errand nobody paid

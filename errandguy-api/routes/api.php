@@ -180,8 +180,7 @@ Route::prefix('v1')->group(function () {
         // Runner routes
         Route::prefix('runner')->middleware(['role:runner'])->group(function () {
             // Runner dashboard in ONE round trip (profile + today's & this
-            // week's earnings + recent errands + available offers + current
-            // errand + peak hours). Each section is byte-identical to the
+            // week's earnings + recent errands + current errand + peak hours). Each section is byte-identical to the
             // individual endpoint that still serves it, so the app seeds its
             // existing caches from this and keeps the per-resource routes as
             // revalidation paths. Mirrors GET /customer/home. (A5)
@@ -197,7 +196,6 @@ Route::prefix('v1')->group(function () {
             Route::post('/location', [RunnerLocationController::class, 'store'])->middleware('throttle:120,1');
 
             Route::get('/errand/current', [RunnerErrandController::class, 'current'])->middleware('etag');
-            Route::get('/errand/available', [RunnerErrandController::class, 'available'])->middleware('etag');
             Route::get('/errand/{id}', [RunnerErrandController::class, 'show'])
                 ->where('id', '[0-9a-fA-F-]{36}')
                 ->middleware('etag');

@@ -191,11 +191,6 @@ function handleNotificationTapped(
         );
       }
       break;
-    case 'incoming_request':
-      // Offers home = runner tab-group index; there is no /home route, so
-      // '/(runner)/(tabs)/home' would land on the not-found screen. (RT-4)
-      router.push('/(runner)/(tabs)' as never);
-      break;
     case 'payment':
       // Land on the thing that was PAID FOR. A booking charge's push
       // ("Payment confirmed for booking EG-1234" / "Payment failed — try

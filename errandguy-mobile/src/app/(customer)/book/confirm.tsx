@@ -52,6 +52,20 @@ const STATE_ANNOUNCEMENTS: Record<SearchState, string> = {
   cancelled: 'Booking cancelled.',
 };
 
+/**
+ * How long the search reads as "looking" before the copy turns to a calmer
+ * "still looking". This is NOT a deadline. Matching runs on the server — each
+ * direct offer gives one runner 90 seconds to answer before the next is tried —
+ * and only the server decides nobody is free, by moving the booking to
+ * `no_runner`. The client used to call it at 60s on its own clock, telling the
+ * customer "No runners available" while a runner was still holding the offer.
+ */
+export const STILL_LOOKING_AFTER_MS = 60_000;
+
+const STILL_LOOKING_LINE =
+  'Taking longer than usual — we’ll keep trying and tell you if no runner is free.';
+const STILL_LOOKING_ANNOUNCEMENT = 'Still looking for a runner.';
+
 export default function ConfirmScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
@@ -68,12 +82,14 @@ export default function ConfirmScreen() {
 
   // A booking scheduled for a FUTURE time must NOT run the live "searching"
   // radar — the server delays matching until near the scheduled slot, so the
-  // countdown would falsely time out to "No runners available". Detect it from
+  // screen would sit on "Looking for a runner" for hours. Detect it from
   // whichever source is populated (the created booking, or the draft on the
   // normal create flow) and land on a "scheduled" confirmation instead.
   const scheduledSource = activeBooking ?? draftBooking;
   // Pickup coords for the searching map (re-enabled per request — this bills
   // HERE tiles for the search duration). Falls back to the gradient if absent.
+  // Laravel casts decimal columns to strings ("8.94120787") and the map camera
+  // silently falls back to the globe view on a string, so coerce with Number().
   const pickupLat = Number(scheduledSource?.pickup_lat);
   const pickupLng = Number(scheduledSource?.pickup_lng);
   const hasPickup = Number.isFinite(pickupLat) && Number.isFinite(pickupLng);
@@ -112,9 +128,9 @@ export default function ConfirmScreen() {
   // server keeps fanning the search out instead of repeating the same one.
   const [retryStep, setRetryStep] = useState<1 | 2 | 3>(1);
   const [isRetrying, setIsRetrying] = useState(false);
-  // True once a widest-radius (step 3) retry has also timed out — at that
-  // point another identical retry would just be theatre, so the UI swaps
-  // to a rebook path instead.
+  // True once a widest-radius (step 3) retry has also come back no_runner —
+  // at that point another identical retry would just be theatre, so the UI
+  // swaps to a rebook path instead.
   const [exhausted, setExhausted] = useState(false);
   const retriedAtMaxRef = useRef(false);
   const [bookingNumber, setBookingNumber] = useState(
@@ -137,27 +153,14 @@ export default function ConfirmScreen() {
     }
   }, [bookingId, router]);
 
-  // Countdown until we give up waiting for a runner.
-  // Fixed price → 60s (matches matching window). Negotiate → 5 minutes (per spec).
-  const totalSeconds = activeBooking?.pricing_mode === 'negotiate' ? 300 : 60;
-  // Deadline-based countdown so backgrounding the app doesn't pause it
-  // (the *server* doesn't pause matching either — pretending it does
-  // gives users a stale impression). Recompute every tick from
-  // `Date.now()` against this deadline.
-  const deadlineRef = useRef<number>(Date.now() + totalSeconds * 1000);
-  // Reset deadline when the screen first mounts for a given totalSeconds.
-  // (Subsequent retries call `setDeadline` directly.)
-  const initialisedDeadlineRef = useRef(false);
-  if (!initialisedDeadlineRef.current) {
-    deadlineRef.current = Date.now() + totalSeconds * 1000;
-    initialisedDeadlineRef.current = true;
-  }
-  const [secondsLeft, setSecondsLeft] = useState(totalSeconds);
+  // When the CURRENT search began (reset by "Search again"). Wall-clock, so a
+  // backgrounded app comes back on the truth rather than a frozen tick.
+  const searchStartedAtRef = useRef<number>(Date.now());
+  const [stillLooking, setStillLooking] = useState(false);
 
   // Cold-start / deep-link hydration (e.g. returning from the Xendit
-  // checkout after the app was killed): the store has no activeBooking,
-  // so `totalSeconds` above guessed the fixed-price 60s window and the
-  // realtime merge can't hydrate a null store. Fetch the booking now
+  // checkout after the app was killed): the store has no activeBooking, and
+  // the realtime merge can't hydrate a null store. Fetch the booking now
   // rather than waiting up to 30s for the safety-net poll.
   const hydratingRef = useRef(false);
   useEffect(() => {
@@ -180,33 +183,6 @@ export default function ConfirmScreen() {
         hydratingRef.current = false;
       });
   }, [bookingId, activeBooking?.id, setActiveBooking]);
-
-  // Re-seed the countdown once the *real* booking arrives (from the fetch
-  // above, realtime, or the AppState resync) so a negotiate booking never
-  // runs against the guessed 60s deadline — the visible timer and the
-  // progressbar's accessibilityValue must stay truthful. Keyed by booking
-  // id so ordinary status updates of the same booking don't reset it.
-  const seededForRef = useRef<string | null>(
-    activeBooking?.id === bookingId ? (bookingId ?? null) : null,
-  );
-  useEffect(() => {
-    if (!bookingId || activeBooking?.id !== bookingId) return;
-    if (seededForRef.current === bookingId) return;
-    seededForRef.current = bookingId;
-    if (state !== 'searching') return;
-    const total = activeBooking.pricing_mode === 'negotiate' ? 300 : 60;
-    let deadline = Date.now() + total * 1000;
-    // Negotiate bookings expose the server's own expiry — prefer it so
-    // the timer reflects time already spent matching while we were away.
-    if (activeBooking.pricing_mode === 'negotiate' && activeBooking.negotiate_expires_at) {
-      const serverDeadline = Date.parse(activeBooking.negotiate_expires_at);
-      if (Number.isFinite(serverDeadline) && serverDeadline > Date.now()) {
-        deadline = serverDeadline;
-      }
-    }
-    deadlineRef.current = deadline;
-    setSecondsLeft(Math.max(0, Math.ceil((deadline - Date.now()) / 1000)));
-  }, [activeBooking, bookingId, state]);
 
   // Rotating searching subtitle — plain setState on an interval, torn
   // down on unmount or as soon as we leave the searching state.
@@ -236,28 +212,24 @@ export default function ConfirmScreen() {
     AccessibilityInfo.announceForAccessibility(STATE_ANNOUNCEMENTS[state]);
   }, [state]);
 
-  // Get pickup coords from booking or draft.
-  // IMPORTANT: Laravel casts decimal columns to strings (e.g. "8.94120787");
-  // Mapbox.Camera.centerCoordinate decodes via Codable as Double and silently
-  // falls back to the globe view when it sees a string. Coerce with Number().
-  // Countdown ticker — only runs while we're still searching.
-  // Uses `useForegroundInterval` so the timer pauses when the app is
-  // backgrounded. The deadline is wall-clock based, so on resume we
-  // immediately recompute against `Date.now()` and account for any
-  // elapsed-while-suspended seconds in a single tick — no drift, no
-  // "frozen counter" UX, no double timeout.
-  const tickCountdown = useCallback(() => {
-    const remaining = Math.max(
-      0,
-      Math.ceil((deadlineRef.current - Date.now()) / 1000),
-    );
-    setSecondsLeft(remaining);
-    if (remaining <= 0) {
-      setState('no_runner');
-      if (retriedAtMaxRef.current) setExhausted(true);
+  // Flip the copy to "still looking" once the search has run a while. Only the
+  // WORDS change — "No runners available" waits for the server's own
+  // `no_runner` (see reactToStatus). `useForegroundInterval` pauses while
+  // backgrounded; the start time is wall-clock, so the first tick on resume
+  // catches up at once.
+  const tickStillLooking = useCallback(() => {
+    if (Date.now() - searchStartedAtRef.current >= STILL_LOOKING_AFTER_MS) {
+      setStillLooking(true);
     }
   }, []);
-  useForegroundInterval(tickCountdown, 1000, state === 'searching');
+  useForegroundInterval(tickStillLooking, 1000, state === 'searching' && !stillLooking);
+
+  // Say the shift out loud too — the headline swap is visual only.
+  useEffect(() => {
+    if (state === 'searching' && stillLooking) {
+      AccessibilityInfo.announceForAccessibility(STILL_LOOKING_ANNOUNCEMENT);
+    }
+  }, [state, stillLooking]);
 
   // Resync booking status whenever the app comes back to the foreground —
   // realtime channels can miss events while suspended on Android.
@@ -394,15 +366,20 @@ export default function ConfirmScreen() {
     const step = Math.min(retryStep, 3) as 1 | 2 | 3;
     setIsRetrying(true);
     try {
-      await bookingService.retryMatch(bookingId, step);
-      // A widest-radius attempt is in flight — if this one also times
-      // out, the next no_runner is terminal (see `exhausted`).
+      const res = await bookingService.retryMatch(bookingId, step);
+      // A widest-radius attempt is in flight — if this one also comes back
+      // no_runner, that outcome is terminal (see `exhausted`).
       if (step === 3) retriedAtMaxRef.current = true;
       setRetryStep((s) => (s < 3 ? ((s + 1) as 1 | 2 | 3) : 3));
-      // Reset the deadline-based countdown.
-      deadlineRef.current = Date.now() + totalSeconds * 1000;
-      setSecondsLeft(totalSeconds);
+      searchStartedAtRef.current = Date.now();
+      setStillLooking(false);
       setState('searching');
+      // The server runs this match inline and answers with the booking as it
+      // now stands — matched already, still pending, or no_runner again.
+      // Hand it to the store so reactToStatus judges THAT, never the
+      // no_runner snapshot the store still holds from the last search.
+      const fresh = res?.data?.data;
+      if (fresh?.id === bookingId) setActiveBooking(fresh);
     } catch (err: any) {
       toast.error(
         errorMessage(err, 'Could not retry matching right now. Try again in a moment.'),
@@ -410,13 +387,12 @@ export default function ConfirmScreen() {
     } finally {
       setIsRetrying(false);
     }
-  }, [bookingId, isRetrying, retryStep, totalSeconds]);
+  }, [bookingId, isRetrying, retryStep, setActiveBooking]);
 
   // Terminal no_runner recovery: the draft was cleared at submit, so
   // "rebook" would otherwise mean full re-entry. Re-seed the draft from
   // the failed booking and drop the user on the review step where the
-  // details that matter for matching (vehicle, pricing mode, offer) are
-  // editable.
+  // details that matter for matching (vehicle, timing) are editable.
   const handleRebook = useCallback(() => {
     const b = activeBooking;
     if (!b) {
@@ -470,9 +446,7 @@ export default function ConfirmScreen() {
             note: s.note ?? undefined,
           }))
         : undefined,
-      pricing_mode: b.pricing_mode,
       vehicle_type_rate: b.vehicle_type_rate ?? undefined,
-      customer_offer: b.customer_offer != null ? Number(b.customer_offer) : undefined,
       schedule_type: scheduleStillValid ? 'scheduled' : 'now',
       scheduled_at: scheduleStillValid ? b.scheduled_at ?? undefined : undefined,
     });
@@ -481,9 +455,10 @@ export default function ConfirmScreen() {
     router.replace('/(customer)/book/review');
   }, [activeBooking, clearDraft, updateDraft, setStep, setActiveBooking, router]);
 
-  const mm = Math.floor(secondsLeft / 60).toString().padStart(2, '0');
-  const ss = (secondsLeft % 60).toString().padStart(2, '0');
-  const progress = Math.max(0, Math.min(1, secondsLeft / totalSeconds));
+  const liveAnnouncement =
+    state === 'searching' && stillLooking
+      ? STILL_LOOKING_ANNOUNCEMENT
+      : STATE_ANNOUNCEMENTS[state];
 
   return (
     <View style={{ flex: 1 }}>
@@ -572,7 +547,7 @@ export default function ConfirmScreen() {
           style={cs.srOnly}
           importantForAccessibility="yes"
         >
-          {STATE_ANNOUNCEMENTS[state]}
+          {liveAnnouncement}
         </Text>
         <View
           style={[
@@ -594,69 +569,18 @@ export default function ConfirmScreen() {
           {state === 'searching' && (
             <>
               <Text className="text-xl font-montserrat-bold text-textPrimary text-center">
-                Looking for a runner nearby…
+                {stillLooking ? 'Still looking…' : 'Looking for a runner nearby…'}
               </Text>
-              {/* Rotating reassurance line — cycles every ~5s. Two lines
-                  of height are reserved so the card (and the pulse
-                  centered above it) doesn't jump when a longer line
-                  wraps on narrow phones. */}
+              {/* Rotating reassurance line — cycles every ~5s, then settles on
+                  the "still looking" note. Two lines of height are reserved
+                  so the card (and the pulse centered above it) doesn't jump
+                  when a longer line wraps on narrow phones. */}
               <Text
                 className="text-sm font-montserrat text-textSecondary mt-1 text-center"
                 style={{ minHeight: 36 }}
               >
-                {SEARCHING_LINES[searchLineIdx]}
+                {stillLooking ? STILL_LOOKING_LINE : SEARCHING_LINES[searchLineIdx]}
               </Text>
-              {activeBooking?.pricing_mode === 'negotiate' && (
-                <Text className="text-xs font-montserrat text-textTertiary mt-1 text-center">
-                  Your offer is visible to runners
-                </Text>
-              )}
-
-              {/* Countdown */}
-              <View
-                style={cs.countdownWrap}
-                accessibilityRole="progressbar"
-                accessibilityLabel={
-                  activeBooking?.pricing_mode === 'negotiate'
-                    ? 'Time left for runners to accept your offer'
-                    : 'Time left to find a runner'
-                }
-                accessibilityValue={{
-                  min: 0,
-                  max: totalSeconds,
-                  now: secondsLeft,
-                  text: `${mm}:${ss} remaining`,
-                }}
-              >
-                <Text
-                  style={[
-                    cs.countdownTime,
-                    // Telegraph the timeout before the hard cut to
-                    // no_runner — the numeric timer carries the meaning,
-                    // color reinforces it.
-                    secondsLeft <= 10 && { color: LightColors.warningDark },
-                  ]}
-                >
-                  {mm}:{ss}
-                </Text>
-                <Text style={cs.countdownLabel}>
-                  {activeBooking?.pricing_mode === 'negotiate'
-                    ? 'Time left for runners to accept your offer'
-                    : 'Time left to find a runner'}
-                </Text>
-                <View style={cs.progressTrack}>
-                  <View
-                    style={[
-                      cs.progressFill,
-                      { width: `${progress * 100}%` },
-                      secondsLeft <= 10 && {
-                        backgroundColor: LightColors.warning,
-                      },
-                    ]}
-                  />
-                </View>
-              </View>
-
               {bookingNumber ? (
                 // Inter for the booking number — data-dense identifiers
                 // use the numeric face per the type convention.
@@ -736,7 +660,7 @@ export default function ConfirmScreen() {
               </Text>
               <Text className="text-sm font-montserrat text-textSecondary mt-1 text-center">
                 {exhausted
-                  ? 'We searched our widest area and no runner picked this up. Rebooking with different details — vehicle, pricing, or timing — gives the best chance.'
+                  ? 'We searched our widest area and no runner picked this up. Rebooking with different details — vehicle or timing — gives the best chance.'
                   : retryStep === 1
                     ? 'No runners are nearby right now. We can widen the search area.'
                     : retryStep === 2
@@ -843,37 +767,5 @@ const cs = StyleSheet.create({
     paddingTop: 24,
     ...Elevation.lg,
     shadowOffset: { width: 0, height: -10 },
-  },
-  countdownWrap: {
-    marginTop: 20,
-    alignItems: 'center',
-  },
-  countdownTime: {
-    // Display rung (4xl) — the timer is this card's hero number.
-    fontSize: 34,
-    fontFamily: 'Inter_600SemiBold',
-    color: LightColors.textPrimary,
-    letterSpacing: 1,
-    fontVariant: ['tabular-nums'],
-  },
-  countdownLabel: {
-    fontSize: 12,
-    fontFamily: 'Quicksand_500Medium',
-    color: LightColors.textTertiary,
-    marginTop: 4,
-    textAlign: 'center',
-  },
-  progressTrack: {
-    width: '100%',
-    height: 6,
-    borderRadius: 3,
-    backgroundColor: LightColors.divider,
-    marginTop: 12,
-    overflow: 'hidden',
-  },
-  progressFill: {
-    height: '100%',
-    backgroundColor: LightColors.primary,
-    borderRadius: 3,
   },
 });

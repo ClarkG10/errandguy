@@ -67,26 +67,33 @@ export interface DraftBooking {
    * structured items column on the API). See `utils/shoppingChecklist`.
    */
   shoppingItems?: ChecklistItem[];
-  pricing_mode?: 'fixed' | 'negotiate';
   schedule_type?: 'now' | 'scheduled';
   scheduled_at?: string;
   vehicle_type_rate?: string;
-  customer_offer?: number;
   payment_method_id?: string;
   instructions?: string;
-  offered_price?: number;
   items?: Array<{ name: string; quantity: number; estimated_price?: number }>;
 }
 
 /**
- * Draft fields that only builds from before promo codes were retired ever
- * wrote: `promo_code` and its saved peso `promo_discount`. A draft restored
- * from one of those builds is otherwise perfectly good, so it is kept, minus
- * these. Nothing reads them any more, yet the draft is re-persisted wholesale
- * on every edit, so they would ride along forever and could be re-sent by
- * anything that spreads the draft into a request.
+ * Draft fields only older builds ever wrote:
+ *   - `promo_code` and its saved peso `promo_discount` (promo codes retired);
+ *   - `pricing_mode`, `customer_offer` and `offered_price` ("name your price"
+ *     retired — every booking is fixed-price now).
+ * A draft restored from one of those builds is otherwise perfectly good, so it
+ * is kept, minus these — an old "make an offer" draft simply comes back as a
+ * fixed-price one, priced by the vehicle it already names. Nothing reads them
+ * any more, yet the draft is re-persisted wholesale on every edit, so they
+ * would ride along forever and could be re-sent by anything that spreads the
+ * draft into a request.
  */
-const RETIRED_DRAFT_FIELDS = ['promo_code', 'promo_discount'] as const;
+const RETIRED_DRAFT_FIELDS = [
+  'promo_code',
+  'promo_discount',
+  'pricing_mode',
+  'customer_offer',
+  'offered_price',
+] as const;
 
 const withoutRetiredFields = (draft: DraftBooking): DraftBooking => {
   const clean: Record<string, unknown> = { ...draft };

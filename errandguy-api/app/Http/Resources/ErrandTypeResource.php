@@ -21,7 +21,6 @@ class ErrandTypeResource extends JsonResource
             'per_km_motorcycle' => $this->per_km_motorcycle,
             'per_km_car' => $this->per_km_car,
             'surcharge' => $this->surcharge,
-            'min_negotiate_fee' => $this->min_negotiate_fee,
             'is_active' => $this->is_active,
         ];
     }

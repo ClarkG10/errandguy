@@ -67,19 +67,19 @@ class IncomingRequest implements ShouldBroadcast
             'dropoff_lng' => $b->dropoff_lng,
             'description' => $b->description,
             'distance_km' => $b->distance_km,
+            // The vehicle the customer paid for. Matching only offers an errand
+            // to a runner whose vehicle can serve it, but the runner should
+            // still see what the job needs before accepting.
+            'vehicle_type' => $b->vehicle_type_rate,
             'pricing_mode' => $b->pricing_mode,
             'base_fee' => $b->base_fee,
             'distance_fee' => $b->distance_fee,
             'service_fee' => $b->service_fee,
             'surcharge' => $b->surcharge,
             'total_amount' => $b->total_amount,
-            'customer_offer' => $b->customer_offer,
             'runner_payout' => $b->runner_payout,
-            'recommended_min' => $b->recommended_min,
-            'recommended_max' => $b->recommended_max,
             'schedule_type' => $b->schedule_type,
             'scheduled_at' => optional($b->scheduled_at)->toIso8601String(),
-            'negotiate_expires_at' => optional($b->negotiate_expires_at)->toIso8601String(),
             'matched_at' => optional($b->matched_at)->toIso8601String(),
             'created_at' => optional($b->created_at)->toIso8601String(),
         ];

@@ -44,7 +44,7 @@ class ReapStrandedBookingsTest extends TestCase
             'slug' => 'delivery', 'name' => 'Delivery', 'description' => 'Deliver',
             'icon_name' => 'Package', 'base_fee' => 50.00, 'per_km_walk' => 15.00,
             'per_km_bicycle' => 12.00, 'per_km_motorcycle' => 10.00, 'per_km_car' => 18.00,
-            'min_negotiate_fee' => 30.00, 'is_active' => true, 'sort_order' => 1,
+            'is_active' => true, 'sort_order' => 1,
         ]);
     }
 
@@ -189,11 +189,12 @@ class ReapStrandedBookingsTest extends TestCase
         ]);
     }
 
-    public function test_reaps_a_stranded_negotiate_booking_past_its_expiry(): void
+    public function test_a_negotiate_booking_left_open_when_the_mode_was_retired_is_cancelled_and_refunded(): void
     {
-        // Negotiate offer prepaid up front, still pending with no runner, and its
-        // negotiate window already elapsed — the delayed ExpireNegotiateBookingJob
-        // never ran. Recovered via the negotiate branch (not the auto-cancel one).
+        // "Name your price" is gone, and with it the job that used to expire an
+        // unanswered offer — one still queued at deploy time no longer has a
+        // class to run. A prepaid negotiate errand left pending must still end
+        // cleanly: the reaper treats it like any unmatched errand.
         $booking = $this->makeBooking(
             'pending', 'paid', 'wallet', now()->subHours(2), 'negotiate', now()->subHour(),
         );
@@ -204,26 +205,27 @@ class ReapStrandedBookingsTest extends TestCase
         $this->assertEquals('cancelled', $fresh->status);
         $this->assertEquals('refunded', $fresh->payment_status);
         $this->assertEquals(115.0, (float) $this->customer->fresh()->wallet_balance);
+        $this->assertDatabaseHas('payments', ['booking_id' => $booking->id, 'status' => 'refunded']);
     }
 
-    public function test_does_not_reap_a_negotiate_booking_still_within_its_window(): void
+    public function test_a_leftover_negotiate_booking_waits_for_the_normal_auto_cancel_window(): void
     {
-        // The critical safety case: a valid, still-OPEN negotiate offer must NOT
-        // be cancelled — even though it was created before the 30m fixed-mode
-        // auto-cancel cutoff. The fixed branch skips it (wrong pricing_mode) and
-        // the negotiate branch skips it (negotiate_expires_at is in the future).
+        // Its old 5-minute offer window has passed, but it is still inside the
+        // auto-cancel window — reaped on the same schedule as any other
+        // unmatched errand, not earlier.
         $booking = $this->makeBooking(
-            'pending', 'paid', 'wallet', now()->subHours(2), 'negotiate', now()->addMinutes(3),
+            'pending', 'paid', 'wallet', now()->subMinutes(10), 'negotiate', now()->subMinutes(5),
         );
 
         $this->reap();
+        $this->assertEquals('pending', $booking->fresh()->status);
+
+        $this->travel(25)->minutes();
+        $this->reap();
 
         $fresh = $booking->fresh();
-        $this->assertEquals('pending', $fresh->status);
-        $this->assertEquals('paid', $fresh->payment_status);
-        $this->assertDatabaseMissing('wallet_transactions', [
-            'user_id' => $this->customer->id, 'type' => 'refund',
-        ]);
+        $this->assertEquals('cancelled', $fresh->status);
+        $this->assertEquals('refunded', $fresh->payment_status);
     }
 
     public function test_does_not_reap_a_scheduled_booking_before_its_window(): void
@@ -264,6 +266,25 @@ class ReapStrandedBookingsTest extends TestCase
         $this->assertEquals(115.0, (float) $this->customer->fresh()->wallet_balance);
     }
 
+    public function test_does_not_reap_a_scheduled_booking_while_matching_is_still_looking(): void
+    {
+        // Matching keeps searching until 15 minutes after the scheduled time,
+        // so even with a short auto-cancel timeout the reaper must not end the
+        // errand inside that grace.
+        \App\Models\SystemConfig::setValue('auto_cancel_timeout_minutes', '5');
+        $booking = $this->makeBooking(
+            'pending', 'paid', 'wallet', now()->subDays(1), 'fixed', null, now()->subMinutes(10),
+        );
+
+        $this->reap();
+        $this->assertEquals('pending', $booking->fresh()->status);
+
+        $this->travel(6)->minutes();
+        $this->reap();
+        $this->assertEquals('cancelled', $booking->fresh()->status);
+        $this->assertEquals('refunded', $booking->fresh()->payment_status);
+    }
+
     public function test_reaps_an_immediate_booking_even_with_a_stray_future_scheduled_at(): void
     {
         // Robustness: a malformed 'now' booking that also carries a future
@@ -281,27 +302,11 @@ class ReapStrandedBookingsTest extends TestCase
         $this->assertEquals('refunded', $fresh->payment_status);
     }
 
-    public function test_reaps_a_negotiate_crash_orphan_with_null_expiry(): void
-    {
-        // A negotiate booking charged up front but crashed before
-        // negotiate_expires_at was written (so its delayed expire job was never
-        // dispatched). Recovered via the null-expiry fallback once well past the
-        // negotiate window.
-        $booking = $this->makeBooking('pending', 'paid', 'wallet', now()->subHours(2), 'negotiate', null);
-
-        $this->reap();
-
-        $fresh = $booking->fresh();
-        $this->assertEquals('cancelled', $fresh->status);
-        $this->assertEquals('refunded', $fresh->payment_status);
-        $this->assertEquals(115.0, (float) $this->customer->fresh()->wallet_balance);
-    }
-
     public function test_does_not_reap_a_scheduled_negotiate_orphan_before_its_time(): void
     {
-        // Even a null-expiry negotiate orphan must NOT be reaped while it is a
-        // future SCHEDULED booking — the fallback anchors on scheduled_at for
-        // scheduled rows.
+        // A leftover negotiate errand that is SCHEDULED for later is aged from
+        // its scheduled time like any other scheduled errand, never from
+        // creation.
         $booking = $this->makeBooking(
             'pending', 'paid', 'wallet', now()->subHours(2), 'negotiate', null, now()->addHours(5),
         );

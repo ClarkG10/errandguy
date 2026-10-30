@@ -80,7 +80,7 @@ export default function RunnerLayout() {
     // if still incomplete.
     const isOnboarding = segments.includes('onboarding' as never);
     if (!isOnboarding) {
-      // On a killed-state push (e.g. incoming_request) this layout can mount
+      // On a killed-state push (e.g. a new-offer push) this layout can mount
       // before validateSession resolves, with `user` still null (loadFromStorage
       // restores token/isAuthenticated but never `user`). Treating null-user as
       // "no runner_profile" used to redirect an already-approved runner to the
@@ -149,10 +149,10 @@ export default function RunnerLayout() {
  * screens ARE the idle gap this app itself links them to.
  *
  * Mounted here it survives every tab switch and every pushed screen. This is
- * the ONE owner of the offer stream (see useIncomingRequest) — Home keeps the
- * open-offer FEED (which it can claim from) and the REST reconcile that
- * upgrades/re-raises a matched offer, both of which only write the shared
- * runnerStore.
+ * the ONE owner of the offer stream (see useIncomingRequest) and the only
+ * place an offer can be accepted — every offer is a direct one, sent to this
+ * runner alone. Home keeps only the REST reconcile that upgrades/re-raises a
+ * matched offer, which writes the shared runnerStore.
  *
  * A matched offer can never collide with the errand cockpit: MatchingService
  * excludes runners who already hold an active errand.
@@ -209,12 +209,7 @@ function OfferWatcher() {
 
   useIncomingRequest(isOnline && userId ? userId : null, {
     onOffer: (offer) => {
-      // Dispatch ran, so this runner's open-offer feed just changed — heal it
-      // now rather than waiting out Home's staleTime. Narrow on purpose: the
-      // offers list only, not the whole runner surface.
-      void invalidateQuery(['runner', 'errand', 'available']);
-      if (offer.status !== 'matched' || !offer.id) return;
-      if (readAcceptDeadline(offer as Booking)) return;
+      if (readAcceptDeadline(offer)) return;
       const id = offer.id;
       void upgradeOffer(id).then((ok) => {
         if (ok) return;
@@ -222,20 +217,13 @@ function OfferWatcher() {
         upgradeTimerRef.current = setTimeout(() => void upgradeOffer(id), 6_000);
       });
     },
-    onOfferWithdrawn: () => {
-      // Someone else took it (or it expired) — get the feed honest so the dead
-      // card goes instead of the runner tapping it and being told it's gone.
-      void invalidateQuery(['runner', 'errand', 'available']);
-    },
   });
 
   /**
-   * Accept the FIXED match. Deliberately not optimistic: the server serialises
-   * the claim with a row lock, so the UI waits for its answer.
-   *
-   * Separate from Home's `claimOffer` (which also mutates the open-offer feed
-   * it owns): a matched offer has this runner's id on it and never appears in
-   * that first-come-first-served list.
+   * Accept the direct offer. Deliberately not optimistic: the server
+   * serialises the claim with a row lock, so the UI waits for its answer.
+   * Errors reuse the backend's honest codes (BOOKING_STALE = "it went to
+   * someone else", BOOKING_CONFLICT = "finish your active errand first").
    */
   const handleAccept = useCallback(async () => {
     const offer = useRunnerStore.getState().incomingRequest?.booking;
@@ -250,7 +238,9 @@ function OfferWatcher() {
       haptics.error();
       toast.error(errorMessage(err, copy.runner.acceptFailed));
       clearIncomingRequest();
-      void invalidateQuery(['runner', 'errand', 'available']);
+      // The cached "current errand" may still hold this offer as `matched`;
+      // re-read it so Home's reconcile can't raise an offer that just failed.
+      void invalidateQuery(['runner', 'errand', 'current']);
     } finally {
       claimingRef.current = false;
     }

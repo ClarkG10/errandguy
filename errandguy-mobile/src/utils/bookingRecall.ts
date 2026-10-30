@@ -1,4 +1,4 @@
-import type { Booking, ChecklistItem, PricingMode } from '../types/booking';
+import type { Booking, ChecklistItem } from '../types/booking';
 import type { VehicleKey } from '../constants/errandTypeRules';
 import { parseChecklist } from './shoppingChecklist';
 import { formatCurrency } from './formatCurrency';
@@ -35,9 +35,6 @@ export interface RecallFields {
   special_instructions?: string;
   /** Only ever a vehicle the CURRENT type's rule still allows. */
   vehicle_type_rate?: VehicleKey;
-  pricing_mode?: PricingMode;
-  /** Only recalled when it is provably >= the live minimum (see findRecall). */
-  customer_offer?: number;
 }
 
 export interface BookingRecall {
@@ -60,13 +57,6 @@ export interface FindRecallOptions {
   showDescription: boolean;
   /** rule.allowedVehicles — a remembered car can't survive onto a walk-only type. */
   allowedVehicles: VehicleKey[];
-  /**
-   * `min_negotiate_fee` from the live estimate for THIS booking, when known.
-   * A remembered offer is recalled only when it clears the current floor;
-   * otherwise it is dropped and Review seeds the floor itself. An offer under
-   * the server minimum is a 422 at submit, not a convenience.
-   */
-  minNegotiateFee?: number;
 }
 
 /** Bookings whose content is a poor thing to hand back to the customer. */
@@ -117,10 +107,9 @@ const VEHICLE_LABELS: Record<VehicleKey, string> = {
 
 /**
  * The one-line summary on the chip. It has to name EVERYTHING the tap will
- * apply, including the two things that only become visible two screens later
- * on Review (the vehicle and the pricing mode) — both move the price, so
- * neither may be applied without being shown here first. 'fixed' is the
- * standing default and is left out as noise.
+ * apply, including the vehicle, which only becomes visible two screens later
+ * on Review — it moves the price, so it may not be applied without being
+ * shown here first.
  */
 function buildPreview(fields: RecallFields, requiresShoppingBudget: boolean): string {
   const parts: string[] = [];
@@ -138,13 +127,6 @@ function buildPreview(fields: RecallFields, requiresShoppingBudget: boolean): st
   }
   if (fields.vehicle_type_rate) {
     parts.push(VEHICLE_LABELS[fields.vehicle_type_rate]);
-  }
-  if (fields.pricing_mode === 'negotiate') {
-    parts.push(
-      fields.customer_offer != null
-        ? `your offer ${formatCurrency(fields.customer_offer)}`
-        : 'make an offer',
-    );
   }
   return parts.join(' · ');
 }
@@ -196,8 +178,8 @@ export function findRecall(
     fields.special_instructions = cleanText(b.special_instructions, 300);
 
     // Nothing the customer would have had to type ⇒ not worth a chip. The
-    // pricing/vehicle memory below rides along with real content; on its own
-    // it is invisible on this screen and would make the chip a lie.
+    // vehicle memory below rides along with real content; on its own it is
+    // invisible on this screen and would make the chip a lie.
     const hasContent =
       fields.description != null ||
       (fields.shoppingItems?.length ?? 0) > 0 ||
@@ -208,16 +190,6 @@ export function findRecall(
     const vehicle = b.vehicle_type_rate as VehicleKey | null;
     if (vehicle && allowedVehicles.includes(vehicle)) {
       fields.vehicle_type_rate = vehicle;
-    }
-    if (b.pricing_mode === 'fixed' || b.pricing_mode === 'negotiate') {
-      fields.pricing_mode = b.pricing_mode;
-      if (b.pricing_mode === 'negotiate') {
-        const offer = cleanAmount(b.customer_offer);
-        const floor = options.minNegotiateFee;
-        if (offer != null && floor != null && offer >= floor) {
-          fields.customer_offer = offer;
-        }
-      }
     }
 
     return {

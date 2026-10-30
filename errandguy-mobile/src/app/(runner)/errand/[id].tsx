@@ -36,6 +36,7 @@ import { ReceiptCaptureModal } from '../../../components/runner/ReceiptCaptureMo
 import { CompletionModal } from '../../../components/runner/CompletionModal';
 import { RateCustomerModal } from '../../../components/runner/RateCustomerModal';
 import { RunnerActiveMap } from '../../../components/runner/RunnerActiveMap';
+import { bookedVehicleLabel } from '../../../components/runner/offerMeta';
 import { Skeleton, SkeletonCircle } from '../../../components/ui/Skeleton';
 import { ErrorState } from '../../../components/ui/ErrorState';
 import { SuccessCheck } from '../../../components/ui/SuccessCheck';
@@ -2705,7 +2706,11 @@ export default function ActiveErrandScreen() {
                 )}
                 <Text className="text-[10px] font-montserrat-bold text-textTertiary uppercase tracking-wider mb-1.5 text-center">
                   {booking.status === 'matched'
-                    ? 'This errand is offered to you — tap to claim it'
+                    ? // A "New errand offer" push lands here, not on the pop-up,
+                      // so name the booked vehicle here too.
+                      [bookedVehicleLabel(booking), 'This errand is offered to you — tap to claim it']
+                        .filter(Boolean)
+                        .join(' · ')
                     : ctaIsSlide
                       ? 'Slide to confirm — customer is notified instantly'
                       : 'Tap to advance — customer is notified instantly'}

@@ -55,7 +55,7 @@ class CancelRaceTest extends TestCase
         $this->type = ErrandType::create([
             'slug' => 'delivery', 'name' => 'Delivery', 'description' => 'D',
             'icon_name' => 'Package', 'base_fee' => 50, 'per_km_walk' => 15, 'per_km_bicycle' => 12,
-            'per_km_motorcycle' => 10, 'per_km_car' => 18, 'min_negotiate_fee' => 30,
+            'per_km_motorcycle' => 10, 'per_km_car' => 18,
             'is_active' => true, 'sort_order' => 1,
         ]);
     }
@@ -104,7 +104,7 @@ class CancelRaceTest extends TestCase
      * status='pending', runner_id=null on its stale snapshot, resurrecting the
      * row. MatchRunnerJob only guards on 'pending', so the dead errand was
      * re-dispatched; the next runner accepted, completed it, and
-     * handleCompletion found payment_status='refunded' and credited them
+     * settlement found payment_status='refunded' and credited them
      * NOTHING. A refunded customer got a runner at their door, and that runner
      * worked for free.
      */

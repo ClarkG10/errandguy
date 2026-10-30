@@ -18,7 +18,6 @@ describe('isClosedBookingStatus', () => {
   it('keeps every live status writable', () => {
     for (const status of [
       'pending',
-      'negotiate',
       'matched',
       'accepted',
       'heading_to_pickup',

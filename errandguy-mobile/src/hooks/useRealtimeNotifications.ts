@@ -261,13 +261,8 @@ export function useRealtimeNotifications(userId: string | null) {
         data: notification?.data ?? null,
       });
       // Trigger 1: a notification naming a booking we're not watching (the
-      // runner just took the errand, so the thread only now exists). An OFFER
-      // card is the one exception: it names a booking nobody has accepted, so
-      // no thread can exist yet — skip the (throttled, but still pointless)
-      // inbox re-derive for those.
-      if (notification?.type !== 'incoming_request') {
-        resolveIfUnwatched(notification?.data?.booking_id);
-      }
+      // runner just took the errand, so the thread only now exists).
+      resolveIfUnwatched(notification?.data?.booking_id);
     },
   });
 

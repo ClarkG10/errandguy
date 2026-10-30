@@ -69,9 +69,9 @@ interface RunnerSearchAnimationProps {
 
 /**
  * The "searching" radar — three staggered expanding rings over a center dot,
- * fills its parent (absolute) and centers itself. Runs for the whole wait
- * (up to ~5 min in negotiate mode); under Reduce Motion it collapses to a
- * single static ring so the reanimated loops never start.
+ * fills its parent (absolute) and centers itself. Runs for the whole wait,
+ * however long the server keeps searching; under Reduce Motion it collapses to
+ * a single static ring so the reanimated loops never start.
  *
  * Extracted from book/confirm.tsx so tracking/[id].tsx's identical
  * pre-dispatch radar can share one implementation. Geometry is unchanged.

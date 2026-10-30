@@ -10,6 +10,7 @@ use App\Models\User;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Bus;
 use Illuminate\Support\Facades\Http;
+use Illuminate\Support\Facades\Queue;
 use Tests\TestCase;
 
 class CreateBookingTest extends TestCase
@@ -42,7 +43,6 @@ class CreateBookingTest extends TestCase
             'per_km_motorcycle' => 10.00,
             'per_km_car' => 18.00,
             'surcharge' => 0.00,
-            'min_negotiate_fee' => 30.00,
             'is_active' => true,
             'sort_order' => 1,
         ]);
@@ -187,7 +187,7 @@ class CreateBookingTest extends TestCase
                 'slug' => $slug, 'name' => ucfirst($slug), 'description' => 'Retired',
                 'icon_name' => 'X', 'base_fee' => 50.00, 'per_km_walk' => 15.00,
                 'per_km_bicycle' => 12.00, 'per_km_motorcycle' => 10.00, 'per_km_car' => 18.00,
-                'min_negotiate_fee' => 30.00, 'is_active' => false, 'sort_order' => 10 + $i,
+                'is_active' => false, 'sort_order' => 10 + $i,
             ]);
 
             $this->actingAs($this->customer)
@@ -211,79 +211,130 @@ class CreateBookingTest extends TestCase
         $this->assertSame(0, Booking::count());
     }
 
-    public function test_negotiate_mode_booking(): void
+    public function test_a_request_without_pricing_mode_is_a_normal_fixed_price_booking(): void
     {
+        // The app no longer sends pricing_mode at all — every errand is fixed
+        // price.
         Bus::fake();
-
-        $data = array_merge($this->validBookingData, [
-            'pricing_mode' => 'negotiate',
-            'vehicle_type_rate' => null,
-            'customer_offer' => 100.00,
-        ]);
-
-        $response = $this->actingAs($this->customer)
-            ->postJson('/api/v1/bookings', $data);
-
-        $response->assertStatus(201)
-            ->assertJsonPath('data.pricing_mode', 'negotiate');
-
-        $this->assertDatabaseHas('bookings', [
-            'customer_id' => $this->customer->id,
-            'pricing_mode' => 'negotiate',
-            'customer_offer' => 100.00,
-        ]);
-    }
-
-    public function test_negotiate_offer_of_zero_is_rejected_by_the_min_fee_floor(): void
-    {
-        Bus::fake();
-
-        // customer_offer: 0 is falsy in PHP — the floor guard used to skip it,
-        // letting a free (total 0 / payout 0) negotiate booking through. It
-        // must now be rejected exactly like any other sub-min offer.
-        $data = array_merge($this->validBookingData, [
-            'pricing_mode' => 'negotiate',
-            'vehicle_type_rate' => null,
-            'customer_offer' => 0,
-        ]);
+        $data = $this->validBookingData;
+        unset($data['pricing_mode']);
 
         $this->actingAs($this->customer)
             ->postJson('/api/v1/bookings', $data)
+            ->assertCreated()
+            ->assertJsonPath('data.pricing_mode', 'fixed')
+            ->assertJsonPath('data.customer_offer', null);
+
+        $booking = Booking::firstOrFail();
+        $this->assertSame('fixed', $booking->pricing_mode);
+        $this->assertGreaterThan(0, (float) $booking->total_amount);
+        Bus::assertDispatched(\App\Jobs\MatchRunnerJob::class);
+    }
+
+    public function test_a_leftover_name_your_price_request_is_refused_not_overcharged(): void
+    {
+        // "Name your price" is retired, but the app build already on phones can
+        // still send pricing_mode=negotiate with a customer_offer. Charging that
+        // customer the full fixed fare instead of their offer would take more
+        // than they agreed to (a wallet booking is debited at once), so it is
+        // refused with a message telling them what to do.
+        Bus::fake();
+
+        $this->actingAs($this->customer)
+            ->postJson('/api/v1/bookings', array_merge($this->validBookingData, [
+                'pricing_mode' => 'negotiate',
+                'vehicle_type_rate' => null,
+                'customer_offer' => 10.00,
+            ]))
             ->assertStatus(422)
-            ->assertJsonValidationErrors(['customer_offer']);
+            ->assertJsonPath(
+                'errors.pricing_mode.0',
+                'Name your price is no longer available. Please update the app and book at the fixed price.',
+            );
 
-        $this->assertDatabaseMissing('bookings', [
-            'customer_id' => $this->customer->id,
-            'pricing_mode' => 'negotiate',
-        ]);
+        $this->assertSame(0, Booking::count());
+        Bus::assertNotDispatched(\App\Jobs\MatchRunnerJob::class);
     }
 
-    public function test_negotiate_booking_is_charged_the_customer_offer(): void
+    public function test_an_older_build_sending_fixed_mode_still_books_normally(): void
+    {
+        // The shipped app sends pricing_mode=fixed on every normal booking; the
+        // new app sends no mode at all. Both are the same fixed-price booking.
+        Bus::fake();
+
+        $this->actingAs($this->customer)
+            ->postJson('/api/v1/bookings', $this->validBookingData)
+            ->assertCreated();
+        $plain = Booking::firstOrFail();
+
+        $this->actingAs($this->customer)
+            ->postJson('/api/v1/bookings', array_merge($this->validBookingData, [
+                'pricing_mode' => 'fixed',
+                'customer_offer' => 999.00,
+            ]))
+            ->assertCreated()
+            ->assertJsonPath('data.pricing_mode', 'fixed')
+            ->assertJsonPath('data.customer_offer', null);
+
+        $older = Booking::whereKeyNot($plain->id)->firstOrFail();
+        $this->assertEquals((float) $plain->total_amount, (float) $older->total_amount);
+        $this->assertEquals((float) $plain->runner_payout, (float) $older->runner_payout);
+        Bus::assertDispatchedTimes(\App\Jobs\MatchRunnerJob::class, 2);
+    }
+
+    public function test_a_booking_without_a_vehicle_is_priced_as_a_motorcycle(): void
     {
         Bus::fake();
 
-        $data = array_merge($this->validBookingData, [
-            'pricing_mode' => 'negotiate',
-            'vehicle_type_rate' => 'motorcycle',
-            'customer_offer' => 200.00,
-        ]);
-
         $this->actingAs($this->customer)
-            ->postJson('/api/v1/bookings', $data)
-            ->assertStatus(201);
+            ->postJson('/api/v1/bookings', [...$this->validBookingData, 'vehicle_type_rate' => null])
+            ->assertCreated()
+            ->assertJsonPath('data.vehicle_type_rate', 'motorcycle')
+            ->assertJsonPath('data.vehicle_type', 'motorcycle');
+    }
 
-        $booking = \App\Models\Booking::where('customer_id', $this->customer->id)
-            ->latest()->firstOrFail();
+    public function test_an_instant_matching_failure_after_the_wallet_was_charged_still_returns_the_booking(): void
+    {
+        // The wallet is debited before the instant runner search runs. If that
+        // search throws (a deadlock under load), failing the request made the
+        // app show an error, the customer tapped again, and the retry created —
+        // and charged — a second booking. Now the booking stands, the response
+        // is the normal 201, and the search is handed to the queue.
+        Queue::fake();
+        $this->customer->update(['wallet_balance' => 5000]);
+        $this->app->instance(\App\Services\MatchingService::class, new class extends \App\Services\MatchingService
+        {
+            public function findRunner(string $bookingId, ?float $radiusOverrideKm = null, ?string $excludeUserId = null): ?\App\Models\RunnerProfile
+            {
+                throw new \RuntimeException('Deadlock found when trying to get lock');
+            }
+        });
 
-        // The customer pays their OFFER, not the fixed fare (this exact value
-        // would not arise from the distance/vehicle calc, so it also guards the
-        // override from being silently removed).
-        $this->assertEquals(200.00, (float) $booking->total_amount);
-        // Platform keeps its flat computed service fee; the runner gets the rest.
-        $this->assertEquals(
-            round(200.00 - (float) $booking->service_fee, 2),
-            (float) $booking->runner_payout,
+        $first = $this->actingAs($this->customer)
+            ->withHeader('Idempotency-Key', 'tap-once')
+            ->postJson('/api/v1/bookings', [...$this->validBookingData, 'payment_method' => 'wallet'])
+            ->assertCreated()
+            ->assertJsonPath('data.status', 'pending');
+
+        $booking = Booking::firstOrFail();
+        $this->assertSame($first->json('data.id'), $booking->id);
+        $this->assertSame('paid', $booking->payment_status);
+        Queue::assertPushed(
+            \App\Jobs\MatchRunnerJob::class,
+            fn (\App\Jobs\MatchRunnerJob $job) => $job->bookingId === $booking->id,
         );
+        Queue::assertPushed(\App\Jobs\AutoCancelBookingJob::class);
+
+        // The duplicate-request guard still holds: the same tap replayed is the
+        // same booking, charged once.
+        $this->actingAs($this->customer)
+            ->withHeader('Idempotency-Key', 'tap-once')
+            ->postJson('/api/v1/bookings', [...$this->validBookingData, 'payment_method' => 'wallet'])
+            ->assertCreated()
+            ->assertJsonPath('data.id', $booking->id);
+
+        $this->assertSame(1, Booking::count());
+        $this->assertEquals(5000 - (float) $booking->total_amount, (float) $this->customer->fresh()->wallet_balance);
     }
 
     public function test_a_leftover_promo_code_is_ignored_and_the_full_price_is_charged(): void
@@ -313,28 +364,6 @@ class CreateBookingTest extends TestCase
         $this->assertEquals(
             5000 - 2 * (float) $plain->total_amount,
             (float) $this->customer->fresh()->wallet_balance,
-        );
-    }
-
-    public function test_a_leftover_promo_code_on_a_negotiate_booking_still_charges_the_offer(): void
-    {
-        Bus::fake();
-
-        $this->actingAs($this->customer)
-            ->postJson('/api/v1/bookings', array_merge($this->validBookingData, [
-                'pricing_mode' => 'negotiate',
-                'vehicle_type_rate' => 'motorcycle',
-                'customer_offer' => 200.00,
-                'promo_code' => 'SAVE10',
-            ]))
-            ->assertCreated();
-
-        $booking = Booking::firstOrFail();
-        $this->assertEquals(200.00, (float) $booking->total_amount);
-        $this->assertEquals(0.0, (float) $booking->promo_discount);
-        $this->assertEquals(
-            round(200.00 - (float) $booking->service_fee, 2),
-            (float) $booking->runner_payout,
         );
     }
 
@@ -392,22 +421,6 @@ class CreateBookingTest extends TestCase
         Bus::assertDispatched(\App\Jobs\MatchRunnerJob::class);
     }
 
-    public function test_broadcast_job_dispatched_for_negotiate_pricing(): void
-    {
-        Bus::fake();
-
-        $data = array_merge($this->validBookingData, [
-            'pricing_mode' => 'negotiate',
-            'vehicle_type_rate' => null,
-            'customer_offer' => 100.00,
-        ]);
-
-        $this->actingAs($this->customer)
-            ->postJson('/api/v1/bookings', $data);
-
-        Bus::assertDispatched(\App\Jobs\BroadcastToRunnersJob::class);
-    }
-
     public function test_booking_requires_errand_type(): void
     {
         $data = $this->validBookingData;
@@ -438,7 +451,7 @@ class CreateBookingTest extends TestCase
             'slug' => 'inactive-type', 'name' => 'Inactive', 'description' => 'An inactive type',
             'icon_name' => 'X', 'base_fee' => 50.00, 'per_km_walk' => 10.00,
             'per_km_bicycle' => 10.00, 'per_km_motorcycle' => 10.00, 'per_km_car' => 10.00,
-            'min_negotiate_fee' => 30.00, 'is_active' => false, 'sort_order' => 99,
+            'is_active' => false, 'sort_order' => 99,
         ]);
 
         $data = array_merge($this->validBookingData, [
@@ -450,21 +463,6 @@ class CreateBookingTest extends TestCase
 
         $response->assertStatus(422)
             ->assertJsonValidationErrors(['errand_type_id']);
-    }
-
-    public function test_negotiate_booking_rejects_offer_below_minimum(): void
-    {
-        $data = array_merge($this->validBookingData, [
-            'pricing_mode' => 'negotiate',
-            'vehicle_type_rate' => null,
-            'customer_offer' => 10.00,
-        ]);
-
-        $response = $this->actingAs($this->customer)
-            ->postJson('/api/v1/bookings', $data);
-
-        $response->assertStatus(422)
-            ->assertJsonValidationErrors(['customer_offer']);
     }
 
     public function test_scheduled_booking_rejects_past_date(): void
@@ -479,20 +477,6 @@ class CreateBookingTest extends TestCase
 
         $response->assertStatus(422)
             ->assertJsonValidationErrors(['scheduled_at']);
-    }
-
-    public function test_fixed_pricing_requires_vehicle_type(): void
-    {
-        $data = array_merge($this->validBookingData, [
-            'pricing_mode' => 'fixed',
-            'vehicle_type_rate' => null,
-        ]);
-
-        $response = $this->actingAs($this->customer)
-            ->postJson('/api/v1/bookings', $data);
-
-        $response->assertStatus(422)
-            ->assertJsonValidationErrors(['vehicle_type_rate']);
     }
 
     public function test_unauthenticated_user_cannot_create_booking(): void

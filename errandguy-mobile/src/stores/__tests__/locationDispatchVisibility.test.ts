@@ -1,9 +1,9 @@
 /**
  * Dispatch visibility — the honest half of "ONLINE".
  *
- * MatchingService drops any runner whose `last_location_at` is older than five
- * minutes, and the app's GPS is a foreground-only watch (background location is
- * deliberately not implemented). These tests pin the two things that keep the
+ * MatchingService drops any runner whose `last_location_at` is older than
+ * fifteen minutes, and the app's GPS is a foreground-only watch (background
+ * location is deliberately not implemented). These tests pin the two things that keep the
  * runner home screen from asserting "receiving requests" at a runner who is
  * invisible: the freshness predicates, and the one-shot ping behind the
  * "refresh" tap.
@@ -54,6 +54,18 @@ describe('isPingStale', () => {
   it('warns before the server actually drops the runner', () => {
     expect(DISPATCH_WARN_AFTER_MS).toBeLessThan(DISPATCH_STALE_AFTER_MS);
     expect(isPingStale(now - DISPATCH_WARN_AFTER_MS - 1, now)).toBe(true);
+  });
+
+  /**
+   * The server keeps offering to a runner whose last location is up to 15
+   * minutes old — that window is what lets a LOCKED phone still get offers by
+   * push. Warning at the old 3 minutes would tell a runner who is still being
+   * dispatched to that customers can't see them.
+   */
+  it('mirrors the server’s 15-minute window, so a short lock is not a warning', () => {
+    expect(DISPATCH_STALE_AFTER_MS).toBe(15 * 60_000);
+    expect(isPingStale(now - 10 * 60_000, now)).toBe(false);
+    expect(isServerLocationStale(new Date(now - 10 * 60_000).toISOString(), now)).toBe(false);
   });
 
   /**

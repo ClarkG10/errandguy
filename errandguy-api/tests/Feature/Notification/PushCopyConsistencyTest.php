@@ -159,7 +159,7 @@ class PushCopyConsistencyTest extends TestCase
      */
     private function literalPushTitles(): array
     {
-        $methods = ['sendPush', 'notifyInApp', 'sendRemotePush', 'sendRemotePushToMany'];
+        $methods = ['sendPush', 'notifyInApp', 'sendRemotePush'];
         $found = [];
 
         $files = new \RecursiveIteratorIterator(
@@ -327,15 +327,14 @@ class PushCopyConsistencyTest extends TestCase
 
         // Guard the guard. A token walk that silently stops matching would let
         // this test pass vacuously forever, so pin the sites that actually
-        // regressed: two of these are past comments between the arguments and
-        // one is inside a nested array call, which is where a naive regex
-        // scanner breaks first.
+        // regressed: some sit past comments between the arguments, and one is a
+        // raw Notification::create, which is where a naive regex scanner breaks
+        // first.
         $this->assertGreaterThan(5, count($titles), 'the push-title scanner found almost nothing — it has stopped working');
 
         foreach ([
             'app/Jobs/NotifySosContactsJob.php' => 'SOS alert',
             'app/Services/SOSService.php' => 'SOS resolved',
-            'app/Jobs/BroadcastToRunnersJob.php' => 'New errand nearby',
             'app/Listeners/SendBookingCancelledNotification.php' => 'Errand cancelled',
             // A RAW Notification::create — a different code shape entirely, and
             // the blind spot that was hiding a Title-Case title on the first
@@ -404,7 +403,7 @@ class PushCopyConsistencyTest extends TestCase
         $type = ErrandType::create([
             'slug' => 'delivery', 'name' => 'Delivery', 'description' => 'D',
             'icon_name' => 'Package', 'base_fee' => 50, 'per_km_walk' => 15, 'per_km_bicycle' => 12,
-            'per_km_motorcycle' => 10, 'per_km_car' => 18, 'min_negotiate_fee' => 30,
+            'per_km_motorcycle' => 10, 'per_km_car' => 18,
             'is_active' => true, 'sort_order' => 1,
         ]);
         $booking = Booking::create([

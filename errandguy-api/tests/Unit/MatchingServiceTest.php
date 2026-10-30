@@ -31,7 +31,7 @@ class MatchingServiceTest extends TestCase
             'slug' => 'delivery', 'name' => 'Delivery', 'description' => 'Deliver',
             'icon_name' => 'Package', 'base_fee' => 50.00, 'per_km_walk' => 15.00,
             'per_km_bicycle' => 12.00, 'per_km_motorcycle' => 10.00, 'per_km_car' => 18.00,
-            'min_negotiate_fee' => 30.00, 'is_active' => true, 'sort_order' => 1,
+            'is_active' => true, 'sort_order' => 1,
         ]);
 
         $this->booking = Booking::create([
@@ -58,6 +58,7 @@ class MatchingServiceTest extends TestCase
         $runner = User::factory()->create(['role' => 'runner', 'status' => 'active']);
         RunnerProfile::create([
             'user_id' => $runner->id,
+            'vehicle_type' => 'motorcycle',
             'verification_status' => 'approved',
             'is_online' => true,
             'current_lat' => 14.6000,
@@ -75,6 +76,7 @@ class MatchingServiceTest extends TestCase
         $runner = User::factory()->create(['role' => 'runner', 'status' => 'active']);
         RunnerProfile::create([
             'user_id' => $runner->id,
+            'vehicle_type' => 'motorcycle',
             'verification_status' => 'approved',
             'is_online' => false,
             'current_lat' => 14.6000,
@@ -91,6 +93,7 @@ class MatchingServiceTest extends TestCase
         $runner = User::factory()->create(['role' => 'runner', 'status' => 'active']);
         RunnerProfile::create([
             'user_id' => $runner->id,
+            'vehicle_type' => 'motorcycle',
             'verification_status' => 'pending',
             'is_online' => true,
             'current_lat' => 14.6000,
@@ -105,9 +108,12 @@ class MatchingServiceTest extends TestCase
     public function test_does_not_match_a_booking_to_its_own_customer(): void
     {
         // The booking's customer is ALSO an online, approved runner right at the
-        // pickup. They must never be matched to their own errand (self-match).
+        // pickup (and in runner mode). They must never be matched to their own
+        // errand (self-match).
+        User::whereKey($this->booking->customer_id)->update(['role' => 'runner']);
         RunnerProfile::create([
             'user_id' => $this->booking->customer_id,
+            'vehicle_type' => 'motorcycle',
             'verification_status' => 'approved', 'is_online' => true,
             'current_lat' => 14.6000, 'current_lng' => 120.9850, 'preferred_types' => [],
         ]);
@@ -117,15 +123,18 @@ class MatchingServiceTest extends TestCase
 
     public function test_self_customer_runner_is_skipped_for_a_real_runner_even_if_closer(): void
     {
-        // Customer-as-runner sits closer than the real runner...
+        // Customer-as-runner (in runner mode) sits closer than the real runner...
+        User::whereKey($this->booking->customer_id)->update(['role' => 'runner']);
         RunnerProfile::create([
             'user_id' => $this->booking->customer_id,
+            'vehicle_type' => 'motorcycle',
             'verification_status' => 'approved', 'is_online' => true,
             'current_lat' => 14.5996, 'current_lng' => 120.9843, 'preferred_types' => [],
         ]);
         $other = User::factory()->create(['role' => 'runner', 'status' => 'active']);
         RunnerProfile::create([
             'user_id' => $other->id,
+            'vehicle_type' => 'motorcycle',
             'verification_status' => 'approved', 'is_online' => true,
             'current_lat' => 14.6000, 'current_lng' => 120.9850, 'preferred_types' => [],
         ]);
@@ -141,6 +150,7 @@ class MatchingServiceTest extends TestCase
         $runner = User::factory()->create(['role' => 'runner', 'status' => 'active']);
         RunnerProfile::create([
             'user_id' => $runner->id,
+            'vehicle_type' => 'motorcycle',
             'verification_status' => 'approved',
             'is_online' => true,
             'current_lat' => 10.0000, // Very far away
@@ -157,6 +167,7 @@ class MatchingServiceTest extends TestCase
         $nearRunner = User::factory()->create(['role' => 'runner', 'status' => 'active']);
         RunnerProfile::create([
             'user_id' => $nearRunner->id,
+            'vehicle_type' => 'motorcycle',
             'verification_status' => 'approved',
             'is_online' => true,
             'current_lat' => 14.6000, // Very close
@@ -168,6 +179,7 @@ class MatchingServiceTest extends TestCase
         $farRunner = User::factory()->create(['role' => 'runner', 'status' => 'active']);
         RunnerProfile::create([
             'user_id' => $farRunner->id,
+            'vehicle_type' => 'motorcycle',
             'verification_status' => 'approved',
             'is_online' => true,
             'current_lat' => 14.6100, // Farther
@@ -180,43 +192,12 @@ class MatchingServiceTest extends TestCase
         $this->assertEquals($nearRunner->id, $result->user_id);
     }
 
-    public function test_broadcast_returns_eligible_runners_without_touching_expiry(): void
-    {
-        $runner = User::factory()->create(['role' => 'runner', 'status' => 'active']);
-        RunnerProfile::create([
-            'user_id' => $runner->id,
-            'verification_status' => 'approved',
-            'is_online' => true,
-            'current_lat' => 14.6000,
-            'current_lng' => 120.9850,
-            'preferred_types' => [],
-        ]);
-
-        // The create path is the single source of truth for the expiry. It is
-        // already set (from config) before broadcasting runs, so broadcasting
-        // must leave it untouched — clobbering it with its own value used to
-        // contradict the config, the offer payload, and the expire job.
-        $expiry = now()->addMinutes(5);
-        $this->booking->update(['negotiate_expires_at' => $expiry]);
-
-        $runners = $this->service->broadcastToRunners($this->booking->id);
-
-        $this->assertTrue($runners->contains(fn ($r) => $r->user_id === $runner->id));
-        $this->booking->refresh();
-        $this->assertNotNull($this->booking->negotiate_expires_at);
-        $this->assertEqualsWithDelta(
-            $expiry->timestamp,
-            $this->booking->negotiate_expires_at->timestamp,
-            1,
-            'broadcastToRunners must not overwrite the create-path expiry',
-        );
-    }
-
     public function test_filters_runners_by_preferred_types(): void
     {
         $runner = User::factory()->create(['role' => 'runner', 'status' => 'active']);
         RunnerProfile::create([
             'user_id' => $runner->id,
+            'vehicle_type' => 'motorcycle',
             'verification_status' => 'approved',
             'is_online' => true,
             'current_lat' => 14.6000,
@@ -239,6 +220,7 @@ class MatchingServiceTest extends TestCase
         $runner = User::factory()->create(['role' => 'runner', 'status' => 'active']);
         RunnerProfile::create([
             'user_id' => $runner->id, 'verification_status' => 'approved', 'is_online' => true,
+            'vehicle_type' => 'motorcycle',
             'current_lat' => 14.6000, 'current_lng' => 120.9850,
             'preferred_types' => ['purchase'],
         ]);
@@ -248,7 +230,7 @@ class MatchingServiceTest extends TestCase
                 'slug' => $slug, 'name' => ucfirst($slug), 'description' => $slug,
                 'icon_name' => 'X', 'base_fee' => 50.00, 'per_km_walk' => 15.00,
                 'per_km_bicycle' => 12.00, 'per_km_motorcycle' => 10.00, 'per_km_car' => 18.00,
-                'min_negotiate_fee' => 30.00, 'is_active' => false, 'sort_order' => 9,
+                'is_active' => false, 'sort_order' => 9,
             ]);
 
             return tap($this->booking->replicate(), function (Booking $b) use ($type, $slug) {
@@ -266,5 +248,98 @@ class MatchingServiceTest extends TestCase
 
         // …and the delivery booking from setUp is not this runner's type.
         $this->assertNull($this->service->findRunner($this->booking->id));
+    }
+
+    /** An online, approved runner on a motorcycle at the pickup, unless overridden. */
+    private function runner(array $profile = [], array $user = []): User
+    {
+        $runner = User::factory()->create(array_merge(['role' => 'runner', 'status' => 'active'], $user));
+        RunnerProfile::create(array_merge([
+            'user_id' => $runner->id,
+            'verification_status' => 'approved',
+            'is_online' => true,
+            'vehicle_type' => 'motorcycle',
+            'current_lat' => 14.6000,
+            'current_lng' => 120.9850,
+            'last_location_at' => now(),
+            'preferred_types' => [],
+        ], $profile));
+
+        return $runner;
+    }
+
+    public function test_a_car_booking_is_only_offered_to_a_car(): void
+    {
+        // The nearer runners ride smaller vehicles; the customer paid the car
+        // price, so only the car runner further out qualifies.
+        $this->runner(['vehicle_type' => 'walk', 'current_lat' => 14.5996]);
+        $this->runner(['vehicle_type' => 'bicycle', 'current_lat' => 14.5997]);
+        $this->runner(['vehicle_type' => 'motorcycle', 'current_lat' => 14.5998]);
+        $car = $this->runner(['vehicle_type' => 'car', 'current_lat' => 14.6100]);
+
+        $this->booking->update(['vehicle_type_rate' => 'car']);
+
+        $this->assertSame($car->id, $this->service->findRunner($this->booking->id)?->user_id);
+    }
+
+    public function test_a_bigger_vehicle_may_take_a_smaller_booking_but_not_the_reverse(): void
+    {
+        $walker = $this->runner(['vehicle_type' => 'walk', 'current_lat' => 14.5996]);
+        $car = $this->runner(['vehicle_type' => 'car', 'current_lat' => 14.6100]);
+
+        // Motorcycle fare: the nearer walker can't serve it, the car can.
+        $this->assertSame($car->id, $this->service->findRunner($this->booking->id)?->user_id);
+
+        // Walking fare: anyone can, so the nearest wins.
+        $this->booking->update(['vehicle_type_rate' => 'walk']);
+        $this->assertSame($walker->id, $this->service->findRunner($this->booking->id)?->user_id);
+    }
+
+    public function test_a_runner_with_no_vehicle_on_file_counts_as_walking(): void
+    {
+        $this->runner(['vehicle_type' => null]);
+
+        $this->assertNull($this->service->findRunner($this->booking->id));
+
+        $this->booking->update(['vehicle_type_rate' => 'walk']);
+        $this->assertNotNull($this->service->findRunner($this->booking->id));
+    }
+
+    public function test_runners_this_errand_was_already_offered_to_are_skipped(): void
+    {
+        $declined = $this->runner(['current_lat' => 14.5996]);
+        $ignored = $this->runner(['current_lat' => 14.5997]);
+        $fresh = $this->runner(['current_lat' => 14.6100]);
+
+        $this->booking->update(['offered_runner_ids' => [$declined->id, $ignored->id]]);
+
+        $this->assertSame($fresh->id, $this->service->findRunner($this->booking->id)?->user_id);
+    }
+
+    public function test_a_suspended_runner_or_one_in_customer_mode_is_never_matched(): void
+    {
+        $this->runner(user: ['status' => 'suspended']);
+        $this->runner(user: ['role' => 'customer']);
+
+        $this->assertNull($this->service->findRunner($this->booking->id));
+    }
+
+    public function test_a_waiting_runner_whose_phone_locked_still_gets_offers_for_15_minutes(): void
+    {
+        $locked = $this->runner(['last_location_at' => now()->subMinutes(14)]);
+        $this->assertSame($locked->id, $this->service->findRunner($this->booking->id)?->user_id);
+
+        RunnerProfile::where('user_id', $locked->id)->update(['last_location_at' => now()->subMinutes(16)]);
+        $this->assertNull($this->service->findRunner($this->booking->id));
+    }
+
+    public function test_the_runners_working_radius_does_not_limit_matching(): void
+    {
+        // ~5 km from the pickup — outside the runner's own 1 km "working area"
+        // setting, inside the 10 km matching radius. Only the matching radius
+        // counts.
+        $far = $this->runner(['current_lat' => 14.6450, 'working_area_radius' => 1000]);
+
+        $this->assertSame($far->id, $this->service->findRunner($this->booking->id)?->user_id);
     }
 }

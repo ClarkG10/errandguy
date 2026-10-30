@@ -5,7 +5,7 @@ namespace App\Jobs;
 use App\Events\BookingCancelled;
 use App\Models\Booking;
 use App\Models\BookingStatusLog;
-use App\Models\SystemConfig;
+use App\Services\BookingService;
 use Illuminate\Bus\Queueable;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Bus\Dispatchable;
@@ -31,8 +31,6 @@ class AutoCancelBookingJob implements ShouldQueue
      */
     public function handle(): bool
     {
-        $timeoutMinutes = (int) SystemConfig::getValue('auto_cancel_timeout_minutes', '30');
-
         // Decide + write under a row lock. Previously the status was read
         // unlocked and the cancel UPDATE had no status predicate, so a runner
         // who accepted in the window between the read and the write was
@@ -45,7 +43,7 @@ class AutoCancelBookingJob implements ShouldQueue
         // here as 'refunded' and must not be told a second time. (A2)
         $paymentStatusBefore = null;
 
-        $didCancel = DB::transaction(function () use ($timeoutMinutes, &$paymentStatusBefore) {
+        $didCancel = DB::transaction(function () use (&$paymentStatusBefore) {
             $booking = Booking::whereKey($this->bookingId)->lockForUpdate()->first();
 
             if (!$booking) {
@@ -58,11 +56,14 @@ class AutoCancelBookingJob implements ShouldQueue
                 return false;
             }
 
-            $createdMinutesAgo = $booking->created_at->diffInMinutes(now());
-            if ($createdMinutesAgo < $timeoutMinutes) {
+            // The same deadline the matching ladder searches until: creation +
+            // auto_cancel_timeout for an immediate errand, the end of the
+            // matching window for a scheduled one. Cancelling a scheduled
+            // errand earlier would kill it mid-search.
+            $deadline = BookingService::matchingDeadline($booking);
+            if (now()->lt($deadline)) {
                 // Not timed out yet — re-dispatch for the remaining window.
-                $remainingSeconds = ($timeoutMinutes - $createdMinutesAgo) * 60;
-                self::dispatch($this->bookingId)->delay(now()->addSeconds((int) $remainingSeconds));
+                self::dispatch($this->bookingId)->delay($deadline);
                 return false;
             }
 
@@ -78,7 +79,7 @@ class AutoCancelBookingJob implements ShouldQueue
                 'booking_id' => $booking->id,
                 'status' => 'cancelled',
                 'changed_by' => null,
-                'note' => "Auto-cancelled after {$timeoutMinutes} minutes with no runner",
+                'note' => 'Auto-cancelled: no runner found in time',
             ]);
 
             return true;
@@ -88,9 +89,9 @@ class AutoCancelBookingJob implements ShouldQueue
         // not skip this). Nobody was ever matched, so return any money collected
         // up front. refundUnfulfilled is idempotent and takes its own lock.
         if ($didCancel) {
-            app(\App\Services\BookingService::class)
+            app(BookingService::class)
                 ->refundUnfulfilled($this->bookingId, 'Auto-cancelled: no runner found within timeout');
-            Log::info("Booking {$this->bookingId} auto-cancelled after {$timeoutMinutes} minutes");
+            Log::info("Booking {$this->bookingId} auto-cancelled: no runner found in time");
 
             // Broadcast the cancellation so the customer's booking.{id} channel
             // drops them off the "finding a runner" screen live (+ the cancel

@@ -7,11 +7,15 @@
  * dashboard paints from on its first frame. So these tests pin, per section:
  *   • the exact useQuery cache key string (peak-hours carries NO userId — the
  *     dashboard nudge and the Demand screen deliberately share one entry),
- *   • the exact value shape (an OFFLINE runner's empty offer list is SEEDED,
+ *   • the exact value shape (a genuine "no current errand" is SEEDED as null,
  *     not skipped),
  *   • the TTL,
  * and pin that a successful aggregate costs ONE request while any failure
- * degrades to precisely the six per-endpoint seeds that shipped before it.
+ * degrades to precisely the five per-endpoint seeds.
+ *
+ * The open-offers list is gone (every offer is a direct one), so its section,
+ * its seed and its endpoint are pinned as never touched — including when an
+ * older server still sends `available_errands`.
  */
 import { preloadRunnerEssentials } from '../preload.service';
 import { CacheTTL } from '../cache.service';
@@ -41,7 +45,6 @@ jest.mock('../api', () => ({
 const mockGetRunnerProfile = jest.fn();
 const mockGetEarnings = jest.fn();
 const mockGetErrandHistory = jest.fn();
-const mockGetAvailableErrands = jest.fn();
 const mockGetCurrentErrand = jest.fn();
 
 jest.mock('../runner.service', () => ({
@@ -49,7 +52,6 @@ jest.mock('../runner.service', () => ({
     getRunnerProfile: (...a: unknown[]) => mockGetRunnerProfile(...a),
     getEarnings: (...a: unknown[]) => mockGetEarnings(...a),
     getErrandHistory: (...a: unknown[]) => mockGetErrandHistory(...a),
-    getAvailableErrands: (...a: unknown[]) => mockGetAvailableErrands(...a),
     getCurrentErrand: (...a: unknown[]) => mockGetCurrentErrand(...a),
     getEarningsHistory: jest.fn(() => Promise.resolve({ data: { data: [] } })),
     getPayoutHistory: jest.fn(() => Promise.resolve({ data: { data: [] } })),
@@ -104,7 +106,6 @@ const PROFILE = { id: 'rp-1', is_online: true, rating: 4.9 };
 const EARNINGS_TODAY = { total_earnings: 480, total_tips: 30, completed_count: 3 };
 const EARNINGS_WEEK = { total_earnings: 3120, total_tips: 210, completed_count: 19 };
 const RECENT = [{ id: 'b1' }, { id: 'b2' }, { id: 'b3' }];
-const OFFERS = [{ id: 'offer-1' }];
 const CURRENT = { id: 'b-live', status: 'in_transit' };
 const PEAK = { days: 30, grid: Array.from({ length: 7 }, () => new Array(24).fill(0)) };
 
@@ -115,7 +116,6 @@ const aggregate = (overrides: Record<string, unknown> = {}) => ({
       earnings_today: EARNINGS_TODAY,
       earnings_week: EARNINGS_WEEK,
       recent_errands: RECENT,
-      available_errands: OFFERS,
       current_errand: CURRENT,
       peak_hours: PEAK,
       ...overrides,
@@ -148,7 +148,6 @@ beforeEach(() => {
     Promise.resolve({ data: { data: period === 'today' ? EARNINGS_TODAY : EARNINGS_WEEK } }),
   );
   mockGetErrandHistory.mockResolvedValue({ data: { data: RECENT } });
-  mockGetAvailableErrands.mockResolvedValue({ data: { data: OFFERS } });
   mockGetCurrentErrand.mockResolvedValue({ data: { data: CURRENT } });
 });
 
@@ -160,9 +159,8 @@ describe('preloadRunnerEssentials — /runner/home aggregate fan-out', () => {
     expect(mockApiGet).toHaveBeenCalledTimes(1);
     expect(mockApiGet.mock.calls[0][0]).toBe('/runner/home');
 
-    // The six above-the-fold requests this aggregate stands in for.
+    // The five above-the-fold requests this aggregate stands in for.
     expect(mockGetRunnerProfile).not.toHaveBeenCalled();
-    expect(mockGetAvailableErrands).not.toHaveBeenCalled();
     expect(mockGetCurrentErrand).not.toHaveBeenCalled();
     expect(mockGetEarnings).not.toHaveBeenCalledWith('today');
     expect(mockGetEarnings).not.toHaveBeenCalledWith('week');
@@ -188,10 +186,6 @@ describe('preloadRunnerEssentials — /runner/home aggregate fan-out', () => {
       ttl: CacheTTL.MEDIUM,
     });
     expect(w[`q:runner:errands:recent:${USER}`]).toEqual({ value: RECENT, ttl: CacheTTL.LONG });
-    expect(w[`q:runner:errand:available:${USER}`]).toEqual({
-      value: OFFERS,
-      ttl: CacheTTL.SHORT,
-    });
     expect(w[`q:runner:errand:current:${USER}`]).toEqual({
       value: CURRENT,
       ttl: CacheTTL.SHORT,
@@ -208,17 +202,20 @@ describe('preloadRunnerEssentials — /runner/home aggregate fan-out', () => {
     expect(w[`q:runner:peak-hours:30:${USER}`]).toBeUndefined();
   });
 
-  it('seeds an OFFLINE runner’s empty offer list rather than skipping the key', async () => {
-    mockApiGet.mockResolvedValue(aggregate({ available_errands: [] }));
-
+  /**
+   * During the rollout the server may still send the retired section. It is
+   * never written anywhere — and never REQUIRED either: the default aggregate
+   * above has no such section and still costs one request, because requiring
+   * it would push every runner onto the fallback once the server drops it.
+   */
+  it('ignores a retired available_errands section from an older server', async () => {
+    mockApiGet.mockResolvedValue(aggregate({ available_errands: [{ id: 'offer-1' }] }));
     await preloadRunnerEssentials(USER);
+    await flush();
 
-    // "No offers" is the correct cold state for an offline runner; a missing
-    // key just costs the screen the round trip this endpoint exists to save.
-    expect(writes()[`q:runner:errand:available:${USER}`]).toEqual({
-      value: [],
-      ttl: CacheTTL.SHORT,
-    });
+    expect(Object.keys(writes()).some((k) => k.includes(':available'))).toBe(false);
+    expect(mockGetRunnerProfile).not.toHaveBeenCalled();
+    expect(writes()[`q:runner:profile:${USER}`]).toEqual({ value: PROFILE, ttl: CacheTTL.LONG });
   });
 
   it('caches a genuine "no current errand" as null rather than skipping the key', async () => {
@@ -244,7 +241,7 @@ describe('preloadRunnerEssentials — /runner/home aggregate fan-out', () => {
     // Pinning junk there would flatten the Demand heatmap for the whole
     // freshness window; a miss makes the screen fetch normally.
     expect(w['q:runner:peak-hours:30']).toBeUndefined();
-    // Peak-hours is a bonus section — it must not cost us the other six.
+    // Peak-hours is a bonus section — it must not cost us the other five.
     expect(w[`q:runner:profile:${USER}`].value).toEqual(PROFILE);
     expect(mockGetRunnerProfile).not.toHaveBeenCalled();
   });
@@ -256,7 +253,6 @@ describe('preloadRunnerEssentials — fallback when the aggregate is unusable', 
     expect(mockGetEarnings).toHaveBeenCalledWith('today');
     expect(mockGetEarnings).toHaveBeenCalledWith('week');
     expect(mockGetErrandHistory).toHaveBeenCalledWith({ page: 1, per_page: 3 });
-    expect(mockGetAvailableErrands).toHaveBeenCalledTimes(1);
     expect(mockGetCurrentErrand).toHaveBeenCalledTimes(1);
 
     const w = writes();
@@ -266,14 +262,11 @@ describe('preloadRunnerEssentials — fallback when the aggregate is unusable', 
       ttl: CacheTTL.MEDIUM,
     });
     expect(w[`q:runner:errands:recent:${USER}`]).toEqual({ value: RECENT, ttl: CacheTTL.LONG });
-    expect(w[`q:runner:errand:available:${USER}`]).toEqual({
-      value: OFFERS,
-      ttl: CacheTTL.SHORT,
-    });
     expect(w[`q:runner:errand:current:${USER}`]).toEqual({
       value: CURRENT,
       ttl: CacheTTL.SHORT,
     });
+    expect(Object.keys(w).some((k) => k.includes(':available'))).toBe(false);
   };
 
   it('degrades to the per-endpoint seeds when the request fails', async () => {
@@ -297,7 +290,7 @@ describe('preloadRunnerEssentials — fallback when the aggregate is unusable', 
   it.each([
     ['a missing section', 'current_errand'],
     ['a null profile', 'profile'],
-    ['a null offer list', 'available_errands'],
+    ['a null recent-errands list', 'recent_errands'],
     ['a null earnings object', 'earnings_week'],
   ])('degrades on a partial payload: %s', async (_label, field) => {
     const payload = aggregate();
@@ -319,7 +312,6 @@ describe('preloadRunnerEssentials — fallback when the aggregate is unusable', 
     mockGetRunnerProfile.mockRejectedValue(new Error('offline'));
     mockGetEarnings.mockRejectedValue(new Error('offline'));
     mockGetErrandHistory.mockRejectedValue(new Error('offline'));
-    mockGetAvailableErrands.mockRejectedValue(new Error('offline'));
     mockGetCurrentErrand.mockRejectedValue(new Error('offline'));
 
     await expect(preloadRunnerEssentials(USER)).resolves.toBeUndefined();

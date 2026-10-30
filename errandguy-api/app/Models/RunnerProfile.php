@@ -140,6 +140,18 @@ class RunnerProfile extends Model
         return $query->where('is_online', true);
     }
 
+    /**
+     * Take a runner offline (and close their shift clock) so matching stops
+     * offering them work. Used when they are suspended or leave runner mode.
+     * Returns whether they were online.
+     */
+    public static function switchOffline(string $userId): bool
+    {
+        return static::where('user_id', $userId)
+            ->where('is_online', true)
+            ->update(['is_online' => false, 'online_since' => null]) > 0;
+    }
+
     public function scopeApproved($query)
     {
         return $query->where('verification_status', 'approved');

@@ -15,15 +15,16 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 
 /**
- * Re-matches fixed-price bookings whose matched runner never accepted in time.
+ * Re-matches bookings whose matched runner never accepted in time.
  *
  * MatchRunnerJob assigns the nearest runner and sets status='matched'. If that
  * runner ignores the offer, nothing previously recovered the booking (only an
  * explicit decline did), so it stranded on "Runner Found" forever while the
  * customer's money sat locked (SYSTEM_AUDIT H12). This sweep resets such
- * bookings to 'pending' and re-dispatches matching, excluding the unresponsive
- * runner so a different one is tried. The created_at-based AutoCancelBookingJob
- * still bounds the total wait, so this cannot loop forever.
+ * bookings to 'pending' and re-dispatches matching. The unresponsive runner is
+ * already on the booking's offered_runner_ids, so they are never offered it
+ * again, and MatchRunnerJob's per-round offer cap ends the search as "no
+ * runner" (with a refund) — so this cannot bounce an errand forever.
  *
  * Runs on a schedule (routes/console.php) rather than as a per-booking delayed
  * job so a dropped/never-run delayed job can't silently strand a booking.
@@ -40,7 +41,6 @@ class ExpireStaleMatchesJob implements ShouldQueue
         $cutoff = now()->subSeconds($timeoutSeconds);
 
         $stale = Booking::where('status', 'matched')
-            ->where('pricing_mode', 'fixed')
             ->whereNotNull('matched_at')
             ->where('matched_at', '<', $cutoff)
             ->limit(100)

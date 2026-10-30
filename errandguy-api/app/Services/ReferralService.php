@@ -212,7 +212,7 @@ class ReferralService
      * but excluded from payout — so referral rewards can never be cashed out
      * as real money. `balance_after` records the bonus balance so the ledger
      * stays honest about which bucket moved. Assumes a surrounding DB
-     * transaction (the row lock idiom mirrors handleCompletion).
+     * transaction (the row lock idiom mirrors BookingSettlementService::settleCompletion).
      */
     private function creditBonus(string $userId, float $amount, string $referenceId, string $description): void
     {

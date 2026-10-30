@@ -27,9 +27,6 @@ export interface RunnerProfile {
   total_errands: number;
   total_earnings: number;
   preferred_types: string[];
-  working_area_lat: number | null;
-  working_area_lng: number | null;
-  working_area_radius: number;
   bank_name: string | null;
   bank_account_number: string | null;
   ewallet_number: string | null;

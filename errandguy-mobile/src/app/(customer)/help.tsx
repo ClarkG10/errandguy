@@ -63,7 +63,7 @@ const FAQS: FAQ[] = [
   {
     question: 'How is the price calculated?',
     answer:
-      'The fare = base fee + per-km distance fee + a small vehicle premium (motorcycle/car). Tipping is optional. For Negotiable errands you set your own offer; runners can accept or counter.',
+      'The fare = base fee + per-km distance fee + a small vehicle premium (motorcycle/car). Every price is fixed: you see the full fare before you confirm, and a runner can only accept it — no bidding, no counter-offers. Tipping is optional.',
   },
   {
     question: 'Can I track my runner live?',

@@ -10,7 +10,6 @@ import {
   Car,
   Wallet,
   ListChecks,
-  MapPinned,
   Bell,
   LifeBuoy,
   FileText,
@@ -58,7 +57,7 @@ interface MenuItem {
   /** Optional destructive accent for the label (e.g. red "Delete"). */
   color?: string;
   /** Muted current-value preview shown before the chevron
-   *  (e.g. "Motorcycle", "12 km", "Verified"). */
+   *  (e.g. "Motorcycle", "Verified"). */
   preview?: string;
   /** Preview text tone. Defaults to textTertiary (AA-legible); an
    *  earning-blocking status can pass a warning/danger *Dark rung. */
@@ -349,10 +348,6 @@ export default function RunnerProfileScreen() {
   const vehiclePreview = runnerProfile?.vehicle_type
     ? VEHICLE_LABELS[runnerProfile.vehicle_type]
     : undefined;
-  const radiusPreview =
-    runnerProfile?.working_area_radius != null
-      ? `${(Number(runnerProfile.working_area_radius) / 1000).toFixed(1)} km`
-      : undefined;
   const documentsPreview = runnerProfile?.verification_status
     ? VERIFICATION_LABELS[runnerProfile.verification_status]
     : undefined;
@@ -384,15 +379,6 @@ export default function RunnerProfileScreen() {
     },
     { label: 'Payout Settings', icon: Wallet, route: '/(runner)/payout' },
     { label: 'Preferred Errand Types', icon: ListChecks, route: '/(runner)/settings/preferred-types' },
-    {
-      // Named for what the screen actually controls. There is no stored
-      // "area" — the server measures working_area_radius from the runner's
-      // live GPS, so the honest label is the radius, not an area.
-      label: 'Working Radius',
-      icon: MapPinned,
-      route: '/(runner)/settings/working-areas',
-      preview: radiusPreview,
-    },
   ];
 
   const settingsMenu: MenuItem[] = [

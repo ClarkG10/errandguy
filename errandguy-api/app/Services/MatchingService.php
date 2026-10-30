@@ -2,18 +2,33 @@
 
 namespace App\Services;
 
+use App\Enums\BookingStatus;
 use App\Models\Booking;
 use App\Models\ErrandType;
 use App\Models\RunnerProfile;
 use App\Models\SystemConfig;
+use App\Support\CashDebtPolicy;
+use App\Support\VehicleClass;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\Log;
 
 class MatchingService
 {
     /**
+     * How old a waiting runner's last location may be and still get offers.
+     * The app stops sending location while the phone is locked, so a runner
+     * waiting for work goes quiet within minutes even though they are online —
+     * and the offer push is exactly what wakes them. Runners silent for longer
+     * than this are switched offline by errandguy:expire-stale-runner-presence.
+     */
+    public const LOCATION_FRESHNESS_MINUTES = 15;
+
+    /**
      * Find the best available runner for a booking.
      * Returns the matched runner profile or null.
+     *
+     * Never returns a runner the booking was already offered to (they declined,
+     * let it lapse, or were taken off it), nor $excludeUserId.
      *
      * @param  float|null  $radiusOverrideKm  When set, ignores SystemConfig
      *         and uses this radius instead. Used by retry-match to
@@ -26,14 +41,20 @@ class MatchingService
         $radiusKm = $radiusOverrideKm
             ?? (float) SystemConfig::getValue('matching_radius_km', '10');
 
+        $excludeUserIds = $booking->offeredRunnerIds();
+        if ($excludeUserId !== null) {
+            $excludeUserIds[] = $excludeUserId;
+        }
+
         $runners = $this->getEligibleRunners(
-            $booking->pickup_lat,
-            $booking->pickup_lng,
+            (float) $booking->pickup_lat,
+            (float) $booking->pickup_lng,
             $radiusKm,
             $booking->errand_type_id,
-            $excludeUserId,
+            array_values(array_unique($excludeUserIds)),
             excludeCustomerId: $booking->customer_id,
             isCashBooking: $booking->payment_method === 'cash',
+            bookedVehicle: $booking->vehicle_type_rate,
         );
 
         if ($runners->isEmpty()) {
@@ -46,94 +67,68 @@ class MatchingService
     }
 
     /**
-     * Broadcast a negotiate-mode booking to nearby eligible runners.
-     */
-    public function broadcastToRunners(string $bookingId): Collection
-    {
-        $booking = Booking::with('errandType')->findOrFail($bookingId);
-
-        $radiusKm = (float) SystemConfig::getValue('matching_radius_km', '10');
-
-        // Broadcast offers to ALL eligible runners, so use a larger cap than
-        // the findRunner path (which only needs the nearest one). Still bounded
-        // so a dense city can't return an unbounded set. (P5)
-        $runners = $this->getEligibleRunners(
-            $booking->pickup_lat,
-            $booking->pickup_lng,
-            $radiusKm,
-            $booking->errand_type_id,
-            limit: 200,
-            excludeCustomerId: $booking->customer_id,
-            isCashBooking: $booking->payment_method === 'cash',
-        );
-
-        // NOTE: negotiate_expires_at is deliberately NOT set here. The create
-        // path (BookingController) is the single source of truth — it sets the
-        // expiry from the `negotiate_timeout_minutes` config, anchored to the
-        // broadcast time, and schedules ExpireNegotiateBookingJob for the same
-        // instant. Overwriting it here (with a hardcoded 30m) contradicted the
-        // config value, the offer payload, the client countdown, and the
-        // runner-accept guard. Broadcasting is a pure read of eligible runners.
-
-        Log::info("Broadcasting booking {$bookingId} to {$runners->count()} runners");
-
-        return $runners;
-    }
-
-    /**
      * Query eligible online runners within radius, sorted by score.
-     */
-    /**
-     * @param  int  $limit  Max runners to hydrate. The findRunner path only
-     *         needs the nearest (->first()), so it takes the tight default; the
-     *         broadcast path offers to ALL eligible runners, so it passes a
-     *         larger cap. Either way the set is bounded — cost no longer scales
-     *         with idle-online-runner density.
+     *
+     * @param  list<string>  $excludeUserIds  Runners never to offer this errand to.
+     * @param  int  $limit  Max runners to hydrate. Only the nearest is used
+     *         (->first()), so the set is bounded — cost no longer scales with
+     *         idle-online-runner density.
      */
     private function getEligibleRunners(
         float $lat,
         float $lng,
         float $radiusKm,
         string $errandTypeId,
-        ?string $excludeUserId = null,
+        array $excludeUserIds = [],
         int $limit = 50,
         ?string $excludeCustomerId = null,
-        bool $isCashBooking = false
+        bool $isCashBooking = false,
+        ?string $bookedVehicle = null,
     ): Collection {
+        $allowedVehicles = VehicleClass::eligibleRunnerVehicles($bookedVehicle);
+
         $runners = RunnerProfile::where('is_online', true)
             ->where('verification_status', 'approved')
-            // Skip a specific runner (e.g. the one who just let a matched
-            // offer time out) so a re-match tries someone else first.
-            ->when($excludeUserId, fn ($q) => $q->where('user_id', '!=', $excludeUserId))
+            // Skip every runner this errand was already offered to (and the one
+            // just found busy mid-race), so a re-match always tries someone new.
+            ->when($excludeUserIds !== [], fn ($q) => $q->whereNotIn('user_id', $excludeUserIds))
             // Never match a booking to its OWN customer. A user who is both the
             // customer here and an online, approved runner could otherwise be
             // matched/offered their own errand (reachable via the re-match paths
             // after a role switch) and settle it — paying as customer, collecting
             // the runner payout.
             ->when($excludeCustomerId, fn ($q) => $q->where('user_id', '!=', $excludeCustomerId))
-            // Cash-debt ceiling: don't dispatch CASH work to a runner who
-            // already owes more platform commission than the limit allows. A
-            // cash errand settles by debiting their wallet, so offering it would
-            // only deepen a debt we may never collect — and accept() refuses it
-            // anyway (CashDebtPolicy is shared by both), so the offer would be a
-            // guaranteed dead end that also burns the dispatch slot. Prepaid and
-            // wallet errands are unaffected: those CREDIT the runner, which is
-            // how they climb back above the line.
-            ->when(
-                $isCashBooking && \App\Support\CashDebtPolicy::enabled(),
-                fn ($q) => $q->whereHas(
-                    'user',
-                    fn ($u) => $u->where('wallet_balance', '>', -\App\Support\CashDebtPolicy::limit()),
-                ),
-            )
+            // The customer paid for this vehicle (PricingService prices per
+            // rung), so only a runner whose vehicle is at least that rung may
+            // take it — never a walker on a car fare. Walking errands (and older
+            // bookings with no vehicle recorded) take anyone.
+            ->when($allowedVehicles !== null, fn ($q) => $q->whereIn('vehicle_type', $allowedVehicles))
+            ->whereHas('user', function ($user) use ($isCashBooking) {
+                // Only an active account in runner mode can answer an offer: a
+                // suspended runner is locked out of the app, and one who
+                // switched to customer mode has no runner screen to accept on.
+                $user->where('status', 'active')->where('role', 'runner');
+
+                // Cash-debt ceiling: don't dispatch CASH work to a runner who
+                // already owes more platform commission than the limit allows. A
+                // cash errand settles by debiting their wallet, so offering it
+                // would only deepen a debt we may never collect — and accept()
+                // refuses it anyway (CashDebtPolicy is shared by both), so the
+                // offer would be a guaranteed dead end that also burns the
+                // dispatch slot. Prepaid and wallet errands are unaffected: those
+                // CREDIT the runner, which is how they climb back above the line.
+                if ($isCashBooking && CashDebtPolicy::enabled()) {
+                    $user->where('wallet_balance', '>', -CashDebtPolicy::limit());
+                }
+            })
             ->whereNotNull('current_lat')
             ->whereNotNull('current_lng')
             // Cheap bounding-box prefilter so we don't haversine every
             // online runner in the country. ~111km per latitude degree;
             // longitude scales with cos(lat). We add a 25% safety margin
             // because the box is a square inscribing the search circle's
-            // outer edge \u2014 we'd otherwise clip nearby runners at the
-            // 45\u00b0 corners.
+            // outer edge — we'd otherwise clip nearby runners at the
+            // 45° corners.
             ->where(function ($q) use ($lat, $lng, $radiusKm) {
                 $latDelta = ($radiusKm * 1.25) / 111.0;
                 $cos = max(0.000001, cos(deg2rad($lat)));
@@ -141,18 +136,19 @@ class MatchingService
                 $q->whereBetween('current_lat', [$lat - $latDelta, $lat + $latDelta])
                   ->whereBetween('current_lng', [$lng - $lngDelta, $lng + $lngDelta]);
             })
-            // Reject runners whose last GPS ping is older than 5 minutes \u2014
-            // their phone is likely dead/in-tunnel and dispatching to them
-            // wastes the broadcast slot and frustrates the customer.
+            // A waiting runner's phone stops reporting location when it locks,
+            // so allow a position up to LOCATION_FRESHNESS_MINUTES old — the
+            // offer push wakes the phone. Older than that, the position is too
+            // stale to rank by distance.
             ->where(function ($q) {
-                $q->where('last_location_at', '>=', now()->subMinutes(5))
+                $q->where('last_location_at', '>=', now()->subMinutes(self::LOCATION_FRESHNESS_MINUTES))
                   ->orWhereNull('last_location_at'); // legacy rows; haversine still applies
             })
-            // Exclude runners who already hold an active errand. Without
-            // this they can be re-broadcast to and accidentally accept
-            // two errands in parallel.
+            // Exclude runners who already hold an offer or an active errand.
+            // Without this they can be re-offered and accidentally accept two
+            // errands in parallel.
             ->whereDoesntHave('user.runnerBookings', function ($q) {
-                $q->whereNotIn('status', ['pending', 'completed', 'cancelled', 'no_runner']);
+                $q->whereIn('status', BookingStatus::RUNNER_HELD);
             })
             ->with('user')
             // Rank nearest-first IN SQL and cap the hydrated set, instead of

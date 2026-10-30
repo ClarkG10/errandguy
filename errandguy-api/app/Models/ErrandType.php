@@ -66,7 +66,6 @@ class ErrandType extends Model
         'per_km_motorcycle',
         'per_km_car',
         'surcharge',
-        'min_negotiate_fee',
         'is_active',
         'sort_order',
     ];
@@ -81,7 +80,6 @@ class ErrandType extends Model
             'per_km_motorcycle' => 'decimal:2',
             'per_km_car' => 'decimal:2',
             'surcharge' => 'decimal:2',
-            'min_negotiate_fee' => 'decimal:2',
             'created_at' => 'datetime',
         ];
     }

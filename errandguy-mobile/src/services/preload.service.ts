@@ -96,10 +96,10 @@ export const prefetchQuery = seed;
 /**
  * Warm the runner errand-detail cache before navigating to
  * (runner)/errand/[id], so the screen paints from cache instead of a skeleton.
- * Generalizes the prefetch that previously existed ONLY on NegotiateOfferCard
- * to the genuinely-cold recent-errand rows (home) and History rows. Best-effort
- * + silent (fire-and-forget); the destination revalidates regardless, so there
- * is no correctness risk. Writes the exact key/shape errand/[id].tsx reads. (P24)
+ * Used by the genuinely-cold recent-errand rows (home) and History rows.
+ * Best-effort + silent (fire-and-forget); the destination revalidates
+ * regardless, so there is no correctness risk. Writes the exact key/shape
+ * errand/[id].tsx reads. (P24)
  */
 export function prefetchRunnerErrand(id: string): void {
   if (!id) return;
@@ -554,9 +554,12 @@ export async function preloadCustomerEssentials(userId: string) {
  *   earnings_today    ← GET /runner/earnings?period=today
  *   earnings_week     ← GET /runner/earnings?period=this_week
  *   recent_errands    ← GET /runner/errands/history?per_page=3
- *   available_errands ← GET /runner/errand/available   ([] when offline)
  *   current_errand    ← GET /runner/errand/current
  *   peak_hours        ← GET /runner/peak-hours?days=30
+ *
+ * There is no offers section any more: every offer is a direct one, raised by
+ * the offer modal, and the open-offers list it used to seed is gone. A server
+ * that still sends `available_errands` is simply not read.
  *
  * That parity is the whole point: seedRunnerHome writes these straight into
  * the per-section useQuery cache keys, so any drift would silently poison
@@ -571,7 +574,6 @@ export interface RunnerHomeAggregate {
   earnings_today: unknown;
   earnings_week: unknown;
   recent_errands: Booking[];
-  available_errands: Booking[];
   current_errand: Booking | null;
   peak_hours: { days: number; grid: number[][] } | null;
 }
@@ -640,15 +642,6 @@ const runnerAboveFoldSeeds = (userId: string): Array<() => Promise<unknown>> => 
     ),
   () =>
     seed(
-      ['runner', 'errand', 'available', userId],
-      async () => {
-        const r = await runnerService.getAvailableErrands();
-        return r.data?.data ?? r.data ?? [];
-      },
-      CacheTTL.SHORT,
-    ),
-  () =>
-    seed(
       ['runner', 'errand', 'current', userId],
       async () => {
         const r = await runnerService.getCurrentErrand();
@@ -678,7 +671,6 @@ const isUsableRunnerHomeAggregate = (payload: unknown): payload is RunnerHomeAgg
     isObject(h.earnings_today) &&
     isObject(h.earnings_week) &&
     Array.isArray(h.recent_errands) &&
-    Array.isArray(h.available_errands) &&
     'current_errand' in payload
   );
 };
@@ -686,7 +678,7 @@ const isUsableRunnerHomeAggregate = (payload: unknown): payload is RunnerHomeAgg
 /**
  * Seed every above-the-fold runner-dashboard cache from ONE request.
  *
- * The runner never got the treatment the customer side did: warm-up paid SIX
+ * The runner never got the treatment the customer side did: warm-up paid FIVE
  * separate authenticated GETs before the success curtain lifted, each a full
  * framework boot + Sanctum auth on Forge. GET /runner/home returns all of them
  * at once — plus peak-hours, which was never warmed at all — so warm-up is a
@@ -716,10 +708,6 @@ async function seedRunnerHome(userId: string): Promise<void> {
       // is what the hero reads — do not "fix" it to match the server.
       write(['runner', 'earnings', 'week', userId], home.earnings_week, CacheTTL.MEDIUM),
       write(['runner', 'errands', 'recent', userId], home.recent_errands, CacheTTL.LONG),
-      // An OFFLINE runner legitimately has no offers. Seed the empty list
-      // rather than skipping the key: "no offers" is the correct cold state,
-      // and a missing key costs the screen the round trip this saves.
-      write(['runner', 'errand', 'available', userId], home.available_errands, CacheTTL.SHORT),
       write(['runner', 'errand', 'current', userId], home.current_errand ?? null, CacheTTL.SHORT),
       // Shared across every runner — this key carries NO userId, because the
       // dashboard nudge and the Demand screen deliberately share one entry.
@@ -739,11 +727,11 @@ async function seedRunnerHome(userId: string): Promise<void> {
 export async function preloadRunnerEssentials(userId: string) {
   // Above-the-fold runner dashboard data — the ONLY set the interactive login
   // path awaits before the success curtain lifts (profile, today's + week's
-  // earnings, recent errands, available offers, current errand, peak hours).
+  // earnings, recent errands, current errand, peak hours).
   //
-  // What used to be six separate requests here is now ONE — seedRunnerHome
-  // fans GET /runner/home out into the same six cache keys (plus peak-hours,
-  // free in the same payload) and falls back to those six requests if the
+  // What used to be five separate requests here is now ONE — seedRunnerHome
+  // fans GET /runner/home out into the same five cache keys (plus peak-hours,
+  // free in the same payload) and falls back to those five requests if the
   // aggregate is unavailable. (P3)
   const aboveFold: Array<() => Promise<unknown>> = [
     () => preloadCoreImages(),

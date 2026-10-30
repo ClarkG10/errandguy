@@ -11,8 +11,6 @@ use App\Http\Requests\Booking\CreateBookingRequest;
 use App\Http\Requests\Booking\EstimateRequest;
 use App\Http\Resources\BookingResource;
 use App\Jobs\AutoCancelBookingJob;
-use App\Jobs\BroadcastToRunnersJob;
-use App\Jobs\ExpireNegotiateBookingJob;
 use App\Jobs\MatchRunnerJob;
 use App\Exceptions\PaymentGatewayException;
 use App\Models\Booking;
@@ -118,7 +116,7 @@ class BookingController extends Controller
             $validated['stops'] ?? [],
         );
 
-        // Calculate pricing
+        // Calculate pricing. Every errand is fixed price.
         $vehicleType = $validated['vehicle_type_rate'] ?? 'motorcycle';
         $pricing = $this->pricingService->calculate(
             $validated['errand_type_id'],
@@ -130,18 +128,6 @@ class BookingController extends Controller
             $validated['schedule_type'],
             extraStops: $extraStops,
         );
-
-        // Negotiate mode: the customer's offer IS the price they pay (the fixed
-        // fare above becomes reference-only). The platform keeps its flat
-        // computed service fee; the runner receives the offer minus that fee.
-        // Without this, negotiate bookings charged the fixed fare and
-        // customer_offer was cosmetic.
-        if ($validated['pricing_mode'] === 'negotiate' && isset($validated['customer_offer'])) {
-            $pricing = $this->pricingService->applyNegotiateOffer(
-                $pricing,
-                (float) $validated['customer_offer'],
-            );
-        }
 
         // Booking number (EG-YYYYMMDD-XXXXXX). The generator loops on an
         // exists() check and uses a 6-char suffix (~2.2B/day space), so a
@@ -182,7 +168,7 @@ class BookingController extends Controller
                 : null,
             'schedule_type' => $validated['schedule_type'],
             'scheduled_at' => $validated['scheduled_at'] ?? null,
-            'pricing_mode' => $validated['pricing_mode'],
+            'pricing_mode' => 'fixed',
             'vehicle_type_rate' => $vehicleType,
             'distance_km' => $pricing['distance_km'],
             'base_fee' => $pricing['base_fee'],
@@ -193,7 +179,6 @@ class BookingController extends Controller
             // discount. The column stays so older bookings' receipts add up.
             'promo_discount' => 0,
             'total_amount' => $pricing['total_amount'],
-            'customer_offer' => $validated['customer_offer'] ?? null,
             'runner_payout' => $pricing['runner_payout'],
         ];
 
@@ -488,61 +473,45 @@ class BookingController extends Controller
             }
         }
 
-        // Dispatch matching job based on pricing mode.
-        // For SCHEDULED bookings we defer the broadcast/match until ~15
-        // minutes before the scheduled time so a runner isn't sent to
-        // pickup hours early.
-        $isScheduled = ($validated['schedule_type'] ?? 'now') === 'scheduled'
-            && !empty($validated['scheduled_at']);
-        $scheduledAt = $isScheduled ? \Carbon\Carbon::parse($validated['scheduled_at']) : null;
-        $matchAt = $scheduledAt
-            ? $scheduledAt->copy()->subMinutes(15)
-            : null;
+        // Arm the auto-cancel/refund safety net FIRST, for the end of the
+        // matching window (BookingService::matchingDeadline — creation + the
+        // timeout for an immediate errand, 15 minutes after the time for a
+        // scheduled one). This job is idempotent and no-ops once the booking
+        // leaves 'pending', so arming it early is harmless when matching
+        // succeeds.
+        AutoCancelBookingJob::dispatch($booking->id)
+            ->delay(BookingService::matchingDeadline($booking));
 
-        if ($validated['pricing_mode'] === 'fixed') {
-            // Arm the auto-cancel/refund safety net FIRST. The immediate match
-            // below runs synchronously and its job re-throws on a transient
-            // failure (deadlock under load), which would 500 out of store() —
-            // if that dispatch came first, a paid booking would be stranded
-            // 'pending' with no auto-cancel armed. This job is idempotent and
-            // no-ops once the booking leaves 'pending', so arming it early is
-            // harmless when matching succeeds.
-            $autoCancelMinutes = (int) \App\Models\SystemConfig::getValue('auto_cancel_timeout_minutes', '30');
-            $autoCancelAt = ($matchAt && $matchAt->isFuture() ? $matchAt : now())
-                ->copy()->addMinutes($autoCancelMinutes);
-            AutoCancelBookingJob::dispatch($booking->id)->delay($autoCancelAt);
-
-            if ($matchAt && $matchAt->isFuture()) {
-                // Scheduled bookings: defer to the queue at $matchAt.
-                MatchRunnerJob::dispatch($booking->id)->delay($matchAt);
-            } else {
-                // Immediate bookings: run matching synchronously inside the
-                // request so the customer doesn't depend on a queue worker
-                // being healthy. The matching call is read-mostly and
-                // typically finishes in well under a second; the booking
-                // row is updated in the same DB transaction the job uses.
-                MatchRunnerJob::dispatchSync($booking->id);
-            }
+        // A SCHEDULED booking is matched from 15 minutes before its time, so a
+        // runner isn't sent to the pickup hours early; the sweep in
+        // errandguy:start-due-scheduled-matching restarts it if this delayed
+        // task is ever lost.
+        $matchAt = BookingService::matchingOpensAt($booking);
+        if ($matchAt->isFuture()) {
+            MatchRunnerJob::dispatch($booking->id)->delay($matchAt);
         } else {
-            // Negotiate mode: broadcast offer + set expiry per spec (5 minutes).
-            $negotiateMinutes = (int) \App\Models\SystemConfig::getValue('negotiate_timeout_minutes', '5');
-            $broadcastAt = $matchAt && $matchAt->isFuture() ? $matchAt : now();
-            $booking->update([
-                'negotiate_expires_at' => $broadcastAt->copy()->addMinutes($negotiateMinutes),
-            ]);
-            // Queue the broadcast even for immediate bookings. Unlike fixed mode,
-            // the 201 does NOT depend on the broadcast result (the booking is
-            // already pending with negotiate_expires_at set above; runners
-            // respond later), so there's no reason to run the realtime
-            // fan-out inside the customer's request. Scheduled negotiate bookings
-            // already depend on the queue worker, so this is consistent. (P4)
-            if ($matchAt && $matchAt->isFuture()) {
-                BroadcastToRunnersJob::dispatch($booking->id)->delay($matchAt);
-            } else {
-                BroadcastToRunnersJob::dispatch($booking->id);
+            // Immediate bookings: run the first search synchronously inside
+            // the request so the customer doesn't depend on a queue worker
+            // being healthy. The matching call is read-mostly and typically
+            // finishes in well under a second.
+            //
+            // By now the booking exists and may already be paid, so a failure
+            // here (a deadlock under load, a listener throwing) must NOT fail
+            // the request: the app would show an error, the customer would tap
+            // again, and the retry would create — and charge — a second
+            // booking. The booking stands, the response is the normal 201, and
+            // the search is handed to the queue (MatchRunnerJob retries with
+            // backoff). If that never finds anyone, the auto-cancel armed above
+            // refunds it.
+            try {
+                MatchRunnerJob::dispatchSync($booking->id);
+            } catch (\Throwable $e) {
+                \Illuminate\Support\Facades\Log::error('Instant matching failed at booking creation; retrying on the queue', [
+                    'booking_number' => $booking->booking_number,
+                    'error' => $e->getMessage(),
+                ]);
+                MatchRunnerJob::dispatch($booking->id)->delay(now()->addSeconds(10));
             }
-            ExpireNegotiateBookingJob::dispatch($booking->id)
-                ->delay($broadcastAt->copy()->addMinutes($negotiateMinutes));
         }
 
         // Fire booking created event
@@ -688,12 +657,12 @@ class BookingController extends Controller
             }
 
             // Authoritative re-evaluation against the LOCKED row. The booking may
-            // have advanced (e.g. heading_to_pickup → arrived_at_pickup) between
-            // the unlocked preview above and this lock, which changes BOTH whether
-            // it is still cancellable AND the fee tier. Trusting the stale pre-lock
-            // policy let a customer cancel a booking that had moved past the
-            // cancellable window and be refunded at the lower flat tier instead of
-            // the percentage tier the committed status requires — a money leak.
+            // have advanced (e.g. pending → accepted, or heading_to_pickup →
+            // arrived_at_pickup) between the unlocked preview above and this
+            // lock, which changes BOTH whether it is still cancellable AND the
+            // fee. Trusting the stale pre-lock policy let a customer cancel for
+            // free after a runner had accepted, or cancel a booking that had
+            // already moved past the cancellable window — a money leak.
             $fresh = CancellationPolicy::preview($locked);
             if (! $fresh['cancellable']) {
                 return ['error' => $fresh['reason']];
@@ -994,7 +963,7 @@ class BookingController extends Controller
         // status='pending' booking and dispatched MatchRunnerJob WITHOUT
         // collecting any payment — no payment_method, no Payment row, so
         // payment_status defaulted to 'unpaid'. A runner would then be matched
-        // and complete the errand for FREE: handleCompletion credits nothing
+        // and complete the errand for FREE: settlement credits nothing
         // for a booking that is neither paid nor cash, leaving a permanent
         // completed+unpaid row, zero revenue, and an unpaid runner. Payment is
         // only ever collected inside store(); there is no pay-for-an-existing-
@@ -1030,7 +999,9 @@ class BookingController extends Controller
                     'description' => $original->description,
                     'special_instructions' => $original->special_instructions,
                     'estimated_item_value' => $original->estimated_item_value,
-                    'pricing_mode' => $original->pricing_mode,
+                    // Kept for the app build already on phones, which reads it;
+                    // every booking is fixed price now.
+                    'pricing_mode' => 'fixed',
                     'vehicle_type_rate' => $vehicleType,
                 ],
                 'pricing' => $pricing,
@@ -1104,6 +1075,9 @@ class BookingController extends Controller
                 'matched_at' => null,
                 'cancelled_at' => null,
                 'cancellation_reason' => null,
+                // A fresh round of offers. Runners who already turned this
+                // errand down stay on offered_runner_ids and are still skipped.
+                'offer_count' => 0,
             ]);
 
             BookingStatusLog::create([
@@ -1120,6 +1094,13 @@ class BookingController extends Controller
             return $this->fail(
                 ErrorCode::BOOKING_CONFLICT,
                 'This booking was already refunded, so it can’t be retried. Please create a new booking to try again.',
+            );
+        }
+
+        if ($outcome === 'scheduled') {
+            return $this->fail(
+                ErrorCode::BOOKING_CONFLICT,
+                'This errand is scheduled for later. We’ll start looking for a runner 15 minutes before its time.',
             );
         }
 

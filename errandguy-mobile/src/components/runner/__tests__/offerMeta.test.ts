@@ -2,12 +2,14 @@ import {
   DEFAULT_OFFER_TIMEOUT_SECONDS,
   MAX_OFFER_TIMEOUT_SECONDS,
   MIN_OFFER_TIMEOUT_SECONDS,
+  bookedVehicleLabel,
   extraStopCount,
   offerExpiresAt,
   offerTimeoutSeconds,
   paymentMethodLabel,
   readAcceptDeadline,
   readAmountToCollect,
+  readBookedVehicle,
   readPaymentMethodType,
   readServerPickupKm,
   scheduledOfferLabel,
@@ -152,5 +154,24 @@ describe('extraStopCount', () => {
         withOps({ stops: [{ id: 'a', sequence: 1, address: 'x', lat: 0, lng: 0 }] }),
       ),
     ).toBe(1);
+  });
+});
+
+describe('readBookedVehicle', () => {
+  it('prefers the offer’s vehicle_type and falls back to vehicle_type_rate', () => {
+    expect(readBookedVehicle(withOps({ vehicle_type: 'car', vehicle_type_rate: 'walk' }))).toBe('car');
+    expect(readBookedVehicle(withOps({ vehicle_type: null, vehicle_type_rate: 'walk' }))).toBe('walk');
+    expect(readBookedVehicle(withOps({ vehicle_type: ' Motorcycle ' }))).toBe('motorcycle');
+  });
+
+  it('is null for an absent or unknown vehicle', () => {
+    expect(readBookedVehicle(withOps({ vehicle_type: null, vehicle_type_rate: null }))).toBeNull();
+    expect(readBookedVehicle(withOps({ vehicle_type: 'jeepney', vehicle_type_rate: null }))).toBeNull();
+  });
+
+  it('labels it the way the offer modal shows it', () => {
+    expect(bookedVehicleLabel(withOps({ vehicle_type: 'car' }))).toBe('Car booked');
+    expect(bookedVehicleLabel(withOps({ vehicle_type: 'bicycle' }))).toBe('Bicycle booked');
+    expect(bookedVehicleLabel(withOps({ vehicle_type: null, vehicle_type_rate: null }))).toBeNull();
   });
 });

@@ -64,6 +64,24 @@ function readKeys(): Set<string> {
   return out;
 }
 
+/** Every non-test source file under the given top-level src directories. */
+function sourceFiles(dirs: string[]): string[] {
+  const out: string[] = [];
+  const walk = (dir: string) => {
+    for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+      const full = path.join(dir, entry.name);
+      if (entry.isDirectory()) {
+        if (entry.name === '__tests__') continue;
+        walk(full);
+      } else if (/\.tsx?$/.test(entry.name)) {
+        out.push(full);
+      }
+    }
+  };
+  for (const d of dirs) walk(path.join(SRC, d));
+  return out;
+}
+
 /**
  * Keys the preload layer writes. Both shapes it uses: `seed([...])` for the
  * per-endpoint warms and `write([...])` for the aggregate snapshot.
@@ -122,5 +140,31 @@ describe('prefetch coverage', () => {
   it('neither warms nor reads the retired promos key', () => {
     expect(warmed.has('promos')).toBe(false);
     expect(consumed.has('promos')).toBe(false);
+  });
+
+  /**
+   * The runner's open-offers list is retired with "name your price": every
+   * offer is a direct one, raised by the offer modal. Its key
+   * `['runner','errand','available', userId]` shares the two-segment prefix
+   * `runner/errand` with the live current-errand and cockpit keys, so the
+   * prefix checks above cannot see it — pin the full key on both sides, plus
+   * the endpoint that fed it.
+   */
+  it('neither warms nor reads the retired runner open-offers key', () => {
+    const retiredKey = /\[\s*'runner'\s*,\s*'errand'\s*,\s*'available'/;
+    const files = sourceFiles(['app', 'components', 'hooks', 'services', 'stores']);
+    expect(files.length).toBeGreaterThan(100);
+
+    const offenders = files
+      .filter((f) => {
+        const src = fs.readFileSync(f, 'utf8');
+        return retiredKey.test(src) || src.includes('/runner/errand/available');
+      })
+      .map((f) => path.relative(SRC, f));
+
+    expect(offenders).toEqual([]);
+    // The live half of that prefix is still warmed, so the check above is
+    // looking at a key family that exists.
+    expect(warmed.has('runner/errand')).toBe(true);
   });
 });

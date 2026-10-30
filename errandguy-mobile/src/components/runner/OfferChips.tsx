@@ -1,22 +1,32 @@
 import React from 'react';
 import { View, Text } from 'react-native';
 import type { LucideIcon } from 'lucide-react-native';
-import { Banknote, CalendarClock, CreditCard, Route } from 'lucide-react-native';
+import {
+  Banknote,
+  Bike,
+  CalendarClock,
+  Car,
+  CreditCard,
+  PersonStanding,
+  Route,
+} from 'lucide-react-native';
 import { formatCurrency } from '../../utils/formatCurrency';
 import {
+  bookedVehicleLabel,
   extraStopCount,
   paymentMethodLabel,
   readAmountToCollect,
+  readBookedVehicle,
   readPaymentMethodType,
   scheduledOfferLabel,
+  type BookedVehicle,
 } from './offerMeta';
 import type { Booking } from '../../types';
 import { LightColors } from '../../constants/colors';
 
 /**
- * Small fact chips shared by every runner OFFER surface (the fixed-match
- * modal, the open-offer card, the offer details sheet) so the same job reads
- * identically wherever the runner meets it.
+ * Small fact chips for the runner's offer modal — one decision-critical fact
+ * each, so a 90-second decision reads at a glance.
  */
 export function OfferChip({
   Icon,
@@ -101,6 +111,33 @@ export function ScheduledChip({ booking }: { booking: Booking }) {
       label={label}
       bg={LightColors.primarySoft}
       fg={LightColors.primaryDark}
+    />
+  );
+}
+
+// Same glyphs as the runner's own vehicle settings (no motorcycle glyph in
+// lucide, so the two-wheelers share Bike and the label disambiguates).
+const VEHICLE_ICONS: Record<BookedVehicle, LucideIcon> = {
+  walk: PersonStanding,
+  bicycle: Bike,
+  motorcycle: Bike,
+  car: Car,
+};
+
+/**
+ * "Car booked" — the vehicle the customer chose, and so the one the fare was
+ * priced for. Renders nothing when the payload names no known vehicle.
+ */
+export function VehicleChip({ booking }: { booking: Booking }) {
+  const vehicle = readBookedVehicle(booking);
+  const label = bookedVehicleLabel(booking);
+  if (!vehicle || !label) return null;
+  return (
+    <OfferChip
+      Icon={VEHICLE_ICONS[vehicle]}
+      label={label}
+      bg={LightColors.surfaceMuted}
+      fg={LightColors.textSecondary}
     />
   );
 }

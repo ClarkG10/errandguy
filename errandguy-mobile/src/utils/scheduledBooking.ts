@@ -2,9 +2,9 @@ import dayjs from 'dayjs';
 import type { Booking } from '../types';
 
 /**
- * A scheduled booking is broadcast to runners at scheduled_at − 15min, and
- * sits at status `pending` (no search running) until then. Mirrors the
- * server-side lead used by MatchRunnerJob and the runner offer feed.
+ * A scheduled booking starts matching at scheduled_at − 15min, and sits at
+ * status `pending` (no search running) until then. Mirrors the server-side
+ * lead used by MatchRunnerJob.
  */
 export const SCHEDULED_MATCH_LEAD_MINUTES = 15;
 

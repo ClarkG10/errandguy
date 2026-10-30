@@ -38,7 +38,7 @@ class BookingCreateHardeningTest extends TestCase
         $this->type = ErrandType::create([
             'slug' => 'delivery', 'name' => 'Delivery', 'description' => 'd', 'icon_name' => 'Package',
             'base_fee' => 50, 'per_km_walk' => 15, 'per_km_bicycle' => 12, 'per_km_motorcycle' => 10,
-            'per_km_car' => 18, 'surcharge' => 0, 'min_negotiate_fee' => 30, 'is_active' => true, 'sort_order' => 1,
+            'per_km_car' => 18, 'surcharge' => 0, 'is_active' => true, 'sort_order' => 1,
         ]);
         $this->validData = [
             'errand_type_id' => $this->type->id,
@@ -115,7 +115,7 @@ class BookingCreateHardeningTest extends TestCase
         // A real online, approved runner near the pickup — the sync match hits them.
         RunnerProfile::create([
             'user_id' => User::factory()->create(['role' => 'runner', 'status' => 'active'])->id,
-            'verification_status' => 'approved', 'is_online' => true,
+            'verification_status' => 'approved', 'is_online' => true, 'vehicle_type' => 'motorcycle',
             'current_lat' => 14.6000, 'current_lng' => 120.9850, 'preferred_types' => [],
             'last_location_at' => now(),
         ]);

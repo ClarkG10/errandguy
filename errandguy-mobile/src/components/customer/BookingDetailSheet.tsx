@@ -127,9 +127,7 @@ function buildDraftFromBooking(b: Booking): Partial<DraftBooking> {
       ? { estimated_item_value: b.estimated_item_value }
       : {}),
     ...(b.shopping_budget != null ? { shopping_budget: b.shopping_budget } : {}),
-    ...(b.pricing_mode ? { pricing_mode: b.pricing_mode } : {}),
     ...(b.vehicle_type_rate ? { vehicle_type_rate: b.vehicle_type_rate } : {}),
-    ...(b.customer_offer != null ? { customer_offer: b.customer_offer } : {}),
     // Re-seed the shopping checklist with the ticks reset — the runner starts
     // a fresh run. (No structured items column ⇒ Review re-serializes it.)
     ...(b.shopping_items && b.shopping_items.length > 0

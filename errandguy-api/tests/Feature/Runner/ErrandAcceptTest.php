@@ -33,6 +33,7 @@ class ErrandAcceptTest extends TestCase
             'user_id' => $this->runner->id,
             'verification_status' => 'approved',
             'is_online' => true,
+            'vehicle_type' => 'motorcycle',
             'current_lat' => 14.5995,
             'current_lng' => 120.9842,
             'preferred_types' => [],
@@ -46,7 +47,7 @@ class ErrandAcceptTest extends TestCase
             'slug' => 'delivery', 'name' => 'Delivery', 'description' => 'Deliver',
             'icon_name' => 'Package', 'base_fee' => 50.00, 'per_km_walk' => 15.00,
             'per_km_bicycle' => 12.00, 'per_km_motorcycle' => 10.00, 'per_km_car' => 18.00,
-            'min_negotiate_fee' => 30.00, 'is_active' => true, 'sort_order' => 1,
+            'is_active' => true, 'sort_order' => 1,
         ]);
 
         $this->booking = Booking::create([
@@ -63,9 +64,16 @@ class ErrandAcceptTest extends TestCase
         ]);
     }
 
-    public function test_runner_can_accept_pending_booking(): void
+    /** Offer the setUp booking to the setUp runner, as MatchRunnerJob does. */
+    private function offerToRunner(): void
+    {
+        $this->booking->update(['status' => 'matched', 'runner_id' => $this->runner->id, 'matched_at' => now()]);
+    }
+
+    public function test_runner_can_accept_the_errand_offered_to_them(): void
     {
         Event::fake();
+        $this->offerToRunner();
 
         $response = $this->actingAs($this->runner)
             ->postJson("/api/v1/runner/errand/{$this->booking->id}/accept");
@@ -79,16 +87,101 @@ class ErrandAcceptTest extends TestCase
         $this->assertNotNull($this->booking->accepted_at);
     }
 
-    public function test_runner_can_accept_matched_booking(): void
+    public function test_an_errand_that_was_not_offered_to_the_runner_cannot_be_accepted(): void
+    {
+        // There is no open list to pick errands from any more: a pending errand
+        // (never offered to this runner, or an offer that already lapsed) is
+        // not theirs to take.
+        Event::fake();
+
+        $this->actingAs($this->runner)
+            ->postJson("/api/v1/runner/errand/{$this->booking->id}/accept")
+            ->assertStatus(409)
+            ->assertJsonPath('code', 'BOOKING_STALE');
+
+        $this->booking->refresh();
+        $this->assertSame('pending', $this->booking->status);
+        $this->assertNull($this->booking->runner_id);
+    }
+
+    public function test_an_offer_for_another_runner_cannot_be_accepted(): void
     {
         Event::fake();
-        $this->booking->update(['status' => 'matched']);
+        $other = User::factory()->create(['role' => 'runner', 'status' => 'active']);
+        $this->booking->update(['status' => 'matched', 'runner_id' => $other->id, 'matched_at' => now()]);
+
+        $this->actingAs($this->runner)
+            ->postJson("/api/v1/runner/errand/{$this->booking->id}/accept")
+            ->assertStatus(409);
+
+        $this->assertSame($other->id, $this->booking->fresh()->runner_id);
+    }
+
+    public function test_a_car_errand_cannot_be_accepted_on_a_motorcycle(): void
+    {
+        // The customer paid the car price. Matching never offers it to a
+        // motorcycle, but a runner may have changed vehicle after the offer.
+        Event::fake();
+        $this->booking->update(['vehicle_type_rate' => 'car']);
+        $this->offerToRunner();
 
         $response = $this->actingAs($this->runner)
-            ->postJson("/api/v1/runner/errand/{$this->booking->id}/accept");
+            ->postJson("/api/v1/runner/errand/{$this->booking->id}/accept")
+            ->assertStatus(409)
+            ->assertJsonPath('code', 'BOOKING_CONFLICT');
 
-        $response->assertOk()
-            ->assertJsonPath('data.status', 'accepted');
+        $this->assertStringContainsString('needs a car', (string) $response->json('message'));
+        $this->assertSame('matched', $this->booking->fresh()->status);
+    }
+
+    public function test_a_bigger_vehicle_can_accept_a_smaller_errand(): void
+    {
+        Event::fake();
+        $this->profile->update(['vehicle_type' => 'car']);
+        $this->booking->update(['vehicle_type_rate' => 'bicycle']);
+        $this->offerToRunner();
+
+        $this->actingAs($this->runner)
+            ->postJson("/api/v1/runner/errand/{$this->booking->id}/accept")
+            ->assertOk();
+    }
+
+    public function test_the_offer_payload_carries_the_booked_vehicle(): void
+    {
+        Event::fake();
+        $this->offerToRunner();
+
+        $this->actingAs($this->runner)
+            ->getJson('/api/v1/runner/errand/current')
+            ->assertOk()
+            ->assertJsonPath('data.vehicle_type', 'motorcycle');
+
+        $payload = (new \App\Events\IncomingRequest($this->booking->fresh()))->broadcastWith();
+        $this->assertSame('motorcycle', $payload['vehicle_type']);
+        foreach (['customer_offer', 'recommended_min', 'recommended_max', 'negotiate_expires_at'] as $retired) {
+            $this->assertArrayNotHasKey($retired, $payload);
+        }
+    }
+
+    public function test_the_open_offers_list_is_gone(): void
+    {
+        $this->actingAs($this->runner)
+            ->getJson('/api/v1/runner/errand/available')
+            ->assertNotFound();
+    }
+
+    public function test_a_stale_decline_is_a_no_op_that_costs_the_runner_nothing(): void
+    {
+        // The offer already lapsed (back to pending, no runner) when the
+        // runner tapped Decline: nothing to revert, and no acceptance-rate hit.
+        $this->profile->update(['total_errands' => 4, 'acceptance_rate' => 100.00]);
+
+        $this->actingAs($this->runner)
+            ->postJson("/api/v1/runner/errand/{$this->booking->id}/decline")
+            ->assertOk();
+
+        $this->assertSame('pending', $this->booking->fresh()->status);
+        $this->assertEquals(100.00, (float) $this->profile->fresh()->acceptance_rate);
     }
 
     public function test_runner_cannot_accept_already_accepted_booking(): void
@@ -129,6 +222,7 @@ class ErrandAcceptTest extends TestCase
             'surcharge' => 0, 'total_amount' => 92, 'runner_payout' => 68,
             'is_transportation' => false,
         ]);
+        $this->offerToRunner();
 
         $response = $this->actingAs($this->runner)
             ->postJson("/api/v1/runner/errand/{$this->booking->id}/accept");
@@ -155,6 +249,7 @@ class ErrandAcceptTest extends TestCase
         // Let BookingStatusChanged fire (the customer notification now comes
         // from its listener, not a direct create); fake everything else.
         Event::fakeExcept([\App\Events\BookingStatusChanged::class]);
+        $this->offerToRunner();
 
         $this->actingAs($this->runner)
             ->postJson("/api/v1/runner/errand/{$this->booking->id}/accept");
@@ -237,7 +332,7 @@ class ErrandAcceptTest extends TestCase
             'status' => 'pending',
             'pickup_address' => '1 A', 'pickup_lat' => 14.60, 'pickup_lng' => 120.98,
             'dropoff_address' => '2 B', 'dropoff_lat' => 14.55, 'dropoff_lng' => 121.02,
-            'schedule_type' => 'now', 'pricing_mode' => 'negotiate', 'vehicle_type_rate' => 'motorcycle',
+            'schedule_type' => 'now', 'pricing_mode' => 'fixed', 'vehicle_type_rate' => 'motorcycle',
             'distance_km' => 5.0, 'base_fee' => 50, 'distance_fee' => 50, 'service_fee' => 15,
             'surcharge' => 0, 'total_amount' => 115, 'runner_payout' => 85,
             'is_transportation' => false,
@@ -254,83 +349,5 @@ class ErrandAcceptTest extends TestCase
         $selfBooking->refresh();
         $this->assertNull($selfBooking->runner_id);
         $this->assertSame('pending', $selfBooking->status);
-    }
-
-    public function test_available_offers_exclude_the_runners_own_booking(): void
-    {
-        // Two open negotiate bookings near the runner: one they booked
-        // themselves, one from a real customer. The offer feed must show the
-        // other customer's booking but NEVER the runner's own (defense-in-depth
-        // for the self-deal guard).
-        $mine = Booking::create([
-            'booking_number' => 'EG-20260331-MINE',
-            'customer_id' => $this->runner->id,
-            'errand_type_id' => $this->errandType->id, 'status' => 'pending',
-            'pickup_address' => '1 A', 'pickup_lat' => 14.60, 'pickup_lng' => 120.98,
-            'dropoff_address' => '2 B', 'dropoff_lat' => 14.55, 'dropoff_lng' => 121.02,
-            'schedule_type' => 'now', 'pricing_mode' => 'negotiate', 'vehicle_type_rate' => 'motorcycle',
-            'negotiate_expires_at' => now()->addHour(),
-            'distance_km' => 5.0, 'base_fee' => 50, 'distance_fee' => 50, 'service_fee' => 15,
-            'surcharge' => 0, 'total_amount' => 115, 'runner_payout' => 85, 'is_transportation' => false,
-        ]);
-        $theirs = Booking::create([
-            'booking_number' => 'EG-20260331-THRS',
-            'customer_id' => $this->customer->id,
-            'errand_type_id' => $this->errandType->id, 'status' => 'pending',
-            'pickup_address' => '1 A', 'pickup_lat' => 14.60, 'pickup_lng' => 120.98,
-            'dropoff_address' => '2 B', 'dropoff_lat' => 14.55, 'dropoff_lng' => 121.02,
-            'schedule_type' => 'now', 'pricing_mode' => 'negotiate', 'vehicle_type_rate' => 'motorcycle',
-            'negotiate_expires_at' => now()->addHour(),
-            'distance_km' => 5.0, 'base_fee' => 50, 'distance_fee' => 50, 'service_fee' => 15,
-            'surcharge' => 0, 'total_amount' => 115, 'runner_payout' => 85, 'is_transportation' => false,
-        ]);
-
-        $response = $this->actingAs($this->runner)->getJson('/api/v1/runner/errand/available');
-        $response->assertOk();
-
-        $ids = collect($response->json('data'))->pluck('id')->all();
-        $this->assertContains($theirs->id, $ids, 'a real customer offer should appear');
-        $this->assertNotContains($mine->id, $ids, 'the runner\'s own booking must never appear');
-    }
-
-    public function test_available_offers_gate_scheduled_negotiate_bookings_until_their_window(): void
-    {
-        // A scheduled negotiate booking is broadcast only at matchAt =
-        // scheduled_at - 15min. The PULL feed must NOT surface one whose
-        // scheduled time is still days out (else a runner could accept/lock a
-        // prepaid booking early), but MUST surface one whose window has arrived
-        // and an ordinary immediate booking.
-        $base = [
-            'customer_id' => $this->customer->id,
-            'errand_type_id' => $this->errandType->id, 'status' => 'pending',
-            'pickup_address' => '1 A', 'pickup_lat' => 14.60, 'pickup_lng' => 120.98,
-            'dropoff_address' => '2 B', 'dropoff_lat' => 14.55, 'dropoff_lng' => 121.02,
-            'pricing_mode' => 'negotiate', 'vehicle_type_rate' => 'motorcycle',
-            'negotiate_expires_at' => now()->addDays(3),
-            'distance_km' => 5.0, 'base_fee' => 50, 'distance_fee' => 50, 'service_fee' => 15,
-            'surcharge' => 0, 'total_amount' => 115, 'runner_payout' => 85, 'is_transportation' => false,
-        ];
-
-        $farFuture = Booking::create($base + [
-            'booking_number' => 'EG-20260331-SCHF',
-            'schedule_type' => 'scheduled', 'scheduled_at' => now()->addDays(3),
-        ]);
-        $windowOpen = Booking::create($base + [
-            'booking_number' => 'EG-20260331-SCHN',
-            'schedule_type' => 'scheduled', 'scheduled_at' => now()->addMinutes(5),
-        ]);
-        $immediate = Booking::create($base + [
-            'booking_number' => 'EG-20260331-IMMD',
-            'schedule_type' => 'now', 'scheduled_at' => null,
-            'negotiate_expires_at' => now()->addHour(),
-        ]);
-
-        $response = $this->actingAs($this->runner)->getJson('/api/v1/runner/errand/available');
-        $response->assertOk();
-
-        $ids = collect($response->json('data'))->pluck('id')->all();
-        $this->assertNotContains($farFuture->id, $ids, 'a scheduled booking days out must not be offered yet');
-        $this->assertContains($windowOpen->id, $ids, 'a scheduled booking within 15min of its time should be offered');
-        $this->assertContains($immediate->id, $ids, 'an immediate negotiate booking should be offered');
     }
 }

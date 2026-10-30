@@ -39,67 +39,44 @@ describe('useIncomingRequest', () => {
     useRunnerStore.setState({ incomingRequest: null, declinedOfferIds: [] });
   });
 
-  it('subscribes to both the offer stream and its retraction', () => {
+  it('subscribes to the runner’s direct-offer stream only', () => {
     renderHook(() => useIncomingRequest('runner-1'));
 
-    expect(subscriptions).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({ channel: 'runner.runner-1', event: 'booking.incoming' }),
-        expect.objectContaining({ channel: 'notifications.runner-1', event: 'offer.withdrawn' }),
-      ]),
-    );
+    expect(subscriptions).toEqual([
+      expect.objectContaining({ channel: 'runner.runner-1', event: 'booking.incoming' }),
+    ]);
   });
 
   it('opens the offer modal on an incoming matched booking', () => {
-    renderHook(() => useIncomingRequest('runner-1'));
+    const onOffer = jest.fn();
+    renderHook(() => useIncomingRequest('runner-1', { onOffer }));
 
     fire('booking.incoming', offer('b1'));
 
     expect(useRunnerStore.getState().incomingRequest?.booking.id).toBe('b1');
+    // Handed on so the layout can upgrade the thin realtime payload.
+    expect(onOffer).toHaveBeenCalledWith(expect.objectContaining({ id: 'b1' }));
   });
 
   /**
-   * The whole point of the retraction: a runner staring at an offer someone
-   * else just took should see it go, not tap it and be told BOOKING_STALE.
+   * "Name your price" offers were fanned out to every nearby runner as an
+   * unassigned (`pending`) booking. That broadcast is gone: an offer is always
+   * matched to THIS runner, so anything else on the channel raises nothing.
    */
-  it('dismisses the open offer when that errand is withdrawn', () => {
-    const onOfferWithdrawn = jest.fn();
-    renderHook(() => useIncomingRequest('runner-1', { onOfferWithdrawn }));
+  it('ignores anything that is not a booking matched to this runner', () => {
+    const onOffer = jest.fn();
+    renderHook(() => useIncomingRequest('runner-1', { onOffer }));
 
-    fire('booking.incoming', offer('b1'));
-    fire('offer.withdrawn', { booking_id: 'b1', reason: 'taken' });
+    fire('booking.incoming', { id: 'b9', status: 'pending', pricing_mode: 'negotiate' });
+    fire('booking.incoming', { status: 'matched' });
 
     expect(useRunnerStore.getState().incomingRequest).toBeNull();
-    expect(onOfferWithdrawn).toHaveBeenCalledWith('b1');
-  });
-
-  /** A retraction for a DIFFERENT errand must not close the one being decided. */
-  it('leaves an unrelated open offer alone', () => {
-    const onOfferWithdrawn = jest.fn();
-    renderHook(() => useIncomingRequest('runner-1', { onOfferWithdrawn }));
-
-    fire('booking.incoming', offer('b1'));
-    fire('offer.withdrawn', { booking_id: 'b2', reason: 'taken' });
-
-    expect(useRunnerStore.getState().incomingRequest?.booking.id).toBe('b1');
-    // The feed still refreshes — b2 may well be sitting in it.
-    expect(onOfferWithdrawn).toHaveBeenCalledWith('b2');
-  });
-
-  it('ignores a malformed retraction', () => {
-    const onOfferWithdrawn = jest.fn();
-    renderHook(() => useIncomingRequest('runner-1', { onOfferWithdrawn }));
-
-    fire('booking.incoming', offer('b1'));
-    fire('offer.withdrawn', {});
-
-    expect(useRunnerStore.getState().incomingRequest?.booking.id).toBe('b1');
-    expect(onOfferWithdrawn).not.toHaveBeenCalled();
+    expect(onOffer).not.toHaveBeenCalled();
   });
 
   /**
    * A decline is fire-and-forget, so the booking can still be `matched` on the
-   * server for a moment and be re-broadcast. Asking again reads as the app
+   * server for a moment and be re-sent. Asking again reads as the app
    * ignoring the runner's answer.
    */
   it('never re-raises an offer the runner already declined', () => {
@@ -111,9 +88,8 @@ describe('useIncomingRequest', () => {
     fire('booking.incoming', offer('b1'));
 
     expect(useRunnerStore.getState().incomingRequest).toBeNull();
-    // The feed callback still runs — the errand may legitimately reappear in
-    // the open-offer list for someone else to claim.
-    expect(onOffer).toHaveBeenCalledTimes(2);
+    // Only the first, genuinely raised offer is handed on.
+    expect(onOffer).toHaveBeenCalledTimes(1);
   });
 
   it('subscribes to nothing without a runner id', () => {

@@ -8,21 +8,23 @@ import type { Coordinate, RunnerLocation } from '../types';
 
 /**
  * How old a runner's last ping may be before MatchingService stops considering
- * them for dispatch — `where('last_location_at', '>=', now()->subMinutes(5))`
- * on the eligible-runner query used by BOTH findRunner and broadcastToRunners
- * (errandguy-api/app/Services/MatchingService.php). Past this the runner is
- * still "online" in every UI sense but is invisible to every match.
+ * them for dispatch — 15 minutes on the eligible-runner query
+ * (errandguy-api/app/Services/MatchingService.php). Long enough that a runner
+ * whose phone is locked (foreground-only GPS, so no pings) still gets offers
+ * by push for a while. Past it the runner is still "online" in every UI sense
+ * but is invisible to every match; at 30 minutes with no location at all the
+ * server switches them offline and tells them by push.
  */
-export const DISPATCH_STALE_AFTER_MS = 5 * 60_000;
+export const DISPATCH_STALE_AFTER_MS = 15 * 60_000;
 
 /**
- * When we start TELLING the runner. Deliberately two minutes inside the
+ * When we start TELLING the runner. Deliberately three minutes inside the
  * server's cutoff: the disclosure is only useful while there is still time to
  * act on it, and the home screen re-derives it on a 60s tick, so the warning
- * lands at worst ~4 min after the last ping — still ahead of dispatch dropping
- * them.
+ * lands at worst ~13 min after the last ping — still ahead of dispatch
+ * dropping them.
  */
-export const DISPATCH_WARN_AFTER_MS = 3 * 60_000;
+export const DISPATCH_WARN_AFTER_MS = 12 * 60_000;
 
 /**
  * Foreground re-ping cadence while online and NOT on an errand.
@@ -57,7 +59,7 @@ export function isPingStale(lastPingAt: number | null, now: number = Date.now())
  * has them online.
  *
  * Uses the FULL server cutoff, not the earlier warn threshold, because this one
- * compares a server instant to the device clock: at 5 minutes the runner is
+ * compares a server instant to the device clock: at 15 minutes the runner is
  * provably dropped, so a modest skew can't manufacture the warning.
  */
 export function isServerLocationStale(
@@ -448,8 +450,9 @@ export const useLocationStore = create<LocationState>((set, get) => ({
 
     // Returning to the app is exactly when visibility has to be rebuilt: the
     // foreground watch was suspended while backgrounded, so last_location_at
-    // is already minutes old and matching has dropped the runner. One fresh fix
-    // (never a permission prompt) puts them back in the pool in about a second.
+    // is already minutes old — past 15, matching has dropped the runner, and
+    // past 30 the server ends their shift. One fresh fix (never a permission
+    // prompt) puts them back in the pool in about a second.
     appStateSub = AppState.addEventListener('change', (state) => {
       if (state !== 'active') return;
       if (!get().isTracking) return;

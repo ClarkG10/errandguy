@@ -24,6 +24,8 @@ export type RunnerOpsBooking = Booking & {
   amount_to_collect?: number | string | null;
   distance_to_pickup_km?: number | string | null;
   accept_deadline?: string | null;
+  /** The vehicle the customer booked, as the offer payload names it. */
+  vehicle_type?: string | null;
 };
 
 /** Client-side default when the server gives us no real deadline. */
@@ -59,8 +61,8 @@ export function readPaymentMethodType(booking: Booking): string | null {
 
 /**
  * Server-measured km from the runner's last GPS ping to this pickup. Attached
- * by RunnerErrandController to the offer feed and the matched offer. Treat as
- * APPROXIMATE — the ping can be a few minutes old; a live client fix always wins.
+ * by RunnerErrandController to the matched offer. Treat as APPROXIMATE — the
+ * ping can be several minutes old; a live client fix always wins.
  */
 export function readServerPickupKm(booking: Booking): number | null {
   return positiveNumber((booking as RunnerOpsBooking).distance_to_pickup_km);
@@ -70,6 +72,39 @@ export function readServerPickupKm(booking: Booking): number | null {
 export function readAcceptDeadline(booking: Booking): string | null {
   const raw = (booking as RunnerOpsBooking).accept_deadline;
   return typeof raw === 'string' && raw.trim() !== '' ? raw : null;
+}
+
+export type BookedVehicle = 'walk' | 'bicycle' | 'motorcycle' | 'car';
+
+const BOOKED_VEHICLES: readonly BookedVehicle[] = ['walk', 'bicycle', 'motorcycle', 'car'];
+
+/**
+ * The vehicle the customer booked — it priced the job, so the runner has to
+ * know it before accepting (a car fare is not a walk fare). Offers name it
+ * `vehicle_type`; the full BookingResource has always carried the same value
+ * as `vehicle_type_rate`, so either payload answers. Null when neither names a
+ * vehicle we know, rather than guessing.
+ */
+export function readBookedVehicle(booking: Booking): BookedVehicle | null {
+  const ops = booking as RunnerOpsBooking;
+  for (const raw of [ops.vehicle_type, booking.vehicle_type_rate]) {
+    const key = typeof raw === 'string' ? raw.trim().toLowerCase() : '';
+    if ((BOOKED_VEHICLES as readonly string[]).includes(key)) return key as BookedVehicle;
+  }
+  return null;
+}
+
+const BOOKED_VEHICLE_LABELS: Record<BookedVehicle, string> = {
+  walk: 'Walk booked',
+  bicycle: 'Bicycle booked',
+  motorcycle: 'Motorcycle booked',
+  car: 'Car booked',
+};
+
+/** "Car booked" etc., or null when the offer names no known vehicle. */
+export function bookedVehicleLabel(booking: Booking): string | null {
+  const vehicle = readBookedVehicle(booking);
+  return vehicle ? BOOKED_VEHICLE_LABELS[vehicle] : null;
 }
 
 const PAYMENT_LABELS: Record<string, string> = {

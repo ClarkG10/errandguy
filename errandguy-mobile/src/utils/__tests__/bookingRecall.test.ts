@@ -3,8 +3,8 @@
  *
  * The whole point is that recall is scoped to ONE errand type — a shopping
  * list must never leak onto a queue errand — and that a recalled value can
- * only ever be a legal one (a vehicle the type still allows, an offer that
- * clears the live negotiate floor, a budget that is real money).
+ * only ever be a legal one (a vehicle the type still allows, a budget that is
+ * real money). Every booking is fixed-price now, so a price is never recalled.
  */
 import {
   draftHasRecallableContent,
@@ -30,8 +30,6 @@ function booking(over: Partial<Booking> & { id: string }): Booking {
     shopping_budget: null,
     shopping_items: [],
     vehicle_type_rate: null,
-    pricing_mode: 'fixed',
-    customer_offer: null,
     scheduled_at: null,
     ...over,
   } as unknown as Booking;
@@ -170,27 +168,12 @@ describe('findRecall', () => {
     ).toBeUndefined();
   });
 
-  it('recalls a negotiate offer only when it clears the live minimum', () => {
-    const list = [
-      booking({
-        id: 'n',
-        pricing_mode: 'negotiate',
-        customer_offer: 150,
-        shopping_budget: 400,
-        shopping_items: [{ id: 'i', name: 'Milk', qty: 1 }],
-      }),
-    ];
-    const base = { ...SHOPPING_OPTS, allowedVehicles: [...SHOPPING_OPTS.allowedVehicles] };
-    expect(findRecall(list, { ...base, minNegotiateFee: 90 })?.fields.customer_offer).toBe(150);
-    // Floor moved above the remembered offer → drop it; Review seeds the floor.
-    expect(findRecall(list, { ...base, minNegotiateFee: 200 })?.fields.customer_offer).toBeUndefined();
-    // Floor unknown (estimate not back yet) → never guess.
-    expect(findRecall(list, base)?.fields.customer_offer).toBeUndefined();
-    // The MODE is still remembered in every case.
-    expect(findRecall(list, base)?.fields.pricing_mode).toBe('negotiate');
-  });
-
-  it('names the price-moving recalls in the preview — they are only visible on Review', () => {
+  /**
+   * "Name your price" is gone. A booking made while it existed still carries
+   * `pricing_mode: 'negotiate'` and the customer's own price; recalling it
+   * must hand back the CONTENT and leave pricing to the fixed fare.
+   */
+  it('recalls an old name-your-price booking as content only — never its mode or price', () => {
     const list = [
       booking({
         id: 'n',
@@ -201,21 +184,35 @@ describe('findRecall', () => {
         shopping_items: [{ id: 'i', name: 'Milk', qty: 1 }],
       }),
     ];
-    const base = { ...SHOPPING_OPTS, allowedVehicles: [...SHOPPING_OPTS.allowedVehicles] };
-    expect(findRecall(list, { ...base, minNegotiateFee: 90 })!.preview).toBe(
-      '1 item · budget ₱400.00 · Car · your offer ₱150.00',
-    );
-    // Offer dropped (under the floor) — the MODE is still disclosed.
-    expect(findRecall(list, { ...base, minNegotiateFee: 500 })!.preview).toBe(
-      '1 item · budget ₱400.00 · Car · make an offer',
-    );
+    const recall = findRecall(list, {
+      ...SHOPPING_OPTS,
+      allowedVehicles: [...SHOPPING_OPTS.allowedVehicles],
+    })!;
+
+    expect(recall.fields).toEqual({
+      shoppingItems: [{ id: 'i', name: 'Milk', qty: 1 }],
+      shopping_budget: 400,
+      vehicle_type_rate: 'car',
+    });
+    expect(recall.fields).not.toHaveProperty('pricing_mode');
+    expect(recall.fields).not.toHaveProperty('customer_offer');
   });
 
-  it('leaves the standing "fixed" default out of the preview as noise', () => {
-    const list = [booking({ id: 'f', pricing_mode: 'fixed', shopping_budget: 400, shopping_items: [{ id: 'i', name: 'Milk', qty: 1 }] })];
-    expect(findRecall(list, { ...SHOPPING_OPTS, allowedVehicles: [...SHOPPING_OPTS.allowedVehicles] })!.preview).toBe(
-      '1 item · budget ₱400.00',
-    );
+  it('names the price-moving vehicle in the preview — it is only visible on Review', () => {
+    const list = [
+      booking({
+        id: 'n',
+        vehicle_type_rate: 'car',
+        pricing_mode: 'negotiate',
+        customer_offer: 150,
+        shopping_budget: 400,
+        shopping_items: [{ id: 'i', name: 'Milk', qty: 1 }],
+      }),
+    ];
+    expect(
+      findRecall(list, { ...SHOPPING_OPTS, allowedVehicles: [...SHOPPING_OPTS.allowedVehicles] })!
+        .preview,
+    ).toBe('1 item · budget ₱400.00 · Car');
   });
 
   it('carries the type name and source date for the chip', () => {

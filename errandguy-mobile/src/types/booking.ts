@@ -12,6 +12,11 @@ export type BookingStatus =
   | 'completed'
   | 'cancelled';
 
+/**
+ * How a booking was priced. Every new booking is fixed-price — "name your
+ * price" is gone — so `'negotiate'` only ever appears on a booking made while
+ * it existed. History and earnings still have to read those honestly.
+ */
 export type PricingMode = 'fixed' | 'negotiate';
 
 /**
@@ -67,7 +72,6 @@ export interface ErrandType {
   per_km_motorcycle: number;
   per_km_car: number;
   surcharge: number;
-  min_negotiate_fee: number;
   is_active: boolean;
   sort_order: number;
   created_at: string;
@@ -114,7 +118,8 @@ export interface Booking {
   receipt_photo_url: string | null;
   schedule_type: ScheduleType;
   scheduled_at: string | null;
-  pricing_mode: PricingMode;
+  /** Legacy — see PricingMode. Absent or 'fixed' on every new booking. */
+  pricing_mode?: PricingMode | null;
   vehicle_type_rate: string | null;
   distance_km: number | null;
   base_fee: number;
@@ -126,13 +131,11 @@ export interface Booking {
    *  they existed can be non-zero. Kept so those receipts still add up. */
   promo_discount: number;
   total_amount: number;
-  customer_offer: number | null;
-  recommended_min: number | null;
-  recommended_max: number | null;
+  /** Legacy — the customer's own price on an old 'negotiate' booking. */
+  customer_offer?: number | null;
   runner_payout: number | null;
   tip_amount: number | null;
   payment_method: string | null;
-  negotiate_expires_at: string | null;
   pickup_photo_url: string | null;
   delivery_photo_url: string | null;
   signature_url: string | null;

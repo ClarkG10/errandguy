@@ -52,7 +52,9 @@ describe('the runner is told the truth when going online', () => {
   const home = read('app/(runner)/(tabs)/index.tsx');
 
   it('does not claim readiness when notifications are denied', () => {
-    const idx = home.indexOf("pushPermission === 'denied'");
+    // The going-online branch reads the store imperatively; the idle note
+    // further down subscribes to the same fact for its own copy.
+    const idx = home.indexOf("useNotificationStore.getState().pushPermission === 'denied'");
     expect(idx).toBeGreaterThan(-1);
 
     // The honest branch must REPLACE the success copy, not sit beside it.

@@ -13,15 +13,18 @@ use Illuminate\Support\Facades\Log;
 /**
  * BookingSettlementService
  *
- * Resolves the two money seams that open when a booking's gateway charge is
- * confirmed paid AT A DIFFERENT TIME than the booking reaches its resting
- * state — i.e. the webhook / status-reconcile settles the charge AFTER the
- * runner already completed the errand, or AFTER the customer already cancelled:
+ * Settles an errand's money at completion ({@see self::settleCompletion()} —
+ * the one path behind both the runner's own "completed" tap and staff "Mark
+ * completed"), and resolves the two money seams that open when a booking's
+ * gateway charge is confirmed paid AT A DIFFERENT TIME than the booking reaches
+ * its resting state — i.e. the webhook / status-reconcile settles the charge
+ * AFTER the runner already completed the errand, or AFTER the customer already
+ * cancelled:
  *
- *   - booking already COMPLETED  → the runner earning that
- *     RunnerErrandController::handleCompletion could not credit (because the
- *     charge was still pending at completion) is BACK-FILLED now (MONEY-1).
- *     Mirrors the existing referral back-fill that already runs on this path.
+ *   - booking already COMPLETED  → the runner earning that settleCompletion
+ *     could not credit (because the charge was still pending at completion) is
+ *     BACK-FILLED now (MONEY-1). Mirrors the existing referral back-fill that
+ *     already runs on this path.
  *
  *   - booking already CANCELLED  → a charge that landed after cancellation is
  *     auto-REFUNDED (minus the cancellation fee that was actually recorded),
@@ -34,6 +37,148 @@ use Illuminate\Support\Facades\Log;
  */
 class BookingSettlementService
 {
+    /**
+     * Settle a just-completed errand: settlement, runner stats, payment marking.
+     *
+     * MUST run inside the transaction that holds the booking's row lock and has
+     * just moved it to `completed` (RunnerErrandController::updateStatus and
+     * BookingService::adminMarkCompleted), with the booking re-read under that
+     * lock so payment_status is current.
+     *
+     * Settlement is a function of what was ACTUALLY collected — never of the
+     * booking status alone (that was the critical money leak):
+     *   - paid (wallet/online): the platform holds the funds, so the runner's
+     *     payout is credited to their withdrawable wallet.
+     *   - cash: the runner collected the full fare in person, so they keep it
+     *     and OWE the platform its service fee — recorded as a negative
+     *     'commission' entry that nets against their wallet balance (and thus
+     *     against future earnings / payout). Their balance may go negative;
+     *     that debt is the point.
+     *   - unsettled online (expired/failed): nobody collected → credit nothing.
+     *
+     * @param  string|null  $actor  Who to record on the payment's audit trail;
+     *                              the runner unless staff completed it.
+     */
+    public function settleCompletion(Booking $booking, User $runner, ?string $actor = null): void
+    {
+        $actor ??= (string) $runner->id;
+        $profile = $runner->runnerProfile;
+        if (! $profile) {
+            return;
+        }
+
+        // Self-deal backstop (legacy rows only — accept() blocks new ones): a
+        // booking whose customer and runner are the SAME user must never
+        // settle, or the platform moves money within a single wallet and lets
+        // the user farm earnings/stats. Skip settlement and flag for
+        // reconciliation.
+        if ((string) $booking->customer_id === (string) $booking->runner_id) {
+            Log::critical('Self-dealt booking reached completion; settlement skipped', [
+                'booking_id' => $booking->id,
+                'user_id' => $booking->customer_id,
+            ]);
+            return;
+        }
+
+        // Idempotency guard: if this booking is already settled for this runner
+        // (an 'earning' credit OR a cash 'commission' debit) we must NOT settle
+        // again. Runs inside the booking-locked transaction, so it is race-safe;
+        // the uq_wallet_tx_user_reference_type index is the DB-level backstop.
+        $alreadySettled = WalletTransaction::where('user_id', $runner->id)
+            ->where('reference_id', $booking->id)
+            ->whereIn('type', ['earning', 'commission'])
+            ->exists();
+
+        if ($alreadySettled) {
+            $this->markPaymentCompleted($booking->payment, $actor);
+            return;
+        }
+
+        // Lock the runner row to serialize concurrent balance writes.
+        $runner = User::lockForUpdate()->find($runner->id);
+        $payoutAmount = (float) $booking->runner_payout;
+        $earnedForStats = 0.0;
+        $collected = false;
+
+        if ($booking->payment_status === 'paid') {
+            // Shared primitive — see WalletService::applyLedgerDelta. This path
+            // and the late-settlement back-fill both credit the SAME booking;
+            // they used to round it differently.
+            app(WalletService::class)->applyLedgerDelta(
+                $runner,
+                'earning',
+                $payoutAmount,
+                $booking->id,
+                "Earning for errand #{$booking->booking_number}",
+            );
+            $earnedForStats = $payoutAmount;
+            $collected = true;
+        } elseif ($booking->payment_method === 'cash') {
+            // The runner collected total_amount in cash and keeps runner_payout,
+            // so the platform's commission is exactly what's left over:
+            //   commission = total_amount − runner_payout
+            // This is the true invariant for every booking, including older
+            // negotiate-priced ones whose runner_payout was floored to 0 (where
+            // service_fee − promo would over-debit the runner). It equals
+            // service_fee − promo_discount for a standard booking (so it fixes
+            // MONEY-2: charging the full service_fee made the runner eat the
+            // platform-funded promo and overstated total_earnings). When the
+            // runner collected LESS cash than their payout (an older promo or
+            // low offer) commission goes negative and they are correctly
+            // CREDITED the shortfall. Promo codes and negotiate pricing are
+            // retired, so those cases only appear on bookings made before then.
+            $commission = round((float) $booking->total_amount - (float) $booking->runner_payout, 2);
+            app(WalletService::class)->applyLedgerDelta(
+                $runner,
+                'commission',
+                -$commission,
+                $booking->id,
+                "Platform commission for cash errand #{$booking->booking_number}",
+            );
+            $earnedForStats = $payoutAmount; // earned in cash, in person
+            $collected = true;
+        }
+        // else: unsettled online payment — nothing was collected, credit nothing.
+
+        // Update runner stats
+        $newTotalErrands = $profile->total_errands + 1;
+        $newTotalEarnings = (float) $profile->total_earnings + $earnedForStats;
+
+        // Recalculate completion rate with a SINGLE conditional-aggregation
+        // query — was two separate COUNT(*) round-trips held under the booking
+        // + runner row locks, needlessly lengthening lock hold time. Because
+        // 'completed' is a strict subset of the {completed,cancelled} assigned
+        // set, SUM(CASE ...) equals the old completed()->count() and COUNT(*)
+        // equals the old total, so the computed rate is identical.
+        // NOTE: 'completed' is hardcoded here rather than reusing the
+        // Booking::completed() scope; if that scope ever grows beyond a bare
+        // status filter, keep this in sync (guarded by the completion_rate
+        // regression test in StatusUpdateTest).
+        $stats = $runner->runnerBookings()
+            ->whereIn('status', ['completed', 'cancelled'])
+            ->toBase()
+            ->selectRaw("COUNT(*) as total_assigned, SUM(CASE WHEN status = 'completed' THEN 1 ELSE 0 END) as completed_count")
+            ->first();
+        $totalAssigned = (int) ($stats->total_assigned ?? 0);
+        $completedCount = (int) ($stats->completed_count ?? 0);
+        $completionRate = $totalAssigned > 0
+            ? round(($completedCount / $totalAssigned) * 100, 2)
+            : 100.00;
+
+        $profile->update([
+            'total_errands' => $newTotalErrands,
+            'total_earnings' => $newTotalEarnings,
+            'completion_rate' => $completionRate,
+        ]);
+
+        // Only record the payment as settled when money was actually collected
+        // (platform-side for paid, in-person cash for cash). An unsettled online
+        // charge must NOT be laundered to 'completed'.
+        if ($collected) {
+            $this->markPaymentCompleted($booking->payment, $actor);
+        }
+    }
+
     /**
      * Call AFTER a booking's gateway charge has just been transitioned to
      * Completed and the booking marked payment_status = 'paid'. No-ops for a
@@ -95,8 +240,8 @@ class BookingSettlementService
      * teardown is silently dead exactly when the customer declines in-app.
      *
      * Cancels the still-live, genuinely unpaid booking under a row lock and
-     * dispatches BookingCancelled, whose listeners retract outstanding offer cards
-     * and push both parties an "Errand cancelled" notice. No refund is involved
+     * dispatches BookingCancelled, whose listener pushes both parties an
+     * "Errand cancelled" notice. No refund is involved
      * (nothing was ever captured). Idempotent + race-safe: a booking that already
      * completed, was cancelled, found no runner, or whose charge actually settled
      * on another path (payment_status 'paid' / a Completed payment row) is left
@@ -145,9 +290,8 @@ class BookingSettlementService
         });
 
         if ($cancelled) {
-            // Post-commit: BookingCancelled's listeners retract outstanding offer
-            // cards (RetractBroadcastOffers) and push both parties an "Errand
-            // cancelled" notice (SendBookingCancelledNotification).
+            // Post-commit: BookingCancelled's listener pushes both parties an
+            // "Errand cancelled" notice (SendBookingCancelledNotification).
             event(new \App\Events\BookingCancelled($cancelled));
         }
     }
@@ -211,7 +355,7 @@ class BookingSettlementService
 
     /**
      * A gateway charge settled AFTER the runner completed the errand — credit
-     * the runner the payout that handleCompletion left uncredited (it saw an
+     * the runner the payout that settleCompletion left uncredited (it saw an
      * unpaid booking at completion time and, correctly, credited nothing).
      *
      * Idempotent: does nothing if the booking was already settled for this
@@ -268,5 +412,30 @@ class BookingSettlementService
                 'payout' => $payout,
             ]);
         });
+    }
+
+    /**
+     * Move the booking's payment to Completed through the audited
+     * {@see Payment::transitionTo()} funnel — never a raw
+     * ->update(['status' => ...]), which would skip the payment_status_transitions
+     * audit row and could launder an illegal failed/expired -> completed move
+     * with a fabricated paid_at. No-ops safely when the payment is null, already
+     * completed, or cannot legally advance.
+     */
+    private function markPaymentCompleted(?Payment $payment, string $actorId): void
+    {
+        if (! $payment) {
+            return;
+        }
+
+        $current = PaymentStatus::tryFrom((string) $payment->status);
+        if ($current && $current->canTransitionTo(PaymentStatus::Completed)) {
+            $payment->transitionTo(
+                PaymentStatus::Completed,
+                actor: $actorId,
+                reason: 'Errand completed',
+                extra: ['paid_at' => now()],
+            );
+        }
     }
 }

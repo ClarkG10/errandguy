@@ -16,8 +16,8 @@ import {
  *     ("Try again.") that asked the runner to retry it;
  *   • runner Home kept a phantom "active errand" after a remote cancel, and
  *     because every idle affordance is gated on `!activeErrand`, the phantom
- *     silently switched OFF the open-offers poll — the runner was frozen out
- *     of paid work with no visible cause.
+ *     left the runner looking busy to themselves — frozen out of paid work
+ *     with no visible cause.
  *
  * These screens can't be rendered under jest (map, router, Reverb socket, half
  * a dozen stores), so — as trackingArrivalCue / runnerCockpitStops already do
@@ -122,9 +122,9 @@ describe('runner Home clears the phantom active errand', () => {
     expect(HOME_CODE).toContain('enabled: !!watchedErrandId');
   });
 
-  it('re-arms the idle surface (offer feed) when the errand goes terminal', () => {
+  it('re-arms the idle surface when the errand goes terminal', () => {
     // updateErrandStatus('completed'|'cancelled') is what nulls currentErrand,
-    // which is what un-gates the `!activeErrand` open-offers poll.
+    // which is what un-gates every `!activeErrand` idle affordance.
     expect(HOME_CODE).toContain('store.updateErrandStatus(incoming.status)');
     expect(HOME_CODE).toContain("invalidateQuery(['runner', 'errand', 'current'])");
     expect(HOME).toContain('This errand was cancelled');

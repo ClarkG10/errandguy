@@ -25,6 +25,7 @@ class OnlineToggleTest extends TestCase
         $this->profile = RunnerProfile::create([
             'user_id' => $this->runner->id,
             'verification_status' => 'approved',
+            'vehicle_type' => 'motorcycle',
             'is_online' => false,
             'preferred_types' => ['delivery'],
             'acceptance_rate' => 100.00,
@@ -79,6 +80,24 @@ class OnlineToggleTest extends TestCase
             ->assertJsonPath('message', 'Your account must be approved before going online.');
     }
 
+    public function test_runner_without_a_vehicle_cannot_go_online(): void
+    {
+        // Matching treats a missing vehicle as walking, so this runner would sit
+        // online and never be offered a motorcycle or car errand.
+        $this->profile->update(['vehicle_type' => null]);
+
+        $this->actingAs($this->runner)
+            ->putJson('/api/v1/runner/online', [
+                'is_online' => true,
+                'lat' => 14.5995,
+                'lng' => 120.9842,
+            ])
+            ->assertStatus(422)
+            ->assertJsonPath('message', 'Add your vehicle in Settings › Vehicle before going online.');
+
+        $this->assertFalse($this->profile->fresh()->is_online);
+    }
+
     public function test_runner_without_preferred_types_cannot_go_online(): void
     {
         $this->profile->update(['preferred_types' => []]);
@@ -102,7 +121,7 @@ class OnlineToggleTest extends TestCase
             'slug' => 'delivery', 'name' => 'Delivery', 'description' => 'Deliver',
             'icon_name' => 'Package', 'base_fee' => 50.00, 'per_km_walk' => 15.00,
             'per_km_bicycle' => 12.00, 'per_km_motorcycle' => 10.00, 'per_km_car' => 18.00,
-            'min_negotiate_fee' => 30.00, 'is_active' => true, 'sort_order' => 1,
+            'is_active' => true, 'sort_order' => 1,
         ]);
 
         $customer = User::factory()->create(['role' => 'customer', 'status' => 'active']);

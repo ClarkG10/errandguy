@@ -80,14 +80,6 @@ const TYPE_META: Record<
     textColor: LightColors.primary,
     chipClass: 'bg-surfaceMuted',
   },
-  // Runner-only offer type; present here only to satisfy the exhaustive
-  // NotificationType map — customers never receive it.
-  incoming_request: {
-    icon: Package,
-    color: LightColors.primary,
-    textColor: LightColors.primary,
-    chipClass: 'bg-surfaceMuted',
-  },
   payment: {
     icon: CreditCard,
     color: LightColors.success,
@@ -139,7 +131,6 @@ const TYPE_LABELS: Record<NotificationType, string> = {
   booking_update: 'Booking',
   shopping_items_updated: 'Shopping',
   booking_stops_updated: 'Stops',
-  incoming_request: 'Offer',
   payment: 'Payment',
   chat: 'Message',
   sos: 'Safety',

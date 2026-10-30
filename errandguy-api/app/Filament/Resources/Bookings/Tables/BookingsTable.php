@@ -2,6 +2,7 @@
 
 namespace App\Filament\Resources\Bookings\Tables;
 
+use App\Enums\BookingStatus;
 use App\Filament\Support\AdminNotify;
 use App\Filament\Support\DateRangeFilter;
 use App\Filament\Support\ExportCsv;
@@ -136,7 +137,7 @@ class BookingsTable
                     ->color('warning')
                     ->requiresConfirmation()
                     ->modalHeading('Re-run matching for the selected errands')
-                    ->modalDescription('Sends fresh offers to nearby runners for every selected errand still awaiting one. Rows that already have a runner, or are no longer live, are skipped. Limited to '.self::REMATCH_BULK_LIMIT.' at a time.')
+                    ->modalDescription('Sends fresh offers to nearby runners for every selected errand still awaiting one. Rows that already have a runner, are no longer live, were refunded, or are scheduled for later are skipped. Limited to '.self::REMATCH_BULK_LIMIT.' at a time.')
                     ->schema([
                         TextInput::make('radius_km')
                             ->label('Search radius (km, optional)')
@@ -180,7 +181,8 @@ class BookingsTable
                                 $service->adminRematch($record->id, $radiusKm);
                                 $sent++;
                             } catch (\App\Exceptions\BookingStateException) {
-                                // Taken or cancelled between selection and now.
+                                // Taken or cancelled between selection and now,
+                                // refunded, or not due yet (adminRematch's guards).
                                 $skipped++;
                             } catch (\Throwable $e) {
                                 report($e);
@@ -190,7 +192,7 @@ class BookingsTable
 
                         $notes = [];
                         if ($skipped) {
-                            $notes[] = "{$skipped} skipped (already matched, or no longer live).";
+                            $notes[] = "{$skipped} skipped (already matched, no longer live, refunded, or scheduled for later).";
                         }
                         if ($failed) {
                             $notes[] = "{$failed} failed — see logs.";
@@ -262,7 +264,7 @@ class BookingsTable
                     ->color('warning')
                     ->requiresConfirmation()
                     ->modalDescription(fn (Booking $record): string => 'Re-runs runner matching for '
-                        .$record->booking_number.'. Sends fresh offers to nearby runners — use only on a stuck errand with no runner assigned yet.')
+                        .$record->booking_number.'. Sends fresh offers to nearby runners — use only on a stuck errand with no runner assigned yet. Refused if its payment was refunded or it is scheduled for later.')
                     ->schema([
                         TextInput::make('radius_km')
                             ->label('Search radius (km, optional)')
@@ -304,6 +306,105 @@ class BookingsTable
                             properties: ['radius_km' => $radiusKm],
                         );
                     }),
+
+                // Stuck-errand rescue: the runner accepted but can't (or won't)
+                // finish. Take it off them and offer it to someone else.
+                Action::make('returnToMatching')
+                    ->label('Return to matching')
+                    ->icon(Heroicon::OutlinedArrowUturnLeft)
+                    ->color('warning')
+                    ->requiresConfirmation()
+                    ->modalHeading('Return this errand to matching')
+                    ->modalDescription(fn (Booking $record): string => 'Takes '.$record->booking_number.' off '
+                        .($record->runner?->full_name ?? 'its runner').' and offers it to another runner. Both the runner and the customer are told. '
+                        .'If the runner already has the customer’s item, arrange the handover first.')
+                    ->schema([
+                        Textarea::make('reason')->required()->maxLength(500),
+                    ])
+                    ->visible(fn ($record): bool => self::isRescuable($record))
+                    ->action(function (array $data, $record): void {
+                        $runnerName = $record->runner?->full_name;
+
+                        try {
+                            app(\App\Services\BookingService::class)
+                                ->adminReturnToMatching($record->id, $data['reason']);
+                        } catch (\App\Exceptions\BookingStateException $e) {
+                            AdminNotify::error('Could not return the errand to matching', $e, $record, [
+                                'Booking' => $record->booking_number,
+                            ]);
+
+                            return;
+                        }
+
+                        AdminNotify::success(
+                            'Errand returned to matching',
+                            $record,
+                            context: [
+                                'Booking' => $record->booking_number,
+                                'Removed runner' => $runnerName,
+                            ],
+                            audit: 'booking.returned_to_matching',
+                            properties: ['reason' => $data['reason'], 'runner' => $runnerName],
+                            note: 'Offers are going out to other runners.',
+                        );
+                    }),
+
+                // Stuck-errand rescue: the work was done but the runner can't
+                // finish it in the app. Settles exactly like their own
+                // completion (BookingService::adminMarkCompleted).
+                Action::make('markCompleted')
+                    ->label('Mark completed')
+                    ->icon(Heroicon::OutlinedCheckCircle)
+                    ->color('success')
+                    ->requiresConfirmation()
+                    ->modalHeading('Mark this errand completed')
+                    ->modalDescription(fn (Booking $record): string => 'Completes '.$record->booking_number
+                        .' on behalf of '.($record->runner?->full_name ?? 'its runner')
+                        .' and settles it like a normal completion: the runner is paid and the payment is recorded. '
+                        .'Use only when the errand was actually done. This can’t be undone.')
+                    ->schema([
+                        Textarea::make('reason')->required()->maxLength(500),
+                    ])
+                    ->visible(fn ($record): bool => self::isRescuable($record))
+                    ->action(function (array $data, $record): void {
+                        try {
+                            app(\App\Services\BookingService::class)
+                                ->adminMarkCompleted($record->id, auth('admin')->id(), $data['reason']);
+                        } catch (\App\Exceptions\BookingStateException $e) {
+                            AdminNotify::error('Could not mark the errand completed', $e, $record, [
+                                'Booking' => $record->booking_number,
+                            ]);
+
+                            return;
+                        }
+
+                        AdminNotify::success(
+                            'Errand marked completed',
+                            $record,
+                            context: [
+                                'Booking' => $record->booking_number,
+                                'Runner' => $record->runner?->full_name,
+                            ],
+                            audit: 'booking.marked_completed',
+                            properties: ['reason' => $data['reason']],
+                            note: 'The runner has been paid for it.',
+                        );
+                    }),
             ]);
+    }
+
+    /**
+     * A runner accepted it and hasn't finished — the errands the two rescue
+     * actions apply to (super admin / admin / ops only).
+     */
+    private static function isRescuable(Booking $record): bool
+    {
+        return $record->runner_id !== null
+            && in_array($record->status, BookingStatus::IN_PROGRESS, true)
+            && (auth('admin')->user()?->hasAnyRole(
+                AdminUser::ROLE_SUPER_ADMIN,
+                AdminUser::ROLE_ADMIN,
+                AdminUser::ROLE_OPS,
+            ) ?? false);
     }
 }

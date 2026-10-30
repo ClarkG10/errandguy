@@ -10,11 +10,8 @@ use App\Http\Requests\Runner\UpdateErrandStatusRequest;
 use App\Http\Resources\BookingResource;
 use App\Models\Booking;
 use App\Models\BookingStatusLog;
-use App\Models\ErrandType;
-use App\Models\Notification;
-use App\Models\WalletTransaction;
-use App\Services\LocationService;
-use App\Services\MatchingService;
+use App\Services\BookingSettlementService;
+use App\Support\VehicleClass;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Cache;
@@ -63,11 +60,6 @@ class RunnerErrandController extends Controller
      * same set ShoppingChecklistController uses for its checklist.
      */
     private const CLOSED_STATUSES = BookingStatus::FINALIZED;
-
-    public function __construct(
-        private MatchingService $matchingService,
-        private LocationService $locationService,
-    ) {}
 
     public function current(Request $request): JsonResponse
     {
@@ -151,7 +143,7 @@ class RunnerErrandController extends Controller
         }
 
         // Deep links from the offer push land here, so the same approximate
-        // pickup distance the feed shows must be available on this payload too.
+        // pickup distance current() shows must be available on this payload too.
         $this->attachPickupDistance($booking, $request->user());
 
         return response()->json([
@@ -170,11 +162,12 @@ class RunnerErrandController extends Controller
             ], 422);
         }
 
-        // Atomically claim the booking to prevent two runners from accepting
-        // the same offer (lockForUpdate serialises competing acceptors).
-        $oldStatus = 'pending';
+        // Atomically claim the booking to prevent a lapsed offer from being
+        // accepted after it moved on (lockForUpdate serialises it against the
+        // stale-offer sweep, a decline, or a cancel).
+        $oldStatus = 'matched';
         try {
-            $booking = DB::transaction(function () use ($id, $user, &$oldStatus) {
+            $booking = DB::transaction(function () use ($id, $user, $profile, &$oldStatus) {
                 $booking = Booking::whereKey($id)->lockForUpdate()->firstOrFail();
 
                 // Self-deal guard: a user who is BOTH a customer and an approved
@@ -183,18 +176,26 @@ class RunnerErrandController extends Controller
                 // account can pay as the customer and collect the runner payout,
                 // self-review to inflate its rating, and farm completion stats.
                 // This mirrors the excludeCustomerId contract the AUTOMATED
-                // dispatch already enforces (MatchingService::findRunner /
-                // broadcastToRunners); accept() is the MANUAL path that omitted
-                // it. (ids are UUIDs → compare as strings.)
+                // dispatch already enforces (MatchingService::findRunner).
+                // (ids are UUIDs → compare as strings.)
                 if ((string) $booking->customer_id === (string) $user->id) {
                     throw new \RuntimeException('self_deal');
                 }
 
-                if (!in_array($booking->status, ['pending', 'matched'])) {
+                // Only the runner this errand is offered to may accept it, and
+                // only while the offer stands. There is no open list of errands
+                // to pick from — matching offers each errand to one runner at a
+                // time — so a pending booking (offer lapsed, or never offered to
+                // this runner) is no longer available.
+                if ($booking->status !== 'matched' || (string) $booking->runner_id !== (string) $user->id) {
                     throw new \RuntimeException('unavailable');
                 }
-                if ($booking->runner_id && $booking->runner_id !== $user->id) {
-                    throw new \RuntimeException('unavailable');
+
+                // The customer paid for this vehicle. Matching only offers it to
+                // runners who can serve it, but a runner may have changed their
+                // vehicle since the offer went out.
+                if (! VehicleClass::canServe($profile->vehicle_type, $booking->vehicle_type_rate)) {
+                    throw new \RuntimeException('vehicle');
                 }
 
                 // Serialize concurrent accepts by THIS runner on their User row
@@ -209,7 +210,7 @@ class RunnerErrandController extends Controller
                 // taking the User lock first makes the loser block until the
                 // winner commits, then read its committed 'accepted' booking.
                 // Lock order is Booking→User, matching MatchRunnerJob and
-                // handleCompletion, so no new deadlock cycle is introduced.
+                // completion settlement, so no new deadlock cycle is introduced.
                 $lockedRunner = \App\Models\User::whereKey($user->id)->lockForUpdate()->first();
 
                 // Cash-debt ceiling. A cash errand settles by DEBITING the
@@ -218,9 +219,10 @@ class RunnerErrandController extends Controller
                 // money the platform never collects. Checked here, under the
                 // runner's row lock, because this is the authoritative gate —
                 // MatchingService also filters indebted runners out of cash
-                // dispatch, but a broadcast offer accepted a moment later must
-                // not slip past. Only CASH is blocked: prepaid/wallet errands
-                // CREDIT the runner, so their way back above the line is open.
+                // dispatch, but a runner whose debt grew after the offer went
+                // out must not slip past. Only CASH is blocked: prepaid/wallet
+                // errands CREDIT the runner, so their way back above the line is
+                // open.
                 if (
                     $lockedRunner
                     && $booking->payment_method === 'cash'
@@ -243,7 +245,7 @@ class RunnerErrandController extends Controller
 
                 // Capture the real old status for the BookingStatusChanged
                 // event so listeners (notifications, analytics) report the
-                // correct transition (e.g. matched → accepted vs pending → accepted).
+                // correct transition.
                 $oldStatus = $booking->status;
 
                 $booking->update([
@@ -270,6 +272,14 @@ class RunnerErrandController extends Controller
                 );
             }
 
+            if ($e->getMessage() === 'vehicle') {
+                return $this->fail(
+                    ErrorCode::BOOKING_CONFLICT,
+                    'This errand needs '.VehicleClass::requirement(Booking::whereKey($id)->value('vehicle_type_rate'))
+                        .'. If your vehicle has changed, update it in Settings.',
+                );
+            }
+
             if ($e->getMessage() === 'cash_debt') {
                 // Names the amount to settle — a bare refusal would leave the
                 // runner blocked with no idea what to do about it.
@@ -279,11 +289,12 @@ class RunnerErrandController extends Controller
                 );
             }
 
-            // Another runner accepted it, or it was cancelled, between the offer
-            // and this tap — a stale view, not the runner's fault.
+            // The offer lapsed, was taken back, or the errand was cancelled
+            // between the offer and this tap — a stale view, not the runner's
+            // fault.
             return $this->fail(
                 ErrorCode::BOOKING_STALE,
-                'This errand is no longer available — someone may have already accepted it. Pull to refresh for new ones.',
+                'This errand is no longer available — the offer may have timed out or been cancelled.',
             );
         }
 
@@ -322,25 +333,16 @@ class RunnerErrandController extends Controller
     {
         $booking = Booking::findOrFail($id);
         $user = $request->user();
-        $profile = $user->runnerProfile;
 
         // A booking that has already been matched/assigned to a runner may only
         // be declined by THAT runner. Otherwise any runner could POST decline on
         // someone else's matched booking and reset it to 'pending' (a griefing /
-        // dispatch-tampering hole). Negotiate broadcasts have runner_id = null,
-        // so a nearby runner declining an offer still works.
+        // dispatch-tampering hole).
         if ($booking->runner_id !== null && $booking->runner_id !== $user->id) {
             return $this->fail(ErrorCode::ERRAND_NOT_ASSIGNED, 'You are not assigned to this errand.', 403);
         }
 
-        // Update acceptance rate
-        if ($profile) {
-            $totalOffers = max(1, $profile->total_errands + 1);
-            $newAcceptanceRate = max(0, ($profile->acceptance_rate * $profile->total_errands) / $totalOffers);
-            $profile->update(['acceptance_rate' => round($newAcceptanceRate, 2)]);
-        }
-
-        // For fixed-price: revert to pending and re-dispatch matching.
+        // Revert the offer to pending and re-dispatch matching.
         //
         // The precondition is re-checked UNDER A ROW LOCK, because the read at
         // the top of this method is unlocked and the write used to carry an
@@ -352,19 +354,20 @@ class RunnerErrandController extends Controller
         //
         // MatchRunnerJob only guards on status === 'pending', so the dead errand
         // was re-dispatched: a second runner was offered an errand the customer
-        // had cancelled, and on completing it handleCompletion found
+        // had cancelled, and on completing it settlement found
         // payment_status === 'refunded', took neither settlement branch, and
         // credited them NOTHING. A refunded customer got a runner at their door
         // and that runner worked for free.
         //
         // Mirrors accept() above and AutoCancelBookingJob: lock, re-read, and
-        // only act if the row is still what we thought it was.
+        // only act if the row is still what we thought it was. A decline that
+        // arrives after the offer already lapsed (or was taken back) is a stale
+        // tap: nothing to revert, and nothing held against the runner.
         $reverted = DB::transaction(function () use ($id, $user) {
             $locked = Booking::whereKey($id)->lockForUpdate()->first();
 
             if (
                 ! $locked
-                || $locked->pricing_mode !== 'fixed'
                 || $locked->status !== 'matched'
                 || (string) $locked->runner_id !== (string) $user->id
             ) {
@@ -379,6 +382,13 @@ class RunnerErrandController extends Controller
         if ($reverted) {
             $booking = $reverted;
 
+            $profile = $user->runnerProfile;
+            if ($profile) {
+                $totalOffers = max(1, $profile->total_errands + 1);
+                $newAcceptanceRate = max(0, ($profile->acceptance_rate * $profile->total_errands) / $totalOffers);
+                $profile->update(['acceptance_rate' => round($newAcceptanceRate, 2)]);
+            }
+
             // Surface the matched → pending revert to the customer live, so
             // their tracking screen drops back to "finding a runner" instead of
             // showing a runner who just walked away. The old WAL-tail feed used to
@@ -388,157 +398,15 @@ class RunnerErrandController extends Controller
             // broadcast only — no spurious notification.
             event(new BookingStatusChanged($booking, 'matched', 'pending'));
 
-            // Re-dispatch matching, EXCLUDING the runner who just declined —
-            // otherwise findRunner (now that runner_id is null and they're still
-            // online/nearest) instantly re-offers the same errand to them,
-            // defeating the decline. Mirrors ExpireStaleMatchesJob.
+            // Re-dispatch matching. The declining runner is on the booking's
+            // offered_runner_ids (and passed as the explicit exclusion), so
+            // they are never offered this errand again. Mirrors
+            // ExpireStaleMatchesJob.
             \App\Jobs\MatchRunnerJob::dispatch($booking->id, null, $user->id);
         }
 
         return response()->json([
             'message' => 'Errand declined.',
-        ]);
-    }
-
-    public function available(Request $request): JsonResponse
-    {
-        $user = $request->user();
-        $profile = $user->runnerProfile;
-
-        if (!$profile || !$profile->is_online) {
-            return response()->json(['data' => []]);
-        }
-
-        // Negotiate-mode bookings still open. Only the minimal customer
-        // fields are eager-loaded; the runner has not been matched yet
-        // and must not be able to harvest the customer's phone / email
-        // by browsing — and tapping decline on — every broadcast.
-        $maxRadiusKm = $profile->working_area_radius
-            ? (float) $profile->working_area_radius / 1000
-            : 10.0;
-
-        $query = Booking::with([
-                'errandType',
-                'customer:id,full_name,avatar_url,role,avg_rating,total_ratings,created_at',
-                // BookingResource emits `stops` only when the relation is
-                // loaded, so without this a multi-stop errand looked like a
-                // single drop in the offer feed and the runner discovered the
-                // extra destinations only after accepting. show()/current()
-                // already load it — this exposes nothing a matched runner
-                // cannot already see.
-                'stops',
-            ])
-            ->where('status', 'pending')
-            ->where('pricing_mode', 'negotiate')
-            ->where('negotiate_expires_at', '>', now())
-            ->whereNull('runner_id')
-            // Never surface a user's OWN booking in their runner offer feed —
-            // defense-in-depth with the accept() self-deal guard so a
-            // customer-and-runner account can neither see nor claim the errand
-            // it booked.
-            ->where('customer_id', '!=', $user->id)
-            // Hide CASH errands from a runner over the cash-debt ceiling. The
-            // same CashDebtPolicy gates accept() and MatchingService dispatch,
-            // so leaving them in the pull feed would show work that is certain
-            // to be refused on tap. The runner is told WHY separately (the
-            // accept error names the amount to settle), so this is a filtered
-            // feed rather than a silent one.
-            ->when(
-                \App\Support\CashDebtPolicy::blocks((float) $user->wallet_balance),
-                fn ($q) => $q->where('payment_method', '!=', 'cash'),
-            )
-            // Schedule-aware gate: a SCHEDULED negotiate booking is broadcast to
-            // runners only at matchAt = scheduled_at - 15min (see
-            // BookingController::store, which defers BroadcastToRunnersJob to
-            // that moment). Without this the PULL feed surfaced — and let a
-            // runner accept/lock — a prepaid scheduled booking the instant it
-            // was created, days before its time, subverting the deferred
-            // dispatch. Immediate bookings (schedule_type 'now', or a stray
-            // scheduled_at on a 'now' row) stay always-eligible; keying on
-            // schedule_type (not scheduled_at nullness) mirrors
-            // ReapStrandedBookingsCommand::scheduleAwareWindow.
-            ->where(function ($q) {
-                $q->where(function ($immediate) {
-                    $immediate->where('schedule_type', '!=', 'scheduled')
-                        ->orWhereNull('scheduled_at');
-                })->orWhere(function ($scheduled) {
-                    $scheduled->where('schedule_type', 'scheduled')
-                        ->whereNotNull('scheduled_at')
-                        ->where('scheduled_at', '<=', now()->addMinutes(15));
-                });
-            });
-
-        // Bounding-box prefilter (same 25%-margin box as MatchingService) so we
-        // don't load every open negotiate booking in the country and haversine
-        // them in PHP. The precise circle filter still runs below.
-        if ($profile->current_lat && $profile->current_lng) {
-            $lat = (float) $profile->current_lat;
-            $lng = (float) $profile->current_lng;
-            $latDelta = ($maxRadiusKm * 1.25) / 111.0;
-            $cos = max(0.000001, cos(deg2rad($lat)));
-            $lngDelta = ($maxRadiusKm * 1.25) / (111.0 * $cos);
-            $query->whereBetween('pickup_lat', [$lat - $latDelta, $lat + $latDelta])
-                  ->whereBetween('pickup_lng', [$lng - $lngDelta, $lng + $lngDelta]);
-        }
-
-        // Hard cap the result set — an unbounded ->get() here was a
-        // latency / memory risk as open-booking volume grows.
-        $bookings = $query->orderByDesc('created_at')->limit(100)->get();
-
-        // Filter by runner's location and preferred types
-        $preferredTypes = $profile->preferred_types ?? [];
-        $filtered = $bookings->filter(function (Booking $booking) use ($profile, $preferredTypes) {
-            // Filter by preferred types — preferred_types stores errand-type
-            // slugs (e.g. "delivery"), not UUIDs. Compare against the eager-
-            // loaded errandType->slug, otherwise every booking is filtered
-            // out and the runner sees an empty list. A retired type is matched
-            // against the type that replaced it.
-            if (!empty($preferredTypes)) {
-                $slug = $booking->errandType?->slug;
-                if (!$slug || !in_array(ErrandType::preferenceSlug($slug), $preferredTypes, true)) {
-                    return false;
-                }
-            }
-
-            // Filter by distance (within working area or 10km default)
-            if ($profile->current_lat && $profile->current_lng && $booking->pickup_lat && $booking->pickup_lng) {
-                $distance = $this->haversineDistance(
-                    (float) $profile->current_lat,
-                    (float) $profile->current_lng,
-                    (float) $booking->pickup_lat,
-                    (float) $booking->pickup_lng
-                );
-                $maxRadius = $profile->working_area_radius
-                    ? (float) $profile->working_area_radius / 1000
-                    : 10.0;
-
-                if ($distance > $maxRadius) {
-                    return false;
-                }
-
-                // Keep the distance we just paid to compute — it used to be
-                // discarded, forcing the app to recompute it client-side (and
-                // render nothing at all until a live GPS fix landed). Surfaced
-                // as `distance_to_pickup_km` and used as the feed's sort key.
-                // Mirrors MatchingService's setAttribute('distance_km') idiom.
-                $booking->setAttribute('distance_to_pickup_km', round($distance, 1));
-
-                return true;
-            }
-
-            return true;
-        })
-            // Nearest-first: the offer feed was ordered by recency, so the
-            // closest (and usually best) job could sit at the bottom of the
-            // list while the runner manually compared cards. Bookings with no
-            // computable distance (runner has no GPS fix on file) sort last;
-            // PHP's sort is stable, so ties keep the newest-first order from
-            // the query above.
-            ->sortBy(fn (Booking $booking) => $booking->distance_to_pickup_km ?? INF)
-            ->values();
-
-        return response()->json([
-            'data' => BookingResource::collection($filtered),
         ]);
     }
 
@@ -664,7 +532,7 @@ class RunnerErrandController extends Controller
                 // re-selects the locked row inside this transaction, so it
                 // reflects the committed payment_status.
                 $booking->refresh();
-                $this->handleCompletion($booking, $user);
+                app(BookingSettlementService::class)->settleCompletion($booking, $user);
             }
 
             // The runner's "active booking" cache (used by
@@ -842,164 +710,6 @@ class RunnerErrandController extends Controller
         }
 
         return self::STATUS_ORDER;
-    }
-
-    /**
-     * Handle booking completion: settlement, stats update, payment marking.
-     *
-     * Settlement is a function of what was ACTUALLY collected — never of the
-     * booking status alone (that was the critical money leak):
-     *   - paid (wallet/online): the platform holds the funds, so the runner's
-     *     payout is credited to their withdrawable wallet.
-     *   - cash: the runner collected the full fare in person, so they keep it
-     *     and OWE the platform its service fee — recorded as a negative
-     *     'commission' entry that nets against their wallet balance (and thus
-     *     against future earnings / payout). Their balance may go negative;
-     *     that debt is the point.
-     *   - unsettled online (expired/failed): nobody collected → credit nothing.
-     */
-    private function handleCompletion(Booking $booking, $user): void
-    {
-        $profile = $user->runnerProfile;
-        if (!$profile) {
-            return;
-        }
-
-        // Self-deal backstop (legacy rows only — accept() now blocks new ones):
-        // a booking whose customer and runner are the SAME user must never
-        // settle, or the platform moves money within a single wallet and lets the
-        // user farm earnings/stats. Skip settlement and flag for reconciliation.
-        if ((string) $booking->customer_id === (string) $booking->runner_id) {
-            \Illuminate\Support\Facades\Log::critical('Self-dealt booking reached completion; settlement skipped', [
-                'booking_id' => $booking->id,
-                'user_id' => $booking->customer_id,
-            ]);
-            return;
-        }
-
-        // Idempotency guard: if this booking is already settled for this runner
-        // (an 'earning' credit OR a cash 'commission' debit) we must NOT settle
-        // again. Runs inside the booking-locked transaction from updateStatus,
-        // so it is race-safe; the uq_wallet_tx_user_reference_type index is the
-        // DB-level backstop.
-        $alreadySettled = WalletTransaction::where('user_id', $user->id)
-            ->where('reference_id', $booking->id)
-            ->whereIn('type', ['earning', 'commission'])
-            ->exists();
-
-        if ($alreadySettled) {
-            $this->markPaymentCompleted($booking->payment, $user->id);
-            return;
-        }
-
-        // Lock the runner row to serialize concurrent balance writes.
-        $user = \App\Models\User::lockForUpdate()->find($user->id);
-        $payoutAmount = (float) $booking->runner_payout;
-        $earnedForStats = 0.0;
-        $collected = false;
-
-        if ($booking->payment_status === 'paid') {
-            // Shared primitive — see WalletService::applyLedgerDelta. This path
-            // and the late-settlement back-fill both credit the SAME booking;
-            // they used to round it differently.
-            app(\App\Services\WalletService::class)->applyLedgerDelta(
-                $user,
-                'earning',
-                $payoutAmount,
-                $booking->id,
-                "Earning for errand #{$booking->booking_number}",
-            );
-            $earnedForStats = $payoutAmount;
-            $collected = true;
-        } elseif ($booking->payment_method === 'cash') {
-            // The runner collected total_amount in cash and keeps runner_payout,
-            // so the platform's commission is exactly what's left over:
-            //   commission = total_amount − runner_payout
-            // This is the true invariant in EVERY pricing mode. It equals
-            // service_fee − promo_discount for a standard booking (so it fixes
-            // MONEY-2: charging the full service_fee made the runner eat the
-            // platform-funded promo and overstated total_earnings), AND it stays
-            // correct in negotiate mode where runner_payout is floored to 0 and
-            // service_fee − promo would over-debit the runner. When the runner
-            // collected LESS cash than their payout (aggressive promo / low
-            // negotiate offer) commission goes negative and they are correctly
-            // CREDITED the shortfall. Promo codes are retired, so a non-zero
-            // promo_discount only appears on a booking made before then.
-            $commission = round((float) $booking->total_amount - (float) $booking->runner_payout, 2);
-            app(\App\Services\WalletService::class)->applyLedgerDelta(
-                $user,
-                'commission',
-                -$commission,
-                $booking->id,
-                "Platform commission for cash errand #{$booking->booking_number}",
-            );
-            $earnedForStats = $payoutAmount; // earned in cash, in person
-            $collected = true;
-        }
-        // else: unsettled online payment — nothing was collected, credit nothing.
-
-        // Update runner stats
-        $newTotalErrands = $profile->total_errands + 1;
-        $newTotalEarnings = (float) $profile->total_earnings + $earnedForStats;
-
-        // Recalculate completion rate with a SINGLE conditional-aggregation
-        // query — was two separate COUNT(*) round-trips held under the booking
-        // + runner row locks, needlessly lengthening lock hold time. Because
-        // 'completed' is a strict subset of the {completed,cancelled} assigned
-        // set, SUM(CASE ...) equals the old completed()->count() and COUNT(*)
-        // equals the old total, so the computed rate is identical.
-        // NOTE: 'completed' is hardcoded here rather than reusing the
-        // Booking::completed() scope; if that scope ever grows beyond a bare
-        // status filter, keep this in sync (guarded by the completion_rate
-        // regression test in StatusUpdateTest).
-        $stats = $user->runnerBookings()
-            ->whereIn('status', ['completed', 'cancelled'])
-            ->toBase()
-            ->selectRaw("COUNT(*) as total_assigned, SUM(CASE WHEN status = 'completed' THEN 1 ELSE 0 END) as completed_count")
-            ->first();
-        $totalAssigned = (int) ($stats->total_assigned ?? 0);
-        $completedCount = (int) ($stats->completed_count ?? 0);
-        $completionRate = $totalAssigned > 0
-            ? round(($completedCount / $totalAssigned) * 100, 2)
-            : 100.00;
-
-        $profile->update([
-            'total_errands' => $newTotalErrands,
-            'total_earnings' => $newTotalEarnings,
-            'completion_rate' => $completionRate,
-        ]);
-
-        // Only record the payment as settled when money was actually collected
-        // (platform-side for paid, in-person cash for cash). An unsettled online
-        // charge must NOT be laundered to 'completed'.
-        if ($collected) {
-            $this->markPaymentCompleted($booking->payment, $user->id);
-        }
-    }
-
-    /**
-     * Move the booking's payment to Completed through the audited
-     * {@see \App\Models\Payment::transitionTo()} funnel — never a raw
-     * ->update(['status' => ...]), which would skip the payment_status_transitions
-     * audit row and could launder an illegal failed/expired -> completed move
-     * with a fabricated paid_at. No-ops safely when the payment is null, already
-     * completed, or cannot legally advance.
-     */
-    private function markPaymentCompleted(?\App\Models\Payment $payment, string $actorId): void
-    {
-        if (! $payment) {
-            return;
-        }
-
-        $current = \App\Enums\PaymentStatus::tryFrom((string) $payment->status);
-        if ($current && $current->canTransitionTo(\App\Enums\PaymentStatus::Completed)) {
-            $payment->transitionTo(
-                \App\Enums\PaymentStatus::Completed,
-                actor: $actorId,
-                reason: 'Errand completed',
-                extra: ['paid_at' => now()],
-            );
-        }
     }
 
     /**

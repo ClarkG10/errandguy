@@ -168,8 +168,7 @@ export default function TypeSelectionScreen() {
     if (!selectedId || !selectionValid) return;
     const selectedType = errandTypes.find((t) => t.id === selectedId);
     // If errand type changed, drop ONLY the fields that are tied to the
-    // previous service shape — pricing/vehicle/offer plus shopping
-    // metadata. We deliberately keep pickup/dropoff coords, address text,
+    // previous service shape — the vehicle plus shopping metadata. We deliberately keep pickup/dropoff coords, address text,
     // contact info, and photos because those are reusable and re-typing
     // them is the single most painful part of the flow. The
     // rule-cleanup effect on details.tsx will additionally prune
@@ -180,8 +179,6 @@ export default function TypeSelectionScreen() {
     ) {
       updateDraft({
         vehicle_type_rate: undefined,
-        customer_offer: undefined,
-        pricing_mode: undefined,
         shopping_budget: undefined,
         estimated_item_value: undefined,
         // Description/checklist are type-specific — a shopping list makes no

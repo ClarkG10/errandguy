@@ -41,6 +41,7 @@ class DiscoverySweepTest extends TestCase
 
         RunnerProfile::create([
             'user_id' => $this->runner->id, 'verification_status' => 'approved', 'is_online' => true,
+            'vehicle_type' => 'motorcycle',
             'current_lat' => 14.60, 'current_lng' => 120.98, 'preferred_types' => [],
             'acceptance_rate' => 100.00, 'completion_rate' => 100.00, 'total_errands' => 0, 'total_earnings' => 0.00,
             'last_location_at' => now(),
@@ -50,7 +51,7 @@ class DiscoverySweepTest extends TestCase
             'slug' => 'delivery', 'name' => 'Delivery', 'description' => 'Deliver',
             'icon_name' => 'Package', 'base_fee' => 50.00, 'per_km_walk' => 15.00,
             'per_km_bicycle' => 12.00, 'per_km_motorcycle' => 10.00, 'per_km_car' => 18.00,
-            'min_negotiate_fee' => 30.00, 'is_active' => true, 'sort_order' => 1,
+            'is_active' => true, 'sort_order' => 1,
         ]);
 
         $this->booking = Booking::create([

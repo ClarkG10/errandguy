@@ -1471,7 +1471,7 @@ export default function TrackingScreen() {
   // no_runner recovery — mirrors book/confirm's exhausted-rebook exactly:
   // re-seed the draft from this booking's fields and drop the user on the
   // review step, where the details that matter for matching (vehicle,
-  // pricing mode, offer) are editable.
+  // timing) are editable.
   const handleRebook = useCallback(() => {
     const b = booking;
     if (!b) {
@@ -1512,9 +1512,7 @@ export default function TrackingScreen() {
             qty: it.qty ?? 1,
           }))
         : undefined,
-      pricing_mode: b.pricing_mode,
       vehicle_type_rate: b.vehicle_type_rate ?? undefined,
-      customer_offer: b.customer_offer != null ? Number(b.customer_offer) : undefined,
       schedule_type: scheduleStillValid ? 'scheduled' : 'now',
       scheduled_at: scheduleStillValid ? b.scheduled_at ?? undefined : undefined,
     });

@@ -20,11 +20,11 @@ class LocationService
      * per runner. The customer's live-track pin is fed by the fine-grained
      * `runner_locations` rows (still inserted on every accepted ping), so this
      * only governs the copy MatchingService reads — and matching tolerates a
-     * stale position (it filters `last_location_at >= now()-5min` and searches
-     * a radius). Writing that hot row on every 5s ping bloats the exact table
-     * every matching scan hits; a coarser cadence cuts the write/contention
-     * ~4× with no UX change. Comfortably inside the 5-min matching freshness
-     * gate. See docs/scaling-tier0-rollout.md ("location write pipeline").
+     * stale position (MatchingService::LOCATION_FRESHNESS_MINUTES, and it
+     * searches a radius). Writing that hot row on every 5s ping bloats the
+     * exact table every matching scan hits; a coarser cadence cuts the
+     * write/contention ~4× with no UX change. Comfortably inside the matching
+     * freshness gate. See docs/scaling-tier0-rollout.md ("location write pipeline").
      */
     private const PROFILE_POSITION_TTL_SECONDS = 20;
 

@@ -116,10 +116,8 @@ const BASE_SIZES: Record<ButtonSize, { padV: number; padH: number; minH: number;
  * The comment above used to claim sm/md "are paired with hitSlop at their call
  * sites" — but ButtonProps never accepted one and this component never set
  * one, so 70+ call sites shipped a 40dp target and the sm ones 30dp. That
- * included the controls it hurts most: the runner's step-advance CTA in the
- * cockpit, the offer-feed Accept (sitting directly on top of a full-card
- * Pressable that opens a details sheet, so a high thumb browses instead of
- * taking the job) and the ride-PIN Verify.
+ * included the controls it hurts most, such as the runner's step-advance CTA
+ * in the cockpit.
  */
 const SIZE_HIT_SLOP: Record<ButtonSize, number> = { sm: 7, md: 2, lg: 0 };
 

@@ -86,7 +86,7 @@ const FAQS: FAQ[] = [
   {
     question: 'How do I receive errand requests?',
     answer:
-      'Toggle yourself online from the dashboard. When a customer books an errand near your working area, you will receive a push notification with the details. Accept or decline within the time limit.',
+      'Go online from the dashboard. When a customer books an errand near you, it is offered to you directly and you have about 90 seconds to accept or decline. With notifications on, offers keep reaching you for about 15 minutes after you lock your phone. If we get no location from you for 30 minutes, we switch you offline and let you know.',
   },
   {
     question: 'When do I get paid?',

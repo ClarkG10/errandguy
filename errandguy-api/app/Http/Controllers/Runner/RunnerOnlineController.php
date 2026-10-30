@@ -34,6 +34,16 @@ class RunnerOnlineController extends Controller
                 ], 422);
             }
 
+            // Matching only offers an errand to a runner whose vehicle can do
+            // it, and treats a missing vehicle as walking — so a runner with
+            // none on file would sit online and never see a motorcycle or car
+            // errand.
+            if (empty($profile->vehicle_type)) {
+                return response()->json([
+                    'message' => 'Add your vehicle in Settings › Vehicle before going online.',
+                ], 422);
+            }
+
             $profile->update([
                 'is_online' => true,
                 'current_lat' => $validated['lat'],

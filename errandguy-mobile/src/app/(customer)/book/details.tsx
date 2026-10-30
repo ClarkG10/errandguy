@@ -1040,13 +1040,6 @@ export default function TaskDetailsScreen() {
         requiresShoppingBudget: rule.requiresShoppingBudget,
         showDescription: rule.showDescription,
         allowedVehicles: rule.allowedVehicles,
-        // Live floor for THIS booking — a remembered offer under it is a 422
-        // at submit, so it is dropped rather than recalled (Review then seeds
-        // the floor itself, exactly as it does today).
-        minNegotiateFee:
-          typeof estimate?.min_negotiate_fee === 'number'
-            ? estimate.min_negotiate_fee
-            : undefined,
       }),
     [
       recentBookingsQ.data,
@@ -1054,7 +1047,6 @@ export default function TaskDetailsScreen() {
       rule.requiresShoppingBudget,
       rule.showDescription,
       rule.allowedVehicles,
-      estimate,
     ],
   );
 
@@ -1082,8 +1074,6 @@ export default function TaskDetailsScreen() {
       shopping_budget: before.shopping_budget,
       special_instructions: before.special_instructions,
       vehicle_type_rate: before.vehicle_type_rate,
-      pricing_mode: before.pricing_mode,
-      customer_offer: before.customer_offer,
     };
     const previousBudgetText = budgetText;
 

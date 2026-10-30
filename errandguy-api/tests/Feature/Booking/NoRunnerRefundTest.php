@@ -31,7 +31,7 @@ class NoRunnerRefundTest extends TestCase
             'slug' => 'delivery', 'name' => 'Delivery', 'description' => 'Deliver',
             'icon_name' => 'Package', 'base_fee' => 50.00, 'per_km_walk' => 15.00,
             'per_km_bicycle' => 12.00, 'per_km_motorcycle' => 10.00, 'per_km_car' => 18.00,
-            'min_negotiate_fee' => 30.00, 'is_active' => true, 'sort_order' => 1,
+            'is_active' => true, 'sort_order' => 1,
         ]);
     }
 
@@ -80,23 +80,6 @@ class NoRunnerRefundTest extends TestCase
         ]);
     }
 
-    public function test_expire_negotiate_does_not_clobber_a_booking_a_runner_just_accepted(): void
-    {
-        Event::fake();
-        $runner = User::factory()->create(['role' => 'runner', 'status' => 'active']);
-        $booking = $this->makeBooking('wallet', 'paid');
-        // Accepted negotiate booking whose window "expired" — must be left alone.
-        $booking->update(['status' => 'accepted', 'runner_id' => $runner->id, 'pricing_mode' => 'negotiate']);
-
-        (new \App\Jobs\ExpireNegotiateBookingJob($booking->id))->handle();
-
-        $this->assertEquals('accepted', $booking->fresh()->status);
-        $this->assertEquals('paid', $booking->fresh()->payment_status);
-        $this->assertDatabaseMissing('wallet_transactions', [
-            'user_id' => $this->customer->id, 'type' => 'refund', 'reference_id' => $booking->id,
-        ]);
-    }
-
     public function test_paid_booking_with_no_runner_is_fully_refunded(): void
     {
         Event::fake();
@@ -130,23 +113,6 @@ class NoRunnerRefundTest extends TestCase
             'user_id' => $this->customer->id, 'type' => 'refund',
         ]);
         $this->assertEquals(0.0, (float) $this->customer->fresh()->wallet_balance);
-    }
-
-    public function test_expired_negotiate_booking_refunds_the_paid_offer(): void
-    {
-        // A negotiate booking is charged the offer up front (H11); if it expires
-        // with no runner acceptance, that money must come back.
-        Event::fake();
-        $booking = $this->makeBooking('wallet', 'paid'); // pending, no runner
-
-        (new \App\Jobs\ExpireNegotiateBookingJob($booking->id))->handle();
-
-        $this->assertEquals('cancelled', $booking->fresh()->status);
-        $this->assertEquals('refunded', $booking->fresh()->payment_status);
-        $this->assertEquals(115.0, (float) $this->customer->fresh()->wallet_balance);
-        $this->assertDatabaseHas('wallet_transactions', [
-            'user_id' => $this->customer->id, 'type' => 'refund', 'reference_id' => $booking->id,
-        ]);
     }
 
     public function test_refund_unfulfilled_is_idempotent(): void

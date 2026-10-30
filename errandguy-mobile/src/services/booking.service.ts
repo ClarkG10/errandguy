@@ -132,9 +132,8 @@ export const bookingService = {
     special_instructions?: string;
     estimated_item_value?: number;
     shopping_budget?: number;
-    pricing_mode: 'fixed' | 'negotiate';
-    vehicle_type_rate?: string;
-    customer_offer?: number;
+    // Every booking is fixed-price, so the vehicle is what prices it.
+    vehicle_type_rate: string;
     schedule_type: 'now' | 'scheduled';
     scheduled_at?: string;
     payment_method?: string;

@@ -3,9 +3,9 @@
 namespace App\Console\Commands;
 
 use App\Jobs\AutoCancelBookingJob;
-use App\Jobs\ExpireNegotiateBookingJob;
 use App\Models\Booking;
 use App\Models\SystemConfig;
+use App\Services\BookingService;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\Log;
 
@@ -25,27 +25,25 @@ use Illuminate\Support\Facades\Log;
  * This command is scheduled via Schedule::command (it runs INSIDE the scheduler
  * process, NOT on the queue worker), so it recovers those bookings even when the
  * worker is the thing that failed. It finds bookings whose auto-cancel window has
- * actually opened and runs the EXISTING AutoCancelBookingJob / ExpireNegotiateBookingJob
- * handle() for each — those methods re-check the status under a row lock (so a
- * runner who just accepted wins) and refund via the idempotent refundUnfulfilled,
- * so this can never double-refund or clobber a live booking, and re-running it is
- * safe.
+ * actually opened and runs the EXISTING AutoCancelBookingJob handle() for each —
+ * which re-checks the status and the deadline under a row lock (so a runner who
+ * just accepted wins) and refunds via the idempotent refundUnfulfilled, so this
+ * can never double-refund or clobber a live booking, and re-running it is safe.
  *
- * The window that gates each booking is mode- AND schedule-aware, so a booking is
- * only reaped once the SAME instant its primary delayed job would have fired has
- * passed:
- *   - immediate fixed: created_at + auto_cancel_timeout;
- *   - SCHEDULED fixed: scheduled_at + auto_cancel_timeout (the primary job is
- *     delayed to ~scheduled_at, so created_at is irrelevant — anchoring on it
- *     would wrongly cancel a valid future booking);
- *   - negotiate (immediate or scheduled): negotiate_expires_at, which the
- *     booking already carries and which is correctly in the future for a
- *     scheduled offer; a crash orphan whose negotiate_expires_at was never
- *     written falls back to the same schedule-aware created_at/scheduled_at
- *     anchor so it is still recovered.
+ * The window that gates each booking is schedule-aware, so a booking is only
+ * reaped once its matching deadline (BookingService::matchingDeadline) and the
+ * auto-cancel timeout have both passed:
+ *   - immediate: created_at + auto_cancel_timeout;
+ *   - SCHEDULED: scheduled_at + the longer of auto_cancel_timeout and the
+ *     matching grace (the search runs until after the scheduled time, so
+ *     created_at is irrelevant — anchoring on it would wrongly cancel a valid
+ *     future booking).
+ * It covers every pricing mode: a negotiate-priced errand left open when that
+ * mode was retired has no expiry job any more and is cancelled + refunded here
+ * like any other unmatched errand.
  *
- * It ALSO recovers refund-failure orphans: the cancel/expire jobs (and admin
- * cancel) commit the status→'cancelled' write and then refund in a SEPARATE
+ * It ALSO recovers refund-failure orphans: the cancel jobs (and admin cancel)
+ * commit the status→'cancelled' write and then refund in a SEPARATE
  * transaction, so a refund that throws after the cancel commits leaves
  * status='cancelled' + payment_status='paid'. Such a row is unambiguously a
  * missed FULL refund — the customer-cancel-with-fee path always moves
@@ -58,7 +56,7 @@ class ReapStrandedBookingsCommand extends Command
 {
     protected $signature = 'errandguy:reap-stranded-bookings';
 
-    protected $description = 'Cancel + refund prepaid bookings stranded past their auto-cancel/negotiate window, independent of the delayed job (SCALE-REL-1/5).';
+    protected $description = 'Cancel + refund prepaid bookings stranded past their auto-cancel window, independent of the delayed job (SCALE-REL-1/5).';
 
     /**
      * Max bookings to process per branch per run. The command exists for
@@ -74,77 +72,34 @@ class ReapStrandedBookingsCommand extends Command
         $checked = 0;
         $errors = 0;
 
-        // ── Fixed-price bookings: backstop AutoCancelBookingJob ──
+        // ── Unmatched bookings: backstop AutoCancelBookingJob ──
         // Still awaiting a runner (the exact statuses AutoCancelBookingJob acts
         // on) AND past their auto-cancel window. handle() re-locks + re-checks
-        // status and age, so a runner mid-accept still wins.
+        // status and deadline, so a runner mid-accept still wins.
         $timeoutMinutes = (int) SystemConfig::getValue('auto_cancel_timeout_minutes', '30');
-        $fixedCutoff = now()->subMinutes($timeoutMinutes);
-        $fixedIds = Booking::where('pricing_mode', 'fixed')
-            ->whereIn('status', ['pending', 'no_runner'])
-            ->where(fn ($q) => $this->scheduleAwareWindow($q, $fixedCutoff))
+        $immediateCutoff = now()->subMinutes($timeoutMinutes);
+        $scheduledCutoff = now()->subMinutes(max($timeoutMinutes, BookingService::SCHEDULED_MATCH_GRACE_MINUTES));
+        $pendingIds = Booking::whereIn('status', ['pending', 'no_runner'])
+            ->where(fn ($q) => $this->scheduleAwareWindow($q, $immediateCutoff, $scheduledCutoff))
             ->orderBy('created_at')
             ->limit(self::MAX_PER_RUN)
             ->pluck('id');
-        $checked += $fixedIds->count();
-        foreach ($fixedIds as $id) {
+        $checked += $pendingIds->count();
+        foreach ($pendingIds as $id) {
             try {
                 if ((new AutoCancelBookingJob($id))->handle()) {
                     $reaped++;
                 }
             } catch (\Throwable $e) {
                 $errors++;
-                Log::error('ReapStrandedBookingsCommand: failed to reap fixed booking', [
-                    'booking_id' => $id, 'error' => $e->getMessage(),
-                ]);
-            }
-        }
-
-        // ── Negotiate bookings: backstop ExpireNegotiateBookingJob ──
-        // A DIFFERENT recovery path gated on negotiate_expires_at — NOT the
-        // auto-cancel timeout. ExpireNegotiateBookingJob::handle() does NOT
-        // self-check that window, so we only invoke it once the window has
-        // elapsed (a SCHEDULED negotiate offer's window is correctly in the
-        // future, so it is skipped until it actually opens and closes).
-        $negotiateIds = Booking::where('pricing_mode', 'negotiate')
-            ->where('status', 'pending')
-            ->whereNull('runner_id')
-            ->where(function ($q) use ($fixedCutoff) {
-                // Normal: the offer window has elapsed.
-                $q->where(function ($expired) {
-                    $expired->whereNotNull('negotiate_expires_at')
-                        ->where('negotiate_expires_at', '<', now());
-                })
-                // Crash orphan: negotiate_expires_at was never written (a crash
-                // between the up-front charge and store() setting it, so the
-                // delayed ExpireNegotiateBookingJob was never dispatched either).
-                // Recover via the same schedule-aware anchor with the auto-cancel
-                // window as a grace — far longer than any real negotiate window,
-                // so a live offer is never hit; only a genuine orphan is.
-                ->orWhere(function ($orphan) use ($fixedCutoff) {
-                    $orphan->whereNull('negotiate_expires_at');
-                    $this->scheduleAwareWindow($orphan, $fixedCutoff);
-                });
-            })
-            ->orderBy('created_at')
-            ->limit(self::MAX_PER_RUN)
-            ->pluck('id');
-        $checked += $negotiateIds->count();
-        foreach ($negotiateIds as $id) {
-            try {
-                if ((new ExpireNegotiateBookingJob($id))->handle()) {
-                    $reaped++;
-                }
-            } catch (\Throwable $e) {
-                $errors++;
-                Log::error('ReapStrandedBookingsCommand: failed to reap negotiate booking', [
+                Log::error('ReapStrandedBookingsCommand: failed to reap unmatched booking', [
                     'booking_id' => $id, 'error' => $e->getMessage(),
                 ]);
             }
         }
 
         // ── Refund-failure orphans: cancelled but still 'paid' ──
-        // The cancel/expire jobs (and admin cancel) commit status→'cancelled'
+        // The cancel jobs (and admin cancel) commit status→'cancelled'
         // and then refund in a SEPARATE transaction; if that refund throws after
         // the cancel commits, the booking is left status='cancelled' +
         // payment_status='paid'. That state is UNAMBIGUOUS: the customer-cancel
@@ -185,7 +140,7 @@ class ReapStrandedBookingsCommand extends Command
         if ($reaped > 0) {
             // WARNING, not INFO: a non-zero reap means the primary delayed-job
             // path did NOT run for these — a worker/scheduler gap worth noticing.
-            Log::warning("ReapStrandedBookingsCommand recovered {$reaped} stranded booking(s) whose delayed cancel/expire/refund did not run.");
+            Log::warning("ReapStrandedBookingsCommand recovered {$reaped} stranded booking(s) whose delayed cancel/refund did not run.");
         }
 
         $this->info("Reaped {$reaped} stranded booking(s) (checked {$checked}, errors {$errors}).");
@@ -198,27 +153,27 @@ class ReapStrandedBookingsCommand extends Command
 
     /**
      * Constrain a query to bookings whose primary delayed job would already have
-     * fired, using the SAME anchor store() chose (its $isScheduled = schedule_type
-     * === 'scheduled' && scheduled_at set): scheduled bookings age from
-     * scheduled_at, everything else (immediate — including a stray scheduled_at on
-     * a 'now' booking, or a 'scheduled' row missing scheduled_at) ages from
-     * created_at. Keying on schedule_type rather than scheduled_at nullness means a
-     * malformed 'now'+scheduled_at booking can't mis-anchor onto a far-future date.
+     * fired, using the SAME anchor store() chose (BookingService::isScheduled):
+     * scheduled bookings age from scheduled_at, everything else (immediate —
+     * including a stray scheduled_at on a 'now' booking, or a 'scheduled' row
+     * missing scheduled_at) ages from created_at. Keying on schedule_type rather
+     * than scheduled_at nullness means a malformed 'now'+scheduled_at booking
+     * can't mis-anchor onto a far-future date.
      *
      * @param  \Illuminate\Database\Eloquent\Builder  $query
      */
-    private function scheduleAwareWindow($query, \DateTimeInterface $cutoff)
+    private function scheduleAwareWindow($query, \DateTimeInterface $immediateCutoff, \DateTimeInterface $scheduledCutoff)
     {
-        return $query->where(function ($q) use ($cutoff) {
-            $q->where(function ($deferred) use ($cutoff) {
+        return $query->where(function ($q) use ($immediateCutoff, $scheduledCutoff) {
+            $q->where(function ($deferred) use ($scheduledCutoff) {
                 $deferred->where('schedule_type', 'scheduled')
                     ->whereNotNull('scheduled_at')
-                    ->where('scheduled_at', '<', $cutoff);
-            })->orWhere(function ($immediate) use ($cutoff) {
+                    ->where('scheduled_at', '<', $scheduledCutoff);
+            })->orWhere(function ($immediate) use ($immediateCutoff) {
                 $immediate->where(function ($w) {
                     $w->where('schedule_type', '!=', 'scheduled')
                         ->orWhereNull('scheduled_at');
-                })->where('created_at', '<', $cutoff);
+                })->where('created_at', '<', $immediateCutoff);
             });
         });
     }

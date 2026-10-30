@@ -12,11 +12,9 @@ class BookingResource extends JsonResource
 {
     public function toArray(Request $request): array
     {
-        // If the viewer isn't yet a participant (e.g. an online runner
-        // browsing the broadcast list before accepting), hide pickup /
-        // dropoff contact phone + name so a runner can't harvest leads
-        // by tapping "decline" on every job. Same for receipts /
-        // signatures / item photos.
+        // If the viewer isn't a participant, hide pickup / dropoff contact
+        // phone + name so nobody outside the errand can harvest leads. Same
+        // for receipts / signatures / item photos.
         $isParticipant = $this->isParticipant();
         $isAdmin = $request->user() instanceof AdminUser;
         $canSeeContacts = $isParticipant || $isAdmin;
@@ -100,8 +98,7 @@ class BookingResource extends JsonResource
             'description' => $this->description,
             'special_instructions' => $this->special_instructions,
             // Customer-uploaded item photos can be documents / prescriptions /
-            // IDs — hide them from a non-participant runner browsing the
-            // negotiate broadcast (available()), as the comment above promises.
+            // IDs — hidden from non-participants, as the comment above promises.
             // Kept as [] (not omitted) so the mobile `string[]` contract holds.
             'item_photos' => $this->when($canSeeContacts, $this->item_photos, []),
             'estimated_item_value' => $this->estimated_item_value,
@@ -113,8 +110,14 @@ class BookingResource extends JsonResource
             'receipt_photo_url' => $this->when($canSeeContacts, $this->receipt_photo_url),
             'schedule_type' => $this->schedule_type,
             'scheduled_at' => $this->scheduled_at,
+            // History only: every booking is fixed price now ('fixed'), so this,
+            // customer_offer and negotiate_expires_at below only carry a value on
+            // a booking made while "name your price" existed.
             'pricing_mode' => $this->pricing_mode,
             'vehicle_type_rate' => $this->vehicle_type_rate,
+            // The vehicle the customer booked (same value as vehicle_type_rate),
+            // under the name the runner's offer screens read.
+            'vehicle_type' => $this->vehicle_type_rate,
             'distance_km' => $this->distance_km,
             'base_fee' => $this->base_fee,
             'distance_fee' => $this->distance_fee,
@@ -133,7 +136,7 @@ class BookingResource extends JsonResource
             // How a job settles changes the runner's decision AND their
             // on-the-ground workflow: on a cash (COD) errand they collect the
             // fare in person and the platform later debits its commission from
-            // their wallet (RunnerErrandController::settleEarnings), while a
+            // their wallet (BookingSettlementService::settleCompletion), while a
             // prepaid errand credits their wallet on completion. Neither the
             // method nor the collectible amount was exposed anywhere, so a
             // runner reached dropoff not knowing to ask for money and was then
@@ -163,11 +166,8 @@ class BookingResource extends JsonResource
             // accept (matched_at + matched_acceptance_timeout_seconds — the
             // exact window ExpireStaleMatchesJob enforces). Lets the offer
             // countdown reflect the real window instead of a client guess.
-            // Negotiate-mode offers use `negotiate_expires_at` instead.
             'accept_deadline' => $this->when(
-                $this->status === 'matched'
-                    && $this->pricing_mode === 'fixed'
-                    && $this->matched_at !== null,
+                $this->status === 'matched' && $this->matched_at !== null,
                 fn () => BookingService::matchAcceptDeadline($this->matched_at),
             ),
             // Passenger rides are retired, so this is always false for a new
@@ -290,7 +290,7 @@ class BookingResource extends JsonResource
      *
      *  1. FARE — owed in cash only when the booking's method IS cash and it has
      *     not already settled. `total_amount` is exactly what the cash branch of
-     *     settleEarnings assumes was collected (commission = total − payout), so
+     *     settleCompletion assumes was collected (commission = total − payout), so
      *     this figure and the ledger cannot disagree. An online booking that has
      *     not settled yet deliberately reports NO fare: the runner must never be
      *     told to collect cash on a GCash/card/wallet job.

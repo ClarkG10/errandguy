@@ -117,7 +117,7 @@ const HANDLERS: Record<string, (payload: any) => Promise<unknown>> = {
   // Default payment method — display-only preference, no money moves.
   'payment.setDefaultMethod': ({ id }) => paymentService.setDefaultMethod(id),
 
-  // Runner settings — preferred types, working area, profile fields.
+  // Runner settings — preferred types and other profile fields.
   'runner.updateProfile': (data) => runnerService.updateRunnerProfile(data),
 
   // Shopping-checklist ticks. Item-scoped and last-write-wins by construction:

@@ -2,12 +2,14 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useBookingStore } from '../bookingStore';
 
 /**
- * Promo codes are retired, but a phone that updates over the air can still
- * hold a half-finished booking draft saved by the build that had them — with a
- * `promo_code` and its saved peso `promo_discount` inside. That draft is still
- * the customer's work, so it must come back intact, minus those two fields:
- * nothing reads them now, and leaving them in would re-persist them on every
- * edit for anything that spreads the draft into a request to re-send.
+ * Promo codes and "name your price" are retired, but a phone that updates over
+ * the air can still hold a half-finished booking draft saved by a build that
+ * had them — with a `promo_code` and its saved peso `promo_discount`, or a
+ * `pricing_mode: 'negotiate'` and the customer's `customer_offer`, inside.
+ * That draft is still the customer's work, so it must come back intact, minus
+ * those fields: nothing reads them now, and leaving them in would re-persist
+ * them on every edit for anything that spreads the draft into a request to
+ * re-send.
  */
 const KEY = '@booking_draft_v1';
 
@@ -89,5 +91,65 @@ describe('a booking draft saved by the promo-code build', () => {
     await relaunch();
 
     expect(useBookingStore.getState().draftBooking).toEqual({});
+  });
+});
+
+describe('a booking draft saved by the name-your-price build', () => {
+  it('restores an offer draft as a fixed-price draft, keeping the vehicle and the rest', async () => {
+    await saveLegacyEnvelope(
+      {
+        errand_type_id: 'type-1',
+        errand_type_slug: 'delivery',
+        pickup_address: 'A',
+        dropoff_address: 'B',
+        vehicle_type_rate: 'car',
+        payment_method_id: '__cash__',
+        pricing_mode: 'negotiate',
+        customer_offer: 150,
+        offered_price: 150,
+      },
+      { createKey: 'key-1', createKeySig: 'sig-1' },
+    );
+
+    await relaunch();
+
+    const s = useBookingStore.getState();
+    expect(s.isDraftHydrated).toBe(true);
+    // The vehicle survives — it is what prices the fixed fare on Review.
+    expect(s.draftBooking).toEqual({
+      errand_type_id: 'type-1',
+      errand_type_slug: 'delivery',
+      pickup_address: 'A',
+      dropoff_address: 'B',
+      vehicle_type_rate: 'car',
+      payment_method_id: '__cash__',
+    });
+    expect(s.currentStep).toBe(3);
+    // Untouched: the payload signature simply stops matching the offer-free
+    // body, so the next Confirm mints a fresh key for the fixed-price request.
+    expect(s.createKey).toBe('key-1');
+  });
+
+  it('drops a plain fixed-mode marker too — nothing sends pricing_mode any more', async () => {
+    await saveLegacyEnvelope({ pickup_address: 'A', pricing_mode: 'fixed' });
+
+    await relaunch();
+
+    expect(useBookingStore.getState().draftBooking).toEqual({ pickup_address: 'A' });
+  });
+
+  it('does not write the offer fields back on the next edit', async () => {
+    await saveLegacyEnvelope({
+      pickup_address: 'A',
+      pricing_mode: 'negotiate',
+      customer_offer: 150,
+    });
+    await relaunch();
+
+    useBookingStore.getState().updateDraft({ special_instructions: 'Gate 2' });
+    await new Promise((resolve) => setTimeout(resolve, 400));
+
+    const stored = JSON.parse((await AsyncStorage.getItem(KEY)) as string);
+    expect(stored.draft).toEqual({ pickup_address: 'A', special_instructions: 'Gate 2' });
   });
 });

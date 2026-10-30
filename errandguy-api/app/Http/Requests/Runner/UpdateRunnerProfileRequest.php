@@ -23,6 +23,11 @@ class UpdateRunnerProfileRequest extends FormRequest
             // The matching/location services compare against the errand
             // type slug as well (see MatchingService::getEligibleRunners).
             'preferred_types.*' => ['string', Rule::exists('errand_types', 'slug')->where('is_active', true)],
+            // The working area is still accepted and stored so the app build
+            // already on phones can save its settings screen, but nothing on
+            // the server reads it any more: matching offers each errand by
+            // distance from the pickup (MatchingService), not by the runner's
+            // chosen area.
             'working_area_lat' => ['sometimes', 'numeric', 'between:-90,90'],
             'working_area_lng' => ['sometimes', 'numeric', 'between:-180,180'],
             'working_area_radius' => ['sometimes', 'integer', 'min:1000', 'max:50000'],
