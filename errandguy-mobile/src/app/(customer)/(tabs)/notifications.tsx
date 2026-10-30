@@ -36,7 +36,7 @@ import { useAuthStore } from '../../../stores/authStore';
 import { notificationService } from '../../../services/notification.service';
 import { runOptimistic } from '../../../utils/optimistic';
 import { queueable } from '../../../services/mutationQueue';
-import { warmTracking, prefetchPromos } from '../../../services/preload.service';
+import { warmTracking } from '../../../services/preload.service';
 import { useQuery } from '../../../hooks/useQuery';
 import { useReducedMotion } from '../../../hooks/useReducedMotion';
 import { useHideTabBarOnScroll } from '../../../hooks/useHideTabBarOnScroll';
@@ -53,7 +53,7 @@ import { toast } from '../../../stores/toastStore';
 
 // Per-type presentation: a lucide icon inside a soft-tinted chip plus
 // the accent used for the unread dot and glyph. Blue-first — only
-// payment/promo/sos borrow the existing status semantics. `textColor`
+// payment/referral/sos borrow the existing status semantics. `textColor`
 // is the small-text rung (the 10px eyebrow needs the darker shade to
 // hit contrast; the 18px glyph keeps the brighter base tone).
 const TYPE_META: Record<
@@ -93,12 +93,6 @@ const TYPE_META: Record<
     color: LightColors.success,
     textColor: LightColors.successDark,
     chipClass: 'bg-successSoft',
-  },
-  promo: {
-    icon: Gift,
-    color: LightColors.accentStrong,
-    textColor: LightColors.accentDark,
-    chipClass: 'bg-accentSoft',
   },
   referral: {
     icon: Gift,
@@ -147,7 +141,6 @@ const TYPE_LABELS: Record<NotificationType, string> = {
   booking_stops_updated: 'Stops',
   incoming_request: 'Offer',
   payment: 'Payment',
-  promo: 'Promo',
   chat: 'Message',
   sos: 'Safety',
   system: 'System',
@@ -160,13 +153,12 @@ const TYPE_LABELS: Record<NotificationType, string> = {
 // so users can narrow the inbox without a per-type chip explosion.
 // "More" sweeps up the low-volume types (chat / safety / system /
 // document). Purely client-side.
-type CategoryKey = 'all' | 'bookings' | 'payments' | 'promos' | 'more';
+type CategoryKey = 'all' | 'bookings' | 'payments' | 'more';
 
 const CATEGORIES: { key: CategoryKey; label: string }[] = [
   { key: 'all', label: 'All' },
   { key: 'bookings', label: 'Bookings' },
   { key: 'payments', label: 'Payments' },
-  { key: 'promos', label: 'Promos' },
   { key: 'more', label: 'More' },
 ];
 
@@ -174,7 +166,6 @@ const CATEGORY_TYPES: Record<Exclude<CategoryKey, 'all'>, NotificationType[]> =
   {
     bookings: ['booking_update', 'shopping_items_updated', 'booking_stops_updated'],
     payments: ['payment', 'referral'],
-    promos: ['promo'],
     // onboarding_reminder sits here with document_update: both are KYC-ish
     // nudges, and without an entry it appeared under "All" ONLY — invisible
     // the moment any chip was selected.
@@ -714,12 +705,6 @@ export default function NotificationsScreen() {
             );
           }
           break;
-        case 'promo':
-          // The Profile-focus prefetch doesn't cover a promo deep-link (it
-          // never mounts Profile), so warm the promos list on the tap too. (P32)
-          if (userId) prefetchPromos(userId);
-          router.push('/(customer)/promos');
-          break;
         // referral + sos were missing here, so tapping those rows in the list
         // did nothing while tapping the SAME push navigated. Mirror the push-tap
         // routing (useNotifications) so the in-app list and push agree.
@@ -735,7 +720,7 @@ export default function NotificationsScreen() {
           break;
       }
     },
-    [router, markRead, closeOpenRow, userId],
+    [router, markRead, closeOpenRow],
   );
 
   const renderNotification = useCallback(

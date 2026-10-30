@@ -18,6 +18,10 @@ use Tests\TestCase;
  * granted — service_fee − promo_discount — because a promo is a
  * platform-funded discount, not a runner-funded one. Charging the full
  * service_fee made the runner eat the promo and overstated their earnings.
+ *
+ * Promo codes are retired, so only a booking made before then carries a
+ * promo_discount — but such a cash errand can still be completed afterwards,
+ * so the netting must keep working. New bookings take the "without promo" path.
  */
 class CashPromoSettlementTest extends TestCase
 {

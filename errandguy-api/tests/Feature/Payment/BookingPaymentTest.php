@@ -95,7 +95,7 @@ class BookingPaymentTest extends TestCase
 
         $res->assertStatus(422);
         // The booking is kept as a terminal FAILED record rather than hard-deleted
-        // (payment review P0-2 — deleting a booking that a Payment/promo row
+        // (payment review P0-2 — deleting a booking that a Payment row
         // references raises a Postgres FK error). It must be inert: never matched.
         $booking = Booking::firstOrFail();
         $this->assertEquals('cancelled', $booking->status);

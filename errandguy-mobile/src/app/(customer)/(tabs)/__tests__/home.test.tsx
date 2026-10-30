@@ -14,7 +14,7 @@ jest.mock('../../../../services/booking.service', () => ({
   bookingService: { getBookings: jest.fn(), getActiveBooking: jest.fn() },
 }));
 jest.mock('../../../../services/config.service', () => ({
-  configService: { getErrandTypes: jest.fn(), getPromos: jest.fn() },
+  configService: { getErrandTypes: jest.fn() },
 }));
 jest.mock('../../../../services/payment.service', () => ({
   paymentService: { getWalletBalance: jest.fn() },
@@ -121,7 +121,6 @@ beforeEach(() => {
   (configService.getErrandTypes as jest.Mock).mockResolvedValue({
     data: { data: CATALOGUE },
   });
-  (configService.getPromos as jest.Mock).mockResolvedValue({ data: { data: [] } });
   (paymentService.getWalletBalance as jest.Mock).mockResolvedValue({
     data: { data: { balance: 0 } },
   });

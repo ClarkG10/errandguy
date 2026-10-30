@@ -25,7 +25,7 @@ const SRC = path.join(__dirname, '..', '..');
 
 const read = (rel: string) => fs.readFileSync(path.join(SRC, rel), 'utf8');
 
-/** Two-segment key prefixes, e.g. "runner/errand" or "promos". */
+/** Two-segment key prefixes, e.g. "runner/errand" or "errand-types". */
 function keyPrefixes(source: string, pattern: RegExp): Set<string> {
   const out = new Set<string>();
   for (const m of source.matchAll(pattern)) {
@@ -112,5 +112,15 @@ describe('prefetch coverage', () => {
     ]) {
       expect([...warmed]).toContain(key);
     }
+  });
+
+  /**
+   * Promo codes are retired: the Promos screen, the Review chips and the Home
+   * pill that read `['promos', userId]` are gone, and so are the warms that
+   * fed them. Pinned on both sides so a revived reader or seed shows up here.
+   */
+  it('neither warms nor reads the retired promos key', () => {
+    expect(warmed.has('promos')).toBe(false);
+    expect(consumed.has('promos')).toBe(false);
   });
 });

@@ -244,10 +244,5 @@ function handleNotificationTapped(
         );
       }
       break;
-    case 'promo':
-      // Customer home = tab-group index (no /home route). (drive-by: same
-      // not-found bug as the runner offers route above.)
-      router.push('/(customer)/(tabs)' as never);
-      break;
   }
 }

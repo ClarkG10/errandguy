@@ -72,7 +72,7 @@ class InboxCategoryFilterTest extends TestCase
         $this->notify('booking_update', 'status moved', 3);
         $this->notify('shopping_items_updated', 'list moved', 2);
         $this->notify('booking_stops_updated', 'stop done', 1);
-        $this->notify('promo', 'not this one', 0);
+        $this->notify('system', 'not this one', 0);
 
         $this->assertSame(
             ['stop done', 'list moved', 'status moved'],
@@ -83,7 +83,7 @@ class InboxCategoryFilterTest extends TestCase
     public function test_no_filter_still_returns_everything(): void
     {
         $this->notify('payment', 'a', 1);
-        $this->notify('promo', 'b', 0);
+        $this->notify('system', 'b', 0);
 
         $this->assertSame(['b', 'a'], $this->inbox());
     }

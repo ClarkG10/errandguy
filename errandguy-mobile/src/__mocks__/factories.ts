@@ -65,7 +65,6 @@ export function makeBooking(overrides: Partial<Booking> = {}): Booking {
     total_amount: 92,
     runner_payout: 68,
     distance_km: 5,
-    promo_code: null,
     promo_discount: 0,
     ride_pin: null,
     cancel_reason: null,

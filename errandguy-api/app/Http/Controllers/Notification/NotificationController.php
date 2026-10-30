@@ -28,7 +28,7 @@ class NotificationController extends Controller
 
         // Category filtering happens HERE, not in the client.
         //
-        // The app's inbox chips ("Bookings", "Payments", "Promos", "More") are
+        // The app's inbox chips ("Bookings", "Payments", "More") are
         // coarse groupings over several `type` values, and they used to filter
         // the rows already loaded — page one only. So a customer with a busy
         // inbox could tap "Payments" and be told "No payment notifications

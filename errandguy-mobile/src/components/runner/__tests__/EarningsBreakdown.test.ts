@@ -117,10 +117,12 @@ describe('computeEarningsBreakdown — negotiate pricing', () => {
   });
 });
 
-describe('computeEarningsBreakdown — promo bookings', () => {
-  // BookingController::store subtracts the discount from total_amount and
-  // leaves runner_payout at its pre-promo value: the promo is funded by the
-  // platform's cut, so the runner's take-home is unchanged.
+describe('computeEarningsBreakdown — older promo-code bookings', () => {
+  // Promo codes are retired, but bookings made while they existed keep their
+  // discount: total_amount was stored minus it and runner_payout was left at
+  // its pre-promo value (the platform's cut funded it), so the runner's
+  // take-home was unchanged. Those rows still show in Earnings and must
+  // still reconcile.
   const promoBooking = (over: Record<string, unknown> = {}) =>
     booking({ promo_discount: 10, total_amount: 110.75, ...over });
 

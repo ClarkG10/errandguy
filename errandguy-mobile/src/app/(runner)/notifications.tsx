@@ -88,12 +88,6 @@ const TYPE_META: Record<
     textColor: LightColors.successDark,
     chipClass: 'bg-successSoft',
   },
-  promo: {
-    icon: Tag,
-    color: LightColors.accentStrong,
-    textColor: LightColors.accentDark,
-    chipClass: 'bg-accentSoft',
-  },
   referral: {
     icon: Tag,
     color: LightColors.accentStrong,
@@ -144,7 +138,6 @@ const TYPE_LABELS: Record<NotificationType, string> = {
   booking_stops_updated: 'Stops',
   incoming_request: 'Offer',
   payment: 'Payment',
-  promo: 'Promo',
   chat: 'Message',
   sos: 'Safety',
   system: 'System',

@@ -42,7 +42,7 @@ export function PriceBreakdown({
         <View key={index} className="flex-row justify-between py-2">
           {/* Label yields; the amount keeps its intrinsic width so the
               money column never wraps or gets pushed off-row by a long
-              promo/fee name. */}
+              fee or discount label. */}
           <Text
             numberOfLines={1}
             className="flex-1 pr-3 text-sm font-montserrat text-textSecondary"

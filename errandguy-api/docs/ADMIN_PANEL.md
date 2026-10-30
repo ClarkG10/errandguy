@@ -10,12 +10,13 @@ the mobile app's Sanctum tokens.
 Grouped in the sidebar:
 
 - **Operations** — Bookings (view + admin cancel), Errand Types (pricing CRUD),
-  Reviews (moderation / flag).
+  Reviews (moderation / flag). Promo codes are retired, so a booking only shows
+  a "Past promo code discount" line when it was made with one before then.
 - **People** — Users (suspend/unsuspend), Runner Profiles (approve/reject +
   documents), Trusted Contacts.
 - **Money** *(finance/super_admin)* — Payments (refund), Payouts (complete/fail),
-  Wallet Transactions (ledger), Promo Codes (CRUD), Referrals (reward), linked
-  Payment Methods (read-only).
+  Wallet Transactions (ledger), Referrals (reward), linked Payment Methods
+  (read-only).
 - **Safety & Support** — SOS Alerts (resolve, with a live red badge), Disputes
   (resolve/escalate), Support Tickets (threaded reply).
 - **System** *(super_admin)* — System Config, Platform Payment Methods,
@@ -46,7 +47,7 @@ Navigation and actions auto-hide by role:
 - **super_admin** — everything, incl. System.
 - **finance** — Money group + everything non-restricted.
 - **support** / **ops** — Safety & Support, People, Operations.
-- **admin** — People, Operations, Promo Codes, Push Broadcast.
+- **admin** — People, Operations, Push Broadcast.
 
 ## First-time setup / deploy (Forge)
 

@@ -18,7 +18,6 @@ class BookingService
 {
     public function __construct(
         private PricingService $pricingService,
-        private PromoService $promoService,
     ) {}
 
     /**
@@ -305,8 +304,7 @@ class BookingService
             // booking that will not be fulfilled, so a 'completed' row here
             // means a caller raced a completion — and refunding the full fare
             // for work that was actually delivered is money out with nothing
-            // to reclaim it. The promo unredeem below is skipped too, since a
-            // completed errand legitimately consumed its promo use.
+            // to reclaim it.
             if ($locked->status === 'completed') {
                 Log::warning('refundUnfulfilled called on a COMPLETED booking — refusing', [
                     'booking_id' => $locked->id,
@@ -315,13 +313,6 @@ class BookingService
 
                 return;
             }
-
-            // Release the promo slot this booking held — it is being cancelled
-            // (no-runner / negotiate-expiry / admin) and will never complete, so
-            // it must not keep burning a use. Runs for cash/unpaid too (there's
-            // no money to refund, but the promo slot must still be freed).
-            // Consumption-verified + idempotent (P0-7).
-            $this->promoService->unredeem($locked->id);
 
             // Nothing was collected (cash/unpaid), or a racing call already
             // refunded it — either way there is nothing to return.

@@ -139,7 +139,6 @@ export const bookingService = {
     scheduled_at?: string;
     payment_method?: string;
     payment_method_id?: string;
-    promo_code?: string;
     items?: Array<{ name: string; quantity: number; estimated_price?: number }>;
     // Structured shopping checklist (name + qty). Sent alongside the
     // human-readable `description` serialization so the runner's synced

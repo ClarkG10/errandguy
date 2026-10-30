@@ -65,7 +65,6 @@ abstract class ApiFormRequest extends FormRequest
             'password_confirmation' => 'password confirmation',
             'amount' => 'amount',
             'payment_method_id' => 'payment method',
-            'promo_code' => 'promo code',
             'code' => 'verification code',
             'pickup_address' => 'pickup address',
             'dropoff_address' => 'drop-off address',

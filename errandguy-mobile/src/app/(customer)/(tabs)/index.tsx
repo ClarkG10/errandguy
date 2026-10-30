@@ -23,7 +23,6 @@ import {
   Clock,
   ChevronRight,
   X,
-  Ticket,
   Wallet,
   Gift,
 } from 'lucide-react-native';
@@ -36,7 +35,7 @@ import { useBookingStore, type DraftBooking } from '../../../stores/bookingStore
 import { useNotificationStore } from '../../../stores/notificationStore';
 import { bookingService } from '../../../services/booking.service';
 import { warmTracking } from '../../../services/preload.service';
-import { configService, type Promo } from '../../../services/config.service';
+import { configService } from '../../../services/config.service';
 import { paymentService } from '../../../services/payment.service';
 import { userService, type ReferralInfo } from '../../../services/user.service';
 import { useQuery } from '../../../hooks/useQuery';
@@ -89,10 +88,6 @@ const RESUME_STEP_ROUTES: Record<number, string> = {
 // straight onto Review (a fresh, clean repeat). Cancelled/no_runner
 // deliberately excluded — a "repeat" of a failed errand isn't a happy-path.
 const REPEATABLE_STATUSES = ['completed', 'delivered'];
-
-// Promos within this window read as "expiring" — worth nudging before they
-// lapse. Anything past it is just a standard available promo.
-const PROMO_EXPIRY_SOON_MS = 7 * 24 * 60 * 60 * 1000;
 
 // Paged active-errand stack geometry. The zone inset is the screen's 20pt page
 // margin plus hs.activeZone's 12pt padding; the peek is how much of the next
@@ -152,8 +147,8 @@ function buildDraftFromBooking(b: Booking): Partial<DraftBooking> {
           })),
         }
       : {}),
-    // Deliberately NOT cloned: promo_code (single-use/expiry) and any payment
-    // selection — the customer re-confirms those on Review.
+    // Deliberately NOT cloned: any payment selection — the customer
+    // re-confirms it on Review.
   };
 }
 
@@ -260,21 +255,11 @@ export default function CustomerHomeScreen() {
   );
 
   // ── Rewards band sources ──────────────────────────────────────────────
-  // All three mirror the exact useQuery keys/shapes the Profile tab already
-  // prefetches (see preload.service: prefetchPromos / prefetchReferral and the
+  // Both mirror the exact useQuery keys/shapes the Profile tab already
+  // prefetches (see preload.service: prefetchReferral and the
   // ['wallet','balance'] warm), so a returning user's band paints from cache
   // with no extra network round-trip. Each degrades to empty on a missing
   // backend, which collapses its pill (see rewardItems) rather than erroring.
-  const promosQ = useQuery<Promo[]>(
-    ['promos', user?.id ?? 'anon'],
-    async () => {
-      const res = await configService.getPromos();
-      const p = res.data?.data;
-      return Array.isArray(p) ? p : [];
-    },
-    { staleTime: 60_000, ttl: CacheTTL.MEDIUM, enabled: enabled && !!user?.id },
-  );
-
   const walletBalanceQ = useQuery<number>(
     ['wallet', 'balance', user?.id ?? 'anon'],
     async () => {
@@ -412,7 +397,6 @@ export default function CustomerHomeScreen() {
       recentBookingsQ.refresh(),
       activeBookingQ.refresh(),
       activeBookingsQ.refresh(),
-      promosQ.refresh(),
       walletBalanceQ.refresh(),
       referralQ.refresh(),
     ]);
@@ -422,7 +406,6 @@ export default function CustomerHomeScreen() {
     recentBookingsQ,
     activeBookingQ,
     activeBookingsQ,
-    promosQ,
     walletBalanceQ,
     referralQ,
   ]);
@@ -718,10 +701,10 @@ export default function CustomerHomeScreen() {
   ];
 
   // Rewards band — a slim, self-collapsing strip that surfaces value the user
-  // already holds: redeemable/expiring promos, wallet credit, and an invite
-  // teaser. Each entry only materializes when it has something real to say, so
-  // an empty band renders NOTHING (see the length guard in the JSX). Amber is
-  // the reward family here (accentSoft surface) with a blue chevron as the CTA.
+  // already holds: wallet credit and an invite teaser. Each entry only
+  // materializes when it has something real to say, so an empty band renders
+  // NOTHING (see the length guard in the JSX). Amber is the reward family here
+  // (accentSoft surface) with a blue chevron as the CTA.
   const rewardItems = useMemo(() => {
     const items: {
       key: string;
@@ -730,32 +713,6 @@ export default function CustomerHomeScreen() {
       a11yLabel: string;
       onPress: () => void;
     }[] = [];
-
-    const promos = promosQ.data ?? [];
-    if (promos.length > 0) {
-      const now = Date.now();
-      let soonest: number | null = null;
-      for (const p of promos) {
-        if (!p.valid_until) continue;
-        const t = new Date(p.valid_until).getTime();
-        if (!Number.isFinite(t) || t < now) continue;
-        if (soonest == null || t < soonest) soonest = t;
-      }
-      const expiringSoon =
-        soonest != null && soonest - now <= PROMO_EXPIRY_SOON_MS;
-      const label = expiringSoon
-        ? 'Promo expiring soon'
-        : promos.length === 1
-          ? '1 promo to use'
-          : `${promos.length} promos to use`;
-      items.push({
-        key: 'promos',
-        icon: Ticket,
-        label,
-        a11yLabel: `${label}. Open promos and offers`,
-        onPress: () => router.push('/(customer)/promos' as any),
-      });
-    }
 
     const balance = walletBalanceQ.data;
     if (typeof balance === 'number' && balance > 0) {
@@ -783,7 +740,7 @@ export default function CustomerHomeScreen() {
     }
 
     return items;
-  }, [promosQ.data, walletBalanceQ.data, referralQ.data, router]);
+  }, [walletBalanceQ.data, referralQ.data, router]);
 
   // Compact hero — just enough blue for the safe-area inset, the greeting +
   // search chrome, and a slim gradient band the destination card floats over.
@@ -1180,8 +1137,8 @@ export default function CustomerHomeScreen() {
         </ScrollView>
 
         {/* Rewards band — self-collapsing. Sits between the quick-action pills
-            and the service grid, surfacing promos / wallet credit / an invite
-            teaser the user already holds. Renders NOTHING when there's nothing
+            and the service grid, surfacing wallet credit / an invite teaser
+            the user already holds. Renders NOTHING when there's nothing
             to show; amber reward pills (accentSoft) with a blue chevron CTA
             distinguish it from the neutral quick actions above. */}
         {rewardItems.length > 0 && (

@@ -138,21 +138,12 @@ export function warmTracking(bookingOrId: Booking | string): void {
 }
 
 /**
- * Warm the Promos and Referral screens. Both are one tap from the Profile tab,
- * and Promos is also a promo-push deep-link target — yet neither had a warm
+ * Warm the Referral screen. It is one tap from the Profile tab, yet had no warm
  * entry, so the highest-intent entry always showed a spinner. Writes the exact
- * useQuery keys/shapes those screens read (['promos', userId] → Promo[];
- * ['user','referral', userId] → ReferralInfo). Deliberately kept OUT of the
- * first-wave auth warm-up. Best-effort + silent. (P32)
+ * useQuery key/shape that screen reads (['user','referral', userId] →
+ * ReferralInfo). Deliberately kept OUT of the first-wave auth warm-up.
+ * Best-effort + silent. (P32)
  */
-export function prefetchPromos(userId: string): void {
-  void seed(
-    ['promos', userId],
-    async () => ((await configService.getPromos()).data?.data ?? []) as unknown[],
-    CacheTTL.MEDIUM,
-  );
-}
-
 export function prefetchReferral(userId: string): void {
   // No `?? null` fallback: if the payload is missing, seed writes `undefined`,
   // which useQuery treats as a cache miss and fetches normally (rather than
@@ -345,6 +336,10 @@ const customerAboveFoldSeeds = (userId: string): Array<() => Promise<unknown>> =
  * therefore require every section to be present and of the right kind, and
  * fall back to the individual endpoints if anything is off. `active_booking`
  * and `referral` are nullable, so they're checked for PRESENCE, not truth.
+ *
+ * Promo codes are retired, so a `promos` section is NOT required: a server
+ * from before the removal still sends one (ignored here, never seeded), and a
+ * newer one omits it. Requiring it would throw the whole snapshot away.
  */
 const isUsableHomeAggregate = (payload: unknown): payload is CustomerHomeAggregate => {
   if (!payload || typeof payload !== 'object') return false;
@@ -352,7 +347,6 @@ const isUsableHomeAggregate = (payload: unknown): payload is CustomerHomeAggrega
   return (
     Array.isArray(h.errand_types) &&
     Array.isArray(h.recent_bookings) &&
-    Array.isArray(h.promos) &&
     typeof h.wallet_balance === 'number' &&
     Number.isFinite(h.wallet_balance) &&
     'active_booking' in payload &&
@@ -366,9 +360,9 @@ const isUsableHomeAggregate = (payload: unknown): payload is CustomerHomeAggrega
  * Home used to cost five separate authenticated GETs at warm-up (and six more
  * on the screen itself), each paying a full framework boot + Sanctum auth on
  * Forge — two sequential waves through the 4-wide pool on PH mobile RTTs.
- * GET /customer/home returns all six sections at once, so warm-up is a single
- * round trip and the rewards band (promos / referral / wallet), which was
- * never warmed above the fold at all, now paints from cache for free.
+ * GET /customer/home returns every section at once, so warm-up is a single
+ * round trip and the rewards band (referral / wallet), which was never
+ * warmed above the fold at all, now paints from cache for free.
  *
  * The cache keys, value shapes and TTLs written here are IDENTICAL to the
  * per-endpoint seeds above — the screens' useQuery keys are untouched and the
@@ -422,7 +416,6 @@ async function seedCustomerHome(userId: string): Promise<void> {
       write(['bookings', 'recent', userId], home.recent_bookings, CacheTTL.LONG),
       // The NUMBER, matching the wallet screen's fetcher (see the seed above).
       write(['wallet', 'balance', userId], home.wallet_balance, CacheTTL.MEDIUM),
-      write(['promos', userId], home.promos, CacheTTL.MEDIUM),
       // Referral is nullable on the wire but the screen caches an object; a
       // null would pin an empty referral card, so leave the key a miss and let
       // the screen fetch it normally (same reasoning as prefetchReferral).
@@ -460,8 +453,8 @@ export async function preloadCustomerEssentials(userId: string) {
   // are thunks so the pool — not JS — decides when each fires. (P3)
   //
   // What used to be five separate requests here is now ONE — seedCustomerHome
-  // fans GET /customer/home out into the same five cache keys (plus promos and
-  // referral, free in the same payload) and falls back to those five requests
+  // fans GET /customer/home out into the same five cache keys (plus referral,
+  // free in the same payload) and falls back to those five requests
   // if the aggregate is unavailable. (P-M10)
   const aboveFold: Array<() => Promise<unknown>> = [
     () => preloadCoreImages(),

@@ -5,7 +5,6 @@ export type NotificationType =
   // offers home instead of the owner-only errand cockpit (which 404s). (RT-4)
   | 'incoming_request'
   | 'payment'
-  | 'promo'
   // Referral reward credited to the wallet. A real backend notification type —
   // omitting it made referral rows fall back to the generic "system" icon/label
   // and stop routing on tap.

@@ -1,7 +1,6 @@
 import api from './api';
 import type { AxiosRequestConfig } from 'axios';
 import { invalidateQuery } from '../hooks/useQuery';
-import type { Promo } from './config.service';
 import type { Booking, ErrandType, SavedAddress, TrustedContact } from '../types';
 
 /** Shape of GET /user/referral → `data` (ReferralController::show). */
@@ -28,13 +27,16 @@ export interface ReferralInfo {
  *   active_booking  ← GET /bookings/active
  *   recent_bookings ← GET /bookings?per_page=5   (the data ARRAY, no paginator meta)
  *   wallet_balance  ← GET /wallet/balance → data.balance
- *   promos          ← GET /promos
  *   referral        ← GET /user/referral
  *
  * That parity is the whole point: `preload.service` seeds the existing
  * per-section useQuery cache keys straight from this payload, so any drift
  * would silently poison them. The individual endpoints stay as each screen's
  * revalidation path.
+ *
+ * A server from before promo codes were retired also sends a `promos` section.
+ * It is deliberately left out of this type: nothing reads it, and the payload
+ * guard in `preload.service` must accept the aggregate with or without it.
  */
 export interface CustomerHomeAggregate {
   errand_types: ErrandType[];
@@ -54,7 +56,6 @@ export interface CustomerHomeAggregate {
    * the object there once rendered "₱[object Object]" on cold start.
    */
   wallet_balance: number;
-  promos: Promo[];
   referral: ReferralInfo | null;
 }
 

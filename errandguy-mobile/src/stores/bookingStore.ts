@@ -73,15 +73,26 @@ export interface DraftBooking {
   vehicle_type_rate?: string;
   customer_offer?: number;
   payment_method_id?: string;
-  promo_code?: string;
-  /** Validated saving for `promo_code` in pesos — persisted alongside it so
-   *  the review screen can restore the discount line after a remount
-   *  instead of showing an applied chip with an undiscounted total. */
-  promo_discount?: number;
   instructions?: string;
   offered_price?: number;
   items?: Array<{ name: string; quantity: number; estimated_price?: number }>;
 }
+
+/**
+ * Draft fields that only builds from before promo codes were retired ever
+ * wrote: `promo_code` and its saved peso `promo_discount`. A draft restored
+ * from one of those builds is otherwise perfectly good, so it is kept, minus
+ * these. Nothing reads them any more, yet the draft is re-persisted wholesale
+ * on every edit, so they would ride along forever and could be re-sent by
+ * anything that spreads the draft into a request.
+ */
+const RETIRED_DRAFT_FIELDS = ['promo_code', 'promo_discount'] as const;
+
+const withoutRetiredFields = (draft: DraftBooking): DraftBooking => {
+  const clean: Record<string, unknown> = { ...draft };
+  for (const field of RETIRED_DRAFT_FIELDS) delete clean[field];
+  return clean as DraftBooking;
+};
 
 interface BookingState {
   activeBooking: Booking | null;
@@ -210,7 +221,7 @@ export const useBookingStore = create<BookingState>((set, get) => ({
         typeof envelope.draft === 'object';
       if (fresh) {
         set({
-          draftBooking: envelope.draft,
+          draftBooking: withoutRetiredFields(envelope.draft),
           currentStep: typeof envelope.step === 'number' ? envelope.step : 0,
           isDraftHydrated: true,
           createKey: envelope.createKey ?? null,

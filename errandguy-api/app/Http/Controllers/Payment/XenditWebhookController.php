@@ -224,7 +224,7 @@ class XenditWebhookController extends Controller
 
         // Gateway-funded tip ("tip-{txId}"): credits the runner + stamps
         // booking.tip_amount, idempotently. Separate from the booking charge so
-        // a tip never touches payment_status / referral / promo.
+        // a tip never touches payment_status / referral.
         if (str_starts_with($externalId, 'tip-')) {
             $transactionId = substr($externalId, 4);
             app(\App\Services\WalletService::class)->completeGatewayTip($transactionId, $data);
@@ -315,7 +315,6 @@ class XenditWebhookController extends Controller
 
             if ($payment) {
                 $this->notifyPayment($payment, 'expired');
-                $this->unredeemBookingPromo($payment);
                 app(\App\Services\BookingSettlementService::class)->cancelUnpaidBooking($payment,'Checkout window expired before payment was completed');
             }
         }
@@ -467,7 +466,6 @@ class XenditWebhookController extends Controller
 
         if ($payment) {
             $this->notifyPayment($payment, 'failed');
-            $this->unredeemBookingPromo($payment);
             app(\App\Services\BookingSettlementService::class)->cancelUnpaidBooking($payment,'Online payment was not completed');
             return;
         }
@@ -492,21 +490,6 @@ class XenditWebhookController extends Controller
             ->first();
         if ($tip) {
             app(\App\Services\WalletService::class)->expireGatewayTip($tip->id, 'Payment failed');
-        }
-    }
-
-    /**
-     * Reverse a promo redemption when an online booking's charge never settles
-     * (invoice expired / payment failed). The redemption is incremented at
-     * booking-create, so without this an abandoned online checkout would burn a
-     * promo use forever (payment review P0-7). Safe against webhook replay: it
-     * runs only in the post-commit block, which is reached only when the
-     * terminal transition actually happened (canAdvance guards the replay).
-     */
-    private function unredeemBookingPromo(?Payment $payment): void
-    {
-        if ($payment?->booking_id) {
-            app(\App\Services\PromoService::class)->unredeem($payment->booking_id);
         }
     }
 

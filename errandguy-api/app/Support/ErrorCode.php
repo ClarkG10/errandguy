@@ -64,8 +64,6 @@ enum ErrorCode: string
     case BOOKING_CONFLICT = 'BOOKING_CONFLICT';
     case BOOKING_STALE = 'BOOKING_STALE';
     case NO_RUNNER_AVAILABLE = 'NO_RUNNER_AVAILABLE';
-    case PROMO_INVALID = 'PROMO_INVALID';
-    case PROMO_NOT_ELIGIBLE = 'PROMO_NOT_ELIGIBLE';
 
     // ── Runner / errand ───────────────────────────────────────────────
     case ERRAND_NOT_ASSIGNED = 'ERRAND_NOT_ASSIGNED';

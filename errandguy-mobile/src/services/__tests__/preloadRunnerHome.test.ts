@@ -66,7 +66,6 @@ jest.mock('../user.service', () => ({
 jest.mock('../config.service', () => ({
   configService: {
     getErrandTypes: jest.fn(() => Promise.resolve({ data: { data: [] } })),
-    getPromos: jest.fn(() => Promise.resolve({ data: { data: [] } })),
   },
 }));
 jest.mock('../booking.service', () => ({

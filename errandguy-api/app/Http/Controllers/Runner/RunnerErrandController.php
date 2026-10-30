@@ -189,12 +189,11 @@ class RunnerErrandController extends Controller
                 // runner (roles are freely toggleable via the profile) must never
                 // accept the errand they themselves booked. Without this, one
                 // account can pay as the customer and collect the runner payout,
-                // self-review to inflate its rating, and farm completion stats —
-                // and with a platform-funded promo the cash commission can even go
-                // negative (net money OUT). This mirrors the excludeCustomerId
-                // contract the AUTOMATED dispatch already enforces
-                // (MatchingService::findRunner / broadcastToRunners); accept() is
-                // the MANUAL path that omitted it. (ids are UUIDs → compare as strings.)
+                // self-review to inflate its rating, and farm completion stats.
+                // This mirrors the excludeCustomerId contract the AUTOMATED
+                // dispatch already enforces (MatchingService::findRunner /
+                // broadcastToRunners); accept() is the MANUAL path that omitted
+                // it. (ids are UUIDs → compare as strings.)
                 if ((string) $booking->customer_id === (string) $user->id) {
                     throw new \RuntimeException('self_deal');
                 }
@@ -355,7 +354,7 @@ class RunnerErrandController extends Controller
         // the top of this method is unlocked and the write used to carry an
         // id-only WHERE. A customer tapping Cancel on the "Runner found" screen
         // at the same moment the matched runner taps Decline would commit the
-        // cancel — refund issued, promo unredeemed, trip-share revoked, customer
+        // cancel — refund issued, trip-share revoked, customer
         // told "cancelled, ₱X refunded" — and then this write would land on its
         // stale pre-cancel snapshot and RESURRECT the row as 'pending'.
         //
@@ -1004,7 +1003,8 @@ class RunnerErrandController extends Controller
             // service_fee − promo would over-debit the runner. When the runner
             // collected LESS cash than their payout (aggressive promo / low
             // negotiate offer) commission goes negative and they are correctly
-            // CREDITED the shortfall.
+            // CREDITED the shortfall. Promo codes are retired, so a non-zero
+            // promo_discount only appears on a booking made before then.
             $commission = round((float) $booking->total_amount - (float) $booking->runner_payout, 2);
             app(\App\Services\WalletService::class)->applyLedgerDelta(
                 $user,

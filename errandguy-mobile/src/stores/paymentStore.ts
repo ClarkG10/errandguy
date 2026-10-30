@@ -76,8 +76,8 @@ export const isAttemptTerminal = (a?: PaymentAttempt | null): boolean =>
  *     key runs cleanly again (and a partial server-side write is deduped).
  *   • status 409 → the FIRST request with this key is still in flight. Minting
  *     a new key here is the double-book, so this one is critical.
- *   • any other 4xx → definitive rejection (validation, promo dead, gateway
- *     refusal); the next Confirm is a genuinely new attempt.
+ *   • any other 4xx → definitive rejection (validation, insufficient balance,
+ *     gateway refusal); the next Confirm is a genuinely new attempt.
  *
  * Callers hold the key in a screen-local ref (see (runner)/payout/index.tsx)
  * rather than in the persisted attempt, so retaining it never also retains the

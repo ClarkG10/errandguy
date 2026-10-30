@@ -72,8 +72,6 @@ final class Messages
         ErrorCode::BOOKING_CONFLICT->value => 'You already have an errand in progress. Finish or cancel it before starting another.',
         ErrorCode::BOOKING_STALE->value => 'This errand was just updated. Pull to refresh and try again.',
         ErrorCode::NO_RUNNER_AVAILABLE->value => 'No runners are available nearby right now. Please try again shortly.',
-        ErrorCode::PROMO_INVALID->value => 'That promo code isn’t valid or has expired.',
-        ErrorCode::PROMO_NOT_ELIGIBLE->value => 'This order doesn’t qualify for that promo code.',
 
         // Runner / errand
         ErrorCode::ERRAND_NOT_ASSIGNED->value => 'You’re not assigned to this errand.',

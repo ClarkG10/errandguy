@@ -22,7 +22,6 @@ import {
   HelpCircle,
   Flag,
   Gift,
-  Ticket,
   RefreshCw,
   Info,
   Accessibility,
@@ -48,7 +47,7 @@ import { userService } from '../../../services/user.service';
 import { bookingService } from '../../../services/booking.service';
 import { CacheTTL } from '../../../services/cache.service';
 import { parseActiveBookings } from '../../../utils/activeBookings';
-import { prefetchPromos, prefetchReferral } from '../../../services/preload.service';
+import { prefetchReferral } from '../../../services/preload.service';
 import { formatCurrency } from '../../../utils/formatCurrency';
 import { LightColors } from '../../../constants/colors';
 import { copy } from '../../../constants/copy';
@@ -101,14 +100,11 @@ export default function CustomerProfileScreen() {
   useFocusEffect(
     useCallback(() => {
       refreshUser();
-      // Warm the one-tap-away Promos & Referral screens so they paint instantly
-      // when opened from here (both are deliberately excluded from the
-      // first-wave auth warm-up). Best-effort. (P32)
+      // Warm the one-tap-away Referral screen so it paints instantly when
+      // opened from here (it is deliberately excluded from the first-wave auth
+      // warm-up). Best-effort. (P32)
       const uid = user?.id;
-      if (uid) {
-        prefetchPromos(uid);
-        prefetchReferral(uid);
-      }
+      if (uid) prefetchReferral(uid);
     }, [refreshUser, user?.id]),
   );
 
@@ -255,7 +251,6 @@ export default function CustomerProfileScreen() {
 
   const earnMenu: MenuItem[] = [
     { label: 'Invite friends', icon: Gift, route: '/(customer)/referral' },
-    { label: 'Promos & offers', icon: Ticket, route: '/(customer)/promos' },
   ];
 
   // Its own section: this is a mode change, not a reward or a setting, and it

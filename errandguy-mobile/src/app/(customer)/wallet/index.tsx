@@ -20,7 +20,6 @@ import {
   Plus,
   Download,
   Gift,
-  Ticket,
   ChevronRight,
   Coins,
   SlidersHorizontal,
@@ -90,14 +89,6 @@ const EARN_MECHANICS: {
     description: 'Earn wallet credit when they join',
     // src/app/(customer)/referral.tsx
     route: '/(customer)/referral',
-  },
-  {
-    key: 'promos',
-    icon: Ticket,
-    title: 'Redeem a promo',
-    description: 'Turn a promo code into credit',
-    // src/app/(customer)/promos.tsx
-    route: '/(customer)/promos',
   },
 ];
 
@@ -884,7 +875,7 @@ export default function WalletScreen() {
       </View>
 
       {/* Ways to earn credit — a compact reward surface pointing at the
-          live earn mechanics (refer a friend, redeem a promo). The ledger
+          live earn mechanics (today: refer a friend). The ledger
           already renders a gold-star `bonus` row when credit lands; this
           card closes the loop by telling the customer HOW to earn it.
           Rendered only when at least one mechanic's screen exists, so it

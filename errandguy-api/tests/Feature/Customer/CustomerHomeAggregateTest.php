@@ -6,7 +6,6 @@ use App\Models\Booking;
 use App\Models\BookingStatusLog;
 use App\Models\BookingStop;
 use App\Models\ErrandType;
-use App\Models\PromoCode;
 use App\Models\RunnerProfile;
 use App\Models\User;
 use App\Services\CacheService;
@@ -50,12 +49,6 @@ class CustomerHomeAggregateTest extends TestCase
             'slug' => 'pabili', 'name' => 'Pabili', 'description' => 'y', 'icon_name' => 'ShoppingBag',
             'base_fee' => 60, 'per_km_walk' => 15, 'per_km_bicycle' => 12, 'per_km_motorcycle' => 10,
             'per_km_car' => 18, 'min_negotiate_fee' => 30, 'is_active' => true, 'sort_order' => 2,
-        ]);
-
-        PromoCode::create([
-            'code' => 'HOME10', 'discount_type' => 'percentage', 'discount_value' => 10,
-            'min_order' => 0, 'usage_limit' => 100, 'per_user_limit' => 5,
-            'valid_from' => now()->subDay(), 'valid_until' => now()->addWeek(), 'is_active' => true,
         ]);
 
         // One in-flight booking (the "active" section) + a few terminal ones so
@@ -163,12 +156,6 @@ class CustomerHomeAggregateTest extends TestCase
         );
 
         $this->assertSame(
-            $this->actingAs($this->customer)->getJson('/api/v1/promos')->assertOk()->json('data'),
-            $home['promos'],
-            'promos drifted from GET /promos',
-        );
-
-        $this->assertSame(
             $this->actingAs($this->customer)->getJson('/api/v1/user/referral')->assertOk()->json('data'),
             $home['referral'],
             'referral drifted from GET /user/referral',
@@ -182,6 +169,7 @@ class CustomerHomeAggregateTest extends TestCase
         // `active_bookings` is the additive sibling of `active_booking` (see
         // ActiveBookingsListTest) — the singular key is unchanged and still
         // authoritative; the list is the stack the home card can page through.
+        // `promos` is a compat stub, see test_promos_is_an_empty_compat_stub.
         $this->assertSame(
             [
                 'errand_types', 'active_booking', 'active_bookings', 'recent_bookings',
@@ -260,14 +248,25 @@ class CustomerHomeAggregateTest extends TestCase
     public function test_empty_sections_stay_arrays_not_null(): void
     {
         $fresh = User::factory()->create(['role' => 'customer', 'status' => 'active']);
-        PromoCode::query()->delete();
 
         $home = $this->actingAs($fresh)->getJson('/api/v1/customer/home')->assertOk()->json('data');
 
         $this->assertSame([], $home['recent_bookings']);
-        $this->assertSame([], $home['promos']);
         $this->assertNull($home['active_booking']);
         $this->assertIsArray($home['referral']);
+    }
+
+    /**
+     * Promo codes are retired and GET /promos is gone, but the app build
+     * already on phones treats a payload without a `promos` ARRAY as unusable
+     * and throws the whole snapshot away (falling back to one request per
+     * section). So the key stays, always empty, until that build is retired.
+     */
+    public function test_promos_is_an_empty_compat_stub(): void
+    {
+        $this->assertSame([], $this->home()['promos']);
+
+        $this->actingAs($this->customer)->getJson('/api/v1/promos')->assertNotFound();
     }
 
     // ── gating ──────────────────────────────────────────────────────────

@@ -72,16 +72,6 @@ export const ERROR_CATALOG: Record<string, ErrorInfo> = {
     message: 'No runners are available right now. Please try again in a few minutes.',
     retryable: true,
   },
-  PROMO_INVALID: {
-    title: 'Promo not valid',
-    message: "That promo code isn't valid or has expired.",
-    retryable: false,
-  },
-  PROMO_NOT_ELIGIBLE: {
-    title: "Promo doesn't apply",
-    message: "This order doesn't meet the requirements for that promo.",
-    retryable: false,
-  },
   ACCOUNT_SUSPENDED: {
     title: 'Account suspended',
     message: 'Your account is suspended. Contact support for help.',

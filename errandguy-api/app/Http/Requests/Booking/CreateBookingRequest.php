@@ -125,7 +125,6 @@ class CreateBookingRequest extends FormRequest
                 Rule::exists('payment_methods', 'id')
                     ->where(fn ($q) => $q->where('user_id', $this->user()?->id)),
             ],
-            'promo_code' => ['nullable', 'string'],
         ];
     }
 

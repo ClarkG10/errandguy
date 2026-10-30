@@ -32,7 +32,6 @@ use App\Http\Controllers\Payment\XenditWebhookController;
 use App\Http\Controllers\Payment\WalletController;
 // Phase 3 additions
 use App\Http\Controllers\Customer\ReferralController;
-use App\Http\Controllers\Customer\PromoController;
 use App\Http\Controllers\Customer\ShoppingListController;
 use App\Http\Controllers\Runner\ShoppingChecklistController;
 use App\Http\Controllers\Runner\HeatmapController;
@@ -131,7 +130,7 @@ Route::prefix('v1')->group(function () {
         });
 
         // Customer Home in ONE round trip (errand types + active booking +
-        // recent bookings + wallet balance + promos + referral). Each section
+        // recent bookings + wallet balance + referral). Each section
         // is byte-identical to the individual endpoint that still serves it,
         // so the app seeds its existing caches from this and keeps the
         // per-resource routes as revalidation paths. (A7)
@@ -307,37 +306,6 @@ Route::prefix('v1')->group(function () {
                 ),
             ]);
         });
-
-        // Promo code validation. Delegates to PromoService so the same
-        // global-limit, per-user-limit, and validity-window checks that
-        // run at booking-create time also run here — otherwise the UI
-        // would happily accept a code the server will later reject.
-        Route::get('/promos/validate/{code}', function (string $code, \Illuminate\Http\Request $request) {
-            $service = app(\App\Services\PromoService::class);
-            // Optional `?amount=N` lets the client preview discount + check
-            // min_order. Defaults to 0 (skips min_order via PromoService
-            // contract).
-            $amount = (float) $request->query('amount', 0);
-            try {
-                $result = $service->validate($code, $request->user()->id, $amount);
-            } catch (\InvalidArgumentException $e) {
-                return response()->json(['message' => $e->getMessage()], 422);
-            }
-            return response()->json([
-                'data' => [
-                    'id' => $result['id'],
-                    'code' => $result['code'],
-                    'discount_type' => $result['discount_type'],
-                    'discount_value' => $result['discount_value'],
-                    'max_discount' => $result['max_discount'],
-                    'description' => $result['description'],
-                    'discount' => $result['discount'],
-                ],
-            ]);
-        });
-
-        // Browse currently-valid, publicly-listable promo codes.
-        Route::get('/promos', [PromoController::class, 'index']);
 
         // Live-support tickets (threaded successor to /support/report below).
         Route::prefix('support')->group(function () {

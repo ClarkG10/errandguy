@@ -109,7 +109,6 @@ describe('notificationInvalidationKeys', () => {
 
   describe('unknown / malformed input behaves exactly as before (no invalidation)', () => {
     it.each([
-      ['promo', { type: 'promo', data: {} }],
       ['system', { type: 'system', data: {} }],
       ['chat', { type: 'chat', data: { booking_id: 'bk-1' } }],
       ['referral', { type: 'referral', data: {} }],
@@ -117,7 +116,7 @@ describe('notificationInvalidationKeys', () => {
       ['a type we have never seen', { type: 'quantum_update', data: {} }],
       ['no type at all', { data: { booking_id: 'bk-1' } }],
       ['an empty type', { type: '', data: {} }],
-      ['a null data bag', { type: 'promo', data: null }],
+      ['a null data bag', { type: 'system', data: null }],
     ])('%s → []', (_label, signal) => {
       expect(notificationInvalidationKeys(signal)).toEqual([]);
     });

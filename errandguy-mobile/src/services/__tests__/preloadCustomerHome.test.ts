@@ -46,7 +46,6 @@ jest.mock('../user.service', () => ({
 jest.mock('../config.service', () => ({
   configService: {
     getErrandTypes: (...a: unknown[]) => mockGetErrandTypes(...a),
-    getPromos: jest.fn(() => Promise.resolve({ data: { data: [] } })),
   },
 }));
 jest.mock('../booking.service', () => ({
@@ -85,7 +84,6 @@ const USER = 'user-1';
 const ERRAND_TYPES = [{ id: 't1', name: 'Delivery', is_active: true }];
 const ACTIVE_BOOKING = { id: 'b-active', status: 'in_transit' };
 const RECENT_BOOKINGS = [{ id: 'b1' }, { id: 'b2' }];
-const PROMOS = [{ id: 'p1', code: 'SAVE10' }];
 const REFERRAL = {
   referral_code: 'ABC123',
   share_link: 'https://errandguy.ph/r/ABC123',
@@ -100,7 +98,6 @@ const aggregate = (overrides: Record<string, unknown> = {}) => ({
       active_booking: ACTIVE_BOOKING,
       recent_bookings: RECENT_BOOKINGS,
       wallet_balance: 1234.5,
-      promos: PROMOS,
       referral: REFERRAL,
       ...overrides,
     },
@@ -163,8 +160,32 @@ describe('preloadCustomerEssentials — /customer/home aggregate fan-out', () =>
       value: RECENT_BOOKINGS,
       ttl: CacheTTL.LONG,
     });
-    expect(w[`q:promos:${USER}`]).toEqual({ value: PROMOS, ttl: CacheTTL.MEDIUM });
     expect(w[`q:user:referral:${USER}`]).toEqual({ value: REFERRAL, ttl: CacheTTL.MEDIUM });
+  });
+
+  /**
+   * Promo codes are retired. The server this replaces still sends a `promos`
+   * section and the new one omits it, so the snapshot has to be usable from
+   * BOTH during the rollout — rejecting either would silently drop every cold
+   * start back to the five per-endpoint requests. Neither may leave a promos
+   * cache key behind: nothing reads one any more.
+   */
+  it.each([
+    ['a server that no longer sends promos', {}],
+    ['a server that still sends promos', { promos: [{ id: 'p1', code: 'SAVE10' }] }],
+  ])('accepts the aggregate from %s and seeds no promos key', async (_label, extra) => {
+    mockGetCustomerHome.mockResolvedValue(aggregate(extra));
+
+    await preloadCustomerEssentials(USER);
+    await flush();
+    const w = writes();
+
+    // Accepted: none of the requests it stands in for went out.
+    expect(mockGetErrandTypes).not.toHaveBeenCalled();
+    expect(mockGetActiveBooking).not.toHaveBeenCalled();
+    expect(mockGetWalletBalance).not.toHaveBeenCalled();
+    expect(w[`q:wallet:balance:${USER}`]).toEqual({ value: 1234.5, ttl: CacheTTL.MEDIUM });
+    expect(Object.keys(w).filter((k) => k.includes('promo'))).toEqual([]);
   });
 
   it('seeds the wallet balance as a NUMBER, not the {balance} object', async () => {
@@ -332,7 +353,7 @@ describe('preloadCustomerEssentials — fallback when the aggregate is unusable'
 
   it.each([
     ['a missing section', { active_booking: undefined }],
-    ['a null list', { promos: null }],
+    ['a null list', { recent_bookings: null }],
     ['a non-numeric balance', { wallet_balance: { balance: 1234.5 } }],
   ])('degrades on a partial payload: %s', async (_label, bad) => {
     const payload = aggregate(bad);

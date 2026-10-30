@@ -9,10 +9,11 @@ import type { Booking } from '../../types';
  *
  * Why the maths is written this way — the server stores base_fee,
  * distance_fee, service_fee and surcharge but NOT the per-vehicle base
- * premium that PricingService folds into the price, and `total_amount` has
- * the customer's promo discount already subtracted while `runner_payout`
- * does not. So the stored columns do NOT sum to total_amount, and printing
- * them as if they did would be a lie on a money screen.
+ * premium that PricingService folds into the price, and on an older
+ * promo-code booking `total_amount` also has the customer's discount already
+ * subtracted while `runner_payout` does not. So the stored columns do NOT sum
+ * to total_amount, and printing them as if they did would be a lie on a
+ * money screen.
  *
  * What IS exact, by construction in PricingService::calculate:
  *
@@ -25,14 +26,15 @@ import type { Booking } from '../../types';
  * fall back to a single honest line instead of showing numbers that don't
  * add up.
  *
- * The same rule governs the customer-side footer: a promo is a
- * PLATFORM-funded subsidy (BookingController::store stores total_amount
- * minus the discount and leaves runner_payout untouched), so service_fee
- * overstates what the platform actually took by exactly the discount. The
- * fee we print is therefore total_amount − runner_payout, the identical
- * figure settlement moves (RunnerErrandController::settleEarnings:
- * commission = total_amount − runner_payout) — which keeps
- * customer paid − platform fee === payout in every mode.
+ * The same rule governs the customer-side footer. Promo codes are retired,
+ * but bookings made while they existed still carry a `promo_discount`: it was
+ * a PLATFORM-funded subsidy (total_amount was stored minus the discount and
+ * runner_payout left untouched), so on those rows service_fee overstates what
+ * the platform actually took by exactly the discount. The fee we print is
+ * therefore total_amount − runner_payout, the identical figure settlement
+ * moves (RunnerErrandController::settleEarnings: commission = total_amount −
+ * runner_payout) — which keeps customer paid − platform fee === payout in
+ * every mode, for old promo bookings and new (discount 0) ones alike.
  */
 
 const round2 = (v: number) => Math.round(v * 100) / 100;
@@ -57,10 +59,11 @@ export interface EarningsBreakdownResult {
   lines: BreakdownLine[];
   /** The runner's take-home. Null when the server hasn't computed it. */
   payout: number | null;
-  /** The platform's cut on this errand, net of any promo it funded — always
-   *  customerPaid − payout. Null when unknown. */
+  /** The platform's cut on this errand, net of any (older-booking) promo
+   *  discount it funded — always customerPaid − payout. Null when unknown. */
   platformFee: number | null;
-  /** What the customer was charged, promo already off. Null when unknown. */
+  /** What the customer was charged, any promo discount already off. Null
+   *  when unknown. */
   customerPaid: number | null;
   /** Cash errands only: peso figure settled against the runner's wallet.
    *  Positive = debited (the platform's fee), negative = credited back. */
@@ -89,8 +92,8 @@ export function computeEarningsBreakdown(booking: Booking): EarningsBreakdownRes
   const method = paymentMethodTypeOf(booking);
   const isNegotiate = booking.pricing_mode === 'negotiate';
 
-  // NOT service_fee: on a promo booking the discount is funded out of the
-  // platform's cut, so service_fee is the gross fee and this is what the
+  // NOT service_fee: on an older promo booking the discount was funded out of
+  // the platform's cut, so service_fee is the gross fee and this is what the
   // platform actually keeps.
   const platformFee = payout != null && totalAmount != null ? round2(totalAmount - payout) : null;
 
@@ -99,11 +102,11 @@ export function computeEarningsBreakdown(booking: Booking): EarningsBreakdownRes
   // (RunnerErrandController::settleEarnings).
   const cashSettlement = method === 'cash' ? platformFee : null;
 
-  // Naming the gross fee alongside the promo keeps every figure on the panel
-  // reconcilable (fee − promo = kept), including the "Platform fee" line a
-  // negotiate breakdown prints. If the two can't be reconciled — a legacy or
-  // hand-edited row — say nothing about the promo rather than print a
-  // subtraction that doesn't hold.
+  // On an older promo booking, naming the gross fee alongside the discount
+  // keeps every figure on the panel reconcilable (fee − promo = kept),
+  // including the "Platform fee" line a negotiate breakdown prints. If the two
+  // can't be reconciled — a legacy or hand-edited row — say nothing about the
+  // promo rather than print a subtraction that doesn't hold.
   let feeNote: string | null = null;
   if (platformFee != null && totalAmount != null) {
     feeNote =

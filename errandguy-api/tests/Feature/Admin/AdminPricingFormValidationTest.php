@@ -3,7 +3,6 @@
 namespace Tests\Feature\Admin;
 
 use App\Filament\Resources\ErrandTypes\Pages\CreateErrandType;
-use App\Filament\Resources\PromoCodes\Pages\CreatePromoCode;
 use App\Models\AdminUser;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Hash;
@@ -11,9 +10,9 @@ use Livewire\Livewire;
 use Tests\TestCase;
 
 /**
- * Admin pricing/discount form fields feed PricingService, which does not clamp a
- * negative total. A negative fee/discount is therefore a standing misconfiguration
- * that silently under- or over-charges. The forms now reject it at the source with
+ * Admin pricing form fields feed PricingService, which does not clamp a negative
+ * total. A negative fee is therefore a standing misconfiguration that silently
+ * under- or over-charges. The forms now reject it at the source with
  * minValue(0). They also cap the upper end with maxValue: an absurd rate (a
  * fat-fingered extra zero) would otherwise overcharge every customer, and a value
  * past the decimal column ceiling would 500 the save under strict MySQL.
@@ -42,16 +41,6 @@ class AdminPricingFormValidationTest extends TestCase
             ->assertHasFormErrors(['per_km_car']);
     }
 
-    public function test_promo_form_rejects_a_negative_discount(): void
-    {
-        $this->actAsCatalogAdmin();
-
-        Livewire::test(CreatePromoCode::class)
-            ->fillForm(['code' => 'BADPROMO', 'discount_type' => 'fixed', 'discount_value' => -5])
-            ->call('create')
-            ->assertHasFormErrors(['discount_value']);
-    }
-
     public function test_errand_type_form_rejects_an_out_of_range_fee(): void
     {
         $this->actAsCatalogAdmin();
@@ -62,28 +51,5 @@ class AdminPricingFormValidationTest extends TestCase
             ->fillForm(['name' => 'Test Type', 'slug' => 'test-type', 'base_fee' => 50, 'per_km_car' => 99999])
             ->call('create')
             ->assertHasFormErrors(['per_km_car']);
-    }
-
-    public function test_promo_form_rejects_an_out_of_range_discount(): void
-    {
-        $this->actAsCatalogAdmin();
-
-        Livewire::test(CreatePromoCode::class)
-            ->fillForm(['code' => 'BADPROMO', 'discount_type' => 'fixed', 'discount_value' => 9999999])
-            ->call('create')
-            ->assertHasFormErrors(['discount_value']);
-    }
-
-    public function test_promo_form_rejects_a_percentage_over_100(): void
-    {
-        $this->actAsCatalogAdmin();
-
-        // A percentage > 100 is nonsensical: a fat-fingered "200" (meant as
-        // ₱200 but with type=percentage) would persist a 100%-off-every-order
-        // promo (PromoService clamps redemption to the order total = free).
-        Livewire::test(CreatePromoCode::class)
-            ->fillForm(['code' => 'FREEALL', 'discount_type' => 'percentage', 'discount_value' => 200])
-            ->call('create')
-            ->assertHasFormErrors(['discount_value']);
     }
 }

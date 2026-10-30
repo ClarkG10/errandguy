@@ -12,8 +12,8 @@ use Illuminate\Http\Request;
 /**
  * GET /customer/home — the customer dashboard in ONE authenticated round trip.
  *
- * The app's Home screen fires six separate authenticated GETs on every cold
- * start (/errand-types, /bookings?per_page=N, /bookings/active, /promos,
+ * The app's Home screen fires five separate authenticated GETs on every cold
+ * start (/errand-types, /bookings?per_page=N, /bookings/active,
  * /wallet/balance, /user/referral), each paying a full framework boot +
  * Sanctum auth on Forge, and the login warm-up fires most of them a second
  * time. This endpoint returns all of those sections at once so the client can
@@ -27,7 +27,8 @@ use Illuminate\Http\Request;
  * route and unwrapping its `data` key, so the eager-loads, resource classes
  * and conditional fields can never diverge. The one exception is
  * `errand_types`, whose route is a closure — it reuses the same CacheService
- * SWR key/TTLs/query, so it literally reads the same cache entry.
+ * SWR key/TTLs/query, so it literally reads the same cache entry. (`promos` is
+ * not a real section: promo codes are retired and it is a temporary empty stub.)
  *
  * The individual endpoints stay exactly as they are; they remain the
  * per-screen revalidation paths. This is additive and read-only — no money
@@ -94,7 +95,8 @@ class HomeController extends Controller
             // ['wallet','balance',userId] cache key holds a plain number and
             // seeding the object poisons the wallet screen.
             'wallet_balance' => (float) ($wallet['balance'] ?? 0),
-            'promos' => $this->section(app(PromoController::class)->index($request)) ?? [],
+            // Promos are retired; the shipped app discards this payload without the key. Delete once the app update is out.
+            'promos' => [],
             'referral' => $this->section(app(ReferralController::class)->show($request)),
         ]);
     }

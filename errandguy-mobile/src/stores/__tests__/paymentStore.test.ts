@@ -172,7 +172,9 @@ describe('shouldRetainIdempotencyKey', () => {
   });
 
   it('drops the key on a definitive 4xx — the next try is a genuinely new attempt', () => {
-    expect(shouldRetainIdempotencyKey({ status: 422, code: 'PROMO_EXPIRED' })).toBe(false);
+    expect(
+      shouldRetainIdempotencyKey({ status: 422, code: 'INSUFFICIENT_WALLET_BALANCE' }),
+    ).toBe(false);
     expect(shouldRetainIdempotencyKey({ status: 400 })).toBe(false);
     expect(shouldRetainIdempotencyKey({ status: 404 })).toBe(false);
     expect(shouldRetainIdempotencyKey({ status: 403 })).toBe(false);

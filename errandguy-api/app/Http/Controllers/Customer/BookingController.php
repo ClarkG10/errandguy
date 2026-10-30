@@ -27,7 +27,6 @@ use App\Services\CancellationPolicy;
 use App\Support\ErrorCode;
 use App\Services\PaymentService;
 use App\Services\PricingService;
-use App\Services\PromoService;
 use App\Services\WalletService;
 use Carbon\Carbon;
 use Illuminate\Http\JsonResponse;
@@ -39,7 +38,6 @@ class BookingController extends Controller
 {
     public function __construct(
         private PricingService $pricingService,
-        private PromoService $promoService,
         private BookingService $bookingService,
     ) {}
 
@@ -138,55 +136,13 @@ class BookingController extends Controller
         // Negotiate mode: the customer's offer IS the price they pay (the fixed
         // fare above becomes reference-only). The platform keeps its flat
         // computed service fee; the runner receives the offer minus that fee.
-        // Applied BEFORE the promo block so a promo discounts the offer and its
-        // min-spend check sees the real total. Without this, negotiate bookings
-        // charged the fixed fare and customer_offer was cosmetic.
+        // Without this, negotiate bookings charged the fixed fare and
+        // customer_offer was cosmetic.
         if ($validated['pricing_mode'] === 'negotiate' && isset($validated['customer_offer'])) {
             $pricing = $this->pricingService->applyNegotiateOffer(
                 $pricing,
                 (float) $validated['customer_offer'],
             );
-        }
-
-        // Handle promo code
-        $promoDiscount = 0;
-        $promoCodeId = null;
-        $perUserLimit = null;
-        if (!empty($validated['promo_code'])) {
-            try {
-                $promo = $this->promoService->validate(
-                    $validated['promo_code'],
-                    $user->id,
-                    $pricing['total_amount']
-                );
-                $promoDiscount = $promo['discount'];
-                $promoCodeId = $promo['id'];
-                $perUserLimit = $promo['per_user_limit'] !== null ? (int) $promo['per_user_limit'] : null;
-            } catch (\InvalidArgumentException $e) {
-                // PromoService throws curated, user-facing copy (invalid/expired/
-                // not-eligible) — keep it, tagged with a machine code.
-                return $this->fail(ErrorCode::PROMO_INVALID, $e->getMessage());
-            }
-        }
-
-        // PRICE-5: a promo is a PLATFORM-funded subsidy. When the discount
-        // exceeds the platform's own service fee the booking is NET-NEGATIVE —
-        // the platform pays the runner more than the customer paid. That can be
-        // a deliberate acquisition subsidy, but an UNBOUNDED one is a
-        // money-safety risk, so every net-negative booking is logged CRITICAL
-        // for ops. The correct hard ceiling is the promo's `max_discount` at
-        // creation (validate() already enforces it), which caps the subsidy
-        // without introducing a preview-vs-charge mismatch here.
-        if ($promoDiscount > 0) {
-            $platformTake = round((float) $pricing['service_fee'] - (float) $promoDiscount, 2);
-            if ($platformTake < 0) {
-                \Illuminate\Support\Facades\Log::critical('Net-negative booking: promo discount exceeds platform service fee', [
-                    'promo_code_id' => $promoCodeId,
-                    'service_fee' => (float) $pricing['service_fee'],
-                    'promo_discount' => (float) $promoDiscount,
-                    'platform_take' => $platformTake,
-                ]);
-            }
         }
 
         // Determine if transportation
@@ -241,35 +197,17 @@ class BookingController extends Controller
             'distance_fee' => $pricing['distance_fee'],
             'service_fee' => $pricing['service_fee'],
             'surcharge' => $pricing['surcharge'],
-            'promo_discount' => $promoDiscount,
-            'total_amount' => $pricing['total_amount'] - $promoDiscount,
+            // Promo codes are retired, so a new booking never carries a
+            // discount. The column stays so older bookings' receipts add up.
+            'promo_discount' => 0,
+            'total_amount' => $pricing['total_amount'],
             'customer_offer' => $validated['customer_offer'] ?? null,
             'runner_payout' => $pricing['runner_payout'],
-            'promo_code_id' => $promoCodeId,
             'ride_pin' => $ridePin,
             'is_transportation' => $isTransportation,
         ];
 
-        // Race-safe per-user promo limit. validate() above checked the per-user
-        // cap with a plain count (a check-then-create TOCTOU: two concurrent
-        // bookings by one user could both pass and both take the discount).
-        // Serialize the re-count + the insert under a per-(user,promo) lock so
-        // the second waits, re-counts, and is rejected. On a race loss no booking
-        // is created, so there is nothing to clean up. (audit promo TOCTOU)
-        try {
-            $booking = DB::transaction(function () use ($bookingData, $promoCodeId, $perUserLimit, $user) {
-                if ($promoCodeId !== null && $perUserLimit !== null) {
-                    $this->promoService->assertUserSlotAvailable($promoCodeId, $user->id, $perUserLimit);
-                }
-
-                return Booking::create($bookingData);
-            });
-        } catch (\App\Exceptions\PromoUserLimitReachedException $e) {
-            return $this->fail(
-                ErrorCode::PROMO_INVALID,
-                'You have already used this promo code the maximum number of times.',
-            );
-        }
+        $booking = Booking::create($bookingData);
 
         // Persist multi-stop destinations (1-based order after the primary
         // dropoff). Priced above via extraStops; stored here with their full
@@ -307,11 +245,6 @@ class BookingController extends Controller
             'changed_by' => $user->id,
             'note' => 'Booking created',
         ]);
-
-        // Redeem promo if used
-        if ($promoCodeId) {
-            $this->promoService->redeem($promoCodeId, $booking->id);
-        }
 
         // ── Payment ──────────────────────────────────────────────────────
         // Capture the chosen settlement method and collect payment.
@@ -381,7 +314,7 @@ class BookingController extends Controller
                 }
             } catch (\Throwable $e) {
                 $payment->transitionTo(PaymentStatus::Failed, reason: 'Saved-method charge failed');
-                $this->failBooking($booking, $promoCodeId, $user->id, 'Payment failed: saved-method charge declined');
+                $this->failBooking($booking, $user->id, 'Payment failed: saved-method charge declined');
                 \Illuminate\Support\Facades\Log::error('Booking saved-method charge failed', [
                     'booking_number' => $booking->booking_number,
                     'error' => $e->getMessage(),
@@ -435,9 +368,9 @@ class BookingController extends Controller
                 $paymentId = $payment->id;
             } catch (\RuntimeException $e) {
                 // Not enough balance — mark the booking failed (never hard-delete:
-                // a Payment row and/or a promo redemption may already reference it,
-                // which on Postgres would raise an FK error) and reverse the promo.
-                $this->failBooking($booking, $promoCodeId, $user->id, 'Payment failed: insufficient wallet balance');
+                // a Payment row may already reference it, which on Postgres would
+                // raise an FK error).
+                $this->failBooking($booking, $user->id, 'Payment failed: insufficient wallet balance');
                 $balance = number_format((float) $user->fresh()->wallet_balance, 2);
 
                 return $this->fail(
@@ -509,7 +442,7 @@ class BookingController extends Controller
                 $booking->update(['payment_status' => 'pending']);
             } catch (\Throwable $e) {
                 $payment->transitionTo(PaymentStatus::Failed, reason: 'E-wallet charge creation failed');
-                $this->failBooking($booking, $promoCodeId, $user->id, 'Payment failed: could not start the e-wallet charge');
+                $this->failBooking($booking, $user->id, 'Payment failed: could not start the e-wallet charge');
                 \Illuminate\Support\Facades\Log::error('Booking e-wallet charge failed', [
                     'booking_number' => $booking->booking_number,
                     'error' => $e->getMessage(),
@@ -550,7 +483,7 @@ class BookingController extends Controller
                 $booking->update(['payment_status' => 'pending']);
             } catch (\Throwable $e) {
                 $payment->transitionTo(PaymentStatus::Failed, reason: 'Gateway invoice creation failed');
-                $this->failBooking($booking, $promoCodeId, $user->id, 'Payment failed: could not create gateway invoice');
+                $this->failBooking($booking, $user->id, 'Payment failed: could not create gateway invoice');
                 \Illuminate\Support\Facades\Log::error('Booking online payment failed', [
                     'booking_number' => $booking->booking_number,
                     'error' => $e->getMessage(),
@@ -650,22 +583,14 @@ class BookingController extends Controller
      * hard-deleting it (payment review P0-2).
      *
      * The old path called $booking->delete() on a payment failure, but a
-     * Payment row (and, before this, an already-incremented promo redemption)
-     * references the booking by then. On Postgres the NO ACTION foreign key
-     * raises 23503 → an uncaught 500 and orphaned rows; SQLite (FKs off) masked
-     * it in tests. Marking the booking terminally failed is crash-safe and a
-     * truthful record, and reversing the promo stops a failed attempt from
-     * burning a promo use (P0-7). These bookings never reach matching (the
+     * Payment row references the booking by then. On Postgres the NO ACTION
+     * foreign key raises 23503 → an uncaught 500 and orphaned rows; SQLite (FKs
+     * off) masked it in tests. Marking the booking terminally failed is
+     * crash-safe and a truthful record. These bookings never reach matching (the
      * caller returns 422 first), so a 'cancelled' row with no runner is inert.
      */
-    private function failBooking(Booking $booking, ?string $promoCodeId, string $actorId, string $reason): void
+    private function failBooking(Booking $booking, string $actorId, string $reason): void
     {
-        // Reverse the promo redemption (consumption-verified + idempotent; a
-        // no-op if this booking never consumed a slot).
-        if ($promoCodeId) {
-            $this->promoService->unredeem($booking->id);
-        }
-
         $booking->update([
             'status' => 'cancelled',
             'payment_status' => 'failed',
@@ -810,11 +735,6 @@ class BookingController extends Controller
                 'trip_share_token' => null,
                 'trip_share_active' => false,
             ]);
-
-            // Release the promo slot this booking held — a cancelled errand
-            // never completed, so it must not keep burning a use (P0-7).
-            // Consumption-verified + idempotent; a no-op for non-promo bookings.
-            $this->promoService->unredeem($locked->id);
 
             // Refund money already collected, minus the cancellation fee, to the
             // customer's wallet. Applies to wallet AND online bookings that were

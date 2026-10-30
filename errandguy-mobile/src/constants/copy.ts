@@ -70,9 +70,6 @@ export const copy = {
     createFailed: 'Couldn’t open your support ticket. Please try again.',
     messageSendFailed: 'Couldn’t send your message. Please try again.',
   },
-  promo: {
-    applyFailed: 'Couldn’t apply that promo code. Check it and try again.',
-  },
   payment: {
     linkFailed: 'Couldn’t start linking that payment method. Please try again.',
   },

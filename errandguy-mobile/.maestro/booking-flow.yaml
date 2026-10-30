@@ -110,14 +110,6 @@ tags:
     direction: DOWN
 - tapOn: "Motorcycle"
 
-# Try applying a promo code
-- scrollUntilVisible:
-    element: "Promo Code"
-    direction: DOWN
-- tapOn: "Promo Code"
-- inputText: "TESTPROMO"
-- tapOn: "Apply"
-
 # Select payment method (default or cash)
 - scrollUntilVisible:
     element: "Payment Method"

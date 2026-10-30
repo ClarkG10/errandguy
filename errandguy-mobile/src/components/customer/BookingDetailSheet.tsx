@@ -141,8 +141,8 @@ function buildDraftFromBooking(b: Booking): Partial<DraftBooking> {
           })),
         }
       : {}),
-    // Deliberately NOT cloned: promo_code (single-use/expiry) and any
-    // payment selection — the customer re-confirms those on Review.
+    // Deliberately NOT cloned: any payment selection — the customer
+    // re-confirms it on Review.
   };
 }
 

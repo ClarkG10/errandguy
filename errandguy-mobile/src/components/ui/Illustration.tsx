@@ -16,7 +16,6 @@ const SOURCES = {
   'empty-wallet': require('../../../assets/illustrations/empty-wallet.png'),
   'empty-addresses': require('../../../assets/illustrations/empty-addresses.png'),
   'empty-contacts': require('../../../assets/illustrations/empty-contacts.png'),
-  'empty-promos': require('../../../assets/illustrations/empty-promos.png'),
   'empty-cart': require('../../../assets/illustrations/empty-cart.png'),
   'empty-error': require('../../../assets/illustrations/empty-error.png'),
   // success

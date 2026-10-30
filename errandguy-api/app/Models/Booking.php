@@ -79,8 +79,6 @@ class Booking extends Model
         'cancellation_reason',
         'cancellation_fee',
         'cancelled_by',
-        'promo_code_id',
-        'promo_redeemed',
         'ride_pin',
         'ride_pin_verified',
         'is_transportation',
@@ -96,7 +94,6 @@ class Booking extends Model
             'item_photos' => 'array',
             'shopping_items' => 'array',
             'is_transportation' => 'boolean',
-            'promo_redeemed' => 'boolean',
             'sos_triggered' => 'boolean',
             'trip_share_active' => 'boolean',
             'trip_share_expires_at' => 'datetime',
@@ -205,11 +202,6 @@ class Booking extends Model
     {
         return $this->hasOne(Review::class)
             ->whereColumn('reviewer_id', 'runner_id');
-    }
-
-    public function promoCode(): BelongsTo
-    {
-        return $this->belongsTo(PromoCode::class, 'promo_code_id');
     }
 
     public function scopeActive($query)

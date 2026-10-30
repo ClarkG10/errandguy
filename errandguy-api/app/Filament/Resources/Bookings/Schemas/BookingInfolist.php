@@ -67,7 +67,12 @@ class BookingInfolist
                                         TextEntry::make('distance_fee')->money('PHP'),
                                         TextEntry::make('service_fee')->money('PHP'),
                                         TextEntry::make('surcharge')->money('PHP'),
-                                        TextEntry::make('promo_discount')->money('PHP')->color('info'),
+                                        TextEntry::make('promo_discount')
+                                            ->label('Past promo code discount')
+                                            ->money('PHP')
+                                            ->color('info')
+                                            ->helperText('From a promo code used before promo codes were retired.')
+                                            ->visible(fn (Booking $record): bool => (float) $record->promo_discount > 0),
                                         TextEntry::make('cancellation_fee')->money('PHP')->color('danger'),
                                         TextEntry::make('runner_payout')->money('PHP')->color('warning'),
                                         TextEntry::make('distance_km')->label('Distance')->suffix(' km')->numeric(2)->placeholder('—'),

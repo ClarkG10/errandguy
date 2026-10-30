@@ -11,7 +11,7 @@ import {
 import * as Haptics from 'expo-haptics';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
-import { Clock, Route, Tag, WifiOff } from 'lucide-react-native';
+import { Clock, Route, WifiOff } from 'lucide-react-native';
 import dayjs from 'dayjs';
 import { GradientHeader } from '../../../components/ui/GradientHeader';
 import { useBookingStore } from '../../../stores/bookingStore';
@@ -21,13 +21,10 @@ import { Button } from '../../../components/ui/Button';
 import { BottomActionBar } from '../../../components/ui/BottomActionBar';
 import { PriceBreakdown } from '../../../components/ui/PriceBreakdown';
 import { ErrorState } from '../../../components/ui/ErrorState';
-import { Eyebrow } from '../../../components/ui/Typography';
-import { Spinner } from '../../../components/ui/Spinner';
 import {
   VehicleTypeSelector,
   type VehicleOption,
 } from '../../../components/customer/VehicleTypeSelector';
-import { PromoCodeInput } from '../../../components/customer/PromoCodeInput';
 import {
   PaymentMethodSelector,
   resolvePaymentMethodType,
@@ -50,9 +47,7 @@ import {
 import { newIdempotencyKey } from '../../../utils/idempotency';
 import { fareLines } from '../../../utils/fareLines';
 import { usePaymentVerification } from '../../../hooks/usePaymentVerification';
-import { invalidateQuery, useQuery } from '../../../hooks/useQuery';
-import { CacheTTL } from '../../../services/cache.service';
-import { configService, type Promo } from '../../../services/config.service';
+import { invalidateQuery } from '../../../hooks/useQuery';
 import { useAuthStore } from '../../../stores/authStore';
 import { usePreferencesStore } from '../../../stores/preferencesStore';
 import { mapFailureReason } from '../../../utils/paymentErrors';
@@ -194,9 +189,6 @@ export default function ReviewScreen() {
   // yet. Callback-captured state alone silently booked those as cash.
   const paymentMethodType =
     resolvePaymentMethodType(draftBooking.payment_method_id) ?? savedMethodType;
-  // Persisted alongside promo_code so a remount can't show an applied chip
-  // over an undiscounted total (while still submitting the code).
-  const promoDiscount = draftBooking.promo_discount ?? 0;
   const [offerPrice, setOfferPrice] = useState(
     draftBooking.customer_offer ?? 100,
   );
@@ -359,22 +351,6 @@ export default function ReviewScreen() {
     estimateAttempt,
   ]);
 
-  // Promos the customer can actually redeem. SAME useQuery key/shape/ttl as
-  // Home's rewards band (['promos', userId]), so on the common path this
-  // paints from cache with zero extra network — the codes were already
-  // fetched to render "N promos to use" on the home screen.
-  const promosQ = useQuery<Promo[]>(
-    ['promos', userId ?? 'anon'],
-    async () => {
-      const res = await configService.getPromos();
-      const p = res.data?.data;
-      return Array.isArray(p) ? p : [];
-    },
-    { staleTime: 60_000, ttl: CacheTTL.MEDIUM, enabled: !!userId },
-  );
-  // Code currently being validated by a chip tap (chip-level spinner).
-  const [applyingPromo, setApplyingPromo] = useState<string | null>(null);
-
   // Distance-based ETA per vehicle so the selector cards can preview
   // travel time alongside fare. Returns undefined for single-location
   // errands where distance isn't applicable.
@@ -433,82 +409,9 @@ export default function ReviewScreen() {
     | { total_amount: number; distance_fee: number; base_fee: number; service_fee: number; surcharge: number }
     | undefined;
 
-  const priceItems = fareLines(currentVehicleEstimate, promoDiscount);
+  const priceItems = fareLines(currentVehicleEstimate);
 
-  // Clamped at zero — a fixed-amount promo larger than the fare must never
-  // render "Confirm ₱-20.00".
-  const totalAmount = currentVehicleEstimate
-    ? Math.max(0, (currentVehicleEstimate.total_amount ?? 0) - promoDiscount)
-    : 0;
-
-  // Fare a promo is measured against — the same value handed to
-  // PromoCodeInput, so a chip's preview and a typed code agree.
-  const promoBaseAmount =
-    pricingMode === 'fixed' ? currentVehicleEstimate?.total_amount ?? 0 : offerPrice;
-
-  // Local preview of the peso saving, mirroring PromoService::calculateDiscount
-  // (percentage clamped 0..100, then capped by max_discount). Preview ONLY —
-  // the number stored on the draft always comes from the server's validate
-  // response, and the server re-validates again at create.
-  const previewDiscount = useCallback(
-    (promo: Promo, amount: number): number => {
-      const raw =
-        promo.discount_type === 'percentage'
-          ? (amount * Math.max(0, Math.min(100, promo.discount_value))) / 100
-          : promo.discount_value;
-      const capped =
-        promo.max_discount != null && promo.max_discount > 0
-          ? Math.min(raw, promo.max_discount)
-          : raw;
-      return Math.max(0, Math.min(capped, amount));
-    },
-    [],
-  );
-
-  // Redeemable promos this fare actually qualifies for. We drop the ones the
-  // payload already marks ineligible (min_order above the fare, window
-  // expired) rather than offering a tap that can only fail.
-  const applicablePromos = useMemo(() => {
-    if (draftBooking.promo_code) return [];
-    if (promoBaseAmount <= 0) return [];
-    const now = Date.now();
-    return (promosQ.data ?? [])
-      .filter((p) => {
-        if (!p?.code) return false;
-        if (p.min_order != null && promoBaseAmount < p.min_order) return false;
-        if (p.valid_until && new Date(p.valid_until).getTime() < now) return false;
-        return previewDiscount(p, promoBaseAmount) > 0;
-      })
-      // Biggest saving first — the chip a customer would pick anyway.
-      .sort(
-        (a, b) =>
-          previewDiscount(b, promoBaseAmount) - previewDiscount(a, promoBaseAmount),
-      )
-      .slice(0, 4);
-  }, [promosQ.data, promoBaseAmount, draftBooking.promo_code, previewDiscount]);
-
-  // A chip tap goes through the EXACT path a typed code does:
-  // configService.validatePromo → `discount` from the response → the same
-  // onApply write PromoCodeInput performs. No client-side shortcut, so
-  // min-order/limit rejections surface identically.
-  const handleApplyPromoChip = useCallback(
-    async (code: string) => {
-      if (applyingPromo) return;
-      setApplyingPromo(code);
-      try {
-        const res = await configService.validatePromo(code, promoBaseAmount);
-        const discount = res.data?.data?.discount ?? 0;
-        haptics.success();
-        updateDraft({ promo_code: code, promo_discount: discount });
-      } catch (err: any) {
-        haptics.error();
-        toast.error(errorMessage(err, copy.promo.applyFailed));
-      } finally {
-        setApplyingPromo(null);
-      }
-    },
-    [applyingPromo, promoBaseAmount, updateDraft],
-  );
+  const totalAmount = currentVehicleEstimate?.total_amount ?? 0;
 
   // Approximate travel time based on vehicle type and distance
   const getEstimatedTime = () => {
@@ -685,7 +588,6 @@ export default function ReviewScreen() {
         payment_method_id: draftBooking.payment_method_id?.startsWith('__')
           ? undefined
           : draftBooking.payment_method_id,
-        promo_code: draftBooking.promo_code,
       };
 
       // Reuse the retained key when the body is byte-for-byte what it was last
@@ -856,24 +758,7 @@ export default function ReviewScreen() {
       }
       setBookingStage(null);
       haptics.error();
-      // A promo can die between "apply" and "Confirm" — expired, usage cap
-      // reached, or the fare changed and no longer meets min_order. The draft
-      // kept the dead code, so the very next Confirm tap re-sent it and hit
-      // the identical 422: a loop the customer could only escape by working
-      // out that the promo chip was the culprit and removing it by hand.
-      // Drop it for them and quote the honest, undiscounted total. The server
-      // already rejected the code — nothing about settlement changes here.
-      const backendCode = typeof err?.code === 'string' ? err.code : undefined;
-      if (backendCode?.startsWith('PROMO_') && draftBooking.promo_code) {
-        updateDraft({ promo_code: undefined, promo_discount: undefined });
-        toast.warning(
-          `That promo no longer applies — removed. New total ${formatCurrency(
-            promoBaseAmount,
-          )}. Tap Confirm to book.`,
-        );
-      } else {
-        toast.error(errorMessage(err, copy.booking.createFailed));
-      }
+      toast.error(errorMessage(err, copy.booking.createFailed));
     } finally {
       setIsSubmitting(false);
       submitLatch.current = false;
@@ -889,8 +774,6 @@ export default function ReviewScreen() {
     clearDraft,
     router,
     totalAmount,
-    // Quoted in the "promo removed" recovery toast — must not go stale.
-    promoBaseAmount,
     updateDraft,
     userId,
     setLastPaymentMethod,
@@ -956,9 +839,10 @@ export default function ReviewScreen() {
         </View>
       </View>
 
-      {/* Keyboard handling mirrors details.tsx — without persistTaps the
-          promo Apply tap is swallowed by keyboard dismissal (two taps to
-          apply), and bottom-half inputs hide under the iOS keyboard. */}
+      {/* Keyboard handling mirrors details.tsx — without persistTaps a tap
+          made while the offer-amount keyboard is up is swallowed by keyboard
+          dismissal (two taps to act), and bottom-half inputs hide under the
+          iOS keyboard. */}
       <KeyboardAvoidingView
         style={{ flex: 1 }}
         behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
@@ -1317,78 +1201,6 @@ export default function ReviewScreen() {
             </Text>
           </View>
         )}
-
-        {/* Redeemable promos — one tap instead of remembering a code.
-            Home already advertises "N promos to use"; this is the screen
-            where they can actually be spent, and until now the only way in
-            was recalling the code string. A chip tap runs the SAME server
-            validate a typed code does (see handleApplyPromoChip), so the
-            backend still decides eligibility and the peso saving. Hidden
-            once a code is applied — PromoCodeInput owns that state. */}
-        {applicablePromos.length > 0 && (
-          <View className="mb-3">
-            <Eyebrow className="mb-2">Your promos · tap to apply</Eyebrow>
-            <View className="flex-row flex-wrap" style={{ gap: 8 }}>
-              {applicablePromos.map((promo) => {
-                const saving = previewDiscount(promo, promoBaseAmount);
-                const busy = applyingPromo === promo.code;
-                return (
-                  <Pressable
-                    key={promo.id ?? promo.code}
-                    // Layout lives in className (a Pressable styled only via
-                    // the style callback loses flexDirection/background).
-                    className="flex-row items-center rounded-2xl bg-accentSoft px-3 py-2"
-                    accessibilityRole="button"
-                    accessibilityLabel={`Apply promo ${promo.code}, saves ${formatCurrency(saving)}`}
-                    accessibilityState={{ disabled: applyingPromo !== null, busy }}
-                    disabled={applyingPromo !== null}
-                    hitSlop={6}
-                    onPress={() => handleApplyPromoChip(promo.code)}
-                    style={({ pressed }) =>
-                      pressed
-                        ? { opacity: 0.7 }
-                        : applyingPromo !== null && !busy
-                          ? { opacity: 0.45 }
-                          : null
-                    }
-                  >
-                    {busy ? (
-                      <Spinner size={13} color={LightColors.accentDark} />
-                    ) : (
-                      <Tag size={13} color={LightColors.accentStrong} strokeWidth={2} />
-                    )}
-                    <Text className="text-[12px] font-montserrat-bold text-accentDark ml-1.5">
-                      {promo.code}
-                    </Text>
-                    <Text
-                      className="text-[12px] font-montserrat-semi text-accentDark ml-1.5"
-                      style={{ fontVariant: ['tabular-nums'] }}
-                    >
-                      −{formatCurrency(saving)}
-                    </Text>
-                  </Pressable>
-                );
-              })}
-            </View>
-          </View>
-        )}
-
-        {/* Promo Code */}
-        <PromoCodeInput
-          appliedCode={draftBooking.promo_code}
-          appliedDiscount={promoDiscount}
-          amount={
-            pricingMode === 'fixed'
-              ? currentVehicleEstimate?.total_amount ?? 0
-              : offerPrice
-          }
-          onApply={(code, discount) => {
-            updateDraft({ promo_code: code, promo_discount: discount });
-          }}
-          onRemove={() => {
-            updateDraft({ promo_code: undefined, promo_discount: undefined });
-          }}
-        />
 
         {/* Payment Method */}
         <PaymentMethodSelector

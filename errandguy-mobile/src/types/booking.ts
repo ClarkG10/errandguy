@@ -121,6 +121,9 @@ export interface Booking {
   distance_fee: number;
   service_fee: number;
   surcharge: number;
+  /** Saving from a promo code, already taken off `total_amount`. Promo codes
+   *  are retired: new bookings always carry 0, and only bookings made while
+   *  they existed can be non-zero. Kept so those receipts still add up. */
   promo_discount: number;
   total_amount: number;
   customer_offer: number | null;
@@ -140,7 +143,6 @@ export interface Booking {
   cancelled_at: string | null;
   cancellation_reason: string | null;
   cancelled_by: string | null;
-  promo_code_id: string | null;
   ride_pin: string | null;
   ride_pin_verified: boolean;
   is_transportation: boolean;
