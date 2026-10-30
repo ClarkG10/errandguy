@@ -18,12 +18,12 @@ class SendBookingStatusNotification implements ShouldQueue
         $booking = $event->booking;
         $status = $event->newStatus;
 
-        // Bookings share three flows (standard / transport / single-location),
-        // but the base TEMPLATES are written for the physical pickup→deliver
-        // flow — so copy like "Item Picked Up … on the way" is wrong for a ride,
-        // a bill payment or a queue job. Layer a per-errand-type override on top
-        // of the status template: the override wins per recipient, otherwise we
-        // fall back to the base. Keyed by errand_type slug.
+        // Bookings share two flows (standard / single-location), but the base
+        // TEMPLATES are written for the physical pickup→deliver flow — so copy
+        // like "Item Picked Up … on the way" is wrong for a queue job. Layer a
+        // per-errand-type override on top of the status template: the override
+        // wins per recipient, otherwise we fall back to the base. Keyed by
+        // errand_type slug.
         $base = self::TEMPLATES[$status] ?? [];
         $slug = $booking->errandType?->slug;
         $override = $slug ? (self::TYPE_OVERRIDES[$slug][$status] ?? []) : [];
@@ -140,47 +140,10 @@ class SendBookingStatusNotification implements ShouldQueue
      * Per-errand-type copy overrides, keyed by errand_type slug → status →
      * recipient. The base TEMPLATES below describe the physical delivery flow;
      * these correct the wording for the flows where a status means something
-     * different (a passenger ride, a bill payment, a queue job). Any status not
-     * listed here for a type simply uses the base template.
+     * different (a queue job). Any status not listed here for a type simply
+     * uses the base template.
      */
     private const TYPE_OVERRIDES = [
-        // Passenger ride (transport flow — skips `delivered`).
-        'transportation' => [
-            'no_runner' => [
-                'customer' => ['title' => 'No driver available', 'body' => 'We couldn’t find a driver for trip #{number}.{refund} Tap to try booking again.'],
-            ],
-            'heading_to_pickup' => [
-                'customer' => ['title' => 'Driver on the way', 'body' => 'Your driver is heading to your pickup point.'],
-            ],
-            'arrived_at_pickup' => [
-                'customer' => ['title' => 'Driver has arrived', 'body' => 'Your driver is waiting at the pickup point.'],
-            ],
-            'picked_up' => [
-                'customer' => ['title' => 'Ride started', 'body' => 'You’re on your way to your destination.'],
-            ],
-            'arrived_at_dropoff' => [
-                'customer' => ['title' => 'You’ve arrived', 'body' => 'You’ve reached your destination.'],
-            ],
-            'completed' => [
-                'customer' => ['title' => 'Trip complete', 'body' => 'Your trip #{number} is complete. Thanks for riding with ErrandGuy!'],
-                'runner' => ['title' => 'Trip complete', 'body' => 'Trip #{number} completed. Payment will be processed.'],
-            ],
-        ],
-        // Bills payment (single-location flow — accepted → … → picked_up → completed).
-        'bills_payment' => [
-            'no_runner' => [
-                'customer' => ['title' => 'No runner available', 'body' => 'We couldn’t find a runner to pay your bill for #{number}.{refund} Tap to try again.'],
-            ],
-            'arrived_at_pickup' => [
-                'customer' => ['title' => 'At the payment counter', 'body' => 'Your runner is paying your bill now.'],
-            ],
-            'picked_up' => [
-                'customer' => ['title' => 'Bill paid', 'body' => 'Your bill has been paid — your receipt will be shared shortly.'],
-            ],
-            'completed' => [
-                'customer' => ['title' => 'All done', 'body' => 'Your bills-payment errand #{number} is complete.'],
-            ],
-        ],
         // Queue / fall-in-line (single-location flow).
         'queue' => [
             'no_runner' => [

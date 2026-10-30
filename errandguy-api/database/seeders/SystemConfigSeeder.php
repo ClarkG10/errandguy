@@ -46,16 +46,6 @@ class SystemConfigSeeder extends Seeder
                 'description' => 'Minutes before SOS live tracking link expires',
             ],
             [
-                'key' => 'route_deviation_threshold_meters',
-                'value' => '500',
-                'description' => 'Meters of deviation before route deviation alert',
-            ],
-            [
-                'key' => 'ride_duration_alert_multiplier',
-                'value' => '2.0',
-                'description' => 'Multiplier of estimated duration before ride duration alert',
-            ],
-            [
                 'key' => 'location_update_interval_seconds',
                 'value' => '5',
                 'description' => 'Seconds between runner location updates',

@@ -10,6 +10,7 @@ use App\Http\Requests\Runner\UpdateErrandStatusRequest;
 use App\Http\Resources\BookingResource;
 use App\Models\Booking;
 use App\Models\BookingStatusLog;
+use App\Models\ErrandType;
 use App\Models\Notification;
 use App\Models\WalletTransaction;
 use App\Services\LocationService;
@@ -33,24 +34,9 @@ class RunnerErrandController extends Controller
     ];
 
     /**
-     * Transportation rides skip the "delivered" handover stage — the
-     * passenger has already arrived when the ride is completed.
-     */
-    private const TRANSPORT_STATUS_ORDER = [
-        'accepted',
-        'heading_to_pickup',
-        'arrived_at_pickup',
-        'picked_up',
-        'in_transit',
-        'arrived_at_dropoff',
-        'completed',
-    ];
-
-    /**
-     * Single-location errands (queue, bills payment, on-site documents)
-     * complete at the pickup location — there is no transit / dropoff /
-     * delivered stage. Runner: accepted → heading → arrived → picked_up
-     * (action done) → completed.
+     * Single-location errands (queue) complete at the pickup location — there
+     * is no transit / dropoff / delivered stage. Runner: accepted → heading →
+     * arrived → picked_up (action done) → completed.
      */
     private const SINGLE_LOCATION_STATUS_ORDER = [
         'accepted',
@@ -63,6 +49,12 @@ class RunnerErrandController extends Controller
     /**
      * Errand type slugs that finish at a single location.
      * Must stay in sync with mobile errandTypeRules.ts singleLocation flag.
+     *
+     * bills_payment is a LEGACY alias: the type is retired (inactive, so it
+     * can't be booked), but an errand booked before the retirement still ends
+     * at the payment counter. Every other retired slug needs no entry here —
+     * document/laundry/food/grocery and old passenger rides all follow the
+     * standard STATUS_ORDER.
      */
     private const SINGLE_LOCATION_SLUGS = ['queue', 'bills_payment'];
 
@@ -303,7 +295,7 @@ class RunnerErrandController extends Controller
         ]);
 
         // Bust the per-runner active-booking cache so the very next GPS
-        // tick attaches `booking_id` to the new ride instead of returning
+        // tick attaches `booking_id` to the new errand instead of returning
         // the stale (likely null) value held by RunnerLocationController.
         Cache::forget("runner_active_booking_id:{$user->id}");
 
@@ -499,10 +491,11 @@ class RunnerErrandController extends Controller
             // Filter by preferred types — preferred_types stores errand-type
             // slugs (e.g. "delivery"), not UUIDs. Compare against the eager-
             // loaded errandType->slug, otherwise every booking is filtered
-            // out and the runner sees an empty list.
+            // out and the runner sees an empty list. A retired type is matched
+            // against the type that replaced it.
             if (!empty($preferredTypes)) {
                 $slug = $booking->errandType?->slug;
-                if (!$slug || !in_array($slug, $preferredTypes, true)) {
+                if (!$slug || !in_array(ErrandType::preferenceSlug($slug), $preferredTypes, true)) {
                     return false;
                 }
             }
@@ -583,8 +576,9 @@ class RunnerErrandController extends Controller
             $updateData['picked_up_at'] = now();
         }
 
-        // Receipt + actual cost reconciliation for shopping errands
-        // (food / grocery / purchase / bills_payment).
+        // Receipt + actual cost reconciliation for shopping errands (purchase,
+        // plus the legacy food / grocery / bills_payment aliases — see
+        // UpdateErrandStatusRequest::SHOPPING_SLUGS).
         if ($newStatus === 'picked_up' && $request->hasFile('receipt_photo')) {
             // PRIVATE media disk — a receipt reveals what/where the customer
             // purchased and must not be a public URL. (audit)
@@ -603,7 +597,7 @@ class RunnerErrandController extends Controller
                 'message' => 'Reported amount exceeds the customer’s pre-authorized budget.',
             ], 422);
         }
-        // Mark picked_up_at even when there is no pickup_photo (e.g. transportation, queue, bills).
+        // Mark picked_up_at even when there is no pickup_photo (e.g. queue, shopping).
         if ($newStatus === 'picked_up' && !isset($updateData['picked_up_at'])) {
             $updateData['picked_up_at'] = now();
         }
@@ -623,8 +617,8 @@ class RunnerErrandController extends Controller
                 "booking-photos/{$booking->id}",
             );
         }
-        // Always stamp completed_at on completion — single-location and transportation
-        // errands finish without a signature, so the timestamp must not depend on the upload.
+        // Always stamp completed_at on completion — single-location errands finish
+        // without a signature, so the timestamp must not depend on the upload.
         if ($newStatus === 'completed') {
             $updateData['completed_at'] = now();
         }
@@ -703,76 +697,6 @@ class RunnerErrandController extends Controller
         return response()->json([
             'data' => new BookingResource($booking),
             'message' => 'Status updated.',
-        ]);
-    }
-
-    public function verifyPin(Request $request, string $id): JsonResponse
-    {
-        $request->validate([
-            'pin' => ['required', 'digits:4'],
-        ]);
-
-        $booking = Booking::findOrFail($id);
-        $user = $request->user();
-
-        if ($user->id !== $booking->runner_id) {
-            return response()->json([
-                'message' => 'You are not assigned to this errand.',
-            ], 403);
-        }
-
-        if (!$booking->is_transportation) {
-            return response()->json([
-                'message' => 'PIN verification is only for transportation errands.',
-            ], 422);
-        }
-
-        if ($booking->ride_pin_verified) {
-            return response()->json([
-                'message' => 'PIN already verified.',
-            ]);
-        }
-
-        // Check PIN attempts (max 3)
-        $attemptKey = "pin_attempts:{$booking->id}";
-        $attempts = (int) cache($attemptKey, 0);
-
-        if ($attempts >= 3) {
-            return response()->json([
-                'message' => 'Maximum PIN attempts exceeded. Please contact support.',
-            ], 422);
-        }
-
-        if ($request->input('pin') !== $booking->ride_pin) {
-            cache([$attemptKey => $attempts + 1], now()->addMinutes(30));
-
-            return response()->json([
-                'message' => 'Incorrect PIN. ' . (2 - $attempts) . ' attempts remaining.',
-            ], 422);
-        }
-
-        $booking->update(['ride_pin_verified' => true]);
-
-        BookingStatusLog::create([
-            'booking_id' => $booking->id,
-            'status' => $booking->status,
-            'changed_by' => $user->id,
-            'note' => 'Ride PIN verified',
-        ]);
-
-        // Notify the customer live. notifyInApp persists the row AND broadcasts
-        // it on notifications.{userId}; a raw Notification::create would write
-        // the row but never reach the app live (the customer is mid-trip and
-        // waiting on this confirmation).
-        app(\App\Services\NotificationService::class)->notifyInApp(
-            $booking->customer_id,
-            'PIN verified',
-            'Your ride PIN has been verified. Have a safe trip!',
-            ['type' => 'booking_update', 'booking_id' => $booking->id],
-        );
-
-        return response()->json([
-            'message' => 'PIN verified successfully.',
         ]);
     }
 
@@ -912,10 +836,6 @@ class RunnerErrandController extends Controller
      */
     private function statusOrderFor(Booking $booking): array
     {
-        if ($booking->is_transportation) {
-            return self::TRANSPORT_STATUS_ORDER;
-        }
-
         $slug = $booking->errandType?->slug;
         if ($slug && in_array($slug, self::SINGLE_LOCATION_SLUGS, true)) {
             return self::SINGLE_LOCATION_STATUS_ORDER;

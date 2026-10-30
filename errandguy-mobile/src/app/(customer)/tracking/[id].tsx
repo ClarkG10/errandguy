@@ -1590,10 +1590,9 @@ export default function TrackingScreen() {
     );
   }
 
-  const isTransportation = booking.is_transportation;
   const errandRule = getErrandTypeRule(booking.errand_type?.slug);
-  // Use the per-type flow so single-location errands (queue / bills /
-  // document) don't show dropoff stages they will never reach.
+  // Use the per-type flow so single-location errands (queue) don't show
+  // dropoff stages they will never reach.
   const steps = errandRule.statusFlow as unknown as BookingStatus[];
   const currentStatusIndex = steps.indexOf(booking.status);
   const isShopping = errandRule.requiresShoppingBudget;
@@ -1668,25 +1667,25 @@ export default function TrackingScreen() {
       case 'arrived_at_pickup': {
         // Same status, very different meaning per errand type.
         let subtitle = 'Picking up your order.';
-        if (isTransportation) subtitle = 'Your driver is at the pickup point.';
-        else if (errandSlug === 'bills_payment') subtitle = 'Paying your bill now.';
-        else if (errandSlug === 'queue') subtitle = 'Your runner is now in line.';
+        if (errandSlug === 'queue') subtitle = 'Your runner is now in line.';
+        // Any other single-location errand (a legacy bill payment still in
+        // progress) is worked on the spot — nothing is being picked up.
+        else if (isSingleLocation) subtitle = 'Your runner is on site now.';
         else if (isShopping) subtitle = 'Shopping for your items now.';
-        return { title: isTransportation ? 'Driver arrived' : 'Arrived', subtitle, accent: 'brand' };
+        return { title: 'Arrived', subtitle, accent: 'brand' };
       }
       case 'picked_up':
-        if (isTransportation) return { title: 'Ride started', subtitle: 'On the way to your destination.', accent: 'brand' };
-        if (errandSlug === 'bills_payment') return { title: 'Bill paid', subtitle: 'Your receipt will be shared shortly.', accent: 'brand' };
         if (errandSlug === 'queue') return { title: 'At the front', subtitle: 'Your runner reached the front of the line.', accent: 'brand' };
+        if (isSingleLocation) return { title: 'Task done', subtitle: 'Your runner is wrapping up.', accent: 'brand' };
         return { title: 'Picked up', subtitle: 'Heading to drop-off next.', accent: 'brand' };
       case 'in_transit':
-        return { title: isTransportation ? 'On the way' : 'On the way to you', accent: 'brand' };
+        return { title: 'On the way to you', accent: 'brand' };
       case 'arrived_at_dropoff':
-        return { title: isTransportation ? 'You’ve arrived' : 'Arrived at drop-off', accent: 'brand' };
+        return { title: 'Arrived at drop-off', accent: 'brand' };
       case 'delivered':
       case 'completed':
         return {
-          title: isTransportation ? 'Trip complete' : isSingleLocation ? 'All done' : 'Delivered',
+          title: isSingleLocation ? 'All done' : 'Delivered',
           subtitle: 'Thanks for using ErrandGuy.',
           accent: 'success',
         };
@@ -1787,9 +1786,6 @@ export default function TrackingScreen() {
         : { opacity: 0.85, transform: [{ scale: 0.97 }] }
       : null;
 
-  const arrivedPinHero =
-    booking.status === 'arrived_at_pickup' || booking.status === 'arrived_at_dropoff';
-
   // ── SOS presentation ──────────────────────────────────────────────────
   // trustedCount null (unknown/never-visited) is treated as zero so we never
   // promise contacts we can't confirm — the modal then leads with the honest
@@ -1825,35 +1821,6 @@ export default function TrackingScreen() {
   // ── Sheet body pieces ─────────────────────────────────────────────────
   // Built once, composed in live or receipt order below, so the handlers
   // (call / chat / share / receipt links) stay single-sourced.
-
-  // Ride PIN — warningSoft card, warningDark text (base warning fails AA on
-  // the soft wash). Promoted to a larger first-card variant at the arrived_*
-  // handoff moments, where the PIN is the whole interaction.
-  const pinCard =
-    isTransportation && booking.ride_pin && !isTerminalUi ? (
-      <View
-        className={`bg-warningSoft items-center mb-3 ${arrivedPinHero ? 'rounded-2xl p-5' : 'rounded-xl p-4'}`}
-        style={{ borderWidth: 1, borderColor: `${LightColors.warning}66` }}
-      >
-        <Text
-          className="text-[12px] font-montserrat text-warningDark mb-1"
-          maxFontSizeMultiplier={1.3}
-        >
-          Show this PIN to your runner
-        </Text>
-        <Text
-          className="font-inter-semi text-warningDark"
-          style={{
-            fontSize: arrivedPinHero ? 34 : 30,
-            letterSpacing: 8,
-            fontVariant: ['tabular-nums'],
-          }}
-          maxFontSizeMultiplier={1.2}
-        >
-          {booking.ride_pin}
-        </Text>
-      </View>
-    ) : null;
 
   // ── Runner card ─────────────────────────────────
   // Clean top row (large avatar + name/rating, verified) over a hairline
@@ -3010,8 +2977,7 @@ export default function TrackingScreen() {
           )
         }
         footer={
-          // SOS is now available on ANY live errand (not just transportation)
-          // — safety is not vehicle-specific. It stays through 'delivered'
+          // SOS is available on ANY live errand. It stays through 'delivered'
           // (post-dropoff safety window) and only drops on
           // completed/cancelled/no_runner — isLiveBooking is exactly that set.
           // Terminal receipts with nothing to show render no footer at all.
@@ -3254,8 +3220,6 @@ export default function TrackingScreen() {
             </>
           ) : (
             <>
-              {/* At the arrived_* handoff the PIN leads the body. */}
-              {arrivedPinHero ? pinCard : null}
               {(showEtaNumeral || heroCopy.subtitle) ? (
                 <View className="mb-4">
                   {/* When the numeral owns the handle, the status verb moves
@@ -3272,7 +3236,6 @@ export default function TrackingScreen() {
                   ) : null}
                 </View>
               ) : null}
-              {!arrivedPinHero ? pinCard : null}
               {runnerCard}
               {shoppingProgressSection}
               {stopsProgressSection}

@@ -33,8 +33,8 @@ class ShoppingItemsTest extends TestCase
         ]);
 
         $this->errandType = ErrandType::create([
-            'slug' => 'grocery', 'name' => 'Grocery', 'description' => 'Buy groceries',
-            'icon_name' => 'ShoppingCart', 'base_fee' => 50.00, 'per_km_walk' => 15.00,
+            'slug' => 'purchase', 'name' => 'Buy for me', 'description' => 'Buy groceries',
+            'icon_name' => 'ShoppingBag', 'base_fee' => 50.00, 'per_km_walk' => 15.00,
             'per_km_bicycle' => 12.00, 'per_km_motorcycle' => 10.00, 'per_km_car' => 18.00,
             'min_negotiate_fee' => 30.00, 'is_active' => true, 'sort_order' => 1,
         ]);

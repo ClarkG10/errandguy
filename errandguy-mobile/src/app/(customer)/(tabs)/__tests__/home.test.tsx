@@ -65,17 +65,15 @@ jest.mock('../../../../hooks/useQuery', () => {
   };
 });
 
-const type = (id: string, name: string, sort: number): ErrandType =>
-  ({ id, slug: id, name, icon_name: 'Package', is_active: true, sort_order: sort }) as ErrandType;
+const type = (id: string, name: string, sort: number, is_active = true): ErrandType =>
+  ({ id, slug: id, name, icon_name: 'Package', is_active, sort_order: sort }) as ErrandType;
 
-// Abbreviated seeded catalogue — laundry and bills sit past the four tiles.
+// The catalogue the server serves after the launch simplification.
 const CATALOGUE = [
   type('delivery', 'Delivery', 1),
-  type('food', 'Food', 2),
-  type('grocery', 'Grocery', 3),
-  type('pharmacy', 'Pharmacy', 4),
-  type('laundry', 'Laundry', 5),
-  type('bills', 'Bills Payment', 7),
+  type('purchase', 'Buy for me', 2),
+  type('queue', 'Queue / Pila', 3),
+  type('custom', 'Custom errand', 4),
 ];
 
 const booking = (id: string, over: Partial<Booking> = {}): Booking =>
@@ -145,7 +143,7 @@ describe('customer home — the live-errand stack', () => {
   it('stacks a card per active errand instead of hiding all but the newest', async () => {
     setActive([
       booking('live', { status: 'in_transit' }),
-      booking('second', { status: 'pending', errand_type: { name: 'Laundry' } as never }),
+      booking('second', { status: 'pending', errand_type: { name: 'Buy for me' } as never }),
     ]);
     const { queryAllByLabelText, queryByTestId, getByText } = renderHome();
 
@@ -208,38 +206,102 @@ describe('customer home — service tiles', () => {
           .replace(/ errand$/, ''),
       );
 
-  it('keeps the catalogue order for a customer with no history', async () => {
+  it('shows exactly the four types the server serves, in its order', async () => {
     const utils = renderHome();
     await waitFor(() => {
       expect(utils.queryByLabelText('Start a Delivery errand')).toBeTruthy();
     });
-    expect(tileNames(utils)).toEqual(['Delivery', 'Food', 'Grocery', 'Pharmacy']);
+    expect(tileNames(utils)).toEqual(['Delivery', 'Buy for me', 'Queue / Pila', 'Custom errand']);
   });
 
-  it('lifts the services this customer actually books onto the tiles', async () => {
+  it('never renders a type the server marks inactive', async () => {
+    (configService.getErrandTypes as jest.Mock).mockResolvedValue({
+      data: { data: [...CATALOGUE, type('bills_payment', 'Bills Payment', 5, false)] },
+    });
+    const utils = renderHome();
+    await waitFor(() => {
+      expect(utils.queryByLabelText('Start a Delivery errand')).toBeTruthy();
+    });
+    expect(tileNames(utils)).not.toContain('Bills Payment');
+    expect(tileNames(utils)).toHaveLength(4);
+  });
+
+  it('lifts the services this customer actually books onto the first tiles', async () => {
     (bookingService.getBookings as jest.Mock).mockResolvedValue({
       data: {
         data: [
-          booking('1', { errand_type_id: 'bills' }),
-          booking('2', { errand_type_id: 'bills' }),
-          booking('3', { errand_type_id: 'laundry' }),
-          booking('4', { errand_type_id: 'laundry' }),
-          // A single booking is not a habit — grocery must not be promoted.
-          booking('5', { errand_type_id: 'grocery' }),
+          booking('1', { errand_type_id: 'custom' }),
+          booking('2', { errand_type_id: 'custom' }),
+          booking('3', { errand_type_id: 'queue' }),
+          booking('4', { errand_type_id: 'queue' }),
+          // A single booking is not a habit — purchase must not be promoted.
+          booking('5', { errand_type_id: 'purchase' }),
         ],
       },
     });
     const utils = renderHome();
 
     await waitFor(() => {
-      expect(utils.queryByLabelText('Start a Bills Payment errand')).toBeTruthy();
+      expect(tileNames(utils)[0]).toBe('Queue / Pila');
     });
-    // bills and laundry tie at 2, so sort_order breaks it: laundry (5) first.
+    // custom and queue tie at 2, so sort_order breaks it: queue (3) first.
     expect(tileNames(utils)).toEqual([
-      'Laundry',
-      'Bills Payment',
+      'Queue / Pila',
+      'Custom errand',
       'Delivery',
-      'Food',
+      'Buy for me',
     ]);
+  });
+});
+
+/**
+ * Older bookings keep the id and name of a retired type (a food run, a ride).
+ * The server refuses a new booking of one, so no Home shortcut may offer it.
+ */
+describe('customer home — shortcuts after the type retirement', () => {
+  const retired = (id: string, over: Partial<Booking> = {}) =>
+    booking(id, {
+      status: 'completed',
+      errand_type_id: 'food',
+      errand_type: { name: 'Food Delivery' } as never,
+      pickup_lat: 14.6,
+      pickup_lng: 121.0,
+      ...over,
+    });
+
+  it('offers neither "Frequently booked" nor "Repeat last" for a retired type', async () => {
+    (bookingService.getBookings as jest.Mock).mockResolvedValue({
+      data: { data: [retired('1'), retired('2'), retired('3')] },
+    });
+    const utils = renderHome();
+    await waitFor(() => {
+      expect(utils.queryByLabelText('Start a Delivery errand')).toBeTruthy();
+    });
+    expect(utils.queryByLabelText(/^Frequently booked/)).toBeNull();
+    expect(utils.queryByText(/Frequently booked/)).toBeNull();
+    expect(utils.queryByLabelText(/^Repeat your last/)).toBeNull();
+    // The history itself still reads by the server's name for the old type.
+    expect(utils.getAllByText('Food Delivery').length).toBeGreaterThan(0);
+  });
+
+  it('repeats the latest booking of a type that can still be booked', async () => {
+    (bookingService.getBookings as jest.Mock).mockResolvedValue({
+      data: {
+        data: [
+          retired('1'),
+          booking('2', {
+            status: 'completed',
+            errand_type_id: 'delivery',
+            errand_type: { name: 'Delivery' } as never,
+            pickup_lat: 14.6,
+            pickup_lng: 121.0,
+          }),
+        ],
+      },
+    });
+    const utils = renderHome();
+    await waitFor(() => {
+      expect(utils.queryByLabelText('Repeat your last Delivery booking')).toBeTruthy();
+    });
   });
 });

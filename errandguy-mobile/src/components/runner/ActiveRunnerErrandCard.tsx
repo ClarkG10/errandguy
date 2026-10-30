@@ -53,8 +53,8 @@ const PHASE_BY_STATUS: Partial<Record<BookingStatus, Phase>> = {
  * Supporting line + CTA per phase. The TITLE is no longer here: it used to be
  * a fifth independent action vocabulary that disagreed with the cockpit button
  * it opens ("Mark item picked up" here, "Pick up item" there) and named a
- * drop-off leg that single-location errands don't have \u2014 a bill-payment card
- * read "En route to drop-off". It now comes from `statusActionLabel`, the same
+ * drop-off leg that single-location errands don't have \u2014 a queue card read
+ * "En route to drop-off". It now comes from `statusActionLabel`, the same
  * per-errand-type ladder the button itself renders.
  */
 const PHASE_COPY: Record<Phase, { fallbackTitle: string; cta: string; sub: string }> = {

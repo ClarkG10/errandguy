@@ -7,7 +7,6 @@ use App\Enums\PaymentStatus;
 use App\Events\BookingCancelled;
 use App\Models\Booking;
 use App\Models\BookingStatusLog;
-use App\Models\ErrandType;
 use App\Models\Payment;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
@@ -38,14 +37,6 @@ class BookingService
         } while (Booking::where('booking_number', $number)->exists());
 
         return $number;
-    }
-
-    /**
-     * Generate a 4-digit ride PIN for transportation bookings.
-     */
-    public function generateRidePin(): string
-    {
-        return str_pad((string) random_int(0, 9999), 4, '0', STR_PAD_LEFT);
     }
 
     /**
@@ -125,47 +116,6 @@ class BookingService
     public function isCancellable(Booking $booking): bool
     {
         return in_array($booking->status, ['pending', 'matched', 'accepted']);
-    }
-
-    /**
-     * Duplicate a booking for rebooking.
-     */
-    public function rebook(Booking $original): Booking
-    {
-        $errandType = ErrandType::findOrFail($original->errand_type_id);
-        $isTransportation = $errandType->slug === 'transportation';
-
-        return Booking::create([
-            'booking_number' => $this->generateBookingNumber(),
-            'customer_id' => $original->customer_id,
-            'errand_type_id' => $original->errand_type_id,
-            'status' => 'pending',
-            'pickup_address' => $original->pickup_address,
-            'pickup_lat' => $original->pickup_lat,
-            'pickup_lng' => $original->pickup_lng,
-            'pickup_contact_name' => $original->pickup_contact_name,
-            'pickup_contact_phone' => $original->pickup_contact_phone,
-            'dropoff_address' => $original->dropoff_address,
-            'dropoff_lat' => $original->dropoff_lat,
-            'dropoff_lng' => $original->dropoff_lng,
-            'dropoff_contact_name' => $original->dropoff_contact_name,
-            'dropoff_contact_phone' => $original->dropoff_contact_phone,
-            'description' => $original->description,
-            'special_instructions' => $original->special_instructions,
-            'estimated_item_value' => $original->estimated_item_value,
-            'schedule_type' => 'now',
-            'pricing_mode' => $original->pricing_mode,
-            'vehicle_type_rate' => $original->vehicle_type_rate,
-            'distance_km' => $original->distance_km,
-            'base_fee' => $original->base_fee,
-            'distance_fee' => $original->distance_fee,
-            'service_fee' => $original->service_fee,
-            'surcharge' => $original->surcharge,
-            'total_amount' => $original->total_amount,
-            'runner_payout' => $original->runner_payout,
-            'is_transportation' => $isTransportation,
-            'ride_pin' => $isTransportation ? $this->generateRidePin() : null,
-        ]);
     }
 
     /**

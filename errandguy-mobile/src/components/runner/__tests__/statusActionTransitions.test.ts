@@ -51,13 +51,12 @@ describe('getNextStatus', () => {
  *
  * StatusActionButton renders `rule.statusActions[status]` verbatim as the
  * single most-tapped control in the runner product — hit one-handed at a
- * motorcycle stop. Transportation used to break the ladder's grammar twice:
- * `picked_up` read "In transit" (a STATUS NOUN, so the driver could not tell
- * whether it described their state or offered to change it) and `in_transit`
- * read "Arriving at drop-off" (about to happen) where every other ladder's
- * identical transition reads "Arrived at drop-off" (it has happened). A driver
- * who works both errand types was taught two contradictory meanings for the
- * button they tap the moment they pull up.
+ * motorcycle stop. A ladder once broke the grammar twice: one step read
+ * "In transit" (a STATUS NOUN, so the runner could not tell whether it
+ * described their state or offered to change it) and another read "Arriving
+ * at drop-off" (about to happen) where every other ladder's identical
+ * transition reads "Arrived at drop-off" (it has happened) — two
+ * contradictory meanings for the button tapped the moment they pull up.
  *
  * These sweep ALL ladders so the next errand type cannot reintroduce it.
  */
@@ -112,7 +111,6 @@ describe('runner action ladders', () => {
         'Arrived',
         'Buy',
         'Complete',
-        'Confirm',
         'Hand',
         'Head',
         'I’ve',
@@ -122,22 +120,8 @@ describe('runner action ladders', () => {
         'Pay',
         'Pick',
         'Start',
-        'Submit',
       ].sort(),
     );
-  });
-
-  /** The specific ladder that was wrong, pinned end to end. */
-  it('pins the transportation ladder to verb-led, correctly-tensed labels', () => {
-    const { statusActions } = getErrandTypeRule('transportation');
-    expect(statusActions).toEqual({
-      accepted: 'Head to passenger',
-      heading_to_pickup: 'I’ve arrived',
-      arrived_at_pickup: 'Start ride',
-      picked_up: 'Start the trip',
-      in_transit: 'Arrived at drop-off',
-      arrived_at_dropoff: 'Complete ride',
-    });
   });
 
   /**

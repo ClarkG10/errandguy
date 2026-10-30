@@ -29,8 +29,10 @@ $FORGE_PHP artisan errandguy:backup-database --no-interaction
 # Run migrations on the app's default DB connection (MySQL in production).
 $FORGE_PHP artisan migrate --force --no-interaction
 
-# Idempotent seeders only (ErrandTypeSeeder uses updateOrCreate, so it's
-# safe to run on every deploy).
+# Idempotent seeders only. ErrandTypeSeeder uses firstOrCreate: it only adds an
+# errand type whose slug is missing and never overwrites one that exists, so
+# staff edits to names, prices, sort order or the on/off switch survive every
+# deploy.
 $FORGE_PHP artisan db:seed --class=ErrandTypeSeeder --force --no-interaction
 
 $FORGE_PHP artisan queue:restart

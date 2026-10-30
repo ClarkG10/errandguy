@@ -12,7 +12,7 @@ const ALL_STATUSES = Object.keys(STATUS_LABELS) as BookingStatus[];
 /**
  * One booking status used to render 8+ different ways across the surfaces a
  * single errand touches — six independent label maps in mobile alone, so a
- * bills-payment customer read "Bill paid" in the tracking hero and "Picked Up"
+ * single-location customer read one thing in the tracking hero and "Picked Up"
  * on the Activity row and home card describing the same moment, and `no_runner`
  * had seven spellings including a singular/plural flip.
  *
@@ -30,21 +30,29 @@ describe('statusLabel (terse register)', () => {
   });
 
   it('never claims an item was picked up on an errand that has none', () => {
-    expect(statusLabel('picked_up', 'bills_payment')).toBe('Bill paid');
     expect(statusLabel('picked_up', 'queue')).toBe('At the front');
-    expect(statusLabel('picked_up', 'transportation')).toBe('Ride started');
     // Shopping flows really do hand over an item — base label is correct.
-    expect(statusLabel('picked_up', 'grocery')).toBe('Picked up');
+    expect(statusLabel('picked_up', 'purchase')).toBe('Picked up');
   });
 
-  it('never describes a passenger as delivered', () => {
-    expect(statusLabel('delivered', 'transportation')).toBe('Trip complete');
-    expect(statusLabel('completed', 'transportation')).toBe('Trip complete');
+  /**
+   * Bills payment is retired, but an in-progress one still ends at the
+   * payment counter — it reads as single-location work, not a parcel.
+   */
+  it('reads a legacy bill payment as single-location work', () => {
+    expect(statusLabel('arrived_at_pickup', 'bills_payment')).toBe('On site');
+    expect(statusLabel('picked_up', 'bills_payment')).toBe('Task done');
   });
 
-  it('calls the runner a driver on a ride, matching the ride push copy', () => {
-    expect(statusLabel('pending', 'transportation')).toBe('Finding a driver');
-    expect(statusLabel('no_runner', 'transportation')).toBe('No driver available');
+  /**
+   * Passenger rides are retired. A ride booked before the cut reads exactly
+   * like the delivery it now finishes as — no driver vocabulary is left.
+   */
+  it('reads a legacy ride with the plain delivery vocabulary', () => {
+    for (const status of ALL_STATUSES) {
+      expect(statusLabel(status, 'transportation')).toBe(statusLabel(status, 'delivery'));
+      expect(statusLabel(status, 'transportation')).not.toMatch(/driver|ride|trip/i);
+    }
   });
 
   /**
@@ -98,36 +106,40 @@ describe('statusHeadline (conversational register)', () => {
   });
 
   it('does not narrate a parcel on errands that have none', () => {
-    expect(statusHeadline('picked_up', { errandSlug: 'bills_payment', runnerFirstName: 'Ana' }))
-      .toBe('Bill paid — receipt on the way');
     expect(statusHeadline('picked_up', { errandSlug: 'queue', runnerFirstName: 'Ana' }))
       .toBe('Ana reached the front of the line');
-    expect(statusHeadline('picked_up', { errandSlug: 'transportation' }))
-      .toBe('On the way to your destination');
+    expect(statusHeadline('picked_up', { errandSlug: 'bills_payment', runnerFirstName: 'Ana' }))
+      .toBe('Ana is wrapping up');
     // …and still does on a delivery, where there IS one.
     expect(statusHeadline('picked_up', { errandSlug: 'delivery', runnerFirstName: 'Ana' }))
       .toBe('Ana picked up your item');
   });
 
-  it('calls the runner a driver on a ride even with no runner attached', () => {
+  it('narrates a legacy ride like the delivery it now finishes as', () => {
+    for (const status of ALL_STATUSES) {
+      expect(statusHeadline(status, { errandSlug: 'transportation' })).toBe(
+        statusHeadline(status, { errandSlug: 'delivery' }),
+      );
+    }
     expect(statusHeadline('accepted', { errandSlug: 'transportation' })).toBe(
-      'Driver is on the way',
-    );
-    expect(statusHeadline('pending', { errandSlug: 'transportation' })).toBe(
-      'Looking for a driver nearby…',
+      'Runner is on the way',
     );
   });
 
-  it('returns a non-empty phrase for every status and every mapped type', () => {
+  it('returns a non-empty phrase for every status and every type, current or legacy', () => {
     for (const slug of [
       undefined,
       'delivery',
+      'purchase',
+      'queue',
+      'custom',
+      // Retired slugs still carried by older bookings.
       'grocery',
       'food',
+      'document',
+      'laundry',
       'transportation',
       'bills_payment',
-      'queue',
-      'purchase',
     ]) {
       for (const status of ALL_STATUSES) {
         const phrase = statusHeadline(status, { errandSlug: slug });

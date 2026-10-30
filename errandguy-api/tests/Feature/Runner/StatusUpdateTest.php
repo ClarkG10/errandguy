@@ -148,14 +148,14 @@ class StatusUpdateTest extends TestCase
         Event::fake();
         Storage::fake('media');
 
-        // Grocery (shopping) errand: the runner proves pickup with the RECEIPT
-        // + actual cost, never a separate pickup_photo (the mobile app sends
-        // receipt_photo + actual_item_cost only). The backend must NOT 422 for
-        // a missing pickup_photo here — regression: it did, permanently
-        // stranding the runner at pickup on food/grocery/purchase errands.
-        $grocery = ErrandType::create([
-            'slug' => 'grocery', 'name' => 'Grocery', 'description' => 'Shop',
-            'icon_name' => 'ShoppingCart', 'base_fee' => 50.00, 'per_km_walk' => 15.00,
+        // "Buy for me" (shopping) errand: the runner proves pickup with the
+        // RECEIPT + actual cost, never a separate pickup_photo (the mobile app
+        // sends receipt_photo + actual_item_cost only). The backend must NOT
+        // 422 for a missing pickup_photo here — regression: it did, permanently
+        // stranding the runner at pickup on shopping errands.
+        $purchase = ErrandType::create([
+            'slug' => 'purchase', 'name' => 'Buy for me', 'description' => 'Shop',
+            'icon_name' => 'ShoppingBag', 'base_fee' => 50.00, 'per_km_walk' => 15.00,
             'per_km_bicycle' => 12.00, 'per_km_motorcycle' => 10.00, 'per_km_car' => 18.00,
             'min_negotiate_fee' => 30.00, 'is_active' => true, 'sort_order' => 2,
         ]);
@@ -163,7 +163,7 @@ class StatusUpdateTest extends TestCase
         $booking = Booking::create([
             'booking_number' => 'EG-20260331-SHOP',
             'customer_id' => $this->customer->id, 'runner_id' => $this->runner->id,
-            'errand_type_id' => $grocery->id, 'status' => 'accepted',
+            'errand_type_id' => $purchase->id, 'status' => 'accepted',
             'pickup_address' => '123 Main', 'pickup_lat' => 14.60, 'pickup_lng' => 120.98,
             'dropoff_address' => '456 Oak', 'dropoff_lat' => 14.55, 'dropoff_lng' => 121.02,
             'schedule_type' => 'now', 'pricing_mode' => 'fixed', 'vehicle_type_rate' => 'motorcycle',
@@ -200,7 +200,7 @@ class StatusUpdateTest extends TestCase
         }
 
         // The default delivery errand still requires a pickup_photo at picked_up
-        // (the skip applies only to shopping/transportation/queue).
+        // (the skip applies only to shopping/queue).
         $this->actingAs($this->runner)
             ->postJson("/api/v1/runner/errand/{$this->booking->id}/status", [
                 'status' => 'picked_up',

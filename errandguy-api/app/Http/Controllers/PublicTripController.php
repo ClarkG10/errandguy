@@ -13,7 +13,8 @@ class PublicTripController extends Controller
     /**
      * Errand type slugs that finish at a single location (no drop-off leg).
      * Must stay in sync with RunnerErrandController::SINGLE_LOCATION_SLUGS
-     * and mobile errandTypeRules.ts singleLocation.
+     * and mobile errandTypeRules.ts singleLocation. bills_payment is a legacy
+     * alias for errands booked before that type was retired.
      */
     private const SINGLE_LOCATION_SLUGS = ['queue', 'bills_payment'];
 
@@ -33,17 +34,6 @@ class PublicTripController extends Controller
         'arrived_at_dropoff' => 'At the drop-off point',
         'delivered' => 'Delivered',
         'completed' => 'Completed',
-    ];
-
-    private const FLOW_TRANSPORT = [
-        'pending' => 'Finding a driver',
-        'accepted' => 'Driver assigned',
-        'heading_to_pickup' => 'On the way to the pick-up point',
-        'arrived_at_pickup' => 'Waiting at the pick-up point',
-        'picked_up' => 'Ride started',
-        'in_transit' => 'On the way to the destination',
-        'arrived_at_dropoff' => 'Arrived at the destination',
-        'completed' => 'Ride complete',
     ];
 
     private const FLOW_SINGLE_LOCATION = [
@@ -247,10 +237,6 @@ class PublicTripController extends Controller
     /** Pick the public status ladder for a booking's errand type. */
     private function flowFor(Booking $booking): array
     {
-        if ($booking->is_transportation) {
-            return self::FLOW_TRANSPORT;
-        }
-
         $slug = $booking->errandType?->slug;
         if ($slug && in_array($slug, self::SINGLE_LOCATION_SLUGS, true)) {
             return self::FLOW_SINGLE_LOCATION;

@@ -18,7 +18,6 @@ class CreateBookingTest extends TestCase
 
     private User $customer;
     private ErrandType $deliveryType;
-    private ErrandType $transportationType;
     private array $validBookingData;
 
     protected function setUp(): void
@@ -46,22 +45,6 @@ class CreateBookingTest extends TestCase
             'min_negotiate_fee' => 30.00,
             'is_active' => true,
             'sort_order' => 1,
-        ]);
-
-        $this->transportationType = ErrandType::create([
-            'slug' => 'transportation',
-            'name' => 'Transportation',
-            'description' => 'Get a ride',
-            'icon_name' => 'Car',
-            'base_fee' => 70.00,
-            'per_km_walk' => 0.00,
-            'per_km_bicycle' => 0.00,
-            'per_km_motorcycle' => 12.00,
-            'per_km_car' => 20.00,
-            'surcharge' => 0.00,
-            'min_negotiate_fee' => 50.00,
-            'is_active' => true,
-            'sort_order' => 6,
         ]);
 
         $this->validBookingData = [
@@ -172,40 +155,60 @@ class CreateBookingTest extends TestCase
         $this->assertGreaterThan(0, (float) $data['total_amount']);
     }
 
-    public function test_transportation_booking_generates_ride_pin(): void
+    public function test_a_new_booking_is_never_a_passenger_ride(): void
     {
         Bus::fake();
 
-        $data = array_merge($this->validBookingData, [
-            'errand_type_id' => $this->transportationType->id,
-            'vehicle_type_rate' => 'car',
-            'description' => null,
-        ]);
-
-        $response = $this->actingAs($this->customer)
-            ->postJson('/api/v1/bookings', $data);
-
-        $response->assertStatus(201)
-            ->assertJsonPath('data.is_transportation', true);
-
-        $booking = Booking::first();
-        $this->assertNotNull($booking->ride_pin);
-        $this->assertMatchesRegularExpression('/^\d{4}$/', $booking->ride_pin);
-        $this->assertTrue($booking->is_transportation);
-    }
-
-    public function test_non_transportation_booking_has_no_ride_pin(): void
-    {
-        Bus::fake();
-
+        // Rides are retired: no new booking is flagged as one or carries a PIN.
+        // is_transportation stays in the payload (always false) only because
+        // the shipped app reads it; the PIN itself is no longer served.
         $response = $this->actingAs($this->customer)
             ->postJson('/api/v1/bookings', $this->validBookingData);
 
-        $response->assertStatus(201);
+        $response->assertStatus(201)
+            ->assertJsonPath('data.is_transportation', false)
+            ->assertJsonMissingPath('data.ride_pin');
 
         $booking = Booking::first();
         $this->assertNull($booking->ride_pin);
         $this->assertFalse($booking->is_transportation);
+    }
+
+    /**
+     * The six types retired for launch stay in the table (switched off) so old
+     * bookings still show their type — but none of them can be booked.
+     */
+    public function test_retired_errand_types_cannot_be_booked(): void
+    {
+        Bus::fake();
+
+        foreach (['document', 'laundry', 'food', 'grocery', 'bills_payment', 'transportation'] as $i => $slug) {
+            $retired = ErrandType::create([
+                'slug' => $slug, 'name' => ucfirst($slug), 'description' => 'Retired',
+                'icon_name' => 'X', 'base_fee' => 50.00, 'per_km_walk' => 15.00,
+                'per_km_bicycle' => 12.00, 'per_km_motorcycle' => 10.00, 'per_km_car' => 18.00,
+                'min_negotiate_fee' => 30.00, 'is_active' => false, 'sort_order' => 10 + $i,
+            ]);
+
+            $this->actingAs($this->customer)
+                ->postJson('/api/v1/bookings', array_merge($this->validBookingData, [
+                    'errand_type_id' => $retired->id,
+                    'shopping_budget' => 500,
+                ]))
+                ->assertStatus(422)
+                ->assertJsonValidationErrors(['errand_type_id']);
+
+            $this->actingAs($this->customer)
+                ->postJson('/api/v1/bookings/estimate', [
+                    'errand_type_id' => $retired->id,
+                    'pickup_lat' => 14.5995, 'pickup_lng' => 120.9842,
+                    'dropoff_lat' => 14.5547, 'dropoff_lng' => 121.0244,
+                ])
+                ->assertStatus(422)
+                ->assertJsonValidationErrors(['errand_type_id']);
+        }
+
+        $this->assertSame(0, Booking::count());
     }
 
     public function test_negotiate_mode_booking(): void

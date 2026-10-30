@@ -11,15 +11,13 @@ interface StatusActionButtonProps {
   status: BookingStatus;
   /** Errand type slug from booking.errand_type?.slug. Drives the per-type label + flow. */
   errandSlug?: string | null;
-  isTransportation?: boolean;
-  pinVerified?: boolean;
   onPress: () => void;
   loading?: boolean;
 }
 
 /**
  * Returns the next status the runner should advance to, honoring the
- * per-errand-type flow (e.g. queue/bills_payment skip the dropoff stages).
+ * per-errand-type flow (e.g. queue skips the dropoff stages).
  *
  * 'matched' is treated as 'accepted' for advancement purposes — the
  * server flips matched→accepted on POST /accept, but realtime/poll lag
@@ -46,7 +44,7 @@ export function getNextStatus(
  * map and promised a different action from the button it opened ("Mark item
  * picked up" over a cockpit reading "Pick up item"), and its drop-off wording
  * ("En route to drop-off") described a leg that single-location errands — a
- * bill payment, a queue job — do not have. Both surfaces now read from here,
+ * queue job — do not have. Both surfaces now read from here,
  * so the promise on the card is the button underneath it.
  *
  * Returns null when there is nothing to advance (terminal statuses).
@@ -69,20 +67,12 @@ export function statusActionLabel(
 export function StatusActionButton({
   status,
   errandSlug,
-  isTransportation,
-  pinVerified,
   onPress,
   loading,
 }: StatusActionButtonProps) {
   const label = statusActionLabel(status, errandSlug);
 
   if (!label) return null;
-
-  // For transportation: disable ride start until PIN is verified
-  const disabled =
-    isTransportation &&
-    status === 'arrived_at_pickup' &&
-    !pinVerified;
 
   // Consequential, hard-to-undo transitions (handing over / completing)
   // get a slide-to-confirm instead of a tap — a drag is deliberately
@@ -93,7 +83,7 @@ export function StatusActionButton({
 
   if (isConsequential) {
     // Reuse the per-type label wording, e.g. "Slide to hand over item",
-    // "Slide to complete ride". Labels are sentence-case verbs, so
+    // "Slide to mark as completed". Labels are sentence-case verbs, so
     // lowercasing the first character keeps them reading naturally.
     const slideLabel = `Slide to ${label.charAt(0).toLowerCase()}${label.slice(1)}`;
     return (
@@ -101,7 +91,6 @@ export function StatusActionButton({
         label={slideLabel}
         onComplete={onPress}
         loading={loading}
-        disabled={disabled}
       />
     );
   }
@@ -112,15 +101,9 @@ export function StatusActionButton({
       onPress={onPress}
       loading={loading}
       loadingTitle="Updating…"
-      disabled={disabled}
       // The single most-tapped control in the product, hit one-handed
       // outdoors and often at a motorcycle stop. 44dp painted, not just slop.
       size="lg"
-      accessibilityHint={
-        disabled
-          ? 'Disabled until the passenger’s 4-digit ride PIN is verified above'
-          : undefined
-      }
       fullWidth
     />
   );

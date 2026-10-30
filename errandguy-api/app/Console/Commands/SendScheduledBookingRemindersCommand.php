@@ -64,7 +64,6 @@ class SendScheduledBookingRemindersCommand extends Command
             ->whereIn('status', ['pending', 'matched', 'accepted'])
             ->where('scheduled_at', '>=', $now)
             ->where('scheduled_at', '<=', $now->copy()->addMinutes(self::LEAD_MINUTES))
-            ->with('errandType:id,slug')
             ->orderBy('scheduled_at')
             ->limit(self::MAX_PER_RUN)
             ->get();
@@ -120,10 +119,8 @@ class SendScheduledBookingRemindersCommand extends Command
     }
 
     /**
-     * Errand-type-aware copy, mirroring the SendBookingStatusNotification
-     * override pattern: a passenger ride is a "ride" with a driver, everything
-     * else is an "errand" with a runner. Times are rendered in Asia/Manila (the
-     * DB stores UTC) — same convention as the admin dashboard header.
+     * Times are rendered in Asia/Manila (the DB stores UTC) — same convention
+     * as the admin dashboard header.
      *
      * @return array{0: string, 1: string}
      */
@@ -132,14 +129,6 @@ class SendScheduledBookingRemindersCommand extends Command
         $number = $booking->booking_number ?? $booking->id;
         $time = optional($booking->scheduled_at)->timezone('Asia/Manila')->format('g:i A') ?? 'soon';
         $freeCancel = in_array($booking->status, ['pending', 'matched'], true);
-
-        if ($booking->errandType?->slug === 'transportation') {
-            return [
-                'Your ride is coming up',
-                "Your scheduled ride #{$number} starts at {$time}."
-                    .($freeCancel ? ' Cancelling is still free until a driver accepts.' : ''),
-            ];
-        }
 
         return [
             'Your errand is coming up',

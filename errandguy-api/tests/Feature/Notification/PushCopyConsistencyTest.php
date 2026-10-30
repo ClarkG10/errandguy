@@ -18,7 +18,7 @@ use Tests\TestCase;
  * this listener lands in one scrolling list for one customer. The base
  * TEMPLATES were the older Title-Case half ("Runner Found!", "Item Picked Up",
  * "In Transit") and the per-errand-type TYPE_OVERRIDES were the newer
- * sentence-case half ("Ride started", "Bill paid") — both reaching the same
+ * sentence-case half ("In line for you", "At the front") — both reaching the same
  * inbox through the same $deliver closure, so the inbox read as if it had been
  * assembled from two different products. The base set also flipped the
  * object's name mid-flow ("Your errand #x is on the way", then "Booking #x has
@@ -124,10 +124,10 @@ class PushCopyConsistencyTest extends TestCase
     }
 
     /**
-     * The per-type overrides exist precisely so a ride/bill/queue is not
-     * described as a parcel. Pin the two that the in-app labels mirror
-     * (mobile `constants/statusLabels.ts` reads the same words), so the push
-     * and the screen the push deep-links into cannot drift apart again.
+     * The per-type overrides exist precisely so a queue job is not described
+     * as a parcel. Pin the wording the in-app labels mirror (mobile
+     * `constants/statusLabels.ts` reads the same words), so the push and the
+     * screen the push deep-links into cannot drift apart again.
      */
     public function test_no_runner_wording_is_pinned_across_types(): void
     {
@@ -137,8 +137,6 @@ class PushCopyConsistencyTest extends TestCase
             ->getConstant('TEMPLATES');
 
         $this->assertSame('No runner available', $templates['no_runner']['customer']['title']);
-        $this->assertSame('No driver available', $overrides['transportation']['no_runner']['customer']['title']);
-        $this->assertSame('No runner available', $overrides['bills_payment']['no_runner']['customer']['title']);
         $this->assertSame('No runner available', $overrides['queue']['no_runner']['customer']['title']);
     }
 
@@ -337,7 +335,7 @@ class PushCopyConsistencyTest extends TestCase
         foreach ([
             'app/Jobs/NotifySosContactsJob.php' => 'SOS alert',
             'app/Services/SOSService.php' => 'SOS resolved',
-            'app/Http/Controllers/Runner/RunnerErrandController.php' => 'PIN verified',
+            'app/Jobs/BroadcastToRunnersJob.php' => 'New errand nearby',
             'app/Listeners/SendBookingCancelledNotification.php' => 'Errand cancelled',
             // A RAW Notification::create — a different code shape entirely, and
             // the blind spot that was hiding a Title-Case title on the first

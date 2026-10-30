@@ -32,8 +32,8 @@ class PricingService
     /**
      * Calculate price breakdown for a booking.
      *
-     * Dropoff coordinates are optional: single-location errands (queue,
-     * bills_payment) have no dropoff and the distance fee collapses to 0.
+     * Dropoff coordinates are optional: single-location errands (queue) have
+     * no dropoff and the distance fee collapses to 0.
      */
     /**
      * @param  list<array{lat:float|int|string,lng:float|int|string}>  $extraStops
@@ -203,10 +203,9 @@ class PricingService
     /**
      * Vehicles available for a given errand type.
      *
-     * Logic: a vehicle is offered iff its per-km column is > 0. This
-     * matches how seed data is structured (transportation has 0 for walk
-     * and bicycle, food has 0 for walk, etc.) and gives ops a single
-     * row to flip without code changes.
+     * Logic: a vehicle is offered iff its per-km column is > 0, which
+     * gives ops a single row to flip (set a rate to 0 to withdraw that
+     * vehicle for the type) without code changes.
      */
     private function supportedVehicleTypes(?ErrandType $errandType): array
     {

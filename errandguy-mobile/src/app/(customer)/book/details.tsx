@@ -65,6 +65,7 @@ import { routeService } from '../../../services/route.service';
 import { bookingService } from '../../../services/booking.service';
 import { userService } from '../../../services/user.service';
 import { useQuery } from '../../../hooks/useQuery';
+import { useRetiredErrandTypeGuard } from '../../../hooks/useRetiredErrandTypeGuard';
 import { CacheTTL } from '../../../services/cache.service';
 import { useAuthStore } from '../../../stores/authStore';
 import { formatCurrency } from '../../../utils/formatCurrency';
@@ -264,6 +265,9 @@ export default function TaskDetailsScreen() {
   const draftBooking = useBookingStore((s) => s.draftBooking);
   const updateDraft = useBookingStore((s) => s.updateDraft);
   const setStep = useBookingStore((s) => s.setStep);
+  // A draft naming a retired errand type (a rebook of an older booking, or a
+  // draft an older build saved) goes back to the type picker.
+  useRetiredErrandTypeGuard();
   const { pickImage, takePhoto } = useImagePicker();
   // Listen to window dimensions so the map pane re-flows on rotation
   // and iPad split-view resizes (was a static module-level read).
@@ -1016,12 +1020,11 @@ export default function TaskDetailsScreen() {
   );
 
   /* ── "Same as last time", scoped to THIS errand type ──
-     Every type except transportation makes the description REQUIRED, and the
-     shopping types additionally force a checklist plus a pre-authorised
-     budget — all of it starting blank on every single booking. A customer
-     paying the same Meralco account monthly retyped their account number
-     twelve times a year; a weekly grocery customer rebuilt the same eight
-     rows. The only escape was "Repeat last", which clones whichever booking
+     Every type makes the description REQUIRED, and "Buy for me" additionally
+     forces a checklist plus a pre-authorised budget — all of it starting blank
+     on every single booking. A customer queuing at the same office every
+     month retyped the same purpose each time; a weekly grocery customer
+     rebuilt the same eight rows. The only escape was "Repeat last", which clones whichever booking
      happened to be most recent regardless of type — useless the moment
      someone alternates between two services.
 
@@ -2285,7 +2288,7 @@ export default function TaskDetailsScreen() {
                 style={({ pressed }) => [st.recallCard, pressed && st.recallCardPressed]}
                 onPress={applyRecall}
                 accessibilityRole="button"
-                // The preview can be a 500-character bill reference — cap what
+                // The preview can be a 500-character description — cap what
                 // VoiceOver reads; the full text is in the fields it fills.
                 accessibilityLabel={`Fill in the same details as your last ${recall.typeName} from ${formatShortDate(recall.sourceCreatedAt)}. ${recall.preview.slice(0, 140)}`}
                 accessibilityHint="Fills the fields below. You can edit anything afterwards."
@@ -2309,7 +2312,7 @@ export default function TaskDetailsScreen() {
                 <Text style={st.recallCta}>Use</Text>
               </Pressable>
             )}
-            {/* Shopping types (grocery / food / purchase / bills) build a
+            {/* Shopping types ("Buy for me") build a
                 structured checklist instead of a free-text description —
                 it's serialized into `description` at submit. */}
             {rule.requiresShoppingBudget ? (

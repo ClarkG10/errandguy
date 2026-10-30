@@ -170,15 +170,12 @@ class BookingResource extends JsonResource
                     && $this->matched_at !== null,
                 fn () => BookingService::matchAcceptDeadline($this->matched_at),
             ),
+            // Passenger rides are retired, so this is always false for a new
+            // booking. Both flags stay in the payload only because the shipped
+            // app reads them; nothing new should branch on either. (The ride
+            // PIN itself is no longer served — the shipped app already treats
+            // a missing one as "no PIN to show".)
             'is_transportation' => $this->is_transportation,
-            // The ride PIN is the out-of-band secret the passenger (customer)
-            // recites and the runner types at verify-pin. Disclosing it to the
-            // runner via this resource would make that check security theatre,
-            // so only the customer (and admins, for support) ever see it.
-            'ride_pin' => $this->when(
-                $this->is_transportation && ($request->user()?->id === $this->customer_id || $isAdmin),
-                $this->ride_pin,
-            ),
             'ride_pin_verified' => $this->ride_pin_verified,
             'pickup_photo_url' => $this->when($canSeeContacts, $this->pickup_photo_url),
             'delivery_photo_url' => $this->when($canSeeContacts, $this->delivery_photo_url),

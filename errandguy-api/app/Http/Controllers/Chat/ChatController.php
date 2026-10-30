@@ -255,7 +255,7 @@ class ChatController extends Controller
                 'customer:id,full_name,avatar_url',
                 'runner:id,full_name,avatar_url',
                 // `slug` drives the client's type-aware status vocabulary — a
-                // bills-payment thread must not claim an item was "Picked up".
+                // queue thread must not claim an item was "Picked up".
                 'errandType:id,name,slug',
             ])
             ->orderByDesc('updated_at')

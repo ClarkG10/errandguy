@@ -163,8 +163,8 @@ export function BookingDetailSheet({
   const statusTextColor =
     STATUS_TEXT_COLORS[booking.status] ?? LightColors.textSecondary;
   // Type-aware so the sheet's eyebrow agrees with the Activity row it was
-  // opened from and with the tracking hero (a bill payment reads "Bill paid",
-  // never "Picked up").
+  // opened from and with the tracking hero (a queue errand reads "At the
+  // front", never "Picked up").
   const statusLabel = statusLabelFor(booking.status, booking.errand_type?.slug);
 
   const priceItems = fareLines(booking, booking.promo_discount);

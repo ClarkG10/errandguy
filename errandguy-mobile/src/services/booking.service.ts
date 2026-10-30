@@ -277,10 +277,6 @@ export const bookingService = {
     return p;
   },
 
-  verifyPin(id: string, pin: string) {
-    return api.post(`/runner/errand/${id}/verify-pin`, { pin });
-  },
-
   // Returns a public read-only trip link + its token. The link is
   // GET {app.url}/trip/{token} — safe to hand to a trusted contact.
   shareTrip(id: string) {

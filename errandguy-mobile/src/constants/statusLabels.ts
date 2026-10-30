@@ -1,5 +1,6 @@
 import type { BookingStatus } from '../types';
 import { LightColors } from './colors';
+import { getErrandTypeRule } from './errandTypeRules';
 
 /**
  * Terse status vocabulary — chips, pills, timeline steps, screen-reader
@@ -35,39 +36,17 @@ export const STATUS_LABELS: Record<BookingStatus, string> = {
 /**
  * Per-errand-type corrections to the terse vocabulary, keyed by errand_type
  * slug. Only statuses whose BASE label is factually WRONG for that flow are
- * listed — a `bills_payment` errand has no parcel to have "Picked up", and a
- * passenger is not an item that gets "Delivered". Everything else falls
- * through to STATUS_LABELS on purpose, so this stays a correction table and
- * not a second copy of the vocabulary.
+ * listed — a queue errand has no parcel to have "Picked up". Everything else
+ * falls through to STATUS_LABELS on purpose, so this stays a correction table
+ * and not a second copy of the vocabulary.
  *
  * Wording is taken from the two surfaces that already got this right (the
  * customer tracking hero and the backend's TYPE_OVERRIDES push copy) rather
  * than invented here, so the chip, the hero and the push agree.
  */
 const TYPE_STATUS_LABELS: Record<string, Partial<Record<BookingStatus, string>>> = {
-  // A passenger ride: the runner is a driver, and pickup/drop-off is
-  // boarding/arriving — never an item changing hands.
-  transportation: {
-    pending: 'Finding a driver',
-    no_runner: 'No driver available',
-    matched: 'Driver matched',
-    accepted: 'Driver accepted',
-    heading_to_pickup: 'Driver on the way',
-    arrived_at_pickup: 'Driver arrived',
-    picked_up: 'Ride started',
-    in_transit: 'On the way',
-    arrived_at_dropoff: 'At the destination',
-    delivered: 'Trip complete',
-    completed: 'Trip complete',
-    cancelled: 'Ride cancelled',
-  },
-  // Single-location: the runner pays at a counter. `picked_up` is the flow's
-  // "work done" step, not a handover.
-  bills_payment: {
-    arrived_at_pickup: 'Paying your bill',
-    picked_up: 'Bill paid',
-  },
-  // Single-location: the runner queues. Same `picked_up` reinterpretation.
+  // Single-location: the runner queues. `picked_up` is the flow's "work done"
+  // step, not a handover.
   queue: {
     arrived_at_pickup: 'In line',
     picked_up: 'At the front',
@@ -75,19 +54,32 @@ const TYPE_STATUS_LABELS: Record<string, Partial<Record<BookingStatus, string>>>
 };
 
 /**
+ * The same correction for any OTHER single-location flow (today only a legacy
+ * bill payment still in progress — see errandTypeRules): it finishes where it
+ * starts, so there is nothing to have "Picked up".
+ */
+const SINGLE_LOCATION_LABELS: Partial<Record<BookingStatus, string>> = {
+  arrived_at_pickup: 'On site',
+  picked_up: 'Task done',
+};
+
+/**
  * The single terse status label for a booking — type-aware.
  *
  * Prefer this over indexing STATUS_LABELS directly: passing the errand type
- * slug is what keeps a bills-payment row from claiming an item was picked up.
- * With no slug (or an unmapped one) it returns the base label unchanged, so it
- * is a safe drop-in everywhere.
+ * slug is what keeps a queue row from claiming an item was picked up. With no
+ * slug (or an unmapped one) it returns the base label unchanged, so it is a
+ * safe drop-in everywhere.
  */
 export function statusLabel(
   status: BookingStatus | string,
   errandSlug?: string | null,
 ): string {
   const s = status as BookingStatus;
-  const override = errandSlug ? TYPE_STATUS_LABELS[errandSlug]?.[s] : undefined;
+  const override = errandSlug
+    ? TYPE_STATUS_LABELS[errandSlug]?.[s] ??
+      (getErrandTypeRule(errandSlug).singleLocation ? SINGLE_LOCATION_LABELS[s] : undefined)
+    : undefined;
   return override ?? STATUS_LABELS[s] ?? String(status);
 }
 
@@ -106,44 +98,16 @@ export function statusHeadline(
   opts: { errandSlug?: string | null; runnerFirstName?: string | null } = {},
 ): string {
   const s = status as BookingStatus;
-  const isRide = opts.errandSlug === 'transportation';
-  // "Runner" / "Driver" as the fallback subject so the sentence still reads
-  // when the payload has no runner attached yet.
-  const name = opts.runnerFirstName ?? (isRide ? 'Driver' : 'Runner');
+  // "Runner" as the fallback subject so the sentence still reads when the
+  // payload has no runner attached yet.
+  const name = opts.runnerFirstName ?? 'Runner';
 
-  if (isRide) {
-    switch (s) {
-      case 'pending':
-        return 'Looking for a driver nearby…';
-      case 'no_runner':
-        return 'No driver available';
-      case 'matched':
-        return `${name} matched — confirming…`;
-      case 'accepted':
-        return `${name} is on the way`;
-      case 'heading_to_pickup':
-        return `${name} is heading to you`;
-      case 'arrived_at_pickup':
-        return `${name} is at the pickup point`;
-      case 'picked_up':
-      case 'in_transit':
-        return 'On the way to your destination';
-      case 'arrived_at_dropoff':
-        return 'You’ve arrived';
-      case 'delivered':
-      case 'completed':
-        return 'Trip complete';
-      case 'cancelled':
-        return 'Ride cancelled';
-    }
-  }
-
-  if (opts.errandSlug === 'bills_payment') {
+  if (opts.errandSlug === 'queue') {
     switch (s) {
       case 'arrived_at_pickup':
-        return `${name} is paying your bill`;
+        return `${name} is in line for you`;
       case 'picked_up':
-        return 'Bill paid — receipt on the way';
+        return `${name} reached the front of the line`;
       case 'delivered':
       case 'completed':
         return 'All done';
@@ -152,12 +116,14 @@ export function statusHeadline(
     }
   }
 
-  if (opts.errandSlug === 'queue') {
+  // Any other single-location flow (see SINGLE_LOCATION_LABELS): no parcel,
+  // no drop-off leg to narrate.
+  if (opts.errandSlug && getErrandTypeRule(opts.errandSlug).singleLocation) {
     switch (s) {
       case 'arrived_at_pickup':
-        return `${name} is in line for you`;
+        return `${name} is on site`;
       case 'picked_up':
-        return `${name} reached the front of the line`;
+        return `${name} is wrapping up`;
       case 'delivered':
       case 'completed':
         return 'All done';

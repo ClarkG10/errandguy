@@ -65,20 +65,27 @@ class DiscoverySweepTest extends TestCase
         ]);
     }
 
-    public function test_ride_pin_is_hidden_from_the_runner_but_shown_to_the_customer(): void
+    public function test_a_legacy_ride_pin_is_served_to_nobody(): void
     {
-        // Runner (assigned) must NOT receive the PIN — they're supposed to get
-        // it from the passenger and type it into verify-pin.
+        // Passenger rides are retired and the PIN check is gone, so the PIN a
+        // legacy ride row still holds has no reader. The runner never got it
+        // (they were meant to hear it from the passenger); now the customer
+        // doesn't either. The shipped app treats a missing PIN as "none".
         $this->actingAs($this->runner)
             ->getJson("/api/v1/runner/errand/{$this->booking->id}")
             ->assertOk()
             ->assertJsonMissingPath('data.ride_pin');
 
-        // Customer (the passenger who recites it) still sees it.
         $this->actingAs($this->customer)
             ->getJson("/api/v1/bookings/{$this->booking->id}")
             ->assertOk()
-            ->assertJsonPath('data.ride_pin', '4821');
+            ->assertJsonMissingPath('data.ride_pin')
+            ->assertJsonPath('data.is_transportation', true);
+
+        // The PIN-verify endpoint is gone with the feature.
+        $this->actingAs($this->runner)
+            ->postJson("/api/v1/runner/errand/{$this->booking->id}/verify-pin", ['pin' => '4821'])
+            ->assertNotFound();
     }
 
     public function test_support_report_rejects_a_foreign_booking(): void

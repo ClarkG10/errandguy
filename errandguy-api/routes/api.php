@@ -204,7 +204,6 @@ Route::prefix('v1')->group(function () {
             Route::post('/errand/{id}/accept', [RunnerErrandController::class, 'accept']);
             Route::post('/errand/{id}/decline', [RunnerErrandController::class, 'decline']);
             Route::post('/errand/{id}/status', [RunnerErrandController::class, 'updateStatus']);
-            Route::post('/errand/{id}/verify-pin', [RunnerErrandController::class, 'verifyPin']);
 
             Route::get('/earnings', [RunnerEarningsController::class, 'summary']);
             Route::get('/earnings/history', [RunnerEarningsController::class, 'history']);

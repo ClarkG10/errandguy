@@ -60,7 +60,8 @@ export default function TypeSelectionScreen() {
   // even on cold start, then revalidate in the background. Shares the
   // ['errand-types'] cache key with the customer home tile so a single
   // fetch warms both screens. The /errand-types endpoint already returns
-  // active-only rows server-side.
+  // active-only rows server-side; the grid shows exactly those, in the
+  // server's order, and nothing else.
   const errandTypesQ = useQuery<ErrandType[]>(
     ['errand-types'],
     async () => {
@@ -71,9 +72,10 @@ export default function TypeSelectionScreen() {
   );
 
   // Mirror the query result into local state so the existing render
-  // pipeline (which reads `errandTypes`) stays untouched.
+  // pipeline (which reads `errandTypes`) stays untouched. Same `is_active`
+  // filter Home applies to the same cache entry, so the two can't disagree.
   useEffect(() => {
-    if (errandTypesQ.data) setErrandTypes(errandTypesQ.data);
+    if (errandTypesQ.data) setErrandTypes(errandTypesQ.data.filter((t) => t.is_active));
   }, [errandTypesQ.data]);
   // useQuery never re-raises `loading` after the first resolution, so
   // pull-to-refresh / retry need their own in-progress flag or the
@@ -109,7 +111,7 @@ export default function TypeSelectionScreen() {
     !!selectedId && errandTypes.some((t) => t.id === selectedId);
   useEffect(() => {
     if (!errandTypesQ.data || !selectedId) return;
-    if (!errandTypesQ.data.some((t) => t.id === selectedId)) {
+    if (!errandTypesQ.data.some((t) => t.id === selectedId && t.is_active)) {
       setSelectedId(undefined);
     }
   }, [errandTypesQ.data, selectedId]);
@@ -182,8 +184,8 @@ export default function TypeSelectionScreen() {
         pricing_mode: undefined,
         shopping_budget: undefined,
         estimated_item_value: undefined,
-        // Description/checklist are type-specific — a "Grocery list" makes no
-        // sense carried onto a "Document" errand, and on shopping types the
+        // Description/checklist are type-specific — a shopping list makes no
+        // sense carried onto a delivery, and on shopping types the
         // description Input is hidden so a stale value would be invisible.
         description: undefined,
         shoppingItems: undefined,
@@ -249,9 +251,10 @@ export default function TypeSelectionScreen() {
       >
         {showSkeletons ? (
           // Skeleton mirrors the real card's metrics (radius 20, 62px
-          // icon, ~2-line description) so the swap to data doesn't reflow.
+          // icon, ~2-line description) and the four-type catalogue's 2×2
+          // grid, so the swap to data doesn't reflow.
           <View className="flex-row flex-wrap justify-between">
-            {Array.from({ length: 6 }).map((_, i) => (
+            {Array.from({ length: 4 }).map((_, i) => (
               <View
                 key={`skeleton-${i}`}
                 className="w-[48%] mb-3 p-4 bg-surface"
@@ -272,7 +275,6 @@ export default function TypeSelectionScreen() {
         >
           {errandTypes.map((type) => {
             const isSelected = selectedId === type.id;
-            const isTransportation = type.slug === 'transportation';
 
             return (
               <Pressable
@@ -306,7 +308,7 @@ export default function TypeSelectionScreen() {
                   setSelectedId(type.id);
                 }}
               >
-                <View className="flex-row items-start justify-between mb-2">
+                <View className="mb-2">
                   {/* Always 'tinted' — never 'ghost'. ErrandTypeIcon returns a
                       PNG that can't recolor to white, so a ghost variant on a
                       blue tile rendered a washed-out icon. */}
@@ -315,14 +317,6 @@ export default function TypeSelectionScreen() {
                     size="md"
                     variant="tinted"
                   />
-                  {isTransportation && (
-                    <Text
-                      className="text-[10px] font-montserrat-bold uppercase mt-1 text-accentDark bg-accentSoft rounded-full px-2 py-0.5"
-                      style={{ letterSpacing: 1.2 }}
-                    >
-                      Ride
-                    </Text>
-                  )}
                 </View>
                 {/* Dark text on a light surface in BOTH states — selection
                     is signalled by the tint + border, never by inverting

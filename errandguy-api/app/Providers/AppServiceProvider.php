@@ -40,10 +40,10 @@ class AppServiceProvider extends ServiceProvider
         // NOTE: no Event::listen() calls here on purpose. Laravel 13
         // auto-discovers every listener in app/Listeners by the event type-hint
         // on its public methods (including non-`handle` names like
-        // SendSafetyAlertNotification::handleDurationAlert). Registering the
-        // same listeners explicitly here registered them a SECOND time, so every
-        // booking-notification and safety-alert listener fired TWICE (duplicate
-        // in-app rows + double pushes). Discovery is the single source of truth.
+        // RetractBroadcastOffers::handleCancelled). Registering the same
+        // listeners explicitly here registered them a SECOND time, so every
+        // booking-notification listener fired TWICE (duplicate in-app rows +
+        // double pushes). Discovery is the single source of truth.
 
         // Clamped page size for list endpoints. A client could otherwise pass
         // per_page=1000000 and force an unbounded query / huge payload. Use

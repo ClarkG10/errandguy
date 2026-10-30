@@ -1,11 +1,14 @@
 /**
  * Per-errand-type UX rules.
  *
- * Different services have different real-world requirements: a passenger
- * ride doesn't need item photos, a food run shouldn't ask for "estimated
- * item value", and walking is not a valid vehicle for transportation.
+ * Different services have different real-world requirements: a shopping run
+ * shouldn't ask for "estimated item value", and a queue job has no drop-off.
  * This file centralizes those per-type variations so the booking flow
  * adapts instead of forcing one generic form on every errand.
+ *
+ * The server offers four types — delivery, purchase ("Buy for me"), queue and
+ * custom. Slugs of the types retired at launch still arrive on older bookings;
+ * see LEGACY_SLUG_ALIASES below.
  */
 
 export type VehicleKey = 'walk' | 'bicycle' | 'motorcycle' | 'car';
@@ -38,8 +41,8 @@ export interface ErrandTypeRule {
   /** Optional helper note rendered at the top of the details sheet. */
   helperNote?: string;
   /**
-   * The errand is completed at a single location (no separate dropoff).
-   * Examples: bills payment, queue/line waiting, document filing on-site.
+   * The errand is completed at a single location (no separate dropoff),
+   * e.g. waiting in a queue.
    */
   singleLocation: boolean;
   /**
@@ -52,14 +55,13 @@ export interface ErrandTypeRule {
   /**
    * Ordered list of statuses this errand passes through, from accepted
    * to completed. Single-location errands skip in_transit / dropoff /
-   * delivered stages because they finish at the same place. Transportation
-   * skips the "delivered" stage because there is no parcel handover.
+   * delivered stages because they finish at the same place.
    */
   statusFlow: BookingStatusKey[];
   /**
    * Human-readable button label for the runner's action button at each
-   * status. Worded per errand type so "Pick Up Item" doesn't appear on a
-   * passenger ride or a queueing job.
+   * status. Worded per errand type so "Pick up item" doesn't appear on a
+   * queueing job.
    */
   statusActions: Partial<Record<BookingStatusKey, string>>;
 }
@@ -83,16 +85,6 @@ const STANDARD_FLOW: BookingStatusKey[] = [
   'in_transit',
   'arrived_at_dropoff',
   'delivered',
-  'completed',
-];
-
-const TRANSPORT_FLOW: BookingStatusKey[] = [
-  'accepted',
-  'heading_to_pickup',
-  'arrived_at_pickup',
-  'picked_up',
-  'in_transit',
-  'arrived_at_dropoff',
   'completed',
 ];
 
@@ -143,128 +135,6 @@ const RULES: Record<string, Partial<ErrandTypeRule>> = {
     descriptionRequired: true,
   },
 
-  grocery: {
-    descriptionLabel: 'Grocery list',
-    descriptionPlaceholder: 'List the items to buy (qty, brand, notes)...',
-    descriptionRequired: true,
-    pickupLabel: 'Store',
-    dropoffLabel: 'Deliver to',
-    showItemValue: false,
-    // Pickup contact is the store — usually not needed.
-    showPickupContact: false,
-    requiresShoppingBudget: true,
-    statusActions: {
-      ...STANDARD_ACTIONS,
-      arrived_at_pickup: 'Confirm purchase + receipt',
-      picked_up: 'Start delivery',
-      arrived_at_dropoff: 'Hand over groceries',
-    },
-    helperNote:
-      'Set a shopping budget — your runner will only spend up to this amount on groceries. The exact cost is reconciled with a receipt at completion.',
-  },
-
-  food: {
-    descriptionLabel: 'Order details',
-    descriptionPlaceholder: 'Restaurant + items (e.g. Jollibee — 2x Chickenjoy w/ rice)',
-    descriptionRequired: true,
-    pickupLabel: 'Restaurant',
-    dropoffLabel: 'Deliver to',
-    showItemValue: false,
-    showPickupContact: false,
-    // Walking with hot food is unusual; bikes/motorcycles/cars are normal.
-    allowedVehicles: ['bicycle', 'motorcycle', 'car'],
-    defaultVehicle: 'motorcycle',
-    requiresShoppingBudget: true,
-    statusActions: {
-      ...STANDARD_ACTIONS,
-      arrived_at_pickup: 'Confirm order + receipt',
-      picked_up: 'Start delivery',
-      arrived_at_dropoff: 'Hand over food',
-    },
-    helperNote:
-      'Set a budget for the food — your runner can only spend up to this amount. Once the order is placed it cannot be cancelled. The actual cost is reconciled with a receipt.',
-  },
-
-  document: {
-    descriptionLabel: 'Document description',
-    descriptionPlaceholder: 'What document needs to be sent or claimed?',
-    descriptionRequired: true,
-    // Documents are usually low-value and don't need photos.
-    showPhotos: false,
-    showItemValue: false,
-    statusActions: {
-      ...STANDARD_ACTIONS,
-      arrived_at_pickup: 'Pick up document',
-      arrived_at_dropoff: 'Submit document',
-    },
-  },
-
-  laundry: {
-    descriptionLabel: 'Laundry notes',
-    descriptionPlaceholder: 'Number of bags, special handling, shop preference...',
-    pickupLabel: 'Pick up from',
-    dropoffLabel: 'Drop off at',
-    showItemValue: false,
-  },
-
-  transportation: {
-    // Customer IS the passenger — no item description, photos, or value.
-    showDescription: true,
-    descriptionRequired: false,
-    descriptionLabel: 'Notes for driver (optional)',
-    descriptionPlaceholder: 'e.g. "Wait at the lobby", landmarks, luggage info',
-    showPhotos: false,
-    showItemValue: false,
-    // Customer is the contact at both ends; no separate pickup/dropoff person.
-    showPickupContact: false,
-    showDropoffContact: false,
-    pickupLabel: 'Pick me up at',
-    dropoffLabel: 'Take me to',
-    // Per spec: transportation only available for motorcycle and car.
-    allowedVehicles: ['motorcycle', 'car'],
-    defaultVehicle: 'motorcycle',
-    statusFlow: TRANSPORT_FLOW,
-    statusActions: {
-      accepted: 'Head to passenger',
-      heading_to_pickup: 'I’ve arrived',
-      arrived_at_pickup: 'Start ride',
-      // Every other ladder names the action the runner is ABOUT TO PERFORM.
-      // These two used to break that: `picked_up` read "In transit" (a status
-      // noun — the driver couldn't tell whether it described their state or
-      // offered to change it) and `in_transit` read "Arriving at drop-off"
-      // (present participle) where the standard ladder's identical transition
-      // reads "Arrived at drop-off" (past), teaching two contradictory
-      // meanings for the button tapped at the moment the driver pulls up.
-      picked_up: 'Start the trip',
-      in_transit: 'Arrived at drop-off',
-      arrived_at_dropoff: 'Complete ride',
-    },
-    helperNote: 'You will receive a 4-digit PIN to share with your driver before boarding.',
-  },
-
-  bills_payment: {
-    descriptionLabel: 'Bill details',
-    descriptionPlaceholder: 'Biller (e.g. Meralco), account number, reference, amount due',
-    descriptionRequired: true,
-    showPhotos: true, // bill stub photo helps the runner
-    showItemValue: false,
-    showDropoffContact: false,
-    // Done at a single payment center — no dropoff.
-    singleLocation: true,
-    pickupLabel: 'Payment center',
-    dropoffLabel: 'Payment center',
-    requiresShoppingBudget: true,
-    statusFlow: SINGLE_LOCATION_FLOW,
-    statusActions: {
-      accepted: 'Head to payment center',
-      heading_to_pickup: 'I’ve arrived',
-      arrived_at_pickup: 'Pay bill + capture receipt',
-      picked_up: 'Mark as completed',
-    },
-    helperNote:
-      'Set a budget covering the bill amount + service fees. Your runner will pay on your behalf and upload the receipt.',
-  },
-
   queue: {
     descriptionLabel: 'What is the runner queuing for?',
     descriptionPlaceholder: 'Place + purpose (e.g. "DFA Pasay — passport claim, 9am slot")',
@@ -311,11 +181,63 @@ const RULES: Record<string, Partial<ErrandTypeRule>> = {
     descriptionPlaceholder: 'Tell the runner exactly what you need done...',
     descriptionRequired: true,
   },
+
+  // LEGACY — bills payment is retired and can no longer be booked. It is kept
+  // only so a bill errand already in progress when this build lands can still
+  // be finished: it ends at the payment counter (no drop-off leg), and the
+  // runner pays against the customer's budget and uploads the receipt. The
+  // booking-form fields are gone because nothing books it any more.
+  bills_payment: {
+    singleLocation: true,
+    pickupLabel: 'Payment center',
+    dropoffLabel: 'Payment center',
+    showDropoffContact: false,
+    requiresShoppingBudget: true,
+    statusFlow: SINGLE_LOCATION_FLOW,
+    statusActions: {
+      accepted: 'Head to payment center',
+      heading_to_pickup: 'I’ve arrived',
+      arrived_at_pickup: 'Pay bill + capture receipt',
+      picked_up: 'Mark as completed',
+    },
+  },
 };
+
+/**
+ * Retired errand types that now run on the rule of a current one.
+ *
+ * The server stopped offering these at launch, but bookings made before the
+ * cut keep their slug, and one can still be in progress when this build
+ * lands. Each finishes on the ladder of the type that absorbed it:
+ *   - food / grocery → purchase: the shopping flow (budget, receipt).
+ *   - document / laundry → delivery.
+ *   - transportation → delivery. Passenger rides are gone; a ride still in
+ *     progress simply follows the normal delivery steps.
+ * bills_payment has no current equivalent, so it keeps its own legacy rule
+ * above.
+ */
+const LEGACY_SLUG_ALIASES: Record<string, string> = {
+  food: 'purchase',
+  grocery: 'purchase',
+  document: 'delivery',
+  laundry: 'delivery',
+  transportation: 'delivery',
+};
+
+/** Every slug the server no longer offers for new bookings. */
+export const RETIRED_ERRAND_SLUGS: readonly string[] = [
+  ...Object.keys(LEGACY_SLUG_ALIASES),
+  'bills_payment',
+];
+
+/** True when a slug names a type that can no longer be booked. */
+export function isRetiredErrandSlug(slug?: string | null): boolean {
+  return !!slug && RETIRED_ERRAND_SLUGS.includes(slug);
+}
 
 export function getErrandTypeRule(slug?: string | null): ErrandTypeRule {
   if (!slug) return DEFAULT_RULE;
-  const override = RULES[slug];
+  const override = RULES[LEGACY_SLUG_ALIASES[slug] ?? slug];
   if (!override) return DEFAULT_RULE;
   return { ...DEFAULT_RULE, ...override };
 }
@@ -323,7 +245,8 @@ export function getErrandTypeRule(slug?: string | null): ErrandTypeRule {
 export const DEFAULT_ERRAND_TYPE_RULE = DEFAULT_RULE;
 
 /**
- * Every slug with a rule override, in declaration order.
+ * Every slug with a rule override, in declaration order (the four current
+ * types, then the legacy bills_payment rule; aliased slugs reuse these).
  *
  * Exported so the arch guards in
  * `components/runner/__tests__/statusActionTransitions.test.ts` can sweep EVERY

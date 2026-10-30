@@ -169,8 +169,10 @@ class MatchingService
             ->limit($limit)
             ->get();
 
-        // Filter by distance and preferred errand types
+        // Filter by distance and preferred errand types. A retired type is
+        // matched against the type that replaced it (ErrandType::preferenceSlug).
         $errandTypeSlug = ErrandType::whereKey($errandTypeId)->value('slug');
+        $errandTypeSlug = $errandTypeSlug ? ErrandType::preferenceSlug($errandTypeSlug) : null;
         $eligible = $runners->filter(function (RunnerProfile $runner) use ($lat, $lng, $radiusKm, $errandTypeSlug) {
             $distance = $this->haversineDistance(
                 $lat,

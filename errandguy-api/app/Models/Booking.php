@@ -18,7 +18,8 @@ class Booking extends Model
 
     /**
      * Attributes hidden from array/JSON serialization.
-     * ride_pin and trip_share_token are secrets — only exposed conditionally via BookingResource.
+     * trip_share_token is a secret — only exposed conditionally via BookingResource.
+     * ride_pin is a secret held on legacy passenger-ride rows and is never served.
      */
     protected $hidden = [
         'ride_pin',

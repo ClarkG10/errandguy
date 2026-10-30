@@ -63,7 +63,10 @@ describe('customer tracking — shopping visibility', () => {
   });
 
   it('renders the progress card above the collapsed trip details while live', () => {
-    const body = SOURCE.slice(SOURCE.indexOf('{!arrivedPinHero ? pinCard : null}'));
+    // The live sheet body opens with the status lead-in under the ETA numeral.
+    const liveStart = SOURCE.indexOf('When the numeral owns the handle');
+    expect(liveStart).toBeGreaterThan(-1);
+    const body = SOURCE.slice(liveStart);
     const progressAt = body.indexOf('{shoppingProgressSection}');
     const detailsAt = body.indexOf('{detailsSection}');
     expect(progressAt).toBeGreaterThan(-1);

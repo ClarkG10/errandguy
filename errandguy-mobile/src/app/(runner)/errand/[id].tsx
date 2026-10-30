@@ -1,5 +1,5 @@
 import React, { useState, useCallback, useRef, useEffect, useMemo } from 'react';
-import { AccessibilityInfo, View, Text, ScrollView, TextInput, RefreshControl, Pressable, Linking, KeyboardAvoidingView, Platform, useWindowDimensions, Animated, PanResponder } from 'react-native';
+import { AccessibilityInfo, View, Text, ScrollView, RefreshControl, Pressable, Linking, KeyboardAvoidingView, Platform, useWindowDimensions, Animated, PanResponder } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import { useIsFocused } from '@react-navigation/native';
@@ -8,7 +8,6 @@ import {
   Phone,
   MapPin,
   Navigation,
-  CheckCircle,
   CheckCircle2,
   Circle,
   ShoppingBag,
@@ -137,10 +136,10 @@ const ARRIVAL_RADIUS_M = 120;
 
 /**
  * Statuses where the runner is actually DRIVING the extra stops — the goods
- * (or passenger) are aboard and everything left is drop-off legs. Before this
- * the stop list is reference material the runner may want to plan against;
- * from here it is the work itself, so the list is lifted into the sheet's
- * primary column and the sheet reveals itself once per leg.
+ * are aboard and everything left is drop-off legs. Before this the stop list
+ * is reference material the runner may want to plan against; from here it is
+ * the work itself, so the list is lifted into the sheet's primary column and
+ * the sheet reveals itself once per leg.
  */
 const STOP_PHASE_STATUSES = new Set<string>([
   'picked_up',
@@ -439,8 +438,6 @@ export default function ActiveErrandScreen() {
   const [submittingReceipt, setSubmittingReceipt] = useState(false);
   const [showCompletion, setShowCompletion] = useState(false);
   const [showRate, setShowRate] = useState(false);
-  const [pinInput, setPinInput] = useState('');
-  const [pinVerified, setPinVerified] = useState(false);
   const [deliveryPhotoUrl, setDeliveryPhotoUrl] = useState<string | null>(null);
   // Remount key for the SlideToConfirm CTA. The slider latches once it
   // completes (by design — the component can't re-arm itself), so when a
@@ -729,7 +726,6 @@ export default function ActiveErrandScreen() {
   // ── Hooks below MUST stay above the early-return so that the hook
   // call order is stable across the null → resolved booking transition.
   // Optional chaining keeps them safe when `booking` is still loading.
-  const isTransportation = !!booking?.is_transportation;
   const errandSlug = booking?.errand_type?.slug;
   const errandRule = getErrandTypeRule(errandSlug);
   const isShoppingErrand = errandRule.requiresShoppingBudget;
@@ -751,10 +747,10 @@ export default function ActiveErrandScreen() {
   // overlay on the runner's mini map and gives the runner a constant
   // sense of progress without flipping to Google Maps.
   //
-  // Single-location errands (queue, bills, document) only have a
-  // pickup pin — there is no dropoff leg — so we always route to the
-  // pickup regardless of status. Otherwise, fall back to the dropoff
-  // only after the package leaves pickup.
+  // Single-location errands (queue) only have a pickup pin — there is
+  // no dropoff leg — so we always route to the pickup regardless of
+  // status. Otherwise, fall back to the dropoff only after the package
+  // leaves pickup.
   const inPickupPhase =
     isSingleLocation || (booking ? PICKUP_PHASE_STATUSES.has(booking.status) : true);
   // ETA target (pickup vs dropoff) changes only per status phase, not per GPS
@@ -798,29 +794,6 @@ export default function ActiveErrandScreen() {
   // do — not the last thing they did.
   const runnerHeroTitle: string = (() => {
     if (!booking) return '';
-    if (isTransportation) {
-      switch (booking.status) {
-        case 'accepted':
-        case 'matched':
-          return 'Head to your passenger';
-        case 'heading_to_pickup':
-          return 'On the way to pickup';
-        case 'arrived_at_pickup':
-          return 'Verify the ride PIN';
-        case 'picked_up':
-        case 'in_transit':
-          return 'Drive to drop-off';
-        case 'arrived_at_dropoff':
-          return 'End the ride';
-        case 'delivered':
-        case 'completed':
-          return 'Trip complete';
-        case 'cancelled':
-          return 'Ride cancelled';
-        default:
-          return STATUS_LABELS[booking.status] ?? '';
-      }
-    }
     switch (booking.status) {
       case 'accepted':
       case 'matched':
@@ -1305,10 +1278,9 @@ export default function ActiveErrandScreen() {
       return;
     }
 
-    // Photo proof at pickup (non-shopping, non-transport item errands)
+    // Photo proof at pickup (non-shopping item errands)
     if (
       booking.status === 'arrived_at_pickup' &&
-      !isTransportation &&
       !isShoppingErrand &&
       !isSingleLocation
     ) {
@@ -1618,7 +1590,7 @@ export default function ActiveErrandScreen() {
     // Only forward signature when it looks like a real file URI; the
     // CompletionModal currently emits 'signature_placeholder' which
     // would 422 on the backend's `image` rule. Pre-existing limitation
-    // — leaves transport/single-location flows working untouched.
+    // — leaves single-location flows working untouched.
     const sig = signatureUri && signatureUri.startsWith('file') ? signatureUri : null;
     // Celebrate ONLY once the server confirms completion. SuccessCheck fires a
     // success haptic and auto-dismisses on its own ~1s timer, so showing it
@@ -1633,49 +1605,6 @@ export default function ActiveErrandScreen() {
       showUploadProgress: !!sig,
     });
     if (ok) setShowSuccessMoment(true);
-  };
-
-  const handleVerifyPin = async () => {
-    if (pinInput.length !== 4 || !booking) return;
-    setLoading(true);
-    try {
-      // Hit the dedicated PIN endpoint — NOT the generic status updater.
-      // The server validates the 4-digit code against booking.ride_pin,
-      // tracks attempts, and flips ride_pin_verified on success.
-      await runnerService.verifyRidePin(booking.id, pinInput);
-      setPinVerified(true);
-      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
-
-      // Verifying the PIN and starting the ride are ONE real-world moment —
-      // the passenger is already in the vehicle. Splitting them made the
-      // runner hunt for a newly-enabled CTA behind the keyboard-expanded
-      // sheet. The transport picked_up transition carries no proof gate (no
-      // photo, no receipt), so nothing is skipped by chaining it here; it goes
-      // through the SAME optimistic advance the CTA uses, which reverts and
-      // toasts on failure — leaving the runner exactly where they'd be today,
-      // verified with the CTA armed as the fallback.
-      const cur = bookingRef.current;
-      const next = cur ? getNextStatus(cur.status, errandSlug) : null;
-      const canChain =
-        !!cur &&
-        cur.status === 'arrived_at_pickup' &&
-        next === 'picked_up' &&
-        !advancingRef.current;
-
-      if (canChain) {
-        toast.success('PIN verified — starting the ride');
-        advancingRef.current = true;
-        await advanceStatus('picked_up');
-      } else {
-        toast.success('PIN verified — ride may begin');
-      }
-    } catch (err: any) {
-      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error).catch(() => {});
-      toast.error(err?.message ?? err?.response?.data?.message ?? 'Incorrect PIN. Please try again.');
-      setPinInput('');
-    } finally {
-      setLoading(false);
-    }
   };
 
   const handleRateSubmit = async (rating: number, comment: string) => {
@@ -1853,29 +1782,12 @@ export default function ActiveErrandScreen() {
 
   // Keep the sheet's default height honest: pin it to the measured
   // collapsed height (so the CTA + its completion checklist are always
-  // fully visible) until the runner drags it themselves. And when a
-  // step gates the CTA behind sub-UI that lives in the scroll area
-  // (transportation PIN entry), reveal it once by snapping to mid so
-  // the field isn't hidden behind a dead-looking disabled button.
-  const autoSnapStatusRef = useRef<string | null>(null);
+  // fully visible) until the runner drags it themselves.
   // One-shot latch for the multi-stop reveal (see the effect below).
   const stopsRevealedRef = useRef(false);
   useEffect(() => {
     if (!booking) return;
     const status = booking.status;
-    const needsPinReveal =
-      isTransportation &&
-      status === 'arrived_at_pickup' &&
-      !pinVerified &&
-      !booking.ride_pin_verified;
-    if (needsPinReveal) {
-      if (autoSnapStatusRef.current !== status) {
-        autoSnapStatusRef.current = status;
-        userMovedRef.current = true; // don't let the collapsed pin fight the reveal
-        snapTo(Math.max(SNAP_MID, snapCollapsedRef.current));
-      }
-      return;
-    }
     // Multi-stop: the first time the runner enters a leg where the extra stops
     // ARE the work, lift the sheet so the stop list is on screen without a
     // tap. One-shot per screen session (same shape as the shopping-list
@@ -1895,7 +1807,7 @@ export default function ActiveErrandScreen() {
     if (!userMovedRef.current && Math.abs(currentSheetHeightRef.current - SNAP_COLLAPSED) > 2) {
       snapTo(SNAP_COLLAPSED);
     }
-  }, [booking?.status, isTransportation, pinVerified, booking?.ride_pin_verified, hasStops, isReadOnly, SNAP_COLLAPSED, SNAP_MID, snapTo]);
+  }, [booking?.status, hasStops, isReadOnly, SNAP_COLLAPSED, SNAP_MID, snapTo]);
 
   // Shopping errands: the tickable list IS the runner's core reference,
   // so open the Trip-details disclosure once on load (the ErrandDetailsCard
@@ -2015,7 +1927,7 @@ export default function ActiveErrandScreen() {
   // complete. Derived entirely from existing booking fields.
   const completionChecklist: { key: string; label: string; done: boolean; note?: string }[] = [];
   if (!isReadOnly && nextStatusForCta === 'completed') {
-    if (!isTransportation && !isSingleLocation) {
+    if (!isSingleLocation) {
       completionChecklist.push({
         key: 'delivery_photo',
         label: 'Delivery photo',
@@ -2029,14 +1941,7 @@ export default function ActiveErrandScreen() {
         done: !!booking.receipt_photo_url,
       });
     }
-    if (isTransportation) {
-      completionChecklist.push({
-        key: 'pin',
-        label: 'Ride PIN verified',
-        done: pinVerified || !!booking.ride_pin_verified,
-      });
-    }
-    if (!isTransportation && !isSingleLocation) {
+    if (!isSingleLocation) {
       completionChecklist.push({
         key: 'signature',
         label: 'Customer signature',
@@ -2169,7 +2074,7 @@ export default function ActiveErrandScreen() {
         />
 
         {/* Floating top bar \u2014 single cohesive card. Replaces the old
-            three-pill arrangement. Back chevron, ride/errand label +
+            three-pill arrangement. Back chevron, errand label +
             booking number, then a separator and chat icon on the right. */}
         <SafeAreaView
           edges={['top']}
@@ -2202,7 +2107,7 @@ export default function ActiveErrandScreen() {
                   className="text-[14px] font-montserrat-bold text-textPrimary"
                   numberOfLines={1}
                 >
-                  {isTransportation ? 'Passenger ride' : 'Active errand'}
+                  Active errand
                 </Text>
                 <Text
                   className="text-[11px] font-inter text-textTertiary mt-0.5"
@@ -2441,9 +2346,7 @@ export default function ActiveErrandScreen() {
                 {amountToCollect != null && isErrandActive && (
                   <View
                     // Brand gold (`accent` family = money/earnings, never a
-                    // status) at the SOFT chip rung, not the faint tint: on a
-                    // transport ride the amber-washed PIN card sits just below
-                    // in the scroll region, and a paler wash would blur into it.
+                    // status) at the SOFT chip rung, not the faint tint.
                     className="mt-3 flex-row items-center rounded-xl px-3 py-2.5 bg-accentSoft border border-accentStrong"
                     accessible
                     accessibilityLabel={`Collect ${formatCurrency(
@@ -2480,9 +2383,8 @@ export default function ActiveErrandScreen() {
 
             {/* Scrollable details — clean Uber-style hierarchy:
                   1. Customer pill (avatar + name + circular call/chat)
-                  2. PIN gate (transportation only, when needed)
-                  3. Payout strip (always visible — the runner's "why")
-                  4. Trip details disclosure (errand brief, shopping
+                  2. Payout strip (always visible — the runner's "why")
+                  3. Trip details disclosure (errand brief, shopping
                      budget, timeline, SOS, report-issue) */}
             <ScrollView
               style={{ flex: 1 }}
@@ -2556,50 +2458,6 @@ export default function ActiveErrandScreen() {
                   )}
                 </Pressable>
               </View>
-
-              {/* ── PIN verification (transportation pickup) ──── */}
-              {isTransportation && booking.status === 'arrived_at_pickup' && !pinVerified && (
-                <View className="bg-warning/10 border border-warning/40 rounded-2xl p-4 mb-3">
-                  <Text className="text-[13px] font-montserrat-bold text-textPrimary mb-1">
-                    Verify ride PIN
-                  </Text>
-                  <Text className="text-[11px] font-montserrat text-textSecondary mb-3">
-                    Ask the passenger to share their 4-digit PIN.
-                  </Text>
-                  <View className="flex-row items-center gap-2">
-                    <TextInput
-                      className="flex-1 bg-surface border border-divider rounded-xl px-4 py-3 text-center text-xl font-inter-semi text-textPrimary tracking-[12px]"
-                      value={pinInput}
-                      onChangeText={(t) => setPinInput(t.replace(/\D/g, '').slice(0, 4))}
-                      keyboardType="number-pad"
-                      maxLength={4}
-                      placeholder="• • • •"
-                      placeholderTextColor={LightColors.textMuted}
-                      accessibilityLabel="Trip PIN"
-                      onFocus={() => {
-                        // Give the field maximum clearance above the
-                        // keyboard so it's never hidden while typing.
-                        userMovedRef.current = true;
-                        snapTo(SNAP_EXPANDED);
-                      }}
-                    />
-                    <Button
-                      title="Verify"
-                      onPress={handleVerifyPin}
-                      disabled={pinInput.length !== 4}
-                      size="sm"
-                    />
-                  </View>
-                </View>
-              )}
-              {pinVerified && isTransportation && (
-                <View className="mb-3 flex-row items-center gap-2 bg-successSoft px-3 py-2.5 rounded-xl">
-                  <CheckCircle size={16} color={LightColors.success} />
-                  <Text className="text-[12px] font-montserrat-bold text-successDark">
-                    PIN verified — ready to start
-                  </Text>
-                </View>
-              )}
 
               {stopsInPrimarySlot ? null : stopsSection}
 
@@ -2858,8 +2716,6 @@ export default function ActiveErrandScreen() {
                   key={`${booking.status}:${slideResetKey}`}
                   status={booking.status}
                   errandSlug={errandSlug}
-                  isTransportation={isTransportation}
-                  pinVerified={pinVerified}
                   onPress={handleStatusUpdate}
                   loading={loading}
                 />
@@ -2968,18 +2824,10 @@ export default function ActiveErrandScreen() {
         <CompletionModal
           bookingId={booking.id}
           deliveryPhotoUrl={deliveryPhotoUrl}
-          requiresSignature={!isSingleLocation && !isTransportation}
-          title={
-            isTransportation
-              ? 'Complete Ride'
-              : isSingleLocation
-              ? 'Mark Errand Done'
-              : 'Complete Errand'
-          }
+          requiresSignature={!isSingleLocation}
+          title={isSingleLocation ? 'Mark Errand Done' : 'Complete Errand'}
           subtitle={
-            isTransportation
-              ? 'Tap confirm once the passenger has safely reached their destination.'
-              : isSingleLocation
+            isSingleLocation
               ? 'Confirm once the task is finished on-site. The customer will be notified right away.'
               : undefined
           }
@@ -3053,8 +2901,8 @@ export default function ActiveErrandScreen() {
       )}
 
       {/* Proactive arrival confirm — advances ONE step via the normal gated
-          handler (arrival steps are gate-free; the photo/PIN capture lives on
-          the NEXT step). Nothing is ever advanced without this tap.
+          handler (arrival steps are gate-free; the photo/receipt capture lives
+          on the NEXT step). Nothing is ever advanced without this tap.
 
           When the runner never announced the travel leg the copy says so
           plainly: this tap updates the leg, and the watcher (remounted on the
@@ -3074,7 +2922,7 @@ export default function ActiveErrandScreen() {
               }”, so the customer can't see you moving. Update it now — we'll ask you to confirm arrival right after.`
             : `Looks like you've reached the ${
                 inPickupPhase ? 'pickup' : 'drop-off'
-              }. Let the customer know — you can capture any required photo or PIN on the next step.`
+              }. Let the customer know — you can capture any required photo or receipt on the next step.`
         }
         confirmLabel={isPreDepartureStatus ? 'Update status' : 'Mark arrived'}
         cancelLabel="Not yet"

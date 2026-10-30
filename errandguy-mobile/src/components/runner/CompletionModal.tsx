@@ -17,9 +17,8 @@ interface CompletionModalProps {
   deliveryPhotoUrl?: string | null;
   /**
    * When false, the customer is not present at completion (single-location
-   * tasks like queue / bills payment, or transportation drop-offs where the
-   * passenger has already disembarked). Show a simple confirm-only dialog
-   * instead of a signature pad.
+   * tasks like a queue job). Show a simple confirm-only dialog instead of a
+   * signature pad.
    */
   requiresSignature?: boolean;
   /** Title shown in the modal header. Lets each errand type tell the runner what they're completing. */

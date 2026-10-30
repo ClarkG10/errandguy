@@ -8,10 +8,22 @@ use Illuminate\Validation\Rule;
 
 class UpdateErrandStatusRequest extends FormRequest
 {
-    /** Errand-type slugs that require the runner to log a receipt + actual item cost. */
-    private const SHOPPING_SLUGS = ['food', 'grocery', 'purchase', 'bills_payment'];
+    /**
+     * Errand-type slugs that require the runner to log a receipt + actual item cost.
+     *
+     * Only `purchase` ("Buy for me") is bookable. food, grocery and
+     * bills_payment are LEGACY aliases for retired (inactive) types, kept so an
+     * errand booked before the retirement can still be finished the way it
+     * was booked: food/grocery shop like purchase, a bill is paid against a
+     * receipt.
+     */
+    private const SHOPPING_SLUGS = ['purchase', 'food', 'grocery', 'bills_payment'];
 
-    /** Errand-type slugs that finish at a single location (no transit / handover). */
+    /**
+     * Errand-type slugs that finish at a single location (no transit / handover).
+     * bills_payment is a legacy alias (see above) — a pre-retirement bill
+     * errand still ends at the payment counter.
+     */
     private const SINGLE_LOCATION_SLUGS = ['queue', 'bills_payment'];
 
     public function authorize(): bool
@@ -29,19 +41,17 @@ class UpdateErrandStatusRequest extends FormRequest
         $budget = $booking?->shopping_budget;
 
         // Pickup photo only makes sense for errands that physically pick up an
-        // item with no other proof. Transportation and queue have no item to
-        // photograph at pickup; shopping errands (food/grocery/purchase/
-        // bills_payment) instead capture the RECEIPT at picked_up — that IS the
-        // pickup proof — and the mobile app deliberately sends receipt_photo +
-        // actual_item_cost (never a separate pickup_photo) at that step. Without
-        // skipping the pickup_photo requirement here, marking a food/grocery/
-        // purchase errand picked_up 422'd and the runner was permanently stuck.
-        $skipPickupPhoto = $isShopping || in_array($slug, ['transportation', 'queue'], true);
+        // item with no other proof. A queue errand has no item to photograph at
+        // pickup; shopping errands instead capture the RECEIPT at picked_up —
+        // that IS the pickup proof — and the mobile app deliberately sends
+        // receipt_photo + actual_item_cost (never a separate pickup_photo) at
+        // that step. Without skipping the pickup_photo requirement here, marking
+        // a shopping errand picked_up 422'd and the runner was permanently stuck.
+        $skipPickupPhoto = $isShopping || $slug === 'queue';
 
-        // Single-location and transportation errands skip the delivery / signature
-        // stages entirely — there is no parcel handover to a recipient.
-        $isTransport = $booking?->is_transportation === true;
-        $skipDeliveryProof = $isSingleLocation || $isTransport;
+        // Single-location errands skip the delivery / signature stages entirely
+        // — there is no parcel handover to a recipient.
+        $skipDeliveryProof = $isSingleLocation;
 
         return [
             'status' => [

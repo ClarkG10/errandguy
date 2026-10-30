@@ -2,7 +2,6 @@
 
 namespace App\Services;
 
-use App\Events\RouteDeviationAlert;
 use App\Events\RunnerLocationUpdated;
 use App\Jobs\SendPushJob;
 use App\Models\Booking;
@@ -58,7 +57,7 @@ class LocationService
      * (SendBookingStatusNotification), so this only fills the missing
      * *advance* warning.
      *
-     * Single-location errands (queue, bills payment) never reach `in_transit`
+     * Single-location errands (queue) never reach `in_transit`
      * and carry no drop-off coords, so they naturally get the pickup leg only.
      */
     private const APPROACH_LEGS = [
@@ -108,8 +107,8 @@ class LocationService
     /**
      * Base approach copy per leg, written for the physical pickup→deliver flow.
      * Mirrors SendBookingStatusNotification: a per-errand-type override wins
-     * where the base wording would be wrong (a passenger ride has a "driver",
-     * a bills-payment pickup is a payment counter, not the customer's door).
+     * where the base wording would be wrong (a queue errand's pickup is the
+     * line, not a parcel).
      */
     private const APPROACH_TEMPLATES = [
         'pickup' => [
@@ -124,22 +123,6 @@ class LocationService
 
     /** Keyed by errand_type slug → leg. Any leg not listed uses the base copy. */
     private const APPROACH_TYPE_OVERRIDES = [
-        'transportation' => [
-            'pickup' => [
-                'title' => 'Driver is nearby',
-                'body' => 'Your driver is almost at your pickup point.',
-            ],
-            'dropoff' => [
-                'title' => 'Almost at your destination',
-                'body' => 'You’re arriving at your destination.',
-            ],
-        ],
-        'bills_payment' => [
-            'pickup' => [
-                'title' => 'Runner is nearby',
-                'body' => 'Your runner is almost at the payment center.',
-            ],
-        ],
         'queue' => [
             'pickup' => [
                 'title' => 'Runner is nearby',
@@ -451,10 +434,12 @@ class LocationService
 
         $runners = $query->get();
 
-        // preferred_types is stored as errand-type slugs; resolve once.
+        // preferred_types is stored as errand-type slugs; resolve once. A
+        // retired type is matched against the type that replaced it.
         $errandTypeSlug = $errandTypeId
             ? ErrandType::whereKey($errandTypeId)->value('slug')
             : null;
+        $errandTypeSlug = $errandTypeSlug ? ErrandType::preferenceSlug($errandTypeSlug) : null;
 
         return $runners->filter(function (RunnerProfile $runner) use ($lat, $lng, $radiusKm, $errandTypeSlug) {
             $distance = $this->haversineDistance(

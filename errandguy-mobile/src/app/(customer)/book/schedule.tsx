@@ -19,6 +19,7 @@ import type { Booking, ScheduleType } from '../../../types';
 import { useAuthStore } from '../../../stores/authStore';
 import { bookingService } from '../../../services/booking.service';
 import { useQuery } from '../../../hooks/useQuery';
+import { useRetiredErrandTypeGuard } from '../../../hooks/useRetiredErrandTypeGuard';
 import { CacheTTL } from '../../../services/cache.service';
 import {
   findRecurringSlot,
@@ -116,6 +117,9 @@ export default function ScheduleScreen() {
   const draftBooking = useBookingStore((s) => s.draftBooking);
   const updateDraft = useBookingStore((s) => s.updateDraft);
   const setStep = useBookingStore((s) => s.setStep);
+  // A draft naming a retired errand type (a rebook of an older booking, or a
+  // draft an older build saved) goes back to the type picker.
+  useRetiredErrandTypeGuard();
 
   const [scheduleType, setScheduleType] = useState<ScheduleType>(
     draftBooking.schedule_type ?? 'now',

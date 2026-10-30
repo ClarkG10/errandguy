@@ -18,7 +18,6 @@ use App\Exceptions\PaymentGatewayException;
 use App\Models\Booking;
 use App\Models\BookingStatusLog;
 use App\Models\BookingStop;
-use App\Models\ErrandType;
 use App\Models\Payment;
 use App\Models\PaymentMethod;
 use App\Models\RunnerLocation;
@@ -104,7 +103,6 @@ class BookingController extends Controller
     {
         $validated = $request->validated();
         $user = $request->user();
-        $errandType = ErrandType::findOrFail($validated['errand_type_id']);
 
         // Single-location errands fall back to pickup as dropoff for tracking/pricing.
         $dropoffLat = $validated['dropoff_lat'] ?? $validated['pickup_lat'];
@@ -145,17 +143,11 @@ class BookingController extends Controller
             );
         }
 
-        // Determine if transportation
-        $isTransportation = $errandType->slug === 'transportation';
-
         // Booking number (EG-YYYYMMDD-XXXXXX). The generator loops on an
         // exists() check and uses a 6-char suffix (~2.2B/day space), so a
         // same-day clash is effectively impossible; a residual check-then-insert
         // race is backstopped by the unique index on booking_number.
         $bookingNumber = $this->bookingService->generateBookingNumber();
-
-        // Generate ride PIN for transportation
-        $ridePin = $isTransportation ? str_pad((string) random_int(0, 9999), 4, '0', STR_PAD_LEFT) : null;
 
         $bookingData = [
             'booking_number' => $bookingNumber,
@@ -203,8 +195,6 @@ class BookingController extends Controller
             'total_amount' => $pricing['total_amount'],
             'customer_offer' => $validated['customer_offer'] ?? null,
             'runner_payout' => $pricing['runner_payout'],
-            'ride_pin' => $ridePin,
-            'is_transportation' => $isTransportation,
         ];
 
         $booking = Booking::create($bookingData);
@@ -1042,7 +1032,6 @@ class BookingController extends Controller
                     'estimated_item_value' => $original->estimated_item_value,
                     'pricing_mode' => $original->pricing_mode,
                     'vehicle_type_rate' => $vehicleType,
-                    'is_transportation' => $original->is_transportation,
                 ],
                 'pricing' => $pricing,
             ],

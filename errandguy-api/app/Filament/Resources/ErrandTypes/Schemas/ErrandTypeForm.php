@@ -2,6 +2,7 @@
 
 namespace App\Filament\Resources\ErrandTypes\Schemas;
 
+use App\Models\ErrandType;
 use Filament\Forms\Components\TextInput;
 use Filament\Forms\Components\Textarea;
 use Filament\Forms\Components\Toggle;
@@ -37,7 +38,12 @@ class ErrandTypeForm
                             ->helperText('Lower shows first in the app.'),
                         Toggle::make('is_active')
                             ->default(true)
-                            ->helperText('Hidden from the app when off.'),
+                            ->disabled(fn (?ErrandType $record): bool => $record !== null
+                                && in_array($record->slug, ErrandType::REMOVED_SLUGS, true))
+                            ->helperText(fn (?ErrandType $record): string => $record !== null
+                                && in_array($record->slug, ErrandType::REMOVED_SLUGS, true)
+                                ? 'This type was removed and can no longer be switched on.'
+                                : 'Hidden from the app when off.'),
                     ]),
                 Section::make('Pricing')
                     ->description('Drives PricingService. Fees are in ₱.')

@@ -298,7 +298,7 @@ export default function NavigateScreen() {
   }, [id, booking, hydrateAttempt]);
 
   // Resolve the right destination based on phase. Single-location
-  // errands (queue / bills / on-site documents) only have a pickup pin.
+  // errands (queue) only have a pickup pin.
   const errandRule = getErrandTypeRule(booking?.errand_type?.slug);
   const isSingleLocation = errandRule.singleLocation;
   const inPickupPhase =
@@ -527,8 +527,8 @@ export default function NavigateScreen() {
 
   // Advance directly to the arrival status from the navigation view.
   // ONLY the arrival transitions (arrived_at_pickup / arrived_at_dropoff)
-  // are gate-free — every later step (picked_up photo, delivered proof,
-  // ride PIN, completion signature) is owned by the errand screen's
+  // are gate-free — every later step (picked_up photo or receipt, delivered
+  // proof, completion signature) is owned by the errand screen's
   // modals, so for those we fall back to routing the runner back rather
   // than firing a bare status POST that would skip the required capture.
   const handleConfirmArrived = useCallback(async () => {
@@ -1257,7 +1257,7 @@ export default function NavigateScreen() {
               }”, so the customer can't see you moving. Update it now — then confirm your arrival.`
             : `Let the customer know you've reached the ${
                 inPickupPhase ? 'pickup' : 'drop-off'
-              }. You can capture any required photo or PIN on the next step.`
+              }. You can capture any required photo or receipt on the next step.`
         }
         confirmLabel={arrivalNeedsDeparture ? 'Update status' : 'Mark arrived'}
         confirmLoadingLabel={arrivalNeedsDeparture ? 'Updating…' : 'Marking…'}

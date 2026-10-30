@@ -10,7 +10,7 @@ import type { Booking, BookingStatus } from '../../../types';
  * the cockpit button it opens — "Mark item picked up" on the card over a
  * cockpit reading "Pick up item", "Mark delivered" over "Hand over item" — and
  * its drop-off wording described a leg that single-location errands don't
- * have, so a bill payment mid-errand read "En route to drop-off".
+ * have, so a queue job mid-errand read "En route to drop-off".
  *
  * Both now read `statusActionLabel`, the per-errand-type ladder.
  */
@@ -32,17 +32,42 @@ describe('ActiveRunnerErrandCard title', () => {
 
   it('does not promise a drop-off leg on a single-location errand', () => {
     const { getByText, queryByText } = render(
-      <ActiveRunnerErrandCard errand={errand('picked_up', 'bills_payment')} onPress={() => {}} />,
+      <ActiveRunnerErrandCard errand={errand('picked_up', 'queue')} onPress={() => {}} />,
     );
     expect(getByText('Mark as completed')).toBeTruthy();
     expect(queryByText('En route to drop-off')).toBeNull();
   });
 
-  it('uses the ride vocabulary on a passenger trip', () => {
-    const { getByText } = render(
+  it('puts a ride booked before the retirement on the normal delivery steps', () => {
+    const { getByText, queryByText } = render(
       <ActiveRunnerErrandCard errand={errand('arrived_at_pickup', 'transportation')} onPress={() => {}} />,
     );
-    expect(getByText('Start ride')).toBeTruthy();
+    expect(getByText('Pick up item')).toBeTruthy();
+    expect(queryByText('Start ride')).toBeNull();
+  });
+
+  it('puts an in-progress food or grocery errand on the shopping steps', () => {
+    for (const slug of ['food', 'grocery']) {
+      const { getByText, unmount } = render(
+        <ActiveRunnerErrandCard errand={errand('arrived_at_pickup', slug)} onPress={() => {}} />,
+      );
+      expect(getByText('Buy item + capture receipt')).toBeTruthy();
+      unmount();
+    }
+  });
+
+  it('puts an in-progress document errand on the delivery steps', () => {
+    const { getByText } = render(
+      <ActiveRunnerErrandCard errand={errand('arrived_at_dropoff', 'document')} onPress={() => {}} />,
+    );
+    expect(getByText('Hand over item')).toBeTruthy();
+  });
+
+  it('still ends a legacy bill payment at the counter', () => {
+    const { getByText } = render(
+      <ActiveRunnerErrandCard errand={errand('picked_up', 'bills_payment')} onPress={() => {}} />,
+    );
+    expect(getByText('Mark as completed')).toBeTruthy();
   });
 
   it('asks the runner to claim an offered errand rather than to head out', () => {

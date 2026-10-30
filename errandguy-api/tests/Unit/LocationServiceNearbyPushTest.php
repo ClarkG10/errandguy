@@ -78,7 +78,6 @@ class LocationServiceNearbyPushTest extends TestCase
             'schedule_type' => 'now', 'pricing_mode' => 'fixed', 'vehicle_type_rate' => 'motorcycle',
             'distance_km' => 7.0, 'base_fee' => 50, 'distance_fee' => 70, 'service_fee' => 15,
             'surcharge' => 0, 'total_amount' => 135, 'runner_payout' => 120,
-            'is_transportation' => $slug === 'transportation',
         ]);
     }
 
@@ -206,22 +205,9 @@ class LocationServiceNearbyPushTest extends TestCase
         $this->assertSame('Your runner is almost at the drop-off location.', $pushes->first()->body);
     }
 
-    public function test_transportation_uses_driver_copy(): void
-    {
-        $booking = $this->makeBooking('heading_to_pickup', 'transportation');
-
-        $this->ping($booking, 14.61, 120.98);
-        $this->ping($booking, 14.602, 120.98);
-
-        $pushes = $this->customerPushes();
-        $this->assertCount(1, $pushes);
-        $this->assertSame('Driver is nearby', $pushes->first()->title);
-        $this->assertSame('Your driver is almost at your pickup point.', $pushes->first()->body);
-    }
-
     public function test_single_location_errand_gets_venue_copy_and_no_dropoff_leg(): void
     {
-        $booking = $this->makeBooking('heading_to_pickup', 'bills_payment');
+        $booking = $this->makeBooking('heading_to_pickup', 'queue');
         // Single-location errands carry no drop-off coords in practice.
         $booking->forceFill(['dropoff_lat' => null, 'dropoff_lng' => null])->save();
 
@@ -230,7 +216,7 @@ class LocationServiceNearbyPushTest extends TestCase
 
         $pushes = $this->customerPushes();
         $this->assertCount(1, $pushes);
-        $this->assertSame('Your runner is almost at the payment center.', $pushes->first()->body);
+        $this->assertSame('Your runner is almost at the queue location.', $pushes->first()->body);
     }
 
     public function test_untagged_online_ping_never_notifies(): void

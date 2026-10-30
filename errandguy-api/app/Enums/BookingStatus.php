@@ -34,10 +34,10 @@ enum BookingStatus: string
     case Accepted = 'accepted';                     // the runner took it
     case HeadingToPickup = 'heading_to_pickup';
     case ArrivedAtPickup = 'arrived_at_pickup';
-    case PickedUp = 'picked_up';                    // also "work done" for bills/queue flows
+    case PickedUp = 'picked_up';                    // also "work done" for single-location (queue) flows
     case InTransit = 'in_transit';
     case ArrivedAtDropoff = 'arrived_at_dropoff';
-    case Delivered = 'delivered';                   // skipped by the transport flow
+    case Delivered = 'delivered';                   // skipped by the single-location flow
     case Completed = 'completed';
     case Cancelled = 'cancelled';
     case NoRunner = 'no_runner';                    // matching exhausted every candidate

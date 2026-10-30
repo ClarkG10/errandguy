@@ -5,7 +5,6 @@ export const APP_CONFIG = {
   OTP_LENGTH: 6,
   OTP_COUNTDOWN: 60, // seconds
   INCOMING_REQUEST_TIMEOUT: 30, // seconds
-  RIDE_PIN_LENGTH: 4,
   SOS_HOLD_DURATION: 3000, // milliseconds
   MAX_TRUSTED_CONTACTS: 5,
   LOCATION_UPDATE_INTERVAL: 5000, // milliseconds

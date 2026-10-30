@@ -116,16 +116,6 @@ Schedule::command('errandguy:reconcile-wallets')->daily()->onOneServer();
 // managed PITR exists. onOneServer so a multi-server fleet dumps once. (audit DR)
 Schedule::command('errandguy:backup-database')->dailyAt('02:30')->onOneServer();
 
-// Safety: alert when an in-transit transportation ride runs well over its
-// estimated duration. Run INLINE in the scheduler (dispatch_sync), NOT via
-// Schedule::job — a queued job dies silently when the worker is down, and this
-// is a safety monitor that must fire regardless. (audit v3 devops)
-Schedule::call(fn () => dispatch_sync(new \App\Jobs\CheckRideDurationJob()))
-    ->everyFiveMinutes()
-    ->name('check-ride-duration')
-    ->onOneServer()
-    ->withoutOverlapping(10);
-
 // Matching: rescue fixed-price bookings whose matched runner never accepted —
 // reset to pending and re-match instead of stranding the customer on "Runner
 // Found". Run INLINE so the status-reset survives a queue-worker outage (the
@@ -162,12 +152,11 @@ Schedule::command('errandguy:reap-stranded-bookings')
     ->withoutOverlapping(10);
 
 // Safety/ops: raise a "may be stalled" admin alert for an errand sitting in a
-// runner-held status with no progress past its per-status threshold. The only
-// prior duration monitor (check-ride-duration above) covers TRANSPORTATION in
-// transit only, so a delivery runner who accepted and then went dark was
-// detected by nothing. Schedule::command (NOT Schedule::job), like
-// reap-stranded-bookings, so the detector survives a queue-worker outage — one
-// of the very ways an errand stalls. Notify-only: it raises an operator alert
+// runner-held status with no progress past its per-status threshold, so a
+// runner who accepted and then went dark no longer goes unnoticed.
+// Schedule::command (NOT Schedule::job), like reap-stranded-bookings, so the
+// detector survives a queue-worker outage — one of the very ways an errand
+// stalls. Notify-only: it raises an operator alert
 // and changes no booking state and no money.
 Schedule::command('errandguy:detect-stalled-errands')
     ->everyFiveMinutes()

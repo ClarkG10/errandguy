@@ -10,6 +10,27 @@ use Illuminate\Validation\Rule;
 
 class CreateBookingRequest extends FormRequest
 {
+    /**
+     * Errand types that fulfill at a single location and don't have a separate
+     * dropoff (the runner does the task on-site). Must stay in sync with mobile
+     * errandTypeRules.ts singleLocation flag and
+     * RunnerErrandController::SINGLE_LOCATION_SLUGS.
+     *
+     * This list and SHOPPING_SLUGS name BOOKABLE slugs only — errand_type_id
+     * must be an active type. Retired slugs live on as runner-side legacy
+     * aliases (UpdateErrandStatusRequest, RunnerErrandController) so errands
+     * booked before the retirement can still finish.
+     */
+    private const SINGLE_LOCATION_SLUGS = ['queue'];
+
+    /**
+     * Errand types where the runner spends the customer's money against a cap
+     * and captures a receipt ("Buy for me") — matching UpdateErrandStatusRequest
+     * (receipt + actual cost required at pickup) and the mobile errandTypeRules
+     * budget rule.
+     */
+    private const SHOPPING_SLUGS = ['purchase'];
+
     public function authorize(): bool
     {
         return true;
@@ -34,24 +55,12 @@ class CreateBookingRequest extends FormRequest
 
     public function rules(): array
     {
-        // Errand types that fulfill at a single location and don't have
-        // a separate dropoff (the runner does the task on-site).
-        // Must stay in sync with mobile errandTypeRules.ts singleLocation flag
-        // and RunnerErrandController::SINGLE_LOCATION_SLUGS.
-        $singleLocationSlugs = ['queue', 'bills_payment'];
         $errandType = $this->input('errand_type_id')
             ? ErrandType::find($this->input('errand_type_id'))
             : null;
-        $isSingleLocation = $errandType && in_array($errandType->slug, $singleLocationSlugs, true);
+        $isSingleLocation = $errandType && in_array($errandType->slug, self::SINGLE_LOCATION_SLUGS, true);
         $dropoffRule = $isSingleLocation ? 'nullable' : 'required';
-
-        // Errand types where the runner spends the customer's money against a
-        // cap and captures a receipt (buys items, or pays a bill). bills_payment
-        // is included so the bill amount is required up front as the cap —
-        // matching UpdateErrandStatusRequest (receipt + actual cost required for
-        // bills at pickup) and the mobile errandTypeRules budget rule.
-        $shoppingSlugs = ['food', 'grocery', 'purchase', 'bills_payment'];
-        $isShopping = $errandType && in_array($errandType->slug, $shoppingSlugs, true);
+        $isShopping = $errandType && in_array($errandType->slug, self::SHOPPING_SLUGS, true);
 
         return [
             'errand_type_id' => [
@@ -89,8 +98,8 @@ class CreateBookingRequest extends FormRequest
             // but without it a value above the decimal(10,2) ceiling (₱99.99M)
             // would 500 the caller's own request under strict-mode MySQL.
             'estimated_item_value' => ['nullable', 'numeric', 'min:0', 'max:10000000'],
-            // Shopping budget is required for food/grocery/purchase so the
-            // runner has a spending cap before placing the order.
+            // Shopping budget is required for "Buy for me" so the runner has a
+            // spending cap before placing the order.
             'shopping_budget' => [
                 $isShopping ? 'required' : 'nullable',
                 'numeric',
@@ -98,7 +107,7 @@ class CreateBookingRequest extends FormRequest
                 'max:50000',
             ],
             // Optional itemized shopping checklist the customer attaches up
-            // front (food/grocery/purchase). Each element only needs a name;
+            // front ("Buy for me"). Each element only needs a name;
             // qty defaults to 1. checked/checked_at are runner-owned and are
             // normalized server-side, so they are not required here.
             'shopping_items' => ['nullable', 'array', 'max:100'],
@@ -147,33 +156,16 @@ class CreateBookingRequest extends FormRequest
             }
 
             // Multi-stop only applies to errands that HAVE a dropoff. A
-            // single-location errand (queue / bills_payment) is done on-site, so
-            // extra stops are meaningless — reject them rather than silently
-            // pricing phantom legs from the pickup.
-            $singleLocationSlugs = ['queue', 'bills_payment'];
+            // single-location errand (queue) is done on-site, so extra stops
+            // are meaningless — reject them rather than silently pricing
+            // phantom legs from the pickup.
             if (
-                $errandType && in_array($errandType->slug, $singleLocationSlugs, true)
+                $errandType && in_array($errandType->slug, self::SINGLE_LOCATION_SLUGS, true)
                 && ! empty($this->input('stops'))
             ) {
                 $validator->errors()->add(
                     'stops',
                     'This errand type is completed at a single location and does not support extra stops.',
-                );
-            }
-
-            // Per-type vehicle restrictions. Mirrors mobile errandTypeRules.ts
-            // allowedVehicles. Prevents e.g. a "walk" transportation request
-            // or a "walk" food run reaching the matching engine.
-            $allowed = match ($errandType?->slug) {
-                'transportation' => ['motorcycle', 'car'],
-                'food' => ['bicycle', 'motorcycle', 'car'],
-                default => ['walk', 'bicycle', 'motorcycle', 'car'],
-            };
-            $vehicle = $this->input('vehicle_type_rate');
-            if ($vehicle && ! in_array($vehicle, $allowed, true)) {
-                $validator->errors()->add(
-                    'vehicle_type_rate',
-                    'This vehicle is not available for the selected errand type.',
                 );
             }
 

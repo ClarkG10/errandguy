@@ -227,4 +227,44 @@ class MatchingServiceTest extends TestCase
         $result = $this->service->findRunner($this->booking->id);
         $this->assertNull($result);
     }
+
+    /**
+     * Runners' preferred types were remapped onto the four launch types, so an
+     * errand of a retired type that was booked but not yet taken must be
+     * matched against the type that replaced it — otherwise a scheduled food
+     * run would find nobody. Rides have no successor and stay unmatched.
+     */
+    public function test_a_retired_type_is_matched_to_runners_of_the_type_that_replaced_it(): void
+    {
+        $runner = User::factory()->create(['role' => 'runner', 'status' => 'active']);
+        RunnerProfile::create([
+            'user_id' => $runner->id, 'verification_status' => 'approved', 'is_online' => true,
+            'current_lat' => 14.6000, 'current_lng' => 120.9850,
+            'preferred_types' => ['purchase'],
+        ]);
+
+        $retired = function (string $slug): Booking {
+            $type = ErrandType::create([
+                'slug' => $slug, 'name' => ucfirst($slug), 'description' => $slug,
+                'icon_name' => 'X', 'base_fee' => 50.00, 'per_km_walk' => 15.00,
+                'per_km_bicycle' => 12.00, 'per_km_motorcycle' => 10.00, 'per_km_car' => 18.00,
+                'min_negotiate_fee' => 30.00, 'is_active' => false, 'sort_order' => 9,
+            ]);
+
+            return tap($this->booking->replicate(), function (Booking $b) use ($type, $slug) {
+                $b->booking_number = 'EG-20261030-'.strtoupper(substr(md5($slug), 0, 4));
+                $b->errand_type_id = $type->id;
+                $b->save();
+            });
+        };
+
+        $food = $retired('food');
+        $this->assertSame($runner->id, $this->service->findRunner($food->id)?->user_id);
+
+        $ride = $retired('transportation');
+        $this->assertNull($this->service->findRunner($ride->id));
+
+        // …and the delivery booking from setUp is not this runner's type.
+        $this->assertNull($this->service->findRunner($this->booking->id));
+    }
 }

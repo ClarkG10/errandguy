@@ -360,14 +360,6 @@ export function IncomingRequestModal({
               <Text className="text-base font-montserrat-bold text-textPrimary">
                 {booking.errand_type?.name ?? 'New Errand'}
               </Text>
-              {booking.is_transportation && (
-                <TypeChip
-                  Icon={Truck}
-                  label="Transport"
-                  bg={LightColors.primarySoft}
-                  fg={LightColors.primaryDark}
-                />
-              )}
               {isShopping && (
                 <TypeChip
                   Icon={ShoppingBag}
@@ -495,13 +487,6 @@ export function IncomingRequestModal({
                 fallbackKm={readServerPickupKm(booking)}
               />
             </View>
-
-            {booking.is_transportation && (
-              // warningDark rung — this safety string is illegible in base amber.
-              <Text className="text-xs font-montserrat text-warningDark text-center mt-3">
-                PIN verification required before ride starts
-              </Text>
-            )}
           </ScrollView>
 
           {/* Actions — pinned below the scroll. Wider separation (16px) and

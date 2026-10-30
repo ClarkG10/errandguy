@@ -51,6 +51,8 @@ const SIZE_MAP: Record<Size, number> = {
   xl: 108,
 };
 
+// Retired types (grocery, food, document, laundry, rides, bills) keep their
+// art: the server still sends their icon_name on bookings made before the cut.
 const ASSET_ART: Partial<Record<ErrandIconName, number>> = {
   Package: require('../../../assets/delivery.png'),
   ShoppingCart: require('../../../assets/grocery-shopping.png'),
@@ -61,6 +63,10 @@ const ASSET_ART: Partial<Record<ErrandIconName, number>> = {
   Receipt: require('../../../assets/bills-payment.png'),
   Users: require('../../../assets/queue-or-line.png'),
   ShoppingBag: require('../../../assets/purchase-and-deliver.png'),
+  // The custom type is served with icon_name 'Clipboard' — the very picture
+  // this art draws — so it gets the same 3D art as the other three tiles
+  // instead of falling back to the flat drawing below.
+  Clipboard: require('../../../assets/custom-errand.png'),
   PenTool: require('../../../assets/custom-errand.png'),
 };
 

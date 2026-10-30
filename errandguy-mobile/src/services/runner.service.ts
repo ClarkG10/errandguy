@@ -123,8 +123,7 @@ export const runnerService = {
    * then uploading the photo separately fails validation (422).
    *
    * If no photo is supplied this collapses to the cheap JSON variant
-   * so transportation / queue / bills_payment runners don't pay the
-   * multipart overhead.
+   * so single-location runners don't pay the multipart overhead.
    */
   advanceErrandStatus(
     id: string,
@@ -196,17 +195,6 @@ export const runnerService = {
   },
 
   /**
-   * Submit the 4-digit ride PIN for a transportation errand. The server
-   * tracks attempts (max 3) and locks the runner out on repeated misses,
-   * so callers should treat 422 responses as user-facing errors.
-   */
-  verifyRidePin(id: string, pin: string) {
-    const p = api.post(`/runner/errand/${id}/verify-pin`, { pin });
-    p.then(invalidateRunnerErrands).catch(() => {});
-    return p;
-  },
-
-  /**
    * Runner-side review of the customer for a completed booking. Mirrors
    * the customer's POST /bookings/{id}/review but routed under /runner
    * so the role middleware passes; the controller infers reviewee from
@@ -222,7 +210,8 @@ export const runnerService = {
   },
 
   /**
-   * Picked-up update for shopping errands (food / grocery / purchase / bills_payment).
+   * Picked-up update for shopping errands ("Buy for me", plus the legacy
+   * food, grocery and bill-payment errands still in progress).
    * Sends actual_item_cost and a receipt photo as multipart/form-data so the backend
    * can reconcile against the customer's pre-authorized shopping_budget.
    */

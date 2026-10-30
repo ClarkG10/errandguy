@@ -15,11 +15,11 @@ export type BookingStatus =
 export type PricingMode = 'fixed' | 'negotiate';
 
 /**
- * A single line on a customer's shopping list (grocery / food / purchase /
- * bills). This is a purely client-side construct: there is no structured
- * items column on the bookings API, so the list is serialized into the
- * free-text `description` at submit (see `src/utils/shoppingChecklist.ts`)
- * and parsed back on the runner side.
+ * A single line on a customer's shopping list (a "Buy for me" errand). This
+ * is a purely client-side construct: there is no structured items column on
+ * the bookings API, so the list is serialized into the free-text
+ * `description` at submit (see `src/utils/shoppingChecklist.ts`) and parsed
+ * back on the runner side.
  */
 export interface ChecklistItem {
   id: string;
@@ -85,7 +85,7 @@ export interface Booking {
   pickup_lng: number;
   pickup_contact_name: string | null;
   pickup_contact_phone: string | null;
-  // Dropoff is optional for single-location errands (queue / bills payment / on-site documents).
+  // Dropoff is optional for single-location errands (queue).
   dropoff_address: string | null;
   dropoff_lat: number | null;
   dropoff_lng: number | null;
@@ -143,9 +143,6 @@ export interface Booking {
   cancelled_at: string | null;
   cancellation_reason: string | null;
   cancelled_by: string | null;
-  ride_pin: string | null;
-  ride_pin_verified: boolean;
-  is_transportation: boolean;
   sos_triggered: boolean;
   trip_share_token: string | null;
   trip_share_active: boolean;

@@ -36,7 +36,9 @@ export default function PreferredTypesScreen() {
   // Errand types come from the same config source the customer booking
   // flow uses, sharing the ['errand-types'] cache key so a single fetch
   // warms both the runner preferences screen and the customer picker.
-  // The /errand-types endpoint already returns active-only rows.
+  // The /errand-types endpoint already returns active-only rows, so a
+  // retired type a runner once preferred simply isn't offered (and is pruned
+  // on their next save — see handleSave).
   const errandTypesQ = useQuery<ErrandType[]>(
     ['errand-types'],
     async () => {
@@ -49,7 +51,7 @@ export default function PreferredTypesScreen() {
   // Live source list, reduced to the fields this checklist needs.
   const sourceTypes = useMemo(
     () =>
-      (errandTypesQ.data ?? []).map((t) => ({
+      (errandTypesQ.data ?? []).filter((t) => t.is_active).map((t) => ({
         id: t.id,
         slug: t.slug,
         name: t.name,
@@ -247,7 +249,7 @@ export default function PreferredTypesScreen() {
 
         {showSkeletons ? (
           <View accessibilityLabel="Loading errand types" accessibilityState={{ busy: true }}>
-            {Array.from({ length: 6 }).map((_, i) => (
+            {Array.from({ length: 4 }).map((_, i) => (
               <Skeleton key={i} height={56} borderRadius={16} style={{ marginBottom: 8 }} />
             ))}
           </View>

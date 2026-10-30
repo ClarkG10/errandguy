@@ -1,8 +1,8 @@
 /**
  * Per-errand-type "same as last time" recall.
  *
- * The whole point is that recall is scoped to ONE errand type — a grocery
- * list must never leak onto a bills payment — and that a recalled value can
+ * The whole point is that recall is scoped to ONE errand type — a shopping
+ * list must never leak onto a queue errand — and that a recalled value can
  * only ever be a legal one (a vehicle the type still allows, an offer that
  * clears the live negotiate floor, a budget that is real money).
  */
@@ -16,13 +16,13 @@ import {
 import { serializeChecklist } from '../shoppingChecklist';
 import type { Booking } from '../../types/booking';
 
-const GROCERY = 'type-grocery';
-const BILLS = 'type-bills';
+const SHOPPING = 'type-purchase';
+const QUEUE = 'type-queue';
 
 /** Minimal Booking stub — only the fields recall reads are meaningful. */
 function booking(over: Partial<Booking> & { id: string }): Booking {
   return {
-    errand_type_id: GROCERY,
+    errand_type_id: SHOPPING,
     status: 'completed',
     created_at: '2026-08-01T02:00:00.000Z',
     description: null,
@@ -38,13 +38,13 @@ function booking(over: Partial<Booking> & { id: string }): Booking {
 }
 
 const SHOPPING_OPTS = {
-  errandTypeId: GROCERY,
+  errandTypeId: SHOPPING,
   requiresShoppingBudget: true,
   showDescription: true,
   allowedVehicles: ['walk', 'bicycle', 'motorcycle', 'car'] as const,
 };
 const TEXT_OPTS = {
-  errandTypeId: BILLS,
+  errandTypeId: QUEUE,
   requiresShoppingBudget: false,
   showDescription: true,
   allowedVehicles: ['walk', 'bicycle', 'motorcycle', 'car'] as const,
@@ -54,11 +54,11 @@ describe('findRecall', () => {
   it('returns null with no type, no bookings, or no matching type', () => {
     expect(findRecall([], { ...SHOPPING_OPTS, allowedVehicles: [...SHOPPING_OPTS.allowedVehicles] })).toBeNull();
     expect(
-      findRecall([booking({ id: 'b1', description: 'Meralco 123' })], {
+      findRecall([booking({ id: 'b1', description: 'DFA Pasay' })], {
         ...TEXT_OPTS,
         allowedVehicles: [...TEXT_OPTS.allowedVehicles],
       }),
-    ).toBeNull(); // b1 is a GROCERY booking, the option asks for BILLS
+    ).toBeNull(); // b1 is a SHOPPING booking, the option asks for QUEUE
     expect(
       findRecall([booking({ id: 'b1', description: 'x' })], {
         ...TEXT_OPTS,
@@ -68,25 +68,25 @@ describe('findRecall', () => {
     ).toBeNull();
   });
 
-  it('never crosses errand types — a grocery list cannot fill a bills payment', () => {
+  it('never crosses errand types — a shopping list cannot fill a queue errand', () => {
     const list = [
       booking({
         id: 'g1',
-        errand_type_id: GROCERY,
+        errand_type_id: SHOPPING,
         created_at: '2026-08-20T02:00:00.000Z',
         shopping_items: [{ id: 'i1', name: 'Milk', qty: 2 }],
         shopping_budget: 1500,
       }),
       booking({
         id: 'p1',
-        errand_type_id: BILLS,
+        errand_type_id: QUEUE,
         created_at: '2026-08-01T02:00:00.000Z',
-        description: 'Meralco · acct 0123456789 · ref 55',
+        description: 'DFA Pasay — passport claim, 9am slot',
       }),
     ];
     const recalled = findRecall(list, { ...TEXT_OPTS, allowedVehicles: [...TEXT_OPTS.allowedVehicles] });
     expect(recalled?.sourceId).toBe('p1');
-    expect(recalled?.fields.description).toBe('Meralco · acct 0123456789 · ref 55');
+    expect(recalled?.fields.description).toBe('DFA Pasay — passport claim, 9am slot');
     expect(recalled?.fields.shoppingItems).toBeUndefined();
   });
 
@@ -148,7 +148,7 @@ describe('findRecall', () => {
     const list = [
       booking({
         id: 'weird',
-        errand_type_id: BILLS,
+        errand_type_id: QUEUE,
         description: serializeChecklist([{ id: 'a', name: 'Milk', qty: 1 }]),
       }),
     ];
@@ -225,11 +225,11 @@ describe('findRecall', () => {
         created_at: '2026-08-20T02:00:00.000Z',
         shopping_budget: 400,
         shopping_items: [{ id: 'i', name: 'Milk', qty: 1 }],
-        errand_type: { name: 'Grocery Run' } as never,
+        errand_type: { name: 'Buy for me' } as never,
       }),
     ];
     const recalled = findRecall(list, { ...SHOPPING_OPTS, allowedVehicles: [...SHOPPING_OPTS.allowedVehicles] })!;
-    expect(recalled.typeName).toBe('Grocery Run');
+    expect(recalled.typeName).toBe('Buy for me');
     expect(recalled.sourceCreatedAt).toBe('2026-08-20T02:00:00.000Z');
   });
 });
@@ -242,7 +242,7 @@ describe('draftHasRecallableContent', () => {
   });
 
   it('is true the moment the customer has typed anything recall would overwrite', () => {
-    expect(draftHasRecallableContent({ description: 'Meralco' })).toBe(true);
+    expect(draftHasRecallableContent({ description: 'DFA Pasay' })).toBe(true);
     expect(draftHasRecallableContent({ shoppingItems: [{ id: 'a', name: 'Milk', qty: 1 }] })).toBe(true);
     expect(draftHasRecallableContent({ shopping_budget: 500 })).toBe(true);
     expect(draftHasRecallableContent({ special_instructions: 'Ring twice' })).toBe(true);

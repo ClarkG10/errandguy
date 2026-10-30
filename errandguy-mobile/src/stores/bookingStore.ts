@@ -40,7 +40,7 @@ const PERSIST_DEBOUNCE_MS = 250;
 
 export interface DraftBooking {
   errand_type_id?: string;
-  /** Slug of the selected errand type (e.g. 'transportation', 'food'). */
+  /** Slug of the selected errand type (e.g. 'delivery', 'purchase'). */
   errand_type_slug?: string;
   pickup_address?: string;
   pickup_lat?: number;
@@ -59,7 +59,7 @@ export interface DraftBooking {
   special_instructions?: string;
   item_photos?: string[];
   estimated_item_value?: number;
-  /** Pre-authorized maximum the runner may spend on items (food/grocery/purchase/bills). */
+  /** Pre-authorized maximum the runner may spend on items ("Buy for me"). */
   shopping_budget?: number;
   /**
    * Client-side shopping checklist for errand types that require a

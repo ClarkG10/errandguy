@@ -54,6 +54,7 @@ import { HomeSkeleton } from '../../../components/ui/Skeleton';
 import { BrandRefreshControl } from '../../../components/ui/BrandRefreshControl';
 import { Eyebrow } from '../../../components/ui/Typography';
 import { STATUS_LABELS, STATUS_COLORS } from '../../../constants/statusLabels';
+import { isRetiredErrandSlug } from '../../../constants/errandTypeRules';
 import { useResponsive } from '../../../constants/responsive';
 import { LightColors, Elevation } from '../../../constants/colors';
 import type { Booking, ErrandType } from '../../../types';
@@ -284,14 +285,19 @@ export default function CustomerHomeScreen() {
     () => (errandTypesQ.data ?? []).filter((t) => t.is_active),
     [errandTypesQ.data],
   );
+  // Types a shortcut can actually start. Older bookings keep the id of a
+  // retired type, which the server would refuse on a new booking.
+  const bookableTypeIds = useMemo(
+    () => new Set(errandTypes.map((t) => t.id)),
+    [errandTypes],
+  );
 
   // ── Personalised service order ────────────────────────────────────────
-  // The catalogue arrives in ONE global sort_order and Home shows its first
-  // four tiles, so a customer whose regular service is 5th (laundry) or 7th
-  // (bills) never saw their own tile — "See all" then scroll, on every single
-  // booking. The recent-bookings window this screen already loads says what
-  // they actually book, so we rank the catalogue by it (2+ bookings to be
-  // promoted, ties keep sort_order — see utils/errandTypeOrder).
+  // The catalogue arrives in ONE global sort_order and Home shows at most
+  // four tiles. The recent-bookings window this screen already loads says
+  // what this customer actually books, so we rank the catalogue by it (2+
+  // bookings to be promoted, ties keep sort_order — see
+  // utils/errandTypeOrder): their regular service sits on the first tile.
   //
   // The ranking is computed ONCE per session and then replayed, because a
   // recomputation on every window change would reshuffle the tiles under the
@@ -342,9 +348,9 @@ export default function CustomerHomeScreen() {
     [errandTypes, pinnedTypeOrder, typeOrderUserId],
   );
 
-  // Keep the home dashboard simple — surface only the most common
-  // errand types here (now "most common FOR THIS CUSTOMER"). The full list
-  // lives one tap deeper on the booking type screen ("See all").
+  // Keep the home dashboard simple — at most four tiles (the whole current
+  // catalogue), most common FOR THIS CUSTOMER first. Descriptions and prices
+  // live one tap deeper on the booking type screen ("See all").
   const featuredTypes = orderedTypes.slice(0, 4);
   const recentBookings = (recentBookingsQ.data ?? []).slice(0, 3);
   const initialLoading =
@@ -506,8 +512,14 @@ export default function CustomerHomeScreen() {
     const draftType = errandTypes.find(
       (t) => t.id === draftBooking.errand_type_id,
     );
+    // A retired type's slug is not a name to show; resuming that draft sends
+    // the customer to pick a current type anyway.
     const typeName =
-      draftType?.name ?? draftBooking.errand_type_slug ?? 'errand';
+      draftType?.name ??
+      (isRetiredErrandSlug(draftBooking.errand_type_slug)
+        ? undefined
+        : draftBooking.errand_type_slug) ??
+      'errand';
     return {
       route,
       typeName,
@@ -603,11 +615,13 @@ export default function CustomerHomeScreen() {
 
   // "Frequently booked" personalization — computed purely from the
   // already-loaded recent bookings (no extra fetch). Only surfaces once
-  // a single errand type has been booked 3+ times in the loaded window.
+  // a single errand type has been booked 3+ times in the loaded window, and
+  // only for a type that can still be booked: a habit formed on a retired
+  // type (a food run, a ride) is not something this chip can repeat.
   const frequentType = useMemo(() => {
     const counts = new Map<string, { id: string; name: string; count: number }>();
     for (const b of recentBookingsQ.data ?? []) {
-      if (!b.errand_type_id) continue;
+      if (!b.errand_type_id || !bookableTypeIds.has(b.errand_type_id)) continue;
       const entry = counts.get(b.errand_type_id);
       if (entry) entry.count += 1;
       else
@@ -622,7 +636,7 @@ export default function CustomerHomeScreen() {
       if (!best || entry.count > best.count) best = entry;
     }
     return best && best.count >= 3 ? best : null;
-  }, [recentBookingsQ.data]);
+  }, [recentBookingsQ.data, bookableTypeIds]);
 
   // The most recent repeatable booking OF the frequently-booked type — lets the
   // "Frequently booked" chip seed a full draft too (falls back to type-only).
@@ -642,16 +656,25 @@ export default function CustomerHomeScreen() {
   // "Track" pill — when an errand is live the ActiveBookingCard renders
   // directly above these pills, so a pill would duplicate it.
   const lastBooking = recentBookings[0];
-  // The most recent booking we can fully clone (terminal-success + a type).
-  // "Repeat last" seeds from this when present; otherwise it falls back to the
-  // last booking's type only.
+  // The most recent booking we can fully clone (terminal-success + a type
+  // that can still be booked). "Repeat last" seeds from this when present;
+  // otherwise it falls back to the last booking's type only.
   const repeatSource = useMemo(
     () =>
       (recentBookingsQ.data ?? []).find(
-        (b) => REPEATABLE_STATUSES.includes(b.status) && !!b.errand_type_id,
+        (b) =>
+          REPEATABLE_STATUSES.includes(b.status) &&
+          !!b.errand_type_id &&
+          bookableTypeIds.has(b.errand_type_id),
       ) ?? null,
-    [recentBookingsQ.data],
+    [recentBookingsQ.data, bookableTypeIds],
   );
+  // Without a clonable booking, "Repeat last" restarts the last booking's
+  // type — only while that type can still be booked.
+  const repeatFallbackTypeId =
+    lastBooking?.errand_type_id && bookableTypeIds.has(lastBooking.errand_type_id)
+      ? lastBooking.errand_type_id
+      : undefined;
   const quickActions: {
     key: string;
     label: string;
@@ -659,7 +682,7 @@ export default function CustomerHomeScreen() {
     a11yLabel: string;
     onPress: () => void;
   }[] = [
-    ...(lastBooking?.errand_type_id
+    ...(repeatSource || repeatFallbackTypeId
       ? [
           {
             key: 'repeat',
@@ -667,10 +690,10 @@ export default function CustomerHomeScreen() {
             icon: Repeat,
             a11yLabel: `Repeat your last ${
               repeatSource?.errand_type?.name ??
-              lastBooking.errand_type?.name ??
+              lastBooking?.errand_type?.name ??
               'errand'
             } booking`,
-            onPress: () => repeatFrom(repeatSource, lastBooking.errand_type_id),
+            onPress: () => repeatFrom(repeatSource, repeatFallbackTypeId),
           },
         ]
       : []),

@@ -2,10 +2,10 @@
  * Personalised errand-type ordering.
  *
  * The catalogue arrives from the API in one global order (`ErrandType::orderBy
- * ('sort_order')`), and Home shows only the first four tiles of it. A customer
- * whose regular service is 5th, 7th or 9th in that global order therefore never
- * sees their own tile — they tap "See all" and scroll, on every single booking,
- * forever.
+ * ('sort_order')`), and Home shows at most four tiles of it. Without this, a
+ * customer's regular service sits wherever the global order puts it — and when
+ * the catalogue held more types than tiles, past the cut entirely, behind
+ * "See all" on every single booking.
  *
  * The screen already knows what this customer books: the recent-bookings window
  * it loads for the "Recent" rows (and for the "Frequently booked" chip). These

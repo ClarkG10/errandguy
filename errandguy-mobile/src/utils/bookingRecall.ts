@@ -8,13 +8,13 @@ import { formatCurrency } from './formatCurrency';
  * booking history.
  *
  * A repeat customer retypes the SAME required content on every booking: the
- * Meralco account number on a monthly bills payment, the eight-row weekly
- * grocery list plus its budget, the same gate note. All of it is already on
- * their past bookings and already cached on the device under the
+ * eight-row weekly "Buy for me" grocery list plus its budget, the office they
+ * queue at every month, the same gate note. All of it is already on their
+ * past bookings and already cached on the device under the
  * ['bookings','recent',userId] key the Home screen renders.
  *
- * Recall is deliberately scoped PER ERRAND TYPE. A grocery list and a
- * bills-payment reference have nothing in common, so the global "Repeat last"
+ * Recall is deliberately scoped PER ERRAND TYPE. A shopping list and a queue
+ * errand's purpose have nothing in common, so the global "Repeat last"
  * shortcut (which clones whichever booking happened to be most recent) is
  * useless the moment a customer alternates between two services.
  *
@@ -44,7 +44,7 @@ export interface BookingRecall {
   /** Booking the values came from — shown on the chip, never submitted. */
   sourceId: string;
   sourceCreatedAt: string;
-  /** Errand type name for the chip label ("Same as last Grocery"). */
+  /** Errand type name for the chip label ("Same as last Buy for me"). */
   typeName: string;
   fields: RecallFields;
   /** One-line human summary of exactly what a tap will fill in. */

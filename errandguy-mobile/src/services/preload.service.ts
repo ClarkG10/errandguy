@@ -41,15 +41,11 @@ const CORE_IMAGE_ASSETS = [
   require('../../assets/ONBOARDING-3.png'),
   require('../../assets/location-permission.png'),
   require('../../assets/contact-permission.png'),
+  // The current errand types' tiles. Retired types' art (still drawn on their
+  // older bookings) loads on demand instead of at every launch.
   require('../../assets/delivery.png'),
-  require('../../assets/grocery-shopping.png'),
-  require('../../assets/food-pickup.png'),
-  require('../../assets/document-delivery.png'),
-  require('../../assets/laundry.png'),
-  require('../../assets/transportation.png'),
-  require('../../assets/bills-payment.png'),
-  require('../../assets/queue-or-line.png'),
   require('../../assets/purchase-and-deliver.png'),
+  require('../../assets/queue-or-line.png'),
   require('../../assets/custom-errand.png'),
 ] as const;
 

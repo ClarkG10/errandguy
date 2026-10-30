@@ -47,14 +47,17 @@ import {
 import { newIdempotencyKey } from '../../../utils/idempotency';
 import { fareLines } from '../../../utils/fareLines';
 import { usePaymentVerification } from '../../../hooks/usePaymentVerification';
-import { invalidateQuery } from '../../../hooks/useQuery';
+import { invalidateQuery, useQuery } from '../../../hooks/useQuery';
+import { configService } from '../../../services/config.service';
+import { CacheTTL } from '../../../services/cache.service';
+import { useRetiredErrandTypeGuard } from '../../../hooks/useRetiredErrandTypeGuard';
 import { useAuthStore } from '../../../stores/authStore';
 import { usePreferencesStore } from '../../../stores/preferencesStore';
 import { mapFailureReason } from '../../../utils/paymentErrors';
 import { getErrandTypeRule, type VehicleKey } from '../../../constants/errandTypeRules';
 import { useResponsive } from '../../../constants/responsive';
 import { LightColors } from '../../../constants/colors';
-import type { PaymentMethodType, PricingMode } from '../../../types';
+import type { ErrandType, PaymentMethodType, PricingMode } from '../../../types';
 import { toast } from '../../../stores/toastStore';
 import { errorMessage } from '../../../utils/errorCatalog';
 import { copy } from '../../../constants/copy';
@@ -149,6 +152,9 @@ export default function ReviewScreen() {
   const clearDraft = useBookingStore((s) => s.clearDraft);
   const setCreateKey = useBookingStore((s) => s.setCreateKey);
   const setActiveBooking = useBookingStore((s) => s.setActiveBooking);
+  // A draft naming a retired errand type (a rebook of an older booking, or a
+  // draft an older build saved) goes back to the type picker.
+  useRetiredErrandTypeGuard();
 
   const [estimate, setEstimate] = useState<EstimateResult | null>(null);
   const [pricingMode, setPricingMode] = useState<PricingMode>(
@@ -400,7 +406,8 @@ export default function ReviewScreen() {
     },
   ];
 
-  // Hide vehicles this errand type doesn't support (e.g. walk/bicycle for transportation).
+  // Hide vehicles this errand type doesn't support (every current type allows
+  // all four; the rule keeps the per-type hook).
   const vehicleOptions = allVehicleOptions.filter((opt) =>
     rule.allowedVehicles.includes(opt.key as VehicleKey),
   );
@@ -428,12 +435,26 @@ export default function ReviewScreen() {
   // Readbacks for the confirmation summary — a "Review & confirm" screen
   // has to show what is being confirmed (type, timing, list size), not
   // just where and for how much.
+  //
+  // The type reads back by its server name ("Buy for me", not "Purchase"),
+  // from the same ['errand-types'] entry Home and the picker keep warm; the
+  // slug only stands in while that cache is cold.
+  const errandTypesQ = useQuery<ErrandType[]>(
+    ['errand-types'],
+    async () => {
+      const res = await configService.getErrandTypes();
+      return (res.data?.data ?? []) as ErrandType[];
+    },
+    { staleTime: 60 * 60 * 1000, ttl: CacheTTL.STATIC },
+  );
   const errandTypeLabel = useMemo(() => {
+    const named = errandTypesQ.data?.find((t) => t.id === draftBooking.errand_type_id)?.name;
+    if (named) return named;
     const slug = draftBooking.errand_type_slug;
     if (!slug) return 'Errand';
     const words = slug.replace(/_/g, ' ');
     return words.charAt(0).toUpperCase() + words.slice(1);
-  }, [draftBooking.errand_type_slug]);
+  }, [errandTypesQ.data, draftBooking.errand_type_id, draftBooking.errand_type_slug]);
 
   const scheduleLabel =
     draftBooking.schedule_type === 'scheduled' && draftBooking.scheduled_at
@@ -1085,7 +1106,7 @@ export default function ReviewScreen() {
 
         {pricingMode === 'fixed' ? (
           <>
-            {/* Single-location errands (queue, bills_payment) have no
+            {/* Single-location errands (queue) have no
                 travel distance, so vehicle pricing is identical for every
                 option. Hide the selector to avoid the confusing "all
                 vehicles cost the same" UX. */}

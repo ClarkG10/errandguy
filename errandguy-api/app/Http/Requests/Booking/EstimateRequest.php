@@ -22,7 +22,7 @@ class EstimateRequest extends FormRequest
             ],
             'pickup_lat' => ['required', 'numeric', 'between:-90,90'],
             'pickup_lng' => ['required', 'numeric', 'between:-180,180'],
-            // Single-location errands (queue, bills_payment) submit only
+            // Single-location errands (queue) submit only
             // pickup coords. PricingService::estimate() already collapses
             // distance to 0 when dropoff is missing, so make these optional.
             'dropoff_lat' => ['nullable', 'numeric', 'between:-90,90'],

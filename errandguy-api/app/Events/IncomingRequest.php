@@ -15,16 +15,16 @@ use Illuminate\Queue\SerializesModels;
  * subscription the runner app filtered by runner_id.
  *
  * SECURITY: the payload is an EXPLICIT non-participant offer projection — NOT
- * BookingResource. BookingResource gates contact/PIN fields on
+ * BookingResource. BookingResource gates contact fields on
  * `request()->user()`, which happens to be null here today only because the
  * broadcast is queued and runs in a worker; but MatchRunnerJob is dispatchSync'd
  * inside the customer's create request, so if this ever became ShouldBroadcastNow
  * (or the queue ran sync), BookingResource would see the CUSTOMER as the request
- * user and leak their contact details + the anti-fraud ride PIN to a runner who
- * has only been OFFERED the job. Building the payload by hand makes the
- * non-sensitive projection intrinsic to the offer, independent of ambient state.
- * Contact info, photos, receipts, signatures, the ride PIN and the customer
- * identity are all withheld until the runner accepts and fetches over REST.
+ * user and leak their contact details to a runner who has only been OFFERED the
+ * job. Building the payload by hand makes the non-sensitive projection intrinsic
+ * to the offer, independent of ambient state. Contact info, photos, receipts,
+ * signatures and the customer identity are all withheld until the runner
+ * accepts and fetches over REST.
  */
 class IncomingRequest implements ShouldBroadcast
 {
@@ -77,7 +77,6 @@ class IncomingRequest implements ShouldBroadcast
             'runner_payout' => $b->runner_payout,
             'recommended_min' => $b->recommended_min,
             'recommended_max' => $b->recommended_max,
-            'is_transportation' => $b->is_transportation,
             'schedule_type' => $b->schedule_type,
             'scheduled_at' => optional($b->scheduled_at)->toIso8601String(),
             'negotiate_expires_at' => optional($b->negotiate_expires_at)->toIso8601String(),

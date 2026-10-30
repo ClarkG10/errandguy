@@ -12,12 +12,10 @@ use Illuminate\Support\Facades\Log;
 /**
  * Stall detector for errands a runner is already holding.
  *
- * Until now the ONLY duration monitor was CheckRideDurationJob, which filters
- * `is_transportation = true AND status = 'in_transit'`. A delivery runner who
- * accepts and then never moves — or picks up and vanishes — was detected by
- * nothing at all: no admin alert, no log line, no signal to anyone. The customer
- * sat on the tracking screen watching a frozen pin and had to notice the problem
- * themselves.
+ * Before it, a runner who accepts and then never moves — or picks up and
+ * vanishes — was detected by nothing at all: no admin alert, no log line, no
+ * signal to anyone. The customer sat on the tracking screen watching a frozen
+ * pin and had to notice the problem themselves.
  *
  * DETECTION SIGNAL — `bookings.updated_at`, deliberately, NOT
  * `runner_profiles.last_location_at`:
@@ -71,12 +69,12 @@ class DetectStalledErrandsCommand extends Command
      * happens exclusively in the 'completed' branch. So an errand parked at
      * 'delivered' pays the runner NOTHING, and every other backstop skipped it
      * too (AutoCancelBookingJob and ReapStrandedBookingsCommand only touch
-     * pending/no_runner; CheckRideDurationJob only transportation in_transit).
-     * The customer has no lever either — cancel and review are both blocked at
-     * this status, and their Activity screen files 'delivered' under COMPLETED,
-     * so it looks finished to them. If the runner's app dies or they consider
-     * the job done at handover, the errand sits there forever: runner unpaid,
-     * customer's money held, and not one alert on either side.
+     * pending/no_runner). The customer has no lever either — cancel and review
+     * are both blocked at this status, and their Activity screen files
+     * 'delivered' under COMPLETED, so it looks finished to them. If the
+     * runner's app dies or they consider the job done at handover, the errand
+     * sits there forever: runner unpaid, customer's money held, and not one
+     * alert on either side.
      *
      * A short threshold, because unlike the others the work is already done —
      * this is the gap between handover and the second tap that settles it.
@@ -163,18 +161,6 @@ class DetectStalledErrandsCommand extends Command
                 })
                 ->orderBy('updated_at')
                 ->limit(self::MAX_PER_RUN);
-
-            // A transportation ride in transit is ALREADY monitored by
-            // CheckRideDurationJob, which judges it against a distance-derived
-            // estimate rather than a flat clock — and a genuine hour-long ride
-            // writes nothing to the booking row while it is going perfectly
-            // well. Leave that exact slice to the better detector so the feed
-            // doesn't carry two alerts (or a false one) for the same trip.
-            // Every OTHER status of a ride is still covered here: nothing else
-            // watches a driver who accepted and never set off.
-            if ($status === 'in_transit') {
-                $query->where('is_transportation', false);
-            }
 
             $bookings = $query->get(['id', 'booking_number', 'status', 'updated_at', 'customer_id', 'runner_id']);
 

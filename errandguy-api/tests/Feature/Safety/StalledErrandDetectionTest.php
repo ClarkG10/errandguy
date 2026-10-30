@@ -2,11 +2,9 @@
 
 namespace Tests\Feature\Safety;
 
-use App\Events\RideDurationAlert;
 use App\Models\AdminAlert;
 use App\Models\Booking;
 use App\Models\ErrandType;
-use App\Models\Notification;
 use App\Models\SystemConfig;
 use App\Models\User;
 use Illuminate\Foundation\Testing\RefreshDatabase;
@@ -16,15 +14,10 @@ use Tests\TestCase;
 /**
  * Guards the stall detector (cluster A4) — the notify-only half.
  *
- * Before it, the ONLY duration monitor was CheckRideDurationJob
- * (is_transportation + in_transit), and its sole listener ended in a log line
- * and an SMS TODO, so a runner who went dark reached no human at all. These
- * tests pin the two halves that now close that loop:
- *   1. errandguy:detect-stalled-errands raises exactly one operator alert per
- *      stalled booking, and stays quiet for fresh, SOS'd, not-yet-due-scheduled
- *      and config-disabled cases; and
- *   2. SendSafetyAlertNotification::handleDurationAlert raises an AdminAlert and
- *      tells BOTH parties instead of only writing a log line.
+ * Before it, a runner who went dark reached no human at all. These tests pin
+ * that errandguy:detect-stalled-errands raises exactly one operator alert per
+ * stalled booking, and stays quiet for fresh, SOS'd, not-yet-due-scheduled and
+ * config-disabled cases.
  *
  * Everything here is notify-only by design: no test asserts a status change, a
  * cancellation or any money movement, because the command performs none.
@@ -215,11 +208,11 @@ class StalledErrandDetectionTest extends TestCase
         $this->assertSame(1, $this->stalledAlerts());
     }
 
-    public function test_an_in_transit_ride_is_left_to_the_ride_duration_monitor(): void
+    public function test_a_legacy_ride_in_transit_is_watched_like_any_other_errand(): void
     {
-        // CheckRideDurationJob already judges this exact slice against a
-        // distance-derived estimate — a flat clock here would double-alert and
-        // would fire on every genuinely long ride.
+        // The ride-duration monitor is gone with passenger rides, so a ride
+        // still in progress from before the retirement is no longer carved out
+        // of the in-transit slice: it is alerted like a delivery would be.
         $ride = $this->makeErrand([
             '__slug' => 'transportation',
             'status' => 'in_transit',
@@ -228,32 +221,16 @@ class StalledErrandDetectionTest extends TestCase
         ]);
         $this->idleFor($ride, 180);
 
-        // …but a NON-transportation errand in transit has no other monitor.
         $delivery = $this->makeErrand(['status' => 'in_transit']);
         $this->idleFor($delivery, 180);
 
         $this->artisan('errandguy:detect-stalled-errands')->assertSuccessful();
 
-        $this->assertSame(1, $this->stalledAlerts());
-        $this->assertSame(
-            $delivery->id,
-            AdminAlert::where('type', 'stalled_errand')->value('subject_id'),
+        $this->assertSame(2, $this->stalledAlerts());
+        $this->assertEqualsCanonicalizing(
+            [$ride->id, $delivery->id],
+            AdminAlert::where('type', 'stalled_errand')->pluck('subject_id')->all(),
         );
-    }
-
-    public function test_a_ride_stuck_before_pickup_is_still_covered(): void
-    {
-        // Nothing else watches a driver who accepted and never set off.
-        $ride = $this->makeErrand([
-            '__slug' => 'transportation',
-            'status' => 'heading_to_pickup',
-            'is_transportation' => true,
-        ]);
-        $this->idleFor($ride, 90);
-
-        $this->artisan('errandguy:detect-stalled-errands')->assertSuccessful();
-
-        $this->assertSame(1, $this->stalledAlerts());
     }
 
     public function test_dry_run_reports_without_raising_or_consuming_the_flag(): void
@@ -267,49 +244,5 @@ class StalledErrandDetectionTest extends TestCase
         // …and must not have burned the once-per-booking claim.
         $this->artisan('errandguy:detect-stalled-errands')->assertSuccessful();
         $this->assertSame(1, $this->stalledAlerts());
-    }
-
-    /**
-     * The transportation monitor's listener used to end in a Log::warning and a
-     * trusted-contact SMS path with no provider behind it — so the detection
-     * reached nobody. It must now raise an operator alert AND tell both parties.
-     */
-    public function test_duration_alert_reaches_the_operator_and_both_parties(): void
-    {
-        $booking = $this->makeErrand([
-            '__slug' => 'transportation',
-            'status' => 'in_transit',
-            'is_transportation' => true,
-            'picked_up_at' => now()->subHours(3),
-        ]);
-
-        event(new RideDurationAlert($booking, 180, 15));
-
-        $alert = AdminAlert::where('type', 'ride_duration')->first();
-        $this->assertNotNull($alert, 'The duration monitor must no longer be log-only.');
-        $this->assertSame($booking->id, $alert->subject_id);
-
-        $this->assertSame(1, Notification::where('user_id', $booking->customer_id)->count());
-        $this->assertSame(1, Notification::where('user_id', $booking->runner_id)->count());
-
-        $customerNote = Notification::where('user_id', $booking->customer_id)->first();
-        $this->assertSame('duration_alert', $customerNote->data['reason'] ?? null);
-        $this->assertSame($booking->id, $customerNote->data['booking_id'] ?? null);
-    }
-
-    public function test_duration_alert_does_not_re_notify_on_a_repeat_fire(): void
-    {
-        $booking = $this->makeErrand([
-            '__slug' => 'transportation',
-            'status' => 'in_transit',
-            'is_transportation' => true,
-            'picked_up_at' => now()->subHours(3),
-        ]);
-
-        event(new RideDurationAlert($booking, 180, 15));
-        event(new RideDurationAlert($booking, 210, 15));
-
-        $this->assertSame(1, AdminAlert::where('type', 'ride_duration')->count());
-        $this->assertSame(1, Notification::where('user_id', $booking->customer_id)->count());
     }
 }
