@@ -87,6 +87,20 @@ return [
 
     /*
     |--------------------------------------------------------------------------
+    | Schedule Timezone
+    |--------------------------------------------------------------------------
+    |
+    | The clock the scheduler's daily times are read on (routes/console.php):
+    | the business timezone, so the nightly backup runs at 02:30 in Manila and
+    | not 10:30 in the morning. Only WHEN tasks fire changes — stored
+    | timestamps and every deadline stay UTC (the app timezone above).
+    |
+    */
+
+    'schedule_timezone' => env('APP_BUSINESS_TIMEZONE', 'Asia/Manila'),
+
+    /*
+    |--------------------------------------------------------------------------
     | Support Contact
     |--------------------------------------------------------------------------
     |
@@ -97,6 +111,19 @@ return [
     */
 
     'support_email' => env('SUPPORT_EMAIL', 'support@errandguyph.com'),
+
+    /*
+    |--------------------------------------------------------------------------
+    | Terms & Privacy Policy Version
+    |--------------------------------------------------------------------------
+    |
+    | The version shown on /terms and /privacy and recorded with a new
+    | account's consent when the app doesn't send its own. Bump it whenever
+    | the published text changes.
+    |
+    */
+
+    'privacy_policy_version' => env('PRIVACY_POLICY_VERSION', '1.0'),
 
     /*
     |--------------------------------------------------------------------------

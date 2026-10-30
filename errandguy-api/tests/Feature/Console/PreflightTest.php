@@ -5,18 +5,20 @@ namespace Tests\Feature\Console;
 use App\Console\Commands\Preflight;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\Storage;
 use Tests\TestCase;
 
 /**
  * The launch-gate command: exits non-zero on ANY critical (unsafe config, pending
- * migrations, a dead scheduler) so a deploy/CI step can gate on it, while
- * warnings (no-heartbeat-yet, on-box backups) stay launchable.
+ * migrations, a dead scheduler, local-only backups in production, an off-site
+ * backup disk that won't take a write) so a deploy/CI step can gate on it,
+ * while warnings (no-heartbeat-yet) stay launchable.
  */
 class PreflightTest extends TestCase
 {
     use RefreshDatabase;
 
-    /** A config with NO criticals (warnings like empty proxies / on-box backups are fine). */
+    /** A config with NO criticals (warnings like on-box backups outside production are fine). */
     private function noCriticalConfig(): void
     {
         config([
@@ -30,6 +32,12 @@ class PreflightTest extends TestCase
             // warning (not a critical) and 'redis' can't connect in this env.
             'queue.default' => 'redis',
             'sentry.dsn' => 'https://public@o1.ingest.sentry.io/1',
+            'trustedproxy.proxies' => 'cloudflare',
+            'mail.default' => 'gmail',
+            'mail.from.address' => 'support@errandguyph.com',
+            'mail.mailers.gmail.oauth_client_id' => 'id',
+            'mail.mailers.gmail.oauth_client_secret' => 'secret',
+            'mail.mailers.gmail.oauth_refresh_token' => 'token',
         ]);
         // Fresh scheduler heartbeat (cron alive).
         Cache::put('scheduler:heartbeat', now()->timestamp, 900);
@@ -76,5 +84,78 @@ class PreflightTest extends TestCase
 
         $this->assertTrue($migrations['ok']);
         $this->assertSame('critical', $migrations['level']);
+    }
+
+    // ── Off-site backups ──────────────────────────────────────────────
+
+    private function backupsCheck(): array
+    {
+        return collect(Preflight::checks())->firstWhere('check', 'off-site backups');
+    }
+
+    public function test_local_only_backups_fail_the_gate_in_production(): void
+    {
+        $this->noCriticalConfig();
+        config(['backup.disk' => 'local']);
+        $this->app['env'] = 'production';
+
+        try {
+            $check = $this->backupsCheck();
+            $this->assertSame('critical', $check['level']);
+            $this->assertFalse($check['ok']);
+            $this->artisan('errandguy:preflight')->assertExitCode(1);
+        } finally {
+            $this->app['env'] = 'testing';
+        }
+    }
+
+    public function test_local_only_backups_are_a_warning_outside_production(): void
+    {
+        $this->noCriticalConfig();
+        config(['backup.disk' => 'local']);
+
+        $check = $this->backupsCheck();
+        $this->assertSame('warning', $check['level']);
+        $this->assertFalse($check['ok']);
+    }
+
+    public function test_a_disk_that_is_a_local_folder_counts_as_local_only(): void
+    {
+        $this->noCriticalConfig();
+        config(['backup.disk' => 'public']);
+
+        $this->assertFalse($this->backupsCheck()['ok']);
+    }
+
+    public function test_a_writable_offsite_disk_passes_and_leaves_no_probe_behind(): void
+    {
+        $this->noCriticalConfig();
+        config(['backup.disk' => 's3']);
+        Storage::fake('s3');
+
+        $check = $this->backupsCheck();
+
+        $this->assertTrue($check['ok'], $check['message']);
+        $this->assertSame('critical', $check['level']);
+        $this->assertSame([], Storage::disk('s3')->allFiles());
+        $this->artisan('errandguy:preflight')->assertExitCode(0);
+    }
+
+    public function test_an_offsite_disk_that_refuses_writes_fails_the_gate(): void
+    {
+        $this->noCriticalConfig();
+        config(['backup.disk' => 's3']);
+        $disk = \Mockery::mock(\Illuminate\Contracts\Filesystem\Filesystem::class);
+        $disk->shouldReceive('put')->andReturn(false);
+        $disk->shouldReceive('get')->andReturn(null);
+        $disk->shouldReceive('delete')->andReturn(true);
+        Storage::set('s3', $disk);
+
+        $check = $this->backupsCheck();
+
+        $this->assertFalse($check['ok']);
+        $this->assertSame('critical', $check['level']);
+        $this->assertStringContainsString('not writable', $check['message']);
+        $this->artisan('errandguy:preflight')->assertExitCode(1);
     }
 }

@@ -111,7 +111,12 @@ import { StopsProgressCard } from '../../../components/customer/StopsProgressCar
 // so both read the outcome through one helper (it normalises the server's
 // decimal-as-string casts; it computes no money of its own).
 import { bookingMoneyOutcome } from '../../../components/customer/BookingDetailSheet';
-import { stopCompletionsFromNotification, mergeStopCompletions } from '../../../utils/stopProgress';
+import {
+  BOOKING_STOPS_UPDATED,
+  stopCompletionsFromNotification,
+  mergeStopCompletions,
+} from '../../../utils/stopProgress';
+import { latestProgressCard, progressCardSignature } from '../../../utils/liveProgressCards';
 import { resolveImageUrl } from '../../../utils/resolveImageUrl';
 import { errorMessage } from '../../../utils/errorCatalog';
 import { haptics } from '../../../utils/haptics';
@@ -129,7 +134,7 @@ import { isRunnerVerified, runnerVehicleLine } from '../../../utils/runnerVehicl
 import { LightColors, Elevation } from '../../../constants/colors';
 import { copy } from '../../../constants/copy';
 
-import { shoppingItemsFromNotification } from '../../../utils/shoppingChecklist';
+import { SHOPPING_ITEMS_UPDATED, shoppingItemsFromNotification } from '../../../utils/shoppingChecklist';
 import { getErrandTypeRule } from '../../../constants/errandTypeRules';
 import type { Booking, BookingStatus, BookingStatusLog } from '../../../types';
 import { toast } from '../../../stores/toastStore';
@@ -1135,51 +1140,67 @@ export default function TrackingScreen() {
     }
   }, [activeBooking, id, router, setActiveBooking]);
 
-  // ── Runner's shopping ticks, live ─────────────────────────────────────
+  // ── Runner's shopping + stop ticks, live ──────────────────────────────
   // The runner's PATCH /runner/errand/{id}/shopping-items pushes the WHOLE
   // refreshed checklist to the customer as an in-app `shopping_items_updated`
-  // notification (ShoppingChecklistController, notifyInApp — broadcast only, no
-  // device buzz per tick). The app-wide realtime handler already lands that row
-  // in the notification store, so we read the newest row from there rather than
+  // notification (ShoppingChecklistController → notifyInAppCoalesced — in-app
+  // only, no device buzz per tick); a ticked-off extra stop arrives the same way as
+  // `booking_stops_updated`. The app-wide realtime handler already lands those
+  // rows in the notification store, so we read them from there rather than
   // opening a second socket for the same channel, and patch the booking in
-  // place: the payload IS the new list, so a tick costs zero requests.
+  // place: the payload IS the new state, so a tick costs zero requests.
+  //
+  // The server COALESCES each stream onto one card per errand and re-broadcasts
+  // it with the same id on every tick, so a tick is recognised by the card's
+  // CONTENT changing (utils/liveProgressCards), never by a new id — keying on
+  // the id froze the checklist after the first tick.
   //
   // Ticks never move `status`, which is why nothing else on this screen could
   // ever see them — the realtime watcher above and the reconcile poll both key
   // their full refetch on a status CHANGE.
-  const latestNotification = useNotificationStore((s) => s.notifications[0] ?? null);
-  const lastTickNotificationRef = useRef<string | null>(null);
-  const tickWatchArmedRef = useRef(false);
+  const shoppingCard = useNotificationStore((s) =>
+    latestProgressCard(s.notifications, SHOPPING_ITEMS_UPDATED, id),
+  );
+  const stopsCard = useNotificationStore((s) =>
+    latestProgressCard(s.notifications, BOOKING_STOPS_UPDATED, id),
+  );
+  const appliedCardsRef = useRef<{ id: string; shopping: string | null; stops: string | null } | null>(
+    null,
+  );
   useEffect(() => {
-    // The row sitting at the head of the inbox when this screen mounts predates
-    // it — the mount fetch already loaded authoritative shopping_items, so
-    // applying it would only risk replaying a list the inbox happens to be
-    // holding from an earlier errand. Arm on the first pass and react to
-    // arrivals from then on.
-    if (!tickWatchArmedRef.current) {
-      tickWatchArmedRef.current = true;
-      lastTickNotificationRef.current = latestNotification?.id ?? null;
+    if (!id) return;
+    const shoppingSig = progressCardSignature(shoppingCard);
+    const stopsSig = progressCardSignature(stopsCard);
+    // The cards held when this screen (or errand) opens predate it — the mount
+    // fetch already loaded authoritative shopping_items and stops. Arm on the
+    // first pass and react to changes from then on.
+    const applied = appliedCardsRef.current;
+    if (!applied || applied.id !== id) {
+      appliedCardsRef.current = { id, shopping: shoppingSig, stops: stopsSig };
       return;
     }
-    if (!id || !latestNotification) return;
-    if (lastTickNotificationRef.current === latestNotification.id) return;
-    lastTickNotificationRef.current = latestNotification.id;
 
-    // Type/booking/payload validation lives in the pure helper so it is
-    // unit-testable without a socket (utils/shoppingChecklist).
-    const patched = shoppingItemsFromNotification(
-      { type: latestNotification.type, data: latestNotification.data },
-      id,
-    );
-
-    // Same channel, same idiom, different payload: the runner ticking off an
-    // extra STOP arrives as `booking_stops_updated`. The payload is partial
-    // ({id, sequence, completed_at} — no address), so it merges into the stops
-    // the booking already holds rather than replacing them.
-    const stopUpdates = stopCompletionsFromNotification(
-      { type: latestNotification.type, data: latestNotification.data },
-      id,
-    );
+    // Type/booking/payload validation lives in the pure helpers so it is
+    // unit-testable without a socket (utils/shoppingChecklist, stopProgress).
+    const patched =
+      shoppingSig !== applied.shopping
+        ? shoppingItemsFromNotification(
+            shoppingCard ? { type: shoppingCard.type, data: shoppingCard.data } : null,
+            id,
+          )
+        : null;
+    // The stops payload is partial ({id, sequence, completed_at} — no
+    // address), so it merges into the stops the booking already holds rather
+    // than replacing them.
+    const stopUpdates =
+      stopsSig !== applied.stops
+        ? stopCompletionsFromNotification(
+            stopsCard ? { type: stopsCard.type, data: stopsCard.data } : null,
+            id,
+          )
+        : null;
+    applied.shopping = shoppingSig;
+    applied.stops = stopsSig;
 
     if (!patched && !stopUpdates) return;
 
@@ -1208,7 +1229,7 @@ export default function TrackingScreen() {
         };
       });
     }
-  }, [latestNotification, id, setActiveBooking]);
+  }, [shoppingCard, stopsCard, id, setActiveBooking]);
 
   // Route GeoJSON
   const routeMapCoords = useMemo(() => {

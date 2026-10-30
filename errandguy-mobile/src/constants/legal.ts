@@ -8,16 +8,41 @@
 export const PRIVACY_POLICY_VERSION = '2026-10-31';
 
 /**
- * The public page that explains account deletion and lets someone ask for it
- * without the app (Google Play requires one). Served by the API host at
- * {APP_URL}/delete-account, so it follows whichever backend this build talks to.
+ * A public web page served by the API host ({APP_URL}/terms, /privacy,
+ * /delete-account), built from the API base URL so it follows whichever
+ * backend this build talks to: "https://api.example.com/api/v1" →
+ * "https://api.example.com/terms".
  */
-export const DELETE_ACCOUNT_URL = (() => {
-  const api = process.env.EXPO_PUBLIC_API_URL ?? '';
+export function publicPageUrl(
+  path: string,
+  apiUrl: string = process.env.EXPO_PUBLIC_API_URL ?? '',
+): string {
+  const page = path.startsWith('/') ? path : `/${path}`;
   try {
-    const u = new URL(api);
-    return `${u.protocol}//${u.host}/delete-account`;
+    const u = new URL(apiUrl);
+    return `${u.protocol}//${u.host}${page}`;
   } catch {
-    return `${api.replace(/\/api\/.*$/, '')}/delete-account`;
+    return `${apiUrl.replace(/\/api(\/.*)?$/, '').replace(/\/+$/, '')}${page}`;
   }
-})();
+}
+
+/** The full Terms of Service. */
+export const TERMS_URL = publicPageUrl('/terms');
+
+/** The full Privacy Policy. */
+export const PRIVACY_URL = publicPageUrl('/privacy');
+
+/**
+ * The page that explains account deletion and lets someone ask for it without
+ * the app (Google Play requires one).
+ */
+export const DELETE_ACCOUNT_URL = publicPageUrl('/delete-account');
+
+export type PublicPage = 'terms' | 'privacy' | 'deleteAccount';
+
+/** Each public page with the label every surface links it by. */
+export const PUBLIC_PAGES: Record<PublicPage, { label: string; url: string }> = {
+  terms: { label: 'Terms of Service', url: TERMS_URL },
+  privacy: { label: 'Privacy Policy', url: PRIVACY_URL },
+  deleteAccount: { label: 'Delete your account', url: DELETE_ACCOUNT_URL },
+};

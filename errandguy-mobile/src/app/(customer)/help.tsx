@@ -24,6 +24,7 @@ import * as Haptics from 'expo-haptics';
 import { Card } from '../../components/ui/Card';
 import { GradientHeader } from '../../components/ui/GradientHeader';
 import { Eyebrow, Hairline } from '../../components/ui/Typography';
+import { PolicyLinksCard } from '../../components/settings/PolicyLinksCard';
 import { useReducedMotion } from '../../hooks/useReducedMotion';
 import { useResponsive } from '../../constants/responsive';
 import { LightColors } from '../../constants/colors';
@@ -288,6 +289,9 @@ export default function CustomerHelpScreen() {
             <ArrowUpRight size={16} color={LightColors.textTertiary} strokeWidth={2} />
           </Pressable>
         </Card>
+
+        <Eyebrow className="mt-8 mb-2">Policies</Eyebrow>
+        <PolicyLinksCard />
       </ScrollView>
     </View>
   );

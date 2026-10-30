@@ -21,6 +21,7 @@ use App\Models\Payment;
 use App\Models\RunnerLocation;
 use App\Services\BookingService;
 use App\Services\CancellationPolicy;
+use App\Support\CancellationNotice;
 use App\Support\ErrorCode;
 use App\Services\PaymentService;
 use App\Services\PricingService;
@@ -639,7 +640,11 @@ class BookingController extends Controller
             'note' => $request->validated('reason'),
         ]);
 
-        event(new BookingCancelled($booking));
+        event(new BookingCancelled($booking, CancellationNotice::forCustomer(
+            $booking,
+            CancellationNotice::BY_CUSTOMER,
+            feeWentToRunner: is_array($outcome) && isset($outcome['runner_fee']),
+        )));
 
         // Tell the runner they were paid for the trip, after commit.
         if (is_array($outcome) && isset($outcome['runner_fee'])) {

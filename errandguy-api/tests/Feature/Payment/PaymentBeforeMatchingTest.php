@@ -324,7 +324,7 @@ class PaymentBeforeMatchingTest extends TestCase
         $this->assertDatabaseHas('notifications', [
             'user_id' => $this->customer->id,
             'title' => 'Errand cancelled',
-            'body' => "Payment wasn't completed, so your errand #{$booking->booking_number} was cancelled.",
+            'body' => "Your errand #{$booking->booking_number} was cancelled: the payment wasn't completed. You weren’t charged.",
         ]);
 
         $this->actingAs($this->customer)

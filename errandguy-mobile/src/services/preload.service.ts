@@ -8,6 +8,7 @@ import { paymentService, parseWalletSummary } from './payment.service';
 import { runnerService } from './runner.service';
 import { supportService } from './support.service';
 import { notificationService } from './notification.service';
+import { useNotificationStore } from '../stores/notificationStore';
 import { userService, type CustomerHomeAggregate } from './user.service';
 import { chatService } from './chat.service';
 import { useChatStore } from '../stores/chatStore';
@@ -487,16 +488,15 @@ export async function preloadCustomerEssentials(userId: string) {
         },
         CacheTTL.MEDIUM,
       ),
-    // Prime the unread badge — a REQUEST, not a query-cache seed.
+    // Prime the unread badge — straight into the store, not a query-cache seed.
     //
-    // The tab badge doesn't go through useQuery at all: useRealtimeNotifications
-    // calls getUnreadCount() straight into the store and keeps it live over
-    // Reverb. So the CacheService key this used to write was read by nothing.
-    // What actually made the badge paint immediately was the side effect —
-    // getUnreadCount() is an `api.get` with a 15s micro-cache, so warming it
-    // here means the hook's own call on mount coalesces onto this one.
-    // Keeping the request and dropping the dead write states that plainly.
-    () => notificationService.getUnreadCount().then(() => undefined).catch(() => undefined),
+    // The tab badge doesn't go through useQuery at all: it is the store's
+    // server total (refreshUnreadCount), kept live by useRealtimeNotifications.
+    // The unread-count read is uncached (a stale body would undo a fresh
+    // arrival), so warming a micro-cache would buy nothing — writing the
+    // number into the store here is what makes the badge paint immediately.
+    // Never throws.
+    () => useNotificationStore.getState().refreshUnreadCount(),
     () =>
       seed(
         ['notifications', userId],
@@ -767,16 +767,15 @@ export async function preloadRunnerEssentials(userId: string) {
         },
         CacheTTL.MEDIUM,
       ),
-    // Prime the unread badge — a REQUEST, not a query-cache seed.
+    // Prime the unread badge — straight into the store, not a query-cache seed.
     //
-    // The tab badge doesn't go through useQuery at all: useRealtimeNotifications
-    // calls getUnreadCount() straight into the store and keeps it live over
-    // Reverb. So the CacheService key this used to write was read by nothing.
-    // What actually made the badge paint immediately was the side effect —
-    // getUnreadCount() is an `api.get` with a 15s micro-cache, so warming it
-    // here means the hook's own call on mount coalesces onto this one.
-    // Keeping the request and dropping the dead write states that plainly.
-    () => notificationService.getUnreadCount().then(() => undefined).catch(() => undefined),
+    // The tab badge doesn't go through useQuery at all: it is the store's
+    // server total (refreshUnreadCount), kept live by useRealtimeNotifications.
+    // The unread-count read is uncached (a stale body would undo a fresh
+    // arrival), so warming a micro-cache would buy nothing — writing the
+    // number into the store here is what makes the badge paint immediately.
+    // Never throws.
+    () => useNotificationStore.getState().refreshUnreadCount(),
     () =>
       seed(
         ['notifications', userId],

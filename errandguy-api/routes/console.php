@@ -13,7 +13,9 @@ Artisan::command('inspire', function () {
 |--------------------------------------------------------------------------
 | Scheduled Tasks
 |--------------------------------------------------------------------------
-| Queue maintenance and cleanup tasks.
+| Times are Asia/Manila (config app.schedule_timezone): the nightly work runs
+| between 02:30 and 04:30, when the marketplace is quietest. Stored timestamps
+| stay UTC.
 */
 
 // Liveness dead-man's-switch: stamp a heartbeat every minute so GET /health can
@@ -26,17 +28,24 @@ Schedule::call(fn () => Cache::put('scheduler:heartbeat', now()->timestamp, 900)
     ->everyMinute()
     ->name('scheduler-heartbeat');
 
+// The queue worker's dead-man's-switch: a tiny job the worker stamps when it
+// runs it, so /health reports a stopped (or badly backed-up) worker.
+Schedule::job(new \App\Jobs\WorkerHeartbeatJob())
+    ->everyMinute()
+    ->name('worker-heartbeat');
+
 // Prune failed jobs older than 7 days
-Schedule::command('queue:prune-failed --hours=168')->daily();
+Schedule::command('queue:prune-failed --hours=168')->dailyAt('03:00');
 
 // Prune completed job batches older than 2 days
-Schedule::command('queue:prune-batches --hours=48')->daily();
+Schedule::command('queue:prune-batches --hours=48')->dailyAt('03:05');
 
 // Clear expired cache entries
 Schedule::command('cache:prune-stale-tags')->hourly();
 
-// Data retention: cleanup old locations (24h) and messages (30d post-completion)
-Schedule::command('errandguy:cleanup-locations')->daily()->onOneServer();
+// Data retention: runner locations (24h), chats and their photos (30 days after
+// the errand ended) and inbox notifications (90 days).
+Schedule::command('errandguy:cleanup-locations')->dailyAt('03:15')->onOneServer();
 
 // Supply: nudge runners who started signing up and stopped. A runner registers,
 // hits the document gate, has to go find a government ID, and puts the phone
@@ -47,7 +56,6 @@ Schedule::command('errandguy:cleanup-locations')->daily()->onOneServer();
 // fortnight only).
 Schedule::command('errandguy:send-onboarding-reminders')
     ->dailyAt('10:00')
-    ->timezone(config('app.business_timezone', 'Asia/Manila'))
     ->onOneServer();
 
 // Money-in safety net: settle GCash/Maya tip charges (and legacy top-ups) the
@@ -93,28 +101,31 @@ Schedule::command('errandguy:reconcile-booking-payments')
 // purpose, so in-flight requests don't 401. The 48h grace keeps a token a
 // little past its expiry, well clear of the rotation window, so this can never
 // delete something still in use.
-Schedule::command('sanctum:prune-expired --hours=48')->daily()->onOneServer();
+Schedule::command('sanctum:prune-expired --hours=48')->dailyAt('03:30')->onOneServer();
 
 // Data retention: bound the money-path dedup tables — expired idempotency_keys
 // (dead after their 24h window) and old webhook_events (kept 90d as an audit
 // trail). Pruned only outside the replay window, so dedup stays intact. (DATA-9)
-Schedule::command('errandguy:prune-dedup-records')->daily()->onOneServer();
+Schedule::command('errandguy:prune-dedup-records')->dailyAt('03:45')->onOneServer();
 
 // Operational readiness: log a CRITICAL/WARNING if production is running with
 // unsafe/degraded config (APP_DEBUG on, broadcast off, file cache, sync queue)
 // that otherwise fails silently. Log-only — can't take the app down.
-Schedule::command('errandguy:check-prod-config')->daily()->onOneServer();
+Schedule::command('errandguy:check-prod-config')->dailyAt('04:30')->onOneServer();
 
 // Money integrity: assert every wallet_balance still equals its ledger (latest
 // balance_after) and log a CRITICAL on any out-of-band divergence — the
 // detective control for the withdrawable balance given the parallel engine on
 // the shared DB. Read-only. (MONEY-6)
-Schedule::command('errandguy:reconcile-wallets')->daily()->onOneServer();
+Schedule::command('errandguy:reconcile-wallets')->dailyAt('04:00')->onOneServer();
 
-// Disaster-recovery floor: a nightly gzip'd mysqldump to the configured backup
-// disk (config/backup.php) with retention pruning. NOT point-in-time recovery —
-// it bounds data loss behind the irreversible `migrate --force` deploy until
-// managed PITR exists. onOneServer so a multi-server fleet dumps once. (audit DR)
+// Disaster-recovery floor: a nightly gzip'd mysqldump plus an archive of the
+// uploaded files (runner ID documents, booking media), kept locally and copied
+// to the off-site backup disk (config/backup.php), with retention pruning. NOT
+// point-in-time recovery — it bounds data loss behind the irreversible
+// `migrate --force` deploy until managed PITR exists. The command raises an
+// AdminAlert and logs CRITICAL itself when any part fails. onOneServer so a
+// multi-server fleet dumps once. (audit DR)
 Schedule::command('errandguy:backup-database')->dailyAt('02:30')->onOneServer();
 
 // Matching: rescue bookings whose matched runner never accepted — reset to

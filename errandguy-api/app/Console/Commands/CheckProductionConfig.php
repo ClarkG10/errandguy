@@ -2,6 +2,7 @@
 
 namespace App\Console\Commands;
 
+use App\Support\TrustedProxyList;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\Log;
 
@@ -20,7 +21,7 @@ class CheckProductionConfig extends Command
 {
     protected $signature = 'errandguy:check-prod-config';
 
-    protected $description = 'Warn if production is running with unsafe/degraded config (APP_DEBUG, broadcast, cache, queue).';
+    protected $description = 'Warn if production is running with unsafe/degraded config (APP_DEBUG, broadcast, cache, queue, proxies, mail).';
 
     public function handle(): int
     {
@@ -67,9 +68,14 @@ class CheckProductionConfig extends Command
             $issues[] = ['level' => 'warning', 'message' => "CACHE_STORE='file' — rate-limit / ETag / idempotency state is best-effort and does not hold under concurrency. Use 'redis'."];
         }
 
-        $trustedProxies = trim((string) env('TRUSTED_PROXIES', ''));
-        if ($trustedProxies === '') {
-            $issues[] = ['level' => 'warning', 'message' => 'TRUSTED_PROXIES is empty — on a *.on-forge.com host Laravel auto-trusts ALL proxies, so ip() is X-Forwarded-For and is SPOOFABLE if the origin is reachable off-Cloudflare (bypassing every IP throttle). Set it to the specific Cloudflare/LB ranges AND firewall the origin.'];
+        // Read exactly as App\Http\Middleware\TrustProxies reads it (config,
+        // not env(), so it survives config:cache).
+        if (TrustedProxyList::configured() === []) {
+            $issues[] = ['level' => 'critical', 'message' => 'TRUSTED_PROXIES is empty — forwarded headers are ignored, so behind Cloudflare every client shares the edge\'s IP and the per-IP limits on sign-in, codes and sign-up are shared by everyone (one busy edge locks real users out). Set TRUSTED_PROXIES=cloudflare (or the specific proxy ranges) and firewall the origin to Cloudflare only.'];
+        }
+
+        foreach (self::mailIssues() as $issue) {
+            $issues[] = $issue;
         }
 
         $queue = config('queue.default');
@@ -118,5 +124,54 @@ class CheckProductionConfig extends Command
         }
 
         return $issues;
+    }
+
+    /**
+     * Mail carries password-reset and sign-in codes, email confirmation and
+     * the SOS / ops alerts to staff. A mailer that isn't set up "sends"
+     * nothing and nobody is told — critical.
+     *
+     * @return array<int, array{level: string, message: string}>
+     */
+    private static function mailIssues(): array
+    {
+        $mailer = (string) config('mail.default');
+
+        if (in_array($mailer, ['', 'log', 'array'], true)) {
+            return [['level' => 'critical', 'message' => "MAIL_MAILER='".($mailer ?: '(empty)')."' — no email leaves the server: password-reset and sign-in codes, email confirmation and SOS staff alerts are written to the log instead. Set MAIL_MAILER=gmail and the GMAIL_OAUTH_* values (docs/EMAIL_GMAIL_API_SETUP.md)."]];
+        }
+
+        $issues = [];
+        $missing = match ($mailer) {
+            'gmail' => self::gmailCredentialsMissing(),
+            'smtp' => blank(config('mail.mailers.smtp.host')) || blank(config('mail.mailers.smtp.username')) ? 'MAIL_HOST / MAIL_USERNAME / MAIL_PASSWORD' : null,
+            'resend' => blank(config('services.resend.key')) ? 'RESEND_API_KEY' : null,
+            default => null,
+        };
+        if ($missing !== null) {
+            $issues[] = ['level' => 'critical', 'message' => "MAIL_MAILER='{$mailer}' but {$missing} is not set — every email (codes, SOS staff alerts) will fail to send."];
+        }
+
+        $from = (string) config('mail.from.address');
+        if ($from === '' || str_ends_with($from, '@example.com')) {
+            $issues[] = ['level' => 'warning', 'message' => "MAIL_FROM_ADDRESS='".($from ?: '(empty)')."' — set it to the mailbox mail is sent from (support@errandguyph.com)."];
+        }
+
+        return $issues;
+    }
+
+    /** What the gmail transport lacks, or null when one credential set is complete. */
+    private static function gmailCredentialsMissing(): ?string
+    {
+        $gmail = (array) config('mail.mailers.gmail', []);
+
+        $oauth = filled($gmail['oauth_client_id'] ?? null)
+            && filled($gmail['oauth_client_secret'] ?? null)
+            && filled($gmail['oauth_refresh_token'] ?? null);
+        $serviceAccount = filled($gmail['credentials_base64'] ?? null)
+            || filled($gmail['credentials'] ?? null)
+            || (filled($gmail['client_email'] ?? null) && filled($gmail['private_key'] ?? null));
+
+        return $oauth || $serviceAccount ? null : 'GMAIL_OAUTH_CLIENT_ID / GMAIL_OAUTH_CLIENT_SECRET / GMAIL_OAUTH_REFRESH_TOKEN';
     }
 }

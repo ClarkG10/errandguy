@@ -24,6 +24,7 @@ import * as Haptics from 'expo-haptics';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useAuthStore } from '../../../stores/authStore';
 import { useChat } from '../../../hooks/useChat';
+import { useOpenChatThread } from '../../../hooks/useOpenChatThread';
 import { useReducedMotion } from '../../../hooks/useReducedMotion';
 import { useKeyboard } from '../../../hooks/useKeyboard';
 import { GradientHeader } from '../../../components/ui/GradientHeader';
@@ -279,6 +280,8 @@ export default function ChatScreen() {
     isTyping,
     sendTyping,
   } = useChat(bookingId ?? '');
+  // Quiet the foreground push banner for this thread while it is on screen.
+  useOpenChatThread(bookingId);
 
   const [inputText, setInputText] = useState('');
   const [sending, setSending] = useState(false);

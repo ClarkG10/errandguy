@@ -9,6 +9,7 @@ use App\Http\Requests\Auth\VerifyOTPRequest;
 use App\Http\Resources\UserResource;
 use App\Models\User;
 use App\Services\OTPService;
+use App\Support\DeviceSessions;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Support\Facades\Log;
 
@@ -65,20 +66,18 @@ class OTPController extends Controller
             'ip' => $request->ip(),
         ]);
 
-        $attempts = $this->otpService->getAttemptCount($identifier);
+        $result = $this->otpService->check($identifier, $request->code);
 
-        if ($attempts >= 5) {
-            $this->otpService->invalidateOTP($identifier);
-
+        if ($result === OTPService::LOCKED) {
             return $this->fail(ErrorCode::OTP_MAX_ATTEMPTS, 'Too many failed attempts. Please request a new code.');
         }
 
-        if (!$this->otpService->verifyOTP($identifier, $request->code)) {
+        if ($result !== OTPService::VALID) {
             // attempts_remaining stays top-level (the app reads it) via $merge.
             return $this->fail(
                 ErrorCode::OTP_INVALID,
                 'Invalid verification code.',
-                merge: ['attempts_remaining' => max(0, 4 - $attempts)],
+                merge: ['attempts_remaining' => $this->otpService->attemptsRemaining($identifier)],
             );
         }
 
@@ -106,7 +105,7 @@ class OTPController extends Controller
                 $user->update(['email_verified' => true]);
             }
 
-            $token = $user->createToken($request->header('User-Agent', 'mobile'))->plainTextToken;
+            $token = DeviceSessions::issueToken($user, $request);
 
             // The account belongs to the caller, so render the self-view
             // (email / verified flags / wallet); request isn't authed yet here.

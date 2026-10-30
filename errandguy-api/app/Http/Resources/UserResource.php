@@ -40,8 +40,9 @@ class UserResource extends JsonResource
             'avatar_url' => $this->avatar_url,
             'role' => $this->role,
             'status' => $this->when($isSelf, $this->status),
-            'email_verified' => $this->when($isSelf, $this->email_verified),
-            'phone_verified' => $this->when($isSelf, $this->phone_verified),
+            // Cleared when the email changes; set again by POST /user/email/verify.
+            'email_verified' => $this->when($isSelf, (bool) $this->email_verified),
+            'phone_verified' => $this->when($isSelf, (bool) $this->phone_verified),
             'wallet_balance' => $this->when($isSelf, $this->wallet_balance),
             // Non-withdrawable promotional balance left from the retired
             // referral program. Spent first on errands until used up, never

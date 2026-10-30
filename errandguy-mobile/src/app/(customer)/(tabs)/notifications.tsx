@@ -400,6 +400,7 @@ export default function NotificationsScreen() {
   // them and trigger redundant fetches / store writes).
   const notifications = useNotificationStore((s) => s.notifications);
   const setNotifications = useNotificationStore((s) => s.setNotifications);
+  const refreshUnreadCount = useNotificationStore((s) => s.refreshUnreadCount);
   const markRead = useNotificationStore((s) => s.markRead);
   const markAllRead = useNotificationStore((s) => s.markAllRead);
   const remove = useNotificationStore((s) => s.remove);
@@ -509,13 +510,15 @@ export default function NotificationsScreen() {
     }
   }, [hasMore, page, setNotifications]);
 
-  // Sync into the global store as the query updates. setNotifications
-  // recomputes the unread badge from the payload itself.
+  // Sync the rows into the global store as the query updates. The badge is
+  // NOT derived from them (they are one page of one category) — it is re-read
+  // from the server's unread total whenever the inbox loads.
   useEffect(() => {
     if (notifQ.data) {
       setNotifications(notifQ.data);
+      void refreshUnreadCount();
     }
-  }, [notifQ.data, setNotifications]);
+  }, [notifQ.data, setNotifications, refreshUnreadCount]);
 
   const onRefresh = useCallback(async () => {
     setRefreshing(true);
@@ -583,13 +586,14 @@ export default function NotificationsScreen() {
 
   const handleMarkAllRead = useCallback(async () => {
     Haptics.selectionAsync().catch(() => {});
-    // Snapshot the list (with its original read flags) so a failure restores
-    // the exact prior state; setNotifications recomputes the unread badge.
+    // Snapshot the list (with its original read flags) AND the badge so a
+    // failure restores the exact prior state.
     const prev = useNotificationStore.getState().notifications;
+    const prevUnread = useNotificationStore.getState().unreadCount;
     const q = queueable('notification.markAllRead', {}, { dedupeKey: 'notif-mark-all-read' });
     await runOptimistic({
       apply: () => markAllRead(),
-      rollback: () => useNotificationStore.getState().setNotifications(prev),
+      rollback: () => useNotificationStore.getState().restore(prev, prevUnread),
       commit: q.commit,
       offline: q.offline,
       errorMessage: "Couldn't mark all as read. Please try again.",
@@ -666,6 +670,7 @@ export default function NotificationsScreen() {
   const handleClearAll = useCallback(async () => {
     // ConfirmModal fires the destructive warning haptic on confirm.
     const prev = useNotificationStore.getState().notifications;
+    const prevUnread = useNotificationStore.getState().unreadCount;
     // Clear-all supersedes any deferred single-row deletes.
     pendingDeletes.current.forEach((t) => clearTimeout(t));
     pendingDeletes.current.clear();
@@ -675,7 +680,7 @@ export default function NotificationsScreen() {
     setClearConfirmVisible(false);
     await runOptimistic({
       apply: () => clear(),
-      rollback: () => useNotificationStore.getState().setNotifications(prev),
+      rollback: () => useNotificationStore.getState().restore(prev, prevUnread),
       commit: () => notificationService.clearAll(),
       errorMessage: "Couldn't clear notifications. Please try again.",
       retry: true,

@@ -31,11 +31,11 @@ class AuditQuickWinsTest extends TestCase
 
     public function test_deep_health_probe_reports_ok_when_db_and_cache_are_up(): void
     {
-        // `status` now also reflects scheduler liveness (a dead cron means no
-        // backups and no money reconciliation, so "ok" would be dishonest —
-        // see SchedulerHealthTest). Seed a fresh heartbeat so this test keeps
-        // asserting what it is actually about: the DB and cache probes.
+        // `status` also reflects scheduler and queue-worker liveness (see
+        // SchedulerHealthTest / HealthCheckTest). Seed fresh heartbeats so this
+        // test keeps asserting what it is actually about: the DB and cache probes.
         \Illuminate\Support\Facades\Cache::put('scheduler:heartbeat', now()->timestamp, 900);
+        \Illuminate\Support\Facades\Cache::put(\App\Jobs\WorkerHeartbeatJob::CACHE_KEY, now()->timestamp, 900);
 
         $this->getJson('/health')
             ->assertOk()

@@ -42,6 +42,7 @@ import { LightColors } from '../../constants/colors';
 import { copy } from '../../constants/copy';
 import type { TrustedContact } from '../../types';
 import { toast } from '../../stores/toastStore';
+import { formatPhMobile, toPhMobileE164 } from '../../utils/phone';
 
 // expo-contacts requires a native build and is not available in Expo Go.
 let Contacts: typeof import('expo-contacts') | null = null;
@@ -215,15 +216,8 @@ export function TrustedContactsScreen({ fallbackHref }: TrustedContactsScreenPro
   const handleSave = async () => {
     const trimmedName = formName.trim();
 
-    // Normalize phone to Philippine format (09XXXXXXXXX)
-    let phone = formPhone.trim().replace(/\s+/g, '');
-    if (phone.startsWith('+63')) {
-      phone = '0' + phone.slice(3);
-    } else if (phone.startsWith('63')) {
-      phone = '0' + phone.slice(2);
-    } else if (!phone.startsWith('0') && phone.startsWith('9')) {
-      phone = '0' + phone;
-    }
+    // Any spelling of a PH mobile (09…, +63 9…, 9…) is saved as +639XXXXXXXXX.
+    const phone = toPhMobileE164(formPhone);
 
     // Inline field errors are the primary surface (each carries an
     // aria-live alert); focus the first invalid field so the fix is
@@ -231,12 +225,12 @@ export function TrustedContactsScreen({ fallbackHref }: TrustedContactsScreenPro
     const nErr = !trimmedName ? 'Enter a name for this contact' : undefined;
     const pErr = !formPhone.trim()
       ? 'Enter a phone number'
-      : !/^(0)9\d{9}$/.test(phone)
+      : !phone
         ? 'Enter a valid Philippine mobile number, e.g. 09XX XXX XXXX'
         : undefined;
     setNameError(nErr);
     setPhoneError(pErr);
-    if (nErr || pErr) {
+    if (nErr || pErr || !phone) {
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning).catch(() => {});
       (nErr ? nameRef : phoneRef).current?.focus();
       return;
@@ -383,13 +377,7 @@ export function TrustedContactsScreen({ fallbackHref }: TrustedContactsScreenPro
   // The user's own safety data on their own device: show the full number
   // (grouped for legibility) so a fat-fingered digit can be caught before
   // an emergency — never masked.
-  const formatPhone = (phone: string) => {
-    const digits = phone.replace(/\D/g, '');
-    if (digits.length === 11 && digits.startsWith('0')) {
-      return `${digits.slice(0, 4)} ${digits.slice(4, 7)} ${digits.slice(7)}`;
-    }
-    return phone;
-  };
+  const formatPhone = formatPhMobile;
 
   // Spell out the consequence when removing the primary (called first
   // during SOS) or the last remaining contact (leaves SOS with no one).

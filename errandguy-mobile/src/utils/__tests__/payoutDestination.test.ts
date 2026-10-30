@@ -32,14 +32,17 @@ describe('validatePayoutDestination — mirrors App\\Support\\PayoutDestination:
     );
   });
 
-  it.each(['09171234567', '+639171234567', '0917 123 4567', '0917-123-4567'])(
+  // Every spelling of a PH mobile is accepted, because it is SENT as
+  // +639XXXXXXXXX (toPayoutDestinationPayload) — the shape the server's
+  // /^(\+63|0)9\d{9}$/ rule takes.
+  it.each(['09171234567', '+639171234567', '0917 123 4567', '0917-123-4567', '639171234567', '+63 917 123 4567'])(
     'accepts the PH mobile number %s for an e-wallet',
     (accountNumber) => {
       expect(validatePayoutDestination(draft({ channel: 'gcash', accountNumber }), EWALLET_ONLY)).toEqual({});
     },
   );
 
-  it.each(['', '0917123456', '08171234567', '639171234567', '+63917123456', 'abc'])(
+  it.each(['', '0917123456', '08171234567', '+63917123456', '6391712345678', 'abc'])(
     'rejects %p as a GCash / Maya number',
     (accountNumber) => {
       expect(
@@ -75,12 +78,16 @@ describe('validatePayoutDestination — mirrors App\\Support\\PayoutDestination:
 });
 
 describe('toPayoutDestinationPayload', () => {
-  it('sends an e-wallet number without spaces or dashes, and no bank name', () => {
+  it('sends an e-wallet number as +639XXXXXXXXX, and no bank name', () => {
     expect(
       toPayoutDestinationPayload(
         draft({ channel: 'gcash', accountNumber: ' 0917 123-4567 ', bankName: 'BDO' }),
       ),
-    ).toEqual({ channel: 'gcash', account_number: '09171234567', account_name: 'Rina Cruz' });
+    ).toEqual({ channel: 'gcash', account_number: '+639171234567', account_name: 'Rina Cruz' });
+    expect(
+      toPayoutDestinationPayload(draft({ channel: 'maya', accountNumber: '+63 917 123 4567' }))
+        .account_number,
+    ).toBe('+639171234567');
   });
 
   it('sends a bank account as digits with its bank', () => {

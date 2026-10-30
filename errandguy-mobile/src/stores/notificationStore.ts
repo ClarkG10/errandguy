@@ -1,8 +1,16 @@
 import { create } from 'zustand';
+import { notificationService } from '../services/notification.service';
 import type { AppNotification } from '../types';
 
 interface NotificationState {
   notifications: AppNotification[];
+  /**
+   * The Alerts badge: the SERVER's unread total (GET /notifications/unread-
+   * count), moved by local deltas as rows are read / removed / arrive between
+   * reconciles. Never recomputed from `notifications` — that is one page (and,
+   * on the customer inbox, one category) of the inbox, so counting it reset a
+   * badge of 34 to the 3 unread rows on screen.
+   */
   unreadCount: number;
   isLoading: boolean;
   /**
@@ -21,13 +29,24 @@ interface NotificationState {
   pushPermission: 'granted' | 'denied' | null;
 
   setNotifications: (notifications: AppNotification[]) => void;
-  addNotification: (notification: AppNotification) => void;
+  /**
+   * Land a realtime row. A NEW id is prepended; an id we already hold is an
+   * UPDATE (the server coalesces progress streams — shopping ticks, stop
+   * ticks — onto one card and re-broadcasts it with fresh data), so it
+   * replaces the held row and moves to the top. Returns whether the id was
+   * already held, so the caller knows when the badge delta was a guess.
+   */
+  addNotification: (notification: AppNotification) => boolean;
   markRead: (id: string) => void;
   markAllRead: () => void;
   remove: (id: string) => void;
   restoreAt: (notification: AppNotification, index: number) => void;
   clear: () => void;
+  /** Put back an exact earlier list + badge (rollback of an optimistic bulk action). */
+  restore: (notifications: AppNotification[], unreadCount: number) => void;
   setUnreadCount: (count: number) => void;
+  /** Re-read the server's unread total into the badge. Never throws. */
+  refreshUnreadCount: () => Promise<void>;
   setIsLoading: (loading: boolean) => void;
   setPushPermission: (state: 'granted' | 'denied' | null) => void;
 }
@@ -38,34 +57,33 @@ export const useNotificationStore = create<NotificationState>((set) => ({
   isLoading: false,
   pushPermission: null,
 
-  // Replace the full list. Recompute the unread badge from the payload
-  // itself so a refresh can never leave the badge out of sync with the
-  // visible rows (previously a stale unreadCount could survive a list
-  // replacement, e.g. after pull-to-refresh hit a server that had since
-  // marked everything read).
-  setNotifications: (notifications) =>
-    set({
-      notifications,
-      unreadCount: notifications.filter((n) => !n.is_read).length,
-    }),
+  // Replace the rows. The badge is deliberately left alone: these rows are a
+  // page (or one category) of the inbox, not all of it — the server's total
+  // stays the badge (refreshUnreadCount).
+  setNotifications: (notifications) => set({ notifications }),
 
-  addNotification: (notification) =>
+  addNotification: (notification) => {
+    let held = false;
     set((state) => {
-      // De-dupe by id. Realtime INSERT and an explicit refresh fetched
-      // around the same time can both deliver the same row; we don't
-      // want it stacking twice in the list (or the unread count to
-      // double-count). Also: only bump unread if the row isn't already
-      // marked read server-side (e.g. the push handler called
-      // markRead() before the Realtime fan-out arrived).
-      if (state.notifications.some((n) => n.id === notification.id)) {
-        return state;
+      const prev = state.notifications.find((n) => n.id === notification.id);
+      held = !!prev;
+      if (!prev) {
+        return {
+          notifications: [notification, ...state.notifications],
+          unreadCount: notification.is_read ? state.unreadCount : state.unreadCount + 1,
+        };
       }
-      const isUnread = !notification.is_read;
+      // The coalesced card came round again: newest content, newest position.
+      // The badge moves only if the read state did (the server re-marks an
+      // updated card unread).
+      const delta = (prev.is_read ? 0 : -1) + (notification.is_read ? 0 : 1);
       return {
-        notifications: [notification, ...state.notifications],
-        unreadCount: isUnread ? state.unreadCount + 1 : state.unreadCount,
+        notifications: [notification, ...state.notifications.filter((n) => n.id !== notification.id)],
+        unreadCount: Math.max(0, state.unreadCount + delta),
       };
-    }),
+    });
+    return held;
+  },
 
   markRead: (id) =>
     set((state) => {
@@ -128,10 +146,23 @@ export const useNotificationStore = create<NotificationState>((set) => ({
       };
     }),
 
-  // Wipe the whole list (clear-all). Badge resets to zero.
+  // Wipe the whole list (clear-all deletes every notification server-side,
+  // and sign-out ends the account's inbox). Badge resets to zero.
   clear: () => set({ notifications: [], unreadCount: 0 }),
 
-  setUnreadCount: (count) => set({ unreadCount: count }),
+  restore: (notifications, unreadCount) => set({ notifications, unreadCount }),
+
+  setUnreadCount: (count) => set({ unreadCount: Math.max(0, Number(count) || 0) }),
+
+  refreshUnreadCount: async () => {
+    try {
+      const response = await notificationService.getUnreadCount();
+      const count = response?.data?.data?.unread_count;
+      if (typeof count === 'number') set({ unreadCount: Math.max(0, count) });
+    } catch {
+      // Keep the current badge; the next foreground / event reconciles.
+    }
+  },
 
   setIsLoading: (loading) => set({ isLoading: loading }),
 

@@ -7,9 +7,8 @@ use App\Http\Controllers\PublicTripController;
 use App\Http\Controllers\RunnerDocumentFileController;
 use Illuminate\Support\Facades\Route;
 
-Route::get('/', function () {
-    return view('welcome');
-});
+// A plain ErrandGuy page (name, one line, links to the public pages below).
+Route::view('/', 'welcome')->name('home');
 
 // Deep health probe (DB + cache/Redis) for uptime monitoring — unlike the
 // framework default '/up', it goes RED on a real dependency outage. (audit DR)
@@ -76,6 +75,14 @@ Route::get('/trip/{token}', [PublicTripController::class, 'page'])
 | explains how to delete an account and how to ask for it without the app.
 */
 Route::view('/delete-account', 'delete-account')->name('account.delete');
+
+/*
+| Terms of Service and Privacy Policy (public, linked from the app and the
+| store listings). Placeholder text until the owner publishes the
+| lawyer-approved versions; the version shown is config app.privacy_policy_version.
+*/
+Route::view('/terms', 'terms')->name('terms');
+Route::view('/privacy', 'privacy')->name('privacy');
 
 Route::get('/payment/complete', function () {
     return response(view('payment-complete'))

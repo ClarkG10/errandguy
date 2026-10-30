@@ -5,6 +5,7 @@ import { X } from 'lucide-react-native';
 import { Card } from '../ui/Card';
 import { Button } from '../ui/Button';
 import { DeleteAccountPageLink } from '../settings/DeleteAccountPageLink';
+import { PublicPageLink } from '../settings/PublicPageLink';
 import { LightColors } from '../../constants/colors';
 
 export type LegalDocument = 'terms' | 'privacy';
@@ -118,6 +119,14 @@ export function LegalModal({ visible, document, onClose, onAgree }: LegalModalPr
               </Card>
             </View>
           ))}
+
+          {/* The summary above is the in-app read; the published page is the
+              full text (constants/legal → the API host's /terms, /privacy). */}
+          <PublicPageLink
+            page={document}
+            label={`Read the full ${doc.title}`}
+            className="self-center mt-1 mb-3"
+          />
 
           <Text className="text-xs font-montserrat text-textSecondary text-center mt-2">
             Last updated: January 2026

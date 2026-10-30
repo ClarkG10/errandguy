@@ -7,6 +7,7 @@ use App\Models\AdminAlert;
 use App\Models\Booking;
 use App\Models\RunnerProfile;
 use App\Models\User;
+use App\Support\DeviceSessions;
 
 /**
  * Account suspension, shared by the Filament single and bulk "Suspend"
@@ -15,10 +16,11 @@ use App\Models\User;
 class UserModerationService
 {
     /**
-     * Suspend a user: lock them out, end their sessions, and — when they are a
-     * runner — take them offline at once so matching stops offering them work
-     * (MatchingService also refuses any account that isn't active, so even a
-     * stale online flag can't get them an offer).
+     * Suspend a user: lock them out, end their sessions, drop their push
+     * registrations, and — when they are a runner — take them offline at once
+     * so matching stops offering them work (MatchingService also refuses any
+     * account that isn't active, so even a stale online flag can't get them an
+     * offer).
      *
      * A runner suspended mid-errand still has a customer waiting on them, so
      * staff get a live alert for each errand they were holding to reassign
@@ -38,7 +40,9 @@ class UserModerationService
             'suspended_reason' => $reason,
             'suspended_at' => now(),
         ]);
-        $user->tokens()->delete();
+        // Signed out everywhere, and no more pushes to their phones: a
+        // suspended account's notifications must not keep arriving.
+        DeviceSessions::signOutEverywhere($user);
 
         RunnerProfile::switchOffline($user->id);
 

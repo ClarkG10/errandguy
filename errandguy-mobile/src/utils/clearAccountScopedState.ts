@@ -2,6 +2,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useBookingStore } from '../stores/bookingStore';
 import { usePaymentStore } from '../stores/paymentStore';
 import { usePreferencesStore } from '../stores/preferencesStore';
+import { useNotificationStore } from '../stores/notificationStore';
 import { CacheService } from '../services/cache.service';
 import { geocodingService } from '../services/geocoding.service';
 import { apiCache } from '../services/api';
@@ -56,6 +57,9 @@ const TRUSTED_CONTACTS_KEY = '@trusted_contacts_cache';
  *     alarm (or an "I'm safe" control) for an errand that isn't theirs.
  *   • CacheService (persisted query cache) + apiCache (in-memory) + recent
  *     destinations — cached network responses / addresses of the prior user.
+ *   • notificationStore — the in-memory Alerts rows and badge. They outlived a
+ *     sign-out, so the next account saw the previous one's inbox (and its
+ *     unread count) until its own first fetch replaced them.
  */
 export async function clearAccountScopedState(): Promise<void> {
   // Synchronous in-memory / persisted zustand resets first.
@@ -63,6 +67,7 @@ export async function clearAccountScopedState(): Promise<void> {
   useBookingStore.getState().clearDraft();
   usePaymentStore.getState().resolve();
   usePreferencesStore.getState().clearLastPaymentMethods();
+  useNotificationStore.getState().clear();
 
   // Cached network data + on-device PII (best-effort, never throws — a storage
   // failure must not be able to strand someone in a half-signed-out session).

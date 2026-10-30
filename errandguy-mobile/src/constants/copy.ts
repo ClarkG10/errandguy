@@ -27,7 +27,11 @@ export const copy = {
     loggedOut: 'You’ve been signed out.',
     otpResent: 'We’ve sent a new code.',
     otpResendFailed: 'Couldn’t send a new code. Please try again in a moment.',
-    resetSent: 'If an account exists for that email, a reset link is on its way.',
+    resetSent: 'We’ve emailed you a new 6-digit code.',
+    passwordReset: 'Password updated. Log in with your new password.',
+    passwordChanged: 'Password changed. Other devices have been signed out.',
+    emailVerified: 'Email verified.',
+    signedOutEverywhere: 'Signed out of all devices.',
   },
   booking: {
     created: 'Errand booked — finding you a runner.',

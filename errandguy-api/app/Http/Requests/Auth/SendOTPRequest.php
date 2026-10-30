@@ -2,13 +2,21 @@
 
 namespace App\Http\Requests\Auth;
 
+use App\Http\Requests\Concerns\NormalizesPhoneNumbers;
 use Illuminate\Foundation\Http\FormRequest;
 
 class SendOTPRequest extends FormRequest
 {
+    use NormalizesPhoneNumbers;
+
     public function authorize(): bool
     {
         return true;
+    }
+
+    protected function prepareForValidation(): void
+    {
+        $this->normalizePhoneFields(['phone']);
     }
 
     public function rules(): array

@@ -3,24 +3,38 @@ import relativeTime from 'dayjs/plugin/relativeTime';
 
 dayjs.extend(relativeTime);
 
+/**
+ * Format, or '' when there is no real date to format. dayjs renders a null /
+ * malformed timestamp as the literal string "Invalid Date", which is what a
+ * chat bubble without a server timestamp used to show; an empty slot is the
+ * honest rendering of "no time known".
+ */
+function format(date: string | Date | null | undefined, pattern: string): string {
+  if (date == null || date === '') return '';
+  const d = dayjs(date);
+  return d.isValid() ? d.format(pattern) : '';
+}
+
 export function formatRelativeTime(date: string | Date): string {
-  return dayjs(date).fromNow();
+  if (date == null || date === '') return '';
+  const d = dayjs(date);
+  return d.isValid() ? d.fromNow() : '';
 }
 
 export function formatFullDate(date: string | Date): string {
-  return dayjs(date).format('MMMM D, YYYY');
+  return format(date, 'MMMM D, YYYY');
 }
 
 export function formatShortDate(date: string | Date): string {
-  return dayjs(date).format('MMM D, YYYY');
+  return format(date, 'MMM D, YYYY');
 }
 
 export function formatTime(date: string | Date): string {
-  return dayjs(date).format('h:mm A');
+  return format(date, 'h:mm A');
 }
 
 export function formatDateTime(date: string | Date): string {
-  return dayjs(date).format('MMM D, YYYY h:mm A');
+  return format(date, 'MMM D, YYYY h:mm A');
 }
 
 export function formatDateForAPI(date: Date): string {
@@ -48,6 +62,7 @@ export function localDayKey(date: string | Date): string {
  *  - "MMM D, YYYY" otherwise
  */
 export function formatChatDayLabel(date: string | Date): string {
+  if (date == null || date === '' || !dayjs(date).isValid()) return '';
   const d = dayjs(date).startOf('day');
   const today = dayjs().startOf('day');
   const diff = today.diff(d, 'day');

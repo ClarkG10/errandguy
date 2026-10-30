@@ -19,7 +19,8 @@ import { join } from 'path';
  *
  *  2. A runner tick never moves `status`, so nothing keyed on a status change
  *     can surface it. The screen must patch its checklist from the
- *     `shopping_items_updated` broadcast instead.
+ *     `shopping_items_updated` broadcast instead — every tick of it, though
+ *     the server re-sends the SAME coalesced card each time.
  */
 const SOURCE = readFileSync(
   join(__dirname, '..', '(customer)', 'tracking', '[id].tsx'),
@@ -39,13 +40,17 @@ describe('customer tracking — shopping visibility', () => {
 
   it('patches the checklist from the shopping_items_updated broadcast', () => {
     expect(SOURCE).toMatch(/shoppingItemsFromNotification\(/);
-    const start = SOURCE.indexOf('const lastTickNotificationRef');
+    const start = SOURCE.indexOf('const appliedCardsRef');
     expect(start).toBeGreaterThan(-1);
-    const block = SOURCE.slice(start, SOURCE.indexOf('}, [latestNotification', start));
-    // Reads the app-wide realtime sink rather than opening a second socket.
-    expect(SOURCE).toMatch(/useNotificationStore\(\(s\) => s\.notifications\[0\]/);
-    // Ignores whatever row happened to be at the head of the inbox on mount.
-    expect(block).toMatch(/tickWatchArmedRef/);
+    const block = SOURCE.slice(start, SOURCE.indexOf('}, [shoppingCard, stopsCard', start));
+    // Reads THIS errand's progress cards from the app-wide realtime sink
+    // rather than opening a second socket (or trusting whatever row happens to
+    // head the inbox).
+    expect(SOURCE).toMatch(
+      /useNotificationStore\(\(s\) =>\s*latestProgressCard\(s\.notifications, SHOPPING_ITEMS_UPDATED, id\)/,
+    );
+    // Ignores the cards held when the screen opened — the mount fetch is newer.
+    expect(block).toMatch(/if \(!applied \|\| applied\.id !== id\)/);
     // Writes through the store so the home card sees the same ticks. The
     // write is shared with the stops merge, so it spreads conditionally
     // rather than naming shopping_items alone.
@@ -53,9 +58,22 @@ describe('customer tracking — shopping visibility', () => {
     expect(block).toMatch(/shopping_items: patched/);
   });
 
+  it('applies EVERY tick: a coalesced card is recognised by content, never by its id', () => {
+    // The server rewrites ONE card per errand and re-broadcasts it with the
+    // same id on each tick. Remembering the last applied id froze the
+    // checklist after the first tick, so the screen must compare content.
+    const start = SOURCE.indexOf('const appliedCardsRef');
+    const block = SOURCE.slice(start, SOURCE.indexOf('}, [shoppingCard, stopsCard', start));
+    expect(block).toMatch(/progressCardSignature\(shoppingCard\)/);
+    expect(block).toMatch(/shoppingSig !== applied\.shopping/);
+    expect(SOURCE).not.toMatch(/lastTickNotificationRef/);
+  });
+
   it('merges stop completions from the booking_stops_updated broadcast', () => {
     // Same effect, same channel — a stop tick patches booking.stops by id
     // (the payload is partial, so it must merge, never replace).
+    expect(SOURCE).toMatch(/latestProgressCard\(s\.notifications, BOOKING_STOPS_UPDATED, id\)/);
+    expect(SOURCE).toMatch(/stopsSig !== applied\.stops/);
     expect(SOURCE).toMatch(/stopCompletionsFromNotification\(/);
     expect(SOURCE).toMatch(/mergeStopCompletions\(/);
     // And the customer can actually SEE the result while the errand runs.

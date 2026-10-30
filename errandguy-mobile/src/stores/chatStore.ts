@@ -17,6 +17,40 @@ function compareMessages(a: Message, b: Message): number {
 }
 
 /**
+ * A message as the store keeps it: always with a usable `created_at`.
+ *
+ * The send endpoint used to answer without `created_at` (a DB-defaulted
+ * column the model never read back), and the realtime copy could miss it too.
+ * A bubble without a timestamp rendered "Invalid Date", sorted by id into a
+ * random slot, and opened an extra day divider of its own. The server's own
+ * value always wins; `fallback` (the optimistic bubble's local send time, or
+ * "now" for an arrival) only fills a missing or unparseable one.
+ */
+export function withTimestamp(message: Message, fallback: string): Message {
+  if (typeof message?.created_at === 'string' && Number.isFinite(Date.parse(message.created_at))) {
+    return message;
+  }
+  return { ...message, created_at: fallback };
+}
+
+/**
+ * The optimistic bubble a server copy stands for: our own still-pending `tmp-`
+ * send with the same text and the same photo-or-not. Lets the realtime echo
+ * (or a poll) that beats the HTTP response REPLACE the placeholder instead of
+ * sitting next to it as a duplicate.
+ */
+function pendingTwinIndex(list: Message[], message: Message): number {
+  return list.findIndex(
+    (m) =>
+      m.pending === true &&
+      m.id.startsWith('tmp-') &&
+      m.sender_id === message.sender_id &&
+      (m.content ?? '') === (message.content ?? '') &&
+      !!m.image_url === !!message.image_url,
+  );
+}
+
+/**
  * Message ids already counted into `unreadByBooking` by the realtime path.
  *
  * The same message can reach us twice — a re-subscribe after a socket drop
@@ -68,6 +102,12 @@ interface ChatState {
    *  so a typing event on one conversation can never light the indicator
    *  on another thread that happens to be mounted at the same time. */
   typingByBooking: Record<string, boolean>;
+  /**
+   * The conversation on screen right now (a chat screen in focus), or null.
+   * The foreground push handler stays quiet for this thread's chat pushes —
+   * the message is already appearing in front of the person.
+   */
+  openThreadId: string | null;
 
   addMessage: (bookingId: string, message: Message) => void;
   /** Swap a placeholder message (matched by id) for the server
@@ -91,6 +131,8 @@ interface ChatState {
    */
   noteIncomingMessage: (bookingId: string, message: Message, myId?: string | null) => void;
   refreshUnread: () => Promise<void>;
+  /** Mark a thread as on screen (null = none). */
+  setOpenThread: (bookingId: string | null) => void;
 }
 
 export const useChatStore = create<ChatState>((set, get) => ({
@@ -98,35 +140,50 @@ export const useChatStore = create<ChatState>((set, get) => ({
   unreadCount: 0,
   unreadByBooking: {},
   typingByBooking: {},
+  openThreadId: null,
 
   addMessage: (bookingId, message) =>
     set((state) => {
       const existing = state.messages[bookingId] || [];
-      // Dedupe: Realtime fan-out re-delivers the message we just
-      // optimistically appended after sending, so without this guard the
-      // sender would see their own message twice. Match by id (UUID).
+      // Dedupe by id: a re-delivery after a socket drop, or the poll and the
+      // channel both carrying the same row.
       if (message?.id && existing.some((m) => m.id === message.id)) {
         return state;
       }
+      // Our own send echoed back BEFORE the HTTP response landed: swap the
+      // optimistic bubble for the server copy (keeping its send time if the
+      // copy has none) rather than showing the message twice.
+      const twin = message?.id && !message.id.startsWith('tmp-') ? pendingTwinIndex(existing, message) : -1;
+      const base = twin === -1 ? existing : existing.filter((_, i) => i !== twin);
+      const fallback = twin === -1 ? new Date().toISOString() : existing[twin].created_at;
       return {
         messages: {
           ...state.messages,
-          [bookingId]: [...existing, message].sort(compareMessages),
+          [bookingId]: [...base, withTimestamp(message, fallback)].sort(compareMessages),
         },
       };
     }),
 
   setMessages: (bookingId, messages) =>
-    set((state) => ({
-      messages: {
-        ...state.messages,
-        [bookingId]: messages,
-      },
-    })),
+    set((state) => {
+      const now = new Date().toISOString();
+      return {
+        messages: {
+          ...state.messages,
+          [bookingId]: messages.map((m) => withTimestamp(m, now)),
+        },
+      };
+    }),
 
   replaceMessage: (bookingId, tempId, message) =>
     set((state) => {
       const list = state.messages[bookingId] || [];
+      const placeholder = list.find((m) => m.id === tempId);
+      // The placeholder is already gone: the realtime echo of this very send
+      // replaced it (addMessage above). A failure arriving now — a timeout
+      // after the server saved the message — must not resurrect a "failed"
+      // bubble for a message that was delivered.
+      if (!placeholder && message?.id === tempId) return state;
       // If the real message already arrived (e.g. via Realtime push
       // before our HTTP response), drop the temp instead of duplicating.
       // Exclude tempId itself: the send-failure path calls replaceMessage
@@ -138,7 +195,13 @@ export const useChatStore = create<ChatState>((set, get) => ({
         message?.id && message.id !== tempId && list.some((m) => m.id === message.id);
       const next = list
         .filter((m) => m.id !== tempId)
-        .concat(realAlready ? [] : [message])
+        // The server copy keeps its own created_at; only a missing one falls
+        // back to the bubble's local send time (never "Invalid Date").
+        .concat(
+          realAlready
+            ? []
+            : [withTimestamp(message, placeholder?.created_at ?? new Date().toISOString())],
+        )
         // Re-sort on merge: the server copy's created_at may differ from the
         // optimistic placeholder's client clock, so its true chronological
         // slot can shift. (RT-5)
@@ -229,6 +292,11 @@ export const useChatStore = create<ChatState>((set, get) => ({
       },
       unreadCount: state.unreadCount + 1,
     }));
+  },
+
+  setOpenThread: (bookingId) => {
+    if (get().openThreadId === bookingId) return;
+    set({ openThreadId: bookingId });
   },
 
   refreshUnread: async () => {

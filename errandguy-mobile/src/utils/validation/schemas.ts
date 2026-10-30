@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { isPhMobile } from '../phone';
 
 /**
  * Shared validation schemas — one source of truth for field rules, replacing
@@ -9,11 +10,11 @@ import { z } from 'zod';
  * onto the same fields via `applyServerErrors`.
  */
 
-/** PH mobile number: 09XXXXXXXXX or +639XXXXXXXXX (matches the backend regex). */
+/** PH mobile number in any spelling utils/phone accepts (sent as +639XXXXXXXXX). */
 export const phPhone = z
   .string()
   .trim()
-  .regex(/^(09\d{9}|\+639\d{9})$/, 'Enter a valid PH mobile number (09XXXXXXXXX).');
+  .refine(isPhMobile, 'Enter a valid PH mobile number (09XXXXXXXXX).');
 
 export const email = z.string().trim().email('Enter a valid email address.');
 

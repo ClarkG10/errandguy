@@ -2,6 +2,7 @@ import { useCallback } from 'react';
 import { useAuthStore } from '../stores/authStore';
 import { authService } from '../services/auth.service';
 import { preloadAfterAuth } from '../services/preload.service';
+import { signOut } from '../services/session.service';
 
 export function useAuth() {
   // Per-field selectors, not a whole-store destructure: useAuthStore() with no
@@ -16,7 +17,6 @@ export function useAuth() {
   const role = useAuthStore((s) => s.role);
   const setUser = useAuthStore((s) => s.setUser);
   const setToken = useAuthStore((s) => s.setToken);
-  const clearAuth = useAuthStore((s) => s.logout);
   const loadFromStorage = useAuthStore((s) => s.loadFromStorage);
   const updateProfile = useAuthStore((s) => s.updateProfile);
 
@@ -32,13 +32,9 @@ export function useAuth() {
     [setToken, setUser],
   );
 
-  const logout = useCallback(async () => {
-    try {
-      await authService.logout();
-    } finally {
-      await clearAuth();
-    }
-  }, [clearAuth]);
+  // services/session.service: tells the server (with this phone's push token)
+  // and lets go of push locally — never only the local half.
+  const logout = useCallback(() => signOut(), []);
 
   const register = useCallback(
     async (data: {

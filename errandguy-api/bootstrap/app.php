@@ -25,33 +25,13 @@ return Application::configure(basePath: dirname(__DIR__))
         ['middleware' => ['auth:sanctum']],
     )
     ->withMiddleware(function (Middleware $middleware): void {
-        // Let $request->ip() + the rate limiters resolve the REAL client IP
-        // behind the proxy chain, by trusting a configured proxy set from env.
-        //
-        // IMPORTANT — this is NOT "safe by default". When TRUSTED_PROXIES is
-        // empty we do NOT call trustProxies(), so Laravel's default TrustProxies
-        // applies: on a `*.on-forge.com` host it AUTO-TRUSTS ALL proxies, i.e.
-        // ip() becomes the left-most X-Forwarded-For — the real client via
-        // Cloudflare, but SPOOFABLE if the origin is reachable directly. On any
-        // other host it trusts nothing (ip() = the edge, so per-IP throttling is
-        // effectively global). Neither empty state is both correct and safe.
-        //
-        // To make it BOTH: set TRUSTED_PROXIES to the SPECIFIC Cloudflare (and
-        // any LB) IP ranges — a non-empty value disables the on-forge auto-trust
-        // and makes Symfony stop at the first untrusted hop (the real client),
-        // which closes the spoof — AND firewall the origin so `*.on-forge.com`
-        // is only reachable via Cloudflare. Never use '*' here (nginx appends
-        // X-Forwarded-For, so trusting every hop is spoofable).
-        $proxies = array_values(array_filter(array_map('trim', explode(',', (string) env('TRUSTED_PROXIES', '')))));
-        if ($proxies !== []) {
-            $middleware->trustProxies(
-                at: in_array('*', $proxies, true) ? '*' : $proxies,
-                headers: Request::HEADER_X_FORWARDED_FOR
-                    | Request::HEADER_X_FORWARDED_HOST
-                    | Request::HEADER_X_FORWARDED_PORT
-                    | Request::HEADER_X_FORWARDED_PROTO,
-            );
-        }
+        // Real client IP behind Cloudflare / a load balancer, from the
+        // TRUSTED_PROXIES list (config/trustedproxy.php) read at request time.
+        // See App\Http\Middleware\TrustProxies.
+        $middleware->replace(
+            \Illuminate\Http\Middleware\TrustProxies::class,
+            \App\Http\Middleware\TrustProxies::class,
+        );
 
         $middleware->api(prepend: [
             // FIRST: assign a correlation id before anything logs or renders, so
@@ -104,6 +84,20 @@ return Application::configure(basePath: dirname(__DIR__))
         \Sentry\Laravel\Integration::handles($exceptions);
     })
     ->booting(function () {
+        // The credential a throttle is keyed on, spelled one way: a phone as
+        // +639XXXXXXXXX and an email in lower case, so "0917…" / "+63917…" or
+        // "Ana@" / "ana@" can't each get a fresh bucket. Falls back to the IP.
+        $credential = function (Request $request): string {
+            $phone = $request->input('phone');
+            if (is_string($phone) && $phone !== '') {
+                return \App\Support\PhilippinePhone::canonical($phone) ?? $phone;
+            }
+
+            $other = $request->input('email') ?? $request->input('phone_or_email');
+
+            return is_string($other) && $other !== '' ? mb_strtolower(trim($other)) : (string) $request->ip();
+        };
+
         RateLimiter::for('api', function (Request $request) {
             // Authenticated mobile clients regularly burst 60+ requests/min
             // during a single tracking session (track polling + chat
@@ -119,18 +113,13 @@ return Application::configure(basePath: dirname(__DIR__))
                 : Limit::perMinute(20)->by($request->ip());
         });
 
-        RateLimiter::for('auth', function (Request $request) {
-            $identifier = $request->input('phone')
-                ?? $request->input('email')
-                ?? $request->input('phone_or_email')
-                ?? $request->ip();
+        RateLimiter::for('auth', function (Request $request) use ($credential) {
+            $identifier = $credential($request);
 
-            // Shared by register / forgot-password / reset-password / OTP-verify.
-            // Kept keyed on the credential ALONE (a GLOBAL per-credential cap):
-            // for forgot-password especially, this bounds reset-email bombing of
-            // a victim to 5/15min TOTAL — keying it on identifier+IP would let an
-            // attacker send 5×(number of IPs) reset emails. Login does NOT use
-            // this limiter (see the 'login' limiter below).
+            // Registration. Keyed on the credential ALONE (a GLOBAL
+            // per-credential cap) plus a per-IP aggregate. Login, the
+            // verify/reset completion paths and the code senders each have
+            // their own limiter below.
             return [
                 Limit::perMinutes(15, 5)->by('auth:' . $identifier),
                 Limit::perMinutes(15, 30)->by('auth-ip:' . $request->ip()),
@@ -143,14 +132,11 @@ return Application::configure(basePath: dirname(__DIR__))
         // 5 junk attempts — a pre-auth DoS (AUTHX-3). Per-IP scoping means an
         // attacker only locks their own IP against the account, never the
         // legitimate user on their own device, while still capping brute-force
-        // from one source at 5/15min. Truly per-client once TRUSTED_PROXIES
-        // resolves the real client IP (see withMiddleware); until then ip() is
-        // the edge and it degrades to per-credential — no worse than before.
-        RateLimiter::for('login', function (Request $request) {
-            $identifier = $request->input('phone')
-                ?? $request->input('email')
-                ?? $request->input('phone_or_email')
-                ?? $request->ip();
+        // from one source at 5/15min. Per-client only while TRUSTED_PROXIES
+        // names the edge in front of the app (App\Http\Middleware\TrustProxies);
+        // without it ip() is the edge and this degrades to per-credential.
+        RateLimiter::for('login', function (Request $request) use ($credential) {
+            $identifier = $credential($request);
 
             return [
                 Limit::perMinutes(15, 5)->by('login:' . $identifier . '|' . $request->ip()),
@@ -167,11 +153,8 @@ return Application::configure(basePath: dirname(__DIR__))
         // credential (AUTHX-3 class). forgot-password intentionally STAYS on
         // 'auth' so outbound reset-email bombing remains globally capped per
         // credential (keying it on +IP would let an attacker send 5×#IPs emails).
-        RateLimiter::for('auth-verify', function (Request $request) {
-            $identifier = $request->input('phone')
-                ?? $request->input('email')
-                ?? $request->input('phone_or_email')
-                ?? $request->ip();
+        RateLimiter::for('auth-verify', function (Request $request) use ($credential) {
+            $identifier = $credential($request);
 
             return [
                 Limit::perMinutes(15, 5)->by('authverify:' . $identifier . '|' . $request->ip()),
@@ -179,8 +162,8 @@ return Application::configure(basePath: dirname(__DIR__))
             ];
         });
 
-        RateLimiter::for('otp', function (Request $request) {
-            $key = $request->input('phone', $request->input('email', $request->ip()));
+        RateLimiter::for('otp', function (Request $request) use ($credential) {
+            $key = $credential($request);
 
             // Two buckets: a per-RECIPIENT 3/hr cap AND a per-IP aggregate cap.
             // Without the second, one source could rotate through unlimited
@@ -194,6 +177,38 @@ return Application::configure(basePath: dirname(__DIR__))
                 Limit::perHour(3)->by('otp:' . $key),
                 Limit::perHour(30)->by('otp-ip:' . $request->ip()),
             ];
+        });
+
+        // Password-reset codes: the same caps as sign-in codes (3 an hour per
+        // address, 30 an hour per IP) in their own buckets. Applied whether or
+        // not the address has an account, so a 429 reveals nothing either.
+        RateLimiter::for('otp-password-reset', function (Request $request) use ($credential) {
+            return [
+                Limit::perHour(3)->by('otp-reset:'.$credential($request)),
+                Limit::perHour(30)->by('otp-reset-ip:'.$request->ip()),
+            ];
+        });
+
+        // Signed-in "confirm my email": 3 codes an hour, and 10 guesses per
+        // 15 minutes on top of the 5-per-code limit.
+        RateLimiter::for('otp-email-verification', fn (Request $request) => Limit::perHour(3)
+            ->by('otp-verify-email:'.($request->user()?->id ?? $request->ip())));
+        RateLimiter::for('email-verify', fn (Request $request) => Limit::perMinutes(15, 10)
+            ->by('email-verify:'.($request->user()?->id ?? $request->ip())));
+
+        // Changing the password checks the current one: cap the guesses.
+        RateLimiter::for('password-change', fn (Request $request) => Limit::perMinutes(15, 5)
+            ->by('password-change:'.($request->user()?->id ?? $request->ip())));
+
+        // Crash reports, signed in or not: per account when signed in,
+        // otherwise per IP, so a crash-looping or hostile client can't flood
+        // the log.
+        RateLimiter::for('client-errors', function (Request $request) {
+            $user = auth('sanctum')->user();
+
+            return $user
+                ? Limit::perMinute(30)->by('client-errors:u:'.$user->getAuthIdentifier())
+                : Limit::perMinute(10)->by('client-errors:ip:'.$request->ip());
         });
     })
     ->create();

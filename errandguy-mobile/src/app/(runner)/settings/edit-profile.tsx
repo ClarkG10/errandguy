@@ -16,6 +16,7 @@ import { useAuthStore } from '../../../stores/authStore';
 import { userService } from '../../../services/user.service';
 import { toast } from '../../../stores/toastStore';
 import { errorMessage } from '../../../utils/errorCatalog';
+import { isPhMobile } from '../../../utils/phone';
 import { copy } from '../../../constants/copy';
 
 export default function EditProfileScreen() {
@@ -98,10 +99,10 @@ export default function EditProfileScreen() {
     } else {
       setEmailError(undefined);
     }
-    // PH mobile numbers run 11 digits (09XXXXXXXXX); a cheap digit-count
-    // floor catches obvious typos without rejecting landlines.
-    if (trimmedPhone && trimmedPhone.replace(/\D/g, '').length < 7) {
-      setPhoneError('Enter a valid phone number');
+    // The server only takes a PH mobile number (09…, +63 9…); the service
+    // sends it as +639XXXXXXXXX.
+    if (trimmedPhone && !isPhMobile(trimmedPhone)) {
+      setPhoneError('Enter a valid PH mobile number, e.g. 0917 123 4567');
       hasError = true;
     } else {
       setPhoneError(undefined);

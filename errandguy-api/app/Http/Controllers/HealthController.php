@@ -2,21 +2,36 @@
 
 namespace App\Http\Controllers;
 
+use App\Jobs\WorkerHeartbeatJob;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Str;
 
 /**
- * Deep health probe for uptime monitors / load balancers. Laravel's default
- * '/up' only confirms the framework boots — it returns 200 while the database,
- * Redis, or the queue store are down. This verifies the critical backing
- * services (DB + cache/queue store, which is Redis in prod) so a monitor goes
- * RED during a real dependency outage. 200 when all checks pass, 503 otherwise.
+ * Deep health probe for an outside uptime monitor — point it at GET /health
+ * and alert on anything but 200. Laravel's default '/up' only confirms the
+ * framework boots; this checks what the marketplace actually runs on:
+ *
+ *   - database and cache (Redis in production);
+ *   - scheduler: the every-minute heartbeat (routes/console.php) — backups,
+ *     reapers, money reconciliation and safety monitors all ride it;
+ *   - worker: the queue worker's heartbeat (WorkerHeartbeatJob, queued by the
+ *     scheduler every minute) — matching, push, auto-cancel and SOS fan-out;
+ *   - realtime: the Reverb server answering its /up (chat, live tracking,
+ *     in-app notifications). Skipped when broadcasting isn't 'reverb'.
+ *
+ * 200 when every check passes, 503 when any fails. A heartbeat counts as
+ * failing once it is more than 3 minutes old, or missing (a cache flush
+ * clears it; the next beat restores it within a minute).
  */
 class HealthController extends Controller
 {
+    /** Heartbeats fire every minute; 180s = 3 missed beats. */
+    private const HEARTBEAT_MAX_AGE = 180;
+
     public function __invoke(): JsonResponse
     {
         $checks = [
@@ -30,56 +45,74 @@ class HealthController extends Controller
                     throw new \RuntimeException('cache round-trip failed');
                 }
             }),
+            'scheduler' => $this->heartbeat('scheduler:heartbeat'),
+            'worker' => $this->heartbeat(WorkerHeartbeatJob::CACHE_KEY),
+            'realtime' => $this->realtime(),
         ];
 
-        // Only DB + cache decide the 200/503 (the LB pulls the box on these).
-        $healthy = ! in_array('down', $checks, true);
-
-        // Scheduler liveness never touches the 503 decision: a stopped cron is
-        // worth alerting on, but must not pull a serving box out of the load
-        // balancer. See the scheduler-heartbeat task in routes/console.php.
-        $scheduler = $this->schedulerStatus();
-
-        // …but it DOES belong in the top-level status, which is the field an
-        // ordinary uptime monitor is pointed at. Reporting "ok" while every
-        // scheduled job is dead is how a stopped cron hid for weeks: the
-        // dead-man's-switch existed and nothing pulled the trigger, because
-        // catching it required a monitor configured to read a nested field
-        // nobody had set up. A dead scheduler means no nightly database
-        // backup, no stale-match reassignment and no money reconciliation —
-        // "degraded" is the honest word for that, and it still returns 200
-        // because requests are being served fine.
-        $status = match (true) {
-            ! $healthy => 'degraded',
-            $scheduler !== 'ok' => 'degraded',
-            default => 'ok',
-        };
+        $healthy = collect($checks)->every(fn (string $state) => in_array($state, ['up', 'ok', 'disabled'], true));
 
         return response()->json([
-            'status' => $status,
+            'status' => $healthy ? 'ok' : 'degraded',
             'checks' => $checks,
-            'scheduler' => $scheduler,
+            // Kept at the top level for monitors already reading it.
+            'scheduler' => $checks['scheduler'],
         ], $healthy ? 200 : 503);
     }
 
     /**
      * 'ok'      — heartbeat within the freshness window,
-     * 'stale'   — heartbeat present but older than the window (cron stopped),
+     * 'stale'   — heartbeat present but older than the window,
      * 'unknown' — no heartbeat / cache unavailable (can't tell).
      */
-    private function schedulerStatus(): string
+    private function heartbeat(string $key): string
     {
         try {
-            $ts = Cache::get('scheduler:heartbeat');
+            $ts = Cache::get($key);
 
             if ($ts === null) {
                 return 'unknown';
             }
 
-            // Heartbeat fires every minute; 180s = 3 missed beats.
-            return (now()->timestamp - (int) $ts) > 180 ? 'stale' : 'ok';
+            return (now()->timestamp - (int) $ts) > self::HEARTBEAT_MAX_AGE ? 'stale' : 'ok';
         } catch (\Throwable $e) {
             return 'unknown';
+        }
+    }
+
+    /**
+     * Reverb answers GET /up on the host/port the app publishes to (loopback
+     * in production). Short timeouts, and the answer is cached for 15 seconds,
+     * so a wedged Reverb can't pin a PHP worker per /health hit.
+     */
+    private function realtime(): string
+    {
+        if (config('broadcasting.default') !== 'reverb') {
+            return 'disabled';
+        }
+
+        $options = (array) config('broadcasting.connections.reverb.options', []);
+        $url = sprintf(
+            '%s://%s:%s/up',
+            $options['scheme'] ?? 'https',
+            $options['host'] ?? '127.0.0.1',
+            $options['port'] ?? 443,
+        );
+
+        $probe = function () use ($url): string {
+            try {
+                return Http::connectTimeout(1)->timeout(2)->get($url)->successful() ? 'up' : 'down';
+            } catch (\Throwable $e) {
+                Log::warning('[health] realtime check failed', ['error' => $e->getMessage()]);
+
+                return 'down';
+            }
+        };
+
+        try {
+            return Cache::remember('health:realtime', 15, $probe);
+        } catch (\Throwable $e) {
+            return $probe();
         }
     }
 

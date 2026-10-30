@@ -18,6 +18,9 @@ import {
   Accessibility,
   Package,
   Users,
+  MailWarning,
+  KeyRound,
+  MonitorSmartphone,
   type LucideIcon,
 } from 'lucide-react-native';
 import * as Haptics from 'expo-haptics';
@@ -34,10 +37,12 @@ import { Eyebrow } from '../../../components/ui/Typography';
 import { RatingStars } from '../../../components/ui/RatingStars';
 import { VerificationBanner } from '../../../components/runner/VerificationBanner';
 import { DeleteAccountSheet } from '../../../components/settings/DeleteAccountSheet';
+import { useAccountSecurity } from '../../../components/settings/AccountSecurity';
 import { useRunnerStore } from '../../../stores/runnerStore';
 import { useAuthStore } from '../../../stores/authStore';
 import { runnerService } from '../../../services/runner.service';
 import { userService } from '../../../services/user.service';
+import { signOut } from '../../../services/session.service';
 import { toast } from '../../../stores/toastStore';
 import { errorMessage } from '../../../utils/errorCatalog';
 import { copy } from '../../../constants/copy';
@@ -196,7 +201,7 @@ export default function RunnerProfileScreen() {
   const { contentMaxWidth } = useResponsive();
   const user = useAuthStore((s) => s.user);
   const setUser = useAuthStore((s) => s.setUser);
-  const logout = useAuthStore((s) => s.logout);
+  const security = useAccountSecurity();
   const { runnerProfile, setRunnerProfile } = useRunnerStore();
   const currentErrand = useRunnerStore((s) => s.currentErrand);
   const setOnlineLocal = useRunnerStore((s) => s.toggleOnline);
@@ -246,21 +251,24 @@ export default function RunnerProfileScreen() {
     setRefreshing(false);
   }, [refreshAll]);
 
+  // signOut, not the store's logout: the server must hear about it (with this
+  // phone's push token) and push must be let go of locally — the store-only
+  // logout this used to call left the token live and the phone still buzzing.
   const confirmLogout = useCallback(async () => {
     setLoggingOut(true);
     try {
-      await logout();
+      await signOut();
     } finally {
       setLoggingOut(false);
       router.replace('/(auth)/welcome' as any);
     }
-  }, [logout, router]);
+  }, [router]);
 
   const onAccountDeleted = useCallback(async () => {
     setShowDeleteModal(false);
-    await logout();
+    await signOut();
     router.replace('/(auth)/welcome' as any);
-  }, [logout, router]);
+  }, [router]);
 
   // ── Mode switch (runner → customer) ─────────────────────────────────────
   // role-select promises "you can switch anytime" and until now nothing in the
@@ -347,6 +355,18 @@ export default function RunnerProfileScreen() {
 
   const accountMenu: MenuItem[] = [
     { label: 'Edit Profile', icon: UserRound, route: '/(runner)/settings/edit-profile' },
+    // Only while the email is unverified — the row disappears once it is.
+    ...(security.needsEmailVerification
+      ? [
+          {
+            label: 'Verify email',
+            icon: MailWarning,
+            preview: 'Not verified',
+            previewColor: LightColors.warningDark,
+            onPress: security.openVerifyEmail,
+          },
+        ]
+      : []),
     {
       label: 'Documents & Verification',
       icon: FileCheck2,
@@ -364,6 +384,15 @@ export default function RunnerProfileScreen() {
     { label: 'Preferred Errand Types', icon: ListChecks, route: '/(runner)/settings/preferred-types' },
     // The people the cockpit's SOS card and no-signal sheet offer one tap away.
     { label: 'Trusted Contacts', icon: Users, route: '/(runner)/settings/trusted-contacts' },
+  ];
+
+  const securityMenu: MenuItem[] = [
+    { label: 'Change password', icon: KeyRound, onPress: security.openChangePassword },
+    {
+      label: 'Sign out of all devices',
+      icon: MonitorSmartphone,
+      onPress: security.openSignOutEverywhere,
+    },
   ];
 
   const settingsMenu: MenuItem[] = [
@@ -609,6 +638,14 @@ export default function RunnerProfileScreen() {
           </Card>
         </View>
 
+        {/* Security — password and sessions */}
+        <View className="px-5 mb-4">
+          <Eyebrow className="mb-3">Security</Eyebrow>
+          <Card padding="sm" className="px-4">
+            {securityMenu.map((item, idx, arr) => renderMenuItem(item, idx, arr))}
+          </Card>
+        </View>
+
         {/* Settings Menu */}
         <View className="px-5 mb-4">
           <Eyebrow className="mb-3">Preferences</Eyebrow>
@@ -744,6 +781,9 @@ export default function RunnerProfileScreen() {
         onConfirm={confirmSwitchToCustomer}
         onCancel={() => setShowSwitchModal(false)}
       />
+
+      {/* Change password · Verify email · Sign out of all devices */}
+      {security.sheets}
 
       <LogoutSplash visible={loggingOut} />
     </View>

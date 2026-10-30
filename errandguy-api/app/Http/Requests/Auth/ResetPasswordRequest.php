@@ -15,8 +15,8 @@ class ResetPasswordRequest extends FormRequest
     public function rules(): array
     {
         return [
-            'token' => ['required', 'string'],
-            'email' => ['required', 'string', 'email'],
+            'email' => ['required', 'string', 'email', 'max:255'],
+            'code' => ['required', 'string', 'digits:6'],
             'password' => [
                 'required',
                 'string',
@@ -26,6 +26,14 @@ class ResetPasswordRequest extends FormRequest
                     ->numbers()
                     ->symbols(),
             ],
+        ];
+    }
+
+    public function messages(): array
+    {
+        return [
+            'code.required' => 'Enter the 6-digit code we emailed you.',
+            'code.digits' => 'The code is 6 digits.',
         ];
     }
 }

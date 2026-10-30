@@ -1,6 +1,9 @@
+import { Platform } from 'react-native';
 import api from './api';
+import { deviceIdentity } from './deviceIdentity';
 import type { AxiosRequestConfig } from 'axios';
 import { invalidateQuery } from '../hooks/useQuery';
+import { phoneForApi } from '../utils/phone';
 import type {
   Booking,
   ErrandType,
@@ -97,7 +100,10 @@ export const userService = {
     avatar_url?: string;
     role?: string;
   }) {
-    const p = api.put('/user/profile', data);
+    const p = api.put(
+      '/user/profile',
+      data.phone !== undefined ? { ...data, phone: phoneForApi(data.phone) } : data,
+    );
     p.then(invalidateProfile).catch(() => {});
     return p;
   },
@@ -118,8 +124,18 @@ export const userService = {
     return p;
   },
 
-  updateFCMToken(token: string) {
-    return api.put('/user/fcm-token', { fcm_token: token });
+  /**
+   * Register this phone's Expo push token. The device_id ties the
+   * registration to this phone's sign-in, so signing out here (or "sign out
+   * of all devices") drops exactly this phone's pushes.
+   */
+  async updateFCMToken(token: string) {
+    const { device_id } = await deviceIdentity();
+    return api.put('/user/fcm-token', {
+      fcm_token: token,
+      platform: Platform.OS,
+      ...(device_id ? { device_id } : null),
+    });
   },
 
   /**
@@ -159,7 +175,7 @@ export const userService = {
   },
 
   addTrustedContact(data: Omit<TrustedContact, 'id' | 'user_id' | 'created_at' | 'updated_at'>) {
-    const p = api.post('/user/trusted-contacts', data);
+    const p = api.post('/user/trusted-contacts', { ...data, phone: phoneForApi(data.phone) });
     p.then(invalidateContacts).catch(() => {});
     return p;
   },
@@ -168,7 +184,10 @@ export const userService = {
     id: string,
     data: Partial<Omit<TrustedContact, 'id' | 'user_id' | 'created_at' | 'updated_at'>>,
   ) {
-    const p = api.put(`/user/trusted-contacts/${id}`, data);
+    const p = api.put(
+      `/user/trusted-contacts/${id}`,
+      data.phone !== undefined ? { ...data, phone: phoneForApi(data.phone) } : data,
+    );
     p.then(invalidateContacts).catch(() => {});
     return p;
   },

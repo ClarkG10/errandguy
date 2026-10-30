@@ -15,6 +15,7 @@ use App\Models\SupportTicket;
 use App\Models\WalletTransaction;
 use App\Services\WalletService;
 use App\Support\CashDebtPolicy;
+use App\Support\DeviceSessions;
 use App\Support\ErrorCode;
 use App\Support\PayoutDestination;
 use Illuminate\Http\JsonResponse;
@@ -134,8 +135,9 @@ class ProfileController extends Controller
     public function updateFCMToken(Request $request): JsonResponse
     {
         $request->validate([
-            'fcm_token' => ['required', 'string'],
+            'fcm_token' => ['required', 'string', 'max:255'],
             'platform' => ['sometimes', 'nullable', 'string', 'max:15'],
+            'device_id' => ['sometimes', 'nullable', 'string', 'max:255'],
         ]);
 
         $user = $request->user();
@@ -158,12 +160,20 @@ class ProfileController extends Controller
         // pushes on every device (the single column used to be overwritten,
         // silencing all but the most recent). Keyed by token, so the same
         // device re-registering — even after a re-login under a new account —
-        // just re-points the row instead of duplicating it.
+        // just re-points the row instead of duplicating it. The device_id (sent,
+        // or the one this sign-in was issued to) lets sign-out drop this
+        // registration without the app having to send its push token.
+        $deviceId = $request->input('device_id');
+        $deviceId = is_string($deviceId) && preg_match(DeviceSessions::DEVICE_ID_PATTERN, $deviceId) === 1
+            ? $deviceId
+            : DeviceSessions::deviceIdOf(DeviceSessions::currentToken($request));
+
         \App\Models\DeviceToken::updateOrCreate(
             ['token' => $token],
             [
                 'user_id' => $user->id,
                 'platform' => $request->input('platform'),
+                'device_id' => $deviceId,
                 'last_used_at' => now(),
             ],
         );

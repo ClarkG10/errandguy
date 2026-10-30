@@ -20,11 +20,14 @@ $FORGE_PHP artisan optimize --no-interaction
 $FORGE_PHP artisan filament:optimize --no-interaction
 $FORGE_PHP artisan storage:link --no-interaction || true
 
-# Fresh logical backup BEFORE the irreversible `migrate --force`, so a bad
+# Fresh database backup BEFORE the irreversible `migrate --force`, so a bad
 # migration is recoverable immediately (not just from the 02:30 nightly job).
-# BLOCKING by design (set -e at the top): if the backup fails, the migration
-# does NOT run. Set DB_BACKUP_DISK=s3 in the Forge env so the copy is off-box. (audit DR)
-$FORGE_PHP artisan errandguy:backup-database --no-interaction
+# A local copy is always made first; it is then copied off-site (DB_BACKUP_DISK,
+# e.g. s3). BLOCKING only on the local copy (set -e at the top): if no local
+# dump could be made, the migration does NOT run. A cloud-copy failure raises
+# an admin alert but lets the deploy continue. --skip-files: uploads aren't
+# touched by migrations; the nightly run archives them. (audit DR)
+$FORGE_PHP artisan errandguy:backup-database --skip-files --no-interaction
 
 # Run migrations on the app's default DB connection (MySQL in production).
 $FORGE_PHP artisan migrate --force --no-interaction
@@ -57,7 +60,7 @@ $FORGE_PHP artisan queue:restart
 $FORGE_PHP artisan reverb:restart --no-interaction || true
 
 # Report unsafe/degraded production config into the deploy log (APP_DEBUG,
-# queue driver, Reverb credentials, Sentry DSN, TRUSTED_PROXIES). It normally
+# queue driver, Reverb credentials, Sentry DSN, TRUSTED_PROXIES, mail). It normally
 # runs on the daily schedule, but the scheduler is the one thing that cannot
 # report its own death — so surfacing it per-deploy means a broken cron doesn't
 # also hide the config warnings. Exits non-zero when it finds something, hence

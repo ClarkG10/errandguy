@@ -227,7 +227,8 @@ class BookingsTable
                         .$record->booking_number.' for '.($record->customer?->full_name ?? 'the customer')
                         .'. This runs the cancellation/refund policy and can’t be undone.')
                     ->schema([
-                        Textarea::make('reason')->required()->maxLength(500),
+                        Textarea::make('reason')->required()->maxLength(500)
+                            ->helperText('The customer sees this reason in the app and in their cancellation notice.'),
                     ])
                     ->visible(fn ($record): bool => ! in_array($record->status, ['completed', 'cancelled'], true)
                         && (auth('admin')->user()?->hasAnyRole(

@@ -2,18 +2,13 @@ import React from 'react';
 import { View, Text } from 'react-native';
 import { Check, X } from 'lucide-react-native';
 import { LightColors } from '../../constants/colors';
+import { PASSWORD_REQUIREMENTS } from '../../utils/validation/passwordPolicy';
 
 interface PasswordStrengthIndicatorProps {
   password: string;
 }
 
-const requirements = [
-  { label: 'At least 8 characters', test: (p: string) => p.length >= 8 },
-  { label: 'Uppercase letter', test: (p: string) => /[A-Z]/.test(p) },
-  { label: 'Lowercase letter', test: (p: string) => /[a-z]/.test(p) },
-  { label: 'Number', test: (p: string) => /\d/.test(p) },
-  { label: 'Special character', test: (p: string) => /[!@#$%^&*(),.?":{}|<>]/.test(p) },
-];
+const requirements = PASSWORD_REQUIREMENTS;
 
 function getStrength(password: string): number {
   if (!password) return 0;

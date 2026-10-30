@@ -23,8 +23,8 @@ class BookingCancelled implements ShouldBroadcast
     public function __construct(
         public Booking $booking,
         /**
-         * What to tell the customer, when the cancellation has a cause they
-         * should hear (an errand whose payment never arrived). Null keeps the
+         * What to tell the customer: why it was cancelled and what happened to
+         * their money (App\Support\CancellationNotice). Null falls back to a
          * cause-neutral "Your errand has been cancelled."
          */
         public ?string $customerMessage = null,

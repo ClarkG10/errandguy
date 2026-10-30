@@ -6,6 +6,7 @@ use App\Http\Controllers\Controller;
 use App\Http\Requests\Auth\LoginRequest;
 use App\Http\Resources\UserResource;
 use App\Models\User;
+use App\Support\DeviceSessions;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Log;
@@ -49,12 +50,9 @@ class LoginController extends Controller
 
         $request->clearAttempts();
 
-        $deviceName = $request->input('device_name', $request->header('User-Agent', 'mobile'));
-
-        // Revoke existing tokens for this device
-        $user->tokens()->where('name', $deviceName)->delete();
-
-        $token = $user->createToken($deviceName)->plainTextToken;
+        // One sign-in per device: signing in again on this phone replaces its
+        // own previous sign-in, never another phone's.
+        $token = DeviceSessions::issueToken($user, $request, replaceSameName: true);
         $user->update(['last_active_at' => now()]);
 
         Log::info('Login successful', [

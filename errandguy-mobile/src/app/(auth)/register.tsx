@@ -32,6 +32,8 @@ import { toast } from '../../stores/toastStore';
 import { errorMessage } from '../../utils/errorCatalog';
 import { LightColors, Elevation } from '../../constants/colors';
 import { PRIVACY_POLICY_VERSION } from '../../constants/legal';
+import { isPhMobile } from '../../utils/phone';
+import { confirmPasswordRules, newPasswordRules } from '../../utils/validation/passwordPolicy';
 
 interface RegisterFormData {
   full_name: string;
@@ -272,9 +274,10 @@ export default function RegisterScreen() {
           });
         } catch {
           // Don't silently skip verification — tell the user why they're
-          // not seeing an OTP screen.
+          // not seeing an OTP screen, and where it lives now (Profile →
+          // Verify email, components/settings/VerifyEmailSheet).
           toast.info(
-            "We couldn't send a verification code — you can verify later from your profile.",
+            "We couldn't send a verification code just now. You can verify your email any time from Profile.",
           );
           router.replace('/(auth)/role-select');
         }
@@ -452,10 +455,8 @@ export default function RegisterScreen() {
               name="phone"
               rules={{
                 required: 'Phone number is required',
-                pattern: {
-                  value: /^(\+63|0)9\d{9}$/,
-                  message: 'Enter a valid PH phone number',
-                },
+                // 09…, +63 9… or 9… — sent as +639XXXXXXXXX (utils/phone).
+                validate: (value) => isPhMobile(value) || 'Enter a valid PH phone number',
               }}
               render={({ field: { onChange, onBlur, value } }) => (
                 <Input
@@ -521,18 +522,7 @@ export default function RegisterScreen() {
             <Controller
               control={control}
               name="password"
-              rules={{
-                required: 'Password is required',
-                minLength: { value: 8, message: 'Minimum 8 characters' },
-                validate: (value) => {
-                  if (!/[A-Z]/.test(value)) return 'Must contain an uppercase letter';
-                  if (!/[a-z]/.test(value)) return 'Must contain a lowercase letter';
-                  if (!/\d/.test(value)) return 'Must contain a number';
-                  if (!/[!@#$%^&*(),.?":{}|<>]/.test(value))
-                    return 'Must contain a special character';
-                  return true;
-                },
-              }}
+              rules={newPasswordRules}
               render={({ field: { onChange, onBlur, value } }) => (
                 <>
                   <Input
@@ -564,11 +554,7 @@ export default function RegisterScreen() {
             <Controller
               control={control}
               name="confirm_password"
-              rules={{
-                required: 'Please confirm your password',
-                validate: (value) =>
-                  value === password || 'Passwords do not match',
-              }}
+              rules={confirmPasswordRules(() => password)}
               render={({ field: { onChange, onBlur, value } }) => (
                 <Input
                   ref={confirmPasswordRef}

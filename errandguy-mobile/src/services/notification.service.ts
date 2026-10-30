@@ -21,8 +21,16 @@ export const notificationService = {
     });
   },
 
+  /**
+   * The server's unread total — the Alerts badge. Deliberately UNCACHED (like
+   * chatService.getUnreadCount): it is read right after something changed (a
+   * realtime arrival, the inbox loading, the app returning to the
+   * foreground), and a micro-cached body from before that change would put a
+   * stale number back on the badge. In-flight dedupe still coalesces
+   * concurrent calls.
+   */
   getUnreadCount() {
-    return api.get('/notifications/unread-count', { cacheTtlMs: 15_000, silent: true });
+    return api.get('/notifications/unread-count', { noCache: true, silent: true });
   },
 
   markAsRead(id: string) {

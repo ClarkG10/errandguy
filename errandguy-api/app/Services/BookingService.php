@@ -15,6 +15,7 @@ use App\Models\BookingStatusLog;
 use App\Models\Payment;
 use App\Models\SystemConfig;
 use App\Models\User;
+use App\Support\CancellationNotice;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
@@ -416,9 +417,7 @@ class BookingService
     /** The customer's push for an errand cancelled because its payment never arrived. */
     public static function paymentNotCompletedNotice(Booking $booking): string
     {
-        $number = $booking->booking_number ?? $booking->id;
-
-        return "Payment wasn't completed, so your errand #{$number} was cancelled.";
+        return CancellationNotice::forCustomer($booking, CancellationNotice::PAYMENT_NOT_COMPLETED);
     }
 
     /**
@@ -502,14 +501,18 @@ class BookingService
             Cache::forget("runner_active_booking_id:{$booking->runner_id}");
         }
 
-        // Notify + broadcast the cancellation. BookingCancelled keeps its push
-        // listener (the customer should learn an admin cancelled their booking)
-        // and now also broadcasts `booking.status` to the booking channel, so
-        // both apps drop out of the active trip live — the admin-cancel path
-        // previously dispatched no event at all.
-        event(new BookingCancelled($booking));
-
         $this->refundUnfulfilled($booking->id, 'Admin cancelled the booking');
+
+        // Notify + broadcast the cancellation, after the refund so the push can
+        // say where the money went. BookingCancelled's listener tells the
+        // customer (with the staff reason, which their errand screen already
+        // shows) and the runner; its broadcast drops both apps out of the
+        // active trip live.
+        event(new BookingCancelled($booking, CancellationNotice::forCustomer(
+            $booking,
+            CancellationNotice::BY_STAFF,
+            staffReason: $reason,
+        )));
     }
 
     /**

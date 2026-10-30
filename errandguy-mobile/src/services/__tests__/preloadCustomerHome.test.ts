@@ -13,6 +13,7 @@
  */
 import { preloadCustomerEssentials } from '../preload.service';
 import { CacheTTL } from '../cache.service';
+import { useNotificationStore } from '../../stores/notificationStore';
 
 // ── Cache writes are the assertion surface ────────────────────────────────
 const mockCacheSet = jest.fn(() => Promise.resolve());
@@ -278,21 +279,21 @@ describe('preloadCustomerEssentials — /customer/home aggregate fan-out', () =>
   });
 
   /**
-   * The unread badge is primed by a REQUEST, not a query-cache seed.
+   * The unread badge is primed straight into the store, not a query-cache seed.
    *
-   * useRealtimeNotifications never goes through useQuery — it calls
-   * getUnreadCount() straight into the store and keeps it live over Reverb — so
-   * the cache key the warm-up used to write was read by nothing. What actually
-   * made the badge paint immediately is the side effect: getUnreadCount() is an
-   * `api.get` with a 15s micro-cache, so the hook's own call on mount coalesces
-   * onto this one. This asserts the useful half happens and the dead half
-   * doesn't (the previous version of this test pinned the dead write).
+   * The badge never goes through useQuery — it is the notification store's
+   * server total — so the cache key the warm-up used to write was read by
+   * nothing. The unread-count read is uncached, so the warm-up writes the
+   * number into the store itself. This asserts the useful half happens and the
+   * dead half doesn't (an older version of this test pinned the dead write).
    */
-  it('primes the unread badge with a request, and writes no dead cache key', async () => {
+  it('primes the unread badge into the store, and writes no dead cache key', async () => {
+    mockGetUnreadCount.mockResolvedValue({ data: { data: { unread_count: 7 } } });
     await preloadCustomerEssentials(USER);
     await flush();
 
     expect(mockGetUnreadCount).toHaveBeenCalled();
+    expect(useNotificationStore.getState().unreadCount).toBe(7);
     expect(writes()[`q:notifications:unread:${USER}`]).toBeUndefined();
   });
 });

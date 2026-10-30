@@ -1,7 +1,15 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { View, Text, ScrollView, AppState, Linking } from 'react-native';
 import * as Notifications from 'expo-notifications';
-import { Bell, BellOff, MessageSquare, Star, AlertTriangle, Lock } from 'lucide-react-native';
+import {
+  Bell,
+  BellOff,
+  MessageSquare,
+  Wallet,
+  FileCheck2,
+  AlertTriangle,
+  Lock,
+} from 'lucide-react-native';
 import { GradientHeader } from '../../../components/ui/GradientHeader';
 import { Card } from '../../../components/ui/Card';
 import { Button } from '../../../components/ui/Button';
@@ -67,11 +75,20 @@ const KINDS: NotifKind[] = [
     description: 'A customer messaged you about an errand in progress',
     icon: MessageSquare,
   },
+  // Only what the server actually sends. A "Reviews & Ratings" row used to
+  // sit here, but rating a runner notifies nobody (Customer\ReviewController
+  // sends nothing) — the row promised a notification that never comes.
   {
-    key: 'reviews',
-    label: 'Reviews & Ratings',
-    description: 'A customer left you a rating after a completed errand',
-    icon: Star,
+    key: 'wallet',
+    label: 'Wallet & Payouts',
+    description: 'A payout was sent or came back, or your wallet balance was adjusted',
+    icon: Wallet,
+  },
+  {
+    key: 'verification',
+    label: 'Verification',
+    description: 'Your documents were approved or need another look',
+    icon: FileCheck2,
   },
   {
     key: 'alerts',
@@ -125,7 +142,7 @@ export default function NotificationsScreen() {
       ? 'Checking your device settings…'
       : granted
         ? 'Notifications are on for ErrandGuy.'
-        : "Notifications are off. You won't be alerted about new errands, messages or safety alerts until you turn them back on.";
+        : "Notifications are off. You won't be alerted about new errands, messages, payouts or safety alerts until you turn them back on.";
 
   return (
     <View className="flex-1 bg-background">
@@ -188,10 +205,6 @@ export default function NotificationsScreen() {
 
         <Card className="p-0 overflow-hidden">
           {KINDS.map((kind, idx) => {
-            // Reviews & Ratings is a brand-gold reward moment, not a status —
-            // its chip wears the accent wash + dense gold star glyph. Every
-            // other row stays blue.
-            const isReviews = kind.key === 'reviews';
             return (
               <View
                 key={kind.key}
@@ -204,16 +217,8 @@ export default function NotificationsScreen() {
                     : `${kind.label}. ${kind.description}.`
                 }
               >
-                <View
-                  className={`w-10 h-10 rounded-full items-center justify-center mr-3 ${
-                    isReviews ? 'bg-accentSoft' : 'bg-surfaceMuted'
-                  }`}
-                >
-                  <kind.icon
-                    size={18}
-                    color={isReviews ? LightColors.accentStrong : LightColors.primary}
-                    strokeWidth={1.8}
-                  />
+                <View className="w-10 h-10 rounded-full items-center justify-center mr-3 bg-surfaceMuted">
+                  <kind.icon size={18} color={LightColors.primary} strokeWidth={1.8} />
                 </View>
                 <View className="flex-1">
                   <Text className="text-[14px] font-montserrat-semi text-textPrimary">

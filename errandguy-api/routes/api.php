@@ -1,5 +1,7 @@
 <?php
 
+use App\Http\Controllers\Auth\ChangePasswordController;
+use App\Http\Controllers\Auth\EmailVerificationController;
 use App\Http\Controllers\Auth\LoginController;
 use App\Http\Controllers\Auth\LogoutController;
 use App\Http\Controllers\Auth\OTPController;
@@ -57,14 +59,24 @@ Route::prefix('v1')->group(function () {
         // the credential+IP 'auth-verify' limiter (like 'login'), not the
         // credential-only 'auth' limiter, so an attacker spamming a victim's
         // phone/email can't lock the legitimate user out of completing recovery
-        // on their own device (AUTHX-3 class). forgot-password stays on 'auth'
-        // (credential-only) to preserve its per-credential reset-email anti-bombing.
+        // on their own device (AUTHX-3 class). forgot-password sends a code, so
+        // it is capped per address globally ('otp-password-reset', 3 an hour)
+        // to stop inbox bombing.
         Route::post('/verify-otp', [OTPController::class, 'verifyOTP'])->middleware('throttle:auth-verify');
-        Route::post('/forgot-password', [PasswordResetController::class, 'forgotPassword'])->middleware('throttle:auth');
+        Route::post('/forgot-password', [PasswordResetController::class, 'forgotPassword'])->middleware('throttle:otp-password-reset');
         Route::post('/reset-password', [PasswordResetController::class, 'resetPassword'])->middleware('throttle:auth-verify');
 
         Route::post('/logout', [LogoutController::class, 'logout'])->middleware('auth:sanctum');
+        // "Sign out of all devices": every sign-in and push registration.
+        Route::post('/logout-all', [LogoutController::class, 'logoutAll'])->middleware('auth:sanctum');
     });
+
+    // Client (mobile) crash ingest — best-effort observability so release-
+    // build crashes (where console.* goes nowhere) become a visible, alertable
+    // server-side signal. No sign-in needed: crashes on the sign-in and sign-up
+    // screens matter too. Throttled per account, or per IP when signed out.
+    Route::post('/client-errors', [\App\Http\Controllers\ClientErrorController::class, 'store'])
+        ->middleware('throttle:client-errors');
 
     // Public config routes (no auth required)
     Route::get('/errand-types', function (\Illuminate\Http\Request $request) {
@@ -99,13 +111,6 @@ Route::prefix('v1')->group(function () {
     // /logout (below) or the admin group, whose 8h token expiry is intentional.
     Route::middleware(['auth:sanctum', 'active', 'token.rotate'])->group(function () {
 
-        // Client (mobile) crash ingest — best-effort observability so release-
-        // build crashes (where console.* goes nowhere) become a visible,
-        // alertable server-side signal. Throttled so a crash-looping client
-        // cannot flood the log.
-        Route::post('/client-errors', [\App\Http\Controllers\ClientErrorController::class, 'store'])
-            ->middleware('throttle:30,1');
-
         // User profile routes
         Route::prefix('user')->group(function () {
             Route::get('/profile', [ProfileController::class, 'show']);
@@ -113,6 +118,13 @@ Route::prefix('v1')->group(function () {
             Route::post('/avatar', [ProfileController::class, 'uploadAvatar']);
             Route::put('/fcm-token', [ProfileController::class, 'updateFCMToken']);
             Route::delete('/account', [ProfileController::class, 'deleteAccount']);
+
+            // Change password while signed in; signs out the other devices.
+            Route::put('/password', [ChangePasswordController::class, 'update'])->middleware('throttle:password-change');
+
+            // "Verify later": confirm the account's email with a 6-digit code.
+            Route::post('/email/send-code', [EmailVerificationController::class, 'send'])->middleware('throttle:otp-email-verification');
+            Route::post('/email/verify', [EmailVerificationController::class, 'verify'])->middleware('throttle:email-verify');
 
             Route::get('/addresses', [SavedAddressController::class, 'index']);
             Route::post('/addresses', [SavedAddressController::class, 'store']);

@@ -5,90 +5,105 @@ namespace App\Http\Controllers\Auth;
 use App\Http\Controllers\Controller;
 use App\Http\Requests\Auth\ForgotPasswordRequest;
 use App\Http\Requests\Auth\ResetPasswordRequest;
+use App\Mail\OneTimeCode;
+use App\Models\User;
+use App\Services\OTPService;
+use App\Support\DeviceSessions;
 use App\Support\ErrorCode;
 use Illuminate\Http\JsonResponse;
-use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Mail;
-use Illuminate\Support\Str;
-use App\Models\User;
 
+/**
+ * Password reset with a 6-digit emailed code (OTPService, purpose
+ * password_reset): the code is typed into the app, never a link.
+ *
+ * Brute force is bounded three ways: 5 guesses per code (then it is dropped),
+ * 3 codes an hour per address (route throttle 'otp-password-reset'), and 5
+ * reset attempts per address and IP every 15 minutes ('auth-verify').
+ */
 class PasswordResetController extends Controller
 {
+    public function __construct(
+        private OTPService $otp,
+    ) {}
+
+    /**
+     * POST /auth/forgot-password {email}
+     *
+     * Always the same answer, whether or not an account uses the address, and
+     * the email goes out after the response is sent — so neither the reply
+     * nor its timing says which addresses are registered.
+     */
     public function forgotPassword(ForgotPasswordRequest $request): JsonResponse
     {
-        // Send the reset only for a real account. Unknown emails never reach
-        // here — ForgotPasswordRequest rejects them with a 422 "not registered"
-        // (a deliberate product choice to reveal existence; see that request).
-        if (User::where('email', $request->email)->exists()) {
-            $token = Str::random(64);
+        $email = (string) $request->validated('email');
 
-            DB::table('password_reset_tokens')->updateOrInsert(
-                ['email' => $request->email],
-                [
-                    'token' => Hash::make($token),
-                    'created_at' => now(),
-                ]
-            );
+        if (User::where('email', $email)->exists()) {
+            $identifier = OTPService::emailIdentifier($email);
+            $code = $this->otp->generateOTP();
+            $this->otp->storeOTP($identifier, $code, OTPService::PASSWORD_RESET);
 
-            try {
-                Mail::raw(
-                    "Your ErrandGuy password reset code is: {$token}\n\nThis code expires in 1 hour.",
-                    function ($message) use ($request) {
-                        $message->to($request->email)
-                            ->subject('ErrandGuy - Password Reset');
-                    }
-                );
-            } catch (\Throwable $e) {
-                // No raw email in logs (CWE-532); error + request_id suffice.
-                Log::error('Failed to send password reset email', [
-                    'ip' => $request->ip(),
-                    'error' => $e->getMessage(),
-                ]);
-
-                // 422, never a 503: Cloudflare masks app-level 5xx and the mobile
-                // client discards >=500 messages, so this line would be lost.
-                return $this->fail(
-                    ErrorCode::PASSWORD_RESET_DELIVERY_FAILED,
-                    'Unable to send reset email at this time. Please try again later.',
-                );
-            }
+            defer(function () use ($email, $code, $identifier) {
+                try {
+                    Mail::to($email)->send(new OneTimeCode($code, OTPService::PASSWORD_RESET));
+                } catch (\Throwable $e) {
+                    $this->otp->invalidateOTP($identifier, OTPService::PASSWORD_RESET);
+                    // No raw email in logs (CWE-532).
+                    Log::error('Password reset code delivery failed', ['error' => $e->getMessage()]);
+                }
+            });
         }
 
-        // Neutral, identical for known + unknown emails.
-        return $this->ok(null, 'If an account exists for that email, a password reset link has been sent.');
+        return $this->ok(
+            null,
+            'If an account uses that email, we’ve sent it a 6-digit code. It expires in '.OTPService::TTL_MINUTES.' minutes.',
+        );
     }
 
+    /**
+     * POST /auth/reset-password {email, code, password, password_confirmation}
+     *
+     * Sets the new password and signs the account out everywhere: every token
+     * is revoked and every push registration dropped, so whoever held the old
+     * password keeps nothing.
+     */
     public function resetPassword(ResetPasswordRequest $request): JsonResponse
     {
-        $record = DB::table('password_reset_tokens')
-            ->where('email', $request->email)
-            ->first();
+        $email = (string) $request->validated('email');
+        $identifier = OTPService::emailIdentifier($email);
 
-        if (!$record || !Hash::check($request->token, $record->token)) {
-            return $this->fail(ErrorCode::VALIDATION_FAILED, 'Invalid or expired reset token. Request a new one to continue.');
+        $result = $this->otp->check($identifier, (string) $request->validated('code'), OTPService::PASSWORD_RESET);
+
+        if ($result === OTPService::LOCKED) {
+            return $this->fail(ErrorCode::OTP_MAX_ATTEMPTS);
+        }
+        if ($result === OTPService::EXPIRED) {
+            return $this->fail(ErrorCode::OTP_EXPIRED, 'That code has expired or was already used. Request a new one to continue.');
+        }
+        if ($result !== OTPService::VALID) {
+            return $this->fail(
+                ErrorCode::OTP_INVALID,
+                merge: ['attempts_remaining' => $this->otp->attemptsRemaining($identifier, OTPService::PASSWORD_RESET)],
+            );
         }
 
-        // Carbon 3 makes diffInMinutes() SIGNED: now()->diffInMinutes($past)
-        // returns a NEGATIVE number, so `> 60` was never true and reset tokens
-        // never expired. Compare against an absolute one-hour deadline instead.
-        if (\Illuminate\Support\Carbon::parse($record->created_at)->addHour()->isPast()) {
-            DB::table('password_reset_tokens')->where('email', $request->email)->delete();
-
-            return $this->fail(ErrorCode::VALIDATION_FAILED, 'Reset token has expired. Please request a new one.');
+        $user = User::where('email', $email)->first();
+        if (! $user) {
+            return $this->fail(ErrorCode::OTP_EXPIRED, 'That code has expired or was already used. Request a new one to continue.');
         }
 
-        $user = User::where('email', $request->email)->firstOrFail();
         $user->update([
-            'password_hash' => Hash::make($request->password, ['rounds' => 12]),
+            'password_hash' => Hash::make($request->validated('password'), ['rounds' => 12]),
+            // The code reached this inbox, so the address is confirmed.
+            'email_verified' => true,
         ]);
 
-        // Revoke all tokens
-        $user->tokens()->delete();
+        DeviceSessions::signOutEverywhere($user);
 
-        DB::table('password_reset_tokens')->where('email', $request->email)->delete();
+        Log::info('Password reset', ['user_id' => $user->id, 'ip' => $request->ip()]);
 
-        return $this->ok(null, 'Password has been reset successfully.');
+        return $this->ok(null, 'Your password has been reset. Sign in with your new password.');
     }
 }

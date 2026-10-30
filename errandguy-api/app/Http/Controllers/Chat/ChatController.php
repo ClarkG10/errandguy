@@ -144,7 +144,11 @@ class ChatController extends Controller
             'is_system' => false,
         ]);
 
-        $message->load('sender:id,full_name,avatar_url');
+        // created_at is filled by the database default (the model has no
+        // timestamps), so re-read the row: without it the reply — and the live
+        // broadcast below — carried created_at null and the app showed
+        // "Invalid Date" on the message just sent.
+        $message->refresh()->load('sender:id,full_name,avatar_url');
 
         // Push to the other participant over the `chat.{bookingId}` Reverb
         // channel. The sender already rendered it optimistically; the mobile

@@ -61,6 +61,22 @@ class MessageTest extends TestCase
         ]);
     }
 
+    public function test_a_sent_message_comes_back_with_its_stored_time(): void
+    {
+        $response = $this->actingAs($this->customer)
+            ->postJson("/api/v1/chat/{$this->booking->id}/messages", ['content' => 'What time?'])
+            ->assertStatus(201);
+
+        // created_at is set by the database; it used to come back null and the
+        // app showed "Invalid Date" on the message just sent.
+        $createdAt = $response->json('data.created_at');
+        $this->assertNotNull($createdAt);
+        $stored = Message::findOrFail($response->json('data.id'))->created_at;
+        $this->assertSame($stored->toIso8601String(), $createdAt);
+        $this->assertFalse($response->json('data.is_system'));
+        $this->assertNull($response->json('data.read_at'));
+    }
+
     public function test_runner_can_send_message(): void
     {
         $response = $this->actingAs($this->runner)

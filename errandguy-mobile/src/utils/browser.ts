@@ -92,3 +92,26 @@ export async function openCheckoutUrl(
     return 'failed';
   }
 }
+
+/**
+ * Open an ordinary public web page — the Terms, the Privacy Policy, the
+ * account-deletion page — in the in-app browser sheet, falling back to the
+ * system browser when this build has no sheet. Resolves true when something
+ * opened, so the caller can show the address when nothing could.
+ */
+export async function openWebPage(url: string): Promise<boolean> {
+  if (WebBrowser) {
+    try {
+      await WebBrowser.openBrowserAsync(url);
+      return true;
+    } catch {
+      // Sheet failed at runtime — fall back to the system browser below.
+    }
+  }
+  try {
+    await Linking.openURL(url);
+    return true;
+  } catch {
+    return false;
+  }
+}

@@ -19,6 +19,7 @@ import { useNetworkStore } from '../stores/networkStore';
 import { userService } from '../services/user.service';
 import { preloadAfterAuth, preloadCoreImages } from '../services/preload.service';
 import { initMutationQueue } from '../services/mutationQueue';
+import { endLocalSession } from '../services/session.service';
 import { useNotifications } from '../hooks/useNotifications';
 import { useOtaLaunchCheck } from '../hooks/useOtaUpdate';
 import { ToastProvider } from '../components/ui/ToastProvider';
@@ -142,7 +143,7 @@ export default function RootLayout() {
   // Use individual selectors to avoid re-rendering the whole tree (and
   // re-firing the validateSession effect) on every unrelated zustand
   // update. Destructuring `useAuthStore()` returns a fresh object snapshot
-  // on every render, which made `setUser` / `logout` look "new" and
+  // on every render, which made `setUser` look "new" and
   // re-triggered the /user/profile fetch on every render.
   const isAuthenticated = useAuthStore((s) => s.isAuthenticated);
   const isLoading = useAuthStore((s) => s.isLoading);
@@ -152,7 +153,6 @@ export default function RootLayout() {
   const onboardingSeen = useAuthStore((s) => s.onboardingSeen);
   const loadFromStorage = useAuthStore((s) => s.loadFromStorage);
   const setUser = useAuthStore((s) => s.setUser);
-  const logout = useAuthStore((s) => s.logout);
   // Hydrate any in-flight booking draft (item description, locations,
   // photos, etc.) so a crash, kill, or OS-eviction during the booking
   // funnel doesn't lose the user's typing.
@@ -224,7 +224,9 @@ export default function RootLayout() {
         // `err.status` directly.
         const status = err?.status;
         if (status === 401 || status === 403) {
-          await logout();
+          // The server already ended this session — clean up this phone,
+          // including its push registration.
+          await endLocalSession();
         }
       }
     };
@@ -235,7 +237,7 @@ export default function RootLayout() {
       cancelled = true;
       controller.abort();
     };
-  }, [isLoading, token, setUser, logout]);
+  }, [isLoading, token, setUser]);
 
   useEffect(() => {
     if (fontsLoaded && !isLoading) {

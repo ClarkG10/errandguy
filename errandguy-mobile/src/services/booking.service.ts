@@ -3,6 +3,7 @@ import { invalidateQuery } from '../hooks/useQuery';
 import { compressProofImage } from '../utils/proofImage';
 import type { PaymentMethodType } from '../types';
 import { sosBody, type SosCoords } from '../utils/sosLocation';
+import { phoneForApi } from '../utils/phone';
 
 const invalidateBookingsCaches = (id?: string) => {
   // Fire-and-forget — cache wipes shouldn't block the UI.
@@ -146,7 +147,25 @@ export const bookingService = {
     // `shopping_items.*.{name,qty}` rules.
     shopping_items?: Array<{ name: string; qty?: number }>;
   }, opts?: { idempotencyKey?: string }) {
-    const p = api.post('/bookings', data, { idempotencyKey: opts?.idempotencyKey });
+    // Every contact number goes out as +639XXXXXXXXX (utils/phone). Pure, so a
+    // retry of the same attempt still sends a byte-identical body.
+    const body = {
+      ...data,
+      ...(data.pickup_contact_phone !== undefined
+        ? { pickup_contact_phone: phoneForApi(data.pickup_contact_phone) }
+        : null),
+      ...(data.dropoff_contact_phone !== undefined
+        ? { dropoff_contact_phone: phoneForApi(data.dropoff_contact_phone) }
+        : null),
+      ...(data.stops
+        ? {
+            stops: data.stops.map((s) =>
+              s.contact_phone !== undefined ? { ...s, contact_phone: phoneForApi(s.contact_phone) } : s,
+            ),
+          }
+        : null),
+    };
+    const p = api.post('/bookings', body, { idempotencyKey: opts?.idempotencyKey });
     p.then(() => invalidateBookingsCaches()).catch(() => {});
     return p;
   },

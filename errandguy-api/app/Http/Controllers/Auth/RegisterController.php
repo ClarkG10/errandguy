@@ -8,6 +8,7 @@ use App\Http\Resources\UserResource;
 use App\Models\Notification;
 use App\Models\RunnerProfile;
 use App\Models\User;
+use App\Support\DeviceSessions;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
@@ -68,7 +69,7 @@ class RegisterController extends Controller
             'ip' => $request->ip(),
         ]);
 
-        $token = $user->createToken($request->header('User-Agent', 'mobile'))->plainTextToken;
+        $token = DeviceSessions::issueToken($user, $request);
 
         // The account belongs to the caller, so render the self-view (email /
         // verified flags / wallet). The request isn't authenticated yet here,

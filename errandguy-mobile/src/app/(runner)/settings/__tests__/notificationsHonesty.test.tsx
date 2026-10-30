@@ -38,9 +38,20 @@ describe('runner notification settings are honest', () => {
 
     expect(getByText('New Errand Requests')).toBeTruthy();
     expect(getByText('Chat Messages')).toBeTruthy();
-    expect(getByText('Reviews & Ratings')).toBeTruthy();
+    expect(getByText('Wallet & Payouts')).toBeTruthy();
+    expect(getByText('Verification')).toBeTruthy();
     expect(getByText('Safety Alerts')).toBeTruthy();
     expect(getByText('Always on for your safety')).toBeTruthy();
+  });
+
+  it('promises no rating notification — rating a runner notifies nobody', async () => {
+    // Customer\ReviewController sends no notification of any kind, so a row
+    // describing one told runners to expect an alert that never comes.
+    const { queryByText, findByText } = render(<NotificationsScreen />);
+    await findByText('Notifications are on for ErrandGuy.');
+
+    expect(queryByText(/Reviews?\b|Ratings?\b/)).toBeNull();
+    expect(queryByText(/left you a rating/)).toBeNull();
   });
 
   it('routes to the OS settings — the one switch that actually works today', async () => {

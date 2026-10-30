@@ -27,6 +27,7 @@ import { userService } from '../../services/user.service';
 import { useAuthStore } from '../../stores/authStore';
 import { toast } from '../../stores/toastStore';
 import { errorMessage } from '../../utils/errorCatalog';
+import { isPhMobile } from '../../utils/phone';
 import { LightColors } from '../../constants/colors';
 import type { User } from '../../types';
 
@@ -35,7 +36,8 @@ interface LoginFormData {
   password: string;
 }
 
-const isPhone = (val: string) => /^(\+63|0)9\d{9}$/.test(val.trim());
+// Any spelling of a PH mobile (09…, +63 9…) — the service sends it as +639….
+const isPhone = (val: string) => isPhMobile(val);
 const isEmail = (val: string) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(val.trim());
 
 /** 20pt checkbox square — fill/border/check animate in over 150ms (snap

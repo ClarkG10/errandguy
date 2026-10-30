@@ -6,17 +6,22 @@ import { router } from 'expo-router';
 import { userService } from '../services/user.service';
 import { useAuthStore } from '../stores/authStore';
 import { useNotificationStore } from '../stores/notificationStore';
+import { useChatStore } from '../stores/chatStore';
+import { rememberPushToken } from '../services/pushToken';
+import { foregroundPresentation } from '../utils/pushPresentation';
 import { noteSosNotification } from '../services/sosActive';
 import { notificationRoute } from '../utils/notificationRoute';
 
+// Foreground presentation. Everything shows, except a chat push for the
+// thread that is open on screen right now — the message is already appearing
+// in front of the person, so a banner + sound on top of it is noise
+// (utils/pushPresentation).
 Notifications.setNotificationHandler({
-  handleNotification: async () => ({
-    shouldShowAlert: true,
-    shouldPlaySound: true,
-    shouldSetBadge: true,
-    shouldShowBanner: true,
-    shouldShowList: true,
-  }),
+  handleNotification: async (notification) =>
+    foregroundPresentation(
+      notification?.request?.content?.data as Record<string, unknown> | undefined,
+      useChatStore.getState().openThreadId,
+    ),
 });
 
 export function useNotifications(enabled = true) {
@@ -65,6 +70,8 @@ export function useNotifications(enabled = true) {
         projectId: '1684a4bc-4b59-47f4-a87e-3b3262438098',
       });
       setExpoPushToken(tokenData.data);
+      // Sign-out sends it as `device_token` (services/session.service).
+      rememberPushToken(tokenData.data);
       return tokenData.data;
     } catch (err) {
       // Legitimately fails in dev / Expo Go (no FCM/APNs configured); in a
@@ -157,7 +164,14 @@ export function useNotifications(enabled = true) {
   // when the app returns to the foreground so a failed one-shot self-heals (the
   // first attempt may have hit a gap right after install); no-op once synced.
   useEffect(() => {
-    if (!enabled) return;
+    if (!enabled) {
+      // Signed out (or back in the auth flow): sign-out unregistered this
+      // phone, so whoever signs in next must upload a fresh token for THEIR
+      // account. Without this reset the one-per-session guard above held, and
+      // a second account on the same phone never got a push at all.
+      tokenSynced.current = false;
+      return;
+    }
     void syncPushToken();
     const sub = AppState.addEventListener('change', (state) => {
       if (state === 'active') void syncPushToken();

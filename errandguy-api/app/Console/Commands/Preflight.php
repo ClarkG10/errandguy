@@ -5,6 +5,8 @@ namespace App\Console\Commands;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Storage;
+use Illuminate\Support\Str;
 
 /**
  * One-shot LAUNCH GATE. Aggregates the go-live readiness checks into a single
@@ -12,20 +14,21 @@ use Illuminate\Support\Facades\DB;
  * "these criticals block launch" answer instead of relying on tribal knowledge.
  *
  * It composes {@see CheckProductionConfig} (env/config hygiene: APP_DEBUG,
- * broadcast, cache, queue, trusted proxies, Sentry DSN, Reverb creds, APP_URL)
- * with RUNTIME state the config check cannot see:
+ * broadcast, cache, queue, trusted proxies, mail, Sentry DSN, Reverb creds,
+ * APP_URL) with RUNTIME state the config check cannot see:
  *   - pending migrations (code deployed ahead of schema),
  *   - whether the scheduler is actually beating (cron alive?),
- *   - whether backups leave the box.
+ *   - whether backups leave the box, and the off-site disk takes a write.
  *
  * Exit code is non-zero when ANY critical fails, so `php artisan
- * errandguy:preflight` can gate a deploy / CI job. Read-only; never mutates.
+ * errandguy:preflight` can gate a deploy / CI job. Read-only, except for the
+ * small probe file it writes and deletes on the off-site backup disk.
  */
 class Preflight extends Command
 {
     protected $signature = 'errandguy:preflight';
 
-    protected $description = 'Launch-readiness gate: config hygiene + migrations + scheduler + backups. Non-zero exit on any critical.';
+    protected $description = 'Launch-readiness gate: config hygiene + migrations + scheduler + off-site backups. Non-zero exit on any critical.';
 
     public function handle(): int
     {
@@ -63,9 +66,9 @@ class Preflight extends Command
     }
 
     /**
-     * Pure-ish detection over the current config + runtime state. Kept static and
-     * side-effect-free (read-only) so it is unit-testable without faking a full
-     * boot.
+     * Pure-ish detection over the current config + runtime state. Kept static
+     * and read-only (bar the off-site backup probe file, deleted again) so it is
+     * unit-testable without faking a full boot.
      *
      * @return array<int, array{check: string, level: string, ok: bool, message: string}>
      */
@@ -106,20 +109,52 @@ class Preflight extends Command
         //    minute; >180s = 3 missed beats).
         $results[] = self::schedulerCheck();
 
-        // 4. Off-box backups — an on-box ('local') backup disk is lost with the
-        //    server it lives on. Warning (launchable, but a real DR gap).
-        $disk = config('backup.disk', 'local');
-        $offBox = ! in_array($disk, ['local', '', null], true);
-        $results[] = [
-            'check' => 'off-box backups',
-            'level' => 'warning',
-            'ok' => $offBox,
-            'message' => $offBox
-                ? "Backups write to the '{$disk}' disk (off-box)."
-                : "DB_BACKUP_DISK='".($disk ?: 'local')."' — backups stay on the app server; a lost box loses them too. Set an off-site disk (e.g. s3) + AWS_*.",
-        ];
+        // 4. Off-site backups — a backup on the app server is lost with it.
+        //    Local-only FAILS the gate in production, and a configured off-site
+        //    disk must actually take a write.
+        $results[] = self::backupsCheck();
 
         return $results;
+    }
+
+    /**
+     * Backups must leave the server: local-only is CRITICAL in production (a
+     * warning elsewhere), and the off-site disk is proven writable by writing,
+     * reading back and deleting a small probe file under the backup folder.
+     */
+    private static function backupsCheck(): array
+    {
+        $configured = (string) config('backup.disk', 'local');
+        $disk = BackupDatabase::offsiteDisk();
+
+        if ($disk === null) {
+            return [
+                'check' => 'off-site backups',
+                'level' => app()->environment('production') ? 'critical' : 'warning',
+                'ok' => false,
+                'message' => "Backups are local-only (DB_BACKUP_DISK='".($configured ?: 'local')."') — a lost server loses the database and every backup with it. Set DB_BACKUP_DISK=s3 and the AWS_* bucket values (.env.production.example).",
+            ];
+        }
+
+        $probe = trim((string) config('backup.path', 'backups'), '/').'/.preflight-'.Str::random(16);
+
+        try {
+            $storage = Storage::disk($disk);
+            $written = $storage->put($probe, 'preflight') && $storage->get($probe) === 'preflight';
+            $storage->delete($probe);
+            $error = $written ? null : 'the write or read-back failed — check the key, secret, bucket, region and endpoint';
+        } catch (\Throwable $e) {
+            $error = $e->getMessage();
+        }
+
+        return [
+            'check' => 'off-site backups',
+            'level' => 'critical',
+            'ok' => $error === null,
+            'message' => $error === null
+                ? "Backups are copied off-site to the '{$disk}' disk, and it accepted a test write."
+                : "The off-site backup disk '{$disk}' is not writable: {$error}. Nightly and pre-deploy backups stay on this server until it is fixed.",
+        ];
     }
 
     /**

@@ -5,6 +5,7 @@ namespace App\Listeners;
 use App\Events\BookingStatusChanged;
 use App\Models\Booking;
 use App\Services\NotificationService;
+use App\Support\CancellationNotice;
 use Illuminate\Contracts\Queue\ShouldQueue;
 
 class SendBookingStatusNotification implements ShouldQueue
@@ -108,16 +109,14 @@ class SendBookingStatusNotification implements ShouldQueue
     ];
 
     /**
-     * The refund sentence for a matching failure — empty unless money really was
-     * (or is being) returned.
+     * The money sentence for a matching failure (empty for any other status).
      *
      * MatchRunnerJob fires BookingStatusChanged('no_runner') and THEN calls
      * BookingService::refundUnfulfilled (post-commit, idempotent, own lock), and
-     * this listener is queued — so it can run either side of that refund. We
-     * therefore re-read the CURRENT payment_status and only claim what is true
-     * for it: 'refunded' = done, 'paid' = in flight. A cash / unpaid errand
-     * collected nothing (refundUnfulfilled no-ops there), so it gets no refund
-     * promise at all. (A2 lifecycle gap)
+     * this listener is queued — so it can run either side of that refund.
+     * CancellationNotice::money re-reads the CURRENT payment_status and only
+     * claims what is true for it: returned to the wallet, being returned, or —
+     * for a cash / unpaid errand that collected nothing — not charged.
      */
     private function refundClause(Booking $booking, string $status): string
     {
@@ -125,15 +124,7 @@ class SendBookingStatusNotification implements ShouldQueue
             return '';
         }
 
-        $paymentStatus = Booking::whereKey($booking->id)->value('payment_status')
-            ?? $booking->payment_status;
-        $amount = '₱'.number_format((float) $booking->total_amount, 2);
-
-        return match ($paymentStatus) {
-            'refunded' => " {$amount} has been refunded to your ErrandGuy wallet.",
-            'paid' => " Your {$amount} payment is being refunded to your ErrandGuy wallet.",
-            default => '',
-        };
+        return ' '.CancellationNotice::money($booking);
     }
 
     /**

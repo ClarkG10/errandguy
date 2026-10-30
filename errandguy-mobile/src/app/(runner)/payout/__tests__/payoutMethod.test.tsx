@@ -100,7 +100,8 @@ describe('payout method — none saved yet', () => {
 
     expect(mockSave).toHaveBeenCalledWith({
       channel: 'gcash',
-      account_number: '09171234567',
+      // E.164, like every mobile number the app sends (utils/phone).
+      account_number: '+639171234567',
       account_name: 'Juan Dela Cruz',
     });
     // The saved profile comes straight back from the endpoint — and the mount
@@ -205,7 +206,7 @@ describe('payout method — one saved', () => {
 
     expect(mockSave).toHaveBeenCalledWith({
       channel: 'maya',
-      account_number: '09181112222',
+      account_number: '+639181112222',
       account_name: 'Juan Dela Cruz',
     });
     await waitFor(() => expect(screen.getByText('Maya •••• 2222')).toBeTruthy());

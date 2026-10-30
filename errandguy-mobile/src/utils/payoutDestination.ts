@@ -1,4 +1,5 @@
 import type { PayoutChannel } from '../types';
+import { isPhMobile, phoneForApi } from './phone';
 
 /**
  * Where money goes out to — a customer's withdrawal, a runner's payout method,
@@ -67,9 +68,7 @@ export function knownBank(name: string | null | undefined): string | null {
   return PH_BANKS.find((b) => b.toLowerCase() === v) ?? null;
 }
 
-const PH_MOBILE = /^(\+63|0)9\d{9}$/;
-
-/** "0917 123-4567" → "09171234567": the server checks the number as sent. */
+/** "0917 123-4567" → "09171234567" before it is normalised for the request. */
 const compactMobile = (v: string) => v.replace(/[\s-]/g, '');
 const digitsOnly = (v: string) => v.replace(/\D/g, '');
 
@@ -93,7 +92,7 @@ export function validatePayoutDestination(
     return errors;
   }
   if (isEwalletChannel(d.channel)) {
-    if (!PH_MOBILE.test(compactMobile(d.accountNumber))) {
+    if (!isPhMobile(d.accountNumber)) {
       errors.account_number = `Enter the ${PAYOUT_CHANNEL_LABELS[d.channel]} mobile number, e.g. 09171234567.`;
     }
   } else {
@@ -124,7 +123,8 @@ export function toPayoutDestinationPayload(d: PayoutDestinationDraft): PayoutDes
   }
   return {
     channel,
-    account_number: compactMobile(d.accountNumber),
+    // E.164 (+639…), like every other mobile number the app sends.
+    account_number: phoneForApi(compactMobile(d.accountNumber)),
     account_name: d.accountName.trim(),
   };
 }

@@ -107,8 +107,9 @@ describe('withdraw — the request', () => {
       {
         amount: 250,
         channel: 'gcash',
-        // Spaces and dashes stripped: the server checks the number as sent.
-        account_number: '09171234567',
+        // Spaces and dashes stripped, and sent as +639… like every number
+        // the app sends (utils/phone).
+        account_number: '+639171234567',
         account_name: 'Rina Cruz',
       },
       { idempotencyKey: 'key-1' },

@@ -2,15 +2,24 @@
 
 namespace App\Http\Requests\Auth;
 
+use App\Http\Requests\Concerns\NormalizesPhoneNumbers;
+use App\Support\DeviceSessions;
 use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Validation\ValidationException;
 
 class LoginRequest extends FormRequest
 {
+    use NormalizesPhoneNumbers;
+
     public function authorize(): bool
     {
         return true;
+    }
+
+    protected function prepareForValidation(): void
+    {
+        $this->normalizePhoneFields(['phone']);
     }
 
     public function rules(): array
@@ -19,7 +28,7 @@ class LoginRequest extends FormRequest
             'phone' => ['required_without:email', 'nullable', 'string'],
             'email' => ['required_without:phone', 'nullable', 'string', 'email'],
             'password' => ['required', 'string'],
-            'device_name' => ['sometimes', 'string', 'max:255'],
+            ...DeviceSessions::rules(),
         ];
     }
 
@@ -28,12 +37,14 @@ class LoginRequest extends FormRequest
      * credential alone let anyone who knew a victim's email/phone lock that
      * account out of every device with 5 junk attempts (a pre-auth DoS,
      * AUTHX-3); with the IP included an attacker only locks their own IP against
-     * the account, never the legitimate user on their own device. (Truly
-     * per-client once TRUSTED_PROXIES is configured — see bootstrap/app.php.)
+     * the account, never the legitimate user on their own device. (Per-client
+     * only while TRUSTED_PROXIES names the edge — App\Http\Middleware\TrustProxies.)
      */
     protected function throttleKey(): string
     {
-        return 'login_attempts:' . ($this->input('phone') ?? $this->input('email')) . '|' . $this->ip();
+        $credential = $this->input('phone') ?? mb_strtolower(trim((string) $this->input('email')));
+
+        return 'login_attempts:' . $credential . '|' . $this->ip();
     }
 
     public function ensureIsNotRateLimited(): void

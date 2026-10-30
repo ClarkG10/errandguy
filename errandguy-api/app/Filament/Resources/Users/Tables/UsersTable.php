@@ -9,11 +9,13 @@ use App\Models\AdminUser;
 use App\Models\User;
 use App\Services\UserModerationService;
 use App\Support\AdminActivity;
+use App\Support\PhilippinePhone;
 use Filament\Actions\Action;
 use Filament\Actions\BulkAction;
 use Filament\Actions\ViewAction;
 use Filament\Forms\Components\Textarea;
 use Filament\Support\Icons\Heroicon;
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Support\Collection;
 use Filament\Tables\Columns\IconColumn;
 use Filament\Tables\Columns\ImageColumn;
@@ -31,7 +33,11 @@ class UsersTable
             ->columns([
                 ImageColumn::make('avatar_url')->label('')->circular(),
                 TextColumn::make('full_name')->searchable()->sortable(),
-                TextColumn::make('phone')->searchable(),
+                // Phones are stored as +639XXXXXXXXX; a search typed as
+                // 0917… or 63917… still finds the account.
+                TextColumn::make('phone')->searchable(query: fn (Builder $query, string $search): Builder => $query
+                    ->where('phone', 'like', '%'.$search.'%')
+                    ->when(PhilippinePhone::canonical($search), fn (Builder $q, string $canonical) => $q->orWhere('phone', $canonical))),
                 TextColumn::make('email')->searchable()->toggleable(isToggledHiddenByDefault: true),
                 TextColumn::make('role')
                     ->badge()

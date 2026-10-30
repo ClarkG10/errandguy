@@ -74,15 +74,25 @@ return [
             'report' => false,
         ],
 
+        // Any S3-compatible bucket (league/flysystem-aws-s3-v3): AWS S3,
+        // Cloudflare R2, DigitalOcean Spaces, Backblaze B2. Off-site backups
+        // use it when DB_BACKUP_DISK=s3 (config/backup.php). For a non-AWS
+        // provider set AWS_ENDPOINT to its S3 endpoint and AWS_DEFAULT_REGION to
+        // its region ('auto' for R2). No ACL is sent (objects take the
+        // bucket's default — keep the bucket private), and checksums only when
+        // the API requires them: some S3-compatible services reject the newer
+        // default ones.
         's3' => [
             'driver' => 's3',
             'key' => env('AWS_ACCESS_KEY_ID'),
             'secret' => env('AWS_SECRET_ACCESS_KEY'),
-            'region' => env('AWS_DEFAULT_REGION'),
+            'region' => env('AWS_DEFAULT_REGION', 'us-east-1'),
             'bucket' => env('AWS_BUCKET'),
             'url' => env('AWS_URL'),
-            'endpoint' => env('AWS_ENDPOINT'),
-            'use_path_style_endpoint' => env('AWS_USE_PATH_STYLE_ENDPOINT', false),
+            'endpoint' => env('AWS_ENDPOINT') ?: null,
+            'use_path_style_endpoint' => (bool) env('AWS_USE_PATH_STYLE_ENDPOINT', false),
+            'request_checksum_calculation' => env('AWS_REQUEST_CHECKSUM_CALCULATION', 'when_required'),
+            'response_checksum_validation' => env('AWS_RESPONSE_CHECKSUM_VALIDATION', 'when_required'),
             'throw' => false,
             'report' => false,
         ],

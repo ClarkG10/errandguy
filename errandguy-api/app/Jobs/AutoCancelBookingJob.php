@@ -6,12 +6,12 @@ use App\Events\BookingCancelled;
 use App\Models\Booking;
 use App\Models\BookingStatusLog;
 use App\Services\BookingService;
+use App\Support\CancellationNotice;
 use Illuminate\Bus\Queueable;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Bus\Dispatchable;
 use Illuminate\Queue\InteractsWithQueue;
 use Illuminate\Queue\SerializesModels;
-use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 
@@ -37,13 +37,7 @@ class AutoCancelBookingJob implements ShouldQueue
         // silently clobbered back to 'cancelled' (and, for a prepaid booking,
         // wrongly refunded). Re-reading FOR UPDATE and re-checking inside the
         // transaction lets a concurrent accept win — mirrors ExpireStaleMatchesJob.
-        // The payment state as it stood UNDER THE LOCK, before this job's refund.
-        // Only a 'paid' → 'refunded' move means THIS cancel returned the money —
-        // a no_runner booking whose refund already ran in MatchRunnerJob arrives
-        // here as 'refunded' and must not be told a second time. (A2)
-        $paymentStatusBefore = null;
-
-        $didCancel = DB::transaction(function () use (&$paymentStatusBefore) {
+        $didCancel = DB::transaction(function () {
             $booking = Booking::whereKey($this->bookingId)->lockForUpdate()->first();
 
             if (!$booking) {
@@ -76,8 +70,6 @@ class AutoCancelBookingJob implements ShouldQueue
                 return false;
             }
 
-            $paymentStatusBefore = $booking->payment_status;
-
             $booking->update([
                 'status' => 'cancelled',
                 'cancelled_at' => now(),
@@ -103,60 +95,18 @@ class AutoCancelBookingJob implements ShouldQueue
             Log::info("Booking {$this->bookingId} auto-cancelled: no runner found in time");
 
             // Broadcast the cancellation so the customer's booking.{id} channel
-            // drops them off the "finding a runner" screen live (+ the cancel
-            // push). Under the old realtime path the WAL UPDATE propagated automatically;
-            // now it must be explicit or the screen hangs until a manual refetch.
+            // drops them off the "finding a runner" screen live, and push them
+            // one notice that says why and where their money is: "…cancelled:
+            // no runner was available. ₱X was returned to your ErrandGuy
+            // wallet." (an unmatched errand refunded earlier by MatchRunnerJob
+            // reads the same — the money is in the wallet either way).
             $cancelled = Booking::find($this->bookingId);
-            event(new BookingCancelled($cancelled));
-
-            $this->notifyRefund($cancelled, $paymentStatusBefore);
+            event(new BookingCancelled(
+                $cancelled,
+                CancellationNotice::forCustomer($cancelled, CancellationNotice::NO_RUNNER),
+            ));
         }
 
         return $didCancel;
-    }
-
-    /**
-     * The BookingCancelled listener's customer push is deliberately cause-neutral
-     * (it is shared with admin/platform cancels), so a PREPAID customer was told
-     * only "your errand has been cancelled" — no reason, and no word that their
-     * money had just been returned. Add one money notice on top, stating the
-     * cause and the amount, and ONLY when this job's refund actually moved money:
-     *   - cash / unpaid bookings collected nothing (refundUnfulfilled no-ops), and
-     *   - a no_runner booking already refunded + notified by MatchRunnerJob
-     *     arrives here as 'refunded', not 'paid'.
-     * Cache flag makes a job retry after this point a no-op. (A2)
-     */
-    private function notifyRefund(?Booking $booking, ?string $paymentStatusBefore): void
-    {
-        if (! $booking || ! $booking->customer_id || $paymentStatusBefore !== 'paid') {
-            return;
-        }
-
-        // Refund runs in its own transaction and can fail independently of the
-        // cancel — only claim it once the row says it landed.
-        if ($booking->fresh()->payment_status !== 'refunded') {
-            return;
-        }
-
-        if (! Cache::add("booking-autocancel-refund-notified:{$booking->id}", true, 86400)) {
-            return;
-        }
-
-        $number = $booking->booking_number ?? $booking->id;
-        $amount = '₱'.number_format((float) $booking->total_amount, 2);
-
-        SendPushJob::dispatch(
-            $booking->customer_id,
-            'Refund issued',
-            "No runner was available for errand #{$number}, so we cancelled it and refunded {$amount} to your ErrandGuy wallet.",
-            [
-                'type' => 'payment',
-                'booking_id' => $booking->id,
-                'status' => 'cancelled',
-                'reason' => 'auto_cancel_no_runner',
-                'refund_amount' => round((float) $booking->total_amount, 2),
-                'refunded_to' => 'wallet',
-            ],
-        );
     }
 }

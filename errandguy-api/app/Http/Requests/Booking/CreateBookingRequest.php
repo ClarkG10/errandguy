@@ -2,6 +2,7 @@
 
 namespace App\Http\Requests\Booking;
 
+use App\Http\Requests\Concerns\NormalizesPhoneNumbers;
 use App\Models\ErrandType;
 use App\Services\PaymentMethodCatalog;
 use App\Support\VehicleClass;
@@ -10,6 +11,8 @@ use Illuminate\Validation\Rule;
 
 class CreateBookingRequest extends FormRequest
 {
+    use NormalizesPhoneNumbers;
+
     /**
      * Errand types that fulfill at a single location and don't have a separate
      * dropoff (the runner does the task on-site). Must stay in sync with mobile
@@ -27,6 +30,11 @@ class CreateBookingRequest extends FormRequest
     public function authorize(): bool
     {
         return true;
+    }
+
+    protected function prepareForValidation(): void
+    {
+        $this->normalizePhoneFields(['pickup_contact_phone', 'dropoff_contact_phone', 'stops.*.contact_phone']);
     }
 
     public function rules(): array

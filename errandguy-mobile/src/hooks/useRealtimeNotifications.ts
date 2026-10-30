@@ -5,7 +5,6 @@ import { useSmartPolling } from './useSmartPolling';
 import { invalidateQuery } from './useQuery';
 import { useNotificationStore } from '../stores/notificationStore';
 import { useChatStore } from '../stores/chatStore';
-import { notificationService } from '../services/notification.service';
 import { chatService } from '../services/chat.service';
 import { echo, retainChannel, releaseChannel } from '../services/echo';
 import { noteSosNotification } from '../services/sosActive';
@@ -110,20 +109,33 @@ const CHAT_WATCH_RESOLVE_MS = 300_000;
  *  cost one request. */
 const CHAT_WATCH_MIN_GAP_MS = 30_000;
 
+/** Wait after an unfamiliar notification before re-reading the unread total. */
+const UNREAD_RECONCILE_DELAY_MS = 1_500;
+
 export function useRealtimeNotifications(userId: string | null) {
   // Per-field selectors — this hook is mounted app-wide; a whole-store
   // useNotificationStore() would re-run it on every notification add/read.
   const addNotification = useNotificationStore((s) => s.addNotification);
-  const setUnreadCount = useNotificationStore((s) => s.setUnreadCount);
+  const fetchUnreadCount = useNotificationStore((s) => s.refreshUnreadCount);
 
-  const fetchUnreadCount = useCallback(async () => {
-    try {
-      const response = await notificationService.getUnreadCount();
-      setUnreadCount(response.data.data.unread_count);
-    } catch {
-      // silently fail
-    }
-  }, [setUnreadCount]);
+  // A row we didn't hold moved the badge by a GUESS (+1 if unread): it may be
+  // a coalesced card that was already unread on the server but never loaded
+  // here. Re-read the server total shortly after — trailing, so a burst of
+  // arrivals costs one request — and the badge is exact again.
+  const reconcileTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const scheduleUnreadReconcile = useCallback(() => {
+    if (reconcileTimerRef.current) clearTimeout(reconcileTimerRef.current);
+    reconcileTimerRef.current = setTimeout(() => {
+      reconcileTimerRef.current = null;
+      void fetchUnreadCount();
+    }, UNREAD_RECONCILE_DELAY_MS);
+  }, [fetchUnreadCount]);
+  useEffect(
+    () => () => {
+      if (reconcileTimerRef.current) clearTimeout(reconcileTimerRef.current);
+    },
+    [],
+  );
 
   // Seed + keep the tab badge authoritative from /notifications/unread-count.
   // Without this the badge started at 0 and only reflected realtime increments
@@ -254,7 +266,11 @@ export function useRealtimeNotifications(userId: string | null) {
     // any `{ new }` change envelope), so it drops straight into the store.
     onEvent: (payload) => {
       const notification = payload as AppNotification;
-      addNotification(notification);
+      // An id we already hold is the server re-broadcasting a coalesced card
+      // (shopping / stop ticks) with new data — the store replaces it so the
+      // tracking screen sees every tick, not just the first.
+      const held = addNotification(notification);
+      if (!held) scheduleUnreadReconcile();
       // Staff closing this device's SOS flips its "SOS active" card to closed.
       void noteSosNotification(notification);
       // The notification names the entity that changed — refresh it now rather

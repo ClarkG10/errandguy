@@ -14,6 +14,17 @@
  */
 import { Platform } from 'react-native';
 import api from '../services/api';
+import { getAppVersionLabel } from './appVersion';
+
+/** `{ app_version: "1.0.0 · 3f2a9c1b" }` (native version + OTA bundle), or {} if unreadable. */
+function withAppVersion(): { app_version?: string } {
+  try {
+    const label = getAppVersionLabel();
+    return label && label !== '—' ? { app_version: label } : {};
+  } catch {
+    return {};
+  }
+}
 
 /**
  * Best-effort forward of a CRASH (a fatal JS error or a React render error) to
@@ -24,6 +35,12 @@ import api from '../services/api';
  * it can't re-enter through the unhandled-rejection tracker; the `forwarding`
  * flag is a second guard against re-entrancy. Only crashes are forwarded (not
  * every logged warning / unhandled rejection) to keep volume — and cost — low.
+ *
+ * Signed-out screens report too: nothing here requires a session (the endpoint
+ * accepts anonymous reports; a token, when there is one, simply rides along
+ * via the api interceptor), and sign-up / login are exactly where a crash costs
+ * a customer. Every report carries the app version and platform so a crash can
+ * be pinned to the build — and OTA bundle — that produced it.
  */
 let forwarding = false;
 function forwardCrash(payload: {
@@ -38,7 +55,7 @@ function forwardCrash(payload: {
     api
       .post(
         '/client-errors',
-        { ...payload, platform: Platform.OS },
+        { ...payload, platform: Platform.OS, ...withAppVersion() },
         // Never spin the global activity indicator or hit the read cache for a
         // crash report, and don't dedupe (each crash is its own event).
         { silent: true, noCache: true, noDedupe: true },

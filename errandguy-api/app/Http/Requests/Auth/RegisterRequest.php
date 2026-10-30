@@ -2,14 +2,23 @@
 
 namespace App\Http\Requests\Auth;
 
+use App\Http\Requests\Concerns\NormalizesPhoneNumbers;
+use App\Support\DeviceSessions;
 use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Validation\Rules\Password;
 
 class RegisterRequest extends FormRequest
 {
+    use NormalizesPhoneNumbers;
+
     public function authorize(): bool
     {
         return true;
+    }
+
+    protected function prepareForValidation(): void
+    {
+        $this->normalizePhoneFields(['phone']);
     }
 
     public function rules(): array
@@ -45,6 +54,7 @@ class RegisterRequest extends FormRequest
             // with app builds that don't yet send it; recorded when present.
             'terms_accepted' => ['sometimes', 'boolean'],
             'privacy_policy_version' => ['sometimes', 'nullable', 'string', 'max:20'],
+            ...DeviceSessions::rules(),
         ];
     }
 

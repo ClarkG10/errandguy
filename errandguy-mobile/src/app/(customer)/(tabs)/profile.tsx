@@ -15,6 +15,13 @@ import {
   Info,
   Accessibility,
   Bike,
+  MailWarning,
+  KeyRound,
+  MonitorSmartphone,
+  FileText,
+  ShieldCheck,
+  UserX,
+  ArrowUpRight,
 } from 'lucide-react-native';
 import type { LucideIcon } from 'lucide-react-native';
 import * as Haptics from 'expo-haptics';
@@ -28,6 +35,8 @@ import { Eyebrow, Hairline } from '../../../components/ui/Typography';
 import { ConfirmModal } from '../../../components/ui/ConfirmModal';
 import { EditProfileModal } from '../../../components/customer/EditProfileModal';
 import { DeleteAccountSheet } from '../../../components/settings/DeleteAccountSheet';
+import { useAccountSecurity } from '../../../components/settings/AccountSecurity';
+import { openPublicPage } from '../../../components/settings/PublicPageLink';
 import { useAuthStore } from '../../../stores/authStore';
 import { useBookingStore } from '../../../stores/bookingStore';
 import { useAuth } from '../../../hooks/useAuth';
@@ -64,6 +73,7 @@ export default function CustomerProfileScreen() {
   const user = useAuthStore((s) => s.user);
   const setUser = useAuthStore((s) => s.setUser);
   const { logout } = useAuth();
+  const security = useAccountSecurity();
   const hideOnScroll = useHideTabBarOnScroll();
 
   const [refreshing, setRefreshing] = useState(false);
@@ -163,12 +173,9 @@ export default function CustomerProfileScreen() {
   }, [logout, router]);
 
   // Profile completion — computed client-side from the user record.
-  // Five checks: photo, email added, email verified, phone added,
-  // phone verified. The hint line only surfaces items the edit modal
-  // (where the meter routes) can actually fix — photo and email. The
-  // verify/phone checks stay in the % math, but hinting them here would
-  // dead-end: the modal has no phone field and no in-app verify flow is
-  // reachable for an authenticated session.
+  // Four checks: name, photo, email, phone. The hint line only surfaces
+  // items the edit modal (where the meter routes) can actually fix — photo
+  // and name. Email verification has its own row in Account (below).
   const completion = useMemo(() => {
     const checks = [
       !!user?.full_name,
@@ -192,11 +199,58 @@ export default function CustomerProfileScreen() {
       icon: UserRound,
       onPress: () => setShowEditModal(true),
     },
+    // Only while the email is unverified — the row disappears once it is.
+    ...(security.needsEmailVerification
+      ? [
+          {
+            label: 'Verify email',
+            icon: MailWarning,
+            trailing: (
+              <Text className="text-[12px] font-montserrat-bold text-warningDark">
+                Not verified
+              </Text>
+            ),
+            onPress: security.openVerifyEmail,
+          },
+        ]
+      : []),
     { label: 'Saved Addresses', icon: MapPin, route: '/(customer)/addresses' },
     {
       label: 'Trusted Contacts',
       icon: Users,
       route: '/(customer)/trusted-contacts',
+    },
+  ];
+
+  const securityMenu: MenuItem[] = [
+    { label: 'Change password', icon: KeyRound, onPress: security.openChangePassword },
+    {
+      label: 'Sign out of all devices',
+      icon: MonitorSmartphone,
+      onPress: security.openSignOutEverywhere,
+    },
+  ];
+
+  // The published pages on the API host (constants/legal), opened in place.
+  const externalLink = <ArrowUpRight size={16} color={LightColors.textMuted} />;
+  const legalMenu: MenuItem[] = [
+    {
+      label: 'Terms of Service',
+      icon: FileText,
+      trailing: externalLink,
+      onPress: () => void openPublicPage('terms'),
+    },
+    {
+      label: 'Privacy Policy',
+      icon: ShieldCheck,
+      trailing: externalLink,
+      onPress: () => void openPublicPage('privacy'),
+    },
+    {
+      label: 'Delete your account on the web',
+      icon: UserX,
+      trailing: externalLink,
+      onPress: () => void openPublicPage('deleteAccount'),
     },
   ];
 
@@ -458,9 +512,11 @@ export default function CustomerProfileScreen() {
         </View>
 
         {renderSection('ACCOUNT', accountMenu)}
+        {renderSection('SECURITY', securityMenu)}
         {renderSection('PAYMENT', paymentMenu)}
         {renderSection('MODE', modeMenu)}
         {renderSection('SUPPORT', supportMenu)}
+        {renderSection('LEGAL', legalMenu)}
 
         {/* Logout / Delete — inline tap-to-confirm. The previous
             bottom-sheet flow felt heavy for an action that's already
@@ -523,6 +579,9 @@ export default function CustomerProfileScreen() {
         visible={showEditModal}
         onClose={() => setShowEditModal(false)}
       />
+
+      {/* Change password · Verify email · Sign out of all devices */}
+      {security.sheets}
 
       <LogoutSplash visible={loggingOut} />
     </View>

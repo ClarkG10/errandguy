@@ -112,4 +112,43 @@ class OTPServiceTest extends TestCase
         $this->service->storeOTP('test@example.com', '654321');
         $this->assertEquals(0, $this->service->getAttemptCount('test@example.com'));
     }
+
+    public function test_each_purpose_keeps_its_own_code(): void
+    {
+        $this->service->storeOTP('ana@example.com', '111111', OTPService::PASSWORD_RESET);
+        $this->service->storeOTP('ana@example.com', '222222');
+
+        // A reset code is not a sign-in code, and the other way round.
+        $this->assertFalse($this->service->verifyOTP('ana@example.com', '111111'));
+        $this->assertSame(OTPService::INVALID, $this->service->check('ana@example.com', '222222', OTPService::PASSWORD_RESET));
+        $this->assertSame(OTPService::VALID, $this->service->check('ana@example.com', '111111', OTPService::PASSWORD_RESET));
+        $this->assertSame(OTPService::EXPIRED, $this->service->check('ana@example.com', '111111', OTPService::PASSWORD_RESET));
+    }
+
+    public function test_check_reports_locked_after_the_last_guess_and_drops_the_code(): void
+    {
+        $this->service->storeOTP('ana@example.com', '123456', OTPService::EMAIL_VERIFICATION);
+
+        for ($i = 0; $i < OTPService::MAX_ATTEMPTS; $i++) {
+            $this->assertSame(OTPService::INVALID, $this->service->check('ana@example.com', '000000', OTPService::EMAIL_VERIFICATION));
+        }
+        $this->assertSame(0, $this->service->attemptsRemaining('ana@example.com', OTPService::EMAIL_VERIFICATION));
+
+        $this->assertSame(OTPService::LOCKED, $this->service->check('ana@example.com', '123456', OTPService::EMAIL_VERIFICATION));
+        $this->assertSame(OTPService::EXPIRED, $this->service->check('ana@example.com', '123456', OTPService::EMAIL_VERIFICATION));
+    }
+
+    public function test_the_code_expires_after_its_lifetime(): void
+    {
+        $this->service->storeOTP('ana@example.com', '123456', OTPService::PASSWORD_RESET);
+
+        $this->travel(OTPService::TTL_MINUTES + 1)->minutes();
+
+        $this->assertSame(OTPService::EXPIRED, $this->service->check('ana@example.com', '123456', OTPService::PASSWORD_RESET));
+    }
+
+    public function test_email_identifiers_ignore_case_and_spaces(): void
+    {
+        $this->assertSame('ana@example.com', OTPService::emailIdentifier('  Ana@Example.COM '));
+    }
 }
