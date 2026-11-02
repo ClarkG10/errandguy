@@ -5,10 +5,13 @@ on:
     branches: [main, develop]
     paths:
       - 'errandguy-api/**'
+      - '.github/workflows/backend-ci.yml'
   push:
     branches: [main]
     paths:
       - 'errandguy-api/**'
+      # A change to this workflow must run it too, or a CI fix can't prove itself.
+      - '.github/workflows/backend-ci.yml'
 
 defaults:
   run:
