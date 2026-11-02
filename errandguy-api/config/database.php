@@ -59,6 +59,12 @@ return [
             'prefix_indexes' => true,
             'strict' => true,
             'engine' => null,
+            // The app reads and writes every time as UTC, and several tables
+            // let the database stamp created_at itself (wallet ledger, payment
+            // history). Pin the session to UTC so a server running on local
+            // time can't shift those stamps 8 hours from the app's clock (the
+            // "today" totals and the staff daily money cap depend on it).
+            'timezone' => '+00:00',
             'options' => extension_loaded('pdo_mysql') ? array_filter([
                 (PHP_VERSION_ID >= 80500 ? Mysql::ATTR_SSL_CA : PDO::MYSQL_ATTR_SSL_CA) => env('MYSQL_ATTR_SSL_CA'),
             ]) : [],

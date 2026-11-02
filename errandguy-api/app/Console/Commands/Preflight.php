@@ -202,11 +202,14 @@ class Preflight extends Command
 
             $database = $connection->getDatabaseName();
 
+            // MySQL 8+ returns information_schema columns upper-case
+            // (INDEX_NAME) whatever case the query used, so alias it.
             $present = DB::table('information_schema.statistics')
                 ->where('table_schema', $database)
                 ->whereIn('index_name', array_values($required))
                 ->distinct()
-                ->pluck('index_name')
+                ->selectRaw('index_name AS idx')
+                ->pluck('idx')
                 ->all();
 
             $missing = [];

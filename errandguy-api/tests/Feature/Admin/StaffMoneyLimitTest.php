@@ -94,6 +94,10 @@ class StaffMoneyLimitTest extends TestCase
     {
         $this->wallet->adjust($this->finance, $this->customer->id, 10000, 'One');
         $this->wallet->adjust($this->finance, $this->customer->id, 10000, 'Two');
+        // The ledger lets the database stamp created_at with the REAL clock,
+        // which travelTo() can't move; pin the rows to the frozen test time.
+        WalletTransaction::where('initiated_by_staff_id', $this->finance->id)
+            ->update(['created_at' => now()]);
         $this->assertSame(0.0, StaffMoneyLimit::remainingToday($this->finance));
 
         // 23:59 Manila the same day: still today.
