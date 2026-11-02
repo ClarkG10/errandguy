@@ -161,6 +161,11 @@ jobs:
     needs: [test, test-mysql, lint]
     runs-on: ubuntu-latest
     if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    # This job checks nothing out, so the workflow-wide errandguy-api working
+    # directory doesn't exist here and bash can't even start in it.
+    defaults:
+      run:
+        working-directory: .
 
     steps:
       - name: Trigger Forge deployment
