@@ -42,8 +42,9 @@ class SentryConfigTest extends TestCase
     public function test_performance_tracing_is_off_by_default(): void
     {
         // No APM overhead until someone opts in via SENTRY_TRACES_SAMPLE_RATE.
-        $this->assertNull(config('sentry.traces_sample_rate'));
-        $this->assertNull(config('sentry.profiles_sample_rate'));
+        // Unset (null) and the env template's explicit 0.0 both mean "off".
+        $this->assertEmpty(config('sentry.traces_sample_rate'));
+        $this->assertEmpty(config('sentry.profiles_sample_rate'));
     }
 
     public function test_before_send_is_a_serializable_class_callable(): void
@@ -60,8 +61,9 @@ class SentryConfigTest extends TestCase
     public function test_dsn_defaults_to_null_so_the_sdk_is_inert(): void
     {
         // With no DSN the SDK builds no transport and captures nothing —
-        // safe to ship before the account exists.
-        $this->assertNull(config('sentry.dsn'));
+        // safe to ship before the account exists. Unset (null) and the env
+        // template's blank SENTRY_LARAVEL_DSN= both leave it inert.
+        $this->assertEmpty(config('sentry.dsn'));
     }
 
     public function test_hub_still_resolves_when_inert(): void
