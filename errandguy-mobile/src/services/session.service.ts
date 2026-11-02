@@ -1,6 +1,7 @@
 import { authService } from './auth.service';
 import { currentPushToken, unregisterPushLocally } from './pushToken';
 import { useAuthStore } from '../stores/authStore';
+import { stopRunnerActivity } from '../utils/runnerSession';
 
 /**
  * Every way a session ends, in one place — so each of them also lets go of
@@ -12,6 +13,9 @@ import { useAuthStore } from '../stores/authStore';
  * account, a password reset): clean up this phone only.
  */
 export async function endLocalSession(): Promise<void> {
+  // GPS + heartbeat off before anything awaits: each ping from here on would
+  // carry a dead token.
+  stopRunnerActivity();
   await unregisterPushLocally();
   await useAuthStore.getState().logout();
 }
@@ -23,6 +27,9 @@ export async function endLocalSession(): Promise<void> {
  * (the token simply expires server-side).
  */
 export async function signOut(): Promise<void> {
+  // Before the server call: the moment it revokes the token, a heartbeat
+  // still in the air comes back 401 and tears the session down a second time.
+  stopRunnerActivity();
   try {
     await authService.logout(currentPushToken());
   } catch {

@@ -166,6 +166,77 @@ class DeviceSessionsTest extends TestCase
         $this->assertNull($profile->fresh()->online_since);
     }
 
+    private function onlineRunnerProfile(): RunnerProfile
+    {
+        return RunnerProfile::create([
+            'user_id' => $this->user->id, 'verification_status' => 'approved',
+            'vehicle_type' => 'motorcycle', 'preferred_types' => ['delivery'],
+            'is_online' => true, 'online_since' => now(),
+        ]);
+    }
+
+    public function test_signing_out_ends_every_sign_in_of_this_phone_including_one_a_rotation_left(): void
+    {
+        $a = $this->login(['device_id' => self::PHONE_A, 'device_name' => 'Pixel 8']);
+        $this->app['auth']->forgetGuards();
+        // The sliding session rotated phone A's token: the new one has the same
+        // name, and the old one stays alive for in-flight requests.
+        $rotated = $this->user->createToken('device:'.self::PHONE_A.'|Pixel 8')->plainTextToken;
+        $b = $this->login(['device_id' => self::PHONE_B]);
+        $this->app['auth']->forgetGuards();
+
+        $this->withToken($rotated)->postJson('/api/v1/auth/logout')->assertOk();
+        $this->app['auth']->forgetGuards();
+
+        $this->assertSame(['device:'.self::PHONE_B], $this->tokenNames());
+        $this->withToken($a)->getJson('/api/v1/user/profile')->assertStatus(401);
+        $this->app['auth']->forgetGuards();
+        $this->withToken($b)->getJson('/api/v1/user/profile')->assertOk();
+    }
+
+    public function test_a_runner_signing_out_goes_offline_even_when_a_rotation_left_a_token_on_this_phone(): void
+    {
+        $profile = $this->onlineRunnerProfile();
+        $old = $this->login(['device_id' => self::PHONE_A]);
+        $this->app['auth']->forgetGuards();
+        $this->user->createToken('device:'.self::PHONE_A); // the rotated-in token
+
+        $this->withToken($old)->postJson('/api/v1/auth/logout')->assertOk();
+
+        $this->assertSame([], $this->tokenNames());
+        $this->assertFalse($profile->fresh()->is_online);
+    }
+
+    public function test_a_phone_signed_in_without_a_device_id_signs_out_its_rotated_token_too(): void
+    {
+        $profile = $this->onlineRunnerProfile();
+        $old = $this->login(['device_name' => 'Old Android']);
+        $this->app['auth']->forgetGuards();
+        $this->user->createToken('Old Android'); // same name: the rotation's replacement
+
+        $this->withToken($old)->postJson('/api/v1/auth/logout')->assertOk();
+
+        $this->assertSame([], $this->tokenNames());
+        $this->assertFalse($profile->fresh()->is_online);
+    }
+
+    public function test_an_expired_sign_in_on_another_phone_does_not_keep_a_runner_online(): void
+    {
+        $profile = $this->onlineRunnerProfile();
+        $a = $this->login(['device_id' => self::PHONE_A]);
+        $this->app['auth']->forgetGuards();
+
+        // Phone B's sign-in is past Sanctum's lifetime; phone C's past its own expiry.
+        $lifetime = (int) config('sanctum.expiration');
+        $stale = $this->user->createToken('device:'.self::PHONE_B)->accessToken;
+        $stale->forceFill(['created_at' => now()->subMinutes($lifetime + 60)])->save();
+        $this->user->createToken('device:6f1c2b8e-3333-4a5b-9c0d-cccccccccccc', ['*'], now()->subMinute());
+
+        $this->withToken($a)->postJson('/api/v1/auth/logout')->assertOk();
+
+        $this->assertFalse($profile->fresh()->is_online);
+    }
+
     public function test_signing_out_of_all_devices_takes_a_runner_offline(): void
     {
         $profile = RunnerProfile::create([

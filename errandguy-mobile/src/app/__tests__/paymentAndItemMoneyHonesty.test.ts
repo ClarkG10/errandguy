@@ -67,11 +67,31 @@ describe('no false money promises anywhere in the app', () => {
 
 describe('a GCash/Maya booking waiting for its payment', () => {
   it('the review screen points at the real way back, Complete payment', () => {
+    // Its failure card reads the ONE booking-payment mapping (which carries
+    // CHECKOUT_CANCELLED_MESSAGE) — the same one the waiting screen and
+    // tracking use through useCompleteBookingPayment.
     expect(REVIEW).toMatch(
-      /import \{\s*CHECKOUT_CANCELLED,\s*CHECKOUT_CANCELLED_MESSAGE,\s*\} from '..\/..\/..\/hooks\/useCompleteBookingPayment'/,
+      /import \{\s*bookingPaymentFailure,\s*CHECKOUT_CANCELLED,\s*\} from '..\/..\/..\/hooks\/useCompleteBookingPayment'/,
     );
+    expect(REVIEW).toMatch(/bookingPaymentFailure\(attempt\?\.failureReason\)/);
+    expect(REVIEW).toMatch(/failureMessage=\{paymentFailure\?\.message\}/);
     // No local copy of the message to drift back to the old promise.
     expect(REVIEW).not.toMatch(/const CHECKOUT_CANCELLED_MESSAGE/);
+  });
+
+  it('review only reopens a checkout that is still alive; a ruled-on charge offers Book again', () => {
+    const overlay = REVIEW.slice(REVIEW.indexOf('<PaymentProgress'));
+    expect(overlay).toMatch(
+      /paymentFailure\?\.recovery === 'rebook'\s*\?\s*rebookAfterFailedPayment/,
+    );
+    expect(overlay).toMatch(/\? 'Book again'/);
+    // The rebook re-seeds from the errand it created, through the shared builder.
+    const rebook = REVIEW.slice(
+      REVIEW.indexOf('const rebookAfterFailedPayment'),
+      REVIEW.indexOf('const leaveForBooking'),
+    );
+    expect(rebook).toMatch(/rebookDraft\(stored\)/);
+    expect(rebook).toMatch(/resolveAttempt\(\)/);
   });
 
   it('tracking leads with "Waiting for your payment", not "Finding you a runner"', () => {
@@ -84,8 +104,33 @@ describe('a GCash/Maya booking waiting for its payment', () => {
     expect(pending).toMatch(/paymentDeadlineLine\(/);
     // The pill speaks the same truth.
     expect(TRACKING).toMatch(
-      /const pillLabel = awaitingPayment \? AWAITING_PAYMENT_LABEL : STATUS_LABELS\[booking\.status\]/,
+      /const pillLabel = awaitingPayment\s*\?\s*AWAITING_PAYMENT_LABEL\s*:\s*scheduledFor\s*\?\s*'Scheduled'\s*:\s*STATUS_LABELS\[booking\.status\]/,
     );
+  });
+
+  it('tracking tells a paid scheduled errand it is scheduled — not "under a minute"', () => {
+    const pending = TRACKING.slice(
+      TRACKING.indexOf("case 'pending':"),
+      TRACKING.indexOf("case 'no_runner':", TRACKING.indexOf("case 'pending':")),
+    );
+    expect(TRACKING).toMatch(
+      /const scheduledFor = awaitingPayment \? null : scheduledWindowLabel\(booking\)/,
+    );
+    // Scheduled is checked BEFORE the live-search copy.
+    expect(pending.indexOf('scheduledFor')).toBeGreaterThan(-1);
+    expect(pending.indexOf('scheduledFor')).toBeLessThan(pending.indexOf("'Finding you a runner'"));
+    expect(pending).toMatch(/title: 'Scheduled'/);
+    expect(pending).toMatch(/\$\{SCHEDULED_MATCH_LEAD_MINUTES\} minutes before/);
+  });
+
+  it('tracking says where a no-runner refund went, above the fold', () => {
+    const noRunner = TRACKING.slice(
+      TRACKING.indexOf("case 'no_runner':", TRACKING.indexOf("case 'pending':")),
+      TRACKING.indexOf("case 'matched':", TRACKING.indexOf("case 'pending':")),
+    );
+    expect(TRACKING).toMatch(/refundedToWallet\(booking\)/);
+    expect(noRunner).toMatch(/noRunnerRefund > 0/);
+    expect(noRunner).toMatch(/went back to your ErrandGuy wallet/);
   });
 
   it('tracking offers Complete payment, wired to the shared verifier', () => {
@@ -93,7 +138,9 @@ describe('a GCash/Maya booking waiting for its payment', () => {
     expect(cta).toBeGreaterThan(-1);
     expect(TRACKING.slice(cta - 300, cta)).toMatch(/awaitingPayment && checkoutUrl \?/);
     expect(TRACKING.slice(cta, cta + 200)).toMatch(/onPress=\{completePayment\}/);
-    expect(TRACKING).toMatch(/useCompleteBookingPayment\(booking, \{ onSettled: fetchBooking \}\)/);
+    expect(TRACKING).toMatch(
+      /useCompleteBookingPayment\(booking, \{\s*onSettled: fetchBooking,\s*onRebook: \(\) => handleRebook\(\),\s*\}\)/,
+    );
     expect(TRACKING).toMatch(/<PaymentProgress \{\.\.\.checkoutProgress\} \/>/);
   });
 
@@ -108,6 +155,14 @@ describe('a GCash/Maya booking waiting for its payment', () => {
     expect(cta).toBeGreaterThan(-1);
     expect(TRACKING.slice(cta, cta + 300)).toMatch(/title="Book again"/);
     expect(TRACKING.slice(cta, cta + 300)).toMatch(/onPress=\{handleRebook\}/);
+  });
+
+  it('every Book again re-seeds through the one shared builder (stops included)', () => {
+    const CONFIRM = read('app', '(customer)', 'book', 'confirm.tsx');
+    for (const screen of [TRACKING, CONFIRM]) {
+      const rebook = screen.slice(screen.indexOf('const handleRebook = useCallback'));
+      expect(rebook.slice(0, 600)).toMatch(/updateDraft\(rebookDraft\(b\)\)/);
+    }
   });
 });
 

@@ -258,9 +258,12 @@ class RunnerErrandController extends Controller
                 return $booking;
             });
         } catch (\RuntimeException $e) {
+            // Refusals about THIS runner and THIS errand get their own code, so
+            // the app shows the server's reason instead of its generic "errand
+            // in progress" copy for BOOKING_CONFLICT.
             if ($e->getMessage() === 'self_deal') {
                 return $this->fail(
-                    ErrorCode::BOOKING_CONFLICT,
+                    ErrorCode::ACCEPT_NOT_ALLOWED,
                     "You can't accept your own errand.",
                 );
             }
@@ -274,7 +277,7 @@ class RunnerErrandController extends Controller
 
             if ($e->getMessage() === 'vehicle') {
                 return $this->fail(
-                    ErrorCode::BOOKING_CONFLICT,
+                    ErrorCode::ACCEPT_NOT_ALLOWED,
                     'This errand needs '.VehicleClass::requirement(Booking::whereKey($id)->value('vehicle_type_rate'))
                         .'. If your vehicle has changed, update it in Settings.',
                 );
@@ -395,7 +398,7 @@ class RunnerErrandController extends Controller
 
             // Re-dispatch matching. The declining runner is on the booking's
             // offered_runner_ids (and passed as the explicit exclusion), so
-            // they are never offered this errand again. Mirrors
+            // they are not offered this errand again this round. Mirrors
             // ExpireStaleMatchesJob.
             \App\Jobs\MatchRunnerJob::dispatch($booking->id, null, $user->id);
         }
@@ -493,8 +496,16 @@ class RunnerErrandController extends Controller
             // check-then-act race: two overlapping "completed" calls (double-tap
             // or a retried request) would both pass and credit the runner twice.
             $locked = Booking::whereKey($booking->id)->lockForUpdate()->first();
+            // Still this runner's errand? The assignment check at the top was
+            // unlocked: staff may have taken it off them since ("Return to
+            // matching") and another runner accepted it — a late tap from the
+            // first runner must never advance, complete or settle the errand
+            // the new runner is working.
+            if ($locked && (string) $locked->runner_id !== (string) $user->id) {
+                return 'not_assigned';
+            }
             if (! $locked || $locked->status !== $oldStatus) {
-                return true; // already moved on — treat as an idempotent no-op
+                return 'conflict'; // already moved on — treat as an idempotent no-op
             }
 
             $booking->update($updateData);
@@ -539,10 +550,16 @@ class RunnerErrandController extends Controller
                 Cache::forget("runner_active_booking_id:{$user->id}");
             }
 
-            return false;
+            return null;
         });
 
-        if ($conflict) {
+        if ($conflict === 'not_assigned') {
+            return response()->json([
+                'message' => 'You are not assigned to this errand.',
+            ], 403);
+        }
+
+        if ($conflict === 'conflict') {
             return response()->json([
                 'message' => 'This errand was just updated. Pull to refresh.',
             ], 409);

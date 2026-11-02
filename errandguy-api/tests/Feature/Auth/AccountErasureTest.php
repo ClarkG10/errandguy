@@ -235,6 +235,20 @@ class AccountErasureTest extends TestCase
         $this->assertEquals(250.0, (float) $user->fresh()->wallet_balance);
     }
 
+    public function test_deleting_a_runner_account_takes_them_offline(): void
+    {
+        $user = User::factory()->create(['role' => 'runner', 'status' => 'active', 'wallet_balance' => 0]);
+        $profile = \App\Models\RunnerProfile::create([
+            'user_id' => $user->id, 'verification_status' => 'approved', 'preferred_types' => [],
+            'is_online' => true, 'online_since' => now(),
+        ]);
+
+        $this->actingAs($user)->deleteJson('/api/v1/user/account')->assertOk();
+
+        $this->assertFalse($profile->fresh()->is_online);
+        $this->assertNull($profile->fresh()->online_since);
+    }
+
     public function test_deletion_blocked_with_negative_wallet_balance_debt(): void
     {
         // TEST-1: a cash errand leaves the runner owing the platform its service
@@ -247,7 +261,8 @@ class AccountErasureTest extends TestCase
             ->assertStatus(422)
             ->assertJsonPath('code', 'CASH_DEBT_OUTSTANDING')
             ->assertJsonPath('message', 'You owe ₱15.00 from cash errands. It’s cleared automatically from your next prepaid earnings; '
-                .'cash errands pause at ₱1,000. You can delete your account once it’s cleared.');
+                .'cash errands pause at ₱1,000. You can delete your account once it’s cleared — '
+                .'to settle it now, contact support at '.config('app.support_email').'.');
 
         $this->assertNull(User::withTrashed()->find($user->id)->deleted_at);
     }

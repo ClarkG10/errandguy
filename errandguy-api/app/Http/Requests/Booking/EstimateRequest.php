@@ -2,6 +2,7 @@
 
 namespace App\Http\Requests\Booking;
 
+use App\Models\ErrandType;
 use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Validation\Rule;
 
@@ -12,12 +13,26 @@ class EstimateRequest extends FormRequest
         return true;
     }
 
+    /** A merged retired type is priced as the type that replaced it (see CreateBookingRequest). */
+    protected function prepareForValidation(): void
+    {
+        if ($this->has('errand_type_id')) {
+            $this->merge(['errand_type_id' => ErrandType::bookableIdFor($this->input('errand_type_id'))]);
+        }
+    }
+
     public function rules(): array
     {
         return [
             'errand_type_id' => [
+                'bail',
                 'required',
                 'string',
+                function (string $attribute, mixed $value, \Closure $fail): void {
+                    if ($message = ErrandType::removedTypeMessage($value)) {
+                        $fail($message);
+                    }
+                },
                 Rule::exists('errand_types', 'id')->where('is_active', true),
             ],
             'pickup_lat' => ['required', 'numeric', 'between:-90,90'],

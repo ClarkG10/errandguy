@@ -182,6 +182,16 @@ function adoptRotatedToken(response: AxiosResponse<any>): void {
 async function endSession(
   opts: { wipeAccountState?: boolean; reason?: string } = {},
 ): Promise<void> {
+  // Runner GPS + heartbeat off first: every ping from here on carries the
+  // dead token, comes back 401/403 and lands right back here. Lazy require —
+  // the location store reaches this module through runner.service.
+  try {
+    const { stopRunnerActivity } = require('../utils/runnerSession');
+    stopRunnerActivity();
+  } catch {
+    /* best effort — never block the teardown */
+  }
+
   await secureStorage.remove('auth_token');
 
   // Hard reset the in-memory auth store so the route gate flips back to

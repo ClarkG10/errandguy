@@ -40,9 +40,15 @@ class ActivityLogResource extends Resource
 
     protected static ?string $pluralModelLabel = 'audit log';
 
+    /**
+     * Only the causer is loaded. The subject is shown from subject_type and
+     * subject_id alone, and loading it would fail the whole page on an entry
+     * about a model class that has since been removed (DisputeTicket,
+     * Referral, …).
+     */
     public static function getEloquentQuery(): Builder
     {
-        return parent::getEloquentQuery()->with(['causer', 'subject']);
+        return parent::getEloquentQuery()->with(['causer']);
     }
 
     public static function table(Table $table): Table

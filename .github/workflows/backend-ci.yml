@@ -148,7 +148,9 @@ jobs:
           tools: php-cs-fixer
 
       - name: Check syntax
-        run: find app routes config database -name "*.php" -exec php -l {} \;
+        # xargs exits non-zero when any `php -l` fails (`find -exec … \;`
+        # ignored the result, so this step could never fail).
+        run: find app routes config database -name "*.php" -print0 | xargs -0 -n1 php -l
         working-directory: errandguy-api
 
   deploy:

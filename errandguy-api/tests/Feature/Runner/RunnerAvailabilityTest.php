@@ -105,6 +105,11 @@ class RunnerAvailabilityTest extends TestCase
         $this->assertNull($this->profile()->online_since);
         $notice = Notification::where('user_id', $this->runner->id)->firstOrFail();
         $this->assertSame('You’re offline now', $notice->title);
+        // Says what to do — the app has to be opened to go online again.
+        $this->assertSame(
+            'We haven’t had your location for 30 minutes. You’re offline — open ErrandGuy and switch Online on again to get errands.',
+            $notice->body,
+        );
         $this->assertSame('stale_location', $notice->data['reason']);
     }
 

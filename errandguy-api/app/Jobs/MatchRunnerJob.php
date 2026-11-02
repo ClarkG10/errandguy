@@ -40,9 +40,11 @@ class MatchRunnerJob implements ShouldQueue
     /**
      * How many runners one round of matching offers an errand to before giving
      * up as "no runner" (and refunding). Every runner who declines or ignores
-     * the offer is skipped from then on, so without a cap an errand could still
-     * crawl through every runner in town while the customer waits. A
-     * customer's "try again" or a staff re-run starts a new round.
+     * the offer is skipped for the rest of the round, so without a cap an
+     * errand could still crawl through every runner in town while the customer
+     * waits. A customer's "try again", a staff re-run or "Return to matching"
+     * starts a new round (BookingService::freshRound), which may offer it to
+     * them again.
      * Overridable via SystemConfig `matching_max_offers`.
      */
     private const DEFAULT_MAX_OFFERS = 5;
@@ -149,8 +151,8 @@ class MatchRunnerJob implements ShouldQueue
                         'runner_id' => $runner->user_id,
                         'status' => 'matched',
                         'matched_at' => now(),
-                        // Remembered so a decline or a lapsed offer never sends
-                        // this errand back to the same runner.
+                        // Remembered so a decline or a lapsed offer doesn't
+                        // send this errand back to the same runner this round.
                         'offered_runner_ids' => $booking->withOfferedRunner((string) $runner->user_id),
                         'offer_count' => $booking->offer_count + 1,
                     ]);

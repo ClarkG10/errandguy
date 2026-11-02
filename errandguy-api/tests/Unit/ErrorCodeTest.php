@@ -32,6 +32,10 @@ class ErrorCodeTest extends TestCase
         $this->assertSame(403, ErrorCode::FORBIDDEN->httpStatus());
         $this->assertSame(404, ErrorCode::BOOKING_NOT_FOUND->httpStatus());
         $this->assertSame(409, ErrorCode::BOOKING_CONFLICT->httpStatus());
+        // Their own codes, so the app shows the server's reason instead of
+        // its BOOKING_CONFLICT copy ("You already have an errand in progress").
+        $this->assertSame(409, ErrorCode::RETRY_NOT_ALLOWED->httpStatus());
+        $this->assertSame(409, ErrorCode::ACCEPT_NOT_ALLOWED->httpStatus());
         $this->assertSame(429, ErrorCode::RATE_LIMITED->httpStatus());
         $this->assertSame(500, ErrorCode::INVALID_STATUS_TRANSITION->httpStatus());
         // The whole point of the taxonomy: gateway rejections stay off the

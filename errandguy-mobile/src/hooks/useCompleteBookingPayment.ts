@@ -20,6 +20,65 @@ export const CHECKOUT_CANCELLED = 'checkout_cancelled';
 export const CHECKOUT_CANCELLED_MESSAGE =
   `You closed checkout before paying, so nothing was charged and no runner has been sent yet. Resume the payment now, or close this and tap Complete payment — an errand left unpaid for ${UNPAID_CHECKOUT_WINDOW_MINUTES} minutes is cancelled. If you did finish paying, it updates by itself.`;
 
+/**
+ * What the failure overlay offers next for a booking's GCash/Maya payment.
+ *
+ *  • resume — the customer closed checkout before paying. The charge is still
+ *    open, so reopening it is the way forward ("Resume payment").
+ *  • retry  — checkout never opened at all (no verdict from anyone), so the
+ *    charge is untouched and reopening it is safe ("Try again").
+ *  • rebook — the server gave a verdict: the charge was declined, expired or
+ *    cancelled (the server then cancels the unpaid errand), or it went through
+ *    after the errand was already cancelled and was refunded to the wallet.
+ *    The checkout is dead either way — "Try again" would reopen a charge that
+ *    can never succeed — so the honest next step is a new booking.
+ */
+export type BookingPaymentRecovery = 'resume' | 'retry' | 'rebook';
+
+export interface BookingPaymentFailure {
+  title: string;
+  message: string;
+  recovery: BookingPaymentRecovery;
+}
+
+/** Turn a booking payment attempt's failure reason into overlay copy + the one next step. */
+export function bookingPaymentFailure(reason?: string | null): BookingPaymentFailure {
+  if (reason === CHECKOUT_CANCELLED) {
+    return { title: 'Payment not finished', message: CHECKOUT_CANCELLED_MESSAGE, recovery: 'resume' };
+  }
+  if (!reason) {
+    return {
+      title: "Checkout didn't open",
+      message: "We couldn't open checkout, so you weren't charged. Try again to pay.",
+      recovery: 'retry',
+    };
+  }
+  const base = mapFailureReason(reason);
+  if (/refund/i.test(reason)) {
+    return {
+      title: base.title,
+      message:
+        'Your payment went through after the errand was cancelled, so it was returned to your ErrandGuy wallet.',
+      recovery: 'rebook',
+    };
+  }
+  const lead =
+    base.title === 'Insufficient funds'
+      ? "There wasn't enough balance to pay for this errand, so it was cancelled."
+      : base.title === 'Payment expired'
+        ? 'The payment window ran out before it went through, so this errand was cancelled.'
+        : base.title === 'Payment declined'
+          ? 'Your bank or provider declined this payment, so this errand was cancelled.'
+          : base.title === 'Payment cancelled'
+            ? 'This payment was cancelled, so the errand was cancelled too.'
+            : "This payment didn't go through, so the errand was cancelled.";
+  return {
+    title: base.title,
+    message: `${lead} You weren't charged — book it again to pay another way.`,
+    recovery: 'rebook',
+  };
+}
+
 type ProgressProps = ComponentProps<typeof PaymentProgress>;
 
 /**
@@ -35,11 +94,12 @@ type ProgressProps = ComponentProps<typeof PaymentProgress>;
  * an unrelated payment rehydrated from storage never pops up over the errand.
  * `onSettled` runs once the verifier has an answer (and when the overlay is
  * closed) so the caller can refetch the booking: a confirmed payment is what
- * releases it to runners.
+ * releases it to runners. `onRebook` is the screen's "Book again", offered when
+ * the charge itself is over (see bookingPaymentFailure).
  */
 export function useCompleteBookingPayment(
   booking: Booking | null | undefined,
-  opts: { onSettled?: () => void } = {},
+  opts: { onSettled?: () => void; onRebook?: () => void } = {},
 ): {
   /** The checkout to reopen, or null when there is nothing to pay. */
   checkoutUrl: string | null;
@@ -62,6 +122,9 @@ export function useCompleteBookingPayment(
   const ownedAttemptRef = useRef<string | null>(null);
   const onSettledRef = useRef(opts.onSettled);
   onSettledRef.current = opts.onSettled;
+  const onRebookRef = useRef(opts.onRebook);
+  onRebookRef.current = opts.onRebook;
+  const canRebook = !!opts.onRebook;
 
   const checkoutUrl = bookingCheckoutUrl(booking);
   const owned =
@@ -154,6 +217,18 @@ export function useCompleteBookingPayment(
     onSettledRef.current?.();
   }, [resolve]);
 
+  // "Book again" leaves for Review, so no refetch: a late re-read would put
+  // the dead booking back in the store the rebook just cleared.
+  const rebook = useCallback(() => {
+    resolve();
+    ownedAttemptRef.current = null;
+    onRebookRef.current?.();
+  }, [resolve]);
+
+  const failure =
+    owned && attempt?.status === 'failed' ? bookingPaymentFailure(attempt.failureReason) : null;
+  const offersRebook = failure?.recovery === 'rebook';
+
   return {
     checkoutUrl,
     completePayment,
@@ -176,14 +251,22 @@ export function useCompleteBookingPayment(
           }
         : undefined,
       onSuccessDone: dismiss,
-      failureMessage:
-        attempt?.failureReason === CHECKOUT_CANCELLED
-          ? CHECKOUT_CANCELLED_MESSAGE
-          : attempt?.failureReason
-            ? mapFailureReason(attempt.failureReason).message
-            : undefined,
-      onRetry: attempt?.checkoutUrl ? retry : undefined,
-      retryCta: attempt?.failureReason === CHECKOUT_CANCELLED ? 'Resume payment' : undefined,
+      failureTitle: failure?.title,
+      failureMessage: failure?.message,
+      // Reopening the checkout only while the charge is still alive; once the
+      // server has ruled on it, the errand is cancelled and Book again leads.
+      onRetry: offersRebook
+        ? canRebook
+          ? rebook
+          : undefined
+        : attempt?.checkoutUrl
+          ? retry
+          : undefined,
+      retryCta: offersRebook
+        ? 'Book again'
+        : failure?.recovery === 'resume'
+          ? 'Resume payment'
+          : undefined,
       onClose: dismiss,
       onSafeExit: dismiss,
     },

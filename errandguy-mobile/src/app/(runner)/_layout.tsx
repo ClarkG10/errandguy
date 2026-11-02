@@ -15,7 +15,7 @@ import {
 } from '../../components/runner/offerMeta';
 import { runnerService } from '../../services/runner.service';
 import { toast } from '../../stores/toastStore';
-import { errorMessage } from '../../utils/errorCatalog';
+import { errorMessage, LEGACY_WORDED_REFUSALS } from '../../utils/errorCatalog';
 import { copy } from '../../constants/copy';
 import { haptics } from '../../utils/haptics';
 import { STACK_ANIMATION } from '../../constants/navigation';
@@ -223,9 +223,12 @@ function OfferWatcher() {
    * Accept the direct offer. Deliberately not optimistic: the server
    * serialises the claim with a row lock, so the UI waits for its answer.
    * Errors reuse the backend's honest codes (BOOKING_STALE = "it went to
-   * someone else", BOOKING_CONFLICT = "finish your active errand first",
-   * CASH_DEBT_OUTSTANDING = the server's own "you owe ₱X from cash errands"
-   * sentence, passed through as-is).
+   * someone else", CASH_DEBT_OUTSTANDING = the server's own "you owe ₱X from
+   * cash errands" sentence, passed through as-is). A refusal for THIS runner
+   * — the errand needs another vehicle, or it is their own — is the server's
+   * sentence too: ACCEPT_NOT_ALLOWED, or BOOKING_CONFLICT on an older server,
+   * whose catalog line ("finish or cancel your errand in progress") was wrong
+   * for both.
    */
   const handleAccept = useCallback(async () => {
     const offer = useRunnerStore.getState().incomingRequest?.booking;
@@ -238,7 +241,11 @@ function OfferWatcher() {
       router.push(`/(runner)/errand/${offer.id}` as any);
     } catch (err) {
       haptics.error();
-      toast.error(errorMessage(err, copy.runner.acceptFailed));
+      toast.error(
+        errorMessage(err, copy.runner.acceptFailed, {
+          trustServerMessageFor: LEGACY_WORDED_REFUSALS,
+        }),
+      );
       clearIncomingRequest();
       // The cached "current errand" may still hold this offer as `matched`;
       // re-read it so Home's reconcile can't raise an offer that just failed.

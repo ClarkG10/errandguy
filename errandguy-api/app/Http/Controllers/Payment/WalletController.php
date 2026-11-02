@@ -39,6 +39,10 @@ class WalletController extends Controller
             // program, which is still spent first on errands until used up.
             'withdrawable' => max(0.0, round($balance, 2)),
             'bonus_balance' => round((float) $user->bonus_balance, 2),
+            // The least one withdrawal may be (₱): the customer minimum, or the
+            // runner minimum for an account with a runner profile — exactly
+            // what POST /wallet/withdraw enforces (PAYOUT_MIN_AMOUNT below it).
+            'withdraw_min' => WalletService::withdrawalMinimumFor($user),
         ]);
     }
 
@@ -51,8 +55,10 @@ class WalletController extends Controller
      * now and the payout waits in the admin Payouts queue for "Send via
      * Xendit"; the customer is told when it is sent, or if it bounces (the
      * money then comes back). Only the withdrawable balance can go — bonus
-     * credit never. No minimum for customers; an account with a runner
-     * profile keeps the runner minimum, so switching mode can't dodge it.
+     * credit never. At least `customer_min_withdrawal` (₱100) at a time; an
+     * account with a runner profile keeps the runner minimum, so switching
+     * mode can't dodge it (WalletService::withdrawalMinimumFor). Below it is a
+     * 422 PAYOUT_MIN_AMOUNT.
      *
      * `idempotent:required` + the Idempotency-Key as the payout's reference
      * make a double-tap or retry return the first withdrawal, never a second.
@@ -77,7 +83,7 @@ class WalletController extends Controller
                 (float) $validated['amount'],
                 (string) $request->header('Idempotency-Key'),
                 $destination,
-                $user->runnerProfile ? WalletService::runnerPayoutMinimum() : 0.0,
+                WalletService::withdrawalMinimumFor($user),
                 'Withdrawal request',
             );
         } catch (WithdrawalException $e) {

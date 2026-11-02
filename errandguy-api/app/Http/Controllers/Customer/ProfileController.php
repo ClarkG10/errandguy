@@ -374,6 +374,9 @@ class ProfileController extends Controller
             $user->tokens()->delete();
             $user->deviceTokens()->delete();
 
+            // A deleted runner can't answer an offer: stop matching them.
+            RunnerProfile::switchOffline($user->id);
+
             // Soft delete the account.
             $user->delete();
 
@@ -381,9 +384,12 @@ class ProfileController extends Controller
         });
 
         if (($outcome['error'] ?? null) === 'debt') {
+            // Someone leaving won't earn their way out of the debt, so say how
+            // else to settle it.
             return $this->fail(
                 ErrorCode::CASH_DEBT_OUTSTANDING,
-                CashDebtPolicy::message($outcome['balance']).' You can delete your account once it’s cleared.',
+                CashDebtPolicy::message($outcome['balance']).' You can delete your account once it’s cleared — '
+                    .'to settle it now, contact support at '.config('app.support_email').'.',
             );
         }
 

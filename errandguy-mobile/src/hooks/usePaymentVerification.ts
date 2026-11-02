@@ -156,7 +156,14 @@ export function usePaymentVerification(): PaymentVerificationState {
         status === 'cancelled' ||
         status === 'refunded'
       ) {
-        setStatus('failed', { failureReason: probe.failure_reason ?? status });
+        setStatus('failed', {
+          // A refund is its own outcome, whatever the row's free-text reason
+          // says ("This errand was already tipped.", or a gateway status like
+          // SUCCEEDED on an older server): the money moved and came back to
+          // the wallet. Keyed on the status so the copy can never fall through
+          // to "You weren't charged".
+          failureReason: status === 'refunded' ? 'refunded' : probe.failure_reason ?? status,
+        });
         return;
       }
 

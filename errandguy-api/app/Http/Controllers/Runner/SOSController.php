@@ -42,11 +42,14 @@ class SOSController extends Controller
         ], 201);
     }
 
-    /** Call off the runner's OWN open SOS on this errand (never the customer's). */
+    /**
+     * Call off the runner's OWN open SOS on this errand (never the customer's).
+     * Authorised by having raised it alone: a runner who was taken off the
+     * errand (returned to matching, cancelled) must still be able to call off
+     * the alert they raised on it.
+     */
     public function deactivate(Request $request, string $id): JsonResponse
     {
-        Booking::where('runner_id', $request->user()->id)->findOrFail($id);
-
         $closed = $this->sosService->cancelByRaiser($id, $request->user()->id, 'runner');
 
         return response()->json([

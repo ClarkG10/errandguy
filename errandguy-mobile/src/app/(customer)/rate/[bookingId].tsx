@@ -753,6 +753,9 @@ export default function RateScreen() {
           setTipStatus('done');
           invalidateQuery(['wallet']);
         }}
+        failureTitle={
+          attempt?.failureReason ? mapFailureReason(attempt.failureReason).title : undefined
+        }
         failureMessage={
           attempt?.failureReason ? mapFailureReason(attempt.failureReason).message : undefined
         }

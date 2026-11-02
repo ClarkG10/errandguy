@@ -29,7 +29,12 @@ import type { Booking } from '../../../types';
 import { scheduledWindowLabel } from '../../../utils/scheduledBooking';
 import { LightColors } from '../../../constants/colors';
 import { copy } from '../../../constants/copy';
-import { STATUS_LABELS } from '../../../constants/statusLabels';
+import {
+  AWAITING_PAYMENT_LABEL,
+  SCHEDULED_LABEL,
+  STATUS_LABELS,
+} from '../../../constants/statusLabels';
+import { isAwaitingPayment } from '../../../utils/bookingPayment';
 import { errorMessage } from '../../../utils/errorCatalog';
 import { toast } from '../../../stores/toastStore';
 import { TAB_CONTENT_BOTTOM_INSET } from '../../../constants/tabLayout';
@@ -157,9 +162,14 @@ export default function ActivityScreen() {
       // search" misread the Home card was fixed for, still landing one tab
       // over.
       const scheduled: Booking[] = [];
+      // An unpaid GCash/Maya errand is `pending` too, but no runner is looked
+      // for until it's paid — filing it under "Finding a runner" promised a
+      // search that wasn't running.
+      const awaitingPayment: Booking[] = [];
       for (const b of bookings) {
         if (b.status === 'pending') {
-          if (scheduledWindowLabel(b)) scheduled.push(b);
+          if (isAwaitingPayment(b)) awaitingPayment.push(b);
+          else if (scheduledWindowLabel(b)) scheduled.push(b);
           else searching.push(b);
         } else if (b.status === 'matched' || b.status === 'accepted') {
           onTheWay.push(b);
@@ -168,12 +178,14 @@ export default function ActivityScreen() {
         }
       }
       return [
+        // First: it's the one that needs the customer to act.
+        { title: AWAITING_PAYMENT_LABEL, data: awaitingPayment },
         { title: 'In progress', data: inProgress },
         { title: 'On the way', data: onTheWay },
-        { title: 'Scheduled', data: scheduled },
-        // Same words as the `pending` chip on the rows inside it
-        // (STATUS_LABELS.pending) — the header used to say "Looking for
-        // runner" directly above rows that said "Finding a Runner".
+        { title: SCHEDULED_LABEL, data: scheduled },
+        // Every header uses the same words as the chip on the rows inside it
+        // (bookingStatusLabel) — the header used to say "Looking for runner"
+        // directly above rows that said "Finding a Runner".
         { title: STATUS_LABELS.pending, data: searching },
       ].filter((s) => s.data.length > 0);
     }

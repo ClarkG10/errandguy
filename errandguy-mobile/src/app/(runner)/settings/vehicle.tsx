@@ -60,6 +60,15 @@ export default function VehicleScreen() {
   const dirty =
     vehicleType !== initial.current.type ||
     (needsPlate(vehicleType) && plate.trim() !== initial.current.plate.trim());
+  // No vehicle on file yet. "Walking" is only PRESELECTED — nothing is saved —
+  // so Save must stay live even though nothing was changed: going online is
+  // refused until a vehicle is on file, and a walker used to face a disabled
+  // Save with no way to put "Walking" on record, ever. Only when the profile
+  // is actually loaded: with no profile in hand we can't tell "nothing saved"
+  // from "not fetched yet", and enabling Save then could overwrite a saved
+  // car with the Walking guess.
+  const nothingSaved = !!runnerProfile && !runnerProfile.vehicle_type;
+  const canSave = dirty || nothingSaved;
 
   // Once the user confirms leaving (or a save succeeds) the beforeRemove
   // guard must not re-intercept our own router.back().
@@ -142,7 +151,15 @@ export default function VehicleScreen() {
             alignSelf: 'center',
           }}
         >
-          <Eyebrow className="mt-5 mb-3 ml-1">Vehicle type</Eyebrow>
+          <Eyebrow className="mt-5 mb-3 ml-1">
+            {nothingSaved ? 'Choose your vehicle' : 'Vehicle type'}
+          </Eyebrow>
+          {nothingSaved ? (
+            <Text className="text-[13px] font-montserrat text-textSecondary -mt-1 mb-4 ml-1">
+              Save the one you’ll use — you can go online once it’s on file, and
+              we only send you errands it can do.
+            </Text>
+          ) : null}
 
           <View
             className="flex-row flex-wrap gap-3 mb-6"
@@ -229,11 +246,11 @@ export default function VehicleScreen() {
       <BottomActionBar>
         <View style={{ maxWidth: contentMaxWidth, width: '100%', alignSelf: 'center' }}>
           <Button
-            title="Save Changes"
+            title={nothingSaved ? 'Save vehicle' : 'Save Changes'}
             onPress={handleSave}
             loading={loading}
             loadingTitle="Saving…"
-            disabled={!dirty}
+            disabled={!canSave}
             fullWidth
             size="lg"
           />

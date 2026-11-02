@@ -147,6 +147,59 @@ class XenditWebhookTest extends TestCase
         $this->assertEquals('completed', $this->booking->fresh()->status);
     }
 
+    /** The customer's notice about their charge, by title. */
+    private function paymentNotice(string $title): ?string
+    {
+        return \App\Models\Notification::where('user_id', $this->booking->customer_id)->where('title', $title)->value('body');
+    }
+
+    public function test_a_declined_charge_says_the_errand_was_cancelled_and_how_to_book_again(): void
+    {
+        $this->postWebhook([
+            'event' => 'payment.failed',
+            'data' => ['id' => 'ddpy_x', 'payment_request_id' => 'pr_test_123', 'status' => 'FAILED'],
+        ])->assertOk();
+
+        $this->assertSame('cancelled', $this->booking->fresh()->status);
+        // The errand can't be paid again, so never "try again" on it.
+        $this->assertSame(
+            "Your ₱115.00 payment for errand #EG-20260331-HOOK didn't go through, so the errand was cancelled. "
+                ."You weren't charged — to try again, book the errand again.",
+            $this->paymentNotice('Payment failed'),
+        );
+    }
+
+    public function test_an_expired_charge_says_the_errand_was_cancelled_and_how_to_book_again(): void
+    {
+        $this->postWebhook([
+            'event' => 'invoice.expired',
+            'data' => ['id' => 'inv_x', 'external_id' => "booking-{$this->payment->id}", 'status' => 'EXPIRED'],
+        ])->assertOk();
+
+        $this->assertSame('cancelled', $this->booking->fresh()->status);
+        $this->assertSame(
+            "Your ₱115.00 payment for errand #EG-20260331-HOOK wasn't completed in time, so the errand was cancelled. "
+                ."You weren't charged — to try again, book the errand again.",
+            $this->paymentNotice('Payment expired'),
+        );
+    }
+
+    public function test_a_stale_failure_on_an_errand_that_carries_on_says_only_that_nothing_was_charged(): void
+    {
+        $runner = User::factory()->create(['role' => 'runner', 'status' => 'active']);
+        $this->booking->update(['status' => 'completed', 'runner_id' => $runner->id]);
+
+        $this->postWebhook([
+            'event' => 'payment.failed',
+            'data' => ['id' => 'ddpy_x', 'payment_request_id' => 'pr_test_123', 'status' => 'FAILED'],
+        ])->assertOk();
+
+        $this->assertSame(
+            "Your ₱115.00 payment for errand #EG-20260331-HOOK didn't go through. You weren't charged for it.",
+            $this->paymentNotice('Payment failed'),
+        );
+    }
+
     public function test_unknown_payment_id_is_ignored(): void
     {
         $payload = [

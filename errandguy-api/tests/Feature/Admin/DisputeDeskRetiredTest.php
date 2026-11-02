@@ -29,13 +29,19 @@ class DisputeDeskRetiredTest extends TestCase
         $this->assertDirectoryDoesNotExist(app_path('Filament/Resources/DisputeTickets'));
     }
 
-    public function test_the_old_report_endpoint_is_gone(): void
+    public function test_the_old_report_endpoint_points_to_support_chat(): void
     {
         $user = User::factory()->create(['role' => 'customer', 'status' => 'active']);
 
+        // A stub for the app build already on phones: a clear answer, not a 404,
+        // and nothing is recorded.
         $this->actingAs($user)
             ->postJson('/api/v1/support/report', ['subject' => 'x', 'description' => 'y', 'category' => 'other'])
-            ->assertNotFound();
+            ->assertStatus(422)
+            ->assertJsonPath('code', 'FEATURE_RETIRED')
+            ->assertJsonPath('message', 'Reporting a problem here is no longer available — please message us in support chat in the app instead, and we’ll sort it out.');
+
+        $this->assertSame(0, \App\Models\SupportTicket::count());
     }
 
     public function test_the_panel_has_no_disputes_page_or_card(): void

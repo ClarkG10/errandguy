@@ -320,8 +320,15 @@ class BookingsTable
                     ->requiresConfirmation()
                     ->modalHeading('Return this errand to matching')
                     ->modalDescription(fn (Booking $record): string => 'Takes '.$record->booking_number.' off '
-                        .($record->runner?->full_name ?? 'its runner').' and offers it to another runner. Both the runner and the customer are told. '
-                        .'If the runner already has the customer’s item, arrange the handover first.')
+                        .($record->runner?->full_name ?? 'its runner').' and offers it to another runner, with a fresh search. '
+                        .'Both the runner and the customer are told. '
+                        .'If the runner already has the customer’s item, arrange the handover first.'
+                        .((float) $record->actual_item_cost > 0
+                            ? ' '.($record->runner?->full_name ?? 'The runner').' already paid ₱'
+                                .number_format((float) $record->actual_item_cost, 2)
+                                .' for the customer’s items and is owed it — an alert is raised so it gets settled; '
+                                .'the customer repays the new runner.'
+                            : ''))
                     ->schema([
                         Textarea::make('reason')->required()->maxLength(500),
                     ])
@@ -355,7 +362,8 @@ class BookingsTable
 
                 // Stuck-errand rescue: the work was done but the runner can't
                 // finish it in the app. Settles exactly like their own
-                // completion (BookingService::adminMarkCompleted).
+                // completion (BookingService::adminMarkCompleted). It pays the
+                // runner, so it is for money roles only.
                 Action::make('markCompleted')
                     ->label('Mark completed')
                     ->icon(Heroicon::OutlinedCheckCircle)
@@ -364,12 +372,13 @@ class BookingsTable
                     ->modalHeading('Mark this errand completed')
                     ->modalDescription(fn (Booking $record): string => 'Completes '.$record->booking_number
                         .' on behalf of '.($record->runner?->full_name ?? 'its runner')
-                        .' and settles it like a normal completion: the runner is paid and the payment is recorded. '
-                        .'Use only when the errand was actually done. This can’t be undone.')
+                        .' and settles it like a normal completion. '
+                        .\App\Services\BookingService::completionPayoutNotice($record)
+                        .' Use only when the errand was actually done. This can’t be undone.')
                     ->schema([
                         Textarea::make('reason')->required()->maxLength(500),
                     ])
-                    ->visible(fn ($record): bool => self::isRescuable($record))
+                    ->visible(fn ($record): bool => self::isRescuable($record, moneyAction: true))
                     ->action(function (array $data, $record): void {
                         try {
                             app(\App\Services\BookingService::class)
@@ -391,7 +400,7 @@ class BookingsTable
                             ],
                             audit: 'booking.marked_completed',
                             properties: ['reason' => $data['reason']],
-                            note: 'The runner has been paid for it.',
+                            note: \App\Services\BookingService::completionPayoutNotice($record->fresh() ?? $record),
                         );
                     }),
             ]);
@@ -399,16 +408,22 @@ class BookingsTable
 
     /**
      * A runner accepted it and hasn't finished — the errands the two rescue
-     * actions apply to (super admin / admin / ops only).
+     * actions apply to. Returning it to matching is for super admin / admin /
+     * ops; marking it completed pays the runner, so it is for the money roles
+     * (super admin / finance).
      */
-    private static function isRescuable(Booking $record): bool
+    private static function isRescuable(Booking $record, bool $moneyAction = false): bool
     {
+        $staff = auth('admin')->user();
+
         return $record->runner_id !== null
             && in_array($record->status, BookingStatus::IN_PROGRESS, true)
-            && (auth('admin')->user()?->hasAnyRole(
-                AdminUser::ROLE_SUPER_ADMIN,
-                AdminUser::ROLE_ADMIN,
-                AdminUser::ROLE_OPS,
-            ) ?? false);
+            && ($moneyAction
+                ? ($staff?->canManageMoney() ?? false)
+                : ($staff?->hasAnyRole(
+                    AdminUser::ROLE_SUPER_ADMIN,
+                    AdminUser::ROLE_ADMIN,
+                    AdminUser::ROLE_OPS,
+                ) ?? false));
     }
 }

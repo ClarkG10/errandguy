@@ -58,8 +58,8 @@ class ExpireStaleRunnerPresenceCommand extends Command
             SendPushJob::dispatch(
                 (string) $userId,
                 'You’re offline now',
-                'We haven’t had your location for '.self::STALE_AFTER_MINUTES.' minutes, so we switched you offline '
-                    .'and paused your offers. Go online again whenever you’re ready.',
+                'We haven’t had your location for '.self::STALE_AFTER_MINUTES.' minutes. '
+                    .'You’re offline — open ErrandGuy and switch Online on again to get errands.',
                 ['type' => 'system', 'reason' => 'stale_location'],
             );
         }

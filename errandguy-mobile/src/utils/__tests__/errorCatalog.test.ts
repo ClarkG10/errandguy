@@ -1,4 +1,9 @@
-import { describeError, errorMessage, ERROR_CATALOG } from '../errorCatalog';
+import {
+  describeError,
+  errorMessage,
+  ERROR_CATALOG,
+  LEGACY_WORDED_REFUSALS,
+} from '../errorCatalog';
 
 describe('describeError', () => {
   it('leads with an exact backend code when we have better copy', () => {
@@ -109,5 +114,74 @@ describe('describeError', () => {
     expect(() => describeError(undefined)).not.toThrow();
     expect(() => describeError('boom')).not.toThrow();
     expect(() => describeError(42)).not.toThrow();
+  });
+});
+
+/**
+ * Refusals the server words for the ONE action that was refused. "Search
+ * again" on a refunded errand and a runner's accept of an errand that needs a
+ * motorcycle both came back as BOOKING_CONFLICT, and the catalog swapped the
+ * exact reason for "You already have an errand — finish or cancel your errand
+ * in progress", true for neither.
+ */
+describe('action-worded refusals', () => {
+  const NOT_THE_CONFLICT_COPY = /already have an errand|in progress/i;
+
+  it.each([
+    [
+      'RETRY_NOT_ALLOWED',
+      'This booking was already refunded, so it can’t be retried. Please create a new booking to try again.',
+    ],
+    [
+      'ACCEPT_NOT_ALLOWED',
+      'This errand needs a motorcycle or car. If your vehicle has changed, update it in Settings.',
+    ],
+    ['ACCEPT_NOT_ALLOWED', "You can't accept your own errand."],
+  ])('%s shows the server’s sentence verbatim', (code, message) => {
+    const info = describeError({ status: 409, kind: 'conflict', code, message });
+    expect(info.message).toBe(message);
+    expect(info.title).not.toMatch(NOT_THE_CONFLICT_COPY);
+    expect(info.retryable).toBe(false);
+  });
+
+  it('still says something sensible when the server sent no message', () => {
+    expect(describeError({ status: 409, kind: 'conflict', code: 'RETRY_NOT_ALLOWED' }).message).toMatch(
+      /Book it again/,
+    );
+    expect(describeError({ status: 409, kind: 'conflict', code: 'ACCEPT_NOT_ALLOWED' }).message).toMatch(
+      /can’t accept/,
+    );
+  });
+
+  it('an older server’s BOOKING_CONFLICT keeps its sentence at the call sites that opt in', () => {
+    const err = {
+      status: 409,
+      kind: 'conflict',
+      code: 'BOOKING_CONFLICT',
+      message: 'This errand is scheduled for later. We’ll start looking for a runner 15 minutes before its time.',
+    };
+    const info = describeError(err, { trustServerMessageFor: LEGACY_WORDED_REFUSALS });
+    expect(info.message).toBe(err.message);
+    expect(info.title).not.toMatch(NOT_THE_CONFLICT_COPY);
+    expect(errorMessage(err, 'fallback', { trustServerMessageFor: LEGACY_WORDED_REFUSALS })).toBe(
+      err.message,
+    );
+  });
+
+  it('…and nowhere else: elsewhere BOOKING_CONFLICT really is "an errand in progress"', () => {
+    const err = { status: 409, kind: 'conflict', code: 'BOOKING_CONFLICT', message: 'whatever' };
+    expect(describeError(err).title).toBe('You already have an errand');
+    // An opt-in for a different code changes nothing for this one.
+    expect(describeError(err, { trustServerMessageFor: ['BOOKING_STALE'] }).title).toBe(
+      'You already have an errand',
+    );
+  });
+
+  it('an opt-in without a server message falls back to the catalog', () => {
+    const info = describeError(
+      { status: 409, kind: 'conflict', code: 'BOOKING_CONFLICT' },
+      { trustServerMessageFor: LEGACY_WORDED_REFUSALS },
+    );
+    expect(info).toEqual(ERROR_CATALOG.BOOKING_CONFLICT);
   });
 });

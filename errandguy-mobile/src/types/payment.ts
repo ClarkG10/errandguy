@@ -56,6 +56,9 @@ export interface WalletSummary {
   balance: number;
   withdrawable: number;
   bonus_balance: number;
+  /** The smallest withdrawal the server accepts (₱100 for customers today).
+   *  Absent on an older server — callers fall back to DEFAULT_WITHDRAW_MIN. */
+  withdraw_min?: number;
 }
 
 export type WalletTransactionType =

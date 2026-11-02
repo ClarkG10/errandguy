@@ -313,13 +313,16 @@ class PaymentService
      * refunds are intentionally NOT supported here — they require the P2 refunds
      * ledger to stay reconcilable and to avoid the cancel-path double-refund;
      * full-only keeps the record and the cancel path unambiguous. Stamps
-     * refunded_to='gateway' and syncs booking.payment_status.
+     * refunded_to='gateway' and syncs booking.payment_status. Only for an
+     * errand that is over (lockEndedBooking).
      *
-     * @throws \RuntimeException if the payment has no gateway charge or is not completed.
+     * @throws \RuntimeException if the payment has no gateway charge or is not
+     *         completed, or its errand is still in progress.
      */
     public function refundPayment(string $paymentId, ?float $amount = null, string $reason = 'REQUESTED_BY_CUSTOMER'): array
     {
         return DB::transaction(function () use ($paymentId, $reason) {
+            $this->lockEndedBooking($paymentId);
             $payment = Payment::whereKey($paymentId)->lockForUpdate()->firstOrFail();
 
             if (blank($payment->gateway_tx_id)) {
@@ -363,10 +366,12 @@ class PaymentService
      * wallet credit is idempotent keyed on the PAYMENT id (not the booking id,
      * which would collide with the lifecycle cancel refunds). Stamps
      * refunded_to='wallet' so records never imply a reversal that didn't happen.
+     * Only for an errand that is over (lockEndedBooking).
      */
     public function refundToWallet(string $paymentId, string $reason = 'REQUESTED_BY_CUSTOMER'): void
     {
         DB::transaction(function () use ($paymentId, $reason) {
+            $this->lockEndedBooking($paymentId);
             $payment = Payment::whereKey($paymentId)->lockForUpdate()->firstOrFail();
 
             if ($payment->method === 'cash') {
@@ -386,6 +391,35 @@ class PaymentService
 
             $this->recordRefund($payment, 'wallet', $amount, $reason);
         });
+    }
+
+    /**
+     * Staff refunds are for an errand that is over — completed, cancelled or
+     * ended with no runner. While it is still live (matching is looking, or a
+     * runner is working it) a refund would leave it running for free and the
+     * runner paid by the platform at completion; cancelling the errand is the
+     * way to stop it, and cancelling refunds the customer.
+     *
+     * Locks the booking BEFORE the payment (the order refundUnfulfilled and
+     * the cancel paths take), so a staff refund racing a cancel or a
+     * completion serializes on the booking and sees its settled status.
+     *
+     * @throws \RuntimeException when the errand is still in progress.
+     */
+    private function lockEndedBooking(string $paymentId): void
+    {
+        $bookingId = Payment::whereKey($paymentId)->value('booking_id');
+        if (! $bookingId) {
+            return;
+        }
+
+        $booking = \App\Models\Booking::whereKey($bookingId)->lockForUpdate()->first(['id', 'status']);
+        if ($booking && ! in_array($booking->status, \App\Enums\BookingStatus::ENDED, true)) {
+            throw new \RuntimeException(
+                'This errand is still in progress, so its payment can’t be refunded here. '
+                .'Cancel the errand instead — cancelling refunds the customer.'
+            );
+        }
     }
 
     /**

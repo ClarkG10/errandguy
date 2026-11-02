@@ -59,6 +59,29 @@ describe('PaymentProgress accessibility', () => {
     );
   });
 
+  it('shows and speaks the caller\'s failure title — a refund never reads as "you weren\'t charged"', () => {
+    const announce = spyOnAnnounce();
+    const message =
+      'Your payment went through after the errand was cancelled, so it was returned to your ErrandGuy wallet.';
+    const { getByText, queryByText } = render(
+      <PaymentProgress stage="failed" failureTitle="Payment refunded" failureMessage={message} />,
+    );
+    expect(getByText('Payment refunded').props.accessibilityRole).toBe('header');
+    expect(getByText(message)).toBeTruthy();
+    expect(queryByText("Payment didn't go through")).toBeNull();
+    expect(announce).toHaveBeenCalledWith(`Payment refunded. ${message}`);
+    expect(announce).not.toHaveBeenCalledWith(expect.stringMatching(/weren't charged/));
+  });
+
+  it('labels the primary recovery as the caller says (Book again)', () => {
+    const onRetry = jest.fn();
+    const { getByText, queryByText } = render(
+      <PaymentProgress stage="failed" onRetry={onRetry} retryCta="Book again" />,
+    );
+    expect(getByText('Book again')).toBeTruthy();
+    expect(queryByText('Try again')).toBeNull();
+  });
+
   it('re-announces when the same stage flips offline, but not on a plain re-render', () => {
     const announce = spyOnAnnounce();
     const { rerender } = render(<PaymentProgress stage="verifying" />);

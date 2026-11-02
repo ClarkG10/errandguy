@@ -96,6 +96,45 @@ final class DeviceSessions
         return $token instanceof PersonalAccessToken ? $token : null;
     }
 
+    /**
+     * Sign one phone out: the current token and every other sign-in of the same
+     * device — an earlier one, and the token the sliding session left alive when
+     * it rotated (RotateAccessToken keeps the old token for in-flight requests,
+     * and gives the new one the same name). A token named the old way has only
+     * its name to go by; a rotation keeps it, and signing in already replaces
+     * by it (issueToken), so the same name counts as the same device.
+     */
+    public static function signOutDevice(User $user, PersonalAccessToken $token): void
+    {
+        $deviceId = self::deviceIdOf($token);
+
+        if ($deviceId !== null) {
+            self::tokensForDevice($user, $deviceId)->delete();
+        } elseif (is_string($token->name) && $token->name !== '') {
+            $user->tokens()->where('name', $token->name)->delete();
+        }
+
+        $token->delete();
+    }
+
+    /**
+     * Whether the user still holds a sign-in that works: one not past its own
+     * expires_at nor Sanctum's lifetime. A token left behind by a rotation on
+     * another phone still works until then, so it counts.
+     */
+    public static function hasLiveSignIn(User $user): bool
+    {
+        $query = $user->tokens()
+            ->where(fn ($q) => $q->whereNull('expires_at')->orWhere('expires_at', '>', now()));
+
+        $lifetimeMinutes = (int) config('sanctum.expiration', 0);
+        if ($lifetimeMinutes > 0) {
+            $query->where('created_at', '>', now()->subMinutes($lifetimeMinutes));
+        }
+
+        return $query->exists();
+    }
+
     /** Sign the user out of every device: all tokens and all push registrations. */
     public static function signOutEverywhere(User $user): void
     {

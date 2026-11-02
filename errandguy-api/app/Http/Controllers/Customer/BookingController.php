@@ -10,7 +10,6 @@ use App\Http\Requests\Booking\CancelBookingRequest;
 use App\Http\Requests\Booking\CreateBookingRequest;
 use App\Http\Requests\Booking\EstimateRequest;
 use App\Http\Resources\BookingResource;
-use App\Jobs\AutoCancelBookingJob;
 use App\Jobs\ExpireUnpaidBookingJob;
 use App\Jobs\MatchRunnerJob;
 use App\Exceptions\PaymentGatewayException;
@@ -924,9 +923,14 @@ class BookingController extends Controller
 
     /**
      * Re-attempt matching for a booking that previously failed to find
-     * a runner. Resets status back to `pending`, dispatches a fresh
-     * MatchRunnerJob with a progressively widened radius (1.5×, 2×, 3×
-     * the system default) and re-arms the auto-cancel safety net.
+     * a runner. Resets status back to `pending` as a new round of matching
+     * (BookingService::freshRound: a full search window from now, fresh
+     * offers), re-arms the auto-cancel for the end of that window and runs a
+     * MatchRunnerJob with a progressively widened radius (1×, 1.75×, 2.5×
+     * the system default).
+     *
+     * A refusal is a 409 RETRY_NOT_ALLOWED with the reason in data.reason
+     * (refunded | unpaid | scheduled | conflict) and copy saying what to do.
      */
     public function retryMatch(Request $request, string $id): JsonResponse
     {
@@ -988,9 +992,7 @@ class BookingController extends Controller
                 'cancelled_at' => null,
                 'cancellation_reason' => null,
                 'cancellation_code' => null,
-                // A fresh round of offers. Runners who already turned this
-                // errand down stay on offered_runner_ids and are still skipped.
-                'offer_count' => 0,
+                ...BookingService::freshRound($locked),
             ]);
 
             BookingStatusLog::create([
@@ -1003,49 +1005,30 @@ class BookingController extends Controller
             return 'ok';
         });
 
-        if ($outcome === 'refunded') {
-            return $this->fail(
-                ErrorCode::BOOKING_CONFLICT,
-                'This booking was already refunded, so it can’t be retried. Please create a new booking to try again.',
-            );
-        }
-
-        if ($outcome === 'unpaid') {
-            return $this->fail(
-                ErrorCode::BOOKING_CONFLICT,
-                $booking->status === 'pending'
-                    ? 'This errand hasn’t been paid for yet. We start looking for a runner as soon as your GCash/Maya payment is confirmed.'
-                    : 'This errand was never paid for, so it can’t be retried. Please create a new booking to try again.',
-            );
-        }
-
-        if ($outcome === 'scheduled') {
-            return $this->fail(
-                ErrorCode::BOOKING_CONFLICT,
-                'This errand is scheduled for later. We’ll start looking for a runner 15 minutes before its time.',
-            );
-        }
-
         if ($outcome !== 'ok') {
             return $this->fail(
-                ErrorCode::BOOKING_CONFLICT,
-                'This booking is already in progress. Pull to refresh to see its current status.',
+                ErrorCode::RETRY_NOT_ALLOWED,
+                match ($outcome) {
+                    'refunded' => 'This booking was already refunded, so it can’t be retried. Please create a new booking to try again.',
+                    'unpaid' => $booking->status === 'pending'
+                        ? 'This errand hasn’t been paid for yet. We start looking for a runner as soon as your GCash/Maya payment is confirmed.'
+                        : 'This errand was never paid for, so it can’t be retried. Please create a new booking to try again.',
+                    'scheduled' => 'This errand is scheduled for later. We’ll start looking for a runner 15 minutes before its time.',
+                    default => 'This booking is already in progress. Pull to refresh to see its current status.',
+                },
+                data: ['reason' => $outcome],
             );
         }
+
+        // Armed BEFORE the search, for the end of the new window (like
+        // BookingService::beginMatching): if no runner takes it by then, it
+        // ends as "no runner" and any money collected goes back.
+        BookingService::armAutoCancel($booking->fresh());
 
         // Run matching inline (AFTER commit — MatchRunnerJob opens its own
         // locked transaction) so the customer sees the result in the same
         // request, matching the immediate-booking path in store().
         MatchRunnerJob::dispatchSync($booking->id, $radius);
-
-        // Re-arm auto-cancel — short window so the customer isn't left
-        // hanging if this widened sweep also fails.
-        $autoCancelMinutes = (int) \App\Models\SystemConfig::getValue(
-            'retry_auto_cancel_timeout_minutes',
-            '5',
-        );
-        AutoCancelBookingJob::dispatch($booking->id)
-            ->delay(now()->addMinutes($autoCancelMinutes));
 
         // Refresh so the response reflects the just-run match result (the inline
         // MatchRunnerJob may have flipped the row to 'matched').

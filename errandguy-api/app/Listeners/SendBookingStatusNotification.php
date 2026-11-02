@@ -45,11 +45,15 @@ class SendBookingStatusNotification implements ShouldQueue
 
         // Body placeholders. `{refund}` is only ever non-empty on a status that
         // auto-refunds (no_runner) AND where money was actually collected — see
-        // refundClause. Anything else resolves to '' so the surrounding copy
-        // reads correctly with the sentence simply absent.
+        // refundClause; `{next}` is what the customer can do about it.
+        // `{item_cash}` is the "Buy for me" repayment line (itemCashLine).
+        // Anything else resolves to '' so the surrounding copy reads correctly
+        // with the sentence simply absent.
         $placeholders = [
             '{number}' => (string) $number,
             '{refund}' => $this->refundClause($booking, $status),
+            '{next}' => $this->nextStep($booking, $status),
+            '{item_cash}' => self::itemCashLine($booking),
         ];
 
         // Quiet stages get the in-app row + live Reverb update, but no device
@@ -128,6 +132,64 @@ class SendBookingStatusNotification implements ShouldQueue
     }
 
     /**
+     * After "no runner": a cash (or otherwise uncollected) errand can simply be
+     * searched again, but one whose money was refunded — or is being refunded
+     * right now — can't (BookingService::retryBlockReason), so the customer is
+     * pointed at booking it again instead of a "try again" that is refused.
+     */
+    private function nextStep(Booking $booking, string $status): string
+    {
+        if ($status !== 'no_runner') {
+            return '';
+        }
+
+        $paymentStatus = Booking::whereKey($booking->id)->value('payment_status') ?? $booking->payment_status;
+
+        return in_array($paymentStatus, ['paid', 'refunded'], true)
+            ? ' Tap to book it again.'
+            : ' Tap to try again.';
+    }
+
+    /**
+     * "Buy for me": the runner pays for the items out of pocket and the
+     * customer repays them in cash at the door, so the customer is told the
+     * amount to have ready — what the runner reported paying, or, before they
+     * have, the budget the customer set.
+     */
+    private static function itemCashLine(Booking $booking): string
+    {
+        $paid = round((float) $booking->actual_item_cost, 2);
+        if ($paid > 0) {
+            $amount = '₱'.number_format($paid, 2);
+
+            return "Your runner paid {$amount} for your items — please have {$amount} cash ready.";
+        }
+
+        $budget = round((float) $booking->shopping_budget, 2);
+        if ($budget > 0) {
+            $amount = 'up to ₱'.number_format($budget, 2);
+
+            return "Your runner paid {$amount} for your items — please have {$amount} cash ready.";
+        }
+
+        return 'Your runner paid for your items — please have the cash ready to repay them.';
+    }
+
+    /**
+     * "Buy for me" stages where the customer must have the item money ready.
+     * Shared by the bookable shopping type and the retired food / grocery
+     * types it replaced (errands booked before the retirement still run).
+     */
+    private const SHOPPING_STAGES = [
+        'picked_up' => [
+            'customer' => ['title' => 'Items bought', 'body' => '{item_cash}'],
+        ],
+        'arrived_at_dropoff' => [
+            'customer' => ['title' => 'Arrived at drop-off', 'body' => 'Your runner has arrived. {item_cash}'],
+        ],
+    ];
+
+    /**
      * Per-errand-type copy overrides, keyed by errand_type slug → status →
      * recipient. The base TEMPLATES below describe the physical delivery flow;
      * these correct the wording for the flows where a status means something
@@ -135,10 +197,14 @@ class SendBookingStatusNotification implements ShouldQueue
      * uses the base template.
      */
     private const TYPE_OVERRIDES = [
+        // "Buy for me" (and the food / grocery types it replaced).
+        'purchase' => self::SHOPPING_STAGES,
+        'food' => self::SHOPPING_STAGES,
+        'grocery' => self::SHOPPING_STAGES,
         // Queue / fall-in-line (single-location flow).
         'queue' => [
             'no_runner' => [
-                'customer' => ['title' => 'No runner available', 'body' => 'We couldn’t find a runner to line up for #{number}.{refund} Tap to try again.'],
+                'customer' => ['title' => 'No runner available', 'body' => 'We couldn’t find a runner to line up for #{number}.{refund}{next}'],
             ],
             'arrived_at_pickup' => [
                 'customer' => ['title' => 'In line for you', 'body' => 'Your runner is now waiting in line.'],
@@ -237,7 +303,7 @@ class SendBookingStatusNotification implements ShouldQueue
         'no_runner' => [
             'customer' => [
                 'title' => 'No runner available',
-                'body' => 'We couldn’t find a runner for errand #{number}.{refund} Tap to try again.',
+                'body' => 'We couldn’t find a runner for errand #{number}.{refund}{next}',
             ],
         ],
         // NOTE: unreachable today — no caller fires BookingStatusChanged with

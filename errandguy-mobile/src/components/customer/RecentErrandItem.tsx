@@ -3,7 +3,7 @@ import { View, Text } from 'react-native';
 import { ChevronRight } from 'lucide-react-native';
 import { Card } from '../ui/Card';
 import { ErrandTypeIcon } from '../ui/ErrandTypeIcon';
-import { statusLabel, STATUS_COLORS } from '../../constants/statusLabels';
+import { bookingStatusLabel, STATUS_COLORS } from '../../constants/statusLabels';
 import { LightColors } from '../../constants/colors';
 import { formatCurrency } from '../../utils/formatCurrency';
 import { formatRelativeTime } from '../../utils/formatDate';
@@ -32,8 +32,10 @@ export const RecentErrandItem = memo(function RecentErrandItem({
   const statusColor = STATUS_COLORS[booking.status] ?? LightColors.textMuted;
   // Type-aware: "Picked Up" on a bills-payment or queue errand described a
   // parcel that never existed. Same label the tracking screen and the push
-  // for this errand use.
-  const label = statusLabel(booking.status, booking.errand_type?.slug);
+  // for this errand use. Booking-aware too: an unpaid GCash/Maya errand reads
+  // "Waiting for payment" and one booked for later "Scheduled", never
+  // "Finding a runner" — nobody is being looked for in either.
+  const label = bookingStatusLabel(booking);
   // Map the API icon (Lucide name string) onto our SVG illustration
   // catalogue. Falls back gracefully to Package inside ErrandTypeIcon.
   const iconName = booking.errand_type?.icon_name ?? null;

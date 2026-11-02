@@ -2,6 +2,7 @@
 
 namespace Tests\Feature\Booking;
 
+use App\Jobs\AutoCancelBookingJob;
 use App\Jobs\ExpireStaleMatchesJob;
 use App\Jobs\MatchRunnerJob;
 use App\Models\AdminAlert;
@@ -13,6 +14,7 @@ use App\Models\SystemConfig;
 use App\Models\User;
 use App\Services\MatchingService;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\Bus;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Event;
 use Tests\TestCase;
@@ -23,8 +25,10 @@ use Tests\TestCase;
  * skips a booking while a runner holds the offer, so two runners who kept
  * declining (or ignoring) could pass it back and forth indefinitely while the
  * customer's money sat locked. Now every runner who was offered it is skipped
- * for good, and a round of offers is capped — then it ends as "no runner" with
- * the usual refund.
+ * for the rest of the round, and a round of offers is capped — then it ends as
+ * "no runner" with the usual refund. A new round (the customer's "try again")
+ * starts the skip list again, so a runner who only missed a 90-second offer
+ * can get it this time.
  */
 class OfferBounceTest extends TestCase
 {
@@ -173,25 +177,35 @@ class OfferBounceTest extends TestCase
         $this->assertNotContains($runners->last()->id, $fresh->offered_runner_ids);
     }
 
-    public function test_a_customer_retry_starts_a_fresh_round_but_still_skips_who_declined(): void
+    public function test_a_customer_retry_starts_a_fresh_round_that_can_reach_the_last_rounds_runners(): void
     {
+        // The delayed auto-cancel is checked separately: on the sync test
+        // queue its delay is ignored and it would re-arm itself in a loop.
+        Bus::fake([AutoCancelBookingJob::class]);
         SystemConfig::setValue('matching_max_offers', '1');
-        $decliner = $this->runner(14.6001);
-        $other = $this->runner(14.6100);
+        $missed = $this->runner(14.6001);
+        $this->runner(14.6100);
         // Cash: nothing was collected up front, so the customer may retry.
         $booking = $this->booking('cash');
 
         MatchRunnerJob::dispatchSync($booking->id);
-        $this->decline($decliner, $booking);
-        $this->assertSame('no_runner', $booking->fresh()->status, 'a one-offer round ends after one decline');
+        $this->ignore($booking);
+        $this->assertSame('no_runner', $booking->fresh()->status, 'a one-offer round ends after one lapsed offer');
+        $booking->update(['matching_started_at' => now()->subHour()]);
 
         $this->actingAs($this->customer)
             ->postJson("/api/v1/bookings/{$booking->id}/retry-match")
             ->assertOk();
 
+        // A new round: the nearest runner, who only missed the last offer, is
+        // offered it again, and the search window starts over.
         $fresh = $booking->fresh();
         $this->assertSame('matched', $fresh->status);
-        $this->assertSame($other->id, $fresh->runner_id);
+        $this->assertSame($missed->id, $fresh->runner_id);
+        $this->assertSame([$missed->id], $fresh->offered_runner_ids);
         $this->assertSame(1, $fresh->offer_count);
+        $this->assertTrue($fresh->matching_started_at->between(now()->subMinute(), now()));
+        Bus::assertDispatched(AutoCancelBookingJob::class, fn (AutoCancelBookingJob $job) => $job->bookingId === $booking->id
+            && \Illuminate\Support\Carbon::parse($job->delay)->equalTo(\App\Services\BookingService::matchingDeadline($fresh)));
     }
 }

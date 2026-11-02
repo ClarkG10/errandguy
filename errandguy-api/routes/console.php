@@ -58,6 +58,10 @@ Schedule::command('errandguy:send-onboarding-reminders')
     ->dailyAt('10:00')
     ->onOneServer();
 
+// The three 15-minute money reconcilers below hold their overlap lock for at
+// most 30 minutes: the framework default is 24 hours, so one hard-killed run
+// (a deploy restart, an OOM) would silence a money safety net for a whole day.
+
 // Money-in safety net: settle GCash/Maya tip charges (and legacy top-ups) the
 // customer paid for and walked away from. The status endpoint pull-reconciles
 // against the gateway, but only while the app is POLLING it — so a dropped
@@ -68,7 +72,7 @@ Schedule::command('errandguy:send-onboarding-reminders')
 Schedule::command('errandguy:reconcile-topups')
     ->everyFifteenMinutes()
     ->onOneServer()
-    ->withoutOverlapping();
+    ->withoutOverlapping(30);
 
 // Money-OUT safety net, and the more painful side: a runner's wallet is debited
 // the moment a payout row is created, and the row stays 'pending' until the
@@ -79,7 +83,7 @@ Schedule::command('errandguy:reconcile-topups')
 Schedule::command('errandguy:reconcile-payouts')
     ->everyFifteenMinutes()
     ->onOneServer()
-    ->withoutOverlapping();
+    ->withoutOverlapping(30);
 
 // The same safety net for the PRIMARY revenue path, which had none. A booking
 // charge's only pull-reconcile was the customer's status poll, and that stops
@@ -93,7 +97,7 @@ Schedule::command('errandguy:reconcile-payouts')
 Schedule::command('errandguy:reconcile-booking-payments')
     ->everyFifteenMinutes()
     ->onOneServer()
-    ->withoutOverlapping();
+    ->withoutOverlapping(30);
 
 // Reap dead access tokens. Nothing has ever pruned personal_access_tokens, so
 // every token any user has ever been issued is still on the row — and the

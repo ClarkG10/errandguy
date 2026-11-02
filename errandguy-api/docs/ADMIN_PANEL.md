@@ -93,7 +93,9 @@ System → Staff, through `StaffAccountService`, every change audited:
 - "Forgot password?" on the sign-in page sends the same kind of link.
 - `errandguy:make-admin` still creates or resets an account from the server;
   add `--reset-two-step` for a super admin who lost both their phone and their
-  recovery codes.
+  recovery codes (it also lifts a sign-in lock). `--unlock` on its own (no
+  `--password`) only lifts the lock after too many failed sign-ins. An existing
+  account keeps its name and role unless `--name` / `--role` are given.
 
 ## My account
 

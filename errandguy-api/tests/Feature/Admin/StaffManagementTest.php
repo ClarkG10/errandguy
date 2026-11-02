@@ -257,4 +257,77 @@ class StaffManagementTest extends TestCase
         ])->assertSuccessful();
         $this->assertNull($cli->fresh()->twoStepMethod());
     }
+
+    private function lockOut(string $email, ?AdminUser $staff = null): void
+    {
+        for ($i = 0; $i < StaffSignIn::MAX_FAILURES; $i++) {
+            StaffSignIn::recordFailure($email, $staff, 'wrong password');
+        }
+        $this->assertGreaterThan(0, StaffSignIn::lockedSeconds($email));
+    }
+
+    public function test_make_admin_reset_two_step_also_lifts_the_sign_in_lock(): void
+    {
+        $ops = $this->staff('ops');
+        $ops->forceFill(['has_email_authentication' => true])->save();
+        $this->lockOut('ops@errandguy.test', $ops);
+
+        $this->artisan('errandguy:make-admin', [
+            'email' => 'ops@errandguy.test', '--password' => 'New-password-1', '--reset-two-step' => true,
+        ])->assertSuccessful();
+
+        $this->assertSame(0, StaffSignIn::lockedSeconds('ops@errandguy.test'));
+        $this->assertNull($ops->fresh()->twoStepMethod());
+    }
+
+    public function test_make_admin_unlock_on_its_own_lifts_the_lock_and_changes_nothing_else(): void
+    {
+        $ops = $this->staff('ops');
+        $hash = $ops->password_hash;
+        $this->lockOut('ops@errandguy.test', $ops);
+
+        $this->artisan('errandguy:make-admin', ['email' => 'ops@errandguy.test', '--unlock' => true])
+            ->expectsOutputToContain('Sign-in lock lifted for ops@errandguy.test.')
+            ->assertSuccessful();
+
+        $this->assertSame(0, StaffSignIn::lockedSeconds('ops@errandguy.test'));
+        $fresh = $ops->fresh();
+        $this->assertSame($hash, $fresh->password_hash);
+        $this->assertSame('ops', $fresh->role);
+        $this->assertSame($ops->full_name, $fresh->full_name);
+
+        $this->artisan('errandguy:make-admin', ['email' => 'nobody@errandguy.test', '--unlock' => true])
+            ->expectsOutputToContain('No staff account uses nobody@errandguy.test.')
+            ->assertFailed();
+        $this->assertNull(AdminUser::where('email', 'nobody@errandguy.test')->first());
+    }
+
+    public function test_make_admin_keeps_an_existing_accounts_name_and_role_unless_told(): void
+    {
+        $ops = $this->staff('ops');
+        $ops->update(['full_name' => 'Renamed In Panel']);
+
+        // A deploy re-running it with the env defaults must not undo a rename
+        // or a role change made in the panel.
+        $_ENV['ADMIN_NAME'] = $_SERVER['ADMIN_NAME'] = 'Deploy Name';
+        $_ENV['ADMIN_ROLE'] = $_SERVER['ADMIN_ROLE'] = 'super_admin';
+        try {
+            $this->artisan('errandguy:make-admin', ['email' => 'ops@errandguy.test', '--password' => 'Ops-password-2'])
+                ->assertSuccessful();
+        } finally {
+            unset($_ENV['ADMIN_NAME'], $_SERVER['ADMIN_NAME'], $_ENV['ADMIN_ROLE'], $_SERVER['ADMIN_ROLE']);
+        }
+
+        $fresh = $ops->fresh();
+        $this->assertSame('Renamed In Panel', $fresh->full_name);
+        $this->assertSame('ops', $fresh->role);
+        $this->assertTrue(Hash::check('Ops-password-2', $fresh->password_hash));
+
+        // Given explicitly, they change.
+        $this->artisan('errandguy:make-admin', [
+            'email' => 'ops@errandguy.test', '--password' => 'Ops-password-3', '--name' => 'Ops Lead', '--role' => 'admin',
+        ])->assertSuccessful();
+        $this->assertSame('Ops Lead', $ops->fresh()->full_name);
+        $this->assertSame('admin', $ops->fresh()->role);
+    }
 }

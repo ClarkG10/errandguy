@@ -25,7 +25,7 @@ final class OpsAlertRecipients
      * Resolution order, first non-empty wins:
      *   1. system_config ops_alert_emails (set in the admin panel);
      *   2. the older system_config admin_alert_email;
-     *   3. config('mail.admin_alert_address') / env ADMIN_ALERT_EMAIL.
+     *   3. config('mail.admin_alert_address') (env ADMIN_ALERT_EMAIL).
      *
      * @return array<int,string>
      */
@@ -36,7 +36,7 @@ final class OpsAlertRecipients
             $raw = self::setting('admin_alert_email');
         }
         if (blank($raw)) {
-            $raw = config('mail.admin_alert_address') ?: env('ADMIN_ALERT_EMAIL');
+            $raw = config('mail.admin_alert_address');
         }
 
         return self::emailList(is_string($raw) ? $raw : null);

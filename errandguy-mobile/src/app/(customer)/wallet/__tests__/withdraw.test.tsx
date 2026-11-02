@@ -286,3 +286,64 @@ describe('withdraw — what can go out', () => {
     expect(screen.queryByLabelText('Amount')).toBeNull();
   });
 });
+
+/**
+ * The server refuses a withdrawal under its minimum (₱100 for customers) with
+ * PAYOUT_MIN_AMOUNT. The screen used to check only "at least ₱1", so a ₱50
+ * withdrawal went through review and confirm just to be refused.
+ */
+describe('withdraw — the minimum', () => {
+  it('uses the server’s withdraw_min, and says it before anything is sent', () => {
+    mockSummary = { balance: 500, withdrawable: 500, bonus_balance: 0, withdraw_min: 200 };
+    const screen = renderScreen();
+    expect(screen.getByText('Minimum ₱200.00 · up to ₱500.00')).toBeTruthy();
+
+    fillForm(screen, '150');
+    fireEvent.press(screen.getByRole('button', { name: 'Withdraw ₱150.00' }));
+
+    expect(screen.getByText('The minimum withdrawal is ₱200.00.')).toBeTruthy();
+    expect(screen.queryByText('Withdraw ₱150.00?')).toBeNull();
+    expect(mockWithdraw).not.toHaveBeenCalled();
+  });
+
+  it('falls back to ₱100 against a server that doesn’t send one', () => {
+    const screen = renderScreen();
+    expect(screen.getByText('Minimum ₱100.00 · up to ₱500.00')).toBeTruthy();
+
+    fillForm(screen, '50');
+    fireEvent.press(screen.getByRole('button', { name: 'Withdraw ₱50.00' }));
+
+    expect(screen.getByText('The minimum withdrawal is ₱100.00.')).toBeTruthy();
+    expect(mockWithdraw).not.toHaveBeenCalled();
+  });
+
+  it('with less than the minimum available, explains instead of offering the form', () => {
+    mockSummary = { balance: 60, withdrawable: 60, bonus_balance: 0 };
+    const screen = renderScreen();
+
+    expect(screen.getByText(/The minimum withdrawal is ₱100\.00\. Your ₱60\.00 stays in your wallet/)).toBeTruthy();
+    expect(screen.queryByLabelText('Amount')).toBeNull();
+    expect(screen.queryByText('Withdraw all')).toBeNull();
+    expect(screen.getByRole('button', { name: 'Withdraw' }).props.accessibilityState).toMatchObject({
+      disabled: true,
+    });
+  });
+
+  it('shows a PAYOUT_MIN_AMOUNT refusal on the amount, in the server’s words, and re-reads the floor', async () => {
+    const refusal = 'The minimum payout is ₱150.00. Please request at least that amount.';
+    mockWithdraw.mockRejectedValueOnce({
+      status: 422,
+      kind: 'validation',
+      code: 'PAYOUT_MIN_AMOUNT',
+      message: refusal,
+    });
+    const screen = renderScreen();
+    fillForm(screen);
+
+    await reviewAndConfirm(screen);
+
+    await waitFor(() => expect(screen.getAllByText(refusal).length).toBeGreaterThan(0));
+    expect(mockRefreshSummary).toHaveBeenCalled();
+    expect(mockRouter.back).not.toHaveBeenCalled();
+  });
+});

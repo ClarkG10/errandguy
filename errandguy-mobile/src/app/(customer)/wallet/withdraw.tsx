@@ -24,6 +24,7 @@ import { shouldRetainIdempotencyKey } from '../../../stores/paymentStore';
 import { toast } from '../../../stores/toastStore';
 import { formatCurrency } from '../../../utils/formatCurrency';
 import { newIdempotencyKey } from '../../../utils/idempotency';
+import { withdrawAmountProblem, withdrawMinimum } from '../../../utils/withdrawal';
 import { errorMessage } from '../../../utils/errorCatalog';
 import { haptics } from '../../../utils/haptics';
 import {
@@ -73,6 +74,10 @@ export default function WithdrawScreen() {
   const summaryQ = useWalletSummary();
   const withdrawable = summaryQ.data?.withdrawable ?? null;
   const bonusCredit = summaryQ.data?.bonus_balance ?? 0;
+  // The server's own floor (GET /wallet/balance `withdraw_min`, ₱100 if an
+  // older server doesn't send it). Checked here so a withdrawal under it is
+  // explained up front rather than refused after the confirm dialog.
+  const minWithdraw = withdrawMinimum(summaryQ.data);
 
   const [amountInput, setAmountInput] = useState('');
   const [destination, setDestination] = useState<PayoutDestinationDraft>(() => ({
@@ -95,6 +100,9 @@ export default function WithdrawScreen() {
 
   const amount = parseFloat(amountInput) || 0;
   const nothingToWithdraw = withdrawable != null && withdrawable <= 0;
+  // Some money, but less than the smallest withdrawal the server accepts:
+  // say so instead of offering a form that can only be refused.
+  const belowMinimum = withdrawable != null && withdrawable > 0 && withdrawable < minWithdraw;
 
   const navigateBack = useCallback(() => {
     if (router.canGoBack()) router.back();
@@ -103,11 +111,7 @@ export default function WithdrawScreen() {
 
   const review = () => {
     setServerError(null);
-    let amountProblem: string | null = null;
-    if (amount < 1) amountProblem = 'Enter at least ₱1.00 to withdraw.';
-    else if (withdrawable != null && amount > withdrawable) {
-      amountProblem = `That's more than the ${formatCurrency(withdrawable)} you can withdraw.`;
-    }
+    const amountProblem = withdrawAmountProblem(amount, withdrawable, minWithdraw);
     const errors = validatePayoutDestination(destination, WITHDRAW_CHANNELS);
     setAmountError(amountProblem);
     setFieldErrors(errors);
@@ -153,7 +157,15 @@ export default function WithdrawScreen() {
       const fields = payoutDestinationServerErrors(err);
       setFieldErrors(fields);
       const message = errorMessage(err, copy.wallet.withdrawalFailed);
-      setServerError(message);
+      if (err?.code === 'PAYOUT_MIN_AMOUNT') {
+        // Under the minimum: the server names it, and it belongs on the
+        // amount. The floor may have moved since we read it — re-read.
+        setAmountError(message);
+        setServerError(null);
+        void summaryQ.refresh();
+      } else {
+        setServerError(message);
+      }
       // The balance moved under us (or a debt appeared) — re-read it.
       if (err?.code === 'INSUFFICIENT_WALLET_BALANCE' || err?.code === 'CASH_DEBT_OUTSTANDING') {
         void summaryQ.refresh();
@@ -212,6 +224,12 @@ export default function WithdrawScreen() {
               There’s nothing to withdraw yet. Refunds and other credits land in your wallet, and
               you can withdraw them here.
             </Text>
+          ) : belowMinimum ? (
+            <Text className="text-[13px] font-montserrat text-textSecondary mb-4">
+              The minimum withdrawal is {formatCurrency(minWithdraw)}. Your{' '}
+              {formatCurrency(withdrawable ?? 0)} stays in your wallet — use it on your next errand,
+              or withdraw once you have {formatCurrency(minWithdraw)} or more.
+            </Text>
           ) : (
             <>
               <Input
@@ -226,10 +244,12 @@ export default function WithdrawScreen() {
                 keyboardType="decimal-pad"
                 error={amountError ?? undefined}
                 helperText={
-                  withdrawable != null ? `Up to ${formatCurrency(withdrawable)}` : undefined
+                  withdrawable != null
+                    ? `Minimum ${formatCurrency(minWithdraw)} · up to ${formatCurrency(withdrawable)}`
+                    : `Minimum ${formatCurrency(minWithdraw)}`
                 }
               />
-              {withdrawable != null && withdrawable > 0 ? (
+              {withdrawable != null && withdrawable >= minWithdraw ? (
                 <Pressable
                   onPress={() => {
                     setAmountInput(withdrawable.toFixed(2));
@@ -285,7 +305,13 @@ export default function WithdrawScreen() {
           <Button
             title={amount >= 1 ? `Withdraw ${formatCurrency(amount)}` : 'Withdraw'}
             onPress={review}
-            disabled={withdrawable == null || nothingToWithdraw || amount <= 0 || !destination.channel}
+            disabled={
+              withdrawable == null ||
+              nothingToWithdraw ||
+              belowMinimum ||
+              amount <= 0 ||
+              !destination.channel
+            }
             loading={submitting}
             loadingTitle="Requesting…"
             fullWidth

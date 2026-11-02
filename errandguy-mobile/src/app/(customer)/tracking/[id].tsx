@@ -129,6 +129,10 @@ import {
   wasCancelledForUnpaidPayment,
 } from '../../../utils/bookingPayment';
 import { itemsCashDue, itemsCashReadyLine } from '../../../utils/shoppingMoney';
+import { cancelMoneyLines, cancelReceiptMessage, type CancelPreview } from '../../../utils/cancelPreview';
+import { rebookDraft } from '../../../utils/rebookDraft';
+import { refundedToWallet } from '../../../utils/noRunner';
+import { scheduledWindowLabel, SCHEDULED_MATCH_LEAD_MINUTES } from '../../../utils/scheduledBooking';
 import { formatRating } from '../../../utils/rating';
 import { isRunnerVerified, runnerVehicleLine } from '../../../utils/runnerVehicle';
 import { LightColors, Elevation } from '../../../constants/colors';
@@ -159,47 +163,6 @@ const bookingReview = (b: Booking | null | undefined): unknown => {
   const r = b as (Booking & WithReview) | null | undefined;
   return r?.review ?? r?.customer_review ?? null;
 };
-
-/**
- * Confirm-modal body for a cancel preview.
- *
- * The fee alone answered the wrong question. A prepaid customer was told "a
- * small ₱20.00 fee applies" and asked to confirm "Cancel & pay ₱20" — which
- * reads as a NEW charge on a fare they had already been charged — and was
- * never told the ₱480 was coming back, nor that it lands in their ErrandGuy
- * wallet rather than back on their GCash. Both figures are the server's
- * (GET /bookings/{id}/cancel-preview); the locked re-evaluation inside cancel()
- * remains the authority and its response carries the settled receipt.
- */
-export function cancelMoneyLines(p: {
-  fee: number;
-  reason: string;
-  refund_amount?: number | null;
-  refund_destination?: 'wallet' | null;
-}): string {
-  const n = (v: unknown) => {
-    const parsed = typeof v === 'number' ? v : Number(v);
-    return Number.isFinite(parsed) ? parsed : 0;
-  };
-  const fee = n(p.fee);
-  const refund = p.refund_amount == null ? 0 : n(p.refund_amount);
-
-  const detail: string[] = [];
-  if (fee > 0) detail.push(`Cancellation fee: ${formatCurrency(fee)}`);
-  if (refund > 0) {
-    detail.push(
-      p.refund_destination === 'wallet'
-        ? `Back to your ErrandGuy wallet: ${formatCurrency(refund)}`
-        : `Refunded to you: ${formatCurrency(refund)}`,
-    );
-  } else if (fee > 0) {
-    // Honest about the capped-fee case rather than leaving a silent gap
-    // where the refund line would be.
-    detail.push('Nothing is left to refund after the fee.');
-  }
-
-  return detail.length > 0 ? `${p.reason}\n\n${detail.join('\n')}` : p.reason;
-}
 
 // Auto-map window. Exported so ops can tune when tiles auto-mount without a
 // redesign — HERE raster tiles are billed per request, so this list IS the
@@ -364,17 +327,9 @@ export default function TrackingScreen() {
   // the toggle in component state — no global store, no animation lib —
   // so reopening the screen restores the default minimal view.
   const [detailsOpen, setDetailsOpen] = useState(false);
-  const [cancelPreview, setCancelPreview] = useState<{
-    fee: number;
-    tier: 'free' | 'flat' | 'percentage';
-    reason: string;
-    cancellable: boolean;
-    // Additive on GET /bookings/{id}/cancel-preview: what comes BACK and
-    // where it lands. Optional so a cached response from an older server (or
-    // an older app build's cache entry) still types.
-    refund_amount?: number | null;
-    refund_destination?: 'wallet' | null;
-  } | null>(null);
+  // GET /bookings/{id}/cancel-preview — what cancelling costs AND what comes
+  // back (see utils/cancelPreview).
+  const [cancelPreview, setCancelPreview] = useState<CancelPreview | null>(null);
   const [previewLoading, setPreviewLoading] = useState(false);
   const [showSOSModal, setShowSOSModal] = useState(false);
   const [sosSubmitting, setSosSubmitting] = useState(false);
@@ -764,13 +719,19 @@ export default function TrackingScreen() {
 
   // "Complete payment" — reopens this booking's own checkout and verifies the
   // outcome; a verdict re-reads the booking, since a confirmed payment is what
-  // sends it to runners.
+  // sends it to runners. A charge the server ruled on (declined, expired,
+  // refunded) cancels the errand, so the overlay offers Book again instead of
+  // reopening a dead checkout. Wrapped: handleRebook is declared further down
+  // and only runs on a press, after this render.
   const {
     checkoutUrl,
     completePayment,
     opening: openingCheckout,
     progress: checkoutProgress,
-  } = useCompleteBookingPayment(booking, { onSettled: fetchBooking });
+  } = useCompleteBookingPayment(booking, {
+    onSettled: fetchBooking,
+    onRebook: () => handleRebook(),
+  });
 
   // Polling fallback for the runner's live position. Reverb realtime
   // is the primary path (useRunnerTracking) but in production we have
@@ -1366,7 +1327,7 @@ export default function TrackingScreen() {
       // to throw it away and navigate off in silence, so money moved with no
       // acknowledgement at the one moment trust is most fragile. Toasted
       // AFTER the replace so it lands on the screen the user ends up on.
-      const receipt = (res as { data?: { message?: string } })?.data?.message;
+      const receipt = cancelReceiptMessage(res);
       if (receipt) {
         toast.success(receipt);
       }
@@ -1568,44 +1529,8 @@ export default function TrackingScreen() {
       router.replace('/(customer)/book/type');
       return;
     }
-    // Server clocks may have moved past a scheduled slot while we searched —
-    // a stale scheduled_at would just 422 at resubmit.
-    const scheduledAt = b.scheduled_at ? Date.parse(b.scheduled_at) : NaN;
-    const scheduleStillValid =
-      b.schedule_type === 'scheduled' &&
-      Number.isFinite(scheduledAt) &&
-      scheduledAt > Date.now();
     clearDraft();
-    updateDraft({
-      errand_type_id: b.errand_type_id,
-      errand_type_slug: b.errand_type?.slug,
-      pickup_address: b.pickup_address,
-      // Laravel casts decimal columns to strings — coerce so downstream
-      // consumers (estimate payload, map cameras) see real numbers.
-      pickup_lat: Number(b.pickup_lat),
-      pickup_lng: Number(b.pickup_lng),
-      pickup_contact_name: b.pickup_contact_name ?? undefined,
-      pickup_contact_phone: b.pickup_contact_phone ?? undefined,
-      dropoff_address: b.dropoff_address ?? undefined,
-      dropoff_lat: b.dropoff_lat != null ? Number(b.dropoff_lat) : undefined,
-      dropoff_lng: b.dropoff_lng != null ? Number(b.dropoff_lng) : undefined,
-      dropoff_contact_name: b.dropoff_contact_name ?? undefined,
-      dropoff_contact_phone: b.dropoff_contact_phone ?? undefined,
-      description: b.description ?? undefined,
-      special_instructions: b.special_instructions ?? undefined,
-      estimated_item_value: b.estimated_item_value ?? undefined,
-      shopping_budget: b.shopping_budget ?? undefined,
-      shoppingItems: b.shopping_items?.length
-        ? b.shopping_items.map((it) => ({
-            id: it.id,
-            name: it.name,
-            qty: it.qty ?? 1,
-          }))
-        : undefined,
-      vehicle_type_rate: b.vehicle_type_rate ?? undefined,
-      schedule_type: scheduleStillValid ? 'scheduled' : 'now',
-      scheduled_at: scheduleStillValid ? b.scheduled_at ?? undefined : undefined,
-    });
+    updateDraft(rebookDraft(b));
     setBookingStep(3);
     setActiveBooking(null);
     router.replace('/(customer)/book/review');
@@ -1711,8 +1636,21 @@ export default function TrackingScreen() {
   const hasReview = !!bookingReview(booking);
   // Cancelled by the server because the GCash/Maya payment never went through.
   const cancelledUnpaid = wasCancelledForUnpaidPayment(booking);
-  // The terse status for the pill: an unpaid booking isn't "Finding a runner".
-  const pillLabel = awaitingPayment ? AWAITING_PAYMENT_LABEL : STATUS_LABELS[booking.status];
+  // A paid errand booked for later sits at `pending` with NO search running
+  // until SCHEDULED_MATCH_LEAD_MINUTES before its time — "Finding you a
+  // runner, usually under a minute" told the customer a search was live that
+  // won't start for hours. Null once its matching window has opened.
+  const scheduledFor = awaitingPayment ? null : scheduledWindowLabel(booking);
+  // A no-runner errand's money already went back to the wallet (prepaid), so
+  // the receipt says so where the customer reads first, not only further down.
+  const noRunnerRefund = booking.status === 'no_runner' ? refundedToWallet(booking) : 0;
+  // The terse status for the pill: an unpaid booking isn't "Finding a runner",
+  // and neither is one scheduled for later.
+  const pillLabel = awaitingPayment
+    ? AWAITING_PAYMENT_LABEL
+    : scheduledFor
+      ? 'Scheduled'
+      : STATUS_LABELS[booking.status];
 
   const timelineSteps = steps.map((status, index) => {
     const log = statusLogs.find((l) => l.status === status);
@@ -1744,9 +1682,22 @@ export default function TrackingScreen() {
               )}`,
               accent: 'warning',
             }
-          : { title: 'Finding you a runner', subtitle: 'Usually takes under a minute.', accent: 'warning' };
+          : scheduledFor
+            ? {
+                title: 'Scheduled',
+                subtitle: `${scheduledFor}. We'll start finding you a runner ${SCHEDULED_MATCH_LEAD_MINUTES} minutes before.`,
+                accent: 'brand',
+              }
+            : { title: 'Finding you a runner', subtitle: 'Usually takes under a minute.', accent: 'warning' };
       case 'no_runner':
-        return { title: 'No runner available', subtitle: 'Try again in a few minutes.', accent: 'danger' };
+        return {
+          title: 'No runner available',
+          subtitle:
+            noRunnerRefund > 0
+              ? `Your ${formatCurrency(noRunnerRefund)} went back to your ErrandGuy wallet. Book it again to find a runner.`
+              : 'Try again in a few minutes.',
+          accent: 'danger',
+        };
       // `matched` is a transient state where the system has assigned a
       // runner but the runner hasn't tapped Accept yet. Conflating it
       // with `accepted` lies to the customer ("John accepted" when John

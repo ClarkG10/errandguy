@@ -178,25 +178,30 @@ class CreateBookingTest extends TestCase
      * The six types retired for launch stay in the table (switched off) so old
      * bookings still show their type — but none of them can be booked.
      */
-    public function test_retired_errand_types_cannot_be_booked(): void
+    private function retiredType(string $slug, int $sort): ErrandType
+    {
+        return ErrandType::create([
+            'slug' => $slug, 'name' => ucfirst($slug), 'description' => 'Retired',
+            'icon_name' => 'X', 'base_fee' => 50.00, 'per_km_walk' => 15.00,
+            'per_km_bicycle' => 12.00, 'per_km_motorcycle' => 10.00, 'per_km_car' => 18.00,
+            'is_active' => false, 'sort_order' => $sort,
+        ]);
+    }
+
+    public function test_rides_and_bills_payment_cannot_be_booked_and_say_so(): void
     {
         Bus::fake();
 
-        foreach (['document', 'laundry', 'food', 'grocery', 'bills_payment', 'transportation'] as $i => $slug) {
-            $retired = ErrandType::create([
-                'slug' => $slug, 'name' => ucfirst($slug), 'description' => 'Retired',
-                'icon_name' => 'X', 'base_fee' => 50.00, 'per_km_walk' => 15.00,
-                'per_km_bicycle' => 12.00, 'per_km_motorcycle' => 10.00, 'per_km_car' => 18.00,
-                'is_active' => false, 'sort_order' => 10 + $i,
-            ]);
+        foreach ([
+            'bills_payment' => 'Bills payment is no longer available. Please choose another errand type.',
+            'transportation' => 'Rides are no longer available. Please choose another errand type.',
+        ] as $slug => $message) {
+            $retired = $this->retiredType($slug, 20);
 
             $this->actingAs($this->customer)
-                ->postJson('/api/v1/bookings', array_merge($this->validBookingData, [
-                    'errand_type_id' => $retired->id,
-                    'shopping_budget' => 500,
-                ]))
+                ->postJson('/api/v1/bookings', array_merge($this->validBookingData, ['errand_type_id' => $retired->id]))
                 ->assertStatus(422)
-                ->assertJsonValidationErrors(['errand_type_id']);
+                ->assertJsonValidationErrors(['errand_type_id' => $message]);
 
             $this->actingAs($this->customer)
                 ->postJson('/api/v1/bookings/estimate', [
@@ -205,8 +210,63 @@ class CreateBookingTest extends TestCase
                     'dropoff_lat' => 14.5547, 'dropoff_lng' => 121.0244,
                 ])
                 ->assertStatus(422)
-                ->assertJsonValidationErrors(['errand_type_id']);
+                ->assertJsonValidationErrors(['errand_type_id' => $message]);
         }
+
+        $this->assertSame(0, Booking::count());
+    }
+
+    /**
+     * "Book again" on an old food/grocery or document/laundry errand in the
+     * app build already on phones still sends the retired type: it books (and
+     * prices) the type that replaced it instead of dead-ending in a 422.
+     */
+    public function test_a_merged_retired_type_books_the_type_that_replaced_it(): void
+    {
+        Bus::fake();
+        $purchase = ErrandType::create([
+            'slug' => 'purchase', 'name' => 'Buy for me', 'description' => 'Shop',
+            'icon_name' => 'Cart', 'base_fee' => 60.00, 'per_km_walk' => 15.00,
+            'per_km_bicycle' => 12.00, 'per_km_motorcycle' => 10.00, 'per_km_car' => 18.00,
+            'is_active' => true, 'sort_order' => 2,
+        ]);
+
+        foreach (['document' => $this->deliveryType, 'laundry' => $this->deliveryType, 'food' => $purchase, 'grocery' => $purchase] as $slug => $successor) {
+            $retired = $this->retiredType($slug, 10);
+
+            $created = $this->actingAs($this->customer)
+                ->postJson('/api/v1/bookings', array_merge($this->validBookingData, [
+                    'errand_type_id' => $retired->id,
+                    'shopping_budget' => 500,
+                ]))
+                ->assertCreated();
+            $this->assertSame($successor->id, Booking::findOrFail($created->json('data.id'))->errand_type_id, $slug);
+
+            $this->actingAs($this->customer)
+                ->postJson('/api/v1/bookings/estimate', [
+                    'errand_type_id' => $retired->id,
+                    'pickup_lat' => 14.5995, 'pickup_lng' => 120.9842,
+                    'dropoff_lat' => 14.5547, 'dropoff_lng' => 121.0244,
+                ])
+                ->assertOk();
+
+            // One live errand at a time: clear this one before the next type.
+            Booking::query()->update(['status' => 'completed']);
+        }
+
+        $this->assertSame(4, Booking::count());
+    }
+
+    public function test_a_merged_type_whose_successor_is_switched_off_is_still_refused(): void
+    {
+        Bus::fake();
+        $this->deliveryType->update(['is_active' => false]);
+        $document = $this->retiredType('document', 10);
+
+        $this->actingAs($this->customer)
+            ->postJson('/api/v1/bookings', array_merge($this->validBookingData, ['errand_type_id' => $document->id]))
+            ->assertStatus(422)
+            ->assertJsonValidationErrors(['errand_type_id']);
 
         $this->assertSame(0, Booking::count());
     }

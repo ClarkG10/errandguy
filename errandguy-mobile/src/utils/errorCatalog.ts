@@ -10,6 +10,8 @@
  *
  * Resolution order (this is the key precedence change — code/kind lead, the raw
  * backend message is demoted to a mid-tier fallback):
+ *   0. a refusal the server words for the refused action (SERVER_WORDED, or a
+ *      caller's `trustServerMessageFor`) → its message, verbatim
  *   1. exact backend `code` in ERROR_CATALOG
  *   2. payment/gateway → delegate to `mapFailureReason` (one payment source)
  *   3. classes where the backend message is useless/generic → KIND_DEFAULTS
@@ -124,6 +126,43 @@ export const ERROR_CATALOG: Record<string, ErrorInfo> = {
   },
 };
 
+/**
+ * Refusals the SERVER words for the one action that was refused — the copy is
+ * its message, verbatim. Only the title (and a fallback for a server that sent
+ * no message) lives here.
+ *
+ * These exist because the generic code they replace lied: a refused "Search
+ * again" on an errand whose money was already refunded, and a runner's refused
+ * accept (wrong vehicle for the errand, or their own errand), both came back as
+ * BOOKING_CONFLICT — whose fixed copy is "You already have an errand. Finish or
+ * cancel your errand in progress…" for a customer with no other errand at all.
+ */
+export const SERVER_WORDED: Record<string, ErrorInfo> = {
+  // POST /bookings/{id}/retry-match refused: refunded, unpaid, scheduled…
+  // (data.reason). The message says what happened and what to do instead.
+  RETRY_NOT_ALLOWED: {
+    title: "Can't search again",
+    message: 'This errand can’t be searched again. Book it again to find a runner.',
+    retryable: false,
+  },
+  // POST /runner/errands/{id}/accept refused for THIS runner: the errand needs
+  // a different vehicle, or it is their own errand.
+  ACCEPT_NOT_ALLOWED: {
+    title: "Can't take this errand",
+    message: 'You can’t accept this errand.',
+    retryable: false,
+  },
+};
+
+/**
+ * The code an OLDER server used for those same action-worded refusals, before
+ * RETRY_NOT_ALLOWED / ACCEPT_NOT_ALLOWED existed. Passed as
+ * `trustServerMessageFor` at the retry-match and accept call sites only —
+ * everywhere else BOOKING_CONFLICT really does mean "you have an errand in
+ * progress", and its catalog copy stands.
+ */
+export const LEGACY_WORDED_REFUSALS: ReadonlyArray<string> = ['BOOKING_CONFLICT'];
+
 /** Copy for whole CLASSES of failure the catalog can't name individually. */
 export const KIND_DEFAULTS: Record<ErrorKind, ErrorInfo> = {
   offline: {
@@ -216,6 +255,18 @@ export interface DescribeErrorOptions {
    * Opt in only where the caller's copy tells the user what to DO instead.
    */
   preferFallback?: boolean;
+  /**
+   * Backend codes whose SERVER message wins at this call site, even though the
+   * catalog has fixed copy for the code.
+   *
+   * For endpoints that answer a refusal with a generic code but a specific
+   * sentence. The case that forced it: before RETRY_NOT_ALLOWED and
+   * ACCEPT_NOT_ALLOWED existed, retry-match and the runner accept refused
+   * with BOOKING_CONFLICT + an exact reason ("This booking was already
+   * refunded…", "This errand needs a motorcycle…"), and the catalog replaced
+   * it with "Finish or cancel your errand in progress" — wrong for both.
+   */
+  trustServerMessageFor?: ReadonlyArray<string>;
 }
 
 /**
@@ -223,6 +274,19 @@ export interface DescribeErrorOptions {
  */
 export function describeError(err: unknown, opts?: DescribeErrorOptions): ErrorInfo {
   const e = (err ?? {}) as NormalizedError;
+  const serverMessage =
+    typeof e.message === 'string' && e.message.trim() ? e.message : null;
+
+  // 0. Refusals the server words for this exact action (see SERVER_WORDED).
+  if (e.code && SERVER_WORDED[e.code]) {
+    const worded = SERVER_WORDED[e.code];
+    return serverMessage ? { ...worded, message: serverMessage } : worded;
+  }
+  if (e.code && serverMessage && opts?.trustServerMessageFor?.includes(e.code)) {
+    // Not the catalog's title either — for these call sites it is just as
+    // wrong as its message ("You already have an errand").
+    return { title: "Couldn't do that", message: serverMessage, retryable: false };
+  }
 
   // 1. Exact backend code.
   if (e.code && ERROR_CATALOG[e.code]) return ERROR_CATALOG[e.code];
@@ -255,8 +319,7 @@ export function describeError(err: unknown, opts?: DescribeErrorOptions): ErrorI
 export function errorMessage(
   err: unknown,
   fallback?: string,
-  opts?: { preferFallback?: boolean },
+  opts?: Omit<DescribeErrorOptions, 'fallback'>,
 ): string {
-  return describeError(err, { fallback, preferFallback: opts?.preferFallback })
-    .message;
+  return describeError(err, { ...opts, fallback }).message;
 }

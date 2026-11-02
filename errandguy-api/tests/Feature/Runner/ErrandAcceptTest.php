@@ -127,7 +127,7 @@ class ErrandAcceptTest extends TestCase
         $response = $this->actingAs($this->runner)
             ->postJson("/api/v1/runner/errand/{$this->booking->id}/accept")
             ->assertStatus(409)
-            ->assertJsonPath('code', 'BOOKING_CONFLICT');
+            ->assertJsonPath('code', 'ACCEPT_NOT_ALLOWED');
 
         $this->assertStringContainsString('needs a car', (string) $response->json('message'));
         $this->assertSame('matched', $this->booking->fresh()->status);
@@ -162,11 +162,18 @@ class ErrandAcceptTest extends TestCase
         }
     }
 
-    public function test_the_open_offers_list_is_gone(): void
+    public function test_the_open_offers_list_is_gone_and_answers_empty(): void
     {
+        // Errands are offered one runner at a time; the app build already on
+        // phones still polls the old list, so it gets an empty one — even
+        // while an errand is offered to this very runner.
+        $this->offerToRunner();
+
         $this->actingAs($this->runner)
             ->getJson('/api/v1/runner/errand/available')
-            ->assertNotFound();
+            ->assertOk()
+            ->assertJsonPath('success', true)
+            ->assertJsonPath('data', []);
     }
 
     public function test_a_stale_decline_is_a_no_op_that_costs_the_runner_nothing(): void
@@ -341,7 +348,7 @@ class ErrandAcceptTest extends TestCase
             ->postJson("/api/v1/runner/errand/{$selfBooking->id}/accept");
 
         $response->assertStatus(409)
-            ->assertJsonPath('code', 'BOOKING_CONFLICT');
+            ->assertJsonPath('code', 'ACCEPT_NOT_ALLOWED');
         $this->assertStringContainsString('your own errand', (string) $response->json('message'));
 
         // The booking stays unclaimed — no runner assigned, still pending.

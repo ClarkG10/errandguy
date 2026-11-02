@@ -60,6 +60,8 @@ trait ApiResponse
      * @param array<string,array<int,string>|string> $errors
      * @param array<string,mixed> $merge
      * @param array<string,mixed> $meta
+     * @param array<string,mixed>|null $data Machine-readable detail for the app
+     *                                        (e.g. `reason`), sent as `data`.
      */
     protected function fail(
         ErrorCode $code,
@@ -68,11 +70,14 @@ trait ApiResponse
         array $errors = [],
         array $merge = [],
         array $meta = [],
+        ?array $data = null,
     ): JsonResponse {
-        return response()->json(
-            ApiPayload::error($code->value, $message ?? $code->defaultMessage(), $errors, $meta) + $merge,
-            $status ?? $code->httpStatus(),
-        );
+        $payload = ApiPayload::error($code->value, $message ?? $code->defaultMessage(), $errors, $meta);
+        if ($data !== null) {
+            $payload['data'] = $data;
+        }
+
+        return response()->json($payload + $merge, $status ?? $code->httpStatus());
     }
 
     /**

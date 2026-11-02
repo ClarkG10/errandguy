@@ -224,3 +224,91 @@ describe('cancelled because the payment was never completed', () => {
     expect(queryByText('Payment not completed')).toBeNull();
   });
 });
+
+/**
+ * The verdict on a reopened checkout. "Try again" reopens the SAME one-time
+ * charge, which only makes sense while it is still open: once the server has
+ * ruled — declined, expired, or paid too late and refunded — it has cancelled
+ * the errand and that checkout can never succeed. The overlay used to offer
+ * "Try again" (and say "You weren't charged") for all of them.
+ */
+describe('the payment verdict after Complete payment', () => {
+  const openAndVerify = async (screen: ReturnType<typeof renderScreen>) => {
+    (openCheckoutUrl as jest.Mock).mockResolvedValue('opened');
+    await act(async () => {
+      fireEvent.press(screen.getByText('Complete payment'));
+    });
+    expect(usePaymentStore.getState().attempt?.status).toBe('verifying');
+  };
+
+  /** The shared verifier's ruling (its poll is mocked out here). */
+  const verifierRules = (failureReason: string) =>
+    act(() => {
+      usePaymentStore.getState().setStatus('failed', { failureReason });
+    });
+
+  it.each([
+    ['DECLINED_BY_PROVIDER', 'Payment declined'],
+    ['expired', 'Payment expired'],
+  ])('a %s charge offers Book again — never Try again', async (reason, title) => {
+    const screen = renderScreen();
+    await openAndVerify(screen);
+
+    verifierRules(reason);
+
+    expect(screen.getByText(title)).toBeTruthy();
+    expect(screen.getByText(/so this errand was cancelled\. You weren't charged/)).toBeTruthy();
+    expect(screen.getByText('Book again')).toBeTruthy();
+    expect(screen.queryByText('Try again')).toBeNull();
+    expect(screen.queryByText('Resume payment')).toBeNull();
+  });
+
+  it('a refunded payment says it went back to the wallet, with no Try again', async () => {
+    const screen = renderScreen();
+    await openAndVerify(screen);
+
+    verifierRules('refunded');
+
+    expect(screen.getByText('Payment refunded')).toBeTruthy();
+    expect(
+      screen.getByText(
+        'Your payment went through after the errand was cancelled, so it was returned to your ErrandGuy wallet.',
+      ),
+    ).toBeTruthy();
+    expect(screen.queryByText('Try again')).toBeNull();
+    expect(screen.queryByText(/weren't charged/)).toBeNull();
+  });
+
+  it('Book again from the overlay re-seeds the errand and releases the payment lock', async () => {
+    const screen = renderScreen();
+    await openAndVerify(screen);
+    verifierRules('DECLINED_BY_PROVIDER');
+
+    fireEvent.press(screen.getByText('Book again'));
+
+    expect(usePaymentStore.getState().attempt).toBeNull();
+    expect(mockReplace).toHaveBeenCalledWith('/(customer)/book/review');
+    expect(useBookingStore.getState().draftBooking).toMatchObject({
+      errand_type_id: 'errand-type-001',
+      pickup_address: '123 Pickup St, Manila',
+    });
+  });
+
+  it('stays up when the re-read shows the errand cancelled underneath it', async () => {
+    const screen = renderScreen();
+    await openAndVerify(screen);
+    verifierRules('DECLINED_BY_PROVIDER');
+
+    // The server cancels the unpaid errand; the screen's re-read lands.
+    serverSays(
+      booking('cancelled', {
+        awaiting_payment: false,
+        checkout_url: null,
+        cancellation_code: 'payment_not_completed',
+      }),
+    );
+
+    expect(screen.getByText('Payment declined')).toBeTruthy();
+    expect(screen.getAllByText('Book again').length).toBeGreaterThan(0);
+  });
+});

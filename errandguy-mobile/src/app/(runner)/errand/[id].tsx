@@ -99,7 +99,7 @@ import { formatCurrency } from '../../../utils/formatCurrency';
 import { formatTime } from '../../../utils/formatDate';
 import type { BookingStatus } from '../../../types';
 import { toast } from '../../../stores/toastStore';
-import { errorMessage } from '../../../utils/errorCatalog';
+import { errorMessage, LEGACY_WORDED_REFUSALS } from '../../../utils/errorCatalog';
 import { copy } from '../../../constants/copy';
 import { haptics } from '../../../utils/haptics';
 import { compressProofImage } from '../../../utils/proofImage';
@@ -1342,7 +1342,11 @@ export default function ActiveErrandScreen() {
         if (fresh) fetchedQ.mutate(fresh);
 
         if (!fresh || fresh.status === 'matched' || fresh.status === 'pending') {
-          toast.error(errorMessage(e, 'We couldn’t claim this errand. Please try again.'));
+          toast.error(
+            errorMessage(e, 'We couldn’t claim this errand. Please try again.', {
+              trustServerMessageFor: LEGACY_WORDED_REFUSALS,
+            }),
+          );
         }
       } finally {
         advancingRef.current = false;

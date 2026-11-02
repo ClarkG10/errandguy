@@ -8,6 +8,7 @@ import { useAuthStore } from '../stores/authStore';
 import { usePaymentStore, type PaymentAttempt } from '../stores/paymentStore';
 import { usePaymentVerification } from '../hooks/usePaymentVerification';
 import { mapFailureReason } from '../utils/paymentErrors';
+import { bookingPaymentFailure } from '../hooks/useCompleteBookingPayment';
 import { LightColors } from '../constants/colors';
 
 /**
@@ -64,7 +65,21 @@ export default function PaymentComplete() {
     return <FinishingUp goHome={goHome} />;
   }
 
-  const failure = attempt.status === 'failed' ? mapFailureReason(attempt.failureReason) : null;
+  // A booking charge the server ruled on has its own outcomes — refunded
+  // after the errand was cancelled, or declined/expired and the errand
+  // cancelled — told with the same copy the in-app overlay uses. Anything
+  // else (and tips) keeps the general mapping: this screen has no "Resume
+  // payment" for the copy that would point at one.
+  const bookingFailure =
+    attempt.status === 'failed' && attempt.kind === 'booking'
+      ? bookingPaymentFailure(attempt.failureReason)
+      : null;
+  const failure =
+    attempt.status !== 'failed'
+      ? null
+      : bookingFailure?.recovery === 'rebook'
+        ? bookingFailure
+        : mapFailureReason(attempt.failureReason);
 
   return (
     <View style={{ flex: 1, backgroundColor: LightColors.background }}>
@@ -81,6 +96,7 @@ export default function PaymentComplete() {
           paidAt: attempt.paidAt,
         }}
         onSuccessDone={() => routeAfterSuccess(attempt)}
+        failureTitle={failure?.title}
         failureMessage={failure?.message}
         onChooseAnotherMethod={() => routeToOrigin(attempt)}
         onClose={() => {

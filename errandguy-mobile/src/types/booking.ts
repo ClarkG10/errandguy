@@ -206,6 +206,16 @@ export interface Booking {
   /** Fee charged at cancellation time (server-computed via
    *  CancellationPolicy). Null until the booking is cancelled. */
   cancellation_fee?: number | null;
+  /** Peso amount that came back to the customer (cancel / no-runner refund),
+   *  or null when none did. Laravel may send it as a string. */
+  refunded_amount?: number | string | null;
+  /** Where that refund landed — always the ErrandGuy wallet today. */
+  refund_destination?: 'wallet' | null;
+  /** Owner only: whether POST /bookings/{id}/retry-match ("Search again")
+   *  would be accepted right now. False for a prepaid errand whose money was
+   *  already refunded (and while unpaid / not yet in its scheduled window).
+   *  Absent on an older server, and on realtime payloads. */
+  can_retry_match?: boolean;
 }
 
 export interface BookingStatusLog {

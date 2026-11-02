@@ -87,6 +87,13 @@ describe('parseWalletSummary — GET /wallet/balance', () => {
       bonus_balance: 0,
     });
   });
+
+  it('keeps the server’s withdrawal minimum, and leaves it absent when unusable', () => {
+    expect(parseWalletSummary({ balance: 500, withdraw_min: '100.00' }).withdraw_min).toBe(100);
+    expect(parseWalletSummary({ balance: 500 })).not.toHaveProperty('withdraw_min');
+    expect(parseWalletSummary({ balance: 500, withdraw_min: 0 })).not.toHaveProperty('withdraw_min');
+    expect(parseWalletSummary({ balance: 500, withdraw_min: 'abc' })).not.toHaveProperty('withdraw_min');
+  });
 });
 
 describe('spendableOnErrands', () => {

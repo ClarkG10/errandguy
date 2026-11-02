@@ -39,6 +39,8 @@ import { VerificationBanner } from '../../../components/runner/VerificationBanne
 import { DeleteAccountSheet } from '../../../components/settings/DeleteAccountSheet';
 import { useAccountSecurity } from '../../../components/settings/AccountSecurity';
 import { useRunnerStore } from '../../../stores/runnerStore';
+import { useLocationStore } from '../../../stores/locationStore';
+import { stopRunnerActivity } from '../../../utils/runnerSession';
 import { useAuthStore } from '../../../stores/authStore';
 import { runnerService } from '../../../services/runner.service';
 import { userService } from '../../../services/user.service';
@@ -288,6 +290,8 @@ export default function RunnerProfileScreen() {
         try {
           await runnerService.toggleOnline(false);
           setOnlineLocal(false);
+          // Offline means no GPS — the same as the Home toggle's offline path.
+          useLocationStore.getState().stopTracking();
         } catch {
           // Non-fatal: the only server-side rejection is "you have an active
           // errand", which the guard below already prevents reaching here.
@@ -303,6 +307,10 @@ export default function RunnerProfileScreen() {
       // setUser, never updateProfile: the store's top-level `role` — which
       // every navigator gate reads — is only written by setUser.
       setUser(fresh);
+      // Customer mode has no runner screen to answer an offer or need a fix:
+      // GPS and heartbeat off, runner state cleared (refetched on the way
+      // back into runner mode).
+      stopRunnerActivity();
       haptics.success();
       setShowSwitchModal(false);
       toast.success('You’re in customer mode. Switch back any time from Profile.');

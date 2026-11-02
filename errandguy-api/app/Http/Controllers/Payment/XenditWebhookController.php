@@ -361,8 +361,9 @@ class XenditWebhookController extends Controller
             });
 
             if ($payment) {
-                $this->notifyPayment($payment, 'expired');
+                // Cancel first, so the notice can say whether the errand ended.
                 app(\App\Services\BookingSettlementService::class)->cancelUnpaidBooking($payment);
+                $this->notifyPayment($payment, 'expired');
             }
         }
     }
@@ -497,8 +498,9 @@ class XenditWebhookController extends Controller
         });
 
         if ($payment) {
-            $this->notifyPayment($payment, 'failed');
+            // Cancel first, so the notice can say whether the errand ended.
             app(\App\Services\BookingSettlementService::class)->cancelUnpaidBooking($payment);
+            $this->notifyPayment($payment, 'failed');
             return;
         }
 
@@ -675,20 +677,34 @@ class XenditWebhookController extends Controller
     /**
      * Fire a user-facing notification for a settled/failed payment. Runs AFTER
      * the DB transaction has committed (it makes an outbound push call — never
-     * hold a row lock across the network). Booking context is lazy-loaded here.
+     * hold a row lock across the network). Booking context is re-read here.
+     *
+     * A declined or expired charge has already cancelled its errand
+     * (cancelUnpaidBooking runs first), and that errand can't be paid again —
+     * so the notice says it was cancelled and how to book it again, never "try
+     * again". A stale failure on an errand that another attempt already paid
+     * just says nothing was charged for it.
      *
      * @param  'completed'|'failed'|'expired'  $status
      */
     private function notifyPayment(Payment $payment, string $status): void
     {
         $amount = number_format((float) $payment->amount, 2);
-        $bookingNo = $payment->booking?->booking_number;
-        $for = $bookingNo ? " for booking {$bookingNo}" : '';
+        $booking = $payment->booking()->first(['id', 'booking_number', 'status']);
+        $bookingNo = $booking?->booking_number;
+        $for = $bookingNo ? " for errand #{$bookingNo}" : '';
+        $missed = $status === 'expired'
+            ? "Your ₱{$amount} payment{$for} wasn't completed in time"
+            : "Your ₱{$amount} payment{$for} didn't go through";
 
         [$title, $body] = match ($status) {
             'completed' => ['Payment confirmed', "Your ₱{$amount} payment{$for} is confirmed."],
-            'expired' => ['Payment expired', "Your payment window{$for} expired. You weren't charged — you can try again."],
-            default => ['Payment failed', "We couldn't confirm your ₱{$amount} payment{$for}. You weren't charged — try again or use another method."],
+            default => [
+                $status === 'expired' ? 'Payment expired' : 'Payment failed',
+                $booking?->status === 'cancelled'
+                    ? "{$missed}, so the errand was cancelled. You weren't charged — to try again, book the errand again."
+                    : "{$missed}. You weren't charged for it.",
+            ],
         };
 
         // Enqueue rather than send inline: this runs on the webhook thread, and a

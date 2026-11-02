@@ -21,7 +21,7 @@ import { useForegroundInterval } from '../../../hooks/useForegroundInterval';
 import { useSmartPolling } from '../../../hooks/useSmartPolling';
 import { useCompleteBookingPayment } from '../../../hooks/useCompleteBookingPayment';
 import { bookingService } from '../../../services/booking.service';
-import { errorMessage } from '../../../utils/errorCatalog';
+import { errorMessage, LEGACY_WORDED_REFUSALS } from '../../../utils/errorCatalog';
 import { haptics } from '../../../utils/haptics';
 import { copy } from '../../../constants/copy';
 import { Button } from '../../../components/ui/Button';
@@ -36,6 +36,9 @@ import {
   unpaidCancelMessage,
   wasCancelledForUnpaidPayment,
 } from '../../../utils/bookingPayment';
+import { cancelMoneyLines, cancelReceiptMessage, type CancelPreview } from '../../../utils/cancelPreview';
+import { canRetryMatch, noRunnerRebookLine } from '../../../utils/noRunner';
+import { rebookDraft } from '../../../utils/rebookDraft';
 import type { Booking, BookingStatus } from '../../../types';
 import { toast } from '../../../stores/toastStore';
 import { LightColors, Elevation } from '../../../constants/colors';
@@ -151,6 +154,16 @@ export default function ConfirmScreen() {
   }, [isScheduledFuture, state]);
   const [showCancelModal, setShowCancelModal] = useState(false);
   const [isCancelling, setIsCancelling] = useState(false);
+  // The server's own cancel preview — what cancelling costs and what comes
+  // back. The modal used to promise a free cancel on its own say-so.
+  const [cancelPreview, setCancelPreview] = useState<CancelPreview | null>(null);
+  const [previewLoading, setPreviewLoading] = useState(false);
+  // A fresh read of the booking once it went no_runner. The realtime event that
+  // announces no_runner carries lifecycle fields only, so the store copy still
+  // holds the PENDING booking's `can_retry_match` (true) and none of the
+  // refund. 'unknown' = the read failed; behave as before (the server still
+  // refuses a retry it can't run, in its own words).
+  const [noRunnerVerdict, setNoRunnerVerdict] = useState<Booking | 'unknown' | null>(null);
   // Tracks how many widened-radius retries the customer has used so the
   // server keeps fanning the search out instead of repeating the same one.
   const [retryStep, setRetryStep] = useState<1 | 2 | 3>(1);
@@ -395,6 +408,36 @@ export default function ConfirmScreen() {
     if (fresh?.id === bookingId) setActiveBooking(fresh);
   }, [bookingId, setActiveBooking]);
 
+  // Once no runner took it, ask the server — not the merged realtime copy —
+  // whether searching again can work (see noRunnerVerdict). Skips the micro-
+  // cache: a read from seconds ago would still be the pending booking.
+  useEffect(() => {
+    if (state !== 'no_runner' || noRunnerVerdict !== null || !bookingId) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await bookingService.getBooking(bookingId, { fresh: true });
+        const fresh = res?.data?.data;
+        if (cancelled) return;
+        if (fresh?.id === bookingId && fresh.status === 'no_runner') {
+          setNoRunnerVerdict(fresh);
+          setActiveBooking(fresh);
+        } else if (fresh?.id === bookingId) {
+          // It moved on (matched, cancelled…) — let reactToStatus take it.
+          setNoRunnerVerdict('unknown');
+          setActiveBooking(fresh);
+        } else {
+          setNoRunnerVerdict('unknown');
+        }
+      } catch {
+        if (!cancelled) setNoRunnerVerdict('unknown');
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [state, noRunnerVerdict, bookingId, setActiveBooking]);
+
   // Waiting for a GCash/Maya payment. Its confirmation doesn't change the
   // status (still `pending`), so no realtime event announces it — tail the
   // booking instead: once on arrival (the stored copy may be the create
@@ -406,31 +449,33 @@ export default function ConfirmScreen() {
     runOnMount: true,
   });
 
-  const { checkoutUrl, completePayment, opening, progress } = useCompleteBookingPayment(
-    activeBooking?.id === bookingId ? activeBooking : null,
-    // A verdict (or closing the overlay) re-reads the booking: a confirmed
-    // payment is what starts the search.
-    { onSettled: () => void refreshBooking().catch(() => {}) },
-  );
-
   const handleCancel = useCallback(() => {
+    if (!bookingId) return;
     setShowCancelModal(true);
-  }, []);
+    setPreviewLoading(true);
+    bookingService
+      .cancelPreview(bookingId)
+      .then((res) => setCancelPreview(res?.data?.data ?? null))
+      .catch(() => setCancelPreview(null))
+      .finally(() => setPreviewLoading(false));
+  }, [bookingId]);
 
   const handleConfirmCancel = useCallback(async () => {
     if (!bookingId) return;
     setIsCancelling(true);
     try {
-      await bookingService.cancelBooking(bookingId, 'Customer cancelled');
+      const res = await bookingService.cancelBooking(bookingId, 'Customer cancelled');
       setState('cancelled');
       setActiveBooking(null);
       setShowCancelModal(false);
+      setCancelPreview(null);
       // Navigation preempts the cancelled-state render, so close the loop
-      // here — the modal just promised "no fee", confirm it happened.
+      // here with the server's own receipt: the fee actually kept, what was
+      // refunded and where it went (same as tracking's cancel).
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(
         () => {},
       );
-      toast.success('Booking cancelled — no fee charged.');
+      toast.success(cancelReceiptMessage(res) ?? 'Booking cancelled.');
       router.replace('/(customer)/(tabs)');
     } catch (err) {
       haptics.error();
@@ -460,11 +505,26 @@ export default function ConfirmScreen() {
       // Hand it to the store so reactToStatus judges THAT, never the
       // no_runner snapshot the store still holds from the last search.
       const fresh = res?.data?.data;
-      if (fresh?.id === bookingId) setActiveBooking(fresh);
+      if (fresh?.id === bookingId) {
+        // A full BookingResource: if this search came back empty too, it is
+        // also the verdict on searching again.
+        setNoRunnerVerdict(fresh.status === 'no_runner' ? fresh : null);
+        setActiveBooking(fresh);
+      }
     } catch (err: any) {
+      // A refusal is worded by the server for THIS errand (refunded, unpaid,
+      // scheduled…). RETRY_NOT_ALLOWED already passes through; an older server
+      // sent the same sentences as BOOKING_CONFLICT, whose catalog copy ("You
+      // already have an errand") was wrong for a customer with no other one.
       toast.error(
-        errorMessage(err, 'Could not retry matching right now. Try again in a moment.'),
+        errorMessage(err, 'Could not retry matching right now. Try again in a moment.', {
+          trustServerMessageFor: LEGACY_WORDED_REFUSALS,
+        }),
       );
+      // The server won't search this errand again: dropping the verdict makes
+      // the no_runner effect re-read it, so the card swaps to Book again (or
+      // shows the match that just landed).
+      if (err?.status === 409) setNoRunnerVerdict(null);
     } finally {
       setIsRetrying(false);
     }
@@ -480,63 +540,36 @@ export default function ConfirmScreen() {
       router.replace('/(customer)/book/type');
       return;
     }
-    // Server clocks may have moved past a scheduled slot while we
-    // searched — a stale scheduled_at would just 422 at resubmit.
-    const scheduledAt = b.scheduled_at ? Date.parse(b.scheduled_at) : NaN;
-    const scheduleStillValid =
-      b.schedule_type === 'scheduled' &&
-      Number.isFinite(scheduledAt) &&
-      scheduledAt > Date.now();
     clearDraft();
-    updateDraft({
-      errand_type_id: b.errand_type_id,
-      errand_type_slug: b.errand_type?.slug,
-      pickup_address: b.pickup_address,
-      // Laravel casts decimal columns to strings — coerce so downstream
-      // consumers (estimate payload, map cameras) see real numbers.
-      pickup_lat: Number(b.pickup_lat),
-      pickup_lng: Number(b.pickup_lng),
-      pickup_contact_name: b.pickup_contact_name ?? undefined,
-      pickup_contact_phone: b.pickup_contact_phone ?? undefined,
-      dropoff_address: b.dropoff_address ?? undefined,
-      dropoff_lat: b.dropoff_lat != null ? Number(b.dropoff_lat) : undefined,
-      dropoff_lng: b.dropoff_lng != null ? Number(b.dropoff_lng) : undefined,
-      dropoff_contact_name: b.dropoff_contact_name ?? undefined,
-      dropoff_contact_phone: b.dropoff_contact_phone ?? undefined,
-      description: b.description ?? undefined,
-      special_instructions: b.special_instructions ?? undefined,
-      estimated_item_value: b.estimated_item_value ?? undefined,
-      shopping_budget: b.shopping_budget ?? undefined,
-      shoppingItems: b.shopping_items?.length
-        ? b.shopping_items.map((it) => ({
-            id: it.id,
-            name: it.name,
-            qty: it.qty ?? 1,
-          }))
-        : undefined,
-      // Multi-stop extra destinations — without re-seeding these, rebooking a
-      // multi-stop errand silently dropped every extra stop (pickup→dropoff
-      // only), so the customer re-paid for a cheaper single-drop errand.
-      stops: b.stops?.length
-        ? b.stops.map((s) => ({
-            address: s.address,
-            lat: Number(s.lat),
-            lng: Number(s.lng),
-            contact_name: s.contact_name ?? undefined,
-            contact_phone: s.contact_phone ?? undefined,
-            note: s.note ?? undefined,
-          }))
-        : undefined,
-      vehicle_type_rate: b.vehicle_type_rate ?? undefined,
-      schedule_type: scheduleStillValid ? 'scheduled' : 'now',
-      scheduled_at: scheduleStillValid ? b.scheduled_at ?? undefined : undefined,
-    });
+    updateDraft(rebookDraft(b));
     setStep(3);
     setActiveBooking(null);
     router.replace('/(customer)/book/review');
   }, [activeBooking, endedBooking, clearDraft, updateDraft, setStep, setActiveBooking, router]);
 
+  const { checkoutUrl, completePayment, opening, progress } = useCompleteBookingPayment(
+    // The ended booking too: a declined charge cancels the errand, and the
+    // overlay explaining that must not vanish the instant the re-read lands.
+    activeBooking?.id === bookingId
+      ? activeBooking
+      : endedBooking?.id === bookingId
+        ? endedBooking
+        : null,
+    // A verdict (or closing the overlay) re-reads the booking: a confirmed
+    // payment is what starts the search.
+    {
+      onSettled: () => void refreshBooking().catch(() => {}),
+      onRebook: handleRebook,
+    },
+  );
+
   const cancelledUnpaid = state === 'cancelled' && wasCancelledForUnpaidPayment(endedBooking);
+  // Searching again is off the table (prepaid and refunded, typically): lead
+  // with Book again and say where the money went, instead of a "Search again"
+  // the server can only refuse.
+  const verdictBooking = noRunnerVerdict && noRunnerVerdict !== 'unknown' ? noRunnerVerdict : null;
+  const retryRefused = state === 'no_runner' && !!verdictBooking && !canRetryMatch(verdictBooking);
+  const verdictPending = state === 'no_runner' && noRunnerVerdict === null;
 
   const liveAnnouncement =
     state === 'searching' && stillLooking
@@ -787,11 +820,13 @@ export default function ConfirmScreen() {
               <Text className="text-sm font-montserrat text-textSecondary mt-1 text-center">
                 {exhausted
                   ? 'We searched our widest area and no runner picked this up. Rebooking with different details — vehicle or timing — gives the best chance.'
-                  : retryStep === 1
-                    ? 'No runners are nearby right now. We can widen the search area.'
-                    : retryStep === 2
-                      ? 'Still no luck. We can search a much larger area, but ETA will be longer.'
-                      : 'One more try at our widest search area.'}
+                  : retryRefused
+                    ? noRunnerRebookLine(verdictBooking)
+                    : retryStep === 1
+                      ? 'No runners are nearby right now. We can widen the search area.'
+                      : retryStep === 2
+                        ? 'Still no luck. We can search a much larger area, but ETA will be longer.'
+                        : 'One more try at our widest search area.'}
               </Text>
               <View className="mt-5 w-full gap-3">
                 {exhausted ? (
@@ -800,7 +835,17 @@ export default function ConfirmScreen() {
                     onPress={handleRebook}
                     fullWidth
                   />
+                ) : retryRefused ? (
+                  <Button
+                    title="Book again"
+                    onPress={handleRebook}
+                    accessibilityHint="Starts a new booking pre-filled from this one"
+                    fullWidth
+                  />
                 ) : (
+                  // Held on "Checking…" for the moment it takes to ask the
+                  // server whether a search can still run, so a refunded
+                  // errand never flashes a Search again it would refuse.
                   <Button
                     title={
                       retryStep === 1
@@ -810,8 +855,8 @@ export default function ConfirmScreen() {
                           : 'Search widest area'
                     }
                     onPress={handleRetry}
-                    loading={isRetrying}
-                    loadingTitle="Searching…"
+                    loading={isRetrying || verdictPending}
+                    loadingTitle={verdictPending ? 'Checking…' : 'Searching…'}
                     fullWidth
                   />
                 )}
@@ -875,14 +920,25 @@ export default function ConfirmScreen() {
       <ConfirmModal
         visible={showCancelModal}
         title="Cancel this booking?"
-        message="No fee will be charged — a runner hasn't accepted yet."
+        // The server's preview, never a promise of our own: it names any fee
+        // and what goes back to the wallet (same body tracking shows).
+        message={
+          previewLoading
+            ? 'Checking cancellation policy…'
+            : cancelPreview
+              ? cancelMoneyLines(cancelPreview)
+              : 'This can’t be undone. We’ll tell you right away what happens to any payment.'
+        }
         confirmLabel="Cancel booking"
         confirmLoadingLabel="Cancelling…"
         cancelLabel={state === 'awaiting_payment' ? 'Keep booking' : 'Keep searching'}
         destructive
         loading={isCancelling}
         onConfirm={handleConfirmCancel}
-        onCancel={() => setShowCancelModal(false)}
+        onCancel={() => {
+          setShowCancelModal(false);
+          setCancelPreview(null);
+        }}
       />
 
       {/* Verifies a reopened GCash/Maya checkout ("Complete payment"). */}

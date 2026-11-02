@@ -1110,13 +1110,31 @@ class WalletService
         });
     }
 
-    /**
-     * The configured payout minimum, applied to runners only. Customers can
-     * withdraw any amount (their balance is refunds and the like, often small).
-     */
+    /** The configured payout minimum for runners (`min_payout_amount`). */
     public static function runnerPayoutMinimum(): float
     {
         return (float) \App\Models\SystemConfig::getValue('min_payout_amount', '100');
+    }
+
+    /**
+     * The least a customer can withdraw at one time (`customer_min_withdrawal`,
+     * ₱100; 0 means none). Each withdrawal is a payout staff send by hand, so
+     * a stream of tiny ones costs more than it moves. The balance paid out on
+     * account deletion is never held to it.
+     */
+    public static function customerWithdrawalMinimum(): float
+    {
+        return max(0.0, (float) \App\Models\SystemConfig::getValue('customer_min_withdrawal', '100'));
+    }
+
+    /**
+     * The minimum that applies to this user's own withdrawals: an account with
+     * a runner profile keeps the runner minimum (so switching to customer mode
+     * can't dodge it), anyone else the customer one.
+     */
+    public static function withdrawalMinimumFor(User $user): float
+    {
+        return $user->runnerProfile ? self::runnerPayoutMinimum() : self::customerWithdrawalMinimum();
     }
 
     /**
@@ -1203,16 +1221,37 @@ class WalletService
             return $tx->fresh();
         });
 
-        // Notify the runner AFTER commit — best-effort, never inside the lock.
+        // Notify the owner AFTER commit — best-effort, never inside the lock. A
+        // completed payout is one Xendit (or staff, by hand) has already paid
+        // out, so the money is there: say where it went, not how long to wait.
         $amount = number_format(abs((float) $tx->amount), 2);
         \App\Jobs\SendPushJob::dispatch(
             $tx->user_id,
             'Payout sent',
-            "Your ₱{$amount} payout has been sent. It should arrive within 1–3 business days.",
+            "Your payout of ₱{$amount} was sent to ".self::payoutWhere($tx).'.',
             ['type' => 'payment', 'status' => 'completed', 'wallet_transaction_id' => $tx->id],
         );
 
         return $tx;
+    }
+
+    /**
+     * Where a payout went, for its owner: "GCash •••• 4567". A runner payout
+     * requested before destinations were recorded on the payout goes to the
+     * profile's details; an unreadable one is named generically.
+     */
+    private static function payoutWhere(WalletTransaction $tx): string
+    {
+        try {
+            $destination = $tx->payout_destination;
+        } catch (\Throwable) {
+            $destination = null;
+        }
+        $destination ??= $tx->user?->runnerProfile?->payoutDestination($tx->user?->full_name);
+
+        return filled($destination['account_number'] ?? null)
+            ? PayoutDestination::label($destination)
+            : 'your bank or e-wallet';
     }
 
     /**

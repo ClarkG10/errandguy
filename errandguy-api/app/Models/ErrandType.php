@@ -135,6 +135,43 @@ class ErrandType extends Model
         return self::RETIRED_SUCCESSORS[$slug] ?? $slug;
     }
 
+    /**
+     * The type to book for an errand_type_id a request names: a retired type
+     * that was merged into a kept one (food/grocery → "Buy for me",
+     * document/laundry → Delivery) becomes that type, so "Book again" on an
+     * old errand in the app build already on phones books the type that
+     * replaced it instead of dead-ending. Anything else comes back unchanged
+     * (a removed type with no successor is refused by removedTypeMessage).
+     */
+    public static function bookableIdFor(mixed $id): mixed
+    {
+        if (! is_string($id) || $id === '') {
+            return $id;
+        }
+
+        $slug = self::whereKey($id)->where('is_active', false)->value('slug');
+        $successor = $slug !== null ? (self::RETIRED_SUCCESSORS[$slug] ?? null) : null;
+        if ($successor === null) {
+            return $id;
+        }
+
+        return self::where('slug', $successor)->where('is_active', true)->value('id') ?? $id;
+    }
+
+    /** Why a removed type (rides, bills payment) can't be booked, or null for any other id. */
+    public static function removedTypeMessage(mixed $id): ?string
+    {
+        if (! is_string($id) || $id === '') {
+            return null;
+        }
+
+        return match (self::whereKey($id)->value('slug')) {
+            'transportation' => 'Rides are no longer available. Please choose another errand type.',
+            'bills_payment' => 'Bills payment is no longer available. Please choose another errand type.',
+            default => null,
+        };
+    }
+
     public function bookings(): HasMany
     {
         return $this->hasMany(Booking::class);

@@ -295,6 +295,8 @@ class PaymentBeforeMatchingTest extends TestCase
         $this->actingAs($this->customer)
             ->postJson("/api/v1/bookings/{$booking->id}/retry-match")
             ->assertStatus(409)
+            ->assertJsonPath('code', 'RETRY_NOT_ALLOWED')
+            ->assertJsonPath('data.reason', 'unpaid')
             ->assertJsonPath('message', 'This errand hasn’t been paid for yet. We start looking for a runner as soon as your GCash/Maya payment is confirmed.');
 
         Bus::assertNotDispatched(MatchRunnerJob::class);

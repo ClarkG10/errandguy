@@ -4,6 +4,7 @@ import { compressProofImage } from '../utils/proofImage';
 import type { PaymentMethodType } from '../types';
 import { sosBody, type SosCoords } from '../utils/sosLocation';
 import { phoneForApi } from '../utils/phone';
+import type { CancelPreview } from '../utils/cancelPreview';
 
 const invalidateBookingsCaches = (id?: string) => {
   // Fire-and-forget — cache wipes shouldn't block the UI.
@@ -170,13 +171,19 @@ export const bookingService = {
     return p;
   },
 
-  getBooking(id: string) {
+  getBooking(id: string, opts?: { fresh?: boolean }) {
     // Silent: the tracking screen revalidates this every few seconds
     // (and the booking detail sheet too); leaving it un-silenced kept
     // the global progress bar permanently visible during a live
     // errand. The user-perceived loading state is conveyed by the
     // tracking UI's own status pills, not by a top-of-screen blip.
-    return api.get(`/bookings/${id}`, { cacheTtlMs: 4000, silent: true });
+    // `fresh` skips the 4s micro-cache — for a read that must reflect a
+    // transition that just happened (e.g. the verdict after no_runner).
+    return api.get(`/bookings/${id}`, {
+      cacheTtlMs: 4000,
+      silent: true,
+      ...(opts?.fresh ? { noCache: true } : null),
+    });
   },
 
   cancelBooking(id: string, reason?: string) {
@@ -186,14 +193,7 @@ export const bookingService = {
   },
 
   cancelPreview(id: string) {
-    return api.get<{
-      data: {
-        fee: number;
-        tier: 'free' | 'flat' | 'percentage';
-        reason: string;
-        cancellable: boolean;
-      };
-    }>(`/bookings/${id}/cancel-preview`);
+    return api.get<{ data: CancelPreview }>(`/bookings/${id}/cancel-preview`);
   },
 
   trackBooking(id: string, opts?: { onlyLocation?: boolean }) {

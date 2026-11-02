@@ -4,9 +4,12 @@ namespace Tests\Feature\Admin;
 
 use App\Exceptions\BookingStateException;
 use App\Filament\Resources\Bookings\Pages\ListBookings;
+use App\Jobs\AutoCancelBookingJob;
 use App\Jobs\MatchRunnerJob;
+use App\Models\AdminAlert;
 use App\Models\AdminUser;
 use App\Models\Booking;
+use App\Models\BookingStop;
 use App\Models\ErrandType;
 use App\Models\Notification;
 use App\Models\Payment;
@@ -31,9 +34,18 @@ use Tests\TestCase;
  *     window hasn't opened (a runner would be sent hours early), exactly like
  *     the customer's own "try again".
  *   - "Return to matching" takes an accepted-but-unfinished errand off its
- *     runner, tells them, and offers it to someone else (never back to them).
+ *     runner, tells them, wipes their progress and offers it to someone else
+ *     (never back to them) with a fresh search window; a runner who already
+ *     paid for the items is flagged to staff as owed.
  *   - "Mark completed" settles it exactly like the runner's own completion,
- *     once.
+ *     once; it pays the runner, so only money roles have it, and an errand
+ *     whose money went back can't be completed.
+ *   - Every new round (re-run, return) gets a full search window and fresh
+ *     offers, so a rescue long after the errand was placed isn't ended by the
+ *     first auto-cancel check.
+ *
+ * AutoCancelBookingJob is faked throughout: on the sync test queue a delay is
+ * ignored, and a job re-arming itself for a future deadline would loop.
  */
 class StuckErrandActionsTest extends TestCase
 {
@@ -49,6 +61,7 @@ class StuckErrandActionsTest extends TestCase
         parent::setUp();
         Cache::flush();
         $this->seed(\Database\Seeders\SystemConfigSeeder::class);
+        Bus::fake([AutoCancelBookingJob::class]);
 
         $this->admin = AdminUser::create([
             'email' => 'ops@errandguy.test', 'password_hash' => Hash::make('Password1!'),
@@ -119,7 +132,7 @@ class StuckErrandActionsTest extends TestCase
 
     public function test_re_run_matching_refuses_an_errand_whose_payment_was_refunded(): void
     {
-        Bus::fake([MatchRunnerJob::class]);
+        Bus::fake([MatchRunnerJob::class, AutoCancelBookingJob::class]);
         $booking = $this->booking(['status' => 'no_runner'], 'refunded');
 
         Livewire::test(ListBookings::class)->callTableAction('rematch', $booking);
@@ -144,7 +157,7 @@ class StuckErrandActionsTest extends TestCase
 
     public function test_bulk_re_run_skips_refunded_and_not_yet_due_errands(): void
     {
-        Bus::fake([MatchRunnerJob::class]);
+        Bus::fake([MatchRunnerJob::class, AutoCancelBookingJob::class]);
         $refunded = $this->booking(['status' => 'no_runner'], 'refunded');
         $later = $this->booking(['schedule_type' => 'scheduled', 'scheduled_at' => now()->addHours(4)]);
         $stuckCash = $this->booking(['status' => 'no_runner', 'offer_count' => 5], 'unpaid', 'cash');
@@ -161,7 +174,7 @@ class StuckErrandActionsTest extends TestCase
 
     public function test_re_run_matching_respects_a_scheduled_errands_time(): void
     {
-        Bus::fake([MatchRunnerJob::class]);
+        Bus::fake([MatchRunnerJob::class, AutoCancelBookingJob::class]);
         $later = $this->booking(['schedule_type' => 'scheduled', 'scheduled_at' => now()->addHours(4)]);
 
         try {
@@ -243,6 +256,7 @@ class StuckErrandActionsTest extends TestCase
     public function test_mark_completed_settles_exactly_like_a_runner_completion(): void
     {
         Event::fake();
+        $this->actingAs($this->staff(AdminUser::ROLE_FINANCE), 'admin');
         $booking = $this->accepted();
 
         Livewire::test(ListBookings::class)
@@ -307,13 +321,264 @@ class StuckErrandActionsTest extends TestCase
     {
         $booking = $this->accepted();
 
-        $this->actingAs(AdminUser::create([
-            'email' => 'support@errandguy.test', 'password_hash' => Hash::make('Password1!'),
-            'full_name' => 'Support', 'role' => AdminUser::ROLE_SUPPORT, 'is_active' => true,
-        ]), 'admin');
+        $this->actingAs($this->staff(AdminUser::ROLE_SUPPORT), 'admin');
 
         Livewire::test(ListBookings::class)
             ->assertTableActionHidden('returnToMatching', $booking)
             ->assertTableActionHidden('markCompleted', $booking);
+    }
+
+    public function test_mark_completed_pays_the_runner_so_only_money_roles_have_it(): void
+    {
+        $booking = $this->accepted();
+
+        // Ops (the setUp signed-in staff) and admins return errands to
+        // matching, but don't pay runners.
+        Livewire::test(ListBookings::class)
+            ->assertTableActionVisible('returnToMatching', $booking)
+            ->assertTableActionHidden('markCompleted', $booking);
+
+        $this->actingAs($this->staff(AdminUser::ROLE_ADMIN), 'admin');
+        Livewire::test(ListBookings::class)
+            ->assertTableActionVisible('returnToMatching', $booking)
+            ->assertTableActionVisible('cancel', $booking)
+            ->assertTableActionHidden('markCompleted', $booking);
+
+        $this->actingAs($this->staff(AdminUser::ROLE_FINANCE), 'admin');
+        Livewire::test(ListBookings::class)
+            ->assertTableActionVisible('markCompleted', $booking)
+            ->assertTableActionHidden('returnToMatching', $booking);
+
+        $this->actingAs($this->staff(AdminUser::ROLE_SUPER_ADMIN), 'admin');
+        Livewire::test(ListBookings::class)
+            ->assertTableActionVisible('markCompleted', $booking)
+            ->assertTableActionVisible('returnToMatching', $booking);
+    }
+
+    public function test_mark_completed_says_whether_and_how_the_runner_is_paid(): void
+    {
+        $this->actingAs($this->staff(AdminUser::ROLE_FINANCE), 'admin');
+
+        Livewire::test(ListBookings::class)
+            ->mountTableAction('markCompleted', $this->accepted())
+            ->assertMountedActionModalSee('The runner is paid ₱100.00 into their ErrandGuy wallet.');
+
+        Livewire::test(ListBookings::class)
+            ->mountTableAction('markCompleted', $this->accepted([], 'unpaid', 'cash'))
+            ->assertMountedActionModalSee('The runner keeps the ₱115.00 cash they collect from the customer, and ErrandGuy’s ₱15.00 fee is taken from their wallet.');
+
+        Livewire::test(ListBookings::class)
+            ->mountTableAction('markCompleted', $this->accepted([], 'refunded'))
+            ->assertMountedActionModalSee('Its payment was refunded or never collected, so it can’t be marked completed');
+    }
+
+    public function test_mark_completed_refuses_an_errand_whose_money_went_back(): void
+    {
+        Event::fake();
+
+        foreach ([['refunded', 'wallet'], ['failed', 'gcash'], ['expired', 'gcash']] as [$paymentStatus, $method]) {
+            $booking = $this->accepted(['payment_method' => $method], $paymentStatus, $method);
+
+            try {
+                app(BookingService::class)->adminMarkCompleted($booking->id, $this->admin->id, 'done');
+                $this->fail("a {$paymentStatus} errand was marked completed");
+            } catch (BookingStateException $e) {
+                $this->assertStringContainsString('Cancel it instead', $e->getMessage());
+            }
+
+            $this->assertSame('picked_up', $booking->fresh()->status);
+        }
+
+        $this->assertEquals(0.0, (float) $this->runner->fresh()->wallet_balance);
+        $this->assertSame(0, (int) $this->runner->runnerProfile->fresh()->total_errands);
+    }
+
+    // ── Fresh rounds ────────────────────────────────────────────────────
+
+    public function test_return_to_matching_long_after_booking_gets_a_full_new_search_window(): void
+    {
+        Bus::fake([MatchRunnerJob::class, AutoCancelBookingJob::class]);
+        $booking = $this->accepted(['matching_started_at' => now()->subHours(2)]);
+        $booking->forceFill(['created_at' => now()->subHours(2)])->save();
+
+        app(BookingService::class)->adminReturnToMatching($booking->id, 'Runner went dark');
+
+        $fresh = $booking->fresh();
+        $this->assertSame('pending', $fresh->status);
+        $this->assertTrue($fresh->matching_started_at->between(now()->subMinute(), now()));
+        $deadline = BookingService::matchingDeadline($fresh);
+        $this->assertTrue($deadline->between(now()->addMinutes(29), now()->addMinutes(31)), 'a full 30-minute window');
+
+        // The auto-cancel is armed for the NEW deadline…
+        Bus::assertDispatched(AutoCancelBookingJob::class, fn (AutoCancelBookingJob $job) => $job->bookingId === $booking->id
+            && $job->delay !== null && \Illuminate\Support\Carbon::parse($job->delay)->equalTo($deadline));
+        // …so neither an old check nor the reaper ends it early.
+        $this->assertFalse((new AutoCancelBookingJob($booking->id))->handle());
+        $this->artisan('errandguy:reap-stranded-bookings')->assertSuccessful();
+        $this->assertSame('pending', $booking->fresh()->status);
+        $this->assertSame('paid', $booking->fresh()->payment_status);
+    }
+
+    public function test_re_run_matching_long_after_booking_gets_a_full_new_search_window(): void
+    {
+        Bus::fake([MatchRunnerJob::class, AutoCancelBookingJob::class]);
+        $booking = $this->booking([
+            'status' => 'no_runner', 'offer_count' => 5, 'matching_started_at' => now()->subHours(3),
+            'offered_runner_ids' => [$this->runner->id],
+        ], 'unpaid', 'cash');
+        $booking->forceFill(['created_at' => now()->subHours(3)])->save();
+
+        app(BookingService::class)->adminRematch($booking->id);
+
+        $fresh = $booking->fresh();
+        $this->assertSame('pending', $fresh->status);
+        $this->assertSame(0, $fresh->offer_count);
+        $this->assertNull($fresh->offered_runner_ids, 'a runner who only missed an offer can be offered it again');
+        $this->assertTrue(BookingService::matchingDeadline($fresh)->greaterThan(now()->addMinutes(29)));
+        Bus::assertDispatched(AutoCancelBookingJob::class, fn (AutoCancelBookingJob $job) => $job->bookingId === $booking->id);
+        $this->assertFalse((new AutoCancelBookingJob($booking->id))->handle());
+        $this->assertSame('pending', $booking->fresh()->status);
+    }
+
+    public function test_a_new_round_offers_the_errand_again_to_a_runner_who_missed_it(): void
+    {
+        Event::fake();
+        // Cash, no_runner after the only nearby runner let the offer lapse.
+        $booking = $this->booking([
+            'status' => 'no_runner', 'offer_count' => 1, 'offered_runner_ids' => [$this->runner->id],
+        ], 'unpaid', 'cash');
+
+        app(BookingService::class)->adminRematch($booking->id);
+
+        $fresh = $booking->fresh();
+        $this->assertSame('matched', $fresh->status);
+        $this->assertSame($this->runner->id, $fresh->runner_id);
+        $this->assertSame([$this->runner->id], $fresh->offered_runner_ids);
+        $this->assertSame(1, $fresh->offer_count);
+    }
+
+    public function test_return_to_matching_keeps_only_the_removed_runner_excluded(): void
+    {
+        Bus::fake([MatchRunnerJob::class, AutoCancelBookingJob::class]);
+        $earlier = $this->makeRunner(14.6200);
+        $booking = $this->accepted(['offered_runner_ids' => [$earlier->id, $this->runner->id], 'offer_count' => 2]);
+
+        app(BookingService::class)->adminReturnToMatching($booking->id, 'Runner asked to drop it');
+
+        $fresh = $booking->fresh();
+        $this->assertSame([$this->runner->id], $fresh->offered_runner_ids);
+        $this->assertSame(0, $fresh->offer_count);
+        Bus::assertDispatched(MatchRunnerJob::class, fn (MatchRunnerJob $job) => $job->excludeUserId === $this->runner->id);
+    }
+
+    public function test_a_scheduled_errand_past_its_window_is_searched_for_like_one_booked_for_now(): void
+    {
+        Bus::fake([MatchRunnerJob::class, AutoCancelBookingJob::class]);
+        $booking = $this->accepted([
+            'schedule_type' => 'scheduled', 'scheduled_at' => now()->subHour(),
+            'matching_started_at' => now()->subMinutes(75),
+        ]);
+
+        app(BookingService::class)->adminReturnToMatching($booking->id, 'Runner went dark');
+
+        $fresh = $booking->fresh();
+        $this->assertSame('now', $fresh->schedule_type);
+        $this->assertTrue(BookingService::matchingDeadline($fresh)->between(now()->addMinutes(29), now()->addMinutes(31)));
+        // Searched right away, not held for a window that already closed.
+        Bus::assertDispatched(MatchRunnerJob::class, fn (MatchRunnerJob $job) => $job->delay === null);
+        $this->assertFalse((new AutoCancelBookingJob($booking->id))->handle());
+    }
+
+    public function test_a_scheduled_errand_still_ahead_of_its_window_keeps_waiting_for_it(): void
+    {
+        Bus::fake([MatchRunnerJob::class, AutoCancelBookingJob::class]);
+        $scheduledAt = now()->addHours(3);
+        $booking = $this->accepted(['schedule_type' => 'scheduled', 'scheduled_at' => $scheduledAt]);
+
+        app(BookingService::class)->adminReturnToMatching($booking->id, 'Runner took it too early');
+
+        $fresh = $booking->fresh();
+        $this->assertSame('scheduled', $fresh->schedule_type);
+        $this->assertNull($fresh->matching_started_at, 'the scheduled-matching sweep can still start it');
+        Bus::assertDispatched(MatchRunnerJob::class, fn (MatchRunnerJob $job) => $job->delay !== null);
+    }
+
+    // ── Return to matching: the first runner's work ─────────────────────
+
+    public function test_return_to_matching_wipes_the_first_runners_progress(): void
+    {
+        Bus::fake([MatchRunnerJob::class, AutoCancelBookingJob::class]);
+        $booking = $this->accepted([
+            'picked_up_at' => now()->subMinutes(10),
+            'pickup_photo_url' => 'https://api.test/media/pickup.jpg',
+            'delivery_photo_url' => 'https://api.test/media/delivery.jpg',
+            'shopping_budget' => 500,
+            'shopping_items' => [
+                ['id' => 'i1', 'name' => 'Rice', 'qty' => 1, 'checked' => true, 'checked_at' => now()->toIso8601String()],
+                ['id' => 'i2', 'name' => 'Eggs', 'qty' => 12, 'checked' => false, 'checked_at' => null],
+            ],
+        ]);
+        $stop = BookingStop::create([
+            'booking_id' => $booking->id, 'sequence' => 1, 'address' => 'C', 'lat' => 14.5, 'lng' => 121.0,
+            'completed_at' => now()->subMinutes(5),
+        ]);
+
+        app(BookingService::class)->adminReturnToMatching($booking->id, 'Runner went dark');
+
+        $fresh = $booking->fresh();
+        $this->assertNull($fresh->picked_up_at);
+        $this->assertNull($fresh->pickup_photo_url);
+        $this->assertNull($fresh->delivery_photo_url);
+        $this->assertNull($fresh->accepted_at);
+        $this->assertSame([false, false], array_column($fresh->shopping_items, 'checked'));
+        $this->assertSame(['Rice', 'Eggs'], array_column($fresh->shopping_items, 'name'), 'the list itself stays');
+        $this->assertNull($stop->fresh()->completed_at);
+        // Nothing was spent on items, so there is nothing to flag.
+        $this->assertFalse(AdminAlert::where('type', 'runner_owed_items')->exists());
+    }
+
+    public function test_a_runner_who_already_paid_for_the_items_is_flagged_as_owed(): void
+    {
+        Bus::fake([MatchRunnerJob::class, AutoCancelBookingJob::class]);
+        $booking = $this->accepted([
+            'shopping_budget' => 500,
+            'actual_item_cost' => 450,
+            'receipt_photo_url' => 'https://api.test/media/receipt.jpg',
+        ]);
+
+        // Staff are told before they confirm.
+        Livewire::test(ListBookings::class)
+            ->mountTableAction('returnToMatching', $booking)
+            ->assertMountedActionModalSee('already paid ₱450.00 for the customer’s items and is owed it');
+
+        app(BookingService::class)->adminReturnToMatching($booking->id, 'Runner’s bike broke down');
+
+        $fresh = $booking->fresh();
+        $this->assertNull($fresh->actual_item_cost);
+        $this->assertNull($fresh->receipt_photo_url);
+
+        $alert = AdminAlert::where('type', 'runner_owed_items')->sole();
+        $this->assertSame($booking->id, $alert->subject_id);
+        $this->assertSame(
+            \App\Filament\Resources\Bookings\BookingResource::getUrl('view', ['record' => $booking->id]),
+            \App\Filament\Widgets\LiveAlertsWidget::linkFor($alert),
+            'the alert opens the errand',
+        );
+        $this->assertStringContainsString('paid ₱450.00 for the items', $alert->body);
+        $this->assertStringContainsString('is owed it', $alert->body);
+        // The amount and the receipt stay on the errand's history.
+        $this->assertDatabaseHas('booking_status_logs', [
+            'booking_id' => $booking->id,
+            'note' => 'Staff returned the errand to matching: Runner’s bike broke down. The first runner had paid ₱450.00 '
+                .'for the items (receipt: https://api.test/media/receipt.jpg)',
+        ]);
+    }
+
+    private function staff(string $role): AdminUser
+    {
+        return AdminUser::create([
+            'email' => $role.'-'.uniqid().'@errandguy.test', 'password_hash' => Hash::make('Password1!'),
+            'full_name' => ucfirst($role), 'role' => $role, 'is_active' => true,
+        ]);
     }
 }

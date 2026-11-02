@@ -51,7 +51,10 @@ interface PaymentProgressProps {
   /** Success primary action (e.g. "Return to booking"). */
   onSuccessDone?: () => void;
   successCta?: string;
-  /** Failed-state: message + recovery actions. */
+  /** Failed-state: title, message + recovery actions. The title defaults to
+   *  "Payment didn't go through", which is false for a payment that went
+   *  through and was refunded — callers that know the outcome pass it. */
+  failureTitle?: string;
   failureMessage?: string;
   onRetry?: () => void;
   /** Label for the retry action. "Try again" fits a payment that failed; a
@@ -109,6 +112,10 @@ const STAGE_ANNOUNCEMENTS: Partial<Record<PaymentStage, string>> = {
   failed: "Payment didn't go through. You weren't charged.",
 };
 
+const FAILED_TITLE = "Payment didn't go through";
+const FAILED_MESSAGE =
+  "We couldn't confirm this payment. You weren't charged — try again or pick another method.";
+
 const OFFLINE_STAGE_ANNOUNCEMENTS: Partial<Record<PaymentStage, string>> = {
   verifying: "Checking payment status. We'll continue once you're back online.",
   pending: "Checking payment status. We'll update you once you're back online.",
@@ -122,6 +129,7 @@ export function PaymentProgress({
   receipt,
   onSuccessDone,
   successCta = 'Done',
+  failureTitle,
   failureMessage,
   onRetry,
   retryCta = 'Try again',
@@ -133,13 +141,17 @@ export function PaymentProgress({
   // sub-second stages we deliberately stay quiet through. Success speaks the
   // caller's own title ("Tip sent!", "Payment confirmed") rather than the
   // generic line, since that is what the user is waiting to hear.
+  // A failure the caller described is spoken as described: the generic
+  // "You weren't charged" would be a lie over a refunded payment.
   const liveMessage = !stage
     ? ''
     : stage === 'success'
       ? (successTitle ? `${successTitle}.` : STAGE_ANNOUNCEMENTS.success!)
-      : ((offline ? OFFLINE_STAGE_ANNOUNCEMENTS[stage] : undefined) ??
-        STAGE_ANNOUNCEMENTS[stage] ??
-        '');
+      : stage === 'failed' && (failureTitle || failureMessage)
+        ? `${failureTitle ?? FAILED_TITLE}. ${failureMessage ?? FAILED_MESSAGE}`
+        : ((offline ? OFFLINE_STAGE_ANNOUNCEMENTS[stage] : undefined) ??
+          STAGE_ANNOUNCEMENTS[stage] ??
+          '');
 
   // Announce each meaningful stage change. Hooks must run unconditionally, so
   // this sits ABOVE the `!stage` early return.
@@ -219,11 +231,10 @@ export function PaymentProgress({
                 accessibilityRole="header"
                 maxFontSizeMultiplier={BODY_MAX_FONT_SCALE}
               >
-                Payment didn't go through
+                {failureTitle ?? FAILED_TITLE}
               </Text>
               <Text style={styles.sub} maxFontSizeMultiplier={BODY_MAX_FONT_SCALE}>
-                {failureMessage ??
-                  "We couldn't confirm this payment. You weren't charged — try again or pick another method."}
+                {failureMessage ?? FAILED_MESSAGE}
               </Text>
               <View style={styles.actions}>
                 {onRetry ? <Button title={retryCta} onPress={onRetry} fullWidth /> : null}

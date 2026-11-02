@@ -9,6 +9,7 @@ import { apiCache } from '../services/api';
 import { clearRecentRecipients } from './recentRecipients';
 import { clearMutationQueue } from '../services/mutationQueue';
 import { clearAllSosActive } from '../services/sosActive';
+import { stopRunnerActivity } from './runnerSession';
 
 /** Unsent support-ticket text. Written only by the support compose screen,
  *  which keeps the key local to itself — mirrored here because the draft is
@@ -60,9 +61,13 @@ const TRUSTED_CONTACTS_KEY = '@trusted_contacts_cache';
  *   • notificationStore — the in-memory Alerts rows and badge. They outlived a
  *     sign-out, so the next account saw the previous one's inbox (and its
  *     unread count) until its own first fetch replaced them.
+ *   • runner mode — the GPS watch + heartbeat and the runner store (online
+ *     flag, current errand, open offer, profile). A runner's tracking used to
+ *     survive the sign-out and keep posting the previous account's location.
  */
 export async function clearAccountScopedState(): Promise<void> {
-  // Synchronous in-memory / persisted zustand resets first.
+  // Synchronous in-memory / persisted zustand resets first. GPS first of all.
+  stopRunnerActivity();
   useBookingStore.getState().setActiveBooking(null);
   useBookingStore.getState().clearDraft();
   usePaymentStore.getState().resolve();

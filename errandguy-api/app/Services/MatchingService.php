@@ -27,8 +27,9 @@ class MatchingService
      * Find the best available runner for a booking.
      * Returns the matched runner profile or null.
      *
-     * Never returns a runner the booking was already offered to (they declined,
-     * let it lapse, or were taken off it), nor $excludeUserId.
+     * Never returns a runner the booking was already offered to in this round
+     * of matching (they declined, let it lapse, or were taken off it), nor
+     * $excludeUserId.
      *
      * @param  float|null  $radiusOverrideKm  When set, ignores SystemConfig
      *         and uses this radius instead. Used by retry-match to

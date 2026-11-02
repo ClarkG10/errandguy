@@ -42,16 +42,16 @@ import { newIdempotencyKey } from '../../../utils/idempotency';
 import { fareLines } from '../../../utils/fareLines';
 import { usePaymentVerification } from '../../../hooks/usePaymentVerification';
 import {
+  bookingPaymentFailure,
   CHECKOUT_CANCELLED,
-  CHECKOUT_CANCELLED_MESSAGE,
 } from '../../../hooks/useCompleteBookingPayment';
+import { rebookDraft } from '../../../utils/rebookDraft';
 import { invalidateQuery, useQuery } from '../../../hooks/useQuery';
 import { configService } from '../../../services/config.service';
 import { CacheTTL } from '../../../services/cache.service';
 import { useRetiredErrandTypeGuard } from '../../../hooks/useRetiredErrandTypeGuard';
 import { useAuthStore } from '../../../stores/authStore';
 import { usePreferencesStore } from '../../../stores/preferencesStore';
-import { mapFailureReason } from '../../../utils/paymentErrors';
 import { shoppingBudgetError, shoppingBudgetMax } from '../../../utils/shoppingMoney';
 import { getErrandTypeRule, type VehicleKey } from '../../../constants/errandTypeRules';
 import { useResponsive } from '../../../constants/responsive';
@@ -216,6 +216,10 @@ export default function ReviewScreen() {
       ? verifyStage
       : null;
   const createOverlayStage = paymentOverlayStage ? null : bookingStage;
+  // What the failure card says and offers — one mapping shared with the
+  // waiting screen and tracking (useCompleteBookingPayment).
+  const paymentFailure =
+    paymentOverlayStage === 'failed' ? bookingPaymentFailure(attempt?.failureReason) : null;
 
   // Announce the create overlay's stage changes. BookingProgress is a
   // full-screen Modal whose stage label is visual only, so submitting was
@@ -785,6 +789,36 @@ export default function ReviewScreen() {
     setAttemptStatus('verifying');
   }, [setAttemptStatus]);
 
+  // The charge is over — declined, expired, or paid too late and refunded — and
+  // the server has cancelled the errand, so its checkout can never succeed.
+  // Re-seed the draft from that errand right here on Review (the create
+  // cleared it), keeping the payment pick visible so the customer can change
+  // it: the selector only auto-picks once per mount, and without this the
+  // retry would go out with no method shown.
+  const rebookAfterFailedPayment = useCallback(() => {
+    const id = usePaymentStore.getState().attempt?.bookingId;
+    const stored = useBookingStore.getState().activeBooking;
+    resolveAttempt();
+    ownedAttemptRef.current = null;
+    if (stored && stored.id === id) {
+      const method = stored.payment_method;
+      clearDraft();
+      updateDraft({
+        ...rebookDraft(stored),
+        ...(method === 'gcash' || method === 'maya' || method === 'wallet' || method === 'cash'
+          ? { payment_method: method }
+          : null),
+      });
+      setStep(3);
+      setActiveBooking(null);
+      return;
+    }
+    // Nothing to re-seed from (the store moved on) — start the errand over
+    // rather than leave an empty Review behind.
+    setActiveBooking(null);
+    router.replace('/(customer)/book/type');
+  }, [resolveAttempt, clearDraft, updateDraft, setStep, setActiveBooking, router]);
+
   const leaveForBooking = useCallback(
     (opts?: { keepAttempt?: boolean; paid?: boolean }) => {
       const id = usePaymentStore.getState().attempt?.bookingId;
@@ -1194,22 +1228,26 @@ export default function ReviewScreen() {
             : undefined
         }
         onSuccessDone={() => leaveForBooking({ paid: true })}
-        failureMessage={
-          attempt?.failureReason === CHECKOUT_CANCELLED
-            ? CHECKOUT_CANCELLED_MESSAGE
-            : attempt?.failureReason
-              ? mapFailureReason(attempt.failureReason).message
+        failureTitle={paymentFailure?.title}
+        failureMessage={paymentFailure?.message}
+        // Reopening the SAME charge (no duplicate-charge risk) only while it is
+        // still alive: a backed-out checkout ("Resume payment") or one that
+        // never opened ("Try again"). Once the server has ruled — declined,
+        // expired, refunded — the errand is cancelled and that checkout is
+        // dead, so Book again leads instead.
+        onRetry={
+          paymentFailure?.recovery === 'rebook'
+            ? rebookAfterFailedPayment
+            : attempt?.checkoutUrl
+              ? retryBookingPayment
               : undefined
         }
-        // Any stashed checkout URL is retryable: retry reopens the SAME charge,
-        // so there is no duplicate-charge risk — and without this a GCash/Maya
-        // failure (including a sheet that never opened) offered no way
-        // forward at all.
-        onRetry={attempt?.checkoutUrl ? retryBookingPayment : undefined}
-        // "Resume payment" reads truthfully after a deliberate back-out; "Try
-        // again" only makes sense after a payment that actually failed.
         retryCta={
-          attempt?.failureReason === CHECKOUT_CANCELLED ? 'Resume payment' : undefined
+          paymentFailure?.recovery === 'rebook'
+            ? 'Book again'
+            : paymentFailure?.recovery === 'resume'
+              ? 'Resume payment'
+              : undefined
         }
         onClose={() => leaveForBooking()}
         onSafeExit={() => leaveForBooking()}

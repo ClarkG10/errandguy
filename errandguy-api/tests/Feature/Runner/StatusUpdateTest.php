@@ -334,17 +334,14 @@ class StatusUpdateTest extends TestCase
         ]);
     }
 
-    public function test_completion_rate_recomputed_correctly_across_completed_and_cancelled(): void
+    /** A finished-earlier errand of this runner's, cancelled by $cancelledBy (null = the system). */
+    private function cancelledEarlier(string $suffix, ?string $cancelledBy): Booking
     {
-        // A pre-existing cancelled booking for this runner, plus the seeded one
-        // we drive to completed → completion_rate = completed / (completed +
-        // cancelled) = 1/2 = 50.00. Locks the single-query conditional-
-        // aggregation recompute against the old two-COUNT form (and against a
-        // future divergence of the Booking::completed() scope).
-        Booking::create([
-            'booking_number' => 'EG-20260331-CANC',
+        return Booking::create([
+            'booking_number' => 'EG-20260331-C'.$suffix,
             'customer_id' => $this->customer->id, 'runner_id' => $this->runner->id,
             'errand_type_id' => $this->errandType->id, 'status' => 'cancelled',
+            'cancelled_by' => $cancelledBy,
             'pickup_address' => '1 A', 'pickup_lat' => 14.60, 'pickup_lng' => 120.98,
             'dropoff_address' => '2 B', 'dropoff_lat' => 14.55, 'dropoff_lng' => 121.02,
             'schedule_type' => 'now', 'pricing_mode' => 'fixed', 'vehicle_type_rate' => 'motorcycle',
@@ -352,6 +349,15 @@ class StatusUpdateTest extends TestCase
             'surcharge' => 0, 'total_amount' => 115, 'runner_payout' => 85,
             'is_transportation' => false,
         ]);
+    }
+
+    public function test_completion_rate_counts_a_cancellation_the_runner_made(): void
+    {
+        // One errand the runner themselves cancelled, plus the seeded one we
+        // drive to completed → completion_rate = 1 / (1 + 1) = 50.00. Locks the
+        // single-query conditional-aggregation recompute (and against a future
+        // divergence of the Booking::completed() scope).
+        $this->cancelledEarlier('RUN', $this->runner->id);
 
         $this->booking->update(['payment_method' => 'wallet', 'payment_status' => 'paid']);
         $this->completeBooking();
@@ -361,6 +367,69 @@ class StatusUpdateTest extends TestCase
             'completion_rate' => '50.00', // decimal:2 cast stores as string
             'total_errands' => 1,
         ]);
+    }
+
+    public function test_cancellations_the_runner_did_not_cause_never_lower_their_completion_rate(): void
+    {
+        // The customer changed their mind, staff cancelled, and the system
+        // ended one (no runner / payment never completed): none of it is the
+        // runner's doing.
+        $this->cancelledEarlier('CUS', $this->customer->id);
+        $this->cancelledEarlier('STF', (string) \Illuminate\Support\Str::uuid());
+        $this->cancelledEarlier('SYS', null);
+
+        $this->booking->update(['payment_method' => 'wallet', 'payment_status' => 'paid']);
+        $this->completeBooking();
+
+        $this->assertDatabaseHas('runner_profiles', [
+            'user_id' => $this->runner->id,
+            'completion_rate' => '100.00',
+            'total_errands' => 1,
+        ]);
+    }
+
+    public function test_a_runner_taken_off_the_errand_cannot_advance_it_for_the_new_runner(): void
+    {
+        // Only the status event is faked: the model's `retrieved` hook below
+        // must still fire.
+        Event::fake([\App\Events\BookingStatusChanged::class]);
+        Storage::fake('media');
+        $this->booking->update(['status' => 'delivered', 'payment_method' => 'wallet', 'payment_status' => 'paid']);
+        $newRunner = User::factory()->create(['role' => 'runner', 'status' => 'active', 'wallet_balance' => 0]);
+        RunnerProfile::create([
+            'user_id' => $newRunner->id, 'verification_status' => 'approved', 'is_online' => true,
+            'preferred_types' => [], 'completion_rate' => 100.00, 'total_errands' => 0, 'total_earnings' => 0.00,
+        ]);
+
+        // Staff returned the errand to matching and the new runner took it
+        // while the first runner's late "completed" was in flight: its
+        // unlocked read still sees the first runner, the locked one doesn't.
+        Booking::whereKey($this->booking->id)->update(['runner_id' => $newRunner->id]);
+        $stale = true;
+        Booking::retrieved(function (Booking $model) use (&$stale) {
+            if ($stale && $model->id === $this->booking->id) {
+                $stale = false;
+                $model->setRawAttributes([...$model->getAttributes(), 'runner_id' => $this->runner->id], true);
+            }
+        });
+
+        $this->actingAs($this->runner)
+            ->postJson("/api/v1/runner/errand/{$this->booking->id}/status", [
+                'status' => 'completed',
+                'signature' => UploadedFile::fake()->image('s.png'),
+            ])
+            ->assertForbidden()
+            ->assertJsonPath('message', 'You are not assigned to this errand.');
+
+        $this->assertFalse($stale, 'the request did read the stale assignment first');
+        $fresh = $this->booking->fresh();
+        $this->assertSame('delivered', $fresh->status);
+        $this->assertSame($newRunner->id, $fresh->runner_id);
+        $this->assertNull($fresh->completed_at);
+        $this->assertEquals(0.0, (float) $this->runner->fresh()->wallet_balance);
+        $this->assertEquals(0.0, (float) $newRunner->fresh()->wallet_balance);
+        $this->assertSame(0, \App\Models\WalletTransaction::where('reference_id', $this->booking->id)->count());
+        $this->assertDatabaseMissing('booking_status_logs', ['booking_id' => $this->booking->id, 'status' => 'completed']);
     }
 
     public function test_notification_data_is_a_decoded_object_not_a_json_string(): void

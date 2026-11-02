@@ -148,17 +148,24 @@ class BookingSettlementService
         $newTotalEarnings = (float) $profile->total_earnings + $earnedForStats;
 
         // Recalculate completion rate with a SINGLE conditional-aggregation
-        // query — was two separate COUNT(*) round-trips held under the booking
-        // + runner row locks, needlessly lengthening lock hold time. Because
-        // 'completed' is a strict subset of the {completed,cancelled} assigned
-        // set, SUM(CASE ...) equals the old completed()->count() and COUNT(*)
-        // equals the old total, so the computed rate is identical.
+        // query (one round-trip under the booking + runner row locks):
+        // completed / (completed + cancellations the RUNNER caused).
+        //
+        // A cancellation counts against the runner only when they cancelled it
+        // themselves (cancelled_by is them). The customer changing their mind,
+        // staff cancelling, and the system ending an errand (no runner found,
+        // payment never completed) aren't the runner's doing — counting them
+        // dragged down the rate customers see on a runner who did nothing
+        // wrong. A runner staff take off an errand ("Return to matching") is no
+        // longer on it, so that errand doesn't count either way.
         // NOTE: 'completed' is hardcoded here rather than reusing the
         // Booking::completed() scope; if that scope ever grows beyond a bare
         // status filter, keep this in sync (guarded by the completion_rate
         // regression test in StatusUpdateTest).
         $stats = $runner->runnerBookings()
-            ->whereIn('status', ['completed', 'cancelled'])
+            ->where(fn ($q) => $q->where('status', 'completed')
+                ->orWhere(fn ($cancelled) => $cancelled->where('status', 'cancelled')
+                    ->where('cancelled_by', $runner->id)))
             ->toBase()
             ->selectRaw("COUNT(*) as total_assigned, SUM(CASE WHEN status = 'completed' THEN 1 ELSE 0 END) as completed_count")
             ->first();

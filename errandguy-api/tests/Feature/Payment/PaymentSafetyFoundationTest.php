@@ -214,6 +214,41 @@ class PaymentSafetyFoundationTest extends TestCase
             ->assertJsonPath('data.payment_id', $paymentId);
     }
 
+    public function test_a_refunded_payment_reports_refunded_not_the_gateways_success(): void
+    {
+        $booking = Booking::create([
+            'booking_number' => 'EG-20261102-RFND',
+            'customer_id' => $this->customer->id,
+            'errand_type_id' => $this->deliveryType->id, 'status' => 'no_runner',
+            'pickup_address' => '1 A', 'pickup_lat' => 14.60, 'pickup_lng' => 120.98,
+            'dropoff_address' => '2 B', 'dropoff_lat' => 14.55, 'dropoff_lng' => 121.02,
+            'schedule_type' => 'now', 'pricing_mode' => 'fixed', 'vehicle_type_rate' => 'motorcycle',
+            'distance_km' => 5.0, 'base_fee' => 50, 'distance_fee' => 50, 'service_fee' => 15,
+            'surcharge' => 0, 'total_amount' => 115, 'runner_payout' => 85,
+            'payment_method' => 'gcash', 'payment_status' => 'refunded', 'is_transportation' => false,
+        ]);
+        $refunded = Payment::create([
+            'booking_id' => $booking->id, 'customer_id' => $this->customer->id, 'amount' => 115,
+            'currency' => 'PHP', 'method' => 'gcash', 'status' => 'refunded', 'gateway_tx_id' => 'pr-rfnd',
+            'gateway_response' => ['status' => 'SUCCEEDED'], 'paid_at' => now(),
+        ]);
+        $failed = Payment::create([
+            'booking_id' => $booking->id, 'customer_id' => $this->customer->id, 'amount' => 115,
+            'currency' => 'PHP', 'method' => 'gcash', 'status' => 'failed', 'gateway_tx_id' => 'pr-fail',
+            'gateway_response' => ['status' => 'FAILED', 'failure_code' => 'INSUFFICIENT_BALANCE'],
+        ]);
+
+        $this->actingAs($this->customer)->getJson("/api/v1/payments/{$refunded->id}/status")
+            ->assertOk()
+            ->assertJsonPath('data.status', 'refunded')
+            ->assertJsonPath('data.failure_reason', 'refunded');
+
+        // A real failure still carries the gateway's reason.
+        $this->actingAs($this->customer)->getJson("/api/v1/payments/{$failed->id}/status")
+            ->assertOk()
+            ->assertJsonPath('data.failure_reason', 'INSUFFICIENT_BALANCE');
+    }
+
     public function test_booking_payment_status_is_pending_when_no_payment_row_yet(): void
     {
         // A booking that exists but has no Payment row must read as an honest

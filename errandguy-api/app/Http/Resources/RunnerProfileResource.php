@@ -32,6 +32,10 @@ class RunnerProfileResource extends JsonResource
             'current_lng' => $this->when($isSelf, $this->current_lng),
             'last_location_at' => $this->when($isSelf, $this->last_location_at),
             'completion_rate' => $this->completion_rate,
+            // Retired (no acceptance rate is kept any more). A fixed 100 for the
+            // app build already on phones, which otherwise shows "0%" under a
+            // warning bar. Delete once the app update is out.
+            'acceptance_rate' => 100,
             'total_errands' => $this->total_errands,
             'total_earnings' => $this->when($isSelf, $this->total_earnings),
             'preferred_types' => $this->when($isSelf, $this->preferred_types),

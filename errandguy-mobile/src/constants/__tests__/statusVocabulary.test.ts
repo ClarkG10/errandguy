@@ -1,5 +1,11 @@
+import { readFileSync } from 'fs';
+import { join } from 'path';
+import { render } from '@testing-library/react-native';
+import React from 'react';
 import {
   AWAITING_PAYMENT_LABEL,
+  bookingStatusLabel,
+  SCHEDULED_LABEL,
   STATUS_LABELS,
   STATUS_COLORS,
   STATUS_TEXT_COLORS,
@@ -7,6 +13,8 @@ import {
   statusHeadline,
 } from '../statusLabels';
 import type { BookingStatus } from '../../types';
+import { makeBooking } from '../../__mocks__/factories';
+import { RecentErrandItem } from '../../components/customer/RecentErrandItem';
 
 const ALL_STATUSES = Object.keys(STATUS_LABELS) as BookingStatus[];
 
@@ -169,5 +177,63 @@ describe('a booking waiting for its GCash/Maya payment', () => {
     expect(statusHeadline('matched', { awaitingPayment: true, runnerFirstName: 'Ana' })).toBe(
       statusHeadline('matched', { runnerFirstName: 'Ana' }),
     );
+  });
+});
+
+/**
+ * `pending` is three different moments: a live search, an errand waiting for
+ * its GCash/Maya payment, and one scheduled for later. Only the first is
+ * "Finding a runner" — the Activity tab filed the other two under it.
+ */
+describe('bookingStatusLabel — the label for one booking, not a bare status', () => {
+  const inHours = (h: number) => new Date(Date.now() + h * 3_600_000).toISOString();
+
+  it('an unpaid GCash/Maya errand is "Waiting for payment"', () => {
+    expect(bookingStatusLabel(makeBooking({ status: 'pending', awaiting_payment: true }))).toBe(
+      AWAITING_PAYMENT_LABEL,
+    );
+  });
+
+  it('a paid errand booked for later is "Scheduled" until its matching window opens', () => {
+    expect(
+      bookingStatusLabel(
+        makeBooking({ status: 'pending', schedule_type: 'scheduled', scheduled_at: inHours(5) }),
+      ),
+    ).toBe(SCHEDULED_LABEL);
+    // Inside the 15-minute lead the search is real.
+    expect(
+      bookingStatusLabel(
+        makeBooking({ status: 'pending', schedule_type: 'scheduled', scheduled_at: inHours(0.1) }),
+      ),
+    ).toBe(STATUS_LABELS.pending);
+  });
+
+  it('a live search, and every other status, reads exactly as statusLabel', () => {
+    expect(bookingStatusLabel(makeBooking({ status: 'pending' }))).toBe('Finding a runner');
+    expect(bookingStatusLabel(makeBooking({ status: 'in_transit' }))).toBe(statusLabel('in_transit'));
+  });
+
+  it('the Activity row says it', () => {
+    const { getByText } = render(
+      React.createElement(RecentErrandItem, {
+        booking: makeBooking({ status: 'pending', awaiting_payment: true }),
+        onPress: jest.fn(),
+      }),
+    );
+    expect(getByText(new RegExp(`^${AWAITING_PAYMENT_LABEL} · `))).toBeTruthy();
+  });
+
+  it('the Activity tab gives unpaid errands their own section, ahead of the searches', () => {
+    const ACTIVITY = readFileSync(
+      join(__dirname, '..', '..', 'app', '(customer)', '(tabs)', 'activity.tsx'),
+      'utf8',
+    );
+    const bucketing = ACTIVITY.slice(ACTIVITY.indexOf("if (filter === 'active')"));
+    expect(bucketing).toMatch(/if \(isAwaitingPayment\(b\)\) awaitingPayment\.push\(b\)/);
+    // Checked before the scheduled / searching split, so it can't fall into either.
+    expect(bucketing.indexOf('isAwaitingPayment(b)')).toBeLessThan(
+      bucketing.indexOf('scheduledWindowLabel(b)'),
+    );
+    expect(bucketing).toMatch(/\{ title: AWAITING_PAYMENT_LABEL, data: awaitingPayment \}/);
   });
 });

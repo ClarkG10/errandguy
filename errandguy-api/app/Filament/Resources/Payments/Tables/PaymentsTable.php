@@ -120,10 +120,13 @@ class PaymentsTable
                     ->color('warning')
                     ->requiresConfirmation()
                     // Full refund only (partial awaits the P2 refunds ledger).
-                    // Finance/super_admin only, completed payments only.
+                    // Finance/super_admin only, completed payments only, and
+                    // only once the errand is over (PaymentService refuses a
+                    // live one: cancelling it is what refunds it).
                     ->visible(fn ($record): bool => $record->status === 'completed'
                         && (auth('admin')->user()?->canManageMoney() ?? false))
                     ->modalDescription(fn ($record): string => match (true) {
+                        $record->booking && ! in_array($record->booking->status, \App\Enums\BookingStatus::ENDED, true) => 'This errand is still in progress, so its payment can’t be refunded here. Cancel the errand instead — cancelling refunds the customer.',
                         $record->method === 'card' => 'Full refund reversed to the original card via Xendit.',
                         $record->method === 'cash' => 'Cash is settled with the runner directly — this cannot be refunded here.',
                         default => 'Full refund to the customer\'s ErrandGuy wallet.',

@@ -73,12 +73,14 @@ final class Messages
         ErrorCode::BOOKING_CONFLICT->value => 'You already have an errand in progress. Finish or cancel it before starting another.',
         ErrorCode::BOOKING_STALE->value => 'This errand was just updated. Pull to refresh and try again.',
         ErrorCode::NO_RUNNER_AVAILABLE->value => 'No runners are available nearby right now. Please try again shortly.',
+        ErrorCode::RETRY_NOT_ALLOWED->value => 'This errand can’t be searched again. Please book it again instead.',
 
         // Runner / errand
         ErrorCode::ERRAND_NOT_ASSIGNED->value => 'You’re not assigned to this errand.',
         ErrorCode::INVALID_ERRAND_STATUS->value => 'That step isn’t available for this errand right now.',
         ErrorCode::DOCUMENT_REQUIRED->value => 'A required document is missing. Please upload it to continue.',
         ErrorCode::RUNNER_NOT_APPROVED->value => 'Your account must be approved before you can do that.',
+        ErrorCode::ACCEPT_NOT_ALLOWED->value => 'You can’t accept this errand.',
 
         // Safety / support
         ErrorCode::SOS_ALREADY_ACTIVE->value => 'An emergency alert is already active for this trip.',

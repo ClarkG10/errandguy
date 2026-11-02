@@ -18,6 +18,8 @@ use Tests\TestCase;
  * - Wallet/GCash/Maya → in-app wallet credit (refunded_to=wallet).
  * - Cash → rejected (the platform never held the money).
  * - Every refund syncs booking.payment_status and cannot double-credit.
+ * - Only for an errand that is over: while it is live, staff cancel it instead
+ *   (cancelling refunds it), or it would run for free.
  */
 class RefundSemanticsTest extends TestCase
 {
@@ -51,15 +53,20 @@ class RefundSemanticsTest extends TestCase
         ];
     }
 
-    private function bookViaWallet(): Booking
+    /** A wallet-paid errand, done ("completed" unless told otherwise) — what staff refund. */
+    private function bookViaWallet(string $status = 'completed'): Booking
     {
         Bus::fake();
         $this->customer->update(['wallet_balance' => 5000]);
-        $this->actingAs($this->customer)
+        $id = $this->actingAs($this->customer)
             ->postJson('/api/v1/bookings', [...$this->base, 'payment_method' => 'wallet'])
-            ->assertCreated();
+            ->assertCreated()
+            ->json('data.id');
 
-        return Booking::firstOrFail();
+        $booking = Booking::findOrFail($id);
+        $booking->update(['status' => $status]);
+
+        return $booking;
     }
 
     public function test_wallet_payment_refunds_to_wallet_and_syncs_booking(): void
@@ -91,6 +98,7 @@ class RefundSemanticsTest extends TestCase
             ->postJson('/api/v1/bookings', [...$this->base, 'payment_method' => 'wallet'])
             ->assertCreated();
         $booking = Booking::firstOrFail();
+        $booking->update(['status' => 'completed']);
         $payment = Payment::where('booking_id', $booking->id)->firstOrFail();
         $fare = (float) $booking->total_amount;
 
@@ -129,10 +137,12 @@ class RefundSemanticsTest extends TestCase
         $this->actingAs($this->customer)
             ->postJson('/api/v1/bookings', [...$this->base, 'payment_method' => 'cash'])
             ->assertCreated();
+        Booking::query()->update(['status' => 'completed']);
         $payment = Payment::firstOrFail();
+        $payment->update(['status' => 'completed']);
         $balance = (float) $this->customer->fresh()->wallet_balance;
 
-        $this->expectException(\RuntimeException::class);
+        $this->expectExceptionMessage('Cash is settled directly with the runner');
         try {
             app(PaymentService::class)->refundToWallet($payment->id, 'x');
         } finally {
@@ -159,6 +169,74 @@ class RefundSemanticsTest extends TestCase
         $this->assertEqualsWithDelta(100.00, (float) $card->refund_amount, 0.001);
         $this->assertEquals('refunded', $booking->fresh()->payment_status);
         Http::assertSent(fn ($r) => str_contains($r->url(), '/refunds'));
+    }
+
+    public function test_a_live_errand_is_never_refunded_here_staff_cancel_it_instead(): void
+    {
+        Http::fake(['api.xendit.co/refunds' => Http::response(['id' => 'rfd-1'], 200)]);
+
+        foreach (['pending', 'matched', 'accepted', 'picked_up', 'arrived_at_dropoff', 'delivered'] as $i => $status) {
+            $booking = $this->bookViaWallet($status);
+            $payment = Payment::where('booking_id', $booking->id)->firstOrFail();
+            $balance = (float) $this->customer->fresh()->wallet_balance;
+
+            try {
+                app(PaymentService::class)->refundToWallet($payment->id, 'test');
+                $this->fail("a {$status} errand was refunded");
+            } catch (\RuntimeException $e) {
+                $this->assertStringContainsString('Cancel the errand instead', $e->getMessage());
+            }
+
+            $card = Payment::create([
+                'booking_id' => $booking->id, 'customer_id' => $this->customer->id,
+                'amount' => 100.00, 'currency' => 'PHP', 'method' => 'card',
+                'status' => 'completed', 'gateway_tx_id' => "pr-live-{$i}", 'paid_at' => now(),
+            ]);
+            try {
+                app(PaymentService::class)->refundPayment($card->id, null, 'test');
+                $this->fail("a {$status} errand's card charge was reversed");
+            } catch (\RuntimeException $e) {
+                $this->assertStringContainsString('Cancel the errand instead', $e->getMessage());
+            }
+
+            $this->assertEqualsWithDelta($balance, (float) $this->customer->fresh()->wallet_balance, 0.001);
+            $this->assertSame('completed', $payment->fresh()->status);
+            $this->assertSame('paid', $booking->fresh()->payment_status);
+        }
+
+        Http::assertNothingSent();
+    }
+
+    public function test_an_errand_that_is_over_can_be_refunded(): void
+    {
+        foreach (['completed', 'cancelled', 'no_runner'] as $status) {
+            $booking = $this->bookViaWallet($status);
+            $payment = Payment::where('booking_id', $booking->id)->firstOrFail();
+
+            app(PaymentService::class)->refundToWallet($payment->id, 'test');
+
+            $this->assertSame('refunded', $payment->fresh()->status, $status);
+        }
+    }
+
+    public function test_the_refund_action_tells_staff_to_cancel_a_live_errand(): void
+    {
+        $booking = $this->bookViaWallet('accepted');
+        $payment = Payment::where('booking_id', $booking->id)->firstOrFail();
+        $this->actingAs(\App\Models\AdminUser::create([
+            'email' => 'finance@errandguy.test', 'password_hash' => 'x',
+            'full_name' => 'Finance', 'role' => 'finance', 'is_active' => true,
+        ]), 'admin');
+
+        \Livewire\Livewire::test(\App\Filament\Resources\Payments\Pages\ListPayments::class)
+            ->mountTableAction('refund', $payment)
+            ->assertMountedActionModalSee('This errand is still in progress, so its payment can’t be refunded here. Cancel the errand instead');
+
+        \Livewire\Livewire::test(\App\Filament\Resources\Payments\Pages\ListPayments::class)
+            ->callTableAction('refund', $payment, ['reason' => 'REQUESTED_BY_CUSTOMER']);
+
+        $this->assertSame('completed', $payment->fresh()->status);
+        $this->assertSame('paid', $booking->fresh()->payment_status);
     }
 
     public function test_card_refund_without_gateway_reference_is_rejected(): void

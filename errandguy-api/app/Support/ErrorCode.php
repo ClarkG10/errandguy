@@ -65,12 +65,14 @@ enum ErrorCode: string
     case BOOKING_CONFLICT = 'BOOKING_CONFLICT';
     case BOOKING_STALE = 'BOOKING_STALE';
     case NO_RUNNER_AVAILABLE = 'NO_RUNNER_AVAILABLE';
+    case RETRY_NOT_ALLOWED = 'RETRY_NOT_ALLOWED';
 
     // ── Runner / errand ───────────────────────────────────────────────
     case ERRAND_NOT_ASSIGNED = 'ERRAND_NOT_ASSIGNED';
     case INVALID_ERRAND_STATUS = 'INVALID_ERRAND_STATUS';
     case DOCUMENT_REQUIRED = 'DOCUMENT_REQUIRED';
     case RUNNER_NOT_APPROVED = 'RUNNER_NOT_APPROVED';
+    case ACCEPT_NOT_ALLOWED = 'ACCEPT_NOT_ALLOWED';
 
     // ── Safety / support ──────────────────────────────────────────────
     case SOS_ALREADY_ACTIVE = 'SOS_ALREADY_ACTIVE';
@@ -87,6 +89,7 @@ enum ErrorCode: string
             self::NOT_FOUND, self::BOOKING_NOT_FOUND, self::PAYMENT_METHOD_NOT_FOUND => 404,
             self::METHOD_NOT_ALLOWED => 405,
             self::CONFLICT, self::BOOKING_CONFLICT, self::BOOKING_STALE,
+            self::RETRY_NOT_ALLOWED, self::ACCEPT_NOT_ALLOWED,
             self::IDEMPOTENCY_IN_PROGRESS, self::SOS_ALREADY_ACTIVE => 409,
             self::PAYLOAD_TOO_LARGE => 413,
             self::IDEMPOTENCY_KEY_REQUIRED => 428,

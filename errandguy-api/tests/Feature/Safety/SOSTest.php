@@ -253,6 +253,36 @@ class SOSTest extends TestCase
         $this->assertTrue((bool) $this->booking->fresh()->sos_triggered);
     }
 
+    public function test_a_runner_taken_off_the_errand_can_still_call_off_their_own_sos(): void
+    {
+        $runnerAlert = $this->alert($this->runner, 'runner');
+        $this->booking->update(['sos_triggered' => true]);
+        // Staff returned the errand to matching: it is no longer theirs.
+        $this->booking->update(['status' => 'pending', 'runner_id' => null]);
+
+        $this->actingAs($this->runner)
+            ->deleteJson("/api/v1/runner/errand/{$this->booking->id}/sos")
+            ->assertOk()
+            ->assertJsonPath('data.closed', 1)
+            ->assertJsonPath('message', 'SOS alert deactivated.');
+
+        $this->assertSame('cancelled', $runnerAlert->fresh()->status);
+        $this->assertFalse((bool) $this->booking->fresh()->sos_triggered);
+    }
+
+    public function test_a_runner_cannot_cancel_anything_on_an_errand_they_never_raised_an_sos_on(): void
+    {
+        $customerAlert = $this->alert($this->customer, 'customer');
+        $stranger = User::factory()->create(['role' => 'runner', 'status' => 'active']);
+
+        $this->actingAs($stranger)
+            ->deleteJson("/api/v1/runner/errand/{$this->booking->id}/sos")
+            ->assertOk()
+            ->assertJsonPath('data.closed', 0);
+
+        $this->assertSame('active', $customerAlert->fresh()->status);
+    }
+
     public function test_each_side_only_closes_their_own_alerts(): void
     {
         // Both pressed SOS; the customer's two alerts (a duplicate from a past

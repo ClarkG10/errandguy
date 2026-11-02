@@ -65,6 +65,11 @@ final class SystemSettings
             'type' => self::NUMBER, 'default' => '100', 'min' => 1, 'max' => 10000,
             'description' => 'The least a runner can cash out at one time, in pesos.',
         ],
+        'customer_min_withdrawal' => [
+            'label' => 'Smallest customer withdrawal (₱)',
+            'type' => self::NUMBER, 'default' => '100', 'min' => 0, 'max' => 10000,
+            'description' => 'The least a customer can withdraw from their wallet at one time, in pesos. 0 means no minimum. Withdrawing the balance when deleting an account is never limited.',
+        ],
         'runner_cash_debt_limit' => [
             'label' => 'Runner cash-fee limit (₱)',
             'type' => self::NUMBER, 'default' => '1000', 'min' => 0, 'max' => 20000,
@@ -112,15 +117,13 @@ final class SystemSettings
             'type' => self::INTEGER, 'default' => '90', 'min' => 30, 'max' => 600,
             'description' => 'How long a runner has to accept an offered errand before it goes to someone else.',
         ],
+        // At least 10: offers go to one runner at a time (up to “Runners
+        // offered per round”, each for “Time a runner has to accept”), so a
+        // shorter search ends before its last offers are made.
         'auto_cancel_timeout_minutes' => [
             'label' => 'Stop searching after (minutes)',
-            'type' => self::INTEGER, 'default' => '30', 'min' => 5, 'max' => 180,
-            'description' => 'How long to look for a runner for an errand booked for now before telling the customer no one was found and refunding them.',
-        ],
-        'retry_auto_cancel_timeout_minutes' => [
-            'label' => 'Stop a “Search again” after (minutes)',
-            'type' => self::INTEGER, 'default' => '5', 'min' => 1, 'max' => 60,
-            'description' => 'How long a customer’s “Search again” keeps looking before giving up.',
+            'type' => self::INTEGER, 'default' => '30', 'min' => 10, 'max' => 180,
+            'description' => 'How long to look for a runner for an errand booked for now before telling the customer no one was found and refunding them. A “Search again”, a staff re-run or “Return to matching” searches this long again.',
         ],
 
         // ── Staff alerts ──

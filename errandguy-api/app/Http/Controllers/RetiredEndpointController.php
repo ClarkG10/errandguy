@@ -14,7 +14,10 @@ use Illuminate\Http\Request;
  *     online payment is a one-time GCash or Maya charge now;
  *   - wallet top-ups — the wallet only spends a balance the customer already
  *     has (refunds and the like) and can be withdrawn;
- *   - the referral program.
+ *   - the referral program;
+ *   - the old dispute report (support chat replaced it), promo codes, the
+ *     runner's open-offers list (offers come one at a time now) and the ride
+ *     PIN check (rides are retired).
  *
  * Nothing here reads or writes data. Delete this controller and its routes
  * once the app update is out.
@@ -73,5 +76,36 @@ class RetiredEndpointController extends Controller
     public function referral(): JsonResponse
     {
         return $this->fail(ErrorCode::FEATURE_RETIRED, 'The referral program has ended.');
+    }
+
+    /** POST /support/report (the retired dispute desk) */
+    public function supportReport(): JsonResponse
+    {
+        return $this->fail(
+            ErrorCode::FEATURE_RETIRED,
+            'Reporting a problem here is no longer available — please message us in support chat in the app instead, and we’ll sort it out.',
+        );
+    }
+
+    /** GET /promos/validate/{code} */
+    public function promoCode(): JsonResponse
+    {
+        return $this->fail(ErrorCode::FEATURE_RETIRED, 'Promo codes are no longer available.');
+    }
+
+    /**
+     * GET /runner/errand/available. There is no open list of errands to pick
+     * from any more — each errand is offered to one runner at a time — so the
+     * app build already on phones gets an empty list rather than an error.
+     */
+    public function availableErrands(): JsonResponse
+    {
+        return $this->ok([]);
+    }
+
+    /** POST /runner/errand/{id}/verify-pin */
+    public function verifyRidePin(): JsonResponse
+    {
+        return $this->fail(ErrorCode::FEATURE_RETIRED, 'Rides are no longer available.');
     }
 }

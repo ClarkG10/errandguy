@@ -67,4 +67,21 @@ class AdminPagesRenderTest extends TestCase
         // the page must still render (not error).
         $this->get('/admin/activity-logs')->assertOk();
     }
+
+    public function test_audit_log_renders_entries_about_models_that_no_longer_exist(): void
+    {
+        // Disputes and referrals were retired with their models; their audit
+        // entries stay, and loading their subject would fail the whole page.
+        foreach (['App\\Models\\DisputeTicket', 'App\\Models\\Referral'] as $i => $class) {
+            \Spatie\Activitylog\Models\Activity::query()->insert([
+                'log_name' => 'admin', 'description' => "Old entry {$i}", 'event' => 'dispute.resolved',
+                'subject_type' => $class, 'subject_id' => '9f1c2b8e-1111-4a5b-9c0d-00000000000'.$i,
+                'properties' => '{}', 'created_at' => now(), 'updated_at' => now(),
+            ]);
+        }
+        $entry = \Spatie\Activitylog\Models\Activity::where('description', 'Old entry 0')->sole();
+
+        $this->get('/admin/activity-logs')->assertOk()->assertSee('Old entry 0')->assertSee('DisputeTicket #9f1c2b8e');
+        $this->get("/admin/activity-logs/{$entry->id}/view")->assertOk()->assertSee('DisputeTicket #9f1c2b8e-1111-4a5b-9c0d-000000000000');
+    }
 }

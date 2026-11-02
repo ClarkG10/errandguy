@@ -101,7 +101,7 @@ class LiveAlertsWidget extends TableWidget
             // Every booking-subject alert deep-links to the booking — the
             // operator's whole job on these rows is to open it. The stall
             // monitor passes the booking id.
-            'no_runner', 'stalled_errand' => $record->subject_id && BookingResource::canViewAny()
+            'no_runner', 'stalled_errand', 'runner_owed_items' => $record->subject_id && BookingResource::canViewAny()
                 ? BookingResource::getUrl('view', ['record' => $record->subject_id])
                 : null,
             // A large wallet adjustment: the user whose wallet it was.

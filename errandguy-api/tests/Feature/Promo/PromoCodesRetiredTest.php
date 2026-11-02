@@ -104,7 +104,12 @@ class PromoCodesRetiredTest extends TestCase
         $customer = User::factory()->create(['role' => 'customer', 'status' => 'active']);
 
         $this->actingAs($customer)->getJson('/api/v1/promos')->assertNotFound();
-        $this->actingAs($customer)->getJson('/api/v1/promos/validate/SAVE10')->assertNotFound();
+        // The app build already on phones still validates a typed code: it
+        // gets a clear "retired" answer instead of a 404.
+        $this->actingAs($customer)->getJson('/api/v1/promos/validate/SAVE10')
+            ->assertStatus(422)
+            ->assertJsonPath('code', 'FEATURE_RETIRED')
+            ->assertJsonPath('message', 'Promo codes are no longer available.');
 
         $this->actAsAdmin();
         $this->get('/admin/promo-codes')->assertNotFound();

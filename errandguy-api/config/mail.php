@@ -145,4 +145,17 @@ return [
         'name' => env('MAIL_FROM_NAME', env('APP_NAME', 'Laravel')),
     ],
 
+    /*
+    |--------------------------------------------------------------------------
+    | Ops Alert Fallback Address
+    |--------------------------------------------------------------------------
+    |
+    | Where staff alert emails (SOS, the ops digest) go when neither "Ops alert
+    | emails" nor the older single address is set in the admin panel. Read
+    | through config (never env() at runtime) so it survives config:cache.
+    |
+    */
+
+    'admin_alert_address' => env('ADMIN_ALERT_EMAIL'),
+
 ];

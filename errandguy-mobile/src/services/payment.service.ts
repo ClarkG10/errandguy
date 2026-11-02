@@ -21,6 +21,8 @@ export interface WithdrawalRequest {
  * Laravel serializes decimals as strings, and a server from before the launch
  * simplification sends `balance` alone — so `withdrawable` is derived from it
  * (never below zero) and a missing `bonus_balance` reads as none.
+ * `withdraw_min` is kept only when the server sends a usable positive amount;
+ * otherwise it stays absent and utils/withdrawal falls back to its default.
  */
 export function parseWalletSummary(payload: unknown): WalletSummary {
   const p = (payload ?? {}) as Partial<Record<keyof WalletSummary, unknown>>;
@@ -29,10 +31,12 @@ export function parseWalletSummary(payload: unknown): WalletSummary {
     return Number.isFinite(n) ? n : 0;
   };
   const balance = num(p.balance);
+  const withdrawMin = p.withdraw_min != null ? num(p.withdraw_min) : 0;
   return {
     balance,
     withdrawable: p.withdrawable != null ? Math.max(0, num(p.withdrawable)) : Math.max(0, balance),
     bonus_balance: Math.max(0, num(p.bonus_balance)),
+    ...(withdrawMin > 0 ? { withdraw_min: withdrawMin } : null),
   };
 }
 

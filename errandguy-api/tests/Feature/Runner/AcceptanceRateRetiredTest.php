@@ -12,8 +12,10 @@ use Illuminate\Support\Facades\Schema;
 use Tests\TestCase;
 
 /**
- * The runner acceptance rate is gone: no column, no API field, nothing
- * recalculated when a runner declines, and matching ranks by distance alone.
+ * The runner acceptance rate is gone: no column, nothing recalculated when a
+ * runner declines, and matching ranks by distance alone. The profile still
+ * sends a fixed 100 for the app build already on phones (which shows "0%"
+ * under a warning bar without it) until the app update is out.
  */
 class AcceptanceRateRetiredTest extends TestCase
 {
@@ -37,17 +39,17 @@ class AcceptanceRateRetiredTest extends TestCase
         $this->assertFalse(Schema::hasColumn('runner_profiles', 'acceptance_rate'));
     }
 
-    public function test_the_profile_and_earnings_apis_no_longer_send_it(): void
+    public function test_the_profile_sends_a_fixed_100_for_the_old_app_and_earnings_nothing(): void
     {
         $profile = $this->actingAs($this->runner)->getJson('/api/v1/runner/profile')->assertOk()->json('data');
-        $this->assertArrayNotHasKey('acceptance_rate', $profile);
+        $this->assertSame(100, $profile['acceptance_rate']);
         $this->assertArrayHasKey('completion_rate', $profile);
 
         $earnings = $this->actingAs($this->runner)->getJson('/api/v1/runner/earnings')->assertOk()->json('data');
         $this->assertArrayNotHasKey('acceptance_rate', $earnings);
 
         $home = $this->actingAs($this->runner)->getJson('/api/v1/runner/home')->assertOk()->json('data');
-        $this->assertArrayNotHasKey('acceptance_rate', $home['profile']);
+        $this->assertSame(100, $home['profile']['acceptance_rate']);
     }
 
     public function test_declining_an_offer_still_works(): void

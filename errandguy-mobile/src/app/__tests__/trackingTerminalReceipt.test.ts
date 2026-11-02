@@ -132,10 +132,14 @@ describe('customer tracking — the terminal receipt', () => {
   });
 
   it('states the refund, not just the fee, in the cancel confirmation', () => {
-    const lines = SOURCE.slice(
-      SOURCE.indexOf('export function cancelMoneyLines'),
-      SOURCE.indexOf('const MAP_PHASES'),
+    // One body for every cancel confirmation (tracking AND the waiting
+    // screen), so neither drifts back to a promise the server never made.
+    const UTIL = readFileSync(join(__dirname, '..', '..', 'utils', 'cancelPreview.ts'), 'utf8');
+    const lines = UTIL.slice(UTIL.indexOf('export function cancelMoneyLines'));
+    expect(SOURCE).toMatch(
+      /import \{ cancelMoneyLines, cancelReceiptMessage, type CancelPreview \} from '..\/..\/..\/utils\/cancelPreview'/,
     );
+    expect(SOURCE).not.toMatch(/function cancelMoneyLines/);
     expect(lines).toMatch(/Cancellation fee: /);
     expect(lines).toMatch(/Back to your ErrandGuy wallet: /);
     // Reads the additive preview fields rather than deriving a refund.
@@ -151,5 +155,20 @@ describe('customer tracking — the terminal receipt', () => {
     // money the customer had already been charged.
     expect(modal).not.toMatch(/`Cancel & pay/);
     expect(modal).toMatch(/'Cancel errand'/);
+
+    // The waiting screen's cancel used to promise "No fee will be charged"
+    // in its modal and "no fee charged" in its toast, whatever the server said.
+    const CONFIRM = readFileSync(
+      join(__dirname, '..', '(customer)', 'book', 'confirm.tsx'),
+      'utf8',
+    );
+    const confirmModal = CONFIRM.slice(
+      CONFIRM.indexOf('visible={showCancelModal}'),
+      CONFIRM.indexOf('confirmLabel="Cancel booking"'),
+    );
+    expect(confirmModal).toMatch(/cancelMoneyLines\(cancelPreview\)/);
+    expect(CONFIRM).not.toMatch(/No fee will be charged/);
+    expect(CONFIRM).not.toMatch(/no fee charged/i);
+    expect(CONFIRM).toMatch(/toast\.success\(cancelReceiptMessage\(res\)/);
   });
 });

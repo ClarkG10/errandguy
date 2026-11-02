@@ -83,10 +83,13 @@ class DiscoverySweepTest extends TestCase
             ->assertJsonMissingPath('data.ride_pin')
             ->assertJsonPath('data.is_transportation', true);
 
-        // The PIN-verify endpoint is gone with the feature.
+        // The PIN-verify endpoint is gone with the feature; the app build
+        // already on phones gets a clear answer instead of a 404.
         $this->actingAs($this->runner)
             ->postJson("/api/v1/runner/errand/{$this->booking->id}/verify-pin", ['pin' => '4821'])
-            ->assertNotFound();
+            ->assertStatus(422)
+            ->assertJsonPath('code', 'FEATURE_RETIRED')
+            ->assertJsonPath('message', 'Rides are no longer available.');
     }
 
     public function test_decline_excludes_the_declining_runner_from_the_immediate_rematch(): void

@@ -17,7 +17,7 @@ class SystemConfigSeeder extends Seeder
             ],
             [
                 'key' => 'auto_cancel_timeout_minutes',
-                'value' => '5',
+                'value' => '30',
                 'description' => 'Minutes before unaccepted booking is auto-cancelled',
             ],
             [

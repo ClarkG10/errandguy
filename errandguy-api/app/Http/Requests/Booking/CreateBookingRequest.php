@@ -35,6 +35,12 @@ class CreateBookingRequest extends FormRequest
     protected function prepareForValidation(): void
     {
         $this->normalizePhoneFields(['pickup_contact_phone', 'dropoff_contact_phone', 'stops.*.contact_phone']);
+
+        // A merged retired type books the type that replaced it ("Book again"
+        // on an old errand in the app build already on phones).
+        if ($this->has('errand_type_id')) {
+            $this->merge(['errand_type_id' => ErrandType::bookableIdFor($this->input('errand_type_id'))]);
+        }
     }
 
     public function rules(): array
@@ -48,8 +54,14 @@ class CreateBookingRequest extends FormRequest
 
         return [
             'errand_type_id' => [
+                'bail',
                 'required',
                 'string',
+                function (string $attribute, mixed $value, \Closure $fail): void {
+                    if ($message = ErrandType::removedTypeMessage($value)) {
+                        $fail($message);
+                    }
+                },
                 Rule::exists('errand_types', 'id')->where('is_active', true),
             ],
             'pickup_address' => ['required', 'string', 'max:500'],

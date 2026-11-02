@@ -65,7 +65,10 @@ class RetryMatchRefundGuardTest extends TestCase
 
         $this->actingAs($this->customer)
             ->postJson("/api/v1/bookings/{$booking->id}/retry-match")
-            ->assertStatus(409);
+            ->assertStatus(409)
+            ->assertJsonPath('code', 'RETRY_NOT_ALLOWED')
+            ->assertJsonPath('data.reason', 'refunded')
+            ->assertJsonPath('message', 'This booking was already refunded, so it can’t be retried. Please create a new booking to try again.');
 
         // Untouched — still cancelled, not reopened, and no matching kicked off.
         $this->assertEquals('cancelled', $booking->fresh()->status);
@@ -78,7 +81,9 @@ class RetryMatchRefundGuardTest extends TestCase
 
         $this->actingAs($this->customer)
             ->postJson("/api/v1/bookings/{$booking->id}/retry-match")
-            ->assertStatus(409);
+            ->assertStatus(409)
+            ->assertJsonPath('code', 'RETRY_NOT_ALLOWED')
+            ->assertJsonPath('data.reason', 'refunded');
 
         $this->assertEquals('no_runner', $booking->fresh()->status);
         Bus::assertNotDispatched(MatchRunnerJob::class);
@@ -96,6 +101,62 @@ class RetryMatchRefundGuardTest extends TestCase
 
         $this->assertEquals('pending', $booking->fresh()->status);
         Bus::assertDispatched(MatchRunnerJob::class);
+    }
+
+    public function test_a_scheduled_errand_not_yet_open_is_refused_with_its_reason(): void
+    {
+        $later = $this->makeBooking('pending', 'cash', 'unpaid');
+        $later->update(['schedule_type' => 'scheduled', 'scheduled_at' => now()->addHours(3)]);
+
+        $this->actingAs($this->customer)
+            ->postJson("/api/v1/bookings/{$later->id}/retry-match")
+            ->assertStatus(409)
+            ->assertJsonPath('code', 'RETRY_NOT_ALLOWED')
+            ->assertJsonPath('data.reason', 'scheduled')
+            ->assertJsonPath('message', 'This errand is scheduled for later. We’ll start looking for a runner 15 minutes before its time.');
+
+        Bus::assertNotDispatched(MatchRunnerJob::class);
+    }
+
+    public function test_a_retry_long_after_booking_starts_a_full_new_search_window(): void
+    {
+        $booking = $this->makeBooking('no_runner', 'cash', 'unpaid');
+        $booking->update(['matching_started_at' => now()->subHours(2), 'offer_count' => 5, 'offered_runner_ids' => ['someone']]);
+        $booking->forceFill(['created_at' => now()->subHours(2)])->save();
+
+        $this->actingAs($this->customer)
+            ->postJson("/api/v1/bookings/{$booking->id}/retry-match")
+            ->assertOk();
+
+        $fresh = $booking->fresh();
+        $this->assertSame(0, $fresh->offer_count);
+        $this->assertNull($fresh->offered_runner_ids);
+        $deadline = \App\Services\BookingService::matchingDeadline($fresh);
+        $this->assertTrue($deadline->between(now()->addMinutes(29), now()->addMinutes(31)));
+        Bus::assertDispatched(AutoCancelBookingJob::class, fn (AutoCancelBookingJob $job) => $job->bookingId === $booking->id
+            && \Illuminate\Support\Carbon::parse($job->delay)->equalTo($deadline));
+
+        // The old window is long gone, but neither the auto-cancel nor the
+        // reaper ends the new search early.
+        $this->assertFalse((new AutoCancelBookingJob($booking->id))->handle());
+        $this->artisan('errandguy:reap-stranded-bookings')->assertSuccessful();
+        $this->assertSame('pending', $booking->fresh()->status);
+    }
+
+    public function test_a_retry_of_a_scheduled_errand_whose_window_closed_runs_like_one_booked_for_now(): void
+    {
+        $booking = $this->makeBooking('no_runner', 'cash', 'unpaid');
+        $booking->update(['schedule_type' => 'scheduled', 'scheduled_at' => now()->subHour(), 'matching_started_at' => now()->subMinutes(75)]);
+
+        $this->actingAs($this->customer)
+            ->postJson("/api/v1/bookings/{$booking->id}/retry-match")
+            ->assertOk();
+
+        $fresh = $booking->fresh();
+        $this->assertSame('now', $fresh->schedule_type);
+        $this->assertTrue(\App\Services\BookingService::matchingDeadline($fresh)->greaterThan(now()->addMinutes(29)));
+        $this->assertFalse((new AutoCancelBookingJob($booking->id))->handle());
+        $this->assertSame('pending', $booking->fresh()->status);
     }
 
     public function test_cash_booking_can_still_be_retried(): void

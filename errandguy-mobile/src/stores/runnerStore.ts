@@ -45,15 +45,25 @@ interface RunnerState {
   updateErrandStatus: (status: BookingStatus) => void;
   setRunnerProfile: (profile: RunnerProfile | null) => void;
   setEarnings: (earnings: Earnings) => void;
+  /**
+   * Back to the signed-out shape: offline, no errand, no offer, no profile.
+   * For leaving runner mode (sign-out, switch to customer, a dead session) —
+   * see utils/runnerSession, which also stops the GPS first.
+   */
+  reset: () => void;
 }
 
-export const useRunnerStore = create<RunnerState>((set, get) => ({
+const INITIAL_RUNNER_STATE = {
   isOnline: false,
   currentErrand: null,
   incomingRequest: null,
   earnings: { today: 0, week: 0, month: 0, total: 0 },
   runnerProfile: null,
-  declinedOfferIds: [],
+  declinedOfferIds: [] as string[],
+};
+
+export const useRunnerStore = create<RunnerState>((set, get) => ({
+  ...INITIAL_RUNNER_STATE,
 
   toggleOnline: (status) => set({ isOnline: status }),
 
@@ -104,4 +114,11 @@ export const useRunnerStore = create<RunnerState>((set, get) => ({
   setRunnerProfile: (profile) => set({ runnerProfile: profile }),
 
   setEarnings: (earnings) => set({ earnings }),
+
+  reset: () =>
+    set({
+      ...INITIAL_RUNNER_STATE,
+      earnings: { ...INITIAL_RUNNER_STATE.earnings },
+      declinedOfferIds: [],
+    }),
 }));

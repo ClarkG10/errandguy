@@ -56,7 +56,7 @@ class SettingsSafetyTest extends TestCase
             'multi_stop_fee' => '15',
             'matched_acceptance_timeout_seconds' => '90',
             'auto_cancel_timeout_minutes' => '30',
-            'retry_auto_cancel_timeout_minutes' => '5',
+            'customer_min_withdrawal' => '100',
             'runner_cash_debt_limit' => '1000',
             'shopping_budget_max' => '3000',
             'ops_alert_emails' => '',
@@ -89,6 +89,66 @@ class SettingsSafetyTest extends TestCase
         $this->assertSame(SystemSettings::description('platform_fee_percent'), SystemConfig::find('platform_fee_percent')->description);
         $this->assertSame('5', SystemConfig::find('matching_max_offers')->value);
         $this->assertSame(1, SystemConfig::where('key', 'matching_max_offers')->count());
+    }
+
+    public function test_the_search_window_setting_is_at_least_ten_minutes_and_the_seeder_matches_the_code(): void
+    {
+        $this->save('auto_cancel_timeout_minutes', '5')->assertHasFormErrors(['value']);
+        $this->save('auto_cancel_timeout_minutes', '9')->assertHasFormErrors(['value']);
+        $this->save('auto_cancel_timeout_minutes', '10')->assertHasNoFormErrors();
+        $this->assertSame('10', SystemConfig::find('auto_cancel_timeout_minutes')->value);
+
+        $this->seed(\Database\Seeders\SystemConfigSeeder::class);
+        $this->assertSame('30', SystemConfig::find('auto_cancel_timeout_minutes')->value);
+
+        // "Try again" no longer has a window of its own.
+        $this->assertFalse(SystemSettings::isKnown('retry_auto_cancel_timeout_minutes'));
+    }
+
+    public function test_the_window_migration_lifts_only_the_old_seeded_five_and_drops_the_retry_setting(): void
+    {
+        $migration = require database_path('migrations/2026_11_02_000002_lengthen_the_matching_window.php');
+
+        DB::table('system_config')->where('key', 'auto_cancel_timeout_minutes')->update(['value' => '5']);
+        DB::table('system_config')->insert(['key' => 'retry_auto_cancel_timeout_minutes', 'value' => '5', 'description' => 'old']);
+
+        $migration->up();
+        $migration->up();
+
+        $this->assertSame('30', SystemConfig::find('auto_cancel_timeout_minutes')->value);
+        $this->assertNull(SystemConfig::find('retry_auto_cancel_timeout_minutes'));
+
+        // A value staff chose is theirs to keep.
+        DB::table('system_config')->where('key', 'auto_cancel_timeout_minutes')->update(['value' => '45']);
+        $migration->up();
+        $this->assertSame('45', SystemConfig::find('auto_cancel_timeout_minutes')->value);
+
+        $migration->down();
+        $migration->down();
+        $this->assertSame('5', SystemConfig::find('retry_auto_cancel_timeout_minutes')->value);
+        $this->assertSame(1, SystemConfig::where('key', 'retry_auto_cancel_timeout_minutes')->count());
+        $this->assertSame('45', SystemConfig::find('auto_cancel_timeout_minutes')->value);
+    }
+
+    public function test_the_customer_withdrawal_minimum_migration_adds_it_once_and_keeps_a_staff_value(): void
+    {
+        $migration = require database_path('migrations/2026_11_02_000001_add_customer_min_withdrawal_setting.php');
+
+        DB::table('system_config')->where('key', 'customer_min_withdrawal')->delete();
+        $migration->up();
+        $migration->up();
+        $this->assertSame('100', SystemConfig::find('customer_min_withdrawal')->value);
+        $this->assertSame(1, SystemConfig::where('key', 'customer_min_withdrawal')->count());
+
+        DB::table('system_config')->where('key', 'customer_min_withdrawal')->update(['value' => '250']);
+        $migration->up();
+        $this->assertSame('250', SystemConfig::find('customer_min_withdrawal')->value);
+
+        $this->save('customer_min_withdrawal', '-1')->assertHasFormErrors(['value']);
+        $this->save('customer_min_withdrawal', '0')->assertHasNoFormErrors();
+
+        $migration->down();
+        $this->assertNull(SystemConfig::find('customer_min_withdrawal'));
     }
 
     /**

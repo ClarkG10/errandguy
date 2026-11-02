@@ -115,10 +115,13 @@ class PaymentStatusController extends Controller
     {
         // gateway_response is $hidden on the model, so reading the failure code
         // here (rather than serializing the model) keeps the raw gateway body
-        // out of the response.
-        $failureReason = data_get($payment->gateway_response, 'failure_code')
-            ?? data_get($payment->gateway_response, 'failure_reason')
-            ?? data_get($payment->gateway_response, 'status');
+        // out of the response. A refund isn't a gateway failure: the charge
+        // itself SUCCEEDED, so its gateway status would read as one.
+        $failureReason = $payment->status === 'refunded'
+            ? 'refunded'
+            : (data_get($payment->gateway_response, 'failure_code')
+                ?? data_get($payment->gateway_response, 'failure_reason')
+                ?? data_get($payment->gateway_response, 'status'));
 
         $paidAt = optional($payment->paid_at)->toIso8601String();
 

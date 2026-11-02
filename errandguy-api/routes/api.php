@@ -210,6 +210,11 @@ Route::prefix('v1')->group(function () {
             Route::post('/location', [RunnerLocationController::class, 'store'])->middleware('throttle:120,1');
 
             Route::get('/errand/current', [RunnerErrandController::class, 'current'])->middleware('etag');
+            // Retired: the open-offers list (errands are offered one runner at
+            // a time) and the ride PIN check (rides are retired). Stubs for the
+            // app build already on phones; delete once the app update is out.
+            Route::get('/errand/available', [RetiredEndpointController::class, 'availableErrands']);
+            Route::post('/errand/{id}/verify-pin', [RetiredEndpointController::class, 'verifyRidePin']);
             Route::get('/errand/{id}', [RunnerErrandController::class, 'show'])
                 ->where('id', '[0-9a-fA-F-]{36}')
                 ->middleware('etag');
@@ -320,6 +325,10 @@ Route::prefix('v1')->group(function () {
             Route::delete('/{id}', [NotificationController::class, 'destroy']);
         });
 
+        // Retired: promo codes. 422 stub for the app build already on phones;
+        // delete once the app update is out.
+        Route::get('/promos/validate/{code}', [RetiredEndpointController::class, 'promoCode']);
+
         // Config routes (cached for performance). Staff-only settings (who
         // gets the ops alerts) are left out.
         Route::get('/config/app', function () {
@@ -341,6 +350,10 @@ Route::prefix('v1')->group(function () {
             Route::post('/tickets/{id}/messages', [SupportController::class, 'postMessage'])
                 ->where('id', '[0-9a-fA-F-]{36}')
                 ->middleware('throttle:60,1');
+            // Retired: the old dispute report (support chat replaced it). 422
+            // stub for the app build already on phones; delete once the app
+            // update is out.
+            Route::post('/report', [RetiredEndpointController::class, 'supportReport']);
         });
     });
 

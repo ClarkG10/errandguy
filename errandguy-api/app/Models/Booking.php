@@ -134,9 +134,11 @@ class Booking extends Model
     }
 
     /**
-     * Every runner this errand has been offered to. Matching never offers it to
-     * any of them again: each one either declined, let the offer lapse, or was
-     * taken off it by staff.
+     * Every runner this errand has been offered to in the current round of
+     * matching. Matching doesn't offer it to any of them again that round: each
+     * one either declined, let the offer lapse, or was taken off it by staff.
+     * A new round (BookingService::freshRound) starts the list again, keeping
+     * only a runner staff took the errand off.
      *
      * @return list<string>
      */

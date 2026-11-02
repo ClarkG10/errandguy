@@ -156,6 +156,32 @@ class CancellationNoticeTest extends TestCase
         $this->assertStringContainsString('returned to your ErrandGuy wallet.', $body);
     }
 
+    public function test_an_unmatched_errand_whose_money_went_back_points_to_booking_again(): void
+    {
+        $booking = $this->booking('wallet', 'paid');
+
+        MatchRunnerJob::dispatchSync($booking->id);
+
+        // Its money is back in the wallet, so "try again" would be refused —
+        // the customer is told to book it again instead.
+        $body = (string) Notification::where('user_id', $this->customer->id)->where('title', 'No runner available')->value('body');
+        $this->assertStringEndsWith('returned to your ErrandGuy wallet. Tap to book it again.', $body);
+        $this->assertStringNotContainsString('try again', $body);
+    }
+
+    public function test_an_unmatched_cash_errand_can_simply_be_tried_again(): void
+    {
+        $booking = $this->booking('cash', 'unpaid');
+
+        MatchRunnerJob::dispatchSync($booking->id);
+
+        $this->assertSame('no_runner', $booking->fresh()->status);
+        $this->assertSame(
+            "We couldn’t find a runner for errand #{$booking->booking_number}. You weren’t charged. Tap to try again.",
+            Notification::where('user_id', $this->customer->id)->where('title', 'No runner available')->value('body'),
+        );
+    }
+
     public function test_an_unpaid_gcash_errand_says_it_was_not_charged(): void
     {
         $booking = $this->booking('gcash', 'pending');

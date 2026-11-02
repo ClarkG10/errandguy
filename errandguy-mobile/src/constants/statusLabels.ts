@@ -1,6 +1,8 @@
-import type { BookingStatus } from '../types';
+import type { Booking, BookingStatus } from '../types';
 import { LightColors } from './colors';
 import { getErrandTypeRule } from './errandTypeRules';
+import { isAwaitingPayment } from '../utils/bookingPayment';
+import { scheduledWindowLabel } from '../utils/scheduledBooking';
 
 /**
  * Terse status vocabulary — chips, pills, timeline steps, screen-reader
@@ -39,6 +41,27 @@ export const STATUS_LABELS: Record<BookingStatus, string> = {
  * paid, so "Finding a runner" would be a false promise.
  */
 export const AWAITING_PAYMENT_LABEL = 'Waiting for payment';
+
+/**
+ * The terse label for a `pending` errand booked for later: no search runs
+ * until shortly before its time (see utils/scheduledBooking).
+ */
+export const SCHEDULED_LABEL = 'Scheduled';
+
+/**
+ * The terse label for one BOOKING rather than a bare status. `pending` covers
+ * three different moments the status alone can't tell apart — a live search,
+ * an errand waiting for its GCash/Maya payment, and one scheduled for later —
+ * and only the first is "Finding a runner". Everything else is statusLabel().
+ */
+export function bookingStatusLabel(
+  booking: Pick<Booking, 'status' | 'schedule_type' | 'scheduled_at'> &
+    Partial<Pick<Booking, 'awaiting_payment' | 'errand_type'>>,
+): string {
+  if (isAwaitingPayment(booking)) return AWAITING_PAYMENT_LABEL;
+  if (scheduledWindowLabel(booking)) return SCHEDULED_LABEL;
+  return statusLabel(booking.status, booking.errand_type?.slug);
+}
 
 /**
  * Per-errand-type corrections to the terse vocabulary, keyed by errand_type

@@ -10,8 +10,10 @@ use App\Exceptions\BookingStateException;
 use App\Jobs\AutoCancelBookingJob;
 use App\Jobs\MatchRunnerJob;
 use App\Jobs\SendPushJob;
+use App\Models\AdminAlert;
 use App\Models\Booking;
 use App\Models\BookingStatusLog;
+use App\Models\BookingStop;
 use App\Models\Payment;
 use App\Models\SystemConfig;
 use App\Models\User;
@@ -244,9 +246,68 @@ class BookingService
             return Carbon::parse($booking->scheduled_at)->addMinutes(self::SCHEDULED_MATCH_GRACE_MINUTES);
         }
 
-        $timeoutMinutes = (int) SystemConfig::getValue('auto_cancel_timeout_minutes', '30');
+        return Carbon::parse($booking->matching_started_at ?? $booking->created_at ?? now())
+            ->addMinutes(self::matchingTimeoutMinutes());
+    }
 
-        return Carbon::parse($booking->matching_started_at ?? $booking->created_at ?? now())->addMinutes($timeoutMinutes);
+    /** How long an errand booked for now is searched for: `auto_cancel_timeout_minutes`. */
+    public static function matchingTimeoutMinutes(): int
+    {
+        return (int) SystemConfig::getValue('auto_cancel_timeout_minutes', '30');
+    }
+
+    /**
+     * The bookkeeping for a NEW round of matching — a customer's "try again",
+     * a staff re-run, a staff "Return to matching" — merged into the caller's
+     * update while it holds the booking's row lock.
+     *
+     *  - The search window starts again from now, so a rescue that comes long
+     *    after the errand was placed gets a full search instead of one sweep
+     *    before the auto-cancel (and the stranded-booking reaper) end it.
+     *  - A scheduled errand whose window has run out (or nearly) would get no
+     *    real search time, so the new round runs like an errand booked for now.
+     *    One whose window hasn't opened yet keeps waiting for it (and the
+     *    scheduled-matching sweep starts it if its delayed task is lost).
+     *  - offered_runner_ids is cleared: a runner who merely missed a 90-second
+     *    offer can be offered it again. Only $excludedRunnerIds (the runner
+     *    staff took it off) stay skipped. Within the round the skip list and
+     *    the offer cap work as before.
+     *
+     * The caller arms the auto-cancel (armAutoCancel) and dispatches the search
+     * after commit.
+     *
+     * @param  list<string>  $excludedRunnerIds
+     * @return array<string, mixed>
+     */
+    public static function freshRound(Booking $booking, array $excludedRunnerIds = []): array
+    {
+        $round = [
+            'offer_count' => 0,
+            'offered_runner_ids' => $excludedRunnerIds === [] ? null : array_values(array_unique($excludedRunnerIds)),
+        ];
+
+        if (self::matchingOpensAt($booking)->isFuture()) {
+            return [...$round, 'matching_started_at' => null];
+        }
+
+        $round['matching_started_at'] = now();
+
+        if (self::isScheduled($booking)
+            && self::matchingDeadline($booking)->lt(now()->addMinutes(self::matchingTimeoutMinutes()))) {
+            $round['schedule_type'] = 'now';
+        }
+
+        return $round;
+    }
+
+    /**
+     * Arm the no-runner auto-cancel for the end of the booking's current
+     * matching window. It no-ops once the booking leaves pending, and re-arms
+     * itself when the window was extended meanwhile.
+     */
+    public static function armAutoCancel(Booking $booking): void
+    {
+        AutoCancelBookingJob::dispatch($booking->id)->delay(self::matchingDeadline($booking));
     }
 
     /**
@@ -265,7 +326,7 @@ class BookingService
         if ($matchAt->isFuture()) {
             // The sweep in errandguy:start-due-scheduled-matching restarts it
             // if this delayed task is ever lost.
-            AutoCancelBookingJob::dispatch($booking->id)->delay(self::matchingDeadline($booking));
+            self::armAutoCancel($booking);
             MatchRunnerJob::dispatch($booking->id)->delay($matchAt);
 
             return;
@@ -281,7 +342,7 @@ class BookingService
         // Armed BEFORE the search: it no-ops once the booking leaves
         // 'pending', and if the search below dies the errand still ends (and
         // is refunded) on time.
-        AutoCancelBookingJob::dispatch($booking->id)->delay(self::matchingDeadline($booking));
+        self::armAutoCancel($booking);
 
         // A failure here (a deadlock under load, a listener throwing) must not
         // fail the caller: by now the errand is paid for, and a booking request
@@ -526,15 +587,15 @@ class BookingService
      * returned or never arrived (the errand would run for free) or when a
      * scheduled errand's matching window has not opened yet (a runner would be
      * sent hours early).
-     * Starts a fresh round of offers; runners who already turned it down are
-     * still skipped. An optional wider radius helps when the default search
-     * found nobody nearby.
+     * Starts a new round of matching (freshRound): a full search window from
+     * now and fresh offers, runners who missed an earlier one included. An
+     * optional wider radius helps when the default search found nobody nearby.
      *
      * @throws BookingStateException with a staff-readable reason.
      */
     public function adminRematch(string $bookingId, ?float $radiusKm = null): void
     {
-        DB::transaction(function () use ($bookingId, $radiusKm) {
+        $booking = DB::transaction(function () use ($bookingId, $radiusKm) {
             $locked = Booking::whereKey($bookingId)->lockForUpdate()->firstOrFail();
 
             if ($locked->runner_id !== null || ! in_array($locked->status, ['no_runner', 'pending'], true)) {
@@ -561,7 +622,7 @@ class BookingService
 
             // Back to pending so MatchRunnerJob — which no-ops on any other
             // status — picks it up again.
-            $locked->update(['status' => 'pending', 'offer_count' => 0]);
+            $locked->update(['status' => 'pending', ...self::freshRound($locked)]);
 
             BookingStatusLog::create([
                 'booking_id' => $locked->id,
@@ -574,18 +635,27 @@ class BookingService
                     ? "Admin re-ran matching (radius {$radiusKm} km)"
                     : 'Admin re-ran matching',
             ]);
+
+            return $locked;
         });
 
+        self::armAutoCancel($booking);
         MatchRunnerJob::dispatch($bookingId, $radiusKm);
     }
 
     /**
      * Staff take an accepted-but-unfinished errand off its runner (they went
      * dark, their vehicle broke down, the customer asked) and offer it to
-     * someone else. The removed runner is told, never offered it again, and the
-     * customer is told a new runner is on the way. Matching starts a fresh round
-     * of offers right away — or at the window opening for a scheduled errand
-     * that is not due yet.
+     * someone else. The removed runner is told and never offered it again in
+     * this round, and the customer is told a new runner is on the way. A new
+     * round of matching (freshRound) starts right away — or at the window
+     * opening for a scheduled errand that is not due yet.
+     *
+     * The first runner's progress is wiped so the next runner starts clean:
+     * pickup time and photos, the receipt and item cost, the shopping-list
+     * ticks and the extra stops they visited. When they had already paid for a
+     * "Buy for me" errand's items, staff get an alert: that runner is owed the
+     * money (the customer repays the NEW runner at the door).
      *
      * Refused when the money for it was already returned or never arrived, so
      * a rescue can never set up an errand that runs for free.
@@ -594,7 +664,7 @@ class BookingService
      */
     public function adminReturnToMatching(string $bookingId, string $reason): void
     {
-        [$booking, $runnerId, $oldStatus] = DB::transaction(function () use ($bookingId, $reason) {
+        [$booking, $runnerId, $oldStatus, $itemCost] = DB::transaction(function () use ($bookingId, $reason) {
             $locked = Booking::whereKey($bookingId)->lockForUpdate()->firstOrFail();
 
             if ($locked->runner_id === null || ! in_array($locked->status, BookingStatus::IN_PROGRESS, true)) {
@@ -612,25 +682,35 @@ class BookingService
 
             $runnerId = (string) $locked->runner_id;
             $oldStatus = $locked->status;
+            $itemCost = round((float) $locked->actual_item_cost, 2);
+            $receipt = $locked->receipt_photo_url;
 
             $locked->update([
                 'status' => 'pending',
                 'runner_id' => null,
                 'matched_at' => null,
                 'accepted_at' => null,
-                'offered_runner_ids' => $locked->withOfferedRunner($runnerId),
-                'offer_count' => 0,
+                ...self::freshRound($locked, [$runnerId]),
+                ...self::clearedRunnerWork($locked),
             ]);
+
+            BookingStop::where('booking_id', $locked->id)
+                ->whereNotNull('completed_at')
+                ->update(['completed_at' => null]);
 
             BookingStatusLog::create([
                 'booking_id' => $locked->id,
                 'status' => 'pending',
                 // A system change (see adminRematch); the admin is in the audit log.
                 'changed_by' => null,
-                'note' => "Staff returned the errand to matching: {$reason}",
+                'note' => "Staff returned the errand to matching: {$reason}"
+                    .($itemCost > 0
+                        ? '. The first runner had paid '.self::peso($itemCost).' for the items'
+                            .($receipt ? " (receipt: {$receipt})" : '')
+                        : ''),
             ]);
 
-            return [$locked, $runnerId, $oldStatus];
+            return [$locked, $runnerId, $oldStatus, $itemCost];
         });
 
         // Stop tagging the removed runner's GPS pings to this errand.
@@ -641,6 +721,19 @@ class BookingService
         event(new BookingStatusChanged($booking, $oldStatus, 'pending'));
 
         $number = $booking->booking_number ?? $booking->id;
+
+        if ($itemCost > 0) {
+            $runnerName = User::withTrashed()->whereKey($runnerId)->value('full_name') ?: 'The first runner';
+            AdminAlert::raise(
+                'runner_owed_items',
+                'warning',
+                'Runner owed for items',
+                "{$runnerName} paid ".self::peso($itemCost)." for the items on errand {$number} before it was "
+                    .'returned to matching, and is owed it. Settle it with them — the customer will repay the new runner.',
+                $booking->id,
+            );
+        }
+
         SendPushJob::dispatch(
             $runnerId,
             'Errand reassigned',
@@ -654,6 +747,8 @@ class BookingService
             ['type' => 'booking_update', 'booking_id' => $booking->id, 'status' => 'pending'],
         );
 
+        self::armAutoCancel($booking);
+
         $opensAt = self::matchingOpensAt($booking);
         $match = MatchRunnerJob::dispatch($booking->id, null, $runnerId);
         if ($opensAt->isFuture()) {
@@ -662,12 +757,42 @@ class BookingService
     }
 
     /**
+     * The progress a removed runner leaves on an errand, reset for the next
+     * one: pickup time and photos, receipt and item cost, and the shopping-list
+     * ticks (the items themselves stay).
+     *
+     * @return array<string, mixed>
+     */
+    private static function clearedRunnerWork(Booking $booking): array
+    {
+        $cleared = [
+            'picked_up_at' => null,
+            'pickup_photo_url' => null,
+            'delivery_photo_url' => null,
+            'receipt_photo_url' => null,
+            'actual_item_cost' => null,
+        ];
+
+        if (is_array($booking->shopping_items) && $booking->shopping_items !== []) {
+            $cleared['shopping_items'] = array_map(
+                fn ($item) => is_array($item) ? [...$item, 'checked' => false, 'checked_at' => null] : $item,
+                $booking->shopping_items,
+            );
+        }
+
+        return $cleared;
+    }
+
+    /**
      * Staff mark an accepted-but-unfinished errand completed (the runner did the
      * work but can't finish it in the app). Settles EXACTLY like the runner's
      * own completion — the same booking lock, the same once-only checks, and the
      * same settlement code (BookingSettlementService::settleCompletion): the
-     * runner is paid, the payment is recorded, and both sides get the usual
-     * "Errand completed" notice.
+     * runner is paid (see completionPayoutNotice), the payment is recorded, and
+     * both sides get the usual "Errand completed" notice.
+     *
+     * Refused when the errand's money was refunded or never collected: it
+     * would settle as a completed errand that paid nobody.
      *
      * @throws BookingStateException with a staff-readable reason.
      */
@@ -679,6 +804,13 @@ class BookingService
             if ($locked->runner_id === null || ! in_array($locked->status, BookingStatus::IN_PROGRESS, true)) {
                 throw new BookingStateException(
                     'Only an errand a runner has accepted and not finished can be marked completed.'
+                );
+            }
+
+            if (self::moneyReturned($locked)) {
+                throw new BookingStateException(
+                    'This errand’s payment was refunded or never collected, so completing it would leave the '
+                    .'runner unpaid. Cancel it instead (and pay the runner by hand if they did the work).'
                 );
             }
 
@@ -709,6 +841,36 @@ class BookingService
         // Same post-commit event as the runner's completion: customer + runner
         // notices, live status for both apps.
         event(new BookingStatusChanged($booking, $oldStatus, 'completed'));
+    }
+
+    /**
+     * What completing this errand does for its runner, for staff before they
+     * mark it completed — the same branches settleCompletion takes.
+     */
+    public static function completionPayoutNotice(Booking $booking): string
+    {
+        if (self::moneyReturned($booking)) {
+            return 'Its payment was refunded or never collected, so it can’t be marked completed — cancel it instead.';
+        }
+
+        if ($booking->payment_status === 'paid') {
+            return 'The runner is paid '.self::peso((float) $booking->runner_payout).' into their ErrandGuy wallet.';
+        }
+
+        if ($booking->payment_method === 'cash') {
+            $fee = round((float) $booking->total_amount - (float) $booking->runner_payout, 2);
+
+            return 'The runner keeps the '.self::peso((float) $booking->total_amount).' cash they collect from the customer, '
+                .'and ErrandGuy’s '.self::peso($fee).' fee is taken from their wallet.';
+        }
+
+        return 'Nothing was collected for it yet, so the runner is not paid.';
+    }
+
+    /** "₱1,250.00", for staff-facing messages. */
+    private static function peso(float $amount): string
+    {
+        return '₱'.number_format($amount, 2);
     }
 
     /** "Nov 3, 2:30 PM" in the business timezone, for staff-facing messages. */

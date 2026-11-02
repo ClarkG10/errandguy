@@ -22,9 +22,9 @@ use Illuminate\Support\Facades\Log;
  * explicit decline did), so it stranded on "Runner Found" forever while the
  * customer's money sat locked (SYSTEM_AUDIT H12). This sweep resets such
  * bookings to 'pending' and re-dispatches matching. The unresponsive runner is
- * already on the booking's offered_runner_ids, so they are never offered it
- * again, and MatchRunnerJob's per-round offer cap ends the search as "no
- * runner" (with a refund) — so this cannot bounce an errand forever.
+ * already on the booking's offered_runner_ids, so they are not offered it
+ * again this round, and MatchRunnerJob's per-round offer cap ends the search
+ * as "no runner" (with a refund) — so this cannot bounce an errand forever.
  *
  * Runs on a schedule (routes/console.php) rather than as a per-booking delayed
  * job so a dropped/never-run delayed job can't silently strand a booking.

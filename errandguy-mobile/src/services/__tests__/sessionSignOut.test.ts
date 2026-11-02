@@ -5,6 +5,7 @@ jest.mock('../pushToken', () => ({
   currentPushToken: jest.fn(() => 'ExponentPushToken[abc]'),
   unregisterPushLocally: jest.fn(async () => {}),
 }));
+jest.mock('../../utils/runnerSession', () => ({ stopRunnerActivity: jest.fn() }));
 
 import { readFileSync } from 'fs';
 import { join } from 'path';
@@ -12,6 +13,7 @@ import { authService } from '../auth.service';
 import { unregisterPushLocally } from '../pushToken';
 import { endLocalSession, signOut, signOutEverywhere } from '../session.service';
 import { useAuthStore } from '../../stores/authStore';
+import { stopRunnerActivity } from '../../utils/runnerSession';
 
 const logout = authService.logout as jest.Mock;
 const logoutAll = authService.logoutAll as jest.Mock;
@@ -38,6 +40,19 @@ describe('signOut (this phone)', () => {
     expect(order).toEqual(['server', 'push', 'store']);
   });
 
+  it('turns a runner\'s GPS off BEFORE the server revokes the token', async () => {
+    // Otherwise a heartbeat in the air lands on the revoked token, 401s, and
+    // tears the session down a second time.
+    const order: string[] = [];
+    (stopRunnerActivity as jest.Mock).mockImplementation(() => order.push('gps-off'));
+    logout.mockImplementation(async () => order.push('server'));
+
+    await signOut();
+
+    expect(order[0]).toBe('gps-off');
+    expect(order.indexOf('server')).toBeGreaterThan(0);
+  });
+
   it('still signs out here when the server cannot be reached', async () => {
     logout.mockRejectedValue({ status: 0 });
     await expect(signOut()).resolves.toBeUndefined();
@@ -59,6 +74,8 @@ describe('signOutEverywhere', () => {
     await expect(signOutEverywhere()).rejects.toEqual({ status: 0 });
     expect(storeLogout).not.toHaveBeenCalled();
     expect(unregister).not.toHaveBeenCalled();
+    // Still signed in here, so a runner keeps their shift (and its GPS).
+    expect(stopRunnerActivity).not.toHaveBeenCalled();
   });
 });
 
@@ -66,6 +83,17 @@ it('endLocalSession lets go of push too', async () => {
   await endLocalSession();
   expect(unregister).toHaveBeenCalled();
   expect(storeLogout).toHaveBeenCalled();
+});
+
+it('endLocalSession (the server already ended it) turns a runner\'s GPS off first', async () => {
+  const order: string[] = [];
+  (stopRunnerActivity as jest.Mock).mockImplementation(() => order.push('gps-off'));
+  unregister.mockImplementation(async () => order.push('push'));
+  storeLogout.mockImplementation(async () => order.push('store'));
+
+  await endLocalSession();
+
+  expect(order).toEqual(['gps-off', 'push', 'store']);
 });
 
 describe('architecture: every sign-out path goes through session.service', () => {
