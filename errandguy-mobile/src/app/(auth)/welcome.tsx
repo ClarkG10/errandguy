@@ -275,7 +275,7 @@ const styles = StyleSheet.create({
     fontWeight: '500',
     fontSize: 12,
     letterSpacing: 0.4,
-    color: LightColors.textMuted,
+    color: LightColors.textTertiary,
   },
   // Width + colour of the active dot are animated inline (MotiView).
   pageDot: {

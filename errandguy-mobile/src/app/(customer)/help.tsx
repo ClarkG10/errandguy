@@ -63,7 +63,7 @@ const FAQS: FAQ[] = [
   {
     question: 'Can I track my runner live?',
     answer:
-      'Yes. Once a runner accepts, the booking moves to the Track screen with a live map, the runner’s vehicle and plate. You can also share a read-only trip link with a trusted contact.',
+      'Yes. Once a runner accepts, the errand moves to the Track screen with a live map, the runner’s vehicle and plate. You can also share a read-only trip link with a trusted contact.',
   },
   {
     question: 'How do I pay?',
@@ -226,7 +226,7 @@ export default function CustomerHelpScreen() {
               <Text className="text-[14px] font-montserrat-semi text-textPrimary">
                 Chat with support
               </Text>
-              <Text className="text-[11px] font-montserrat text-textMuted">
+              <Text className="text-[11px] font-montserrat text-textTertiary">
                 Open a ticket and message our team
               </Text>
             </View>
@@ -251,7 +251,7 @@ export default function CustomerHelpScreen() {
               <Text className="text-[14px] font-montserrat-semi text-textPrimary">
                 Email support
               </Text>
-              <Text className="text-[11px] font-montserrat text-textMuted">
+              <Text className="text-[11px] font-montserrat text-textTertiary">
                 support@errandguyph.com
               </Text>
             </View>
@@ -282,7 +282,7 @@ export default function CustomerHelpScreen() {
               <Text className="text-[14px] font-montserrat-semi text-textPrimary">
                 Report an issue by email
               </Text>
-              <Text className="text-[11px] font-montserrat text-textMuted">
+              <Text className="text-[11px] font-montserrat text-textTertiary">
                 Include your booking number
               </Text>
             </View>

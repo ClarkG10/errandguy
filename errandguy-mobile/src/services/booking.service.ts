@@ -193,7 +193,14 @@ export const bookingService = {
   },
 
   cancelPreview(id: string) {
-    return api.get<{ data: CancelPreview }>(`/bookings/${id}/cancel-preview`);
+    // The cancel dialog holds its confirm button until this answers, so it
+    // must answer fast: one short attempt, no retries. On failure the dialog
+    // says a fee may apply and offers to check again. (The default 30s
+    // timeout + 2 retries could lock the button for about a minute.)
+    return api.get<{ data: CancelPreview }>(`/bookings/${id}/cancel-preview`, {
+      retries: 0,
+      timeout: 8000,
+    });
   },
 
   trackBooking(id: string, opts?: { onlyLocation?: boolean }) {
@@ -248,16 +255,6 @@ export const bookingService = {
     return api.get('/bookings/active', { cacheTtlMs: 5000, silent: true });
   },
 
-  getEstimate(data: {
-    errand_type_id: string;
-    pickup_lat: number;
-    pickup_lng: number;
-    dropoff_lat?: number;
-    dropoff_lng?: number;
-  }) {
-    return api.post('/bookings/estimate', data);
-  },
-
   // P1: warm the fare estimate at the details phase-flip (all coords finalized),
   // so Review paints the fare on its first frame. Fire-and-forget — the result
   // lands in estimateStash keyed by signature.
@@ -280,12 +277,6 @@ export const bookingService = {
   // estimate object (not the axios response).
   fetchEstimate(input: EstimateInput): Promise<any> {
     return runEstimate(input);
-  },
-
-  rebookErrand(id: string) {
-    const p = api.post(`/bookings/${id}/rebook`);
-    p.then(() => invalidateBookingsCaches()).catch(() => {});
-    return p;
   },
 
   /**

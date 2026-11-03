@@ -280,7 +280,9 @@ export function ConversationList({ chatHrefPrefix, fallbackHref }: Props) {
             // endless skeleton (the "messages won't load" symptom).
             <ErrorState
               title="Messages are taking a while"
-              description="Check your connection and try again."
+              // Nothing has failed yet — it's only slow — so this doesn't
+              // blame the connection; the server may be the slow part.
+              description="This is taking longer than usual. Try again."
               onRetry={() => {
                 setSlowLoad(false);
                 conversationsQ.refresh();

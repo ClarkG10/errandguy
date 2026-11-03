@@ -99,4 +99,16 @@ describe('ErrorState', () => {
     const { getByText } = render(<ErrorState icon={AlertCircle} />);
     expect(getByText("Couldn't load this")).toBeTruthy();
   });
+
+  it('offers a way out under Retry when one is given (e.g. Go to Home)', () => {
+    const onRetry = jest.fn();
+    const onHome = jest.fn();
+    const { getByText, getByLabelText } = render(
+      <ErrorState onRetry={onRetry} secondaryActionLabel="Go to Home" onSecondaryAction={onHome} />,
+    );
+    expect(getByText('Retry')).toBeTruthy();
+    fireEvent.press(getByLabelText('Go to Home'));
+    expect(onHome).toHaveBeenCalledTimes(1);
+    expect(onRetry).not.toHaveBeenCalled();
+  });
 });

@@ -130,7 +130,7 @@ export default function EditProfileScreen() {
   return (
     <View className="flex-1 bg-background">
       <GradientHeader
-        title="Edit Profile"
+        title="Edit profile"
         showBack
         fallbackHref="/(runner)/(tabs)/profile"
         onBackPress={handleBackPress}
@@ -229,7 +229,7 @@ export default function EditProfileScreen() {
       <BottomActionBar>
         <View style={{ maxWidth: contentMaxWidth, width: '100%', alignSelf: 'center' }}>
           <Button
-            title="Save Changes"
+            title="Save changes"
             onPress={handleSave}
             loading={loading}
             loadingTitle="Saving…"

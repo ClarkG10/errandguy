@@ -3,7 +3,11 @@ import { Platform } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRunnerStore } from '../../../stores/runnerStore';
 import { useReducedMotion } from '../../../hooks/useReducedMotion';
-import { TabBarItem } from '../../../components/ui/TabBarItem';
+import {
+  TabBarItem,
+  TAB_LABEL_STYLE,
+  cappedTabBarLabel,
+} from '../../../components/ui/TabBarItem';
 import { HidingTabBar } from '../../../components/ui/HidingTabBar';
 import {
   TAB_BAR_HEIGHT as BAR_HEIGHT,
@@ -51,7 +55,9 @@ export default function RunnerTabsLayout() {
         // Short word under every icon — matches the customer bar. A new
         // runner shouldn't have to guess what "wallet" and "clock" open.
         tabBarShowLabel: true,
-        tabBarLabelStyle: { fontFamily: 'Quicksand_600SemiBold', fontSize: 11 },
+        tabBarLabelStyle: TAB_LABEL_STYLE,
+        // Capped at the chrome font scale (see cappedTabBarLabel).
+        tabBarLabel: cappedTabBarLabel,
         tabBarHideOnKeyboard: true,
         tabBarStyle: {
           backgroundColor: LightColors.surface,

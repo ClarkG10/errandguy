@@ -255,7 +255,7 @@ export default function WalletActivityScreen() {
           ) : !hasMore && rows.length > 0 ? (
             <Text
               className="text-[11px] font-montserrat text-center py-5"
-              style={{ color: LightColors.textMuted }}
+              style={{ color: LightColors.textTertiary }}
             >
               That’s your full wallet history.
             </Text>

@@ -107,12 +107,4 @@ export const paymentService = {
   }) {
     return api.get('/wallet/transactions', { params, cacheTtlMs: 15_000, silent: true });
   },
-
-  getPaymentHistory(params?: { page?: number; per_page?: number }) {
-    return api.get('/payments/history', { params, cacheTtlMs: 15_000 });
-  },
-
-  getReceipt(id: string) {
-    return api.get(`/payments/${id}/receipt`, { cacheTtlMs: 60_000 });
-  },
 };

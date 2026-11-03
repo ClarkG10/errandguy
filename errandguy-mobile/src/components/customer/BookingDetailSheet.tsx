@@ -424,7 +424,7 @@ export function BookingDetailSheet({
                   variant={rebookIsRecovery ? 'secondary' : 'primary'}
                   icon={RefreshCw}
                   onPress={handleRebook}
-                  accessibilityHint="Starts a new booking pre-filled from this one"
+                  accessibilityHint="Starts a new errand pre-filled from this one"
                   fullWidth
                 />
               )}

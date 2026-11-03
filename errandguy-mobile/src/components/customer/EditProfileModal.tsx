@@ -13,10 +13,14 @@ import { toast } from '../../stores/toastStore';
 import { runOptimistic } from '../../utils/optimistic';
 import { errorMessage } from '../../utils/errorCatalog';
 import { haptics } from '../../utils/haptics';
+import { compressProofImage } from '../../utils/proofImage';
 import { isPhMobile, toPhMobileE164 } from '../../utils/phone';
 import { queueable } from '../../services/mutationQueue';
 import { LightColors } from '../../constants/colors';
 import { copy } from '../../constants/copy';
+
+/** Longest edge for a profile photo (the server accepts 2 MB at most). */
+const AVATAR_MAX_EDGE = 1024;
 
 interface EditProfileModalProps {
   visible: boolean;
@@ -127,19 +131,24 @@ export function EditProfileModal({ visible, onClose }: EditProfileModalProps) {
     });
   };
 
-  const handleAvatarUpload = async (uri: string) => {
+  const handleAvatarUpload = async (pickedUri: string) => {
     setAvatarPickerVisible(false);
     setUploadingAvatar(true);
     setAvatarPct(0);
 
-    const formData = new FormData();
-    formData.append('avatar', {
-      uri,
-      type: 'image/jpeg',
-      name: 'avatar.jpg',
-    } as any);
-
     try {
+      // Shrink it first, like every other upload: a camera frame is several
+      // MB and the server takes 2 MB at most, so a full-size photo was simply
+      // refused. 1024px is plenty for an avatar. Falls back to the original
+      // if the shrink fails.
+      const uri = (await compressProofImage(pickedUri, { maxEdge: AVATAR_MAX_EDGE })) ?? pickedUri;
+      const formData = new FormData();
+      formData.append('avatar', {
+        uri,
+        type: 'image/jpeg',
+        name: 'avatar.jpg',
+      } as any);
+
       const res = await userService.uploadAvatar(formData, (p) => setAvatarPct(p));
       const avatarUrl = res.data.data?.avatar_url;
       if (avatarUrl) {

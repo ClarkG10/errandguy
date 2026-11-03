@@ -65,3 +65,22 @@ export function classifyError(
   if (status >= 500) return 'server';
   return 'unknown';
 }
+
+/**
+ * Seconds to wait before retrying a 429, from the API envelope's
+ * `meta.retry_after` or the `Retry-After` header (delta-seconds or an HTTP
+ * date). null when neither says — callers then fall back to a vaguer "wait a
+ * moment". The api interceptor keeps it as `retryAfter` on the normalized
+ * error so the copy can say "Try again in 2 minutes".
+ */
+export function parseRetryAfter(value: unknown, now: number = Date.now()): number | null {
+  if (value == null) return null;
+  const text = String(value).trim();
+  if (!text) return null;
+  const seconds = typeof value === 'number' ? value : Number(text);
+  if (Number.isFinite(seconds)) return seconds > 0 ? Math.ceil(seconds) : null;
+  const at = Date.parse(text);
+  if (!Number.isFinite(at)) return null;
+  const until = Math.ceil((at - now) / 1000);
+  return until > 0 ? until : null;
+}

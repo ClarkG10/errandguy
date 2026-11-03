@@ -335,7 +335,7 @@ describe('customer home — a saved draft is never wiped without asking', () => 
 
   it('the "where to?" card resumes the draft instead of clearing it', async () => {
     const utils = await ready();
-    fireEvent.press(utils.getAllByLabelText('Start a new booking')[1]);
+    fireEvent.press(utils.getAllByLabelText('Book a new errand')[1]);
     expect(mockPush).toHaveBeenCalledWith('/(customer)/book/review');
     expect(useBookingStore.getState().draftBooking).toEqual(draft);
   });

@@ -48,7 +48,7 @@ export function PolicyLinksCard() {
               </View>
               <View className="flex-1 ml-3">
                 <Text className="text-[14px] font-montserrat-semi text-textPrimary">{row.label}</Text>
-                <Text className="text-[11px] font-montserrat text-textMuted">{row.caption}</Text>
+                <Text className="text-[11px] font-montserrat text-textTertiary">{row.caption}</Text>
               </View>
               <ArrowUpRight size={16} color={LightColors.textTertiary} strokeWidth={2} />
             </Pressable>

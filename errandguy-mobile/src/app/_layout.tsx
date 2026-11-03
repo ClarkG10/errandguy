@@ -19,6 +19,7 @@ import { useNetworkStore } from '../stores/networkStore';
 import { userService } from '../services/user.service';
 import { preloadAfterAuth, preloadCoreImages } from '../services/preload.service';
 import { initMutationQueue } from '../services/mutationQueue';
+import { CacheService } from '../services/cache.service';
 import { endLocalSession } from '../services/session.service';
 import { resumeSosIntent } from '../services/sosIntent';
 import { useNotifications } from '../hooks/useNotifications';
@@ -196,6 +197,12 @@ export default function RootLayout() {
     // Rehydrate any offline-queued mutations and wire the reconnect flush so
     // changes made while offline sync themselves the moment we're back online.
     void initMutationQueue();
+    // Clear expired cache entries once per launch (reads already treat them
+    // as missing). Android caps this storage at 6 MB, and once it is full every
+    // write in the app fails silently — drafts and queued work included.
+    // Deferred so it doesn't compete with the reads that paint the first screen.
+    const prune = setTimeout(() => void CacheService.pruneExpired(), 5000);
+    return () => clearTimeout(prune);
   }, [loadFromStorage, loadDraftFromStorage, loadPaymentAttempt]);
 
   // An SOS pressed with no signal is saved to disk and retried. Resume it here

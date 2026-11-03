@@ -20,7 +20,7 @@ import { useCountdown } from '../../hooks/useCountdown';
 import { authService } from '../../services/auth.service';
 import { useAuthStore } from '../../stores/authStore';
 import { toast } from '../../stores/toastStore';
-import { errorMessage } from '../../utils/errorCatalog';
+import { errorMessage, tooManyAttemptsMessage } from '../../utils/errorCatalog';
 import { confirmPasswordRules, newPasswordRules } from '../../utils/validation/passwordPolicy';
 import { APP_CONFIG } from '../../constants/config';
 import { copy } from '../../constants/copy';
@@ -140,7 +140,7 @@ export default function ResetPasswordScreen() {
       if (!status) {
         toast.error('Unable to reach the server. Check your internet connection.');
       } else if (status === 429) {
-        toast.error('Too many attempts. Please wait a few minutes and try again.');
+        toast.error(tooManyAttemptsMessage(error));
       } else {
         toast.error(errorMessage(error, copy.generic.tryAgain));
       }

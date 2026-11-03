@@ -23,6 +23,7 @@ import {
 import * as Haptics from 'expo-haptics';
 import { HereMapView, HereMarker, HerePolyline, type HereMapViewRef } from '../../../components/map';
 import { ErrorState } from '../../../components/ui/ErrorState';
+import { Button } from '../../../components/ui/Button';
 import { Spinner } from '../../../components/ui/Spinner';
 import { useRunnerStore } from '../../../stores/runnerStore';
 import { useLocationStore } from '../../../stores/locationStore';
@@ -268,6 +269,10 @@ export default function NavigateScreen() {
   // instead of an infinite "Preparing navigation…" spinner (the old
   // behaviour when this effect swallowed its rejection).
   const [hydrateFailed, setHydrateFailed] = useState(false);
+  // What actually failed, so the error screen can say "you're offline" or
+  // "errand not found" instead of one sentence for every cause. Null for the
+  // stall timeout / empty payload, which have no error object to describe.
+  const [hydrateError, setHydrateError] = useState<unknown>(null);
   const [hydrateAttempt, setHydrateAttempt] = useState(0);
   useEffect(() => {
     if (!id || booking) return;
@@ -283,12 +288,15 @@ export default function NavigateScreen() {
         if (fresh) {
           setBooking(fresh);
           setHydrateFailed(false);
+          setHydrateError(null);
         } else {
           setHydrateFailed(true);
         }
       })
-      .catch(() => {
-        if (!cancelled) setHydrateFailed(true);
+      .catch((err: unknown) => {
+        if (cancelled) return;
+        setHydrateError(err);
+        setHydrateFailed(true);
       })
       .finally(() => clearTimeout(timer));
     return () => {
@@ -382,19 +390,58 @@ export default function NavigateScreen() {
   const destKey = destination ? `${destination.lat.toFixed(4)},${destination.lng.toFixed(4)}` : '';
   const lastFetchKeyRef = useRef<string>('');
 
+  // One routing call at a time. The ~110m origin snap, the off-route reroute
+  // and the 60s refresh below can all fire within the same few seconds; each
+  // used to start its own HERE call, and whichever answered LAST won — even
+  // when it was the oldest. A request made while one is in flight now waits
+  // and runs once, from the newest position, after it lands.
+  const navFetchInFlightRef = useRef(false);
+  const navRefetchQueuedRef = useRef(false);
+  const lastNavFetchAtRef = useRef(0);
+  const fetchNavRef = useRef<() => Promise<void>>(async () => {});
+  // A queued refetch must not run once the screen is gone or the errand has
+  // ended (a cancellation mid-reroute): that's a HERE call nobody sees and
+  // state set on an unmounted screen.
+  const navMountedRef = useRef(true);
+  const navTerminatedRef = useRef(navTerminated);
+  navTerminatedRef.current = navTerminated;
+  useEffect(() => {
+    navMountedRef.current = true;
+    return () => {
+      navMountedRef.current = false;
+    };
+  }, []);
   const fetchNav = useCallback(async () => {
     if (!origin || !destination) return;
+    if (navFetchInFlightRef.current) {
+      navRefetchQueuedRef.current = true;
+      return;
+    }
+    navFetchInFlightRef.current = true;
+    lastNavFetchAtRef.current = Date.now();
     setRouteLoading(true);
     setRouteError(false);
-    const r = await routeService.getNavigationRoute(origin, destination);
-    if (r) {
-      setNavRoute(r);
-      setRouteError(false);
-    } else {
-      setRouteError(true);
+    try {
+      const r = await routeService.getNavigationRoute(origin, destination);
+      if (!navMountedRef.current) return;
+      if (r) {
+        setNavRoute(r);
+        setRouteError(false);
+      } else {
+        setRouteError(true);
+      }
+    } finally {
+      navFetchInFlightRef.current = false;
+      const replay = navRefetchQueuedRef.current;
+      navRefetchQueuedRef.current = false;
+      if (navMountedRef.current) {
+        setRouteLoading(false);
+        // The ref holds the latest render's fetchNav, i.e. the newest origin.
+        if (replay && !navTerminatedRef.current) void fetchNavRef.current();
+      }
     }
-    setRouteLoading(false);
   }, [origin, destination]);
+  fetchNavRef.current = fetchNav;
 
   useEffect(() => {
     if (!origin || !destination || navTerminated) return;
@@ -485,12 +532,21 @@ export default function NavigateScreen() {
   // pause the refresh while offline (its main win here \u2014 getNavigationRoute
   // resolves to null rather than rejecting, so the backoff path rarely fires;
   // maxInterval still caps it at 5min should it ever reject). (P29)
-  useSmartPolling(() => fetchNav(), {
-    interval: 60_000,
-    enabled: !!origin && !!destination && !navTerminated,
-    runOnMount: false,
-    maxInterval: 300_000,
-  });
+  useSmartPolling(
+    () => {
+      // A runner on the move refetches every ~110m anyway (the origin snap
+      // above), so a refresh that lands right after one of those is the same
+      // route bought twice. Only refresh a route that has actually aged.
+      if (Date.now() - lastNavFetchAtRef.current < 45_000) return Promise.resolve();
+      return fetchNav();
+    },
+    {
+      interval: 60_000,
+      enabled: !!origin && !!destination && !navTerminated,
+      runOnMount: false,
+      maxInterval: 300_000,
+    },
+  );
 
   // Camera follow: when followCamera is true, move to runner position on
   // each location update. Reduce Motion is a vestibular preference, so it
@@ -741,22 +797,38 @@ export default function NavigateScreen() {
   if (!booking) {
     if (hydrateFailed) {
       return (
-        <SafeAreaView className="flex-1 bg-background" edges={['top']}>
+        <SafeAreaView className="flex-1 bg-background justify-center px-4" edges={['top']}>
           <ErrorState
             title="Couldn't start navigation"
-            description="We couldn't load this errand's route details. Please try again."
+            description={
+              hydrateError
+                ? undefined
+                : "We couldn't load this errand's route details. Please try again."
+            }
+            error={hydrateError ?? undefined}
             onRetry={() => {
               setHydrateFailed(false);
+              setHydrateError(null);
               setHydrateAttempt((n) => n + 1);
             }}
+            style={{ flex: 0 }}
           />
+          {/* Retry alone was a dead end when the errand is gone for good
+              (reassigned, or a stale notification). */}
+          <View className="items-center pb-10">
+            <Button
+              title="Go to Home"
+              variant="outline"
+              onPress={() => router.dismissTo('/(runner)/(tabs)' as any)}
+            />
+          </View>
         </SafeAreaView>
       );
     }
     return (
       <View className="flex-1 bg-background items-center justify-center">
         <Spinner size="small" color={LightColors.primary} />
-        <Text className="mt-3 text-xs font-montserrat text-textSecondary">Preparing navigation\u2026</Text>
+        <Text className="mt-3 text-xs font-montserrat text-textSecondary">Preparing navigation…</Text>
       </View>
     );
   }

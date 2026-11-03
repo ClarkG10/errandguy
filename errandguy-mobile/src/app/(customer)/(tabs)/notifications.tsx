@@ -20,6 +20,7 @@ import {
   Trash2,
   Headphones,
   Megaphone,
+  RefreshCw,
 } from 'lucide-react-native';
 import type { LucideIcon } from 'lucide-react-native';
 import * as Haptics from 'expo-haptics';
@@ -54,6 +55,7 @@ import { storage } from '../../../utils/storage';
 import type { AppNotification, NotificationType } from '../../../types';
 import { TAB_CONTENT_BOTTOM_INSET } from '../../../constants/tabLayout';
 import { toast } from '../../../stores/toastStore';
+import { toastMaxDuration } from '../../../components/ui/ToastProvider';
 
 // Per-type presentation: a lucide icon inside a soft-tinted chip plus
 // the accent used for the unread dot and glyph. Blue-first — only
@@ -204,7 +206,11 @@ const SWIPE_HINT_KEY = 'notif_swipe_hint_v1';
 // How long a swipe-delete stays undoable before the server call fires.
 // Slightly shorter than the toast-with-action display time (5s) so the
 // Undo button never outlives the window it controls.
-const UNDO_DELETE_MS = 4000;
+const DELETED_TOAST = 'Notification deleted';
+// The server delete waits until the Undo toast can no longer be on screen
+// (its longest stay, screen reader included), so Undo works for as long as
+// it is visible. A fixed 4s used to close the window while Undo still showed.
+const UNDO_DELETE_MS = toastMaxDuration(DELETED_TOAST, true) + 500;
 
 /** Placeholder rows shown during the very first fetch so the empty
  *  state can't flash before we know whether the inbox is empty. */
@@ -457,9 +463,6 @@ export default function NotificationsScreen() {
   } = archived;
   const [clearConfirmVisible, setClearConfirmVisible] = useState(false);
   const [clearing, setClearing] = useState(false);
-  // Single-row delete is gated behind a confirm dialog so a stray swipe can't
-  // silently remove a notification. Holds the row awaiting confirmation.
-  const [deleteTarget, setDeleteTarget] = useState<AppNotification | null>(null);
   // Reduce Motion fallback for the swipe teaching peek — a dismissible
   // one-liner under the chips instead of a surprise animation.
   const [swipeHintCaption, setSwipeHintCaption] = useState(false);
@@ -471,6 +474,11 @@ export default function NotificationsScreen() {
   const [hasMore, setHasMore] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
   const loadingMoreRef = useRef(false);
+  // Set when fetching the next page failed. FlatList won't fire onEndReached
+  // again at the same scroll position, so a silent failure left an inbox that
+  // just stopped with no way to get older notifications; the footer offers
+  // "Try again" instead, and nothing pages on its own until it's tapped.
+  const [loadMoreFailed, setLoadMoreFailed] = useState(false);
 
   // Live registry of each row's swipeable methods plus which row (if
   // any) currently has its actions exposed — Apple Mail keeps at most
@@ -483,6 +491,18 @@ export default function NotificationsScreen() {
   const pendingDeletes = useRef(
     new Map<string, ReturnType<typeof setTimeout>>(),
   );
+  // Leaving the screen (sign-out, account switch) ends the undo window: send
+  // any still-pending delete now rather than dropping it.
+  useEffect(() => {
+    const pending = pendingDeletes.current;
+    return () => {
+      pending.forEach((t, id) => {
+        clearTimeout(t);
+        notificationService.deleteNotification(id).catch(() => {});
+      });
+      pending.clear();
+    };
+  }, []);
 
   // The chips are a SERVER filter now, and part of the cache key so switching
   // category refetches. They used to filter the loaded rows only, so a busy
@@ -490,6 +510,13 @@ export default function NotificationsScreen() {
   // unfetched on page three.
   const categoryTypes =
     category === 'all' ? undefined : CATEGORY_TYPES[category].join(',');
+  // Lets a page that was still loading when the chip changed be dropped
+  // instead of landing in the new category's list.
+  const categoryTypesRef = useRef(categoryTypes);
+  categoryTypesRef.current = categoryTypes;
+  useEffect(() => {
+    setLoadMoreFailed(false);
+  }, [category]);
 
   const notifQ = useQuery<AppNotification[]>(
     ['notifications', userId ?? 'anon', category],
@@ -502,6 +529,7 @@ export default function NotificationsScreen() {
       const list = (r.data?.data ?? []) as AppNotification[];
       // Reset pagination state whenever the head page is (re)fetched.
       setPage(1);
+      setLoadMoreFailed(false);
       // The Laravel paginator response surfaces last_page / current_page
       // at the top level; fall back to a length heuristic if the meta
       // shape changes.
@@ -515,10 +543,12 @@ export default function NotificationsScreen() {
     { staleTime: 30_000, ttl: CacheTTL.MEDIUM },
   );
 
-  const handleLoadMore = useCallback(async () => {
-    if (loadingMoreRef.current || !hasMore) return;
+  const fetchMore = useCallback(async () => {
+    if (loadingMoreRef.current) return;
     loadingMoreRef.current = true;
     setLoadingMore(true);
+    setLoadMoreFailed(false);
+    const forTypes = categoryTypes;
     try {
       const next = page + 1;
       // Must carry the category too, or page 2 of a filtered view returns
@@ -526,8 +556,9 @@ export default function NotificationsScreen() {
       const r = await notificationService.getNotifications({
         page: next,
         per_page: 20,
-        types: categoryTypes,
+        types: forTypes,
       });
+      if (categoryTypesRef.current !== forTypes) return;
       const more = (r.data?.data ?? []) as AppNotification[];
       const meta = r.data?.meta ?? r.data;
       const lastPage = Number(meta?.last_page ?? meta?.['last_page']);
@@ -546,12 +577,19 @@ export default function NotificationsScreen() {
       setPage(next);
       setHasMore(Number.isFinite(lastPage) ? next < lastPage : more.length >= 20);
     } catch {
-      // Soft-fail — keep `hasMore` true so user can retry by scrolling.
+      // Keep `hasMore` true; the footer's "Try again" retries this page.
+      if (categoryTypesRef.current === forTypes) setLoadMoreFailed(true);
     } finally {
       setLoadingMore(false);
       loadingMoreRef.current = false;
     }
-  }, [hasMore, page, setNotifications]);
+  }, [page, categoryTypes, setNotifications]);
+
+  const handleLoadMore = useCallback(() => {
+    // After a failure, wait for the explicit retry tap.
+    if (!hasMore || loadMoreFailed) return;
+    void fetchMore();
+  }, [hasMore, loadMoreFailed, fetchMore]);
 
   // Sync the rows into the global store as the query updates. The badge is
   // NOT derived from them (they are one page of one category) — it is re-read
@@ -709,7 +747,9 @@ export default function NotificationsScreen() {
 
   // Delete is optimistic AND undoable: the row disappears immediately,
   // but the server call is deferred so the Undo toast action can cancel
-  // it and splice the row back at its original index.
+  // it and splice the row back at its original index. Undo is the safety net
+  // — there's no confirm dialog in front of it (that made one delete three
+  // steps; the runner's inbox has always just offered Undo).
   const handleDelete = useCallback(
     (item: AppNotification) => {
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning).catch(
@@ -728,7 +768,7 @@ export default function NotificationsScreen() {
         });
       }, UNDO_DELETE_MS);
       pendingDeletes.current.set(item.id, timer);
-      toast.info('Notification deleted', {
+      toast.info(DELETED_TOAST, {
         actionLabel: 'Undo',
         onAction: () => {
           const pending = pendingDeletes.current.get(item.id);
@@ -742,13 +782,6 @@ export default function NotificationsScreen() {
     },
     [remove, restoreAt],
   );
-
-  // Swipe/rotor "Delete" opens a confirm dialog instead of deleting straight
-  // away; the actual removal (handleDelete, with its undo grace window) only
-  // runs once the user confirms.
-  const requestDelete = useCallback((item: AppNotification) => {
-    setDeleteTarget(item);
-  }, []);
 
   const handleClearAll = useCallback(async () => {
     // ConfirmModal fires the destructive warning haptic on confirm.
@@ -810,7 +843,7 @@ export default function NotificationsScreen() {
         archived={showArchived}
         onPress={handleNotificationPress}
         onArchive={showArchived ? handleUnarchive : handleArchive}
-        onDelete={requestDelete}
+        onDelete={handleDelete}
         registerRow={registerRow}
         onRowWillOpen={handleRowWillOpen}
         onRowClose={handleRowClose}
@@ -821,7 +854,7 @@ export default function NotificationsScreen() {
       handleNotificationPress,
       handleArchive,
       handleUnarchive,
-      requestDelete,
+      handleDelete,
       registerRow,
       handleRowWillOpen,
       handleRowClose,
@@ -1057,6 +1090,23 @@ export default function NotificationsScreen() {
                 Loading…
               </Text>
             </View>
+          ) : (showArchived ? archived.loadMoreFailed : loadMoreFailed) ? (
+            // Same inline retry as the runner's history and the wallet.
+            <Pressable
+              onPress={() => {
+                Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
+                void (showArchived ? archived.retryLoadMore() : fetchMore());
+              }}
+              accessibilityRole="button"
+              accessibilityLabel="Retry loading more notifications"
+              className="mx-5 my-2 py-3 rounded-2xl border border-divider bg-surface flex-row items-center justify-center"
+              style={{ minHeight: 44 }}
+            >
+              <RefreshCw size={14} color={LightColors.primary} strokeWidth={2} />
+              <Text className="text-[12px] font-montserrat-bold text-primary ml-2">
+                Couldn’t load more · Try again
+              </Text>
+            </Pressable>
           ) : !listHasMore && visibleNotifications.length > 0 ? (
             <View className="py-4 items-center">
               <Text className="text-[11px] font-montserrat text-textTertiary">
@@ -1124,26 +1174,6 @@ export default function NotificationsScreen() {
         loading={clearing}
         onConfirm={handleClearAll}
         onCancel={() => setClearConfirmVisible(false)}
-      />
-
-      <ConfirmModal
-        visible={deleteTarget !== null}
-        title="Delete notification?"
-        message="This removes it from your inbox. You'll get a moment to undo."
-        confirmLabel="Delete"
-        cancelLabel="Cancel"
-        destructive
-        onConfirm={() => {
-          const target = deleteTarget;
-          setDeleteTarget(null);
-          if (target) handleDelete(target);
-        }}
-        onCancel={() => {
-          const target = deleteTarget;
-          setDeleteTarget(null);
-          // Snap the still-open swiped row shut when the user backs out.
-          if (target) rowRefs.current.get(target.id)?.current?.close();
-        }}
       />
     </View>
   );

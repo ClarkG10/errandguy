@@ -37,6 +37,26 @@ export function formatDateTime(date: string | Date): string {
   return format(date, 'MMM D, YYYY h:mm A');
 }
 
+/** "Nov 3" — a recent date where the year goes without saying. */
+export function formatMonthDay(date: string | Date): string {
+  return format(date, 'MMM D');
+}
+
+/** "Nov 2026" — e.g. "Member since". */
+export function formatMonthYear(date: string | Date): string {
+  return format(date, 'MMM YYYY');
+}
+
+/** "Monday, Nov 3" — a day-group heading. */
+export function formatWeekdayMonthDay(date: string | Date): string {
+  return format(date, 'dddd, MMM D');
+}
+
+/** "Nov 3, 2:30 PM" — a recent event with its time. */
+export function formatMonthDayTime(date: string | Date): string {
+  return format(date, 'MMM D, h:mm A');
+}
+
 export function formatDateForAPI(date: Date): string {
   return dayjs(date).toISOString();
 }

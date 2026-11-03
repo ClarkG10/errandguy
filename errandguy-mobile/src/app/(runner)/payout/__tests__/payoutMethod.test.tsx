@@ -7,6 +7,7 @@ import { useRunnerStore } from '../../../../stores/runnerStore';
 import { runnerService } from '../../../../services/runner.service';
 import { userService } from '../../../../services/user.service';
 import type { RunnerProfile, User } from '../../../../types';
+import { toast } from '../../../../stores/toastStore';
 
 /**
  * The runner's payout method: ONE explicit destination — GCash, Maya or a
@@ -150,6 +151,49 @@ describe('payout method — none saved yet', () => {
 
     expect(screen.getByText('Enter the Maya mobile number, e.g. 09171234567.')).toBeTruthy();
     expect(mockSave).not.toHaveBeenCalled();
+  });
+
+  it("puts the server's field errors under the fields, without a toast on top", async () => {
+    startWith(profile());
+    mockSave.mockRejectedValue({
+      status: 422,
+      message: 'Enter the bank account number (digits only). (and 1 more error)',
+      errors: {
+        account_number: ['Enter the bank account number (digits only).'],
+        bank_name: ['Choose your bank.'],
+      },
+      kind: 'validation',
+    });
+    const toastError = jest.spyOn(toast, 'error');
+    const screen = renderScreen();
+
+    fireEvent.press(screen.getByLabelText('Bank account'));
+    fireEvent.press(screen.getByLabelText('BPI'));
+    fireEvent.changeText(screen.getByLabelText('Account number'), '1234 5678 9');
+    await act(async () => {
+      fireEvent.press(screen.getByLabelText('Save payout method'));
+    });
+
+    expect(screen.getByText('Enter the bank account number (digits only).')).toBeTruthy();
+    expect(screen.getByText('Choose your bank.')).toBeTruthy();
+    expect(toastError).not.toHaveBeenCalled();
+    toastError.mockRestore();
+  });
+
+  it('still says why when a save fails with nothing to point at', async () => {
+    startWith(profile());
+    mockSave.mockRejectedValue({ status: 0, message: 'Network error.', errors: {}, kind: 'offline' });
+    const toastError = jest.spyOn(toast, 'error');
+    const screen = renderScreen();
+
+    fireEvent.press(screen.getByLabelText('GCash'));
+    fireEvent.changeText(screen.getByLabelText('GCash number'), '0917-123-4567');
+    await act(async () => {
+      fireEvent.press(screen.getByLabelText('Save payout method'));
+    });
+
+    expect(toastError).toHaveBeenCalledTimes(1);
+    toastError.mockRestore();
   });
 
   it('pre-selects a bank saved without its account number, asking only for the number', () => {

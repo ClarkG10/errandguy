@@ -636,7 +636,7 @@ export default function CustomerProfileScreen() {
         title={isRunnerAlready ? 'Switch to runner mode?' : 'Start earning as a runner?'}
         message={
           isRunnerAlready
-            ? 'You’ll switch to the runner app. Your bookings, wallet and saved addresses stay exactly as they are — switch back any time from your runner profile.'
+            ? 'You’ll switch to the runner app. Your errands, wallet and saved addresses stay exactly as they are — switch back any time from your runner profile.'
             : 'We’ll set up your runner profile. You’ll need a government ID and a selfie before you can accept errands, and you can switch back to customer mode any time from your profile.'
         }
         confirmLabel={isRunnerAlready ? 'Switch' : 'Continue'}

@@ -86,6 +86,8 @@ export default function RateScreen() {
   // 'loading' → skeleton receipt; 'error' → compact retry row; 'ready' →
   // real receipt. The rating card stays usable in every state.
   const [bookingState, setBookingState] = useState<'loading' | 'error' | 'ready'>('loading');
+  // The receipt load's failure, so its error block shows offline vs a fault.
+  const [bookingError, setBookingError] = useState<unknown>(null);
   const [rating, setRating] = useState(0);
   const [comment, setComment] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -141,7 +143,10 @@ export default function RateScreen() {
         setBooking(res.data.data);
         setBookingState('ready');
       })
-      .catch(() => setBookingState('error'));
+      .catch((err) => {
+        setBookingError(err);
+        setBookingState('error');
+      });
   }, [bookingId]);
 
   useEffect(() => {
@@ -430,6 +435,7 @@ export default function RateScreen() {
               compact
               title="Couldn't load your receipt"
               description="You can still rate your runner below."
+              error={bookingError}
               onRetry={fetchBooking}
             />
           </Card>
@@ -648,7 +654,7 @@ export default function RateScreen() {
                         loadingTitle={tipMethod === 'wallet' ? 'Sending…' : 'Starting…'}
                         fullWidth
                       />
-                      <Text className="text-[11px] font-montserrat text-textMuted mt-2 text-center">
+                      <Text className="text-[11px] font-montserrat text-textTertiary mt-2 text-center">
                         {tipMethod === 'wallet' && withdrawable != null
                           ? `Paid from your wallet (${formatCurrency(withdrawable)})`
                           : `Paid via ${TIP_METHOD_LABEL[tipMethod]}`}{' '}
@@ -721,7 +727,7 @@ export default function RateScreen() {
                   title="Book again"
                   icon={Repeat}
                   onPress={handleBookAgain}
-                  accessibilityHint="Starts a new booking pre-filled from this one"
+                  accessibilityHint="Starts a new errand pre-filled from this one"
                   fullWidth
                 />
               ) : null}

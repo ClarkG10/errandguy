@@ -8,6 +8,19 @@ export interface EtaResult {
   distanceMeters: number | null;
   /** True while a Mapbox Directions fetch is in flight. */
   refreshing: boolean;
+  /** Geometry of the last fetched route as `[lng, lat]` pairs, or null before
+   *  one lands. Lets a map draw the same leg this ETA came from instead of
+   *  asking for it a second time. */
+  coordinates: [number, number][] | null;
+}
+
+interface UseEtaOptions {
+  /**
+   * When false the hook keeps its last values and fetches nothing — for a
+   * screen that stays mounted under another one (the errand cockpit under
+   * turn-by-turn). It catches up on the next change once re-enabled.
+   */
+  enabled?: boolean;
 }
 
 interface Point {
@@ -68,9 +81,11 @@ export function useEta(
   origin: Point | null | undefined,
   destination: Point | null | undefined,
   profile: 'driving' | 'cycling' | 'walking' = 'driving',
+  { enabled = true }: UseEtaOptions = {},
 ): EtaResult {
   const [minutes, setMinutes] = useState<number | null>(null);
   const [refreshing, setRefreshing] = useState(false);
+  const [coordinates, setCoordinates] = useState<[number, number][] | null>(null);
 
   // Defensive coercion: callers occasionally pass `booking.pickup_lat`
   // / `booking.pickup_lng` straight through, which Laravel serialises
@@ -95,6 +110,7 @@ export function useEta(
   const lastFetchedKeyRef = useRef<string>('');
 
   useEffect(() => {
+    if (!enabled) return;
     if (!safeOrigin || !safeDestination) {
       setMinutes(null);
       return;
@@ -110,9 +126,14 @@ export function useEta(
         { lng: safeOrigin.lng, lat: safeOrigin.lat },
         { lng: safeDestination.lng, lat: safeDestination.lat },
         profile,
+        // The origin here is the runner's moving position.
+        { liveOrigin: true },
       )
       .then((res) => {
         if (cancelled) return;
+        // A failed refetch keeps the last line on the map rather than
+        // blanking it, same as the ETA below.
+        if (res && res.coordinates.length > 0) setCoordinates(res.coordinates);
         // The REAL fetched route duration always wins — it carries road
         // geometry and HERE's traffic model. The speed table below is a
         // strict fallback for when routing is unavailable.
@@ -136,8 +157,12 @@ export function useEta(
 
     return () => {
       cancelled = true;
+      // An effect cut short (disabled, or the origin moved cells mid-fetch)
+      // must not leave its key marked as fetched, or re-enabling at the same
+      // spot would skip the fetch and keep whatever was there before.
+      if (lastFetchedKeyRef.current === key) lastFetchedKeyRef.current = '';
     };
-  }, [originKey, destKey, profile]);
+  }, [originKey, destKey, profile, enabled]);
 
-  return { minutes, distanceMeters, refreshing };
+  return { minutes, distanceMeters, refreshing, coordinates };
 }

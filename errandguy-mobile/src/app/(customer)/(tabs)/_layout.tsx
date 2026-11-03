@@ -2,7 +2,11 @@ import { Tabs } from 'expo-router';
 import { View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useNotificationStore } from '../../../stores/notificationStore';
-import { TabBarItem } from '../../../components/ui/TabBarItem';
+import {
+  TabBarItem,
+  TAB_LABEL_STYLE,
+  cappedTabBarLabel,
+} from '../../../components/ui/TabBarItem';
 import { HidingTabBar } from '../../../components/ui/HidingTabBar';
 import { QuickBookFAB } from '../../../components/ui/QuickBookFAB';
 import {
@@ -65,7 +69,9 @@ export default function CustomerTabsLayout() {
         // Short word under every icon: an icon-only bar left first-time
         // customers guessing what "list" and "person" lead to.
         tabBarShowLabel: true,
-        tabBarLabelStyle: { fontFamily: 'Quicksand_600SemiBold', fontSize: 11 },
+        tabBarLabelStyle: TAB_LABEL_STYLE,
+        // Capped at the chrome font scale (see cappedTabBarLabel).
+        tabBarLabel: cappedTabBarLabel,
         tabBarHideOnKeyboard: true,
         tabBarStyle: {
           backgroundColor: LightColors.surface,

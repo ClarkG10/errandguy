@@ -188,3 +188,51 @@ export function isSocketConnected(): boolean {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   return (echo.connector as any)?.pusher?.connection?.state === 'connected';
 }
+
+// Pusher's own lifecycle events, addressed with a leading `.` so Echo binds
+// them verbatim (no App\Events namespace).
+const SUBSCRIBED_EVENT = '.pusher:subscription_succeeded';
+const SUBSCRIPTION_ERROR_EVENT = '.pusher:subscription_error';
+
+/** The slice of an Echo channel `watchChannelHealth` needs. */
+interface ListenableChannel {
+  listen(event: string, callback: (...args: unknown[]) => void): unknown;
+  stopListening(event: string, callback?: (...args: unknown[]) => void): unknown;
+}
+
+/**
+ * Report whether `channel` is genuinely live: true once its subscription
+ * succeeds (or right away when the shared socket is already up, since a
+ * channel another screen subscribed earlier won't announce itself again),
+ * false on a subscription error or when the socket drops.
+ *
+ * Returns the function that removes EVERY listener it added. Echo's own
+ * `.subscribed(cb)` / `.error(cb)` wrap the callback in a fresh closure, so
+ * nothing could ever unbind them: on a ref-counted channel that outlives the
+ * screen (the booking channel stays up while any subscriber remains), each
+ * mount piled another pair of dead closures onto it.
+ */
+export function watchChannelHealth(
+  channel: ListenableChannel,
+  onChange: (live: boolean) => void,
+): () => void {
+  const onSubscribed = () => onChange(true);
+  const onError = () => onChange(false);
+  channel.listen(SUBSCRIBED_EVENT, onSubscribed);
+  channel.listen(SUBSCRIPTION_ERROR_EVENT, onError);
+
+  if (isSocketConnected()) onChange(true);
+
+  // Reflect socket drops immediately — every channel rides one connection.
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const connection = (echo.connector as any)?.pusher?.connection;
+  const onStateChange = (states: { current: string }) =>
+    onChange(states.current === 'connected');
+  connection?.bind('state_change', onStateChange);
+
+  return () => {
+    channel.stopListening(SUBSCRIBED_EVENT, onSubscribed);
+    channel.stopListening(SUBSCRIPTION_ERROR_EVENT, onError);
+    connection?.unbind('state_change', onStateChange);
+  };
+}

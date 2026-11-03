@@ -72,6 +72,35 @@ describe('useArchivedNotifications', () => {
     });
   });
 
+  it('stops after a failed page and retries only when asked', async () => {
+    mockGet
+      .mockResolvedValueOnce({ data: { data: [row('a')], meta: { last_page: 2 } } })
+      .mockRejectedValueOnce(new Error('offline'))
+      .mockResolvedValueOnce({ data: { data: [row('b')], meta: { last_page: 2 } } });
+
+    const { result } = renderHook(() => useArchivedNotifications('u1', true));
+    await waitFor(() => expect(result.current.rows).toHaveLength(1));
+
+    await act(async () => {
+      result.current.loadMore();
+    });
+    await waitFor(() => expect(result.current.loadMoreFailed).toBe(true));
+    expect(result.current.hasMore).toBe(true);
+
+    // Scrolling to the end again doesn't hammer the failing page.
+    await act(async () => {
+      result.current.loadMore();
+    });
+    expect(mockGet).toHaveBeenCalledTimes(2);
+
+    // The footer's "Try again" does.
+    await act(async () => {
+      await result.current.retryLoadMore();
+    });
+    expect(result.current.loadMoreFailed).toBe(false);
+    expect(result.current.rows.map((n) => n.id)).toEqual(['a', 'b']);
+  });
+
   it('takes a row out for "move to inbox" and can put it back where it was', async () => {
     mockGet.mockResolvedValue({ data: { data: [row('a'), row('b'), row('c')], meta: { last_page: 1 } } });
     const { result } = renderHook(() => useArchivedNotifications('u1', true));

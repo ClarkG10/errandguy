@@ -18,7 +18,7 @@ import { Illustration } from '../../components/ui/Illustration';
 import { useResponsive } from '../../constants/responsive';
 import { authService } from '../../services/auth.service';
 import { toast } from '../../stores/toastStore';
-import { errorMessage } from '../../utils/errorCatalog';
+import { errorMessage, tooManyAttemptsMessage } from '../../utils/errorCatalog';
 import { copy } from '../../constants/copy';
 import { LightColors } from '../../constants/colors';
 
@@ -71,7 +71,7 @@ export default function ForgotPasswordScreen() {
       if (!status) {
         message = 'Unable to reach the server. Check your internet connection.';
       } else if (status === 429) {
-        message = 'Too many attempts. Please wait a few minutes and try again.';
+        message = tooManyAttemptsMessage(error);
       } else if (status >= 500) {
         message = 'Something went wrong on our end. Please try again later.';
       } else {

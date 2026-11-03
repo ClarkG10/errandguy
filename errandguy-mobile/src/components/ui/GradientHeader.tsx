@@ -7,6 +7,7 @@ import { useRouter } from 'expo-router';
 import type { LucideIcon } from 'lucide-react-native';
 import { useResponsive } from '../../constants/responsive';
 import { LightColors } from '../../constants/colors';
+import { CHROME_MAX_FONT_SCALE } from '../../constants/fontScale';
 
 /**
  * Page header used on every customer (and runner) page.
@@ -184,9 +185,13 @@ export function GradientHeader({
             <ChevronLeft size={backIcon} color={contentColor} strokeWidth={2.2} />
           </Pressable>
         ) : null}
+        {/* The title row is a fixed height, so the title takes the chrome
+            font cap; it's the page's heading for screen readers. */}
         <Text
           className="flex-1 font-montserrat-bold"
           numberOfLines={1}
+          maxFontSizeMultiplier={CHROME_MAX_FONT_SCALE}
+          accessibilityRole="header"
           style={{
             marginLeft: showBack ? 10 : 0,
             fontSize: titleFont,

@@ -1,9 +1,9 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useRef } from 'react';
 import { View, Text, Pressable, Animated } from 'react-native';
 import { HereMapView, HereMarker, HerePolyline, type HereMapViewRef } from '../map';
 import { Locate, Navigation } from 'lucide-react-native';
 import { useLocationStore } from '../../stores/locationStore';
-import { routeService, formatEtaMinutes } from '../../services/route.service';
+import { formatEtaMinutes } from '../../services/route.service';
 import { useEta } from '../../hooks/useEta';
 import { LightColors, Elevation } from '../../constants/colors';
 
@@ -17,6 +17,12 @@ interface RunnerActiveMapProps {
   etaMinutes?: number | null;
   variant?: 'card' | 'fill';
   bottomOffset?: number | Animated.Value | Animated.AnimatedInterpolation<number>;
+  /**
+   * False while the screen hosting the map is covered (turn-by-turn pushed on
+   * top of the errand cockpit). The map then stops fetching routes and
+   * re-fitting on every GPS fix nobody can see, and catches up on return.
+   */
+  active?: boolean;
 }
 
 export function RunnerActiveMap({
@@ -29,6 +35,7 @@ export function RunnerActiveMap({
   etaMinutes,
   variant = 'card',
   bottomOffset = 24,
+  active = true,
 }: RunnerActiveMapProps) {
   const currentLocation = useLocationStore((s) => s.currentLocation);
   const mapRef = useRef<HereMapViewRef>(null);
@@ -53,39 +60,24 @@ export function RunnerActiveMap({
   const hasPickup = pLat != null && pLng != null;
   const hasDropoff = dLat != null && dLng != null;
 
-  // Live ETA to the destination this map actually draws its route to. Computed
-  // HERE — a leaf that already subscribes to currentLocation — rather than in
-  // the ~1100-line parent errand screen, so a GPS fix re-renders only this map
-  // instead of the whole errand tree. `etaMinutes` stays an optional override
-  // for any caller that wants to supply its own. (P14)
-  const internalEta = useEta(
+  // Live ETA AND the drawn route for the leg this map shows, from ONE request.
+  // Computed HERE — a leaf that already subscribes to currentLocation — rather
+  // than in the ~1100-line parent errand screen, so a GPS fix re-renders only
+  // this map instead of the whole errand tree. The polyline used to come from a
+  // second effect asking routeService for the very same leg, so every ~110 m
+  // the map paid for the same route twice. `etaMinutes` stays an optional
+  // override for any caller that wants to supply its own. (P14)
+  const eta = useEta(
     hasRunner ? { lat: myLat!, lng: myLng! } : null,
     hasDest ? { lat: destLat!, lng: destLng! } : null,
+    'driving',
+    { enabled: active },
   );
-  const displayEta = etaMinutes ?? internalEta.minutes;
+  const displayEta = etaMinutes ?? eta.minutes;
 
-  const [routeCoords, setRouteCoords] = useState<[number, number][]>([]);
-
-  const runnerKey = useMemo(() => {
-    if (!hasRunner) return '';
-    return `${myLat!.toFixed(3)},${myLng!.toFixed(3)}`;
-  }, [hasRunner, myLat, myLng]);
-
-  useEffect(() => {
-    if (!hasRunner || !hasDest) return;
-    let cancelled = false;
-    routeService
-      .getRoute({ lng: myLng!, lat: myLat! }, { lng: destLng!, lat: destLat! })
-      .then((res) => {
-        if (cancelled || !res) return;
-        setRouteCoords(res.coordinates);
-      });
-    return () => { cancelled = true; };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [runnerKey, destLat, destLng, hasRunner, hasDest]);
-
+  const routeCoords = eta.coordinates;
   const routeMapCoords = useMemo(
-    () => routeCoords.map(([lng, lat]) => ({ latitude: lat, longitude: lng })),
+    () => (routeCoords ?? []).map(([lng, lat]) => ({ latitude: lat, longitude: lng })),
     [routeCoords],
   );
 
@@ -106,12 +98,12 @@ export function RunnerActiveMap({
   }, [hasDest, hasRunner, myLng, myLat, destLat, destLng]);
 
   useEffect(() => {
-    if (!mapRef.current || !fitBounds) return;
+    if (!active || !mapRef.current || !fitBounds) return;
     mapRef.current.fitToCoordinates(fitBounds, {
       edgePadding: { top: 50, bottom: 70, left: 50, right: 50 },
       animated: true,
     });
-  }, [fitBounds]);
+  }, [fitBounds, active]);
 
   const recenter = () => {
     if (!mapRef.current) return;

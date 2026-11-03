@@ -151,6 +151,7 @@ export function StopsEditor({
                 value={query}
                 onChangeText={runSearch}
                 placeholder="Search an address…"
+                accessibilityLabel="Search for an extra stop address"
                 autoFocus
               />
             </View>
@@ -223,7 +224,7 @@ export function StopsEditor({
       )}
 
       {atMax && !adding && (
-        <Text className="text-[11px] font-montserrat text-textMuted mt-1">
+        <Text className="text-[11px] font-montserrat text-textTertiary mt-1">
           You can add up to {max} extra stops.
         </Text>
       )}

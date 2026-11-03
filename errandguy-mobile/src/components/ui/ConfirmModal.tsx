@@ -15,6 +15,13 @@ interface ConfirmModalProps {
   cancelLabel?: string;
   destructive?: boolean;
   loading?: boolean;
+  /** Holds only the confirm button back (Cancel and the backdrop stay live),
+   *  e.g. until the facts the message states have loaded — a confirm that
+   *  can be tapped before the fee is shown agrees to a fee nobody saw. */
+  confirmDisabled?: boolean;
+  /** A small link under the message, e.g. "Check again" when the lookup the
+   *  message depends on failed. */
+  messageAction?: { label: string; onPress: () => void };
   onConfirm: () => void;
   onCancel: () => void;
 }
@@ -28,6 +35,8 @@ export function ConfirmModal({
   cancelLabel = 'Cancel',
   destructive = false,
   loading = false,
+  confirmDisabled = false,
+  messageAction,
   onConfirm,
   onCancel,
 }: ConfirmModalProps) {
@@ -112,6 +121,27 @@ export function ConfirmModal({
               </Text>
             </ScrollView>
 
+            {messageAction ? (
+              <Pressable
+                onPress={messageAction.onPress}
+                disabled={loading}
+                hitSlop={12}
+                accessibilityRole="button"
+                style={{ alignSelf: 'center', marginTop: -12, marginBottom: 18 }}
+              >
+                <Text
+                  style={{
+                    fontSize: 14,
+                    fontFamily: 'Quicksand_700Bold',
+                    color: LightColors.primary,
+                    textAlign: 'center',
+                  }}
+                >
+                  {messageAction.label}
+                </Text>
+              </Pressable>
+            ) : null}
+
             {/* Stacked action buttons — modern pattern replacing the old
                 horizontal-split row. Primary action is always visible and
                 tappable at the natural thumb position; cancel sits below
@@ -123,7 +153,7 @@ export function ConfirmModal({
                 variant={destructive ? 'danger' : 'primary'}
                 fullWidth
                 loading={loading}
-                disabled={loading}
+                disabled={loading || confirmDisabled}
                 onPress={handleConfirm}
               />
               <Button

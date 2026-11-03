@@ -71,7 +71,13 @@ export const runnerService = {
   },
 
   updateLocation(
-    coords: Coordinate & { heading?: number; speed?: number; booking_id?: string | null },
+    coords: Coordinate & {
+      heading?: number;
+      speed?: number;
+      /** Fix accuracy in metres; the server nulls anything past ~1 km. */
+      accuracy?: number;
+      booking_id?: string | null;
+    },
   ) {
     // Silent: GPS push fires every ~5s while the runner is online; it
     // has zero user-facing intent and shouldn't pin the global progress
@@ -84,7 +90,12 @@ export const runnerService = {
     // so those pings never reached the tracking screen. Sending the id
     // from the client closes the race for the common case (runner
     // already on an active errand).
-    return api.post('/runner/location', coords, { silent: true });
+    //
+    // Short timeout: a ping is worth nothing 8s later — the next fix is
+    // already on its way — and the default 30s let a dead-zone request hold
+    // the sender's one in-flight slot long after it mattered. POSTs are never
+    // retried by api.ts, so there is nothing else to switch off.
+    return api.post('/runner/location', coords, { silent: true, timeout: 8_000 });
   },
 
   getCurrentErrand() {

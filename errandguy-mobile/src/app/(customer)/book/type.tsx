@@ -403,7 +403,7 @@ export default function TypeSelectionScreen() {
 
       <ConfirmModal
         visible={showDiscardModal}
-        title="Discard this booking?"
+        title="Discard this errand?"
         message="You'll lose the details you've entered so far."
         confirmLabel="Discard"
         cancelLabel="Keep editing"

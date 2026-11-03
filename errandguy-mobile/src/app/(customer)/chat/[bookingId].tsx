@@ -291,7 +291,8 @@ export default function ChatScreen() {
   // slot on the very first load; `loadError` surfaces a retry affordance
   // above the composer when that first fetch fails (previously silent).
   const [initialLoading, setInitialLoading] = useState(true);
-  const [loadError, setLoadError] = useState(false);
+  // Holds the failure itself, so the retry can say offline vs a server fault.
+  const [loadError, setLoadError] = useState<unknown>(null);
   // First-unread marker, frozen once when the thread opens so the "New
   // messages" divider doesn't jump as messages get marked read.
   const [firstUnreadId, setFirstUnreadId] = useState<string | null>(null);
@@ -375,10 +376,10 @@ export default function ChatScreen() {
   useEffect(() => {
     if (!bookingId) return;
     setInitialLoading(true);
-    setLoadError(false);
+    setLoadError(null);
     fetchMessages()
-      .then(() => setLoadError(false))
-      .catch(() => setLoadError(true))
+      .then(() => setLoadError(null))
+      .catch((err) => setLoadError(err ?? new Error('load failed')))
       .finally(() => setInitialLoading(false));
     // Only PATCH /read on mount when there's actually something to
     // clear. Previously we fired this unconditionally on every chat
@@ -393,10 +394,10 @@ export default function ChatScreen() {
   // Manual retry from the ErrorState shown above the composer.
   const handleReload = useCallback(() => {
     setInitialLoading(true);
-    setLoadError(false);
+    setLoadError(null);
     fetchMessages()
-      .then(() => setLoadError(false))
-      .catch(() => setLoadError(true))
+      .then(() => setLoadError(null))
+      .catch((err) => setLoadError(err ?? new Error('load failed')))
       .finally(() => setInitialLoading(false));
   }, [fetchMessages]);
 
@@ -817,7 +818,12 @@ export default function ChatScreen() {
             conversation isn't a silent blank when the fetch fails. */}
         {loadError && messages.length === 0 ? (
           <View className="px-4 py-2">
-            <ErrorState compact onRetry={handleReload} />
+            <ErrorState
+              compact
+              title="Couldn't load messages"
+              error={loadError}
+              onRetry={handleReload}
+            />
           </View>
         ) : null}
 

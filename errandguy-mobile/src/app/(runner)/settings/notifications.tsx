@@ -189,7 +189,7 @@ export default function NotificationsScreen() {
 
           <View className="mt-3">
             <Button
-              title={granted === false ? 'Turn On Notifications' : 'Open Device Settings'}
+              title={granted === false ? 'Turn on notifications' : 'Open device settings'}
               onPress={openDeviceSettings}
               variant={granted === false ? 'primary' : 'secondary'}
               size="sm"

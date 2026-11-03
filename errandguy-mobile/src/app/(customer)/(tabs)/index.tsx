@@ -818,7 +818,7 @@ export default function CustomerHomeScreen() {
             android_ripple={{ color: 'rgba(255,255,255,0.12)' }}
             onPress={withLightImpact(startOrResume)}
             accessibilityRole="button"
-            accessibilityLabel="Start a new booking"
+            accessibilityLabel="Book a new errand"
           />
 
           <SafeAreaView edges={['top']} pointerEvents="box-none">
@@ -880,7 +880,7 @@ export default function CustomerHomeScreen() {
           <Pressable
             onPress={withLightImpact(startOrResume)}
             accessibilityRole="button"
-            accessibilityLabel="Start a new booking"
+            accessibilityLabel="Book a new errand"
             className="bg-surface px-4 py-4 rounded-[28px] border border-divider"
             android_ripple={{ color: 'rgba(37,99,235,0.08)' }}
             style={({ pressed }) => [hs.searchBox, pressed && hs.cardPressed]}
@@ -947,7 +947,7 @@ export default function CustomerHomeScreen() {
                 className="flex-1 flex-row items-center"
                 accessibilityRole="button"
                 accessibilityLabel={`Continue your ${resumeInfo.typeName} errand, step ${resumeInfo.stepNumber} of ${BOOKING_STEP_COUNT}`}
-                accessibilityHint="Returns to where you left off in the booking"
+                accessibilityHint="Returns to where you left off"
                 style={({ pressed }) => pressed && hs.cardPressed}
               >
                 {resumeInfo.iconName ? (

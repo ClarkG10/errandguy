@@ -3,7 +3,7 @@ import { useChatStore } from '../stores/chatStore';
 import { chatService } from '../services/chat.service';
 import { useSmartPolling } from './useSmartPolling';
 import { CacheService, CacheTTL } from '../services/cache.service';
-import { echo, retainChannel, releaseChannel } from '../services/echo';
+import { echo, retainChannel, releaseChannel, watchChannelHealth } from '../services/echo';
 import { useAuthStore } from '../stores/authStore';
 import type { Message } from '../types';
 
@@ -14,6 +14,13 @@ const TYPING_THROTTLE_MS = 2_000;
 /** How long the "typing…" indicator stays lit after the last event.
  *  Longer than the sender throttle so continuous typing never flickers. */
 const TYPING_HOLD_MS = 3_500;
+
+/** Fallback poll cadence. Tight while the chat channel is down (it is then
+ *  the only way messages arrive), relaxed while the channel is subscribed and
+ *  pushing — the poll is just a safety net then. Mirrors the tracking screen's
+ *  realtime-healthy cadence. */
+const POLL_MS_REALTIME_DOWN = 8_000;
+const POLL_MS_REALTIME_UP = 30_000;
 
 /** Per-booking cache key for the most recent page of messages. */
 const cacheKey = (bookingId: string) => `chat:messages:${bookingId}`;
@@ -273,6 +280,8 @@ export function useChat(bookingId: string) {
   const channelRef = useRef<any>(null);
   const typingClearRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const lastTypingSentRef = useRef(0);
+  /** The chat channel is subscribed and the socket is up. Drives the poll. */
+  const [channelLive, setChannelLive] = useState(false);
 
   useEffect(() => {
     if (!bookingId) return;
@@ -281,6 +290,10 @@ export function useChat(bookingId: string) {
     const channel = echo.private(channelName);
     retainChannel(channelName);
     channelRef.current = channel;
+    let active = true;
+    const stopWatching = watchChannelHealth(channel, (live) => {
+      if (active) setChannelLive(live);
+    });
 
     // New chat message — mirrors MessageResource (sender loaded). The store
     // dedupes by id, so the sender's own echoed message is harmless.
@@ -307,6 +320,9 @@ export function useChat(bookingId: string) {
     channel.listenForWhisper('typing', onTyping);
 
     return () => {
+      active = false;
+      stopWatching();
+      setChannelLive(false);
       channel.stopListening('.message.created', onMessage);
       channel.stopListeningForWhisper('typing', onTyping);
       channelRef.current = null;
@@ -343,7 +359,9 @@ export function useChat(bookingId: string) {
   // push path, but it depends on the socket staying live and the
   // broadcasting-auth handshake (Laravel Sanctum) succeeding — if the channel
   // drops or auth fails, pushes silently never arrive. Polling closes that
-  // gap. At 8s (not 2s) it's a light fallback; useSmartPolling additionally
+  // gap: 8s while the channel is down, 30s while it is live (it used to poll
+  // at 8s regardless — ~450 requests an hour per open chat that realtime was
+  // already covering). useSmartPolling additionally
   // pauses it while backgrounded/offline, ticks immediately on foreground +
   // reconnect, and backs off (up to 32s) if getMessages starts failing.
   const pollMessages = useCallback(async () => {
@@ -381,7 +399,7 @@ export function useChat(bookingId: string) {
   }, [bookingId, addMessage]);
 
   useSmartPolling(pollMessages, {
-    interval: 8_000,
+    interval: channelLive ? POLL_MS_REALTIME_UP : POLL_MS_REALTIME_DOWN,
     enabled: !!bookingId,
     runOnMount: true,
     pauseWhenOffline: true,

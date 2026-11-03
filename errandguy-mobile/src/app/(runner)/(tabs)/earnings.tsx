@@ -28,7 +28,7 @@ import { useHideTabBarOnScroll } from '../../../hooks/useHideTabBarOnScroll';
 import { CacheTTL } from '../../../services/cache.service';
 import { formatCurrency } from '../../../utils/formatCurrency';
 import { formatRunnerPayout } from '../../../utils/runnerPayout';
-import { formatTime } from '../../../utils/formatDate';
+import { formatTime, formatWeekdayMonthDay } from '../../../utils/formatDate';
 import { secureStorage } from '../../../utils/storage';
 import { toast } from '../../../stores/toastStore';
 import type { Booking, WalletTransaction } from '../../../types';
@@ -254,7 +254,7 @@ export default function EarningsScreen() {
       let label: string;
       if (dayStart === startOfToday) label = 'Today';
       else if (dayStart === startOfYesterday) label = 'Yesterday';
-      else label = ts.toLocaleDateString([], { weekday: 'long', month: 'short', day: 'numeric' });
+      else label = formatWeekdayMonthDay(ts);
       // runner_payout is a Laravel decimal cast → JSON STRING ("14.60").
       // Without Number() the `+=` below STRING-concatenates, so any day with
       // 2+ errands collapses to ₱0.00 (NaN) and the weekly chart breaks.
@@ -725,7 +725,7 @@ export default function EarningsScreen() {
                           <Text className="text-[14px] font-montserrat-bold text-textPrimary" numberOfLines={1}>
                             {errand.errand_type?.name ?? 'Errand'}
                           </Text>
-                          <Text className="text-[11px] font-inter tabular-nums text-textMuted mt-0.5">
+                          <Text className="text-[11px] font-inter tabular-nums text-textTertiary mt-0.5">
                             {/* formatTime, not toLocaleTimeString — see
                                 navigate/[id].tsx fmtArrival. A runner's own
                                 earnings rows read 24h on a 24h-locale device

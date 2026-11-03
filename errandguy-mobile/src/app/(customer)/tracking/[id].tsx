@@ -153,6 +153,15 @@ const CAN_CANCEL_STATUSES: BookingStatus[] = [
 ];
 
 /**
+ * The cancel confirm's body when the fee preview couldn't be fetched. The
+ * server only keeps a fee once a runner has accepted a paid errand, so that is
+ * the honest "maybe" — never a promise either way. (Same words on the waiting
+ * screen's cancel.)
+ */
+const CANCEL_PREVIEW_FAILED =
+  'We couldn’t check for a cancellation fee just now. If a runner has already accepted your errand, a small fee may apply. This can’t be undone.';
+
+/**
  * Has the customer already rated this errand?
  *
  * BookingResource ships `review` / `customer_review` (BookingController::show
@@ -295,10 +304,11 @@ export default function TrackingScreen() {
     cachedBooking?.status_logs ?? [],
   );
   const [loading, setLoading] = useState(!cachedBooking);
-  // Distinguishes a genuine 404 (no such booking) from a transient
+  // Distinguishes a genuine 404 (no such errand) from a transient
   // fetch/network failure. Without this, a dropped request fell through
-  // to the misleading "Booking not found" dead-end with no retry.
-  const [loadError, setLoadError] = useState(false);
+  // to the misleading "not found" dead-end with no retry. Holds the error
+  // itself, so the screen can say offline vs gone.
+  const [loadError, setLoadError] = useState<unknown>(null);
   // The live alert for THIS errand, from the per-errand record sosIntent
   // writes on the server's ack — so leaving and reopening the screen keeps the
   // card (and its "I'm safe" control). A record with resolvedAt is an alert
@@ -333,6 +343,13 @@ export default function TrackingScreen() {
   // back (see utils/cancelPreview).
   const [cancelPreview, setCancelPreview] = useState<CancelPreview | null>(null);
   const [previewLoading, setPreviewLoading] = useState(false);
+  // The preview request failed. The confirm then says a fee MAY apply (once a
+  // runner accepted) and offers a re-check, instead of generic copy that let
+  // the customer agree without ever seeing the fee.
+  const [previewFailed, setPreviewFailed] = useState(false);
+  // Only the newest preview request may write its answer — one still in
+  // flight from an earlier open of the dialog must not overwrite it.
+  const previewSeqRef = useRef(0);
   const [showSOSModal, setShowSOSModal] = useState(false);
   const [sosSubmitting, setSosSubmitting] = useState(false);
   // Cached trusted contacts (@trusted_contacts_cache, written by the
@@ -636,7 +653,7 @@ export default function TrackingScreen() {
   // (useRunnerTracking) in steady state.
   const fetchBooking = useCallback(() => {
     if (!id) return;
-    setLoadError(false);
+    setLoadError(null);
     bookingService
       .getBooking(id)
       .then((bookingRes) => {
@@ -652,8 +669,8 @@ export default function TrackingScreen() {
         lastSyncedStatusRef.current = b?.status ?? null;
       })
       // Flag the failure instead of swallowing it so the UI can offer a
-      // retry rather than falling through to "Booking not found".
-      .catch(() => setLoadError(true))
+      // retry rather than falling through to "Errand not found".
+      .catch((err) => setLoadError(err ?? new Error('load failed')))
       .finally(() => setLoading(false));
   }, [id, setActiveBooking]);
 
@@ -900,7 +917,11 @@ export default function TrackingScreen() {
     let cancelled = false;
     setRouteFetchState('loading');
     routeService
-      .getRoute({ lng: from.lng, lat: from.lat }, { lng: to.lng, lat: to.lat })
+      .getRoute({ lng: from.lng, lat: from.lat }, { lng: to.lng, lat: to.lat }, 'driving', {
+        // From the runner it shares the ETA's live entry; pickup→drop-off is
+        // two fixed pins.
+        liveOrigin: !!(runnerLocation && targetLat && targetLng),
+      })
       .then((res) => {
         if (cancelled) return;
         if (res) {
@@ -953,7 +974,7 @@ export default function TrackingScreen() {
     }
   }, [eta.distanceMeters, isPickupPhase, booking?.id]);
 
-  // Force-refresh the route polyline (bypasses the AsyncStorage cache).
+  // Force-refresh the route polyline (bypasses the route cache).
   // Wired to the "Couldn't load route" retry chip below the map.
   const retryRoute = useCallback(async () => {
     let from: { lat: number; lng: number } | null = null;
@@ -970,6 +991,8 @@ export default function TrackingScreen() {
     const res = await routeService.refreshRoute(
       { lng: from.lng, lat: from.lat },
       { lng: to.lng, lat: to.lat },
+      'driving',
+      { liveOrigin: !!(runnerLocation && targetLat && targetLng) },
     );
     if (res) {
       setRouteCoords(res.coordinates);
@@ -1293,18 +1316,36 @@ export default function TrackingScreen() {
   }, [cameraBounds, reduceMotion]);
 
 
+  const loadCancelPreview = useCallback(() => {
+    if (!id) return;
+    const seq = ++previewSeqRef.current;
+    setPreviewLoading(true);
+    setPreviewFailed(false);
+    bookingService
+      .cancelPreview(id)
+      .then((res) => {
+        if (seq !== previewSeqRef.current) return;
+        const preview = res?.data?.data ?? null;
+        setCancelPreview(preview);
+        setPreviewFailed(!preview);
+      })
+      .catch(() => {
+        if (seq !== previewSeqRef.current) return;
+        setCancelPreview(null);
+        setPreviewFailed(true);
+      })
+      .finally(() => {
+        if (seq === previewSeqRef.current) setPreviewLoading(false);
+      });
+  }, [id]);
+
   const handleCancel = useCallback(() => {
     if (!id || isCancelling) return;
     // Warning cue as the destructive confirm surfaces.
     Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning).catch(() => {});
     setShowCancelModal(true);
-    setPreviewLoading(true);
-    bookingService
-      .cancelPreview(id)
-      .then((res) => setCancelPreview(res.data.data))
-      .catch(() => setCancelPreview(null))
-      .finally(() => setPreviewLoading(false));
-  }, [id, isCancelling]);
+    loadCancelPreview();
+  }, [id, isCancelling, loadCancelPreview]);
 
   const confirmCancel = useCallback(async () => {
     if (!id) return;
@@ -1582,13 +1623,20 @@ export default function TrackingScreen() {
 
   if (!booking) {
     // A fetch/network failure gets a retry affordance; only a genuine
-    // absence of the booking falls through to the "not found" dead-end.
-    if (loadError) {
+    // absence of the errand (a 404) falls through to the "not found"
+    // screen — retrying that never succeeds.
+    if (loadError && (loadError as { status?: number }).status !== 404) {
       return (
         <SafeAreaView className="flex-1 bg-background" edges={['top']}>
+          {/* "Go to Home" is a way out that doesn't depend on Retry working —
+              opened from a cold-start push there's no screen behind this one
+              to go back to. */}
           <ErrorState
             title="Couldn't load this errand"
+            error={loadError}
             onRetry={retryLoad}
+            secondaryActionLabel="Go to Home"
+            onSecondaryAction={() => router.replace('/(customer)/(tabs)')}
           />
         </SafeAreaView>
       );
@@ -1597,7 +1645,7 @@ export default function TrackingScreen() {
       <SafeAreaView className="flex-1 bg-background items-center justify-center px-8">
         <Illustration name="error-not-found" size={180} style={{ marginBottom: 12 }} />
         <Text className="text-lg font-montserrat-semi text-textPrimary">
-          Booking not found
+          Errand not found
         </Text>
         <View className="mt-4">
           <Button title="Go Home" onPress={() => router.replace('/(customer)/(tabs)')} />
@@ -3205,7 +3253,7 @@ export default function TrackingScreen() {
               )}
               {canCancel && (
                 <Button
-                  title="Cancel Errand"
+                  title="Cancel errand"
                   loading={isCancelling}
                   loadingTitle="Cancelling…"
                   variant="outline"
@@ -3288,7 +3336,7 @@ export default function TrackingScreen() {
                     <Button
                       title="Book again"
                       onPress={handleRebook}
-                      accessibilityHint="Starts a new booking pre-filled from this one"
+                      accessibilityHint="Starts a new errand pre-filled from this one"
                       fullWidth
                     />
                   </View>
@@ -3303,7 +3351,7 @@ export default function TrackingScreen() {
                       title="Rebook this errand"
                       variant="secondary"
                       onPress={handleRebook}
-                      accessibilityHint="Starts a new booking pre-filled from this one"
+                      accessibilityHint="Starts a new errand pre-filled from this one"
                       fullWidth
                     />
                   </View>
@@ -3365,13 +3413,22 @@ export default function TrackingScreen() {
       {/* Cancel confirmation */}
       <ConfirmModal
         visible={showCancelModal}
-        title="Cancel booking?"
+        title="Cancel errand?"
         message={
           previewLoading
-            ? 'Checking cancellation policy…'
+            ? 'Checking for a cancellation fee…'
             : cancelPreview
               ? cancelMoneyLines(cancelPreview)
-              : "The runner will be notified. This action can't be undone."
+              : CANCEL_PREVIEW_FAILED
+        }
+        // Not confirmable until the fee is known (or its check has failed and
+        // the body says one may apply); nor when the server says this errand
+        // can't be cancelled any more — the reason above explains why.
+        confirmDisabled={previewLoading || cancelPreview?.cancellable === false}
+        messageAction={
+          previewFailed && !previewLoading
+            ? { label: 'Check the fee again', onPress: loadCancelPreview }
+            : undefined
         }
         // NOT "Cancel & pay ₱20": on a prepaid errand the fee is DEDUCTED
         // from money the customer already handed over, and a "pay" label read
@@ -3382,13 +3439,14 @@ export default function TrackingScreen() {
             ? 'Cancel errand'
             : 'Yes, cancel'
         }
-        cancelLabel="Keep booking"
+        cancelLabel="Keep errand"
         destructive
         loading={isCancelling}
         onConfirm={confirmCancel}
         onCancel={() => {
           setShowCancelModal(false);
           setCancelPreview(null);
+          setPreviewFailed(false);
         }}
       />
 

@@ -108,6 +108,9 @@ const refundedNoRunner = () =>
 
 const toasts = () => useToastStore.getState().toasts.map((t) => t.message);
 
+/** The cancel dialog's confirm — it renders after the screen's own button of the same name. */
+const modalConfirm = <T,>(matches: T[]): T => matches[matches.length - 1];
+
 const advance = (ms: number) => {
   // One second per act() so each interval tick's re-render is flushed.
   for (let t = 0; t < ms; t += 1000) {
@@ -162,7 +165,7 @@ describe('waiting for a runner', () => {
     expect(getByText('Still looking…')).toBeTruthy();
     expect(queryByText('No runners available')).toBeNull();
     // The customer can still walk away while it searches.
-    expect(getByText('Cancel Booking')).toBeTruthy();
+    expect(getByText('Cancel errand')).toBeTruthy();
   });
 
   it('says "No runners available" the moment the server says no_runner — and offers Search again', async () => {
@@ -343,7 +346,7 @@ describe('cancelling while it searches', () => {
     const { getByText, queryByText } = renderScreen();
 
     await act(async () => {
-      fireEvent.press(getByText('Cancel Booking'));
+      fireEvent.press(getByText('Cancel errand'));
     });
 
     expect(getByText(/Back to your ErrandGuy wallet: ₱92\.00/)).toBeTruthy();
@@ -352,24 +355,95 @@ describe('cancelling while it searches', () => {
 
   it('confirms with the server’s receipt, including where the refund went', async () => {
     const receipt =
-      'Booking cancelled. ₱92.00 was refunded to your ErrandGuy wallet (new balance ₱92.00).';
+      'Errand cancelled. ₱92.00 was refunded to your ErrandGuy wallet (new balance ₱92.00).';
     (bookingService.cancelPreview as jest.Mock).mockRejectedValue({ status: 0, kind: 'offline' });
     (bookingService.cancelBooking as jest.Mock).mockResolvedValue({
       data: { data: booking('cancelled'), message: receipt },
     });
-    const { getByText, queryByText } = renderScreen();
+    const { getByText, getAllByText, queryByText } = renderScreen();
 
     await act(async () => {
-      fireEvent.press(getByText('Cancel Booking'));
+      fireEvent.press(getByText('Cancel errand'));
     });
     // No preview → no promise either way.
     expect(queryByText(/No fee/)).toBeNull();
     await act(async () => {
-      fireEvent.press(getByText('Cancel booking'));
+      fireEvent.press(modalConfirm(getAllByText('Cancel errand')));
     });
 
     expect(bookingService.cancelBooking).toHaveBeenCalledWith('bk-1', 'Customer cancelled');
     expect(toasts()).toContain(receipt);
     expect(toasts().join(' ')).not.toMatch(/no fee charged/i);
+  });
+
+  it('can’t be confirmed until the fee is known', async () => {
+    let answer: (v: unknown) => void = () => {};
+    (bookingService.cancelPreview as jest.Mock).mockReturnValue(
+      new Promise((resolve) => {
+        answer = resolve;
+      }),
+    );
+    (bookingService.cancelBooking as jest.Mock).mockResolvedValue({
+      data: { data: booking('cancelled'), message: 'Errand cancelled.' },
+    });
+    const { getByText, getAllByText } = renderScreen();
+
+    await act(async () => {
+      fireEvent.press(getByText('Cancel errand'));
+    });
+    expect(getByText('Checking for a cancellation fee…')).toBeTruthy();
+    expect(modalConfirm(getAllByText('Cancel errand'))).toBeDisabled();
+    await act(async () => {
+      // A disabled press falls through to the dialog card, which swallows it.
+      fireEvent.press(modalConfirm(getAllByText('Cancel errand')), { stopPropagation: () => {} });
+    });
+    expect(bookingService.cancelBooking).not.toHaveBeenCalled();
+
+    await act(async () => {
+      answer({
+        data: {
+          data: {
+            fee: 20,
+            tier: 'flat',
+            reason: 'A small ₱20.00 fee applies — your runner is already on the way.',
+            cancellable: true,
+          },
+        },
+      });
+    });
+    expect(getByText(/Cancellation fee: ₱20\.00/)).toBeTruthy();
+    expect(modalConfirm(getAllByText('Cancel errand'))).not.toBeDisabled();
+    await act(async () => {
+      fireEvent.press(modalConfirm(getAllByText('Cancel errand')));
+    });
+    expect(bookingService.cancelBooking).toHaveBeenCalledWith('bk-1', 'Customer cancelled');
+  });
+
+  it('when the fee check fails, says a fee may apply and offers to check again', async () => {
+    (bookingService.cancelPreview as jest.Mock)
+      .mockRejectedValueOnce({ status: 0, kind: 'offline' })
+      .mockResolvedValueOnce({
+        data: {
+          data: {
+            fee: 0,
+            tier: 'free',
+            reason: 'No fee — runner has not accepted yet.',
+            cancellable: true,
+          },
+        },
+      });
+    const { getByText, queryByText } = renderScreen();
+
+    await act(async () => {
+      fireEvent.press(getByText('Cancel errand'));
+    });
+    expect(getByText(/If a runner has already accepted your errand, a small fee may apply/)).toBeTruthy();
+
+    await act(async () => {
+      fireEvent.press(getByText('Check the fee again'));
+    });
+    expect(bookingService.cancelPreview).toHaveBeenCalledTimes(2);
+    expect(getByText('No fee — runner has not accepted yet.')).toBeTruthy();
+    expect(queryByText('Check the fee again')).toBeNull();
   });
 });

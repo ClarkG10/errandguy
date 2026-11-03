@@ -1,5 +1,5 @@
 import React from 'react';
-import { View, Text, StyleSheet, type ViewStyle } from 'react-native';
+import { View, Text, Pressable, StyleSheet, type ViewStyle } from 'react-native';
 import { AlertCircle, CloudOff, RefreshCw } from 'lucide-react-native';
 import type { LucideIcon } from 'lucide-react-native';
 import { Button } from './Button';
@@ -30,6 +30,10 @@ interface ErrorStateProps {
   onRetry?: () => void;
   /** Label for the retry button. Defaults to "Retry". */
   retryLabel?: string;
+  /** A quiet link under Retry — a way out that doesn't depend on Retry ever
+   *  working (e.g. "Go to Home"). Same as EmptyState's. Full layout only. */
+  secondaryActionLabel?: string;
+  onSecondaryAction?: () => void;
   /** Compact horizontal layout for embedding inside cards / list slots
    *  instead of taking over the whole screen. */
   compact?: boolean;
@@ -58,6 +62,8 @@ export function ErrorState({
   error,
   onRetry,
   retryLabel = 'Retry',
+  secondaryActionLabel,
+  onSecondaryAction,
   compact = false,
   style,
   testID,
@@ -132,6 +138,17 @@ export function ErrorState({
           />
         </View>
       ) : null}
+      {secondaryActionLabel && onSecondaryAction ? (
+        <Pressable
+          onPress={onSecondaryAction}
+          accessibilityRole="button"
+          accessibilityLabel={secondaryActionLabel}
+          hitSlop={8}
+          style={s.secondaryLink}
+        >
+          <Text style={s.secondaryLinkText}>{secondaryActionLabel}</Text>
+        </Pressable>
+      ) : null}
     </View>
   );
 }
@@ -177,6 +194,17 @@ const s = StyleSheet.create({
     lineHeight: 18,
     maxWidth: 280,
     marginTop: 6,
+  },
+  secondaryLink: {
+    marginTop: 14,
+    paddingVertical: 4,
+    paddingHorizontal: 8,
+  },
+  secondaryLinkText: {
+    fontSize: 14,
+    fontFamily: 'Quicksand_700Bold',
+    color: LightColors.primary,
+    letterSpacing: 0.1,
   },
 
   // ── Compact layout ─────────────────────────────────────────

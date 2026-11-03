@@ -2,7 +2,7 @@ import axios, { AxiosRequestConfig, AxiosResponse } from 'axios';
 import { secureStorage } from '../utils/storage';
 import { apiActivity } from '../stores/apiActivityStore';
 import { network } from '../stores/networkStore';
-import { classifyError } from '../utils/classifyError';
+import { classifyError, parseRetryAfter } from '../utils/classifyError';
 
 // Teach axios's own config type about this client's per-request options so
 // callers can pass them WITHOUT `as any`. These were previously bolted on via
@@ -479,6 +479,14 @@ api.interceptors.response.use(
         });
       }
 
+      // A 429 says how long to wait (meta.retry_after, or the Retry-After
+      // header); keep it so the copy can say "Try again in 2 minutes" rather
+      // than a vague "wait a moment".
+      const retryAfter =
+        status === 429
+          ? parseRetryAfter(data?.meta?.retry_after ?? error.response.headers?.['retry-after'])
+          : null;
+
       return Promise.reject({
         status,
         message: data.message || 'An error occurred',
@@ -486,6 +494,7 @@ api.interceptors.response.use(
         code: backendCode,
         kind,
         ...('attempts_remaining' in (data || {}) && { attempts_remaining: data.attempts_remaining }),
+        ...(retryAfter != null && { retryAfter }),
       });
     }
 

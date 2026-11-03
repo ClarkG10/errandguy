@@ -99,8 +99,10 @@ export function WalletActivityRow({ tx, divider = true }: WalletActivityRowProps
   const settled = status !== 'pending' && status !== 'failed';
   const chip = walletStatusChip(tx);
 
+  // Pending/failed amounts read quieter than settled ones, but they are still
+  // content: textTertiary, not textMuted (2.6:1, placeholder grey).
   const amountClass = !settled
-    ? 'text-textMuted'
+    ? 'text-textTertiary'
     : isCredit
       ? 'text-successDark'
       : 'text-textPrimary';
@@ -148,7 +150,7 @@ export function WalletActivityRow({ tx, divider = true }: WalletActivityRowProps
           {formatCurrency(Math.abs(amount))}
         </Text>
         {settled && tx.balance_after != null ? (
-          <Text className="text-[10px] font-inter tabular-nums text-textMuted mt-0.5">
+          <Text className="text-[10px] font-inter tabular-nums text-textTertiary mt-0.5">
             Bal {formatCurrency(Number(tx.balance_after))}
           </Text>
         ) : null}

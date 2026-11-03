@@ -1,5 +1,6 @@
 import React from 'react';
 import { View, Text } from 'react-native';
+import { CHROME_MAX_FONT_SCALE } from '../../constants/fontScale';
 
 /**
  * Compact label / count pill.
@@ -46,7 +47,9 @@ const variantClasses: Record<BadgeVariant, { bg: string; text: string }> = {
   success: { bg: 'bg-successSoft', text: 'text-successDark' },
   warning: { bg: 'bg-warningSoft', text: 'text-warningDark' },
   accent: { bg: 'bg-accentSoft', text: 'text-accentDark' },
-  danger: { bg: 'bg-danger', text: 'text-white' },
+  // dangerDark, not danger: white 10px text on #EF4444 measures 3.76:1, under
+  // AA for text this small. Same hue, same fix as the error toast.
+  danger: { bg: 'bg-dangerDark', text: 'text-white' },
   neutral: { bg: 'bg-divider', text: 'text-textSecondary' },
 };
 
@@ -65,11 +68,14 @@ export function Badge({
   return (
     <View
       className={`${bg} rounded-full items-center justify-center ${
-        isSmall ? 'min-w-[18px] h-[18px] px-1.5' : 'min-w-[24px] h-[24px] px-2.5'
+        isSmall ? 'min-w-[18px] min-h-[18px] px-1.5' : 'min-w-[24px] min-h-[24px] px-2.5'
       }`}
     >
+      {/* min-h, not a fixed height, plus the chrome cap: at large text sizes
+          a fixed-height pill clipped the top and bottom off its label. */}
       <Text
         className={`${text} font-montserrat-bold ${isSmall ? 'text-[10px]' : 'text-xs'}`}
+        maxFontSizeMultiplier={CHROME_MAX_FONT_SCALE}
       >
         {displayText}
       </Text>

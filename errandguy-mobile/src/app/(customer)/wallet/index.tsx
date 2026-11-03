@@ -409,7 +409,7 @@ export default function WalletScreen() {
     const isWithdrawal = item.type === 'payout';
 
     const amountClass = !settled
-      ? 'text-textMuted'
+      ? 'text-textTertiary'
       : isCredit
         ? 'text-success'
         : 'text-textPrimary';
@@ -481,7 +481,7 @@ export default function WalletScreen() {
           {/* The running balance is real once the money left or landed — a
               pending withdrawal is already debited, so it shows there too. */}
           {settled || (isPending && isWithdrawal) ? (
-            <Text className="text-[10px] font-inter tabular-nums text-textMuted mt-0.5">
+            <Text className="text-[10px] font-inter tabular-nums text-textTertiary mt-0.5">
               {formatCurrency(item.balance_after)}
             </Text>
           ) : null}
@@ -828,7 +828,7 @@ export default function WalletScreen() {
           ) : !hasMore && txList.length > 0 ? (
             <Text
               className="text-[11px] font-montserrat text-center py-5"
-              style={{ color: LightColors.textMuted }}
+              style={{ color: LightColors.textTertiary }}
             >
               That’s your full wallet history.
             </Text>

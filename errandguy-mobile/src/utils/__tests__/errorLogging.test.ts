@@ -8,7 +8,7 @@ jest.mock('../appVersion', () => ({ getAppVersionLabel: jest.fn(() => '1.0.0 · 
 import { Platform } from 'react-native';
 import api from '../../services/api';
 import { getAppVersionLabel } from '../appVersion';
-import { reportError } from '../errorLogging';
+import { fitCrashReport, reportError } from '../errorLogging';
 import { useAuthStore } from '../../stores/authStore';
 
 const post = api.post as jest.Mock;
@@ -71,5 +71,62 @@ describe('errorLogging.reportError → server forward', () => {
     });
 
     expect(() => reportError(new Error('boom2'))).not.toThrow();
+  });
+});
+
+/**
+ * The server refuses a report over its limits (message 1000 characters,
+ * stacks 8000, body 24 KB), and the forward is fire-and-forget — so the
+ * biggest crashes were the ones silently lost.
+ */
+describe('crash reports fit the server limits', () => {
+  const bytes = (body: unknown) => Buffer.byteLength(JSON.stringify(body), 'utf8');
+
+  beforeEach(() => {
+    post.mockReset();
+    post.mockResolvedValue({ data: {} });
+    jest.spyOn(console, 'error').mockImplementation(() => {});
+  });
+
+  afterEach(() => {
+    (console.error as jest.Mock).mockRestore?.();
+  });
+
+  it('trims an oversized message, stack and component stack before sending', () => {
+    const error = new Error('m'.repeat(5000));
+    error.stack = 's'.repeat(50_000);
+    reportError(error, 'c'.repeat(50_000));
+
+    const body = post.mock.calls[0][1];
+    expect(body.message.length).toBeLessThanOrEqual(1000);
+    expect(body.stack.length).toBeLessThanOrEqual(8000);
+    expect(body.component_stack.length).toBeLessThanOrEqual(8000);
+    expect(bytes(body)).toBeLessThanOrEqual(24576);
+    // The start of each is kept — that's the useful end of a stack.
+    expect(body.stack.startsWith('sss')).toBe(true);
+    expect(body.message.endsWith('…')).toBe(true);
+  });
+
+  it('stays under the 24 KB body cap even when every character is multi-byte', () => {
+    const body = fitCrashReport({
+      message: 'é'.repeat(1000),
+      stack: '中'.repeat(8000),
+      component_stack: '中'.repeat(8000),
+      fatal: true,
+    });
+    expect(bytes(body)).toBeLessThanOrEqual(24576);
+    expect(body.stack?.length).toBeGreaterThan(0);
+  });
+
+  it('never cuts an emoji in half', () => {
+    const body = fitCrashReport({ message: '😀'.repeat(600), fatal: true });
+    const last = body.message.charCodeAt(body.message.length - 2);
+    expect(last >= 0xd800 && last <= 0xdbff).toBe(false);
+    expect(() => decodeURIComponent(encodeURIComponent(body.message))).not.toThrow();
+  });
+
+  it('sends a report that already fits unchanged', () => {
+    const report = { message: 'Error: boom', stack: 'at Foo', fatal: true };
+    expect(fitCrashReport(report)).toEqual(report);
   });
 });

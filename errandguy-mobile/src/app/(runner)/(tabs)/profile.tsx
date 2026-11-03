@@ -56,6 +56,7 @@ import { useHideTabBarOnScroll } from '../../../hooks/useHideTabBarOnScroll';
 import { TAB_CONTENT_BOTTOM_INSET_RUNNER } from '../../../constants/tabLayout';
 import { getAppVersionLabel } from '../../../utils/appVersion';
 import { formatRating } from '../../../utils/rating';
+import { formatMonthYear } from '../../../utils/formatDate';
 
 interface MenuItem {
   label: string;
@@ -213,6 +214,9 @@ export default function RunnerProfileScreen() {
   const [showDeleteModal, setShowDeleteModal] = useState(false);
   const [loggingOut, setLoggingOut] = useState(false);
   const [loadFailed, setLoadFailed] = useState(false);
+  // The failure itself, so the error card can say "you're offline" vs "our
+  // side failed" instead of the same line for both.
+  const [loadError, setLoadError] = useState<unknown>(null);
   // Which performance metric's explainer sheet is open (null = closed).
   const [explainer, setExplainer] = useState<MetricKey | null>(null);
 
@@ -233,11 +237,15 @@ export default function RunnerProfileScreen() {
       setRunnerProfile(runnerRes.data.data);
       if (userRes.data?.data) setUser(userRes.data.data);
       setLoadFailed(false);
-    } catch {
+      setLoadError(null);
+    } catch (err) {
       // Only surface the failure when the store has nothing cached —
       // with a hydrated profile the stale numbers are still honest,
       // and the fetch retries on the next focus/refresh anyway.
-      if (!useRunnerStore.getState().runnerProfile) setLoadFailed(true);
+      if (!useRunnerStore.getState().runnerProfile) {
+        setLoadError(err);
+        setLoadFailed(true);
+      }
     }
   }, [setRunnerProfile, setUser]);
 
@@ -554,6 +562,7 @@ export default function RunnerProfileScreen() {
               <ErrorState
                 compact
                 title="Couldn't load your stats"
+                error={loadError}
                 onRetry={() => {
                   setLoadFailed(false);
                   refreshAll();
@@ -625,13 +634,8 @@ export default function RunnerProfileScreen() {
               <View className="flex-row items-center justify-between pt-3">
                 <Text className="text-[12px] font-montserrat text-textTertiary">Member since</Text>
                 <Text className="text-[12px] font-montserrat-bold text-textPrimary">
-                  {(() => {
-                    const raw = runnerProfile?.created_at;
-                    if (!raw) return 'New member';
-                    const d = new Date(raw);
-                    if (isNaN(d.getTime())) return 'New member';
-                    return d.toLocaleDateString([], { month: 'short', year: 'numeric' });
-                  })()}
+                  {(runnerProfile?.created_at && formatMonthYear(runnerProfile.created_at)) ||
+                    'New member'}
                 </Text>
               </View>
             </>

@@ -43,6 +43,69 @@ function withAppVersion(): { app_version?: string } {
  * be pinned to the build — and OTA bundle — that produced it.
  */
 let forwarding = false;
+
+// The server's limits (ClientErrorController): message 1000 characters, stack
+// and component_stack 8000 each, the whole body 24 KB. A report over any of
+// them is refused, and since the forward is fire-and-forget it was silently
+// lost — and the biggest stacks are usually the crashes worth seeing. Kept a
+// little under the body cap for the other fields and JSON overhead.
+const MAX_MESSAGE_CHARS = 1000;
+const MAX_STACK_CHARS = 8000;
+const MAX_BODY_BYTES = 20_000;
+
+/** Cut to at most `max` UTF-16 units (the server counts characters, never more than this). */
+function clip(text: string | undefined, max: number): string | undefined {
+  if (text == null || text.length <= max) return text;
+  let cut = text.slice(0, Math.max(0, max - 1));
+  // Never end on half of a surrogate pair — a lone surrogate is invalid JSON
+  // text for the server's decoder, which would drop the whole report.
+  const last = cut.charCodeAt(cut.length - 1);
+  if (last >= 0xd800 && last <= 0xdbff) cut = cut.slice(0, -1);
+  return `${cut}…`;
+}
+
+/** UTF-8 byte length of a string (no TextEncoder dependency). */
+function utf8Length(text: string): number {
+  let bytes = 0;
+  for (let i = 0; i < text.length; i += 1) {
+    const code = text.charCodeAt(i);
+    if (code < 0x80) bytes += 1;
+    else if (code < 0x800) bytes += 2;
+    else if (code >= 0xd800 && code <= 0xdfff) bytes += 2; // half of a 4-byte pair
+    else bytes += 3;
+  }
+  return bytes;
+}
+
+type CrashBody = {
+  message: string;
+  stack?: string;
+  component_stack?: string;
+  [key: string]: unknown;
+};
+
+/** The report, trimmed to fit every server limit. Exported for tests. */
+export function fitCrashReport<T extends CrashBody>(body: T): T {
+  const fitted: T = {
+    ...body,
+    message: clip(body.message, MAX_MESSAGE_CHARS) ?? '',
+    stack: clip(body.stack, MAX_STACK_CHARS),
+    component_stack: clip(body.component_stack, MAX_STACK_CHARS),
+  };
+  // Non-ASCII text can take 3 bytes a character, so the per-field caps alone
+  // can still overshoot the body cap: halve the longer stack until it fits.
+  for (let i = 0; i < 20 && utf8Length(JSON.stringify(fitted)) > MAX_BODY_BYTES; i += 1) {
+    const key =
+      (fitted.stack?.length ?? 0) >= (fitted.component_stack?.length ?? 0)
+        ? 'stack'
+        : 'component_stack';
+    const current = fitted[key];
+    if (!current) break;
+    (fitted as CrashBody)[key] = clip(current, Math.floor(current.length / 2));
+  }
+  return fitted;
+}
+
 function forwardCrash(payload: {
   message: string;
   stack?: string;
@@ -55,7 +118,7 @@ function forwardCrash(payload: {
     api
       .post(
         '/client-errors',
-        { ...payload, platform: Platform.OS, ...withAppVersion() },
+        fitCrashReport({ ...payload, platform: Platform.OS, ...withAppVersion() }),
         // Never spin the global activity indicator or hit the read cache for a
         // crash report, and don't dedupe (each crash is its own event).
         { silent: true, noCache: true, noDedupe: true },

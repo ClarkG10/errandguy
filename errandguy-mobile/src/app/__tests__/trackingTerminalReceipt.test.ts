@@ -148,7 +148,7 @@ describe('customer tracking — the terminal receipt', () => {
 
     const modal = SOURCE.slice(
       SOURCE.indexOf('visible={showCancelModal}'),
-      SOURCE.indexOf('cancelLabel="Keep booking"'),
+      SOURCE.indexOf('cancelLabel="Keep errand"'),
     );
     expect(modal).toMatch(/cancelMoneyLines\(cancelPreview\)/);
     // The old confirm label ("Cancel & pay ₱20") read as a fresh charge on
@@ -164,7 +164,7 @@ describe('customer tracking — the terminal receipt', () => {
     );
     const confirmModal = CONFIRM.slice(
       CONFIRM.indexOf('visible={showCancelModal}'),
-      CONFIRM.indexOf('confirmLabel="Cancel booking"'),
+      CONFIRM.indexOf('confirmLabel="Cancel errand"'),
     );
     expect(confirmModal).toMatch(/cancelMoneyLines\(cancelPreview\)/);
     expect(CONFIRM).not.toMatch(/No fee will be charged/);

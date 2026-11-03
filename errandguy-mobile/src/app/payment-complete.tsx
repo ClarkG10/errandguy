@@ -88,7 +88,7 @@ export default function PaymentComplete() {
         stage={stage}
         offline={isOffline}
         successTitle="Payment confirmed"
-        successCta={attempt.kind === 'booking' ? 'Return to booking' : 'Done'}
+        successCta={attempt.kind === 'booking' ? 'Back to your errand' : 'Done'}
         receipt={{
           amount: attempt.amount,
           method: attempt.method,

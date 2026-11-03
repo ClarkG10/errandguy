@@ -1,8 +1,11 @@
 import {
+  bookingFieldProblem,
   describeError,
   errorMessage,
   ERROR_CATALOG,
+  formatWait,
   LEGACY_WORDED_REFUSALS,
+  tooManyAttemptsMessage,
 } from '../errorCatalog';
 
 describe('describeError', () => {
@@ -183,5 +186,94 @@ describe('action-worded refusals', () => {
       { trustServerMessageFor: LEGACY_WORDED_REFUSALS },
     );
     expect(info).toEqual(ERROR_CATALOG.BOOKING_CONFLICT);
+  });
+});
+
+describe('a 429 that says how long to wait', () => {
+  const limited = (retryAfter?: number) => ({
+    status: 429,
+    code: 'RATE_LIMITED',
+    kind: 'rate_limited' as const,
+    message: 'Too Many Attempts.',
+    ...(retryAfter != null && { retryAfter }),
+  });
+
+  it('names the wait in the catalog copy (OTP resend, reset-code resend…)', () => {
+    expect(errorMessage(limited(45), 'Couldn’t send a new code.')).toBe(
+      "You've done that a lot in a short time. Try again in 45 seconds.",
+    );
+    expect(errorMessage(limited(90))).toMatch(/Try again in 2 minutes\.$/);
+  });
+
+  it('keeps the vague line when the server didn’t say', () => {
+    expect(errorMessage(limited())).toBe(
+      "You've done that a lot in a short time. Wait a moment and try again.",
+    );
+  });
+
+  it('gives the sign-in screens their own line, with the wait when known', () => {
+    expect(tooManyAttemptsMessage(limited(60))).toBe('Too many attempts. Try again in 1 minute.');
+    expect(tooManyAttemptsMessage(limited())).toBe(
+      'Too many attempts. Please wait a few minutes and try again.',
+    );
+  });
+
+  it('formats the wait in whole seconds, then whole minutes rounded up', () => {
+    expect(formatWait(1)).toBe('1 second');
+    expect(formatWait(59)).toBe('59 seconds');
+    expect(formatWait(60)).toBe('1 minute');
+    expect(formatWait(61)).toBe('2 minutes');
+    expect(formatWait(600)).toBe('10 minutes');
+  });
+});
+
+/**
+ * Review only summarises the errand; the fields live on earlier steps. A
+ * create-booking 422 used to be a bare toast that never said which step to
+ * go back to.
+ */
+describe('bookingFieldProblem', () => {
+  const invalid = (errors: Record<string, string[]>) => ({
+    status: 422,
+    kind: 'validation' as const,
+    message: 'The given data was invalid.',
+    errors,
+  });
+
+  it('sends a scheduled-time problem back to the schedule step, in plain words', () => {
+    expect(
+      bookingFieldProblem(
+        invalid({ scheduled_at: ['The scheduled at field must be a date after +30 minutes.'] }),
+      ),
+    ).toEqual({
+      message: 'Your scheduled time can’t be used any more — please pick a new one.',
+      step: 'schedule',
+    });
+  });
+
+  it('names the extra stop (counting from 1) instead of "stops.0.contact_phone"', () => {
+    expect(
+      bookingFieldProblem(invalid({ 'stops.1.contact_phone': ['The stops.1.contact_phone field format is invalid.'] })),
+    ).toEqual({
+      message: 'Extra stop 2: the contact number isn’t a valid PH mobile number.',
+      step: 'details',
+    });
+    expect(bookingFieldProblem(invalid({ 'stops.0.note': ['too long'] }))?.message).toBe(
+      'Extra stop 1: check the note.',
+    );
+  });
+
+  it('keeps the server’s own words for a details field that has them', () => {
+    expect(
+      bookingFieldProblem(
+        invalid({ pickup_contact_phone: ['Pickup phone must be a valid Philippine mobile number.'] }),
+      ),
+    ).toEqual({ message: 'Pickup phone must be a valid Philippine mobile number.', step: 'details' });
+  });
+
+  it('is null for anything another step can’t fix, or no field errors at all', () => {
+    expect(bookingFieldProblem(invalid({ payment_method: ['nope'] }))).toBeNull();
+    expect(bookingFieldProblem({ status: 0, kind: 'offline', message: 'Network error.' })).toBeNull();
+    expect(bookingFieldProblem(null)).toBeNull();
   });
 });

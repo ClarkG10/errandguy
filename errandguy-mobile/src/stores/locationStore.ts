@@ -40,6 +40,17 @@ export const DISPATCH_WARN_AFTER_MS = 12 * 60_000;
 const IDLE_HEARTBEAT_MS = 60_000;
 
 /**
+ * Floor between two GPS sends from the watch.
+ *
+ * The server keeps one ping per 5s per runner (LocationService) and answers
+ * the rest with 429. `timeInterval` in the profiles below is Android-only: iOS
+ * delivers a fix per `distanceInterval`, about one a second at driving speed,
+ * so almost every iOS send was a 429 that still cost a radio wake and a
+ * request. 5.5s leaves room for network jitter over the server's window.
+ */
+export const MIN_SEND_INTERVAL_MS = 5_500;
+
+/**
  * True when OUR last successful ping is old enough to warn about.
  *
  * Keyed off a locally-recorded send time, never a server timestamp compared
@@ -107,6 +118,128 @@ let inflightPing: Promise<boolean> | null = null;
 let errandSub: (() => void) | null = null;
 /** The profile the live watch was armed with, so we only re-arm on a change. */
 let armedProfile: TrackingProfile | null = null;
+
+/** What the watch sends for one fix. */
+type FixPayload = Coordinate & {
+  heading?: number;
+  speed?: number;
+  accuracy?: number;
+  booking_id: string | null;
+};
+
+/**
+ * Watch-send throttle state (see MIN_SEND_INTERVAL_MS). Module-scoped like the
+ * rigs above: one store, one watch, one sender.
+ *
+ * Throttled fixes are not thrown away: the newest one waits and goes out as
+ * soon as the floor allows. Dropping it instead would leave the server on a
+ * position up to a block old when the runner stops moving (on iOS a still
+ * phone emits no further fixes) — the customer would watch the pin park short
+ * of the door.
+ */
+let sendInFlight = false;
+let lastSendAt = 0;
+let pendingFix: FixPayload | null = null;
+/** When the held fix was taken; an old one is dropped, never sent (see holdFix). */
+let pendingFixAt = 0;
+let trailingTimer: ReturnType<typeof setTimeout> | null = null;
+/** Bumped when the shift ends, so a send still in flight from the old shift
+ *  can't unlatch (or flush into) the next one. */
+let sendGeneration = 0;
+
+const clearTrailing = () => {
+  if (trailingTimer) {
+    clearTimeout(trailingTimer);
+    trailingTimer = null;
+  }
+};
+
+/**
+ * A held fix older than this is dropped instead of sent. The server stamps a
+ * ping with its arrival time, so a fix held across a trip to Waze (timers
+ * pause in the background) would land minutes late as "just now" and pull the
+ * customer's pin back to where the runner was.
+ */
+const MAX_HELD_FIX_AGE_MS = 10_000;
+
+const holdFix = (fix: FixPayload) => {
+  pendingFix = fix;
+  pendingFixAt = Date.now();
+};
+
+/** Take the held fix if it is still fresh enough to send. */
+const takeHeldFix = (): FixPayload | null => {
+  const held = pendingFix;
+  pendingFix = null;
+  if (!held || Date.now() - pendingFixAt > MAX_HELD_FIX_AGE_MS) return null;
+  return held;
+};
+
+/** Forget anything waiting to go out (backgrounded, shift over). */
+const dropHeldFix = () => {
+  clearTrailing();
+  pendingFix = null;
+};
+
+/** Send one fix now. Never overlaps another watch send (see sendOrHold). */
+const sendFix = (fix: FixPayload) => {
+  const generation = sendGeneration;
+  sendInFlight = true;
+  lastSendAt = Date.now();
+  runnerService
+    .updateLocation(fix)
+    // Stamp the SEND, not the fix: dispatch visibility depends on the
+    // server having taken the ping, and this is the only place that
+    // knows it did. (429 = throttled duplicate, i.e. a fresher ping
+    // already landed — also visible, see pingLocation.)
+    .then(() => useLocationStore.setState({ lastPingAt: Date.now() }))
+    .catch((err) => {
+      const status =
+        (err as { status?: number; response?: { status?: number } })?.status ??
+        (err as { response?: { status?: number } })?.response?.status;
+      if (status === 429) {
+        useLocationStore.setState({ lastPingAt: Date.now() });
+        // The server's 5s throttle counts arrivals, so network jitter can
+        // refuse a fix sent on our 5.5s floor. If it was the last one (the
+        // runner stopped at the door — a still phone sends no more), keep it
+        // for the next slot rather than parking the pin short.
+        if (generation === sendGeneration && !pendingFix) holdFix(fix);
+      }
+      // Network drop — keep the watcher alive; the next valid fix
+      // will retry. Resetting `lastSent` would just spam the queue.
+    })
+    .finally(() => {
+      if (generation !== sendGeneration) return;
+      sendInFlight = false;
+      const held = takeHeldFix();
+      if (held) sendOrHold(held);
+    });
+};
+
+/**
+ * Send a fix, or hold it as the newest pending one while a send is in flight
+ * or the floor hasn't passed. Held fixes are replaced, never queued: only the
+ * latest position is worth sending.
+ */
+function sendOrHold(fix: FixPayload) {
+  const wait = lastSendAt + MIN_SEND_INTERVAL_MS - Date.now();
+  if (!sendInFlight && wait <= 0) {
+    clearTrailing();
+    pendingFix = null;
+    sendFix(fix);
+    return;
+  }
+  holdFix(fix);
+  // In flight: sendFix's finally picks it up. Otherwise wake when the floor
+  // passes.
+  if (!sendInFlight && !trailingTimer) {
+    trailingTimer = setTimeout(() => {
+      trailingTimer = null;
+      const held = takeHeldFix();
+      if (held) sendOrHold(held);
+    }, Math.max(wait, 0));
+  }
+}
 
 /**
  * GPS duty cycle. Two profiles, because a runner's day is mostly NOT an errand.
@@ -188,6 +321,9 @@ const clearSideRigs = () => {
     errandSub = null;
   }
   armedProfile = null;
+  // A throttled fix belongs to the watch being torn down.
+  clearTrailing();
+  pendingFix = null;
 };
 
 export const useLocationStore = create<LocationState>((set, get) => ({
@@ -260,6 +396,7 @@ export const useLocationStore = create<LocationState>((set, get) => ({
     const run = async (): Promise<boolean> => {
       let coords = get().currentLocation;
       let gotFreshFix = false;
+      let accuracy: number | undefined;
 
       set({ isPinging: true });
       try {
@@ -272,6 +409,7 @@ export const useLocationStore = create<LocationState>((set, get) => ({
           if (pos) {
             coords = { lat: pos.lat, lng: pos.lng };
             gotFreshFix = true;
+            if (typeof pos.accuracy === 'number' && pos.accuracy >= 0) accuracy = pos.accuracy;
           }
         }
         if (!coords) return false;
@@ -289,7 +427,14 @@ export const useLocationStore = create<LocationState>((set, get) => ({
           : null;
 
         try {
-          await runnerService.updateLocation({ ...coords, booking_id: bookingId });
+          // Counts against the watch's send floor too, so the first fix after
+          // this ping waits its turn instead of landing a guaranteed 429.
+          lastSendAt = Date.now();
+          await runnerService.updateLocation({
+            ...coords,
+            ...(accuracy != null ? { accuracy } : {}),
+            booking_id: bookingId,
+          });
           set({ lastPingAt: Date.now() });
           return true;
         } catch (err) {
@@ -347,8 +492,9 @@ export const useLocationStore = create<LocationState>((set, get) => ({
       return false;
     }
 
-    // Last successfully reported location — used to suppress jittery
-    // sub-meter updates that some Android devices emit while stationary.
+    // Last fix this watch accepted (and sent, or handed to the send floor to
+    // send shortly) — used to suppress jittery sub-meter updates that some
+    // Android devices emit while stationary.
     let lastSent: { lat: number; lng: number; t: number } | null = null;
 
     const profile = profileForNow();
@@ -371,6 +517,9 @@ export const useLocationStore = create<LocationState>((set, get) => ({
           heading:
             typeof rawHeading === 'number' && rawHeading >= 0 ? rawHeading : undefined,
           speed: typeof rawSpeed === 'number' && rawSpeed >= 0 ? rawSpeed : undefined,
+          // The server stores it (and gates the "runner is nearby" push on
+          // it), but the app never sent it, so that gate trusted every fix.
+          accuracy: typeof acc === 'number' && acc >= 0 ? acc : undefined,
         };
 
         // Heartbeat: always send if 30s have passed since the last push,
@@ -405,21 +554,7 @@ export const useLocationStore = create<LocationState>((set, get) => ({
         // a match tagged NULL and invisible to the customer's realtime
         // subscription (which filters on booking_id=eq.…).
         const activeErrandId = useRunnerStore.getState().currentErrand?.id ?? null;
-        runnerService
-          .updateLocation({ ...coords, booking_id: activeErrandId })
-          // Stamp the SEND, not the fix: dispatch visibility depends on the
-          // server having taken the ping, and this is the only place that
-          // knows it did. (429 = throttled duplicate, i.e. a fresher ping
-          // already landed — also visible, see pingLocation.)
-          .then(() => set({ lastPingAt: Date.now() }))
-          .catch((err) => {
-            const status =
-              (err as { status?: number; response?: { status?: number } })?.status ??
-              (err as { response?: { status?: number } })?.response?.status;
-            if (status === 429) set({ lastPingAt: Date.now() });
-            // Network drop — keep the watcher alive; the next valid fix
-            // will retry. Resetting `lastSent` would just spam the queue.
-          });
+        sendOrHold({ ...coords, booking_id: activeErrandId });
       },
     );
 
@@ -454,7 +589,12 @@ export const useLocationStore = create<LocationState>((set, get) => ({
     // past 30 the server ends their shift. One fresh fix (never a permission
     // prompt) puts them back in the pool in about a second.
     appStateSub = AppState.addEventListener('change', (state) => {
-      if (state !== 'active') return;
+      if (state !== 'active') {
+        // Timers pause in the background; a fix held now would go out late
+        // on return, ahead of the fresh one below.
+        dropHeldFix();
+        return;
+      }
       if (!get().isTracking) return;
       void get().pingLocation({ fresh: true });
     });
@@ -485,6 +625,11 @@ export const useLocationStore = create<LocationState>((set, get) => ({
       watchId.remove();
     }
     clearSideRigs();
+    // A new shift starts with a clean sender: no floor carried over, and a
+    // send still in flight from this one can't hold the next one up.
+    sendGeneration += 1;
+    sendInFlight = false;
+    lastSendAt = 0;
     // Offline: freshness is meaningless (and the hero's disclosure is gated on
     // isOnline anyway), so don't leave a timestamp behind for the next shift.
     set({ watchId: null, isTracking: false, lastPingAt: null, isPinging: false });

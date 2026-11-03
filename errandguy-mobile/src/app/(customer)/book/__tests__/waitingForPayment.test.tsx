@@ -105,7 +105,7 @@ describe('waiting for a GCash/Maya payment', () => {
     expect(getByText('Complete payment')).toBeTruthy();
     expect(queryByText('Looking for a runner nearby…')).toBeNull();
     // The customer can still walk away instead of paying.
-    expect(getByText('Cancel Booking')).toBeTruthy();
+    expect(getByText('Cancel errand')).toBeTruthy();
   });
 
   it("Complete payment reopens the booking's own checkout in the return-aware sheet", async () => {
@@ -203,7 +203,7 @@ describe('cancelled because the payment was never completed', () => {
     ).toBeTruthy();
     expect(getByText('Book again')).toBeTruthy();
     // Not the generic card.
-    expect(queryByText('Booking Cancelled')).toBeNull();
+    expect(queryByText('Errand cancelled')).toBeNull();
   });
 
   it('Book again re-seeds the errand and lands on Review', () => {
@@ -223,7 +223,7 @@ describe('cancelled because the payment was never completed', () => {
     const { getByText, queryByText } = renderScreen();
     serverSays(booking('cancelled', { cancellation_reason: 'Cancelled by support' }));
 
-    expect(getByText('Booking Cancelled')).toBeTruthy();
+    expect(getByText('Errand cancelled')).toBeTruthy();
     expect(queryByText('Payment not completed')).toBeNull();
   });
 });

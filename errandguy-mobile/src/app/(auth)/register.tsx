@@ -29,10 +29,11 @@ import { userService } from '../../services/user.service';
 import { authService } from '../../services/auth.service';
 import { geocodingService, type PlaceFeature } from '../../services/geocoding.service';
 import { toast } from '../../stores/toastStore';
-import { errorMessage } from '../../utils/errorCatalog';
+import { errorMessage, tooManyAttemptsMessage } from '../../utils/errorCatalog';
 import { LightColors, Elevation } from '../../constants/colors';
 import { PRIVACY_POLICY_VERSION } from '../../constants/legal';
 import { isPhMobile } from '../../utils/phone';
+import { compressProofImage } from '../../utils/proofImage';
 import { confirmPasswordRules, newPasswordRules } from '../../utils/validation/passwordPolicy';
 
 interface RegisterFormData {
@@ -44,6 +45,9 @@ interface RegisterFormData {
   default_address: string;
   terms: boolean;
 }
+
+/** Longest edge for a profile photo (the server accepts 2 MB at most). */
+const AVATAR_MAX_EDGE = 1024;
 
 /** Visual top-to-bottom field order — used to pick which invalid field
  *  to scroll to after a failed submit. */
@@ -239,16 +243,23 @@ export default function RegisterScreen() {
       // toast so the user knows their photo isn't on file and can retry
       // from the profile screen later.
       if (image) {
-        const formData = new FormData();
-        const ext = image.uri.split('.').pop()?.toLowerCase() || 'jpg';
-        const mime =
-          ext === 'png' ? 'image/png' : ext === 'webp' ? 'image/webp' : 'image/jpeg';
-        formData.append('avatar', {
-          uri: image.uri,
-          name: `avatar.${ext === 'jpeg' ? 'jpg' : ext}`,
-          type: mime,
-        } as any);
         try {
+          // Shrink it first, like every other upload: a camera frame is
+          // several MB and the server takes 2 MB at most, so a full-size photo
+          // was refused. The shrunk copy is always a JPEG; if shrinking fails
+          // the original goes up as it is.
+          const shrunk = await compressProofImage(image.uri, { maxEdge: AVATAR_MAX_EDGE });
+          const uri = shrunk ?? image.uri;
+          const ext =
+            uri !== image.uri ? 'jpg' : image.uri.split('.').pop()?.toLowerCase() || 'jpg';
+          const mime =
+            ext === 'png' ? 'image/png' : ext === 'webp' ? 'image/webp' : 'image/jpeg';
+          const formData = new FormData();
+          formData.append('avatar', {
+            uri,
+            name: `avatar.${ext === 'jpeg' ? 'jpg' : ext}`,
+            type: mime,
+          } as any);
           await userService.uploadAvatar(formData);
         } catch {
           toast.warning('Profile photo upload failed — you can add it later from your profile.');
@@ -312,7 +323,7 @@ export default function RegisterScreen() {
         if (!status) {
           message = 'Unable to reach the server. Check your internet connection.';
         } else if (status === 429) {
-          message = 'Too many attempts. Please wait a few minutes and try again.';
+          message = tooManyAttemptsMessage(error);
         } else if (status >= 500) {
           message = errorMessage(error, 'Couldn’t create your account. Please try again.');
         } else {

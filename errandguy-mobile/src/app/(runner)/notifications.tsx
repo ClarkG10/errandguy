@@ -18,6 +18,7 @@ import {
   Trash2,
   Headphones,
   Megaphone,
+  RefreshCw,
 } from 'lucide-react-native';
 import type { LucideIcon } from 'lucide-react-native';
 import * as Haptics from 'expo-haptics';
@@ -47,6 +48,7 @@ import { formatRelativeTime } from '../../utils/formatDate';
 import { storage } from '../../utils/storage';
 import type { AppNotification, NotificationType } from '../../types';
 import { LightColors } from '../../constants/colors';
+import { toastMaxDuration } from '../../components/ui/ToastProvider';
 
 // Per-type presentation: a lucide icon inside a soft-tinted chip plus
 // the accent used for the unread dot and glyph. `textColor` is the
@@ -162,7 +164,11 @@ const SWIPE_HINT_KEY = 'runner_notif_swipe_hint_v1';
 // How long a swipe-delete stays undoable before the server call fires —
 // slightly shorter than the toast-with-action display window (5s) so the
 // Undo button never outlives the timer it controls.
-const UNDO_DELETE_MS = 4000;
+const DELETED_TOAST = 'Notification deleted';
+// The server delete waits until the Undo toast can no longer be on screen
+// (its longest stay, screen reader included), so Undo works for as long as
+// it is visible. A fixed 4s used to close the window while Undo still showed.
+const UNDO_DELETE_MS = toastMaxDuration(DELETED_TOAST, true) + 500;
 
 /** Placeholder rows shown during the very first fetch so the empty
  *  state can't flash before we know whether the inbox is empty. */
@@ -360,6 +366,10 @@ export default function RunnerNotificationsScreen() {
   const [hasMore, setHasMore] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
   const loadingMoreRef = useRef(false);
+  // A failed next page used to leave nothing behind: no footer, no retry, and
+  // the list just stopped. Latched so the scroll position can't keep
+  // re-firing the failing request; cleared by the retry tap or a refresh.
+  const [loadMoreFailed, setLoadMoreFailed] = useState(false);
 
   // Live registry of each row's swipeable methods plus which row (if any)
   // currently has its actions exposed — keep at most one row open at a
@@ -379,6 +389,7 @@ export default function RunnerNotificationsScreen() {
       const r = await notificationService.getNotifications({ page: 1, per_page: 20 });
       const list = (r.data?.data ?? []) as AppNotification[];
       setPage(1);
+      setLoadMoreFailed(false);
       const meta = r.data?.meta ?? r.data;
       const lastPage = Number(meta?.last_page ?? meta?.['last_page']);
       setHasMore(Number.isFinite(lastPage) ? lastPage > 1 : list.length >= 20);
@@ -396,12 +407,16 @@ export default function RunnerNotificationsScreen() {
     }
   }, [notifQ.data, setNotifications, refreshUnreadCount]);
 
-  // Cancel any still-pending deferred deletes when the screen unmounts so
-  // their timers can't fire against a torn-down store.
+  // Leaving the screen ends the undo window: send any still-pending delete
+  // now. Cancelling it (as before) left the row gone here but never deleted
+  // on the server, so it came back on the next load.
   useEffect(() => {
     const pending = pendingDeletes.current;
     return () => {
-      pending.forEach((t) => clearTimeout(t));
+      pending.forEach((t, id) => {
+        clearTimeout(t);
+        notificationService.deleteNotification(id).catch(() => {});
+      });
       pending.clear();
     };
   }, []);
@@ -428,13 +443,20 @@ export default function RunnerNotificationsScreen() {
       }
       setPage(next);
       setHasMore(Number.isFinite(lastPage) ? next < lastPage : more.length >= 20);
+      setLoadMoreFailed(false);
     } catch {
-      // soft-fail; user can scroll again to retry
+      setLoadMoreFailed(true);
     } finally {
       setLoadingMore(false);
       loadingMoreRef.current = false;
     }
   }, [hasMore, page, setNotifications]);
+
+  const onEndReached = useCallback(() => {
+    // After a failure, wait for the explicit retry tap in the footer.
+    if (loadMoreFailed) return;
+    void handleLoadMore();
+  }, [loadMoreFailed, handleLoadMore]);
 
   const onRefresh = useCallback(async () => {
     setRefreshing(true);
@@ -561,7 +583,7 @@ export default function RunnerNotificationsScreen() {
         });
       }, UNDO_DELETE_MS);
       pendingDeletes.current.set(item.id, timer);
-      toast.info('Notification deleted', {
+      toast.info(DELETED_TOAST, {
         actionLabel: 'Undo',
         onAction: () => {
           const pending = pendingDeletes.current.get(item.id);
@@ -753,7 +775,7 @@ export default function RunnerNotificationsScreen() {
         windowSize={5}
         removeClippedSubviews
         contentContainerStyle={{ paddingTop: 4, paddingBottom: 24 + insets.bottom }}
-        onEndReached={handleLoadMore}
+        onEndReached={onEndReached}
         onEndReachedThreshold={0.4}
         ListFooterComponent={
           loadingMore ? (
@@ -762,6 +784,23 @@ export default function RunnerNotificationsScreen() {
                 Loading…
               </Text>
             </View>
+          ) : loadMoreFailed ? (
+            // Same footer as the errand history list.
+            <Pressable
+              onPress={() => {
+                Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
+                void handleLoadMore();
+              }}
+              accessibilityRole="button"
+              accessibilityLabel="Retry loading more notifications"
+              className="mx-5 my-2 py-3 rounded-2xl border border-divider bg-surface flex-row items-center justify-center"
+              style={{ minHeight: 44 }}
+            >
+              <RefreshCw size={14} color={LightColors.primary} strokeWidth={2} />
+              <Text className="text-[12px] font-montserrat-bold text-primary ml-2">
+                Couldn&apos;t load more · Tap to retry
+              </Text>
+            </Pressable>
           ) : !hasMore && notifications.length > 0 ? (
             <View className="py-4 items-center">
               <Text className="text-xs font-montserrat text-textTertiary">

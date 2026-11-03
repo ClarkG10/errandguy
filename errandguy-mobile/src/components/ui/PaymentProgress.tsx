@@ -48,7 +48,7 @@ interface PaymentProgressProps {
   successSubtitle?: string;
   /** Honest confirmation details rendered on the success stage. */
   receipt?: PaymentReceipt;
-  /** Success primary action (e.g. "Return to booking"). */
+  /** Success primary action (e.g. "Back to your errand"). */
   onSuccessDone?: () => void;
   successCta?: string;
   /** Failed-state: title, message + recovery actions. The title defaults to

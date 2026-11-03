@@ -19,6 +19,13 @@ export const CacheTTL = {
 
 const CACHE_PREFIX = '@errandguy_cache:';
 
+/** Keys read per multiGet while pruning — bounded so one call never pulls
+ *  the whole store across the bridge at once. */
+const PRUNE_CHUNK = 50;
+
+/** getOrFetch calls currently fetching, so concurrent misses share one. */
+const inflight = new Map<string, Promise<unknown>>();
+
 /**
  * Lightweight caching layer on top of AsyncStorage with TTL support.
  * Prevents unnecessary API calls and reduces load.
@@ -68,12 +75,64 @@ export const CacheService = {
     fetcher: () => Promise<T>,
     ttl: number = CacheTTL.MEDIUM,
   ): Promise<T> {
-    const cached = await this.get<T>(key);
-    if (cached !== null) return cached;
+    // Concurrent misses on one key share a single fetch instead of each
+    // paying for its own (two screens geocoding the same pin on mount).
+    const pending = inflight.get(key) as Promise<T> | undefined;
+    if (pending) return pending;
 
-    const data = await fetcher();
-    await this.set(key, data, ttl);
-    return data;
+    const run = (async () => {
+      try {
+        const cached = await this.get<T>(key);
+        if (cached !== null) return cached;
+
+        const data = await fetcher();
+        await this.set(key, data, ttl);
+        return data;
+      } finally {
+        inflight.delete(key);
+      }
+    })();
+    inflight.set(key, run);
+    return run;
+  },
+
+  /**
+   * Drop every expired or unreadable entry under the cache prefix.
+   *
+   * `get` only removes an expired entry when that exact key is read again, so
+   * anything keyed by something that never recurs (a coordinate, a one-off
+   * search) stays on disk forever. Android caps AsyncStorage at 6 MB, and once
+   * it is full EVERY setItem in the app throws — and `set` swallows that, so
+   * caching, drafts and queued work all stop persisting with no visible error.
+   * Run once per launch. Returns how many entries were removed; never throws.
+   */
+  async pruneExpired(now: number = Date.now()): Promise<number> {
+    try {
+      const allKeys = await AsyncStorage.getAllKeys();
+      const cacheKeys = allKeys.filter((k) => k.startsWith(CACHE_PREFIX));
+      const doomed: string[] = [];
+      for (let i = 0; i < cacheKeys.length; i += PRUNE_CHUNK) {
+        const pairs = await AsyncStorage.multiGet(cacheKeys.slice(i, i + PRUNE_CHUNK));
+        for (const [k, raw] of pairs) {
+          if (raw == null) continue;
+          let expiresAt: unknown;
+          try {
+            expiresAt = (JSON.parse(raw) as Partial<CacheEntry<unknown>> | null)?.expiresAt;
+          } catch {
+            doomed.push(k); // corrupt — `get` could never return it anyway
+            continue;
+          }
+          if (typeof expiresAt !== 'number' || !Number.isFinite(expiresAt) || now > expiresAt) {
+            doomed.push(k);
+          }
+        }
+      }
+      if (doomed.length > 0) await AsyncStorage.multiRemove(doomed);
+      return doomed.length;
+    } catch {
+      // Housekeeping only — a failure here must never break launch.
+      return 0;
+    }
   },
 
   /**

@@ -285,7 +285,9 @@ export default function RunnerChatScreen() {
   // above the composer when that first fetch fails (previously silent,
   // which showed a false "no messages" and hid dropoff instructions).
   const [initialLoading, setInitialLoading] = useState(true);
-  const [loadError, setLoadError] = useState(false);
+  // The failure itself (not just a flag), so the retry card can name the
+  // cause — offline vs. our side — instead of blaming the connection.
+  const [loadError, setLoadError] = useState<unknown>(null);
   const flatListRef = useRef<FlatList<Row>>(null);
   // (image aspect ratios now live inside <ChatImage>'s own local state, so a
   //  photo resolving no longer re-renders the whole visible message window — P12)
@@ -342,10 +344,10 @@ export default function RunnerChatScreen() {
   useEffect(() => {
     if (!bookingId) return;
     setInitialLoading(true);
-    setLoadError(false);
+    setLoadError(null);
     fetchMessages()
-      .then(() => setLoadError(false))
-      .catch(() => setLoadError(true))
+      .then(() => setLoadError(null))
+      .catch((err: unknown) => setLoadError(err ?? true))
       .finally(() => setInitialLoading(false));
     // Only PATCH /read on mount when there's actually something to
     // clear, so opening an already-read thread doesn't cost a write.
@@ -358,10 +360,10 @@ export default function RunnerChatScreen() {
   // Manual retry from the ErrorState shown above the composer.
   const handleReload = useCallback(() => {
     setInitialLoading(true);
-    setLoadError(false);
+    setLoadError(null);
     fetchMessages()
-      .then(() => setLoadError(false))
-      .catch(() => setLoadError(true))
+      .then(() => setLoadError(null))
+      .catch((err: unknown) => setLoadError(err ?? true))
       .finally(() => setInitialLoading(false));
   }, [fetchMessages]);
 
@@ -752,7 +754,7 @@ export default function RunnerChatScreen() {
             would hide dropoff instructions) when the fetch fails. */}
         {loadError && messages.length === 0 ? (
           <View className="px-4 py-2">
-            <ErrorState compact onRetry={handleReload} />
+            <ErrorState compact error={loadError} onRetry={handleReload} />
           </View>
         ) : null}
 

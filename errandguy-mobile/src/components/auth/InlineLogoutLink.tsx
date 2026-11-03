@@ -187,6 +187,6 @@ const s = StyleSheet.create({
   cancelText: {
     fontSize: 12,
     fontFamily: 'Quicksand_400Regular',
-    color: LightColors.textMuted,
+    color: LightColors.textTertiary,
   },
 });

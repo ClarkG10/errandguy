@@ -42,6 +42,12 @@ import {
 import { RateCustomerModal } from '../../../components/runner/RateCustomerModal';
 import { RunnerActiveMap } from '../../../components/runner/RunnerActiveMap';
 import {
+  NO_LONGER_YOURS_MESSAGE,
+  REASSIGNED_MESSAGE,
+  isTakenOffBroadcast,
+  releaseTakenOffErrand,
+} from '../../../components/runner/reassignment';
+import {
   bookedVehicleLabel,
   offerExpiresAt,
   readAcceptDeadline,
@@ -163,6 +169,13 @@ function metersBetween(
   return Math.sqrt(dLat * dLat + dLng * dLng);
 }
 
+/** The server answered "not yours to see" (api.ts normalises errors to
+ *  `{ status }`), as opposed to the request failing on the way there. */
+function isGoneError(err: unknown): boolean {
+  const status = (err as { status?: number } | null | undefined)?.status;
+  return status === 404 || status === 403;
+}
+
 // TERMINAL_STATUSES / STATUS_RANK now live in constants/statusRank.ts — the
 // navigate screen consumes the SAME `booking.status` broadcast and has to merge
 // it by the identical rule (see the import above).
@@ -277,10 +290,14 @@ function RunnerArrivalWatcher({
 function RunnerEtaLeaf({
   targetLat,
   targetLng,
+  active = true,
   children,
 }: {
   targetLat?: number | null;
   targetLng?: number | null;
+  /** False while the cockpit is covered by turn-by-turn: keep the last ETA,
+   *  fetch nothing (see RunnerActiveMap's `active`). */
+  active?: boolean;
   children: (minutes: number | null) => React.ReactElement | null;
 }) {
   const currentLocation = useLocationStore((s) => s.currentLocation);
@@ -289,6 +306,8 @@ function RunnerEtaLeaf({
     targetLat != null && targetLng != null
       ? { lat: Number(targetLat), lng: Number(targetLng) }
       : null,
+    'driving',
+    { enabled: active },
   );
   return children(eta.minutes);
 }
@@ -441,7 +460,10 @@ function StopRow({
 export default function ActiveErrandScreen() {
   const router = useRouter();
   const { id } = useLocalSearchParams<{ id: string }>();
-  const { currentErrand, updateErrandStatus } = useRunnerStore();
+  // Per-field selectors: a bare useRunnerStore() re-rendered this whole screen
+  // on ANY store write (an incoming offer, the online toggle, a profile save).
+  const currentErrand = useRunnerStore((s) => s.currentErrand);
+  const updateErrandStatus = useRunnerStore((s) => s.updateErrandStatus);
   const refreshUnread = useChatStore((s) => s.refreshUnread);
   const unreadForBooking = useChatStore(
     (s) => (id ? s.unreadByBooking[id] ?? 0 : 0),
@@ -580,6 +602,22 @@ export default function ActiveErrandScreen() {
   const mutateRef = useRef(fetchedQ.mutate);
   mutateRef.current = fetchedQ.mutate;
 
+  // Support took this errand off the runner (returned it to matching), or the
+  // server has stopped returning it to us. Clear it everywhere and go Home —
+  // dismissTo also pops turn-by-turn when it sits on top, so the runner isn't
+  // left steering to a job that is no longer theirs. Ref-held so the
+  // once-created channel handler below can call it; latched so the broadcast
+  // and the poll can't both navigate.
+  const takenOffRef = useRef(false);
+  const leaveTakenOffRef = useRef<(message: string) => void>(() => {});
+  leaveTakenOffRef.current = (message: string) => {
+    const cur = bookingRef.current;
+    if (!cur || takenOffRef.current) return;
+    takenOffRef.current = true;
+    releaseTakenOffErrand(cur.id, message);
+    router.dismissTo('/(runner)/(tabs)' as any);
+  };
+
   // An offer push tapped while the app was closed opens THIS screen with no
   // Home tab underneath — and Home's reconcile is what raises the offer
   // pop-up — so the runner landed on a "tap to claim" job with no countdown
@@ -706,6 +744,12 @@ export default function ActiveErrandScreen() {
     const cur = bookingRef.current;
     if (!cur) return;
     if (incoming.id && incoming.id !== cur.id) return;
+    // Checked before the rank guard below: the reassignment arrives as
+    // `pending`, which that guard would otherwise drop as a late event.
+    if (isTakenOffBroadcast(incoming, cur, useAuthStore.getState().user?.id)) {
+      leaveTakenOffRef.current(REASSIGNED_MESSAGE);
+      return;
+    }
     if (incoming.status === cur.status) return;
 
     const isTerminal = TERMINAL_STATUSES.includes(incoming.status);
@@ -764,7 +808,29 @@ export default function ActiveErrandScreen() {
   useSmartPolling(
     async () => {
       if (!id) return;
-      const r = await runnerService.getErrand(id);
+      let r;
+      try {
+        r = await runnerService.getErrand(id);
+      } catch (err: any) {
+        // The runner endpoint only returns errands assigned to this runner
+        // (scoped by runnerBookings(), 404 otherwise), so a 404 on one they were working
+        // means it was taken off them — the poll's job when the reassignment
+        // broadcast never arrived. Before this it just backed off and retried
+        // forever. Not 403: that is account/role middleware, which has its
+        // own handling. An offer they never accepted is left alone (it lapses
+        // through its own path).
+        const status = err?.status;
+        const cur = bookingRef.current;
+        const wasWorking =
+          !!cur &&
+          !TERMINAL_STATUSES.includes(cur.status) &&
+          (STATUS_RANK[cur.status] ?? -1) >= STATUS_RANK.accepted;
+        if (status === 404 && wasWorking) {
+          leaveTakenOffRef.current(NO_LONGER_YOURS_MESSAGE);
+          return;
+        }
+        throw err;
+      }
       const fresh = (r?.data?.data ?? null) as Booking | null;
       if (!fresh) return;
       // A fresh read saying no alert is open closes a stale "SOS active" card.
@@ -1843,9 +1909,11 @@ export default function ActiveErrandScreen() {
       // Don't block the runner from leaving the screen on failure — their
       // shift continues. A 422 here is the intentional "already reviewed"
       // no-op and stays silent; everything else (including offline/timeout,
-      // which carries NO err.response) surfaces a toast so the review isn't
-      // lost without the runner ever knowing.
-      if (err?.response?.status !== 422) {
+      // which api.ts rejects as status 0) surfaces a toast so the review isn't
+      // lost without the runner ever knowing. api.ts normalises every failure
+      // to `{ status }` — `err.response` is never set, so reading it made even
+      // the "already reviewed" no-op raise an error toast.
+      if (err?.status !== 422) {
         toast.error(
           errorMessage(err, "Couldn't submit your review. Please try again."),
         );
@@ -2089,7 +2157,15 @@ export default function ActiveErrandScreen() {
       <SafeAreaView className="flex-1 bg-background justify-center px-4" edges={['top']}>
         <ErrorState
           title="Errand unavailable"
-          description="This errand is no longer accessible. It may have been reassigned or removed."
+          // "Reassigned or removed" is only true when the server said so
+          // (404/403). Offline, a timeout or a 500 used to get the same
+          // sentence, so a runner in a dead zone was told the job was gone.
+          description={
+            isGoneError(fetchedQ.error)
+              ? 'This errand is no longer accessible. It may have been reassigned or removed.'
+              : undefined
+          }
+          error={fetchedQ.error}
           onRetry={() => fetchedQ.refresh()}
           style={{ flex: 0 }}
         />
@@ -2256,6 +2332,9 @@ export default function ActiveErrandScreen() {
             inPickupPhase={inPickupPhase}
             singleLocation={isSingleLocation}
             bottomOffset={mapControlsOffset}
+            // Turn-by-turn is pushed on top of this screen and fetches its own
+            // route; while covered, this map must not keep paying for one.
+            active={isFocused}
           />
         </View>
 
@@ -2536,7 +2615,11 @@ export default function ActiveErrandScreen() {
                 <JourneyBeads status={booking.status} showLabel={false} />
               </View>
               <View className="mt-2">
-                <RunnerEtaLeaf targetLat={etaTargetLat} targetLng={etaTargetLng}>
+                <RunnerEtaLeaf
+                  targetLat={etaTargetLat}
+                  targetLng={etaTargetLng}
+                  active={isFocused}
+                >
                   {(etaMin) => (
                     // The verb-led "do this now" headline is the single most
                     // important element on the screen and had no a11y props at
@@ -2888,13 +2971,13 @@ export default function ActiveErrandScreen() {
                         setShowIssueSheet(true);
                       }}
                       accessibilityRole="button"
-                      accessibilityLabel="Report an issue with this errand"
+                      accessibilityLabel="Report a problem with this errand"
                       hitSlop={8}
                       className="flex-row items-center gap-1.5 py-2"
                     >
                       <AlertTriangle size={12} color={LightColors.textMuted} />
                       <Text className="text-[11px] font-montserrat-semi text-textTertiary underline">
-                        Report an issue
+                        Report a problem
                       </Text>
                     </Pressable>
                     {booking.customer_id ? (
@@ -2965,7 +3048,7 @@ export default function ActiveErrandScreen() {
                         {!item.done && item.note && (
                           <Text
                             numberOfLines={1}
-                            className="text-[11px] font-montserrat text-textMuted ml-1.5 flex-shrink"
+                            className="text-[11px] font-montserrat text-textTertiary ml-1.5 flex-shrink"
                           >
                             · {item.note}
                           </Text>

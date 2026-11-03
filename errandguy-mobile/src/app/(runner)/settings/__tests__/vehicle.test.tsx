@@ -19,10 +19,11 @@ jest.mock('expo-router', () => ({
 }));
 
 jest.mock('../../../../services/runner.service', () => ({
-  runnerService: { updateRunnerProfile: jest.fn() },
+  runnerService: { updateRunnerProfile: jest.fn(), getRunnerProfile: jest.fn() },
 }));
 
 const updateRunnerProfile = runnerService.updateRunnerProfile as jest.Mock;
+const getRunnerProfile = runnerService.getRunnerProfile as jest.Mock;
 
 const renderScreen = () =>
   render(
@@ -86,12 +87,12 @@ describe('vehicle — one already on file', () => {
     const screen = renderScreen();
 
     expect(screen.queryByText('Choose your vehicle')).toBeNull();
-    expect(saveButton(screen, 'Save Changes').props.accessibilityState).toMatchObject({
+    expect(saveButton(screen, 'Save changes').props.accessibilityState).toMatchObject({
       disabled: true,
     });
 
     fireEvent.press(screen.getByRole('radio', { name: 'Walking' }));
-    expect(saveButton(screen, 'Save Changes').props.accessibilityState).toMatchObject({
+    expect(saveButton(screen, 'Save changes').props.accessibilityState).toMatchObject({
       disabled: false,
     });
   });
@@ -99,10 +100,35 @@ describe('vehicle — one already on file', () => {
   it('never offers to save over a profile it has not loaded', () => {
     // Unknown is not "nothing saved": Save stays off rather than risk
     // overwriting a saved car.
+    getRunnerProfile.mockReturnValue(new Promise(() => {}));
     useRunnerStore.setState({ runnerProfile: null });
     const screen = renderScreen();
     expect(screen.queryByText('Choose your vehicle')).toBeNull();
-    expect(saveButton(screen, 'Save Changes').props.accessibilityState).toMatchObject({
+    // The picker is held back until the profile lands.
+    expect(screen.queryByRole('radio', { name: 'Walking' })).toBeNull();
+    expect(saveButton(screen, 'Save changes').props.accessibilityState).toMatchObject({
+      disabled: true,
+    });
+  });
+
+  it('loads a missing profile and shows the vehicle already on file', async () => {
+    getRunnerProfile.mockResolvedValue({
+      data: { data: makeRunnerProfile({ vehicle_type: 'motorcycle', vehicle_plate: 'ABC 1234' }) },
+    });
+    useRunnerStore.setState({ runnerProfile: null });
+    const screen = renderScreen();
+
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    expect(getRunnerProfile).toHaveBeenCalledTimes(1);
+    expect(screen.getByRole('radio', { name: 'Motorcycle' }).props.accessibilityState).toMatchObject({
+      selected: true,
+    });
+    expect(screen.getByDisplayValue('ABC 1234')).toBeTruthy();
+    // Seeded from the server, so nothing has changed yet.
+    expect(saveButton(screen, 'Save changes').props.accessibilityState).toMatchObject({
       disabled: true,
     });
   });

@@ -106,7 +106,7 @@ const FAQS: FAQ[] = [
   {
     question: 'What if I can’t finish an errand?',
     answer:
-      'Once you accept an errand it stays yours — you can’t hand it back in the app. If something stops you (the store is closed, the customer is unreachable, you’re in trouble), tap "Report an issue" on the errand and our team will reassign or cancel it. In an emergency use SOS or call 911.',
+      'Once you accept an errand it stays yours — you can’t hand it back in the app. If something stops you (the store is closed, the customer is unreachable, you’re in trouble), tap "Report a problem" on the errand and our team will reassign or cancel it. In an emergency use SOS or call 911.',
   },
   {
     question: 'How do I get offers?',

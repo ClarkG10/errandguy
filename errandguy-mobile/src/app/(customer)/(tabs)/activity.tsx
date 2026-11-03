@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   View,
   Text,
@@ -6,7 +6,7 @@ import {
   Pressable,
   TextInput,
 } from 'react-native';
-import { ClipboardList, MessageCircle, Search, SearchX, X } from 'lucide-react-native';
+import { ClipboardList, MessageCircle, RefreshCw, Search, SearchX, X } from 'lucide-react-native';
 import { useRouter } from 'expo-router';
 import * as Haptics from 'expo-haptics';
 import { bookingService } from '../../../services/booking.service';
@@ -28,15 +28,12 @@ import { Eyebrow } from '../../../components/ui/Typography';
 import type { Booking } from '../../../types';
 import { scheduledWindowLabel } from '../../../utils/scheduledBooking';
 import { LightColors } from '../../../constants/colors';
-import { copy } from '../../../constants/copy';
 import {
   AWAITING_PAYMENT_LABEL,
   SCHEDULED_LABEL,
   STATUS_LABELS,
 } from '../../../constants/statusLabels';
 import { isAwaitingPayment } from '../../../utils/bookingPayment';
-import { errorMessage } from '../../../utils/errorCatalog';
-import { toast } from '../../../stores/toastStore';
 import { TAB_CONTENT_BOTTOM_INSET } from '../../../constants/tabLayout';
 
 type FilterKey = 'all' | 'active' | 'completed' | 'cancelled';
@@ -100,6 +97,16 @@ export default function ActivityScreen() {
   const [hasMore, setHasMore] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [loadingMore, setLoadingMore] = useState(false);
+  // The last "load more" failure, kept until a retry or a refresh. While it's
+  // set nothing pages on its own: the footer (or the empty state) offers
+  // "Try again" instead. Without this latch the auto-pager below refired the
+  // moment loadingMore dropped, so offline it looped, stacked one error toast
+  // per attempt and left a filtered tab on a skeleton for good.
+  const [loadMoreError, setLoadMoreError] = useState<unknown>(null);
+  const loadMoreFailed = loadMoreError != null;
+  // Bumped by pull-to-refresh, so a page that was still loading from before
+  // the list started over is dropped when it lands instead of appended.
+  const pagingGen = useRef(0);
 
   // Pagination is over the single unfiltered list now, so it does NOT reset
   // when the tab changes (switching tabs just re-filters what's loaded).
@@ -213,51 +220,76 @@ export default function ActivityScreen() {
 
   const onRefresh = useCallback(async () => {
     setRefreshing(true);
+    pagingGen.current += 1;
     setExtraPages([]);
     setPage(1);
     setHasMore(true);
+    setLoadMoreError(null);
     await page1Q.refresh();
     setRefreshing(false);
   }, [page1Q]);
 
-  const onEndReached = useCallback(async () => {
-    if (!hasMore || loadingMore) return;
+  const fetchNextPage = useCallback(async () => {
     setLoadingMore(true);
+    setLoadMoreError(null);
     const nextPage = page + 1;
+    const gen = pagingGen.current;
     try {
       // Always page the unfiltered list; the tabs filter it client-side.
       const res = await bookingService.getBookings({
         page: nextPage,
         per_page: PER_PAGE,
       });
+      if (pagingGen.current !== gen) return;
       const data: Booking[] = res.data.data ?? [];
       setExtraPages((prev) => [...prev, ...data]);
       setPage(nextPage);
       setHasMore(data.length >= PER_PAGE);
     } catch (err) {
-      toast.error(errorMessage(err, copy.generic.loadMoreFailed));
+      // An inline "Try again" (footer or empty state), not a toast.
+      if (pagingGen.current === gen) setLoadMoreError(err ?? new Error('load more failed'));
     } finally {
       setLoadingMore(false);
     }
-  }, [hasMore, loadingMore, page]);
+  }, [page]);
+
+  const onEndReached = useCallback(() => {
+    // Never page past a first page that hasn't loaded, and after a failure
+    // wait for an explicit retry tap — otherwise the scroll position (or the
+    // auto-pager below) keeps re-triggering the failing request.
+    if (!hasMore || loadingMore || loadMoreFailed || !page1Q.data) return;
+    void fetchNextPage();
+  }, [hasMore, loadingMore, loadMoreFailed, page1Q.data, fetchNextPage]);
 
   // The list is paginated over the UNFILTERED history and filtered client-side,
   // so a tab whose matches all live beyond page 1 would render an empty list —
   // and an empty list can't scroll, so onEndReached never fires and those
   // errands stay unreachable behind a false "none" state. Proactively page while
-  // the active filter has zero matches but more history exists (onEndReached's
-  // own hasMore/loadingMore guards prevent overlap/over-fetch).
+  // the active filter has zero matches but more history exists. It stops on the
+  // first failure (and never starts while page 1 itself failed) — the empty
+  // state then offers the retry.
   useEffect(() => {
     if (
       !trimmedSearch &&
       !loading &&
+      !!page1Q.data &&
       hasMore &&
       !loadingMore &&
+      !loadMoreFailed &&
       statusFiltered.length === 0
     ) {
-      void onEndReached();
+      onEndReached();
     }
-  }, [trimmedSearch, loading, hasMore, loadingMore, statusFiltered.length, onEndReached]);
+  }, [
+    trimmedSearch,
+    loading,
+    page1Q.data,
+    hasMore,
+    loadingMore,
+    loadMoreFailed,
+    statusFiltered.length,
+    onEndReached,
+  ]);
 
   return (
     <View className="flex-1 bg-background">
@@ -402,6 +434,24 @@ export default function ActivityScreen() {
                 Loading…
               </Text>
             </View>
+          ) : loadMoreFailed && sections.length > 0 ? (
+            // Same inline retry as the runner's history and the wallet. With
+            // nothing on screen the empty state below carries it instead.
+            <Pressable
+              onPress={() => {
+                Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
+                void fetchNextPage();
+              }}
+              accessibilityRole="button"
+              accessibilityLabel="Retry loading more errands"
+              className="mx-5 my-2 py-3 rounded-2xl border border-divider bg-surface flex-row items-center justify-center"
+              style={{ minHeight: 44 }}
+            >
+              <RefreshCw size={14} color={LightColors.primary} strokeWidth={2} />
+              <Text className="text-[12px] font-montserrat-bold text-primary ml-2">
+                Couldn’t load more · Try again
+              </Text>
+            </Pressable>
           ) : !hasMore && visibleBookings.length > 0 ? (
             <View className="py-4 items-center">
               <Text className="text-[11px] font-montserrat text-textTertiary">
@@ -430,6 +480,18 @@ export default function ActivityScreen() {
               description={`Nothing matches “${search.trim()}” in this view`}
               actionLabel="Clear search"
               onAction={() => setSearch('')}
+            />
+          ) : loadMoreFailed ? (
+            // This tab's errands may be further back in the history, and
+            // fetching the next page failed — say so instead of a skeleton
+            // that never resolves.
+            <ErrorState
+              title="Couldn’t load more of your errands"
+              error={loadMoreError}
+              onRetry={() => {
+                void fetchNextPage();
+              }}
+              retryLabel="Try again"
             />
           ) : !loading && !hasMore ? (
             // Genuine empty — only once ALL history is loaded (!hasMore).

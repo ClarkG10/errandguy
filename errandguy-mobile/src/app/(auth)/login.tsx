@@ -26,7 +26,7 @@ import { preloadCoreImages } from '../../services/preload.service';
 import { userService } from '../../services/user.service';
 import { useAuthStore } from '../../stores/authStore';
 import { toast } from '../../stores/toastStore';
-import { errorMessage } from '../../utils/errorCatalog';
+import { errorMessage, tooManyAttemptsMessage } from '../../utils/errorCatalog';
 import { isPhMobile } from '../../utils/phone';
 import { LightColors } from '../../constants/colors';
 import type { User } from '../../types';
@@ -201,7 +201,7 @@ export default function LoginScreen() {
       } else if (status >= 500) {
         message = errorMessage(error, 'Couldn’t sign you in. Please try again.');
       } else if (status === 429) {
-        message = 'Too many attempts. Please wait a few minutes and try again.';
+        message = tooManyAttemptsMessage(error);
       } else if (status === 422) {
         message =
           error.errors?.credentials?.[0] ||
@@ -540,7 +540,7 @@ export default function LoginScreen() {
                 <Text className="text-[13px] font-montserrat text-textTertiary">
                   Unlock with {biometricLabel} next time
                 </Text>
-                <Text className="text-[12px] font-montserrat text-textMuted mt-0.5">
+                <Text className="text-[12px] font-montserrat text-textTertiary mt-0.5">
                   Keeps you remembered on this device
                 </Text>
               </View>

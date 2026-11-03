@@ -1,8 +1,9 @@
 import React from 'react';
-import { View, Text, StyleSheet } from 'react-native';
+import { View, Text, StyleSheet, Platform, type TextStyle } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useResponsive } from '../../constants/responsive';
 import { LightColors } from '../../constants/colors';
+import { CHROME_MAX_FONT_SCALE } from '../../constants/fontScale';
 
 /** Base Ionicons names used by the tab bars. The `-outline` variant is
  *  rendered when inactive; the solid (base) glyph when active. */
@@ -98,7 +99,35 @@ export function TabBarItem({
   );
 }
 
+/** The word under each tab icon — shared by both tab bars. */
+export const TAB_LABEL_STYLE: TextStyle = { fontFamily: 'Quicksand_600SemiBold', fontSize: 11 };
+
+/**
+ * The tab label, capped at the chrome font scale. The bar is a fixed-height
+ * strip, and on Android the navigator's own label grew without limit, so at
+ * large text sizes the word squeezed the icon out of its slot. iOS keeps the
+ * navigator's label: it doesn't scale there at all (the system's Large
+ * Content Viewer shows it instead), and VoiceOver's "Home, tab, 1 of 4" is
+ * only built for a plain-string label. Pass as `tabBarLabel`.
+ */
+export const cappedTabBarLabel =
+  Platform.OS === 'android'
+    ? ({ color, children }: { color: string; children: string }) => (
+        <Text
+          numberOfLines={1}
+          maxFontSizeMultiplier={CHROME_MAX_FONT_SCALE}
+          style={[s.tabLabel, TAB_LABEL_STYLE, { color }]}
+        >
+          {children}
+        </Text>
+      )
+    : undefined;
+
 const s = StyleSheet.create({
+  tabLabel: {
+    textAlign: 'center',
+    backgroundColor: 'transparent',
+  },
   wrap: {
     // Fill the icon slot's full height so the glyph sits dead-centre.
     // Without this the icon hugs the top and leaves a gap at the bottom

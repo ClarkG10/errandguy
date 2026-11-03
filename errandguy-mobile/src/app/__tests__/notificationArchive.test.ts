@@ -31,3 +31,24 @@ describe('customer inbox — archive', () => {
     expect(hook).not.toContain('useNotificationStore');
   });
 });
+
+describe('customer inbox — delete and older pages', () => {
+  it('deletes in one step with Undo, like the runner inbox — no confirm dialog in front', () => {
+    expect(INBOX).not.toContain('Delete notification?');
+    expect(INBOX).not.toMatch(/deleteTarget|requestDelete/);
+    expect(INBOX).toContain('onDelete={handleDelete}');
+    const del = INBOX.slice(INBOX.indexOf('const handleDelete')).slice(0, 1600);
+    expect(del).toContain('toast.info(DELETED_TOAST, {');
+    expect(INBOX).toContain("const DELETED_TOAST = 'Notification deleted';");
+    expect(del).toContain("actionLabel: 'Undo'");
+  });
+
+  it('a failed older page offers Try again and doesn’t page on its own until it’s tapped', () => {
+    const fetchMore = INBOX.slice(INBOX.indexOf('const fetchMore'), INBOX.indexOf('const handleLoadMore'));
+    expect(fetchMore).toContain('setLoadMoreFailed(true)');
+    const loadMore = INBOX.slice(INBOX.indexOf('const handleLoadMore')).slice(0, 300);
+    expect(loadMore).toMatch(/if \(!hasMore \|\| loadMoreFailed\) return;/);
+    expect(INBOX).toContain('accessibilityLabel="Retry loading more notifications"');
+    expect(INBOX).toContain('Couldn’t load more · Try again');
+  });
+});

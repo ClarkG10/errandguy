@@ -1,4 +1,4 @@
-import { CacheService, CacheTTL } from './cache.service';
+import { CacheTTL } from './cache.service';
 
 const HERE_API_KEY = process.env.EXPO_PUBLIC_HERE_API_KEY ?? '';
 
@@ -115,9 +115,84 @@ function flexDecodeFlexPolyline(encoded: string): [number, number][] {
 // Helpers
 // ---------------------------------------------------------------------------
 
-function quantize(n: unknown): string {
+function quantize(n: unknown, digits = 4): string {
   const v = typeof n === 'number' ? n : Number(n);
-  return Number.isFinite(v) ? v.toFixed(4) : 'NaN';
+  return Number.isFinite(v) ? v.toFixed(digits) : 'NaN';
+}
+
+/**
+ * Cache key for one leg. A LIVE origin (the runner's moving position) is
+ * snapped to 3 decimals (~110 m), the same snap every live caller (useEta, the
+ * runner map, customer tracking) uses to decide when to refetch. At 4
+ * decimals the key moved with every ~11 m of GPS drift, so the map, its ETA
+ * badge and the step hero all missed each other's entry for the same leg and
+ * each paid for its own HERE call. A fixed pin (a pickup the customer placed,
+ * every destination) keeps the finer snap: two different pins a block apart
+ * must never share a route, or the line starts away from the marker.
+ */
+function routeKey(
+  profile: DirectionsProfile,
+  fLng: number,
+  fLat: number,
+  tLng: number,
+  tLat: number,
+  liveOrigin = false,
+): string {
+  const o = liveOrigin ? 3 : 4;
+  return `route5:${profile}:${liveOrigin ? 'live:' : ''}${quantize(fLng, o)},${quantize(fLat, o)}:${quantize(tLng)},${quantize(tLat)}`;
+}
+
+/** `liveOrigin`: the origin is a moving runner, not a pin (see routeKey). */
+export interface RouteOptions {
+  liveOrigin?: boolean;
+}
+
+/**
+ * Route results live in memory only. They used to be written to AsyncStorage,
+ * but a key carries the runner's position, so almost none was ever read twice
+ * and expired entries were only removed when their own key was read again —
+ * the store grew for the life of the install, and Android caps it at 6 MB,
+ * after which every write in the app fails silently. A route is cheap to
+ * refetch after a cold start; small and recent is all this cache needs to be.
+ */
+const ROUTE_CACHE_MAX = 40;
+const routeCache = new Map<string, { value: RouteResult; expiresAt: number }>();
+
+function readRoute(key: string): RouteResult | null {
+  const hit = routeCache.get(key);
+  if (!hit) return null;
+  if (Date.now() > hit.expiresAt) {
+    routeCache.delete(key);
+    return null;
+  }
+  // Re-insert so the Map's insertion order doubles as recency (LRU).
+  routeCache.delete(key);
+  routeCache.set(key, hit);
+  return hit.value;
+}
+
+function writeRoute(key: string, value: RouteResult): void {
+  routeCache.delete(key);
+  routeCache.set(key, { value, expiresAt: Date.now() + CacheTTL.LONG });
+  while (routeCache.size > ROUTE_CACHE_MAX) {
+    const oldest = routeCache.keys().next().value;
+    if (oldest === undefined) break;
+    routeCache.delete(oldest);
+  }
+}
+
+/**
+ * One request per leg at a time. On the runner's errand screen the map, its
+ * ETA badge and the step hero all ask for the same leg in the same commit;
+ * without this each started its own HERE call before any had landed in the
+ * cache. Same idiom as the `inflight` map in api.ts.
+ */
+const routeInflight = new Map<string, Promise<RouteResult | null>>();
+
+/** Test hook: forget every cached and in-flight route. */
+export function __resetRouteCacheForTests(): void {
+  routeCache.clear();
+  routeInflight.clear();
 }
 
 function isFiniteCoord(n: unknown): n is number {
@@ -317,6 +392,7 @@ export const routeService = {
     from: { lng: number; lat: number },
     to: { lng: number; lat: number },
     profile: DirectionsProfile = 'driving',
+    opts: RouteOptions = {},
   ): Promise<RouteResult | null> {
     const fLng = Number(from?.lng), fLat = Number(from?.lat);
     const tLng = Number(to?.lng),   tLat = Number(to?.lat);
@@ -324,21 +400,33 @@ export const routeService = {
       if (__DEV__) console.warn('[route.getRoute] Invalid coordinates:', { from, to });
       return null;
     }
-    const key = `route4:${profile}:${quantize(fLng)},${quantize(fLat)}:${quantize(tLng)},${quantize(tLat)}`;
-    try {
-      return await CacheService.getOrFetch<RouteResult>(
-        key,
-        async () => {
-          const r = await fetchHereRoute({ lng: fLng, lat: fLat }, { lng: tLng, lat: tLat }, profile, false);
-          if (!r) throw new Error('here_routing_failed');
-          return { coordinates: r.coords, distanceMeters: r.distanceMeters, durationSeconds: r.durationSeconds };
-        },
-        CacheTTL.LONG,
-      );
-    } catch (err) {
-      console.error('[route.getRoute] Failed:', err);
-      return null;
-    }
+    const key = routeKey(profile, fLng, fLat, tLng, tLat, opts.liveOrigin);
+    const cached = readRoute(key);
+    if (cached) return cached;
+    const pending = routeInflight.get(key);
+    if (pending) return pending;
+
+    const request = (async (): Promise<RouteResult | null> => {
+      try {
+        const r = await fetchHereRoute({ lng: fLng, lat: fLat }, { lng: tLng, lat: tLat }, profile, false);
+        if (!r) throw new Error('here_routing_failed');
+        const result: RouteResult = {
+          coordinates: r.coords,
+          distanceMeters: r.distanceMeters,
+          durationSeconds: r.durationSeconds,
+        };
+        // Failures are never cached, so the next caller retries.
+        writeRoute(key, result);
+        return result;
+      } catch (err) {
+        console.error('[route.getRoute] Failed:', err);
+        return null;
+      } finally {
+        routeInflight.delete(key);
+      }
+    })();
+    routeInflight.set(key, request);
+    return request;
   },
 
   /**
@@ -369,13 +457,13 @@ export const routeService = {
     from: { lng: number; lat: number },
     to: { lng: number; lat: number },
     profile: DirectionsProfile = 'driving',
+    opts: RouteOptions = {},
   ): Promise<RouteResult | null> {
     const fLng = Number(from?.lng), fLat = Number(from?.lat);
     const tLng = Number(to?.lng),   tLat = Number(to?.lat);
     if (!isFiniteCoord(fLng) || !isFiniteCoord(fLat) || !isFiniteCoord(tLng) || !isFiniteCoord(tLat)) return null;
-    const key = `route4:${profile}:${quantize(fLng)},${quantize(fLat)}:${quantize(tLng)},${quantize(tLat)}`;
-    await CacheService.remove(key);
-    return this.getRoute(from, to, profile);
+    routeCache.delete(routeKey(profile, fLng, fLat, tLng, tLat, opts.liveOrigin));
+    return this.getRoute(from, to, profile, opts);
   },
 
   async getNavigationRoute(

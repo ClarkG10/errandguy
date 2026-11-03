@@ -11,13 +11,4 @@ export const configService = {
   getAppConfig() {
     return api.get('/config/app', { cacheTtlMs: 10 * 60 * 1000, silent: true });
   },
-
-  submitReport(data: {
-    booking_id?: string;
-    subject: string;
-    description: string;
-    category: string;
-  }) {
-    return api.post('/support/report', data);
-  },
 };

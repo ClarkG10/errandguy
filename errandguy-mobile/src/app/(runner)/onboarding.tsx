@@ -117,7 +117,9 @@ export default function RunnerOnboardingScreen() {
   const [documents, setDocuments] = useState<RunnerDocument[]>([]);
   const [uploading, setUploading] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
-  const [loadError, setLoadError] = useState(false);
+  // The failure itself, so the error state can name the cause (offline vs.
+  // our side) rather than one sentence for both. Null = no failure.
+  const [loadError, setLoadError] = useState<unknown>(null);
   const [refreshing, setRefreshing] = useState(false);
   const [pickerVisible, setPickerVisible] = useState(false);
   const [activeDocType, setActiveDocType] = useState<DocumentType | null>(null);
@@ -131,17 +133,19 @@ export default function RunnerOnboardingScreen() {
       const profile = res.data.data;
       setRunnerProfile(profile);
       setDocuments(profile?.documents ?? []);
-      setLoadError(false);
+      setLoadError(null);
     } catch (err: any) {
       // A 404 means the profile simply doesn't exist yet — that's a
       // legitimate "nothing uploaded" state. Anything else (network
       // drop, 5xx) is a real failure: surface it instead of silently
-      // rendering every document as "Not uploaded".
-      if (err?.response?.status === 404) {
+      // rendering every document as "Not uploaded". (api.ts normalises
+      // errors to `{ status }`; `err.response` is never set, so this branch
+      // used to be unreachable.)
+      if (err?.status === 404) {
         setDocuments([]);
-        setLoadError(false);
+        setLoadError(null);
       } else {
-        setLoadError(true);
+        setLoadError(err ?? true);
       }
     } finally {
       setLoading(false);
@@ -421,12 +425,12 @@ export default function RunnerOnboardingScreen() {
     <SafeAreaView className="flex-1 bg-background">
       {/* Top bar with logout. Document upload is mandatory — there is no
           skip; the only exits are Continue (enabled once required docs are
-          uploaded) or Log out. */}
+          uploaded) or Sign out. */}
       <View className="flex-row items-center justify-end px-5 pt-2">
         <Pressable
           onPress={handleLogout}
           accessibilityRole="button"
-          accessibilityLabel="Log out"
+          accessibilityLabel="Sign out"
           // 36pt visual — hitSlop lifts the effective target to 44pt.
           hitSlop={4}
           className="w-9 h-9 rounded-full items-center justify-center"
@@ -484,6 +488,7 @@ export default function RunnerOnboardingScreen() {
         ) : loadError ? (
           <ErrorState
             title="Couldn't load your documents"
+            error={loadError}
             onRetry={() => {
               setLoading(true);
               fetchProfile();
@@ -625,9 +630,9 @@ export default function RunnerOnboardingScreen() {
 
       <ConfirmModal
         visible={showLogoutModal}
-        title="Log out?"
+        title="Sign out?"
         message="You'll need to sign in again to continue your runner application."
-        confirmLabel="Log out"
+        confirmLabel="Sign out"
         cancelLabel="Stay"
         destructive
         onConfirm={confirmLogout}

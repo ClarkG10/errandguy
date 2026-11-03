@@ -85,7 +85,7 @@ export function ShiftSummarySheet({ shift, onClose }: Props) {
         <Text className="text-[34px] font-montserrat-bold tabular-nums text-textPrimary mt-1">
           {formatCurrency(shift?.earnings ?? 0)}
         </Text>
-        <Text className="text-[12px] font-inter text-textMuted mt-0.5">
+        <Text className="text-[12px] font-inter text-textTertiary mt-0.5">
           {shift && shift.tips > 0 ? 'earned, plus tips below' : 'earned this shift'}
         </Text>
 
@@ -111,7 +111,7 @@ export function ShiftSummarySheet({ shift, onClose }: Props) {
         </View>
 
         {shift?.errands === 0 && (
-          <Text className="text-[12px] font-inter text-textMuted mt-4">
+          <Text className="text-[12px] font-inter text-textTertiary mt-4">
             No errands came through this time. Busier hours are usually lunch and
             early evening — the demand map shows where.
           </Text>

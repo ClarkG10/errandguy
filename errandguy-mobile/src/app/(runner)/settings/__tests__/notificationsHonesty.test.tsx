@@ -59,7 +59,7 @@ describe('runner notification settings are honest', () => {
     const { findByText, getByText } = render(<NotificationsScreen />);
     await findByText('Notifications are on for ErrandGuy.');
 
-    fireEvent.press(getByText('Open Device Settings'));
+    fireEvent.press(getByText('Open device settings'));
     expect(openSettings).toHaveBeenCalledTimes(1);
     openSettings.mockRestore();
   });
@@ -71,7 +71,7 @@ describe('runner notification settings are honest', () => {
     expect(
       await findByText(/Notifications are off\./),
     ).toBeTruthy();
-    expect(await findByText('Turn On Notifications')).toBeTruthy();
+    expect(await findByText('Turn on notifications')).toBeTruthy();
   });
 
   it('degrades to a neutral line when the permission cannot be read', async () => {

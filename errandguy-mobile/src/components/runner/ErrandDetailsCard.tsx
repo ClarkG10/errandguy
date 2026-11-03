@@ -211,11 +211,14 @@ export function ErrandDetailsCard({
   return (
     <>
     <Card className="p-4 mb-3">
+      {/* py-2 + hitSlop: the row was only as tall as its 14pt label (~20pt),
+          well under a 44pt target for a gloved/one-handed tap mid-errand. */}
       <Pressable
         onPress={() => setExpanded(!expanded)}
         accessibilityRole="button"
         accessibilityState={{ expanded }}
-        className="flex-row items-center justify-between"
+        hitSlop={8}
+        className="flex-row items-center justify-between py-2"
       >
         <Text className="text-sm font-montserrat-bold text-textPrimary">
           Errand Details

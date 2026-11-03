@@ -68,7 +68,7 @@ export function StopsProgressCard({ stops, live }: StopsProgressCardProps) {
       })}
 
       {live && (
-        <Text className="text-[11px] font-montserrat text-textMuted mt-1">
+        <Text className="text-[11px] font-montserrat text-textTertiary mt-1">
           Your runner ticks each stop off as they go — updates land here live.
         </Text>
       )}

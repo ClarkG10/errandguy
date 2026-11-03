@@ -43,6 +43,10 @@ export function useArchivedNotifications(userId: string | undefined, enabled: bo
   const [page, setPage] = useState(1);
   const [hasMore, setHasMore] = useState(false);
   const [loadingMore, setLoadingMore] = useState(false);
+  // A failed page waits for the footer's "Try again": FlatList won't fire
+  // onEndReached again at the same length, so a silent failure looked like
+  // the end of the archive.
+  const [loadMoreFailed, setLoadMoreFailed] = useState(false);
   const loadingMoreRef = useRef(false);
 
   const q = useQuery<ArchivedPage>(
@@ -57,12 +61,14 @@ export function useArchivedNotifications(userId: string | undefined, enabled: bo
     setRows(q.data.list);
     setPage(1);
     setHasMore(q.data.hasMore);
+    setLoadMoreFailed(false);
   }, [q.data]);
 
-  const loadMore = useCallback(async () => {
+  const fetchMore = useCallback(async () => {
     if (loadingMoreRef.current || !hasMore) return;
     loadingMoreRef.current = true;
     setLoadingMore(true);
+    setLoadMoreFailed(false);
     try {
       const next = page + 1;
       const more = await fetchArchivedPage(next);
@@ -73,12 +79,19 @@ export function useArchivedNotifications(userId: string | undefined, enabled: bo
       setPage(next);
       setHasMore(more.hasMore);
     } catch {
-      // Soft-fail — `hasMore` stays true so scrolling again retries.
+      // `hasMore` stays true; retryLoadMore (the footer) tries this page again.
+      setLoadMoreFailed(true);
     } finally {
       setLoadingMore(false);
       loadingMoreRef.current = false;
     }
   }, [hasMore, page]);
+
+  /** onEndReached: after a failure, wait for the explicit retry tap. */
+  const loadMore = useCallback(async () => {
+    if (loadMoreFailed) return;
+    await fetchMore();
+  }, [loadMoreFailed, fetchMore]);
 
   // Read synchronously by removeRow (a state updater runs too late to report).
   const rowsRef = useRef(rows);
@@ -114,7 +127,9 @@ export function useArchivedNotifications(userId: string | undefined, enabled: bo
     refresh: q.refresh,
     hasMore,
     loadingMore,
+    loadMoreFailed,
     loadMore,
+    retryLoadMore: fetchMore,
     removeRow,
     restoreRow,
     markReadLocal,

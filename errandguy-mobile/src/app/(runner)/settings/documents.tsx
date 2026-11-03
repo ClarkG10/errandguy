@@ -25,6 +25,7 @@ import { useResponsive } from '../../../constants/responsive';
 import type { RunnerDocument, DocumentType, RunnerProfile } from '../../../types';
 import { toast } from '../../../stores/toastStore';
 import { errorMessage } from '../../../utils/errorCatalog';
+import { formatShortDate } from '../../../utils/formatDate';
 import { copy } from '../../../constants/copy';
 
 interface DocConfig {
@@ -301,12 +302,7 @@ export default function DocumentsScreen() {
                       </Text>
                       {profile?.approved_at && (
                         <Text className="text-xs font-montserrat text-textSecondary mt-0.5">
-                          Approved on{' '}
-                          {new Date(profile.approved_at).toLocaleDateString([], {
-                            month: 'short',
-                            day: 'numeric',
-                            year: 'numeric',
-                          })}
+                          Approved on {formatShortDate(profile.approved_at)}
                         </Text>
                       )}
                     </View>
@@ -356,7 +352,7 @@ export default function DocumentsScreen() {
           setActiveDocType(null);
         }}
         onConfirm={handleImageConfirm}
-        title={activeDoc ? `Upload ${activeDoc.label}` : 'Upload Document'}
+        title={activeDoc ? `Upload ${activeDoc.label}` : 'Upload document'}
         subtitle={activeDoc?.description}
         uploading={!!uploading}
       />

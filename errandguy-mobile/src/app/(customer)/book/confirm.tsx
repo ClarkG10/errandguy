@@ -71,10 +71,10 @@ const SEARCHING_LINES = [
 const STATE_ANNOUNCEMENTS: Record<SearchState, string> = {
   awaiting_payment: 'Waiting for your payment. No runner is contacted until it goes through.',
   searching: 'Searching for a runner nearby',
-  scheduled: 'Booking scheduled. We will match a runner near your scheduled time.',
+  scheduled: 'Errand scheduled. We will match a runner near your scheduled time.',
   matched: 'Runner found. Redirecting to tracking.',
   no_runner: 'No runners available right now.',
-  cancelled: 'Booking cancelled.',
+  cancelled: 'Errand cancelled.',
 };
 
 /**
@@ -191,6 +191,11 @@ export default function ConfirmScreen() {
   // back. The modal used to promise a free cancel on its own say-so.
   const [cancelPreview, setCancelPreview] = useState<CancelPreview | null>(null);
   const [previewLoading, setPreviewLoading] = useState(false);
+  // The preview request failed: the confirm says a fee MAY apply and offers a
+  // re-check (see tracking's cancel, which works the same way).
+  const [previewFailed, setPreviewFailed] = useState(false);
+  // Only the newest preview request may write its answer.
+  const previewSeqRef = useRef(0);
   // A fresh read of the booking once it went no_runner. The realtime event that
   // announces no_runner carries lifecycle fields only, so the store copy still
   // holds the PENDING booking's `can_retry_match` (true) and none of the
@@ -221,7 +226,7 @@ export default function ConfirmScreen() {
   // forever.
   useEffect(() => {
     if (!bookingId) {
-      toast.error('Booking session lost. Please try again.');
+      toast.error('Couldn’t find this errand. Please try again.');
       router.replace('/(customer)/(tabs)');
     }
   }, [bookingId, router]);
@@ -343,7 +348,7 @@ export default function ConfirmScreen() {
     state === 'searching' || state === 'awaiting_payment',
     state === 'awaiting_payment'
       ? 'Tap back again to leave — you can finish paying from your errand on Home.'
-      : 'Tap back again to leave — your booking will keep searching.',
+      : 'Tap back again to leave — we’ll keep looking for a runner.',
   );
 
   // ── Realtime status updates ──
@@ -482,16 +487,34 @@ export default function ConfirmScreen() {
     runOnMount: true,
   });
 
+  const loadCancelPreview = useCallback(() => {
+    if (!bookingId) return;
+    const seq = ++previewSeqRef.current;
+    setPreviewLoading(true);
+    setPreviewFailed(false);
+    bookingService
+      .cancelPreview(bookingId)
+      .then((res) => {
+        if (seq !== previewSeqRef.current) return;
+        const preview = res?.data?.data ?? null;
+        setCancelPreview(preview);
+        setPreviewFailed(!preview);
+      })
+      .catch(() => {
+        if (seq !== previewSeqRef.current) return;
+        setCancelPreview(null);
+        setPreviewFailed(true);
+      })
+      .finally(() => {
+        if (seq === previewSeqRef.current) setPreviewLoading(false);
+      });
+  }, [bookingId]);
+
   const handleCancel = useCallback(() => {
     if (!bookingId) return;
     setShowCancelModal(true);
-    setPreviewLoading(true);
-    bookingService
-      .cancelPreview(bookingId)
-      .then((res) => setCancelPreview(res?.data?.data ?? null))
-      .catch(() => setCancelPreview(null))
-      .finally(() => setPreviewLoading(false));
-  }, [bookingId]);
+    loadCancelPreview();
+  }, [bookingId, loadCancelPreview]);
 
   const handleConfirmCancel = useCallback(async () => {
     if (!bookingId) return;
@@ -508,7 +531,7 @@ export default function ConfirmScreen() {
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(
         () => {},
       );
-      toast.success(cancelReceiptMessage(res) ?? 'Booking cancelled.');
+      toast.success(cancelReceiptMessage(res) ?? copy.booking.cancelled);
       router.replace('/(customer)/(tabs)');
     } catch (err) {
       haptics.error();
@@ -748,7 +771,7 @@ export default function ConfirmScreen() {
                   />
                 ) : null}
                 <Button
-                  title="Cancel Booking"
+                  title="Cancel errand"
                   variant="outline"
                   onPress={handleCancel}
                   disabled={isCancelling}
@@ -783,7 +806,7 @@ export default function ConfirmScreen() {
               {notificationsOffLine}
               <View className="mt-5 w-full">
                 <Button
-                  title="Cancel Booking"
+                  title="Cancel errand"
                   variant="outline"
                   onPress={handleCancel}
                   disabled={isCancelling}
@@ -799,7 +822,7 @@ export default function ConfirmScreen() {
                 <SuccessCheck size={72} />
               </View>
               <Text className="text-xl font-montserrat-bold text-textPrimary mt-4 text-center">
-                Booking scheduled
+                Errand scheduled
               </Text>
               {Number.isFinite(scheduledAtMs) && (
                 <Text className="text-base font-montserrat-semibold text-textPrimary mt-1 text-center">
@@ -874,7 +897,7 @@ export default function ConfirmScreen() {
                   <Button
                     title="Book again"
                     onPress={handleRebook}
-                    accessibilityHint="Starts a new booking pre-filled from this one"
+                    accessibilityHint="Starts a new errand pre-filled from this one"
                     fullWidth
                   />
                 ) : (
@@ -933,12 +956,12 @@ export default function ConfirmScreen() {
             <>
               <Illustration name="booking-cancelled" size={150} style={{ alignSelf: 'center' }} />
               <Text className="text-xl font-montserrat-bold text-textPrimary mt-4 text-center">
-                Booking Cancelled
+                Errand cancelled
               </Text>
               {/* This card only shows for a server-side cancellation —
                   a customer cancel navigates home directly. */}
               <Text className="text-sm font-montserrat text-textSecondary mt-1 text-center">
-                This booking is no longer active. You can start a new one anytime.
+                This errand is no longer active. You can book a new one anytime.
               </Text>
               <View className="mt-5 w-full">
                 <Button
@@ -954,25 +977,35 @@ export default function ConfirmScreen() {
 
       <ConfirmModal
         visible={showCancelModal}
-        title="Cancel this booking?"
+        title="Cancel this errand?"
         // The server's preview, never a promise of our own: it names any fee
         // and what goes back to the wallet (same body tracking shows).
         message={
           previewLoading
-            ? 'Checking cancellation policy…'
+            ? 'Checking for a cancellation fee…'
             : cancelPreview
               ? cancelMoneyLines(cancelPreview)
-              : 'This can’t be undone. We’ll tell you right away what happens to any payment.'
+              : 'We couldn’t check for a cancellation fee just now. If a runner has already accepted your errand, a small fee may apply. This can’t be undone.'
         }
-        confirmLabel="Cancel booking"
+        // Not confirmable until the fee is known (or its check failed and the
+        // body says one may apply), nor when the server says it can't be
+        // cancelled any more.
+        confirmDisabled={previewLoading || cancelPreview?.cancellable === false}
+        messageAction={
+          previewFailed && !previewLoading
+            ? { label: 'Check the fee again', onPress: loadCancelPreview }
+            : undefined
+        }
+        confirmLabel="Cancel errand"
         confirmLoadingLabel="Cancelling…"
-        cancelLabel={state === 'awaiting_payment' ? 'Keep booking' : 'Keep searching'}
+        cancelLabel={state === 'awaiting_payment' ? 'Keep errand' : 'Keep searching'}
         destructive
         loading={isCancelling}
         onConfirm={handleConfirmCancel}
         onCancel={() => {
           setShowCancelModal(false);
           setCancelPreview(null);
+          setPreviewFailed(false);
         }}
       />
 

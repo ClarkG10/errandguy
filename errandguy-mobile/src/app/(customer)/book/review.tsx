@@ -62,7 +62,7 @@ import { useResponsive } from '../../../constants/responsive';
 import { LightColors } from '../../../constants/colors';
 import type { ErrandType } from '../../../types';
 import { toast } from '../../../stores/toastStore';
-import { errorMessage } from '../../../utils/errorCatalog';
+import { bookingFieldProblem, errorMessage } from '../../../utils/errorCatalog';
 import { copy } from '../../../constants/copy';
 import { haptics } from '../../../utils/haptics';
 
@@ -251,10 +251,11 @@ export default function ReviewScreen() {
   // an in-flight attempt would hide the honest loading state.
   const showOfflineGate = isOffline && !isSubmitting;
   const [isEstimateLoading, setIsEstimateLoading] = useState(false);
-  // True when the estimate request failed — drives the inline retry UI.
+  // Set when the estimate request failed — drives the inline retry UI.
   // Without it a failed fetch left the screen on "Calculating fare…"
-  // with a permanently disabled CTA.
-  const [estimateError, setEstimateError] = useState(false);
+  // with a permanently disabled CTA. Holds the error so the retry can say
+  // offline vs a server fault.
+  const [estimateError, setEstimateError] = useState<unknown>(null);
   // Bumping this re-runs the estimate effect (retry).
   const [estimateAttempt, setEstimateAttempt] = useState(0);
 
@@ -290,13 +291,13 @@ export default function ReviewScreen() {
       estimateAttempt === 0 ? bookingService.getCachedEstimate(estimateInput) : null;
     if (cached) {
       setEstimate(cached);
-      setEstimateError(false);
+      setEstimateError(null);
       setIsEstimateLoading(false);
       return;
     }
     let cancelled = false;
     setIsEstimateLoading(true);
-    setEstimateError(false);
+    setEstimateError(null);
     bookingService
       // Deduped fetch that also caches — coalesces with any prefetch still in
       // flight; resolves to the unwrapped estimate (not the axios response).
@@ -305,11 +306,11 @@ export default function ReviewScreen() {
         if (cancelled) return;
         setEstimate(data ?? null);
       })
-      .catch(() => {
+      .catch((err) => {
         if (cancelled) return;
         // Surface the failure inline (ErrorState below) instead of
         // stranding the user on an eternal "Calculating fare…".
-        setEstimateError(true);
+        setEstimateError(err ?? new Error('estimate failed'));
         Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error).catch(
           () => {},
         );
@@ -469,7 +470,7 @@ export default function ReviewScreen() {
 
   const handleSubmit = useCallback(async () => {
     if (!draftBooking.errand_type_id || !draftBooking.pickup_address) {
-      toast.warning('Please go back and complete all booking steps.');
+      toast.warning('Please go back and complete every step of your errand.');
       return;
     }
     // Per-errand-type validation. Without these the server would 422 the
@@ -653,8 +654,8 @@ export default function ReviewScreen() {
       // tracking screen's pre-dispatch polyline paints on its first frame —
       // especially on the rebook path, which lands here via review without
       // passing through the details map where this cache otherwise gets filled.
-      // Writes the same `route4:driving:{coords}` key getRoute/tracking read, so
-      // there are zero net HERE calls in steady state. Read the draft coords
+      // Fills the same in-memory route cache getRoute/tracking read, so there
+      // are zero net HERE calls in steady state within the session. Read the draft coords
       // BEFORE clearDraft() wipes them. Guard null dropoff (single-location). (P31)
       if (
         draftBooking.pickup_lat != null &&
@@ -758,7 +759,21 @@ export default function ReviewScreen() {
       }
       setBookingStage(null);
       haptics.error();
-      toast.error(errorMessage(err, copy.booking.createFailed));
+      // A field the customer filled in on an earlier step (a stop's contact
+      // number, the scheduled time…): say which, and offer to go back to it —
+      // the field itself isn't on this screen.
+      const problem = bookingFieldProblem(err);
+      if (problem) {
+        toast.error(problem.message, {
+          actionLabel: problem.step === 'schedule' ? 'Change time' : 'Edit',
+          onAction: () =>
+            editStep(
+              problem.step === 'schedule' ? '/(customer)/book/schedule' : '/(customer)/book/details',
+            ),
+        });
+      } else {
+        toast.error(errorMessage(err, copy.booking.createFailed));
+      }
     } finally {
       setIsSubmitting(false);
       submitLatch.current = false;
@@ -1091,6 +1106,7 @@ export default function ReviewScreen() {
             <ErrorState
               compact
               title="Couldn't calculate your fare"
+              error={estimateError}
               onRetry={rerunEstimate}
             />
           </View>
@@ -1191,7 +1207,7 @@ export default function ReviewScreen() {
                 hitSlop={12}
                 accessibilityRole="button"
                 accessibilityLabel="Try booking anyway"
-                accessibilityHint="Sends the booking now even though the app thinks you're offline"
+                accessibilityHint="Sends your errand now even though the app thinks you're offline"
                 style={({ pressed }) => (pressed ? { opacity: 0.6 } : null)}
               >
                 <Text className="text-[12px] font-montserrat-bold text-primary ml-3">
@@ -1212,7 +1228,7 @@ export default function ReviewScreen() {
             }
             onPress={handleSubmit}
             loading={isSubmitting}
-            loadingTitle="Creating booking…"
+            loadingTitle="Booking your errand…"
             // Don't let the user submit before the estimate has resolved —
             // without it we'd be sending a payload with an indeterminate
             // price expectation, and the server would 422 on

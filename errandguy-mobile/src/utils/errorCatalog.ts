@@ -229,6 +229,33 @@ interface NormalizedError {
   message?: string;
   code?: string;
   kind?: ErrorKind;
+  /** Seconds to wait, on a 429 that said (see classifyError.parseRetryAfter). */
+  retryAfter?: number;
+}
+
+/** "45 seconds" / "2 minutes" — a 429's wait, rounded up to whole minutes past one. */
+export function formatWait(seconds: number): string {
+  const s = Math.max(1, Math.ceil(seconds));
+  if (s < 60) return `${s} second${s === 1 ? '' : 's'}`;
+  const m = Math.ceil(s / 60);
+  return `${m} minute${m === 1 ? '' : 's'}`;
+}
+
+/** The wait a 429 named, in seconds, or null when it didn't say. */
+function retryAfterOf(err: unknown): number | null {
+  const wait = (err as NormalizedError | null | undefined)?.retryAfter;
+  return typeof wait === 'number' && Number.isFinite(wait) && wait > 0 ? wait : null;
+}
+
+/**
+ * The sign-in / sign-up screens' own "too many attempts" line, naming the wait
+ * when the server said it.
+ */
+export function tooManyAttemptsMessage(err: unknown): string {
+  const wait = retryAfterOf(err);
+  return wait != null
+    ? `Too many attempts. Try again in ${formatWait(wait)}.`
+    : 'Too many attempts. Please wait a few minutes and try again.';
 }
 
 /** Kinds whose backend `message` is generic/useless — always prefer our copy. */
@@ -302,9 +329,18 @@ export function describeError(err: unknown, opts?: DescribeErrorOptions): ErrorI
   // 3. Classes where the backend message is noise. The caller can still keep
   //    its own copy when that copy is the actionable half (see preferFallback).
   if (MESSAGE_IS_USELESS.includes(kind)) {
-    return opts?.preferFallback && opts.fallback
-      ? { ...KIND_DEFAULTS[kind], message: opts.fallback }
-      : KIND_DEFAULTS[kind];
+    if (opts?.preferFallback && opts.fallback) {
+      return { ...KIND_DEFAULTS[kind], message: opts.fallback };
+    }
+    // A 429 that named its wait says it, instead of "wait a moment".
+    const wait = kind === 'rate_limited' ? retryAfterOf(e) : null;
+    if (wait != null) {
+      return {
+        ...KIND_DEFAULTS.rate_limited,
+        message: `You've done that a lot in a short time. Try again in ${formatWait(wait)}.`,
+      };
+    }
+    return KIND_DEFAULTS[kind];
   }
 
   // 4. Trust the backend message for validation / specific 4xx.
@@ -322,4 +358,79 @@ export function errorMessage(
   opts?: Omit<DescribeErrorOptions, 'fallback'>,
 ): string {
   return describeError(err, { ...opts, fallback }).message;
+}
+
+/** Where a booking-form field lives, for the Review step's "go back and fix it". */
+export type BookingFieldStep = 'details' | 'schedule';
+
+/** Readable names for the stop fields — the server's own text names them
+ *  `stops.0.contact_phone`. */
+const STOP_FIELD_LABELS: Record<string, string> = {
+  address: 'address',
+  lat: 'address',
+  lng: 'address',
+  contact_name: 'contact name',
+  contact_phone: 'contact number',
+  note: 'note',
+};
+
+/** Top-level create-booking fields that are entered on the Details step. */
+const DETAILS_STEP_FIELDS: ReadonlyArray<string> = [
+  'pickup_address',
+  'pickup_lat',
+  'pickup_lng',
+  'pickup_contact_name',
+  'pickup_contact_phone',
+  'dropoff_address',
+  'dropoff_lat',
+  'dropoff_lng',
+  'dropoff_contact_name',
+  'dropoff_contact_phone',
+  'stops',
+  'description',
+  'special_instructions',
+  'estimated_item_value',
+  'shopping_budget',
+  'shopping_items',
+];
+
+/**
+ * A create-booking 422 that names a field the customer filled in on an earlier
+ * step. Review only summarises the errand, so the field can't be marked here:
+ * the caller says what's wrong and offers to go back to that step. Fields the
+ * customer can't fix on another step (payment method, vehicle…) give null —
+ * the ordinary error message covers those.
+ */
+export function bookingFieldProblem(
+  err: unknown,
+): { message: string; step: BookingFieldStep } | null {
+  const errors = (err as { errors?: Record<string, string[] | string> } | null)?.errors;
+  if (!errors || typeof errors !== 'object') return null;
+
+  for (const [key, raw] of Object.entries(errors)) {
+    const serverMessage = Array.isArray(raw) ? raw[0] : raw;
+    if (key === 'scheduled_at' || key === 'schedule_type') {
+      // The server's text ("…must be a date after +30 minutes") reads as code.
+      return {
+        message: 'Your scheduled time can’t be used any more — please pick a new one.',
+        step: 'schedule',
+      };
+    }
+    const stop = /^stops\.(\d+)\.(\w+)/.exec(key);
+    if (stop) {
+      const n = Number(stop[1]) + 1;
+      const field = STOP_FIELD_LABELS[stop[2]] ?? 'details';
+      return {
+        message:
+          stop[2] === 'contact_phone'
+            ? `Extra stop ${n}: the contact number isn’t a valid PH mobile number.`
+            : `Extra stop ${n}: check the ${field}.`,
+        step: 'details',
+      };
+    }
+    if (DETAILS_STEP_FIELDS.includes(key.split('.')[0]) && typeof serverMessage === 'string' && serverMessage) {
+      return { message: serverMessage, step: 'details' };
+    }
+  }
+  return null;
 }

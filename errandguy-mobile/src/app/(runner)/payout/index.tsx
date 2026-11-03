@@ -52,6 +52,7 @@ import { useQuery } from '../../../hooks/useQuery';
 import { useResponsive } from '../../../constants/responsive';
 import { CacheTTL } from '../../../services/cache.service';
 import { formatCurrency } from '../../../utils/formatCurrency';
+import { formatMonthDay, formatMonthDayTime } from '../../../utils/formatDate';
 import { toast } from '../../../stores/toastStore';
 import { errorMessage } from '../../../utils/errorCatalog';
 import { copy } from '../../../constants/copy';
@@ -89,21 +90,24 @@ function draftFromMethod(
 // different page sizes (a divergence would make the warm-up a no-op).
 const ACTIVITY_PREVIEW = PAYOUT_ACTIVITY_PREVIEW;
 
-/** Whole-peso display for the payout-progress line — "₱65 of ₱100".
- *  Mirrors the runner home daily-goal bar's peso formatting so the two
- *  progress surfaces read as one visual family. */
-const pesos = (v: number) => `₱${Math.round(v).toLocaleString('en-PH')}`;
+/**
+ * Whole-peso display for the payout-progress line — "₱65 of ₱100".
+ * Mirrors the runner home daily-goal bar's peso formatting so the two
+ * progress surfaces read as one visual family.
+ *
+ * Progress is FLOORED and the target CEILED: rounding ₱99.60 up read
+ * "₱100 of ₱100 needed" while the payout stayed locked. A whole-peso line
+ * must never claim more than the runner has.
+ */
+const pesos = (v: number, round: (n: number) => number = Math.floor) =>
+  `₱${round(v).toLocaleString('en-PH')}`;
 
+/** "Nov 3, 2:30 PM" via the app's formatter, not the device locale (which
+ *  read "3 Nov, 14:30" on a UK/24h phone beside "Nov 3" everywhere else). ''
+ *  for a missing or malformed timestamp. */
 function fmtPayoutDate(iso: string | null | undefined): string {
   if (!iso) return '';
-  const d = new Date(iso);
-  if (!Number.isFinite(d.getTime())) return '';
-  return d.toLocaleString([], {
-    month: 'short',
-    day: 'numeric',
-    hour: '2-digit',
-    minute: '2-digit',
-  });
+  return formatMonthDayTime(iso);
 }
 
 // Same digits-only-with-one-decimal sanitiser used elsewhere; prevents
@@ -346,8 +350,15 @@ export default function PayoutScreen() {
       toast.success(res.data?.message ?? 'Payout method saved.');
     } catch (err: any) {
       haptics.error();
-      setMethodErrors(payoutDestinationServerErrors(err));
-      toast.error(errorMessage(err, copy.profile.saveFailed));
+      // A 422 names the field that's wrong; it now shows under that field.
+      // Repeating Laravel's summary ("…(and 1 more error)") in a toast on top
+      // of it only buried the inline message, so the toast is kept for
+      // failures that have no field to point at (offline, 5xx, a refusal).
+      const fieldErrors = payoutDestinationServerErrors(err);
+      setMethodErrors(fieldErrors);
+      if (Object.keys(fieldErrors).length === 0) {
+        toast.error(errorMessage(err, copy.profile.saveFailed));
+      }
     } finally {
       setSaving(false);
       methodSaveLatch.current = false;
@@ -493,13 +504,13 @@ export default function PayoutScreen() {
               // track) so the runner sees momentum instead of a locked door.
               <View className="mt-3">
                 <Text className="text-[11px] font-inter-semi text-white/90 tabular-nums mb-1.5">
-                  {pesos(balance)} of {pesos(minPayout)} needed to cash out
+                  {pesos(balance)} of {pesos(minPayout, Math.ceil)} needed to cash out
                 </Text>
                 <View
                   className="overflow-hidden"
                   accessibilityRole="progressbar"
-                  accessibilityLabel={`${pesos(balance)} of ${pesos(minPayout)} needed to cash out`}
-                  accessibilityValue={{ min: 0, max: minPayout, now: Math.round(balance) }}
+                  accessibilityLabel={`${pesos(balance)} of ${pesos(minPayout, Math.ceil)} needed to cash out`}
+                  accessibilityValue={{ min: 0, max: minPayout, now: Math.floor(balance) }}
                   style={{
                     height: 6,
                     borderRadius: 999,
@@ -537,7 +548,7 @@ export default function PayoutScreen() {
                 </Text>
                 <Text className="text-xs font-montserrat mt-0.5 text-textSecondary">
                   {formatCurrency(Math.abs(Number(pendingPayout.amount ?? 0)))} · submitted{' '}
-                  {new Date(pendingPayout.created_at).toLocaleDateString([], { month: 'short', day: 'numeric' })}.
+                  {formatMonthDay(pendingPayout.created_at)}.
                   You can request another after this one is paid out.
                 </Text>
               </View>

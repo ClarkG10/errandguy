@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { echo, retainChannel, releaseChannel, isSocketConnected } from '../services/echo';
+import { echo, retainChannel, releaseChannel, watchChannelHealth } from '../services/echo';
 
 interface UseEchoChannelOptions {
   /** Reverb private-channel name WITHOUT the `private-` prefix, e.g.
@@ -55,35 +55,20 @@ export function useEchoChannel({
     const handler = (payload: any) => onEventRef.current(payload);
     channel.listen(dottedEvent, handler);
 
-    // Subscription lifecycle → isConnected. `.subscribed` fires once the
-    // channel-auth handshake completes; `.error` on a rejected/failed auth.
-    const onSubscribed = () => {
-      if (mounted) setIsConnected(true);
-    };
-    const onError = () => {
-      if (mounted) setIsConnected(false);
-    };
-    channel.subscribed(onSubscribed);
-    channel.error(onError);
-
-    // A shared channel may already be subscribed by the time this hook mounts
-    // (its `.subscribed` won't fire again), so seed from the live socket state.
-    if (isSocketConnected()) onSubscribed();
-
-    // Reflect socket drops immediately — every channel rides one connection.
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const connection = (echo.connector as any)?.pusher?.connection;
-    const onStateChange = (states: { current: string }) => {
-      if (mounted) setIsConnected(states.current === 'connected');
-    };
-    connection?.bind('state_change', onStateChange);
+    // Subscription lifecycle → isConnected: up once the channel-auth
+    // handshake completes, down on a rejected/failed auth or a socket drop.
+    // Unbound on cleanup — see watchChannelHealth for why Echo's own
+    // `.subscribed()` / `.error()` couldn't be.
+    const stopWatching = watchChannelHealth(channel, (live) => {
+      if (mounted) setIsConnected(live);
+    });
 
     return () => {
       mounted = false;
       // Remove only THIS hook's handler (pass the callback) so a co-subscriber
       // listening to the same event on a shared channel keeps its listener.
       channel.stopListening(dottedEvent, handler);
-      connection?.unbind('state_change', onStateChange);
+      stopWatching();
       releaseChannel(channelName);
       setIsConnected(false);
     };

@@ -23,6 +23,7 @@ import { CacheTTL } from '../../../services/cache.service';
 import { useAuthStore } from '../../../stores/authStore';
 import { useChatStore } from '../../../stores/chatStore';
 import { formatRunnerPayout } from '../../../utils/runnerPayout';
+import { formatMonthDay } from '../../../utils/formatDate';
 import { earnedLabel } from '../../../components/runner/errandEarnings';
 import { useDebounce } from '../../../hooks/useDebounce';
 import { useHideTabBarOnScroll } from '../../../hooks/useHideTabBarOnScroll';
@@ -144,10 +145,9 @@ export default function HistoryScreen() {
   const renderItem = useCallback(
     ({ item }: { item: Booking }) => {
       const isCompleted = item.status === 'completed';
-      const dateStr = new Date(item.completed_at ?? item.created_at).toLocaleDateString([], {
-        month: 'short',
-        day: 'numeric',
-      });
+      // The app's own formatter, not the device locale: a 24h/European-locale
+      // phone rendered "3 Nov" here beside "Nov 3" everywhere else.
+      const dateStr = formatMonthDay(item.completed_at ?? item.created_at);
       return (
         <Card
           className="mx-5 mb-3"

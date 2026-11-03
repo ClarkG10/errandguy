@@ -48,6 +48,11 @@ import { useKeepAwakeWhile } from '../../../hooks/useKeepAwakeWhile';
 import { ShiftSummarySheet } from '../../../components/runner/ShiftSummarySheet';
 import { offerExpiresAt, readAcceptDeadline } from '../../../components/runner/offerMeta';
 import { ActiveRunnerErrandCard } from '../../../components/runner/ActiveRunnerErrandCard';
+import {
+  REASSIGNED_MESSAGE,
+  isTakenOffBroadcast,
+  releaseTakenOffErrand,
+} from '../../../components/runner/reassignment';
 import { Avatar } from '../../../components/ui/Avatar';
 import { Button } from '../../../components/ui/Button';
 import { ErrorState } from '../../../components/ui/ErrorState';
@@ -93,8 +98,16 @@ import { haptics } from '../../../utils/haptics';
 import { LightColors, Elevation } from '../../../constants/colors';
 import { prefetchDemand } from '../../../services/preload.service';
 
-/** Whole-peso display for the goal progress line — "₱650 of ₱1,000". */
-const pesos = (v: number) => `₱${Math.round(v).toLocaleString('en-PH')}`;
+/**
+ * Whole-peso display for the goal progress line — "₱650 of ₱1,000".
+ *
+ * Progress is FLOORED and the target CEILED: rounding ₱499.60 up read
+ * "₱500 of ₱500 goal" with no "reached" chip, because the bar itself (rightly)
+ * compares the exact amounts. A whole-peso line must never claim more than
+ * the runner has.
+ */
+const pesos = (v: number, round: (n: number) => number = Math.floor) =>
+  `₱${round(v).toLocaleString('en-PH')}`;
 
 /** Same names the vehicle settings screen uses. */
 const VEHICLE_NAMES: Record<string, string> = {
@@ -213,16 +226,17 @@ interface EarningsSummary {
 export default function RunnerHomeScreen() {
   const router = useRouter();
   const user = useAuthStore((s) => s.user);
-  const {
-    isOnline,
-    toggleOnline,
-    currentErrand,
-    incomingRequest,
-    earnings,
-    setEarnings,
-    runnerProfile,
-    setRunnerProfile,
-  } = useRunnerStore();
+  // Per-field selectors: a bare useRunnerStore() re-rendered this whole screen
+  // on ANY runner-store write, including ones it never reads (the declined-
+  // offer memory, for one). Same pattern as useIncomingRequest.
+  const isOnline = useRunnerStore((s) => s.isOnline);
+  const toggleOnline = useRunnerStore((s) => s.toggleOnline);
+  const currentErrand = useRunnerStore((s) => s.currentErrand);
+  const incomingRequest = useRunnerStore((s) => s.incomingRequest);
+  const earnings = useRunnerStore((s) => s.earnings);
+  const setEarnings = useRunnerStore((s) => s.setEarnings);
+  const runnerProfile = useRunnerStore((s) => s.runnerProfile);
+  const setRunnerProfile = useRunnerStore((s) => s.setRunnerProfile);
   // Atomic action selectors — a bare useLocationStore() re-renders this whole
   // screen on every GPS tick (locationStore writes currentLocation ~every 6s
   // while online). The action refs are stable, so these never re-render here.
@@ -373,6 +387,13 @@ export default function RunnerHomeScreen() {
     const cur = store.currentErrand;
     if (!cur) return;
     if (incoming.id && incoming.id !== cur.id) return;
+    // Support took it off this runner (sent back to matching): arrives as a
+    // `pending` the rank guard below would drop as a late event, leaving the
+    // card — and the runner — on a job that is no longer theirs.
+    if (isTakenOffBroadcast(incoming, cur, useAuthStore.getState().user?.id)) {
+      releaseTakenOffErrand(cur.id, REASSIGNED_MESSAGE);
+      return;
+    }
     if (incoming.status === cur.status) return;
     if (isTerminalStatus(incoming.status)) {
       if (isClosedStatus(incoming.status)) {
@@ -1331,7 +1352,7 @@ export default function RunnerHomeScreen() {
                   <View className="mt-4">
                     <View className="flex-row items-center justify-between mb-1.5">
                       <Text className="text-[11px] font-inter-semi text-white/90 tabular-nums">
-                        {pesos(todayEarnings)} of {pesos(dailyGoal)} goal
+                        {pesos(todayEarnings)} of {pesos(dailyGoal, Math.ceil)} goal
                       </Text>
                       <Pressable
                         onPress={openGoalModal}
@@ -1960,7 +1981,9 @@ export default function RunnerHomeScreen() {
                   accessibilityLabel="Remove daily goal"
                   onPress={removeGoal}
                 >
-                  <Text className="text-sm font-montserrat-bold text-danger">
+                  {/* dangerDark: plain `danger` is 3.76:1 on white, under
+                      the 4.5:1 a text label needs. */}
+                  <Text className="text-sm font-montserrat-bold text-dangerDark">
                     Remove goal
                   </Text>
                 </Pressable>

@@ -1837,6 +1837,11 @@ export default function TaskDetailsScreen() {
                   }}
                   onFocus={() => setShowSearch(true)}
                   returnKeyType="search"
+                  // A placeholder isn't a label: it's gone once there's text
+                  // and some screen readers skip it.
+                  accessibilityLabel={`${
+                    phase === 'pickup' ? rule.pickupLabel : rule.dropoffLabel
+                  }: search for an address`}
                   // Place-name queries ("mcdo bgc", "7 eleven") must not be
                   // auto-capitalized or autocorrected into dictionary words —
                   // matches every other search field in the app.
@@ -2775,6 +2780,7 @@ export default function TaskDetailsScreen() {
                 onChangeText={setCustomLabel}
                 placeholder="e.g. Mom's house, Gym"
                 placeholderTextColor={LightColors.textMuted}
+                accessibilityLabel="Custom label for this address"
                 maxLength={50}
                 autoFocus
                 returnKeyType="done"

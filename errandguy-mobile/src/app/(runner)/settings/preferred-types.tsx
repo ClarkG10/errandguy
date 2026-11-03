@@ -224,7 +224,7 @@ export default function PreferredTypesScreen() {
   return (
     <View className="flex-1 bg-background">
       <GradientHeader
-        title="Preferred Errand Types"
+        title="Preferred errand types"
         showBack
         fallbackHref="/(runner)/(tabs)/profile"
         onBackPress={handleBackPress}
@@ -305,7 +305,7 @@ export default function PreferredTypesScreen() {
       {/* Save Button — disabled until the selection actually changes so an
           untouched form doesn't fire a redundant profile write. */}
       <BottomActionBar>
-        <Button title="Save Preferences" onPress={handleSave} disabled={!dirty} fullWidth />
+        <Button title="Save preferences" onPress={handleSave} disabled={!dirty} fullWidth />
       </BottomActionBar>
 
       <ConfirmModal

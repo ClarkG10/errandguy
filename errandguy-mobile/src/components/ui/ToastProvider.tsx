@@ -22,7 +22,7 @@ import { LightColors } from '../../constants/colors';
 
 const INVERSE = LightColors.textInverse;
 
-// The toast is fixed-height chrome (a floating capsule, max 3 lines). At
+// The toast is fixed-height chrome (a floating capsule, max 5 lines). At
 // large accessibility text sizes an uncapped label would blow past the
 // pill; cap Dynamic Type at 1.3× so it still grows for legibility while
 // staying inside the capsule. Long-form/content text elsewhere is left
@@ -48,6 +48,28 @@ const SHOW_DURATION = 4000;
 const SHOW_DURATION_ACTION = 5000;
 /** Extra dwell when a screen reader is on — spoken text outlasts read text. */
 const SHOW_DURATION_SR_BONUS = 3000;
+// Longer messages stay up longer. Some toasts are the only receipt for money
+// that just moved ("Errand cancelled. ₱480.00 was refunded to your ErrandGuy
+// wallet (new balance ₱1,230.00).") and 4s wasn't enough to read one. Capped
+// so a long message can't park over the screen.
+const SHOW_DURATION_PER_CHAR = 50;
+const SHOW_DURATION_MAX = 10_000;
+/** Lines before the message truncates — enough for a full money receipt. */
+export const TOAST_MAX_LINES = 5;
+
+/** How long a toast stays up (before any screen-reader bonus). */
+export function toastDuration(message: string, hasAction: boolean): number {
+  const base = hasAction ? SHOW_DURATION_ACTION : SHOW_DURATION;
+  return Math.min(SHOW_DURATION_MAX, base + message.length * SHOW_DURATION_PER_CHAR);
+}
+
+/**
+ * The longest a toast can stay up, screen reader included. An action that
+ * stays tappable this long (an Undo) must keep working for all of it.
+ */
+export function toastMaxDuration(message: string, hasAction: boolean): number {
+  return toastDuration(message, hasAction) + SHOW_DURATION_SR_BONUS;
+}
 
 function ToastCard({
   id,
@@ -93,10 +115,9 @@ function ToastCard({
       AccessibilityInfo.announceForAccessibility(message);
     }
 
-    // Auto-dismiss timer. Spoken text takes longer than read text, so give
-    // screen-reader users a longer dwell — 4s can be shorter than the
-    // utterance of a 3-line message.
-    const baseDuration = actionLabel && onAction ? SHOW_DURATION_ACTION : SHOW_DURATION;
+    // Auto-dismiss timer, scaled to the message length. Spoken text takes
+    // longer than read text, so screen-reader users get a longer dwell still.
+    const baseDuration = toastDuration(message, !!(actionLabel && onAction));
     let cancelled = false;
     AccessibilityInfo.isScreenReaderEnabled()
       .then((enabled) => {
@@ -142,7 +163,7 @@ function ToastCard({
       <Icon size={20} color={config.iconColor} />
       <Text
         style={[styles.message, { color: config.textColor }]}
-        numberOfLines={3}
+        numberOfLines={TOAST_MAX_LINES}
         maxFontSizeMultiplier={CHROME_MAX_FONT_SCALE}
       >
         {message}
