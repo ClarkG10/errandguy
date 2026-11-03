@@ -97,19 +97,22 @@ class OnlineToggleTest extends TestCase
         $this->assertFalse($this->profile->fresh()->is_online);
     }
 
-    public function test_runner_without_preferred_types_cannot_go_online(): void
+    public function test_runner_without_preferred_types_can_go_online(): void
     {
+        // An empty list means "every type" to matching, so it is no reason to
+        // keep a runner offline.
         $this->profile->update(['preferred_types' => []]);
 
-        $response = $this->actingAs($this->runner)
+        $this->actingAs($this->runner)
             ->putJson('/api/v1/runner/online', [
                 'is_online' => true,
                 'lat' => 14.5995,
                 'lng' => 120.9842,
-            ]);
+            ])
+            ->assertOk()
+            ->assertJsonPath('data.is_online', true);
 
-        $response->assertStatus(422)
-            ->assertJsonPath('message', 'Please set at least one preferred errand type before going online.');
+        $this->assertTrue($this->profile->fresh()->is_online);
     }
 
     public function test_runner_with_active_errand_cannot_go_offline(): void

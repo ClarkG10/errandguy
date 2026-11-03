@@ -58,6 +58,18 @@ class RunnerProfilesTable
             : $record->hasApprovedRequiredDocuments();
     }
 
+    /**
+     * The approval push. "You can now start accepting errands" was untrue for
+     * a runner with no vehicle on file: going online is refused until one is
+     * saved, so their first shift began with a detour. Say what is left to do.
+     */
+    public static function approvalPushBody(RunnerProfile $record): string
+    {
+        return empty($record->vehicle_type)
+            ? 'Add your vehicle in the app, then go online to start getting errands.'
+            : 'Go online in the app to start getting errands.';
+    }
+
     public static function configure(Table $table): Table
     {
         return $table
@@ -184,7 +196,7 @@ class RunnerProfilesTable
                             \App\Jobs\SendPushJob::dispatch(
                                 $record->user_id,
                                 'Verification Approved!',
-                                'You can now start accepting errands.',
+                                static::approvalPushBody($record),
                                 ['type' => 'document_update'],
                             );
                             AdminActivity::log('runner.approved', $record, ['via' => 'bulk']);
@@ -237,7 +249,7 @@ class RunnerProfilesTable
                         \App\Jobs\SendPushJob::dispatch(
                             $record->user_id,
                             'Verification Approved!',
-                            'You can now start accepting errands.',
+                            static::approvalPushBody($record),
                             ['type' => 'document_update'],
                         );
 

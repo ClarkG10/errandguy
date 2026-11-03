@@ -16,6 +16,15 @@ use Illuminate\Support\Facades\Storage;
 
 class RunnerDocumentController extends Controller
 {
+    /** What each document type is called in sentences the runner reads. */
+    private const DOCUMENT_NAMES = [
+        'government_id' => 'government ID',
+        'selfie' => 'selfie with ID',
+        'vehicle_registration' => 'vehicle registration',
+        'vehicle_photo' => 'vehicle photo',
+        'drivers_license' => 'driver’s license',
+    ];
+
     public function store(UploadDocumentRequest $request): JsonResponse
     {
         $profile = $request->user()->runnerProfile;
@@ -113,10 +122,11 @@ class RunnerDocumentController extends Controller
         }
 
         // Notify admins of new submission
+        $documentName = self::DOCUMENT_NAMES[$documentType] ?? str_replace('_', ' ', $documentType);
         Notification::create([
             'user_id' => $request->user()->id,
             'title' => 'Document submitted',
-            'body' => "Your {$documentType} document has been submitted for review.",
+            'body' => "Your {$documentName} has been sent for review.",
             'type' => 'document_update',
             'data' => ['document_id' => $document->id],
         ]);

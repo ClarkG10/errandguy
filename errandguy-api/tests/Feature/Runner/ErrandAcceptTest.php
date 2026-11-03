@@ -2,8 +2,10 @@
 
 namespace Tests\Feature\Runner;
 
+use App\Jobs\MatchRunnerJob;
 use App\Models\Booking;
 use App\Models\ErrandType;
+use App\Models\Notification;
 use App\Models\RunnerProfile;
 use App\Models\User;
 use Illuminate\Foundation\Testing\RefreshDatabase;
@@ -160,6 +162,56 @@ class ErrandAcceptTest extends TestCase
         foreach (['customer_offer', 'recommended_min', 'recommended_max', 'negotiate_expires_at'] as $retired) {
             $this->assertArrayNotHasKey($retired, $payload);
         }
+    }
+
+    public function test_the_realtime_offer_carries_the_item_budget_and_payment_method(): void
+    {
+        // A "Buy for me" runner fronts the item money, so the offer has to say
+        // how much before they accept — not only after the REST upgrade lands.
+        $this->booking->update(['shopping_budget' => 1500, 'payment_method' => 'cash']);
+        $this->offerToRunner();
+
+        $payload = (new \App\Events\IncomingRequest($this->booking->fresh()))->broadcastWith();
+
+        $this->assertEquals(1500, $payload['shopping_budget']);
+        $this->assertSame('cash', $payload['payment_method_type']);
+        // Still no customer identity or contact on an offer.
+        foreach (['customer', 'customer_id', 'pickup_contact_phone', 'dropoff_contact_phone'] as $private) {
+            $this->assertArrayNotHasKey($private, $payload);
+        }
+    }
+
+    public function test_the_offer_push_says_the_pay_distance_and_errand_type(): void
+    {
+        Event::fake();
+        $this->booking->update(['status' => 'completed']);
+        $this->profile->update(['last_location_at' => now()]);
+        $pending = Booking::create([
+            'booking_number' => 'EG-20260331-PUSH', 'customer_id' => $this->customer->id,
+            'errand_type_id' => $this->errandType->id, 'status' => 'pending',
+            'pickup_address' => '1 A', 'pickup_lat' => 14.60, 'pickup_lng' => 120.98,
+            'dropoff_address' => '2 B', 'dropoff_lat' => 14.55, 'dropoff_lng' => 121.02,
+            'schedule_type' => 'now', 'pricing_mode' => 'fixed', 'vehicle_type_rate' => 'motorcycle',
+            'distance_km' => 5.0, 'base_fee' => 50, 'distance_fee' => 50, 'service_fee' => 15,
+            'surcharge' => 0, 'total_amount' => 115, 'runner_payout' => 85, 'is_transportation' => false,
+        ]);
+
+        MatchRunnerJob::dispatchSync($pending->id);
+
+        $body = Notification::where('user_id', $this->runner->id)
+            ->where('title', 'New errand offer')->value('body');
+        $this->assertMatchesRegularExpression('/^₱85 · \d+\.\d km to pickup · Delivery$/u', (string) $body);
+        $this->assertStringNotContainsString($this->customer->full_name, (string) $body);
+    }
+
+    public function test_the_offer_push_leaves_out_what_it_does_not_know(): void
+    {
+        $this->booking->update(['runner_payout' => 92.5]);
+
+        $this->assertSame(
+            '₱92.50 · Delivery',
+            MatchRunnerJob::offerPushBody($this->booking->fresh(), null),
+        );
     }
 
     public function test_the_open_offers_list_is_gone_and_answers_empty(): void

@@ -9,6 +9,13 @@ use Illuminate\Http\Resources\Json\JsonResource;
 
 class RunnerProfileResource extends JsonResource
 {
+    /**
+     * How close to the cash-debt ceiling a runner gets before they are told.
+     * The block itself used to be the first they heard of it — work simply
+     * stopped — so this warns while a prepaid errand can still head it off.
+     */
+    public const CASH_DEBT_WARN_AT = 0.8;
+
     public function toArray(Request $request): array
     {
         // The runner's bank/e-wallet, earnings, GPS coordinates and
@@ -89,6 +96,26 @@ class RunnerProfileResource extends JsonResource
                 return [
                     'owed' => round(abs($balance), 2),
                     'limit' => CashDebtPolicy::limit(),
+                    'message' => CashDebtPolicy::message($balance),
+                ];
+            }),
+            // The heads-up before that block: owing at least CASH_DEBT_WARN_AT
+            // of the ceiling, but not blocked yet. Same shape and the same
+            // sentence (which names the pause point), so the runner hears one
+            // story from first warning to block. null otherwise.
+            'cash_debt_warning' => $this->when($isSelf, function () use ($request): ?array {
+                $balance = (float) ($request->user()?->wallet_balance ?? 0);
+                if (! CashDebtPolicy::enabled() || CashDebtPolicy::blocks($balance)) {
+                    return null;
+                }
+                $limit = CashDebtPolicy::limit();
+                if (round(-$balance, 2) < round($limit * self::CASH_DEBT_WARN_AT, 2)) {
+                    return null;
+                }
+
+                return [
+                    'owed' => round(abs($balance), 2),
+                    'limit' => $limit,
                     'message' => CashDebtPolicy::message($balance),
                 ];
             }),

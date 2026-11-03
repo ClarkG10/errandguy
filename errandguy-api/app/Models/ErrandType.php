@@ -3,6 +3,7 @@
 namespace App\Models;
 
 use App\Services\CacheService;
+use App\Services\PricingService;
 use Illuminate\Database\Eloquent\Concerns\HasUuids;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\HasMany;
@@ -111,8 +112,9 @@ class ErrandType extends Model
 
     /**
      * The bookable catalog the app reads (/errand-types and the customer home
-     * screen): active types in order, each shopping type carrying
-     * `shopping_budget_max` so the app can show and enforce the cap.
+     * screen): active types in order, each carrying `minimum_price` (the
+     * app's "From ₱X") and each shopping type `shopping_budget_max` so the app
+     * can show and enforce the cap.
      *
      * @return list<array<string, mixed>>
      */
@@ -123,10 +125,33 @@ class ErrandType extends Model
         return self::where('is_active', true)
             ->orderBy('sort_order')
             ->get()
-            ->map(fn (self $type): array => in_array($type->slug, self::SHOPPING_SLUGS, true)
-                ? [...$type->toArray(), 'shopping_budget_max' => $budgetMax]
-                : $type->toArray())
+            ->map(function (self $type) use ($budgetMax): array {
+                $row = [...$type->toArray(), 'minimum_price' => $type->minimumPrice()];
+
+                return in_array($type->slug, self::SHOPPING_SLUGS, true)
+                    ? [...$row, 'shopping_budget_max' => $budgetMax]
+                    : $row;
+            })
             ->all();
+    }
+
+    /**
+     * The least a booking of this type can cost (₱): PricingService's own
+     * total on the cheapest vehicle the type offers, at 0 km — base fee,
+     * vehicle premium, service fee (platform_fee_percent) and surcharge. The
+     * app showed the base fee alone as "From ₱X", which left out the service
+     * fee every booking pays.
+     */
+    public function minimumPrice(): float
+    {
+        $estimates = app(PricingService::class)->estimate($this->id, 0.0, 0.0, null, null);
+
+        $totals = array_map(
+            fn (string $vehicle): float => (float) $estimates[$vehicle]['total_amount'],
+            $estimates['vehicle_types'] ?? [],
+        );
+
+        return $totals === [] ? (float) $this->base_fee : min($totals);
     }
 
     /** The slug to look for in a runner's preferred_types for an errand of this slug. */

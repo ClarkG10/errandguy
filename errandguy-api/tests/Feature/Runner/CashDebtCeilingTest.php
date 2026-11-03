@@ -299,6 +299,52 @@ class CashDebtCeilingTest extends TestCase
         );
     }
 
+    public function test_the_profile_warns_before_the_ceiling_is_reached(): void
+    {
+        // ₱1,000 ceiling: ₱800 owed is the first warned balance, ₱799.99 is not,
+        // and once blocked the block replaces the warning.
+        $this->indebt(-800.00);
+        $warning = $this->actingAs($this->runner)->getJson('/api/v1/runner/profile')->json('data');
+        $this->assertNull($warning['cash_debt_block']);
+        $this->assertEquals(800.0, $warning['cash_debt_warning']['owed']);
+        $this->assertEquals(1000.0, $warning['cash_debt_warning']['limit']);
+        $this->assertSame(\App\Support\CashDebtPolicy::message(-800.00), $warning['cash_debt_warning']['message']);
+
+        $this->indebt(-799.99);
+        $this->assertNull(
+            $this->actingAs($this->runner)->getJson('/api/v1/runner/profile')->json('data.cash_debt_warning'),
+        );
+
+        $this->indebt(-1000.00);
+        $blocked = $this->actingAs($this->runner)->getJson('/api/v1/runner/profile')->json('data');
+        $this->assertNotNull($blocked['cash_debt_block']);
+        $this->assertNull($blocked['cash_debt_warning']);
+    }
+
+    public function test_no_warning_when_the_ceiling_is_switched_off(): void
+    {
+        SystemConfig::where('key', 'runner_cash_debt_limit')->update(['value' => '0']);
+        \Illuminate\Support\Facades\Cache::flush();
+        $this->indebt(-5000.00);
+
+        $this->assertNull(
+            $this->actingAs($this->runner)->getJson('/api/v1/runner/profile')->json('data.cash_debt_warning'),
+        );
+    }
+
+    public function test_the_warning_is_never_shown_to_anyone_but_the_runner(): void
+    {
+        $this->indebt(-900.00);
+
+        $request = \Illuminate\Http\Request::create('/api/v1/runner/profile');
+        $request->setUserResolver(fn () => $this->customer);
+        $payload = (new \App\Http\Resources\RunnerProfileResource(
+            $this->runner->fresh()->runnerProfile,
+        ))->resolve($request);
+
+        $this->assertArrayNotHasKey('cash_debt_warning', $payload);
+    }
+
     public function test_a_solvent_runner_sees_no_block_on_home(): void
     {
         $this->runner->update(['wallet_balance' => 250.00]);

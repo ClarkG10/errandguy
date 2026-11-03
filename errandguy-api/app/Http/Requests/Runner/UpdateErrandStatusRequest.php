@@ -26,6 +26,21 @@ class UpdateErrandStatusRequest extends FormRequest
      */
     private const SINGLE_LOCATION_SLUGS = ['queue', 'bills_payment'];
 
+    /**
+     * Why a runner finished a handover without a signature. Nobody at the door,
+     * a guard who won't sign, a customer who said "leave it by the gate" — the
+     * signature pad used to be a hard wall in every one of those, with a
+     * delivery photo already on file. Only offered once that photo is on the
+     * booking; the reason is recorded on the completion's status log, which the
+     * customer's status history already shows.
+     */
+    public const NO_SIGNATURE_REASONS = [
+        'recipient_unavailable' => 'Recipient not available',
+        'left_with_guard' => 'Left with guard or reception',
+        'customer_asked' => 'Customer asked me to leave it',
+        'other' => 'Other',
+    ];
+
     public function authorize(): bool
     {
         return true;
@@ -53,6 +68,18 @@ class UpdateErrandStatusRequest extends FormRequest
         // — there is no parcel handover to a recipient.
         $skipDeliveryProof = $isSingleLocation;
 
+        // A signature can be replaced by a stated reason, but only on top of
+        // the delivery photo that is already on the booking, and never while
+        // money is due at the door: completion settles an unpaid cash fare as
+        // collected (and debits the runner's commission) and closes out the
+        // item money the runner fronted, so whoever pays can also sign.
+        // Mirrors BookingResource::amountToCollect().
+        $moneyDue = ($booking?->payment_method === 'cash' && $booking?->payment_status !== 'paid')
+            || (float) ($booking?->actual_item_cost ?? 0) > 0;
+        $signatureExcused = $this->filled('no_signature_reason')
+            && ! empty($booking?->delivery_photo_url)
+            && ! $moneyDue;
+
         return [
             'status' => [
                 'required',
@@ -67,7 +94,13 @@ class UpdateErrandStatusRequest extends FormRequest
                     'completed',
                 ]),
             ],
-            'note' => ['nullable', 'string', 'max:300'],
+            // "Other" has to say what happened.
+            'note' => ['nullable', 'string', 'max:300', 'required_if:no_signature_reason,other'],
+            'no_signature_reason' => [
+                'nullable',
+                'string',
+                Rule::in(array_keys(self::NO_SIGNATURE_REASONS)),
+            ],
             'lat' => ['nullable', 'numeric', 'between:-90,90'],
             'lng' => ['nullable', 'numeric', 'between:-180,180'],
             'pickup_photo' => [
@@ -93,7 +126,7 @@ class UpdateErrandStatusRequest extends FormRequest
                 'max:5120',
             ],
             'signature' => [
-                $skipDeliveryProof ? 'nullable' : 'required_if:status,completed',
+                $skipDeliveryProof || $signatureExcused ? 'nullable' : 'required_if:status,completed',
                 'nullable',
                 'image',
                 // Raster-only (no SVG): the bare `image` rule accepts SVG, which
@@ -130,7 +163,10 @@ class UpdateErrandStatusRequest extends FormRequest
         return [
             'pickup_photo.required_if' => 'A pickup photo is required when marking as picked up.',
             'delivery_photo.required_if' => 'A delivery photo is required when marking as delivered.',
-            'signature.required_if' => 'A signature is required when marking as completed.',
+            'signature.required_if' => $this->filled('no_signature_reason')
+                ? 'You can only finish without a signature when there’s a delivery photo and no money to collect. Collect the payment and get a signature.'
+                : 'A signature is required when marking as completed.',
+            'note.required_if' => 'Say briefly why there’s no signature.',
             'actual_item_cost.required_if' => 'Please enter the actual amount you paid for the items.',
             'actual_item_cost.max' => 'Amount cannot exceed the customer’s spending limit for the items.',
             'receipt_photo.required_if' => 'A photo of the receipt is required for shopping errands.',

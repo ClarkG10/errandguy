@@ -27,12 +27,10 @@ class RunnerOnlineController extends Controller
                 ], 422);
             }
 
-            // Must have at least 1 preferred errand type
-            if (empty($profile->preferred_types)) {
-                return response()->json([
-                    'message' => 'Please set at least one preferred errand type before going online.',
-                ], 422);
-            }
+            // No check on preferred errand types: an empty list means "every
+            // type" — that is how MatchingService and the nearby push have
+            // always read it — so refusing it here only sent a runner who never
+            // opened that screen on a detour before their first shift.
 
             // Matching only offers an errand to a runner whose vehicle can do
             // it, and treats a missing vehicle as walking — so a runner with

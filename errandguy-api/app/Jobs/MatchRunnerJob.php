@@ -253,7 +253,10 @@ class MatchRunnerJob implements ShouldQueue
                         SendPushJob::dispatch(
                             $runner->user_id,
                             'New errand offer',
-                            'You were matched to an errand. Open the app to accept it.',
+                            self::offerPushBody(
+                                $matchedBooking,
+                                $runner->distance_km !== null ? (float) $runner->distance_km : null,
+                            ),
                             [
                                 'type' => 'booking_update',
                                 'booking_id' => $matchedBooking->id,
@@ -386,5 +389,33 @@ class MatchRunnerJob implements ShouldQueue
             'matching_max_offers',
             (string) self::DEFAULT_MAX_OFFERS,
         ));
+    }
+
+    /**
+     * "₱85 · 1.2 km to pickup · Delivery" — the three facts a runner decides
+     * on, readable from the lock screen. The old "You were matched to an
+     * errand" told them nothing, so every offer cost an unlock just to find
+     * out whether it was worth one. Never anything about the customer: the
+     * runner has only been OFFERED the job. A fact we don't have is left out.
+     */
+    public static function offerPushBody(Booking $booking, ?float $pickupKm): string
+    {
+        $parts = [];
+
+        if ($booking->runner_payout !== null) {
+            $pay = (float) $booking->runner_payout;
+            $parts[] = '₱'.number_format($pay, fmod($pay, 1.0) == 0.0 ? 0 : 2);
+        }
+        if ($pickupKm !== null) {
+            $parts[] = number_format($pickupKm, 1).' km to pickup';
+        }
+        $type = $booking->loadMissing('errandType')->errandType?->name;
+        if ($type) {
+            $parts[] = $type;
+        }
+
+        return $parts === []
+            ? 'You have a new errand offer. Open the app to accept it.'
+            : implode(' · ', $parts);
     }
 }

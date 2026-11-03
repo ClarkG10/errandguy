@@ -71,6 +71,17 @@ class RegisterTest extends TestCase
         ]);
     }
 
+    public function test_a_new_runner_starts_open_to_every_errand_type(): void
+    {
+        // An empty list means "every type" to matching — including a type
+        // staff switch on later, which a saved copy of today's list would
+        // silently filter out. Their first GO needs no errand-types detour.
+        $this->postJson('/api/v1/auth/register', $this->validRunnerData)->assertStatus(201);
+
+        $user = User::where('email', 'maria@example.com')->first();
+        $this->assertEmpty($user->runnerProfile->fresh()->preferred_types);
+    }
+
     public function test_customer_registration_does_not_create_runner_profile(): void
     {
         $this->postJson('/api/v1/auth/register', $this->validCustomerData);

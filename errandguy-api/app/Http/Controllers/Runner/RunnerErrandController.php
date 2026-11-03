@@ -489,7 +489,19 @@ class RunnerErrandController extends Controller
             $updateData['completed_at'] = now();
         }
 
-        $conflict = DB::transaction(function () use ($booking, $updateData, $validated, $user, $newStatus, $oldStatus) {
+        // Handed over without a signature (the request only allows that on top
+        // of a delivery photo): the runner's reason becomes the completion's
+        // status-log note — the record staff and the customer's status history
+        // already read — instead of a bare "Completed".
+        $logNote = $validated['note'] ?? null;
+        if ($newStatus === 'completed' && ! $request->hasFile('signature')
+            && ! empty($validated['no_signature_reason'])) {
+            $reason = UpdateErrandStatusRequest::NO_SIGNATURE_REASONS[$validated['no_signature_reason']];
+            $detail = trim((string) ($validated['note'] ?? ''));
+            $logNote = 'No signature: '.$reason.($detail !== '' ? ' — '.$detail : '');
+        }
+
+        $conflict = DB::transaction(function () use ($booking, $updateData, $logNote, $validated, $user, $newStatus, $oldStatus) {
             // Serialize concurrent status changes on this booking. Re-read the
             // row under a lock and bail if another request already advanced it.
             // Without this the earlier (unlocked) transition check is a
@@ -515,7 +527,7 @@ class RunnerErrandController extends Controller
                 'booking_id' => $booking->id,
                 'status' => $newStatus,
                 'changed_by' => $user->id,
-                'note' => $validated['note'] ?? null,
+                'note' => $logNote,
                 'lat' => $validated['lat'] ?? null,
                 'lng' => $validated['lng'] ?? null,
             ]);

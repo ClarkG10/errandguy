@@ -23,7 +23,7 @@ class SystemConfig extends Model
     ];
 
     /** Settings the cached /errand-types catalog is built from. */
-    private const CATALOG_KEYS = ['shopping_budget_max'];
+    private const CATALOG_KEYS = ['shopping_budget_max', 'platform_fee_percent'];
 
     /**
      * Staff-only settings: never sent to the app by GET /config/app (which

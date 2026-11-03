@@ -66,6 +66,23 @@ class DocumentUploadTest extends TestCase
         );
     }
 
+    public function test_the_submitted_notice_names_the_document_in_plain_words(): void
+    {
+        Storage::fake('kyc');
+        $runner = $this->runner();
+
+        $this->actingAs($runner)->postJson('/api/v1/runner/documents', [
+            'document_type' => 'government_id',
+            'file' => UploadedFile::fake()->image('id.jpg'),
+        ])->assertStatus(201);
+
+        $this->assertDatabaseHas('notifications', [
+            'user_id' => $runner->id,
+            'title' => 'Document submitted',
+            'body' => 'Your government ID has been sent for review.',
+        ]);
+    }
+
     public function test_admin_can_stream_a_kyc_document_but_an_anonymous_request_cannot(): void
     {
         Storage::fake('kyc');

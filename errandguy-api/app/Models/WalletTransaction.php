@@ -117,11 +117,14 @@ class WalletTransaction extends Model
      * existing description when nothing better can be derived. We do
      * NOT mutate the stored column so historical audit trails stay
      * intact; the original is still exposed as `description`.
+     *
+     * No "ErrandGuy · " prefix: every row in the ledger is ErrandGuy's, and on
+     * the customer wallet's one-line rows the prefix pushed the errand number
+     * off the end. Both the customer wallet and the runner's wallet activity
+     * (components/runner/WalletActivityRow) render this text.
      */
     public function getDisplayDescriptionAttribute(): string
     {
-        $brand = 'ErrandGuy';
-
         // Booking-linked types: enrich with errand type + booking #, but ONLY
         // when the caller eager-loaded booking.errandType. Since this accessor is
         // $appended, it serializes on EVERY WalletTransaction that goes out — a
@@ -142,19 +145,32 @@ class WalletTransaction extends Model
                     'earning' => 'Earned from',
                     'refund' => 'Refund for',
                 };
-                return "{$brand} · {$verb} {$typeName} #{$shortNumber}";
+                return "{$verb} {$typeName} #{$shortNumber}";
             }
         }
 
         return match ($this->type) {
             // Legacy: top-ups are retired, but older rows stay in the ledger.
-            'top_up' => "{$brand} · Wallet top-up",
-            'payout' => "{$brand} · Payout to ".\App\Support\PayoutDestination::label($this->safePayoutDestination()),
+            'top_up' => 'Wallet top-up',
+            'payout' => ($this->isCustomerWithdrawal() ? 'Withdrawal to ' : 'Payout to ')
+                .\App\Support\PayoutDestination::label($this->safePayoutDestination()),
             // Legacy: referral bonuses are retired; older credits stay listed.
-            'bonus' => "{$brand} · Promotional bonus",
-            'cancel_fee' => "{$brand} · Cancellation fee",
+            'bonus' => 'Promotional bonus',
+            'cancel_fee' => 'Cancellation fee',
             default => $this->description ?? ucfirst(str_replace('_', ' ', (string) $this->type)),
         };
+    }
+
+    /**
+     * A customer's own money going out — the app calls that "Withdraw" — as
+     * opposed to a runner's payout of earnings. Told apart by the description
+     * each flow writes ('Withdrawal request' from WalletController::withdraw,
+     * 'Withdrawal on account deletion' from ProfileController::deleteAccount;
+     * runner payouts write 'Payout …'), so the label needs no extra query.
+     */
+    private function isCustomerWithdrawal(): bool
+    {
+        return str_starts_with((string) $this->description, 'Withdrawal');
     }
 
     /**

@@ -55,6 +55,42 @@ class WalletTransactionLabelTest extends TestCase
         $this->assertStringContainsString($booking->booking_number, $loaded->display_description);
     }
 
+    public function test_label_leads_with_the_errand_not_the_brand(): void
+    {
+        [$tx, $booking] = $this->paymentTx();
+
+        $loaded = WalletTransaction::with('booking.errandType')->find($tx->id);
+
+        // One-line ledger rows: a "ErrandGuy · " prefix pushed the errand
+        // number off the end.
+        $this->assertSame("Paid for Delivery #{$booking->booking_number}", $loaded->display_description);
+    }
+
+    public function test_a_customer_withdrawal_reads_as_a_withdrawal_and_a_runner_payout_as_a_payout(): void
+    {
+        $user = User::factory()->create(['role' => 'customer', 'status' => 'active']);
+        $destination = ['channel' => 'gcash', 'account_number' => '+639171234567', 'account_name' => 'Rina Cruz'];
+
+        $withdrawal = WalletTransaction::create([
+            'user_id' => $user->id, 'type' => 'payout', 'amount' => -100, 'balance_after' => 0,
+            'description' => 'Withdrawal request', 'status' => 'pending', 'payout_destination' => $destination,
+        ]);
+        $onDeletion = WalletTransaction::create([
+            'user_id' => $user->id, 'type' => 'payout', 'amount' => -50, 'balance_after' => 0,
+            'description' => 'Withdrawal on account deletion', 'status' => 'pending', 'payout_destination' => $destination,
+        ]);
+        $runnerPayout = WalletTransaction::create([
+            'user_id' => $user->id, 'type' => 'payout', 'amount' => -300, 'balance_after' => 0,
+            'description' => 'Payout request', 'status' => 'pending', 'payout_destination' => $destination,
+        ]);
+
+        // The app's button says "Withdraw"; the row now agrees.
+        $this->assertSame('Withdrawal to GCash •••• 4567', $withdrawal->fresh()->display_description);
+        $this->assertSame('Withdrawal to GCash •••• 4567', $onDeletion->fresh()->display_description);
+        // The runner's earnings still go out as a "payout", as their screens say.
+        $this->assertSame('Payout to GCash •••• 4567', $runnerPayout->fresh()->display_description);
+    }
+
     public function test_no_lazy_query_when_booking_is_not_loaded(): void
     {
         [$tx] = $this->paymentTx();

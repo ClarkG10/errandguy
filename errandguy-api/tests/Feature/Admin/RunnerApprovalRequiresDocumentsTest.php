@@ -86,6 +86,24 @@ class RunnerApprovalRequiresDocumentsTest extends TestCase
         Bus::assertDispatched(SendPushJob::class);
     }
 
+    public function test_the_approval_push_says_what_is_left_before_the_first_shift(): void
+    {
+        // Going online is refused without a vehicle, so "start accepting
+        // errands" was untrue for a runner who hasn't saved one.
+        $noVehicle = $this->runner('No Vehicle', ['government_id' => 'approved', 'selfie' => 'approved']);
+        $ready = $this->runner('Has Bike', ['government_id' => 'approved', 'selfie' => 'approved']);
+        $ready->update(['vehicle_type' => 'motorcycle']);
+
+        Livewire::test(ListRunnerProfiles::class, ['activeTab' => 'all'])
+            ->callTableAction('approve', $noVehicle)
+            ->callTableAction('approve', $ready);
+
+        Bus::assertDispatched(SendPushJob::class, fn (SendPushJob $job) => $job->userId === $noVehicle->user_id
+            && $job->body === 'Add your vehicle in the app, then go online to start getting errands.');
+        Bus::assertDispatched(SendPushJob::class, fn (SendPushJob $job) => $job->userId === $ready->user_id
+            && $job->body === 'Go online in the app to start getting errands.');
+    }
+
     public function test_bulk_approve_skips_runners_whose_documents_are_not_approved(): void
     {
         $pending = $this->runner('Pending Docs', ['government_id' => 'pending', 'selfie' => 'pending']);

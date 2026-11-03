@@ -78,6 +78,15 @@ class IncomingRequest implements ShouldBroadcast
             'surcharge' => $b->surcharge,
             'total_amount' => $b->total_amount,
             'runner_payout' => $b->runner_payout,
+            // "Buy for me": the runner fronts the item money (repaid in cash at
+            // the door), so the ceiling has to be on the offer they decide
+            // from — not only on the REST payload that upgrades it seconds
+            // later. Null for every other type.
+            'shopping_budget' => $b->shopping_budget,
+            // How the job settles (cash / wallet / gcash / maya) — the method
+            // TYPE string only, never a gateway reference. Same value
+            // BookingResource sends runners as payment_method_type.
+            'payment_method_type' => $b->payment_method,
             'schedule_type' => $b->schedule_type,
             'scheduled_at' => optional($b->scheduled_at)->toIso8601String(),
             'matched_at' => optional($b->matched_at)->toIso8601String(),
