@@ -354,6 +354,29 @@ describe('resumeSosIntent', () => {
     expect(state().intent).toBeNull();
   });
 
+  it('never sends another account’s saved SOS under the current sign-in', async () => {
+    const { useAuthStore } = require('../../stores/authStore');
+    useAuthStore.setState({ user: { id: 'user-b' } });
+    await AsyncStorage.setItem(
+      STORAGE_KEY,
+      JSON.stringify({
+        bookingId: 'bk-a',
+        role: 'customer',
+        userId: 'user-a',
+        triggeredAt: Date.now() - 30_000,
+        attempts: 1,
+        lastAttemptAt: Date.now() - 30_000,
+      }),
+    );
+
+    const resumed = await resumeSosIntent();
+    await flush();
+
+    expect(resumed).toBeNull();
+    expect(mockCustomerSos).not.toHaveBeenCalled();
+    useAuthStore.setState({ user: null });
+  });
+
   it('replays the coordinates stored with an intent persisted before an app kill', async () => {
     await AsyncStorage.setItem(
       STORAGE_KEY,
@@ -391,6 +414,54 @@ describe('resumeSosIntent', () => {
     expect(resumed).toBeNull();
     expect(mockCustomerSos).not.toHaveBeenCalled();
     expect(await AsyncStorage.getItem(STORAGE_KEY)).toBeNull();
+  });
+
+  it('sends once when the root layout and an SOS screen resume on the same cold start', async () => {
+    await AsyncStorage.setItem(
+      STORAGE_KEY,
+      JSON.stringify({
+        bookingId: 'bk-17',
+        role: 'customer',
+        triggeredAt: Date.now() - 30_000,
+        attempts: 1,
+        lastAttemptAt: Date.now() - 30_000,
+      }),
+    );
+
+    const [a, b] = await Promise.all([resumeSosIntent(), resumeSosIntent()]);
+    await flush();
+
+    expect(a?.bookingId).toBe('bk-17');
+    expect(b?.bookingId).toBe('bk-17');
+    expect(mockCustomerSos).toHaveBeenCalledTimes(1);
+  });
+
+  it('a foreground resume while an attempt is on the wire does not send a second one', async () => {
+    let release: (v: unknown) => void = () => {};
+    mockCustomerSos.mockImplementationOnce(
+      () => new Promise((r) => {
+        release = r;
+      }),
+    );
+    await AsyncStorage.setItem(
+      STORAGE_KEY,
+      JSON.stringify({
+        bookingId: 'bk-18',
+        role: 'customer',
+        triggeredAt: Date.now() - 30_000,
+        attempts: 1,
+        lastAttemptAt: Date.now() - 30_000,
+      }),
+    );
+
+    await resumeSosIntent();
+    await resumeSosIntent();
+    await resumeSosIntent();
+    expect(mockCustomerSos).toHaveBeenCalledTimes(1);
+
+    release({ data: { data: { id: 'alert-3' } } });
+    await flush();
+    expect(state().intent).toBeNull();
   });
 
   it('survives a corrupt payload without touching the emergency path', async () => {

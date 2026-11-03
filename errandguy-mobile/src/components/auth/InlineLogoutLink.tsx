@@ -25,7 +25,7 @@ interface InlineLogoutLinkProps {
  * Replaces the modal/bottom-sheet logout confirmation with a quieter,
  * inline interaction:
  *
- *   1. The link reads "Log out". A first tap "arms" it — the label
+ *   1. The link reads "Sign out". A first tap "arms" it — the label
  *      morphs to "Tap again to confirm" with a thin progress bar
  *      counting down ~3 seconds.
  *   2. If the user taps again within the window, logout fires.
@@ -46,7 +46,7 @@ interface InlineLogoutLinkProps {
  */
 export function InlineLogoutLink({
   onConfirm,
-  label = 'Log out',
+  label = 'Sign out',
   confirmLabel = 'Tap again to confirm',
 }: InlineLogoutLinkProps) {
   const [armed, setArmed] = useState(false);
@@ -107,7 +107,7 @@ export function InlineLogoutLink({
         onPress={handlePress}
         hitSlop={10}
         accessibilityRole="button"
-        accessibilityLabel={armed ? `${confirmLabel} to log out` : label}
+        accessibilityLabel={armed ? `${confirmLabel} to sign out` : label}
         accessibilityHint={armed ? 'Tap again within 3 seconds' : undefined}
         style={({ pressed }) => [s.btn, pressed && { opacity: 0.7 }]}
       >

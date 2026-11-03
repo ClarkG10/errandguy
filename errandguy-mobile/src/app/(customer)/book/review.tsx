@@ -43,7 +43,7 @@ import { fareLines } from '../../../utils/fareLines';
 import { usePaymentVerification } from '../../../hooks/usePaymentVerification';
 import {
   bookingPaymentFailure,
-  CHECKOUT_CANCELLED,
+  settleClosedCheckout,
 } from '../../../hooks/useCompleteBookingPayment';
 import { rebookDraft } from '../../../utils/rebookDraft';
 import { invalidateQuery, useQuery } from '../../../hooks/useQuery';
@@ -53,7 +53,11 @@ import { useRetiredErrandTypeGuard } from '../../../hooks/useRetiredErrandTypeGu
 import { useAuthStore } from '../../../stores/authStore';
 import { usePreferencesStore } from '../../../stores/preferencesStore';
 import { shoppingBudgetError, shoppingBudgetMax } from '../../../utils/shoppingMoney';
-import { getErrandTypeRule, type VehicleKey } from '../../../constants/errandTypeRules';
+import {
+  bookingVehicle,
+  getErrandTypeRule,
+  type VehicleKey,
+} from '../../../constants/errandTypeRules';
 import { useResponsive } from '../../../constants/responsive';
 import { LightColors } from '../../../constants/colors';
 import type { ErrandType } from '../../../types';
@@ -152,20 +156,22 @@ export default function ReviewScreen() {
     [draftBooking.errand_type_slug],
   );
 
-  const initialVehicle = useMemo<VehicleKey>(() => {
-    const stored = draftBooking.vehicle_type_rate as VehicleKey | undefined;
-    if (stored && rule.allowedVehicles.includes(stored)) return stored;
-    return rule.defaultVehicle;
-  }, [draftBooking.vehicle_type_rate, rule]);
+  const initialVehicle = useMemo<VehicleKey>(
+    () => bookingVehicle(rule, draftBooking.vehicle_type_rate),
+    [draftBooking.vehicle_type_rate, rule],
+  );
 
   const [vehicleType, setVehicleType] = useState<string>(initialVehicle);
 
   // If the rule changes (e.g. user changed errand type) and the current
-  // vehicle is no longer allowed, snap back to the rule's default.
+  // vehicle is no longer allowed, snap back to the rule's default. The draft
+  // follows too, so a restored draft holding an older pick (a queue errand
+  // saved on a motorcycle) can't keep it.
   useEffect(() => {
-    if (!rule.allowedVehicles.includes(vehicleType as VehicleKey)) {
-      setVehicleType(rule.defaultVehicle);
-      updateDraft({ vehicle_type_rate: rule.defaultVehicle });
+    const vehicle = bookingVehicle(rule, vehicleType);
+    if (vehicle !== vehicleType) setVehicleType(vehicle);
+    if (draftBooking.vehicle_type_rate && draftBooking.vehicle_type_rate !== vehicle) {
+      updateDraft({ vehicle_type_rate: vehicle });
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [rule]);
@@ -429,10 +435,18 @@ export default function ReviewScreen() {
     errandTypesQ.data?.find((t) => t.id === draftBooking.errand_type_id),
   );
 
-  const scheduleLabel =
-    draftBooking.schedule_type === 'scheduled' && draftBooking.scheduled_at
-      ? `Scheduled · ${dayjs(draftBooking.scheduled_at).format('ddd, MMM D · h:mm A')}`
+  const isScheduled = draftBooking.schedule_type === 'scheduled' && !!draftBooking.scheduled_at;
+  // Chose "Later" but no time yet (e.g. the app was closed on the picker after
+  // Home's Schedule shortcut). Never shown as "Now": it isn't booked as now.
+  const needsScheduleTime = draftBooking.schedule_type === 'scheduled' && !draftBooking.scheduled_at;
+  const scheduleLabel = isScheduled
+    ? `Scheduled · ${dayjs(draftBooking.scheduled_at).format('ddd, MMM D · h:mm A')}`
+    : needsScheduleTime
+      ? 'Later · no time picked'
       : 'Now';
+  // Booking goes straight from details to here on "Now", so this row is the
+  // one way to book for later — say so instead of a bare "Edit".
+  const scheduleAction = isScheduled ? 'Edit' : needsScheduleTime ? 'Pick a time' : 'Schedule for later';
 
   const shoppingItemCount = rule.requiresShoppingBudget
     ? (draftBooking.shoppingItems ?? []).filter((it) => it.name.trim()).length
@@ -441,7 +455,12 @@ export default function ReviewScreen() {
   // navigate() returns to the step already on the stack instead of pushing
   // a duplicate; the persisted draft makes the round-trip lossless.
   const editStep = useCallback(
-    (path: '/(customer)/book/details' | '/(customer)/book/schedule') => {
+    (
+      path:
+        | '/(customer)/book/details'
+        | '/(customer)/book/schedule'
+        | '/(customer)/book/schedule?later=1',
+    ) => {
       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
       router.navigate(path);
     },
@@ -500,7 +519,11 @@ export default function ReviewScreen() {
         when.isAfter(dayjs().add(30, 'day'))
       ) {
         updateDraft({ scheduled_at: undefined });
-        toast.error('Your scheduled time is no longer valid — please pick a new one.');
+        toast.error(
+          when
+            ? 'Your scheduled time is no longer valid — please pick a new one.'
+            : 'Pick a time for your errand first.',
+        );
         router.push('/(customer)/book/schedule');
         return;
       }
@@ -569,7 +592,10 @@ export default function ReviewScreen() {
         shopping_budget: draftBooking.shopping_budget,
         vehicle_type_rate: vehicleType,
         schedule_type: draftBooking.schedule_type ?? ('now' as const),
-        scheduled_at: draftBooking.scheduled_at,
+        // A time picked and then switched back to "Now" stays in the draft
+        // (see schedule.tsx); it must not ride along on a "Now" booking.
+        scheduled_at:
+          draftBooking.schedule_type === 'scheduled' ? draftBooking.scheduled_at : undefined,
         // GCash/Maya return a checkout_url (a one-time charge approved in
         // their app); wallet is debited now; cash is collected by the runner.
         payment_method: paymentMethodType ?? 'cash',
@@ -688,21 +714,15 @@ export default function ReviewScreen() {
           // The customer DISMISSED the sheet. Flipping to 'verifying' here used
           // to trap them behind a button-less spinner for the full 35s pending
           // timeout, then claim their payment "is being processed" — for a
-          // payment they deliberately never made. Land on the actionable
-          // failure state instead: "Resume payment" re-opens the SAME charge —
-          // no duplicate booking — and Close drops them on the waiting screen,
-          // whose "Complete payment" reopens that charge until the server
-          // cancels the unpaid errand.
-          //
-          // iOS can report a cancel when the sheet is dismissed AFTER paying but
-          // before the redirect, so the copy never claims the payment failed for
-          // good: the webhook still settles it and the push lands on the errand.
-          setAttemptStatus('failed', {
-            bookingId: booking.id,
-            checkoutUrl,
-            reference: booking.booking_number,
-            failureReason: CHECKOUT_CANCELLED,
-          });
+          // payment they deliberately never made. And landing straight on the
+          // failure card claimed nothing was charged without asking: iOS can
+          // report a cancel when the sheet is dismissed AFTER paying but before
+          // the redirect. So check ONCE, briefly: paid → the success path; no
+          // payment yet → the actionable card, whose "Resume payment" re-opens
+          // the SAME charge — no duplicate booking — and whose Close drops them
+          // on the waiting screen, where "Complete payment" reopens that charge
+          // until the server cancels the unpaid errand.
+          await settleClosedCheckout();
           return;
         }
 
@@ -776,14 +796,15 @@ export default function ReviewScreen() {
     const outcome = await openCheckoutUrl(url, PAYMENT_RETURN_URL);
     // Same honest branches as the first attempt: a sheet that never opened, or
     // one the customer dismissed, must NOT spin the verification overlay for
-    // 35s. Stay on the actionable failure card so Resume/Close remain there.
+    // 35s. A dismissed one gets the same single quick check, then the
+    // actionable failure card so Resume/Close remain there.
     if (outcome === 'failed') {
       setAttemptStatus('failed', { failureReason: undefined });
       toast.error("Couldn't open checkout — you weren't charged. Tap Resume payment to pay.");
       return;
     }
     if (outcome === 'cancelled') {
-      setAttemptStatus('failed', { failureReason: CHECKOUT_CANCELLED });
+      await settleClosedCheckout();
       return;
     }
     setAttemptStatus('verifying');
@@ -845,7 +866,7 @@ export default function ReviewScreen() {
             className="text-[10px] font-montserrat-bold uppercase"
             style={{ letterSpacing: 1.4, color: LightColors.textSecondary }}
           >
-            New errand · Step 4
+            New errand · Step 3
           </Text>
         </View>
       </GradientHeader>
@@ -854,7 +875,7 @@ export default function ReviewScreen() {
           scroll body so tablet edges align (mirrors type.tsx). */}
       <View className="px-5 mt-3 pb-3">
         <View style={{ maxWidth: contentMaxWidth, width: '100%', alignSelf: 'center' }}>
-          <BookingStepIndicator currentStep={3} />
+          <BookingStepIndicator currentStep={2} />
         </View>
       </View>
 
@@ -989,10 +1010,13 @@ export default function ReviewScreen() {
           <Pressable
             className="flex-row items-center justify-between py-3 border-t border-divider"
             accessibilityRole="button"
-            accessibilityLabel={`Schedule: ${scheduleLabel}. Edit`}
+            accessibilityLabel={`Schedule: ${scheduleLabel}. ${scheduleAction}`}
             hitSlop={8}
             style={({ pressed }) => (pressed ? { opacity: 0.7 } : null)}
-            onPress={() => editStep('/(customer)/book/schedule')}
+            onPress={() =>
+              // "Schedule for later" opens the picker already on "Later".
+              editStep(isScheduled || needsScheduleTime ? '/(customer)/book/schedule' : '/(customer)/book/schedule?later=1')
+            }
           >
             <Text className="text-[12px] font-montserrat text-textSecondary">
               Schedule
@@ -1002,7 +1026,7 @@ export default function ReviewScreen() {
                 {scheduleLabel}
               </Text>
               <Text className="text-[13px] font-montserrat-semi text-primary ml-3">
-                Edit
+                {scheduleAction}
               </Text>
             </View>
           </Pressable>
@@ -1067,7 +1091,6 @@ export default function ReviewScreen() {
             <ErrorState
               compact
               title="Couldn't calculate your fare"
-              description="Check your connection and try again."
               onRetry={rerunEstimate}
             />
           </View>

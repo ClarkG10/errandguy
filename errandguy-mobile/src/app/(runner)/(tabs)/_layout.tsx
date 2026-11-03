@@ -12,8 +12,8 @@ import { LightColors } from '../../../constants/colors';
 
 const ACTIVE = LightColors.primary;
 // textTertiary clears the 3:1 non-text glyph floor that textMuted failed
-// (shared with the customer bar via TabBarItem). Labels are hidden, so this
-// only feeds react-navigation's inactive tint, but keep it in sync.
+// (shared with the customer bar via TabBarItem). It is also the inactive
+// label colour, so the word under each icon matches its glyph.
 const INACTIVE = LightColors.textTertiary;
 
 export default function RunnerTabsLayout() {
@@ -25,8 +25,9 @@ export default function RunnerTabsLayout() {
   // verbatim — it does NOT add the bottom inset — so a flat height would
   // sit the bar flush and collide the icon row with the home indicator /
   // gesture bar on inset devices. Grow the bar and reserve the inset as
-  // bottom padding; the item grows with it so the glyph stays centred in
-  // the visible strip above the inset.
+  // bottom padding. The item keeps the visible strip's height (growing it by
+  // the inset too would drop the labels onto the home indicator) — same as
+  // the customer bar.
   const barHeight = BAR_HEIGHT + insets.bottom;
 
   return (
@@ -47,7 +48,10 @@ export default function RunnerTabsLayout() {
         lazy: true,
         tabBarActiveTintColor: ACTIVE,
         tabBarInactiveTintColor: INACTIVE,
-        tabBarShowLabel: false,
+        // Short word under every icon — matches the customer bar. A new
+        // runner shouldn't have to guess what "wallet" and "clock" open.
+        tabBarShowLabel: true,
+        tabBarLabelStyle: { fontFamily: 'Quicksand_600SemiBold', fontSize: 11 },
         tabBarHideOnKeyboard: true,
         tabBarStyle: {
           backgroundColor: LightColors.surface,
@@ -69,15 +73,14 @@ export default function RunnerTabsLayout() {
         },
         tabBarItemStyle: {
           // Match the customer bar: size the touch slot to the visible strip
-          // (bar minus a little) + inset so the glyph centres in the strip
-          // above the home indicator instead of floating mid-bar, which read
-          // as an over-tall bar.
-          height: BAR_HEIGHT - 12 + insets.bottom,
+          // (bar minus a little) so the icon and its label sit above the
+          // home indicator instead of floating mid-bar.
+          height: BAR_HEIGHT - 12,
           paddingTop: 0,
           paddingBottom: 0,
         },
-        // Fill the icon container so the icon-only glyph centres vertically
-        // instead of leaving a gap at the bottom (reserved label space).
+        // Let the icon container fill what the label leaves, so the glyph
+        // centres in the space above its word.
         tabBarIconStyle: { flex: 1 },
       }}
     >

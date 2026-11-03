@@ -7,6 +7,8 @@ import { notificationService } from './notification.service';
 import { userService } from './user.service';
 import { runnerService } from './runner.service';
 import { bookingService } from './booking.service';
+import { toast } from '../stores/toastStore';
+import { errorMessage } from '../utils/errorCatalog';
 
 /**
  * ── Scoped durable offline mutation queue ──────────────────────────────────
@@ -48,7 +50,9 @@ import { bookingService } from './booking.service';
  *     so a change made days ago can't clobber newer server state on reconnect.
  *   • Attempt cap — a 5xx that keeps failing is dropped after MAX_ATTEMPTS; a
  *     4xx (the server rejected it outright) is dropped immediately — retrying
- *     a client error never helps.
+ *     a client error never helps. A dropped change the person made themselves
+ *     (REFUSAL_COPY) is announced with the server's reason, never dropped in
+ *     silence.
  */
 
 type QueryKey = (string | number | null | undefined)[];
@@ -154,6 +158,39 @@ const HANDLERS: Record<string, (payload: any) => Promise<unknown>> = {
         if (status === 422) return null;
         throw err;
       }),
+};
+
+/**
+ * What to tell the person when a queued change is dropped — refused by the
+ * server on replay, or failing until we give up. It was made offline and has
+ * been showing as saved ever since, so dropping it quietly (an email someone
+ * else already uses, say) left them believing it went through. The server's
+ * reason follows this line. Kinds left out drop quietly: a notification that
+ * no longer exists, a delete that already happened, a tick on an errand that
+ * has since closed — none of those need explaining.
+ */
+const REFUSAL_COPY: Record<string, string> = {
+  'user.updateProfile': 'Your profile change wasn’t saved.',
+  'user.addAddress': 'Your new address wasn’t saved.',
+  'user.updateAddress': 'Your address change wasn’t saved.',
+  'user.addTrustedContact': 'Your new trusted contact wasn’t saved.',
+  'user.updateTrustedContact': 'Your trusted contact change wasn’t saved.',
+  'runner.updateProfile': 'Your settings change wasn’t saved.',
+  'booking.review': 'Your review wasn’t sent.',
+};
+
+/**
+ * Put server truth back where a dropped change's optimistic value lives
+ * outside the query cache, so `invalidate` can't reach it. Best-effort.
+ */
+const RECONCILE_DROPPED: Record<string, () => Promise<void>> = {
+  // The edit-profile sheet writes straight into authStore.user.
+  'user.updateProfile': async () => {
+    const res = await userService.getProfile();
+    const fresh = res?.data?.data;
+    const { useAuthStore } = require('../stores/authStore');
+    if (fresh) useAuthStore.getState().setUser?.(fresh);
+  },
 };
 
 /** Is `kind` a registered, queueable action? */
@@ -333,7 +370,10 @@ async function runFlush(): Promise<void> {
           if (entry.invalidate?.length) {
             await Promise.all(entry.invalidate.map((k) => invalidateQuery(k))).catch(() => {});
           }
+          await RECONCILE_DROPPED[entry.kind]?.().catch(() => {});
           remove(entry.id); // give up — a client error or exhausted retries.
+          const refusal = REFUSAL_COPY[entry.kind];
+          if (refusal) toast.error(`${refusal} ${errorMessage(err)}`);
         } else {
           bumpAttempt(entry.id); // transient (5xx) — keep for the next reconnect.
         }

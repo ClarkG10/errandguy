@@ -72,7 +72,8 @@ export function TrustedContactsScreen({ fallbackHref }: TrustedContactsScreenPro
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
-  const [loadError, setLoadError] = useState(false);
+  // The failed load itself (not just a flag), so the error can say why.
+  const [loadError, setLoadError] = useState<unknown>(null);
 
   // Form modal state
   const [modalVisible, setModalVisible] = useState(false);
@@ -114,10 +115,10 @@ export function TrustedContactsScreen({ fallbackHref }: TrustedContactsScreenPro
         ? data.sort((a: TrustedContact, b: TrustedContact) => a.priority - b.priority)
         : [];
       setContacts(sorted);
-      setLoadError(false);
+      setLoadError(null);
       await saveCache(sorted);
-    } catch {
-      setLoadError(true);
+    } catch (err) {
+      setLoadError(err ?? true);
     } finally {
       if (!background) setLoading(false);
     }
@@ -527,6 +528,7 @@ export function TrustedContactsScreen({ fallbackHref }: TrustedContactsScreenPro
           loadError ? (
             <ErrorState
               title="Couldn't load your contacts"
+              error={loadError}
               onRetry={() => {
                 void fetchContacts(false);
               }}

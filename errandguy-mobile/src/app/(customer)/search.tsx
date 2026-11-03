@@ -101,7 +101,7 @@ type ResultRow =
   | { type: 'address'; key: string; address: SavedAddress }
   | { type: 'transaction'; key: string; tx: WalletTransaction }
   | { type: 'more'; key: string; category: string; categoryTitle: string; count: number }
-  | { type: 'error'; key: string; title: string; onRetry: () => void };
+  | { type: 'error'; key: string; title: string; error: unknown; onRetry: () => void };
 
 interface ResultSection {
   key: string;
@@ -263,19 +263,21 @@ export default function SearchScreen() {
     const pushCategory = <T,>(
       key: string,
       title: string,
-      hasError: boolean,
+      error: unknown,
       hasData: boolean,
       items: readonly T[],
       getFields: (item: T) => unknown[],
       makeRow: (item: T) => ResultRow,
       onRetry: () => void,
     ) => {
-      if (hasError && !hasData) {
+      if (error && !hasData) {
         out.push({
           key,
           title,
           count: null,
-          data: [{ type: 'error', key: `${key}-err`, title: `Couldn't load ${title.toLowerCase()}`, onRetry }],
+          data: [
+            { type: 'error', key: `${key}-err`, title: `Couldn't load ${title.toLowerCase()}`, error, onRetry },
+          ],
         });
         return;
       }
@@ -298,7 +300,7 @@ export default function SearchScreen() {
     pushCategory<Booking>(
       'errands',
       'Errands',
-      !!bookingsError,
+      bookingsError,
       !!bookingsData,
       bookingsData ?? [],
       (b) => [
@@ -315,7 +317,7 @@ export default function SearchScreen() {
     pushCategory<Conversation>(
       'messages',
       'Messages',
-      !!convError,
+      convError,
       !!convData,
       convData ?? [],
       (c) => [
@@ -331,7 +333,7 @@ export default function SearchScreen() {
     pushCategory<SavedAddress>(
       'addresses',
       'Addresses',
-      !!addrError,
+      addrError,
       !!addrData,
       addrData ?? [],
       (a) => [a.label, a.address],
@@ -342,7 +344,7 @@ export default function SearchScreen() {
     pushCategory<WalletTransaction>(
       'transactions',
       'Transactions',
-      !!txError,
+      txError,
       !!txData,
       txData ?? [],
       (t) => [
@@ -546,7 +548,7 @@ export default function SearchScreen() {
         case 'error':
           return (
             <View className="px-5 pb-2">
-              <ErrorState compact title={item.title} onRetry={item.onRetry} />
+              <ErrorState compact title={item.title} error={item.error} onRetry={item.onRetry} />
             </View>
           );
         default:

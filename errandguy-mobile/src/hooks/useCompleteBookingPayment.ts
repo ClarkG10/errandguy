@@ -4,7 +4,7 @@ import { openCheckoutUrl, PAYMENT_RETURN_URL } from '../utils/browser';
 import { bookingCheckoutUrl, UNPAID_CHECKOUT_WINDOW_MINUTES } from '../utils/bookingPayment';
 import { mapFailureReason } from '../utils/paymentErrors';
 import { usePaymentStore, isAttemptActive } from '../stores/paymentStore';
-import { usePaymentVerification } from './usePaymentVerification';
+import { usePaymentVerification, verifyAttemptOnce } from './usePaymentVerification';
 import { toast } from '../stores/toastStore';
 import type { PaymentProgress } from '../components/ui/PaymentProgress';
 import type { Booking } from '../types';
@@ -14,11 +14,25 @@ import type { Booking } from '../types';
  *  of the generic "we couldn't confirm this payment". */
 export const CHECKOUT_CANCELLED = 'checkout_cancelled';
 
-/** What the failure overlay says after the customer backs out of checkout.
- *  The way back is real: the waiting screen and the errand both carry a
- *  "Complete payment" button that reopens the same checkout. */
+/** What the failure overlay says after the customer backs out of checkout
+ *  and one quick check found no payment yet. It claims no more than that: a
+ *  payment made just before closing can still be on its way. The way back is
+ *  real: the waiting screen and the errand both carry a "Complete payment"
+ *  button that reopens the same checkout. */
 export const CHECKOUT_CANCELLED_MESSAGE =
-  `You closed checkout before paying, so nothing was charged and no runner has been sent yet. Resume the payment now, or close this and tap Complete payment — an errand left unpaid for ${UNPAID_CHECKOUT_WINDOW_MINUTES} minutes is cancelled. If you did finish paying, it updates by itself.`;
+  `We haven't received your payment yet, so no runner has been sent. Resume the payment now, or close this and tap Complete payment — an errand left unpaid for ${UNPAID_CHECKOUT_WINDOW_MINUTES} minutes is cancelled. If you already paid, this updates by itself.`;
+
+/**
+ * The customer closed the GCash/Maya sheet. That alone doesn't mean unpaid —
+ * iOS reports a cancel when the sheet is dismissed after paying but before the
+ * redirect — so ask the server once, briefly (never the 35-second spinner).
+ * Paid, or ruled on: that verdict stands. Otherwise land on the resumable
+ * "not finished" card.
+ */
+export async function settleClosedCheckout(): Promise<void> {
+  if (await verifyAttemptOnce()) return;
+  usePaymentStore.getState().setStatus('failed', { failureReason: CHECKOUT_CANCELLED });
+}
 
 /**
  * What the failure overlay offers next for a booking's GCash/Maya payment.
@@ -44,7 +58,7 @@ export interface BookingPaymentFailure {
 /** Turn a booking payment attempt's failure reason into overlay copy + the one next step. */
 export function bookingPaymentFailure(reason?: string | null): BookingPaymentFailure {
   if (reason === CHECKOUT_CANCELLED) {
-    return { title: 'Payment not finished', message: CHECKOUT_CANCELLED_MESSAGE, recovery: 'resume' };
+    return { title: 'Payment not received yet', message: CHECKOUT_CANCELLED_MESSAGE, recovery: 'resume' };
   }
   if (!reason) {
     return {
@@ -134,9 +148,10 @@ export function useCompleteBookingPayment(
     attempt.bookingId === booking?.id;
   const overlayStage = owned && stage && stage !== 'preparing' ? stage : null;
 
-  // Same honest branches as the create flow: a sheet that never opened, or
-  // one the customer dismissed, lands on the actionable failure card rather
-  // than spinning the verification overlay for 35 seconds.
+  // Same honest branches as the create flow: a sheet that never opened lands
+  // on the actionable failure card, and one the customer dismissed gets one
+  // quick check first, rather than spinning the verification overlay for 35
+  // seconds.
   const openSheet = useCallback(
     async (url: string) => {
       const outcome = await openCheckoutUrl(url, PAYMENT_RETURN_URL);
@@ -146,7 +161,7 @@ export function useCompleteBookingPayment(
         return;
       }
       if (outcome === 'cancelled') {
-        setStatus('failed', { failureReason: CHECKOUT_CANCELLED });
+        await settleClosedCheckout();
         return;
       }
       setStatus('verifying');

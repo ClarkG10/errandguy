@@ -9,6 +9,7 @@ import { apiCache } from '../services/api';
 import { clearRecentRecipients } from './recentRecipients';
 import { clearMutationQueue } from '../services/mutationQueue';
 import { clearAllSosActive } from '../services/sosActive';
+import { clearSosIntent } from '../services/sosIntent';
 import { stopRunnerActivity } from './runnerSession';
 
 /** Unsent support-ticket text. Written only by the support compose screen,
@@ -56,6 +57,8 @@ const TRUSTED_CONTACTS_KEY = '@trusted_contacts_cache';
  *   • acknowledged-SOS records (@sos_active_v1) — the previous account's
  *     "SOS active" cards, keyed by errand; the next user must not inherit an
  *     alarm (or an "I'm safe" control) for an errand that isn't theirs.
+ *   • an unsent SOS (@sos_intent_v1) — the app resumes it at launch, so it would
+ *     otherwise be replayed under the next account's sign-in.
  *   • CacheService (persisted query cache) + apiCache (in-memory) + recent
  *     destinations — cached network responses / addresses of the prior user.
  *   • notificationStore — the in-memory Alerts rows and badge. They outlived a
@@ -84,6 +87,7 @@ export async function clearAccountScopedState(): Promise<void> {
     AsyncStorage.removeItem(TRUSTED_CONTACTS_KEY),
     clearMutationQueue(),
     clearAllSosActive(),
+    clearSosIntent(),
   ]);
   apiCache.clear();
 }

@@ -1,5 +1,6 @@
 import React from 'react';
-import { render, waitFor } from '@testing-library/react-native';
+import { fireEvent, render, waitFor } from '@testing-library/react-native';
+import { useRouter } from 'expo-router';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import CustomerHomeScreen from '../index';
 import { useAuthStore } from '../../../../stores/authStore';
@@ -298,5 +299,84 @@ describe('customer home — shortcuts after the type retirement', () => {
     await waitFor(() => {
       expect(utils.queryByLabelText('Repeat your last Delivery booking')).toBeTruthy();
     });
+  });
+});
+
+/**
+ * The screen's biggest tap areas all started a NEW booking, which clears the
+ * saved draft — so a half-built errand vanished from under its own "Continue
+ * your errand" card. Now a generic "start" resumes it, and a tap that names
+ * something else asks first.
+ */
+describe('customer home — a saved draft is never wiped without asking', () => {
+  const mockPush = jest.fn();
+  const draft = { errand_type_id: 'delivery', errand_type_slug: 'delivery', pickup_address: 'A' };
+
+  beforeEach(() => {
+    mockPush.mockReset();
+    (useRouter as jest.Mock).mockReturnValue({
+      push: mockPush,
+      replace: jest.fn(),
+      back: jest.fn(),
+      navigate: jest.fn(),
+    });
+    useBookingStore.setState({ draftBooking: draft, currentStep: 3, isDraftHydrated: true });
+  });
+
+  const ready = async () => {
+    const utils = renderHome();
+    await waitFor(() => {
+      expect(utils.queryByLabelText('Start a Delivery errand')).toBeTruthy();
+    });
+    expect(utils.getByText('Continue your errand')).toBeTruthy();
+    expect(utils.getByText('Delivery · Step 3 of 3')).toBeTruthy();
+    return utils;
+  };
+
+  it('the "where to?" card resumes the draft instead of clearing it', async () => {
+    const utils = await ready();
+    fireEvent.press(utils.getAllByLabelText('Start a new booking')[1]);
+    expect(mockPush).toHaveBeenCalledWith('/(customer)/book/review');
+    expect(useBookingStore.getState().draftBooking).toEqual(draft);
+  });
+
+  it('a tile for the same type resumes it too', async () => {
+    const utils = await ready();
+    fireEvent.press(utils.getByLabelText('Start a Delivery errand'));
+    expect(mockPush).toHaveBeenCalledWith('/(customer)/book/review');
+    expect(useBookingStore.getState().draftBooking).toEqual(draft);
+  });
+
+  it('a tile for another type asks first — "Keep it" keeps everything', async () => {
+    const utils = await ready();
+    fireEvent.press(utils.getByLabelText('Start a Buy for me errand'));
+    expect(utils.getByText('Start a new errand?')).toBeTruthy();
+    expect(mockPush).not.toHaveBeenCalled();
+
+    fireEvent.press(utils.getByText('Keep it'));
+    expect(mockPush).not.toHaveBeenCalled();
+    expect(useBookingStore.getState().draftBooking).toEqual(draft);
+  });
+
+  it('…and "Start new" clears the draft and starts the new type', async () => {
+    const utils = await ready();
+    fireEvent.press(utils.getByLabelText('Start a Buy for me errand'));
+    fireEvent.press(utils.getByText('Start new'));
+    expect(useBookingStore.getState().draftBooking).toEqual({
+      errand_type_id: 'purchase',
+      errand_type_slug: 'purchase',
+    });
+    expect(mockPush).toHaveBeenCalledWith('/(customer)/book/details');
+  });
+
+  it('with no draft, a tile starts straight away as before', async () => {
+    useBookingStore.setState({ draftBooking: {}, currentStep: 0 });
+    const utils = renderHome();
+    await waitFor(() => {
+      expect(utils.queryByLabelText('Start a Buy for me errand')).toBeTruthy();
+    });
+    fireEvent.press(utils.getByLabelText('Start a Buy for me errand'));
+    expect(utils.queryByText('Start a new errand?')).toBeNull();
+    expect(mockPush).toHaveBeenCalledWith('/(customer)/book/details');
   });
 });

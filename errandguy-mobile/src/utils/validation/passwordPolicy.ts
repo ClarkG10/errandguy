@@ -8,8 +8,13 @@
  * same list as its live checklist.
  */
 
-/** The special characters the checklist counts. */
-const SPECIAL_CHARACTER = /[!@#$%^&*(),.?":{}|<>]/;
+/**
+ * What counts as a special character: exactly Laravel's `symbols()` test
+ * (Illuminate\Validation\Rules\Password: `/\p{Z}|\p{S}|\p{P}/u`) — any
+ * space, symbol or punctuation mark, `_`, `-`, `+`, `~` and `₱` included. The
+ * old hand-picked list refused passwords the server accepts, like "Juan_2024A".
+ */
+const SPECIAL_CHARACTER = /\p{Z}|\p{S}|\p{P}/u;
 
 export const PASSWORD_REQUIREMENTS: readonly { label: string; test: (p: string) => boolean }[] = [
   { label: 'At least 8 characters', test: (p) => p.length >= 8 },

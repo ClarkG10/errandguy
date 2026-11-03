@@ -64,7 +64,10 @@ describe('the offer pop-up', () => {
 describe('the errand screen while the errand is only offered', () => {
   it('locks contacts on `matched` and blanks the customer phone', () => {
     expect(COCKPIT).toContain("const contactsLocked = booking?.status === 'matched';");
-    expect(COCKPIT).toMatch(/const customerPhone = contactsLocked\s*\?\s*null/);
+    // Every callable number comes from one list, and that list is empty
+    // while locked — so the pill, its Call button and "Other numbers" all go.
+    expect(COCKPIT).toContain('if (!booking || contactsLocked) return [] as CallOption[];');
+    expect(COCKPIT).toContain('const customerPhone = callOptions[0]?.phone ?? null;');
   });
 
   it('hides the Call buttons and says when details appear', () => {

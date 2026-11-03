@@ -416,6 +416,7 @@ export default function ActivityScreen() {
             // failure instead of the misleading "No errands yet".
             <ErrorState
               title="Couldn't load your errands"
+              error={page1Q.error}
               onRetry={() => {
                 page1Q.refresh();
               }}

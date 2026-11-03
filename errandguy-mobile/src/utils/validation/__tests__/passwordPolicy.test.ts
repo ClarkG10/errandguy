@@ -26,6 +26,23 @@ describe('new-password policy (sign-up, reset, change password)', () => {
     expect(PASSWORD_REQUIREMENTS.every((r) => r.test('Errand#2026'))).toBe(true);
   });
 
+  /**
+   * The server's symbols() rule is Laravel's `/\p{Z}|\p{S}|\p{P}/u`: any
+   * space, symbol or punctuation. The form used to accept only a short
+   * hand-picked list, so it refused passwords the server takes.
+   */
+  it.each(['Juan_2024A', 'Errand-2026a', 'Errand+2026a', 'Errand~2026a', 'Errand 2026a', 'Bayad₱2026a', 'Errand/2026a'])(
+    'counts %p as having a special character, like the server',
+    (value) => {
+      expect(newPasswordError(value)).toBeNull();
+      expect(PASSWORD_REQUIREMENTS.find((r) => r.label === 'Special character')?.test(value)).toBe(true);
+    },
+  );
+
+  it.each(['Juan2024Ab', 'Juañ2024Ab'])('still asks for one in %p — letters and digits only', (value) => {
+    expect(newPasswordError(value)).toBe('Must contain a special character');
+  });
+
   it('confirmation must match the new password', () => {
     const rules = confirmPasswordRules(() => 'Errand#2026');
     expect(rules.validate('Errand#2026')).toBe(true);

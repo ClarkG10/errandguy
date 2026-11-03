@@ -96,7 +96,7 @@ const FAQS: FAQ[] = [
   {
     question: 'How do I update my documents?',
     answer:
-      'Go to Profile → Documents & Verification. Upload or re-upload any required document. Our team reviews submissions within 24-48 hours.',
+      'Go to Profile → Documents & Verification. Upload or re-upload any required document. Our team reviews submissions within 1–2 business days.',
   },
   {
     question: 'What if a customer cancels?',
@@ -287,7 +287,7 @@ export default function HelpScreen() {
               <Headphones size={18} color={LightColors.primary} strokeWidth={1.8} />
             </View>
             <View className="flex-1">
-              <Text className="text-[14px] font-montserrat-semi text-textPrimary">Chat with Support</Text>
+              <Text className="text-[14px] font-montserrat-semi text-textPrimary">Support tickets</Text>
               <Text className="text-sm font-montserrat text-textSecondary">
                 Open a ticket and message our team
               </Text>

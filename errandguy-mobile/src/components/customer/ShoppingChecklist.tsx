@@ -47,13 +47,27 @@ export function ShoppingChecklist({
   // move focus without the user tapping into each fresh row.
   const inputRefs = useRef<Record<string, TextInput | null>>({});
 
+  // An empty list still shows one blank row, ready to type into — the list
+  // used to start as a hint and an "Add item" tap. The row is display-only
+  // until it's edited, so an untouched list stays empty in the draft.
+  const blankIdRef = useRef(newId());
+  const isBlankStart = value.length === 0;
+  const rows: ChecklistItem[] = isBlankStart
+    ? [{ id: blankIdRef.current, name: '', qty: 1 }]
+    : value;
+
   const handleAdd = useCallback(() => {
     lightImpact();
+    if (isBlankStart) {
+      // The blank row is already there — just put the cursor in it.
+      inputRefs.current[blankIdRef.current]?.focus();
+      return;
+    }
     const id = newId();
     onChange([...value, { id, name: '', qty: 1 }]);
     // The new row's TextInput mounts on the next commit.
     requestAnimationFrame(() => inputRefs.current[id]?.focus());
-  }, [value, onChange]);
+  }, [isBlankStart, value, onChange]);
 
   const handleRemove = useCallback(
     (id: string) => {
@@ -70,23 +84,23 @@ export function ShoppingChecklist({
 
   const handleName = useCallback(
     (id: string, name: string) => {
-      onChange(value.map((item) => (item.id === id ? { ...item, name } : item)));
+      onChange(rows.map((item) => (item.id === id ? { ...item, name } : item)));
     },
-    [value, onChange],
+    [rows, onChange],
   );
 
   const handleQty = useCallback(
     (id: string, delta: number) => {
       lightImpact();
       onChange(
-        value.map((item) =>
+        rows.map((item) =>
           item.id === id
             ? { ...item, qty: Math.max(1, item.qty + delta) }
             : item,
         ),
       );
     },
-    [value, onChange],
+    [rows, onChange],
   );
 
   return (
@@ -102,13 +116,11 @@ export function ShoppingChecklist({
         )}
       </View>
 
-      {value.length === 0 && (
-        <Text style={st.emptyHint}>
-          Add the items you need bought. Tap “Add item” to start your list.
-        </Text>
+      {isBlankStart && (
+        <Text style={st.emptyHint}>Type the first item you need bought.</Text>
       )}
 
-      {value.map((item, idx) => (
+      {rows.map((item, idx) => (
         <View key={item.id} style={st.row}>
           <TextInput
             ref={(r) => {
@@ -126,7 +138,7 @@ export function ShoppingChecklist({
             onSubmitEditing={() => {
               // Flow down the list; on the last filled row, grow it — a
               // whole grocery list can be typed without leaving the keys.
-              const next = value[idx + 1];
+              const next = rows[idx + 1];
               if (next) inputRefs.current[next.id]?.focus();
               else if (item.name.trim()) handleAdd();
               else inputRefs.current[item.id]?.blur();
@@ -162,15 +174,21 @@ export function ShoppingChecklist({
             </Pressable>
           </View>
 
-          <Pressable
-            onPress={() => handleRemove(item.id)}
-            hitSlop={10}
-            accessibilityRole="button"
-            accessibilityLabel={`Remove ${item.name || `item ${idx + 1}`}`}
-            style={({ pressed }) => [st.removeBtn, pressed && st.pressed]}
-          >
-            <X size={16} color={LightColors.textTertiary} strokeWidth={2.2} />
-          </Pressable>
+          {/* Nothing to remove on the blank starting row — its slot stays
+              so the row lines up with the ones that follow. */}
+          {isBlankStart ? (
+            <View style={st.removeBtn} />
+          ) : (
+            <Pressable
+              onPress={() => handleRemove(item.id)}
+              hitSlop={10}
+              accessibilityRole="button"
+              accessibilityLabel={`Remove ${item.name || `item ${idx + 1}`}`}
+              style={({ pressed }) => [st.removeBtn, pressed && st.pressed]}
+            >
+              <X size={16} color={LightColors.textTertiary} strokeWidth={2.2} />
+            </Pressable>
+          )}
         </View>
       ))}
 

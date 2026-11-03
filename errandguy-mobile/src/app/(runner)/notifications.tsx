@@ -778,6 +778,7 @@ export default function RunnerNotificationsScreen() {
             <NotificationSkeletonRows />
           ) : notifQ.error && notifications.length === 0 ? (
             <ErrorState
+              error={notifQ.error}
               title="Couldn't load notifications"
               onRetry={() => notifQ.refresh()}
             />

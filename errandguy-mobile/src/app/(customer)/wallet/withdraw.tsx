@@ -17,6 +17,7 @@ import { ConfirmModal } from '../../../components/ui/ConfirmModal';
 import { GradientHeader } from '../../../components/ui/GradientHeader';
 import { Input } from '../../../components/ui/Input';
 import { Skeleton } from '../../../components/ui/Skeleton';
+import { ErrorState } from '../../../components/ui/ErrorState';
 import { PayoutDestinationForm } from '../../../components/payout/PayoutDestinationForm';
 import { useWalletSummary } from '../../../hooks/useWalletSummary';
 import { useAuthStore } from '../../../stores/authStore';
@@ -99,6 +100,9 @@ export default function WithdrawScreen() {
   const keyRef = useRef<{ key: string; sig: string } | null>(null);
 
   const amount = parseFloat(amountInput) || 0;
+  // The balance read failed and nothing is cached: say so, with a retry —
+  // this used to be a skeleton that never resolved.
+  const loadFailed = withdrawable == null && !!summaryQ.error;
   const nothingToWithdraw = withdrawable != null && withdrawable <= 0;
   // Some money, but less than the smallest withdrawal the server accepts:
   // say so instead of offering a form that can only be refused.
@@ -201,7 +205,16 @@ export default function WithdrawScreen() {
             <Text className="text-[11px] font-montserrat-bold uppercase tracking-wider text-textSecondary">
               Available to withdraw
             </Text>
-            {withdrawable == null ? (
+            {loadFailed ? (
+              <View className="mt-2">
+                <ErrorState
+                  compact
+                  title="Couldn't load your balance"
+                  error={summaryQ.error}
+                  onRetry={() => void summaryQ.refresh()}
+                />
+              </View>
+            ) : withdrawable == null ? (
               <Skeleton width={140} height={28} borderRadius={6} style={{ marginTop: 6 }} />
             ) : (
               <Text className="text-[26px] font-inter-semi tabular-nums text-textPrimary mt-1">
@@ -219,7 +232,7 @@ export default function WithdrawScreen() {
             ) : null}
           </View>
 
-          {nothingToWithdraw ? (
+          {loadFailed ? null : nothingToWithdraw ? (
             <Text className="text-[13px] font-montserrat text-textSecondary mb-4">
               There’s nothing to withdraw yet. Refunds and other credits land in your wallet, and
               you can withdraw them here.

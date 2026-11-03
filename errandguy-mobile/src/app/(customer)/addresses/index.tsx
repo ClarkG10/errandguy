@@ -417,6 +417,7 @@ export default function AddressesScreen() {
         // them. Surface a real error with a retry instead.
         <ErrorState
           title="Couldn't load your addresses"
+          error={addressesQ.error}
           onRetry={fetchAddresses}
         />
       ) : (

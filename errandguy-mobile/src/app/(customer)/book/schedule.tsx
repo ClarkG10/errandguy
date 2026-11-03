@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { View, Text, ScrollView, Pressable, AppState } from 'react-native';
-import { useRouter } from 'expo-router';
+import { useLocalSearchParams, useRouter } from 'expo-router';
 import * as Haptics from 'expo-haptics';
 import { Info, Zap } from 'lucide-react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -121,8 +121,10 @@ export default function ScheduleScreen() {
   // draft an older build saved) goes back to the type picker.
   useRetiredErrandTypeGuard();
 
+  // Review's "Schedule for later" opens this already on "Later" (?later=1).
+  const { later } = useLocalSearchParams<{ later?: string }>();
   const [scheduleType, setScheduleType] = useState<ScheduleType>(
-    draftBooking.schedule_type ?? 'now',
+    later === '1' ? 'scheduled' : draftBooking.schedule_type ?? 'now',
   );
 
   /* ── The customer's own recurring slot ──
@@ -159,7 +161,10 @@ export default function ScheduleScreen() {
     () => buildQuickPicks(picksNow, recurringSlot),
     [picksNow, recurringSlot],
   );
-  const selectedIso = draftBooking.scheduled_at;
+  // The picked time stays on this screen until Continue, like the Now/Later
+  // choice, so backing out leaves the booking's time as it was.
+  const [pickedAt, setPickedAt] = useState<string | undefined>(draftBooking.scheduled_at);
+  const selectedIso = pickedAt;
 
   useEffect(() => {
     const sub = AppState.addEventListener('change', (state) => {
@@ -175,6 +180,7 @@ export default function ScheduleScreen() {
     const at = draftBooking.scheduled_at;
     if (at && dayjs(at).isBefore(dayjs().add(30, 'minute'))) {
       updateDraft({ scheduled_at: undefined });
+      setPickedAt(undefined);
       if (draftBooking.schedule_type === 'scheduled') {
         toast.info('Your scheduled time has passed — pick a new one.');
       }
@@ -182,43 +188,43 @@ export default function ScheduleScreen() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const handleScheduleChange = useCallback(
-    (type: ScheduleType) => {
-      setScheduleType(type);
-      // scheduled_at stays in the draft while on "Now" (it's inert
-      // there) so an accidental toggle round-trip doesn't destroy the
-      // picked time; it's stripped at Continue instead.
-      updateDraft({ schedule_type: type });
-      if (type === 'scheduled') setPicksNow(dayjs());
-    },
-    [updateDraft],
-  );
+  const handleScheduleChange = useCallback((type: ScheduleType) => {
+    setScheduleType(type);
+    // The choice reaches the draft at Continue, so backing out to Review
+    // leaves the booking as it was (not "Later" with no time picked).
+    // scheduled_at stays in the draft while on "Now" (it's inert there) so
+    // an accidental toggle round-trip doesn't destroy the picked time; it's
+    // stripped at Continue instead.
+    if (type === 'scheduled') setPicksNow(dayjs());
+  }, []);
 
   const handleContinue = useCallback(() => {
     if (scheduleType === 'scheduled') {
-      const at = draftBooking.scheduled_at;
+      const at = pickedAt;
       // Presence is gated by the button, but time may have passed since
       // the value was picked — never forward a sub-30-minute time.
       if (!at || dayjs(at).isBefore(dayjs().add(30, 'minute'))) {
         Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error).catch(() => {});
         toast.error('Your scheduled time has passed — pick a new one.');
-        updateDraft({ scheduled_at: undefined });
+        setPickedAt(undefined);
         return;
       }
     }
     updateDraft({
       schedule_type: scheduleType,
-      scheduled_at:
-        scheduleType === 'now' ? undefined : draftBooking.scheduled_at,
+      scheduled_at: scheduleType === 'now' ? undefined : pickedAt,
     });
     setStep(3);
     if (navLatch.current) return;
     navLatch.current = true;
-    router.push('/(customer)/book/review');
+    // This screen is a side trip from Review ("Schedule for later"), so go
+    // back to the Review underneath rather than stacking a second one; when
+    // there is none (an older draft resumed here) it takes this screen's place.
+    router.dismissTo('/(customer)/book/review');
     setTimeout(() => {
       navLatch.current = false;
     }, 700);
-  }, [scheduleType, draftBooking.scheduled_at, updateDraft, setStep, router]);
+  }, [scheduleType, pickedAt, updateDraft, setStep, router]);
 
   return (
     <View className="flex-1 bg-background">
@@ -315,7 +321,7 @@ export default function ScheduleScreen() {
                             return;
                           }
                           Haptics.selectionAsync().catch(() => {});
-                          updateDraft({ scheduled_at: iso });
+                          setPickedAt(iso);
                         }}
                         className="px-4 py-3"
                         // Selection = soft tint + brand border with DARK text
@@ -363,10 +369,8 @@ export default function ScheduleScreen() {
             )}
 
             <DateTimePicker
-              value={draftBooking.scheduled_at}
-              onChange={(isoString) =>
-                updateDraft({ scheduled_at: isoString })
-              }
+              value={pickedAt}
+              onChange={setPickedAt}
             />
           </View>
         )}
@@ -380,7 +384,7 @@ export default function ScheduleScreen() {
             title="Continue"
             onPress={handleContinue}
             disabled={
-              scheduleType === 'scheduled' && !draftBooking.scheduled_at
+              scheduleType === 'scheduled' && !pickedAt
             }
             fullWidth
           />

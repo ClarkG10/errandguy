@@ -8,6 +8,7 @@ import { useAuthStore } from '../stores/authStore';
 import { useNotificationStore } from '../stores/notificationStore';
 import { useChatStore } from '../stores/chatStore';
 import { rememberPushToken } from '../services/pushToken';
+import { toPushPermission } from '../services/pushPermission';
 import { foregroundPresentation } from '../utils/pushPresentation';
 import { noteSosNotification } from '../services/sosActive';
 import { notificationRoute } from '../utils/notificationRoute';
@@ -24,7 +25,16 @@ Notifications.setNotificationHandler({
     ),
 });
 
-export function useNotifications(enabled = true) {
+/**
+ * `askOs: false` never shows the OS permission prompt: the state is recorded
+ * ('undetermined' / 'denied') and the in-app NotificationPrimer asks first.
+ * The prompt is a one-shot, and spending it on a cold, unexplained dialog the
+ * moment Home first renders is how a customer ends up with push off for good.
+ * Once permission is granted (from the primer, or Profile → Notifications),
+ * this registers the phone on its own.
+ */
+export function useNotifications(enabled = true, options: { askOs?: boolean } = {}) {
+  const askOs = options.askOs ?? true;
   const [expoPushToken, setExpoPushToken] = useState<string | null>(null);
   const notificationListener = useRef<Notifications.EventSubscription>(null);
   const responseListener = useRef<Notifications.EventSubscription>(null);
@@ -34,11 +44,15 @@ export function useNotifications(enabled = true) {
       return null;
     }
 
-    const { status: existingStatus } =
-      await Notifications.getPermissionsAsync();
+    const existing = await Notifications.getPermissionsAsync();
+    const existingStatus = existing.status;
     let finalStatus = existingStatus;
 
     if (existingStatus !== 'granted') {
+      if (!askOs) {
+        useNotificationStore.getState().setPushPermission(toPushPermission(existing));
+        return null;
+      }
       const { status } = await Notifications.requestPermissionsAsync();
       finalStatus = status;
     }
@@ -80,7 +94,7 @@ export function useNotifications(enabled = true) {
       if (__DEV__) console.warn('[push] getExpoPushTokenAsync failed', err);
       return null;
     }
-  }, []);
+  }, [askOs]);
 
   // Tap-handling is registered UNCONDITIONALLY on mount — independent of
   // `enabled` (which only gates the permission prompt + token upload). A
@@ -137,25 +151,32 @@ export function useNotifications(enabled = true) {
   // AppState re-trigger doesn't re-upload once it has — but DOES keep retrying
   // until it does.
   const tokenSynced = useRef(false);
+  // One sync at a time: the mount, a foreground and a fresh grant can all ask.
+  const syncing = useRef(false);
 
   const syncPushToken = useCallback(async () => {
-    if (tokenSynced.current) return;
-    const token = await registerForPush();
-    if (!token) return; // no permission / simulator — nothing to sync
-    // PUT /user/fcm-token is a mutation, so it bypasses the GET-only api retry
-    // layer. Retry with backoff: a single connectivity blip right after
-    // install / OTP must not silently lose push for the whole session.
-    for (let attempt = 0; attempt < 3; attempt++) {
-      try {
-        await userService.updateFCMToken(token);
-        tokenSynced.current = true;
-        return;
-      } catch (err) {
-        if (__DEV__) console.warn(`[push] token upload failed (attempt ${attempt + 1})`, err);
-        await new Promise<void>((resolve) => {
-          setTimeout(resolve, 1000 * (attempt + 1));
-        });
+    if (tokenSynced.current || syncing.current) return;
+    syncing.current = true;
+    try {
+      const token = await registerForPush();
+      if (!token) return; // no permission / simulator — nothing to sync
+      // PUT /user/fcm-token is a mutation, so it bypasses the GET-only api retry
+      // layer. Retry with backoff: a single connectivity blip right after
+      // install / OTP must not silently lose push for the whole session.
+      for (let attempt = 0; attempt < 3; attempt++) {
+        try {
+          await userService.updateFCMToken(token);
+          tokenSynced.current = true;
+          return;
+        } catch (err) {
+          if (__DEV__) console.warn(`[push] token upload failed (attempt ${attempt + 1})`, err);
+          await new Promise<void>((resolve) => {
+            setTimeout(resolve, 1000 * (attempt + 1));
+          });
+        }
       }
+    } finally {
+      syncing.current = false;
     }
   }, [registerForPush]);
 
@@ -178,6 +199,13 @@ export function useNotifications(enabled = true) {
     });
     return () => sub.remove();
   }, [enabled, syncPushToken]);
+
+  // A grant from outside this hook (the in-app primer, Profile → Notifications)
+  // registers the phone straight away instead of waiting for a foreground.
+  const pushGranted = useNotificationStore((s) => s.pushPermission === 'granted');
+  useEffect(() => {
+    if (enabled && pushGranted) void syncPushToken();
+  }, [enabled, pushGranted, syncPushToken]);
 
   return {
     expoPushToken,

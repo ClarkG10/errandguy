@@ -147,7 +147,8 @@ export function IncomingRequestModal({
       // The window simply closed — that is NOT a decline. Dismiss locally and
       // let the server's own ExpireStaleMatchesJob re-match the booking; POSTing
       // /decline here recorded a decision the runner never made.
-      toast.info('Time’s up — that request went to another runner.');
+      // No claim about where it went — we don't know that it was re-matched.
+      toast.info('This offer is no longer available.');
       void (onExpireRef.current ?? onDeclineRef.current)();
       return;
     }
@@ -269,9 +270,11 @@ export function IncomingRequestModal({
       transparent
       animationType="fade"
       statusBarTranslucent
-      // Android back captures to the screen for the offer's lifetime, and
-      // maps to a deliberate decline rather than a silent nav-away.
-      onRequestClose={handleDecline}
+      // Android back / edge swipe is swallowed for the offer's lifetime. It
+      // used to fire a real decline — a paid job lost to a thumb brushing the
+      // screen edge on a bar mount. Only the Decline button declines; the
+      // countdown handles a runner who walks away.
+      onRequestClose={() => {}}
     >
       <View
         className="flex-1 bg-black/60 justify-center items-center px-6"
@@ -475,9 +478,20 @@ export function IncomingRequestModal({
                   {formatDistanceKm(booking.distance_km) ?? 'On-site'}
                 </Text>
               </View>
-              <Text className="text-xl font-inter-semi tabular-nums text-white">
-                {formatRunnerPayout(booking.runner_payout)}
-              </Text>
+              {/* Labelled: next to a "Collect from customer" chip, a bare
+                  figure read as either number. */}
+              <View
+                className="items-end"
+                accessible
+                accessibilityLabel={`You earn ${formatRunnerPayout(booking.runner_payout)}`}
+              >
+                <Text className="text-[10px] font-montserrat-bold uppercase text-white/70">
+                  You earn
+                </Text>
+                <Text className="text-xl font-inter-semi tabular-nums text-white">
+                  {formatRunnerPayout(booking.runner_payout)}
+                </Text>
+              </View>
             </View>
 
             {/* How far the *pickup* is from the runner right now — the key

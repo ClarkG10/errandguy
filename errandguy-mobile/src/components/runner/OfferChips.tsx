@@ -78,10 +78,12 @@ export function PaymentChip({ booking }: { booking: Booking }) {
   const label = paymentMethodLabel(type);
 
   if (collect != null) {
+    // Named for what it is — money the runner takes FROM the customer — so it
+    // never reads as a second pay figure next to "You earn".
     return (
       <OfferChip
         Icon={Banknote}
-        label={`Collect ${formatCurrency(collect)}`}
+        label={`Collect from customer ${formatCurrency(collect)}`}
         bg={LightColors.accentSoft}
         fg={LightColors.accentDark}
         borderColor={LightColors.accentStrong}

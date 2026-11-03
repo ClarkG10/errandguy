@@ -23,6 +23,7 @@ import { CacheTTL } from '../../../services/cache.service';
 import { useAuthStore } from '../../../stores/authStore';
 import { useChatStore } from '../../../stores/chatStore';
 import { formatRunnerPayout } from '../../../utils/runnerPayout';
+import { earnedLabel } from '../../../components/runner/errandEarnings';
 import { useDebounce } from '../../../hooks/useDebounce';
 import { useHideTabBarOnScroll } from '../../../hooks/useHideTabBarOnScroll';
 import { HistorySkeleton } from '../../../components/ui/Skeleton';
@@ -157,7 +158,7 @@ export default function HistoryScreen() {
             prefetchRunnerErrand(item.id);
             router.push(`/(runner)/errand/${item.id}` as any);
           }}
-          accessibilityLabel={`${item.errand_type?.name ?? 'Errand'}, ${isCompleted ? 'Completed' : 'Cancelled'}, ${dateStr}, ${formatRunnerPayout(item.runner_payout, isCompleted ? 'Payout pending' : 'No payout')}`}
+          accessibilityLabel={`${item.errand_type?.name ?? 'Errand'}, ${isCompleted ? 'Completed' : 'Cancelled'}, ${dateStr}, ${isCompleted ? formatRunnerPayout(item.runner_payout) : `you earned ${earnedLabel(item)}`}`}
           accessibilityHint="Opens errand details"
         >
           {/* Top row — type + status chip left, date + fare right */}
@@ -195,7 +196,10 @@ export default function HistoryScreen() {
                   isCompleted ? 'text-textPrimary' : 'text-textTertiary'
                 }`}
               >
-                {formatRunnerPayout(item.runner_payout, isCompleted ? 'Payout pending' : '—')}
+                {/* A cancelled errand shows what it actually paid — the
+                    cancellation fee, or ₱0.00 — never the payout it would
+                    have earned. */}
+                {isCompleted ? formatRunnerPayout(item.runner_payout) : earnedLabel(item)}
               </Text>
             </View>
           </View>
@@ -368,6 +372,7 @@ export default function HistoryScreen() {
         ListEmptyComponent={
           page1Failed ? (
             <ErrorState
+              error={page1Q.error}
               title="Couldn't load your errands"
               onRetry={() => page1Q.refresh()}
             />

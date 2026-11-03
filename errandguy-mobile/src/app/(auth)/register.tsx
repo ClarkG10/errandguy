@@ -710,7 +710,9 @@ export default function RegisterScreen() {
               Have an account?{' '}
             </Text>
             <Pressable
-              onPress={() => router.push('/(auth)/login')}
+              // Log in is always underneath (sign-up is only reached from it or
+              // from onboarding), so go back to it rather than stacking another.
+              onPress={() => (router.canGoBack() ? router.back() : router.replace('/(auth)/login'))}
               style={({ pressed }) => pressed && { opacity: 0.55 }}
               hitSlop={12}
               accessibilityRole="button"

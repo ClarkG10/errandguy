@@ -4,6 +4,7 @@ import { useNetworkStore } from '../stores/networkStore';
 import { paymentService } from '../services/payment.service';
 import {
   usePaymentStore,
+  isAttemptTerminal,
   type PaymentAttempt,
   type AttemptStatus,
 } from '../stores/paymentStore';
@@ -29,6 +30,9 @@ const POLL_INTERVAL_MS = 3000;
 const POLL_MAX_INTERVAL_MS = 15000;
 // After this long unconfirmed, show the honest "being processed" state.
 const PENDING_AFTER_MS = 35000;
+// The one status read after a closed checkout gives up after this long, so
+// closing the sheet never strands the customer behind a spinner.
+const QUICK_CHECK_TIMEOUT_MS = 4000;
 
 const POLL_STATUSES: AttemptStatus[] = ['awaiting_gateway', 'verifying', 'pending'];
 
@@ -72,6 +76,88 @@ async function fetchProbe(attempt: PaymentAttempt): Promise<any | null> {
     return res?.data?.data ?? res?.data ?? null;
   }
   return null;
+}
+
+type SetStatus = (status: AttemptStatus, patch?: Partial<PaymentAttempt>) => void;
+
+/**
+ * Apply the backend's verdict on an attempt, if the probe carries one. Returns
+ * true when it did (success or failed), false while the payment is still open.
+ */
+function applyVerdict(current: PaymentAttempt, probe: any, setStatus: SetStatus): boolean {
+  const status: string | undefined = probe?.status;
+
+  if (status === 'completed') {
+    setStatus('success', {
+      reference: probe.reference ?? current.reference,
+      method: probe.method ?? current.method,
+      paidAt: probe.paid_at ?? probe.processed_at ?? undefined,
+      amount: typeof probe.amount === 'number' ? probe.amount : current.amount,
+    });
+    return true;
+  }
+
+  if (
+    status === 'failed' ||
+    status === 'expired' ||
+    status === 'cancelled' ||
+    status === 'refunded'
+  ) {
+    setStatus('failed', {
+      // A refund is its own outcome, whatever the row's free-text reason
+      // says ("This errand was already tipped.", or a gateway status like
+      // SUCCEEDED on an older server): the money moved and came back to
+      // the wallet. Keyed on the status so the copy can never fall through
+      // to "You weren't charged".
+      failureReason: status === 'refunded' ? 'refunded' : probe.failure_reason ?? status,
+    });
+    return true;
+  }
+
+  return false;
+}
+
+/**
+ * ONE bounded status read of the current attempt, for the moment the customer
+ * closes the checkout sheet — closing alone doesn't mean unpaid (iOS reports a
+ * cancel when the sheet is dismissed after paying but before the redirect).
+ *
+ * Shows the honest "verifying" state while it runs and applies a verdict
+ * exactly as the poll would. Resolves true when the attempt is settled (by
+ * this read, by the poll in the meantime, or because it is no longer the same
+ * attempt), false when the payment is still open or the read was slow or
+ * failed — the caller then shows its own "not received yet" state.
+ */
+export async function verifyAttemptOnce(): Promise<boolean> {
+  const { attempt: current, setStatus } = usePaymentStore.getState();
+  if (!current || current.kind === 'payout') return false;
+  // The poll runs while the sheet is open, so a payment can already be
+  // confirmed (or expired) by the time the sheet reports a close. Never walk a
+  // verdict back to "verifying" — a slow re-read would then turn a paid
+  // booking into "not received yet".
+  if (isAttemptTerminal(current)) return true;
+  // A fresh clock for this short wait, so the "verifying" safety net times it
+  // from now rather than from when the checkout first opened.
+  setStatus('verifying', { startedAt: Date.now() });
+
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  let probe: any = null;
+  try {
+    probe = await Promise.race([
+      fetchProbe(current),
+      new Promise<null>((resolve) => {
+        timer = setTimeout(() => resolve(null), QUICK_CHECK_TIMEOUT_MS);
+      }),
+    ]);
+  } catch {
+    probe = null;
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+
+  const latest = usePaymentStore.getState().attempt;
+  if (!latest || latest.attemptId !== current.attemptId || isAttemptTerminal(latest)) return true;
+  return applyVerdict(latest, probe, setStatus);
 }
 
 export interface PaymentVerificationState {
@@ -138,34 +224,7 @@ export function usePaymentVerification(): PaymentVerificationState {
     inFlight.current = true;
     try {
       const probe = await fetchProbe(current); // throws on network/404 → backoff
-      const status: string | undefined = probe?.status;
-
-      if (status === 'completed') {
-        setStatus('success', {
-          reference: probe.reference ?? current.reference,
-          method: probe.method ?? current.method,
-          paidAt: probe.paid_at ?? probe.processed_at ?? undefined,
-          amount: typeof probe.amount === 'number' ? probe.amount : current.amount,
-        });
-        return;
-      }
-
-      if (
-        status === 'failed' ||
-        status === 'expired' ||
-        status === 'cancelled' ||
-        status === 'refunded'
-      ) {
-        setStatus('failed', {
-          // A refund is its own outcome, whatever the row's free-text reason
-          // says ("This errand was already tipped.", or a gateway status like
-          // SUCCEEDED on an older server): the money moved and came back to
-          // the wallet. Keyed on the status so the copy can never fall through
-          // to "You weren't charged".
-          failureReason: status === 'refunded' ? 'refunded' : probe.failure_reason ?? status,
-        });
-        return;
-      }
+      if (applyVerdict(current, probe, setStatus)) return;
 
       // Still pending/processing (or unknown non-terminal). After a short wait
       // with no confirmation, surface the honest "being processed" state.

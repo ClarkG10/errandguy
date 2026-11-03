@@ -16,6 +16,7 @@ import { Eyebrow, Hairline } from '../../../components/ui/Typography';
 import { GradientHeader } from '../../../components/ui/GradientHeader';
 import { SyncIndicator } from '../../../components/ui/SyncIndicator';
 import { EarningsBreakdown } from '../../../components/runner/EarningsBreakdown';
+import { settledIn, splitEarnings } from '../../../components/runner/errandEarnings';
 import { payoutMinimum, type SelfRunnerProfile } from '../../../components/runner/payoutMethod';
 import { useResponsive } from '../../../constants/responsive';
 import { useAuthStore } from '../../../stores/authStore';
@@ -222,6 +223,10 @@ export default function EarningsScreen() {
 
   const earningsData = summaryQ.data ?? null;
   const earningsList = historyQ.data ?? [];
+  const earningsSplit = useMemo(
+    () => splitEarnings(earningsList, earningsData?.total_earnings),
+    [earningsList, earningsData?.total_earnings],
+  );
 
   // Collapse an open breakdown when the period switches — the row it belonged
   // to is gone.
@@ -399,6 +404,7 @@ export default function EarningsScreen() {
       <View className="flex-1 bg-background">
         <GradientHeader title="Earnings" />
         <ErrorState
+          error={summaryQ.error ?? historyQ.error}
           title="Couldn't load your earnings"
           onRetry={retryAll}
         />
@@ -430,6 +436,7 @@ export default function EarningsScreen() {
         {summaryFailed ? (
           <Card className="mx-5 mb-4" padding="lg">
             <ErrorState
+              error={summaryQ.error}
               compact
               title="Couldn't load your summary"
               onRetry={() => summaryQ.refresh()}
@@ -503,6 +510,23 @@ export default function EarningsScreen() {
                 in tips
               </Text>
             )}
+            {/* Why this total and "Available now" below don't match: on a
+                cash errand the payout was collected at the door, and only
+                paid-online errands credit the wallet (which cash commissions
+                then draw from). Shown only when the rows reconcile to the
+                total above. */}
+            {earningsSplit && earningsSplit.cash > 0 ? (
+              <Text className="text-[12px] font-montserrat text-white/85 mt-1">
+                <Text className="font-inter-semi tabular-nums text-white">
+                  {formatCurrency(earningsSplit.cash)}
+                </Text>{' '}
+                cash already in hand ·{' '}
+                <Text className="font-inter-semi tabular-nums text-white">
+                  {formatCurrency(earningsSplit.wallet)}
+                </Text>{' '}
+                paid online
+              </Text>
+            ) : null}
             <View className="flex-row items-center mt-3">
               <Text className="text-[13px] font-inter-semi tabular-nums text-white">
                 {earningsData?.total_errands ?? 0}
@@ -647,6 +671,7 @@ export default function EarningsScreen() {
           <Eyebrow className="mb-2">Per-errand</Eyebrow>
           {historyFailed ? (
             <ErrorState
+              error={historyQ.error}
               compact
               title="Couldn't load your errands"
               onRetry={() => historyQ.refresh()}
@@ -673,6 +698,8 @@ export default function EarningsScreen() {
                 </View>
                 {group.errands.map((errand, idx) => {
                   const expanded = openBreakdown === errand.id;
+                  const how = settledIn(errand);
+                  const howLabel = how === 'cash' ? 'Cash' : how === 'online' ? 'Paid online' : null;
                   return (
                     <View key={errand.id}>
                       {/* Rows used to be plain Views: a runner asking why one
@@ -685,7 +712,7 @@ export default function EarningsScreen() {
                         }}
                         accessibilityRole="button"
                         accessibilityState={{ expanded }}
-                        accessibilityLabel={`${errand.errand_type?.name ?? 'Errand'}, ${formatRunnerPayout(errand.runner_payout)}`}
+                        accessibilityLabel={`${errand.errand_type?.name ?? 'Errand'}, ${formatRunnerPayout(errand.runner_payout)}${howLabel ? `, ${howLabel.toLowerCase()}` : ''}`}
                         accessibilityHint={
                           expanded ? 'Hide the fee breakdown' : 'Show the fee breakdown'
                         }
@@ -704,6 +731,9 @@ export default function EarningsScreen() {
                                 earnings rows read 24h on a 24h-locale device
                                 while the errand card above them read 12h. */}
                             {formatTime(errand.completed_at ?? errand.created_at)}
+                            {/* Cash = collected at the door, already in
+                                hand; Paid online = goes to the wallet. */}
+                            {howLabel ? ` · ${howLabel}` : ''}
                           </Text>
                         </View>
                         <Text className="text-[14px] font-inter-semi tabular-nums text-textPrimary">

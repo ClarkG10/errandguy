@@ -258,6 +258,7 @@ export default function DocumentsScreen() {
           // instead of rendering every document as "not uploaded" under a
           // fake "Pending Review" banner.
           <ErrorState
+            error={profileQ.error}
             title="Couldn't load your documents"
             onRetry={() => {
               void profileQ.refresh();
@@ -333,7 +334,7 @@ export default function DocumentsScreen() {
             <View className="px-5 mb-2">
               <Eyebrow className="mb-3 ml-0.5">Vehicle Documents (Optional)</Eyebrow>
               <Text className="text-xs font-montserrat text-textTertiary mb-3 ml-0.5">
-                Required if you use a motorcycle or car for errands.
+                Not needed for approval. Add them if you use a motorcycle or car.
               </Text>
               {VEHICLE_DOCUMENTS.map(renderDocCard)}
             </View>

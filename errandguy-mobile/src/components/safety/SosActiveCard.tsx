@@ -104,8 +104,7 @@ export function SosActiveCard({
         style={{ lineHeight: 17 }}
         maxFontSizeMultiplier={1.3}
       >
-        {sosAlertedText(record)} Stay safe — only stand down once you&apos;re out of
-        danger.
+        {sosAlertedText(record)} Only cancel the alert once you&apos;re safe.
       </Text>
 
       {/* 911 first: ErrandGuy staff are not an emergency service. */}

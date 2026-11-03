@@ -484,7 +484,6 @@ export default function RunnerOnboardingScreen() {
         ) : loadError ? (
           <ErrorState
             title="Couldn't load your documents"
-            description="Check your internet connection and try again."
             onRetry={() => {
               setLoading(true);
               fetchProfile();
@@ -536,7 +535,7 @@ export default function RunnerOnboardingScreen() {
             <View className="px-5 mb-6">
               <Eyebrow className="mb-3 ml-0.5">Vehicle Documents (Optional)</Eyebrow>
               <Text className="text-xs font-montserrat text-textTertiary mb-3 ml-0.5">
-                Required if you'll use a motorcycle or car for errands.
+                Not needed for approval. Add them if you use a motorcycle or car.
               </Text>
               {VEHICLE_DOCUMENTS.map(renderDocCard)}
             </View>

@@ -16,6 +16,16 @@ jest.mock('../../../services/user.service', () => ({
   userService: { deleteAccount: jest.fn() },
 }));
 
+let mockBonus = 0;
+jest.mock('../../../hooks/useWalletSummary', () => ({
+  useWalletSummary: () => ({
+    data: { balance: 0, withdrawable: 0, bonus_balance: mockBonus },
+    loading: false,
+    error: null,
+    refresh: jest.fn(),
+  }),
+}));
+
 const mockDelete = userService.deleteAccount as jest.Mock;
 
 const NEEDS_DESTINATION = {
@@ -61,6 +71,48 @@ const typeDeleteAndConfirm = async (screen: ReturnType<typeof render>) => {
 
 beforeEach(() => {
   jest.clearAllMocks();
+  mockBonus = 0;
+});
+
+describe('DeleteAccountSheet — typing DELETE', () => {
+  it('accepts it in any case, with stray spaces', async () => {
+    mockDelete.mockResolvedValue({ data: { data: null, message: 'Account deleted successfully.' } });
+    const { screen, onDeleted } = renderSheet();
+
+    fireEvent.changeText(screen.getByLabelText('Type DELETE to confirm account deletion'), ' delete ');
+    await act(async () => {
+      fireEvent.press(screen.getByLabelText('Delete Account'));
+    });
+
+    expect(mockDelete).toHaveBeenCalledTimes(1);
+    await waitFor(() => expect(onDeleted).toHaveBeenCalledTimes(1));
+  });
+
+  it('still refuses anything else', async () => {
+    const { screen } = renderSheet();
+
+    fireEvent.changeText(screen.getByLabelText('Type DELETE to confirm account deletion'), 'delet');
+    await act(async () => {
+      fireEvent.press(screen.getByLabelText('Delete Account'));
+    });
+
+    expect(mockDelete).not.toHaveBeenCalled();
+  });
+});
+
+describe('DeleteAccountSheet — bonus credit', () => {
+  it('warns, before deleting, that bonus credit is lost with the account', () => {
+    mockBonus = 50;
+    const { screen } = renderSheet();
+
+    expect(screen.getByText(/₱50\.00 bonus credit can’t be sent to you/)).toBeTruthy();
+  });
+
+  it('says nothing about it when there is none', () => {
+    const { screen } = renderSheet();
+
+    expect(screen.queryByText(/bonus credit/)).toBeNull();
+  });
 });
 
 describe('DeleteAccountSheet — an empty wallet', () => {
@@ -122,6 +174,10 @@ describe('DeleteAccountSheet — money in the wallet (PAYOUT_METHOD_REQUIRED)', 
       expect(screen.getByText(/₱80\.00 is on its way to Maya •••• 2222/)).toBeTruthy(),
     );
     expect(onDeleted).not.toHaveBeenCalled();
+    // …and how to chase it once there is no account left to look in.
+    expect(screen.getByText('support@errandguyph.com')).toBeTruthy();
+    expect(screen.getByText('Reference: p1')).toBeTruthy();
+    expect(screen.getByText(/we can’t notify you when it’s sent/)).toBeTruthy();
 
     await act(async () => {
       fireEvent.press(screen.getByLabelText('Done'));

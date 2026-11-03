@@ -49,6 +49,7 @@ import { mapFailureReason } from '../../../utils/paymentErrors';
 import { invalidateQuery } from '../../../hooks/useQuery';
 import { formatCurrency } from '../../../utils/formatCurrency';
 import { fareLines } from '../../../utils/fareLines';
+import { repeatDraft } from '../../../utils/repeatDraft';
 
 // A tip is paid from the wallet (when its withdrawable balance covers it) or
 // with a one-time GCash / Maya checkout — so a zero-wallet / cash-errand
@@ -78,6 +79,8 @@ export default function RateScreen() {
   const { bookingId } = useLocalSearchParams<{ bookingId: string }>();
   const setActiveBooking = useBookingStore((s) => s.setActiveBooking);
   const clearDraft = useBookingStore((s) => s.clearDraft);
+  const updateDraft = useBookingStore((s) => s.updateDraft);
+  const setStep = useBookingStore((s) => s.setStep);
 
   const [booking, setBooking] = useState<Booking | null>(null);
   // 'loading' → skeleton receipt; 'error' → compact retry row; 'ready' →
@@ -151,15 +154,25 @@ export default function RateScreen() {
     router.replace('/(customer)/(tabs)');
   }, [cancelAutoReturn, setActiveBooking, router]);
 
-  // Re-book the same errand type — clear the finished booking + any stale
-  // draft, then seed the type picker with this errand's type (the same
-  // startBooking recipe used on Home). Replace, not push: the rate screen
-  // is done, so it shouldn't linger in the back stack behind the funnel.
+  // Book the same errand again — the whole errand, onto a pre-filled Review,
+  // exactly like Home's "Repeat last" (one shared builder, repeatDraft). It
+  // used to preselect only the type, so the customer re-entered every address
+  // and item. Without the route to rebuild (no pickup coordinates) it falls
+  // back to the type picker with the type chosen. Replace, not push: the rate
+  // screen is done, so it shouldn't linger in the back stack behind the
+  // funnel.
   const handleBookAgain = useCallback(() => {
     cancelAutoReturn();
     haptics.light();
     clearDraft();
     setActiveBooking(null);
+    const draft = booking ? repeatDraft(booking) : null;
+    if (draft) {
+      updateDraft(draft);
+      setStep(3);
+      router.replace('/(customer)/book/review');
+      return;
+    }
     router.replace(
       booking?.errand_type_id
         ? {
@@ -168,7 +181,7 @@ export default function RateScreen() {
           }
         : '/(customer)/book/type',
     );
-  }, [cancelAutoReturn, clearDraft, setActiveBooking, router, booking?.errand_type_id]);
+  }, [cancelAutoReturn, clearDraft, setActiveBooking, updateDraft, setStep, router, booking]);
 
   const handleSubmit = useCallback(async () => {
     // In-flight guard (defense-in-depth beyond the Button's disabled state): a
@@ -708,7 +721,7 @@ export default function RateScreen() {
                   title="Book again"
                   icon={Repeat}
                   onPress={handleBookAgain}
-                  accessibilityHint="Start a new booking of the same errand type"
+                  accessibilityHint="Starts a new booking pre-filled from this one"
                   fullWidth
                 />
               ) : null}

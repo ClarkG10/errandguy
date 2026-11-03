@@ -30,13 +30,12 @@ const ACTIVE = LightColors.primary;
 const INACTIVE = LightColors.textTertiary;
 
 /**
- * A single tab-bar entry — icon only.
+ * The icon of a tab-bar entry; the navigator draws the text label under it.
  *
- * Active state is conveyed entirely by the icon: a solid (filled) glyph in
- * brand blue when focused, the outline variant in muted slate when not.
- * No label and no active dot — the outline→solid swap is the whole
- * affordance. The notification badge and runner online dot stay because
- * they carry information, not selection state.
+ * Active state is shown by the icon: a solid (filled) glyph in brand blue
+ * when focused, the outline variant in muted slate when not. No active dot.
+ * The notification badge and runner online dot stay because they carry
+ * information, not selection state.
  */
 export function TabBarItem({
   name,

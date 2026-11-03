@@ -673,6 +673,21 @@ export default function NavigateScreen() {
     nextStatusOnArrival === 'heading_to_pickup' ||
     nextStatusOnArrival === 'in_transit';
 
+  // "I've Arrived" IS the confirmation — tapping it then confirming again in a
+  // dialog was two taps for one fact, at a curb, one-handed. The dialog stays
+  // only for the odd case where the travel leg was never announced, because
+  // that tap updates the leg, not the arrival, and has to say so.
+  const handleArrivedTap = () => {
+    if (!booking || arriving) return;
+    if (arrivalNeedsDeparture) {
+      handleArrived();
+      return;
+    }
+    Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
+    stopVoice();
+    void handleConfirmArrived();
+  };
+
   // Greeting/intro overlay \u2014 a brief contextual welcome that fades
   // in when the route resolves and auto-dismisses after ~3.5s. Gives
   // the runner a moment to register destination + total trip cost
@@ -729,7 +744,7 @@ export default function NavigateScreen() {
         <SafeAreaView className="flex-1 bg-background" edges={['top']}>
           <ErrorState
             title="Couldn't start navigation"
-            description="We couldn't load this errand's route details. Check your connection and try again."
+            description="We couldn't load this errand's route details. Please try again."
             onRetry={() => {
               setHydrateFailed(false);
               setHydrateAttempt((n) => n + 1);
@@ -1136,9 +1151,11 @@ export default function NavigateScreen() {
             </View>
             {arrivedSoon ? (
               <Pressable
-                onPress={handleArrived}
+                onPress={handleArrivedTap}
+                disabled={arriving}
                 accessibilityRole="button"
                 accessibilityLabel="I've arrived"
+                accessibilityState={{ busy: arriving }}
                 // successDark (#15803D) clears 4.5:1 with white at this
                 // label size; larger label + target for a stopping glance.
                 // rounded-xl (14) matches the app CTA corner, not a pill.
@@ -1146,7 +1163,9 @@ export default function NavigateScreen() {
                 style={({ pressed }) => ({ minHeight: 48, opacity: pressed ? 0.9 : 1 })}
                 android_ripple={{ color: 'rgba(255,255,255,0.18)' }}
               >
-                <Text className="text-white text-[15px] font-montserrat-bold">I&apos;ve Arrived</Text>
+                <Text className="text-white text-[15px] font-montserrat-bold">
+                  {arriving ? 'Marking…' : 'I’ve Arrived'}
+                </Text>
               </Pressable>
             ) : (
               <Pressable
@@ -1239,10 +1258,10 @@ export default function NavigateScreen() {
         <SafeAreaView edges={['bottom']} />
       </ExpandableSheet>
 
-      {/* Single-tap arrival confirm — advances the status in place so the
-          runner doesn't have to bounce back to the errand screen. When the
-          travel leg was never announced the copy says so plainly and this tap
-          updates THAT leg; arrival stays a separate, deliberate confirm. */}
+      {/* Only reached when the travel leg was never announced ("I've Arrived"
+          marks a normal arrival in one tap — see handleArrivedTap). The copy
+          says so plainly and this tap updates THAT leg; arrival stays a
+          separate, deliberate confirm. */}
       <ConfirmModal
         visible={showArrivedPrompt}
         title={

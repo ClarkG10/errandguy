@@ -71,12 +71,18 @@ export default function PreferredTypesScreen() {
   // screen's own dirty/discard guards. After a save `selected` already matches
   // the persisted set (no re-seed needed); a genuinely new server value is
   // picked up on the next mount.
+  //
+  // An EMPTY saved list means "every type" — that is how matching reads it —
+  // so it seeds as every type ticked (once the catalog is here to name them)
+  // rather than a blank list that looks like the runner gets nothing.
   const didSeedRef = useRef(false);
   useEffect(() => {
     if (didSeedRef.current || !runnerProfile) return;
-    setSelected(new Set(runnerProfile.preferred_types ?? []));
+    const saved = runnerProfile.preferred_types ?? [];
+    if (saved.length === 0 && sourceTypes.length === 0) return;
+    setSelected(new Set(saved.length > 0 ? saved : sourceTypes.map((t) => t.slug)));
     didSeedRef.current = true;
-  }, [runnerProfile]);
+  }, [runnerProfile, sourceTypes]);
 
   // Render model: each source type carries its current checked state.
   const options = useMemo(
@@ -158,10 +164,11 @@ export default function PreferredTypesScreen() {
   // a discard confirm instead of silently dropping the change. Only
   // meaningful once the catalog has loaded — an empty options list while
   // loading would otherwise read as "everything deselected".
-  const initialSet = useMemo(
-    () => new Set(runnerProfile?.preferred_types ?? []),
-    [runnerProfile],
-  );
+  const initialSet = useMemo(() => {
+    const saved = runnerProfile?.preferred_types ?? [];
+    // Empty = every type (see the seed above), so an untouched screen isn't dirty.
+    return new Set(saved.length > 0 ? saved : sourceTypes.map((t) => t.slug));
+  }, [runnerProfile, sourceTypes]);
   const dirty = useMemo(() => {
     if (sourceTypes.length === 0) return false;
     // Compare only against persisted slugs that still exist in the live
@@ -255,8 +262,8 @@ export default function PreferredTypesScreen() {
           </View>
         ) : showError ? (
           <ErrorState
+            error={errandTypesQ.error}
             title="Couldn't load errand types"
-            description="Check your connection and try again."
             onRetry={() => {
               errandTypesQ.refresh().catch(() => {});
             }}

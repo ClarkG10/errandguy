@@ -13,8 +13,8 @@ import { LightColors } from '../../../constants/colors';
 
 const ACTIVE = LightColors.primary;
 // textTertiary clears the 3:1 non-text glyph floor that textMuted failed
-// (shared with the runner bar via TabBarItem). Labels are hidden, so this
-// only feeds react-navigation's inactive tint, but keep it in sync.
+// (shared with the runner bar via TabBarItem). It is also the inactive
+// label colour, so the word under each icon matches its glyph.
 const INACTIVE = LightColors.textTertiary;
 
 // Screen-level tabBarItemStyle replaces (not merges with) the
@@ -35,12 +35,10 @@ export default function CustomerTabsLayout() {
   // verbatim — it does NOT add the bottom inset — so a flat height would
   // sit the bar flush and collide the icon row with the home indicator /
   // gesture bar on inset devices. Grow the bar and reserve the inset as
-  // bottom padding; the item grows with it so the glyph stays centred in
-  // the visible strip above the inset.
-  const itemStyle = {
-    ...ITEM_STYLE,
-    height: ITEM_STYLE.height + insets.bottom,
-  };
+  // bottom padding. The item keeps the visible strip's height (it used to
+  // grow by the inset too, which with labels on would drop the words onto
+  // the home indicator).
+  const itemStyle = ITEM_STYLE;
 
   return (
     <View style={{ flex: 1 }}>
@@ -64,7 +62,10 @@ export default function CustomerTabsLayout() {
         lazy: true,
         tabBarActiveTintColor: ACTIVE,
         tabBarInactiveTintColor: INACTIVE,
-        tabBarShowLabel: false,
+        // Short word under every icon: an icon-only bar left first-time
+        // customers guessing what "list" and "person" lead to.
+        tabBarShowLabel: true,
+        tabBarLabelStyle: { fontFamily: 'Quicksand_600SemiBold', fontSize: 11 },
         tabBarHideOnKeyboard: true,
         tabBarStyle: {
           backgroundColor: LightColors.surface,
@@ -76,9 +77,8 @@ export default function CustomerTabsLayout() {
           paddingHorizontal: 8,
         },
         tabBarItemStyle: itemStyle,
-        // Let the icon container fill the item height so the icon-only
-        // glyph centres vertically instead of leaving a gap at the bottom
-        // (the space react-navigation reserves for a now-hidden label).
+        // Let the icon container fill what the label leaves, so the glyph
+        // centres in the space above its word.
         tabBarIconStyle: { flex: 1 },
       }}
     >

@@ -27,12 +27,13 @@ jest.mock('../../../../services/payment.service', () => ({
 }));
 
 let mockSummary: WalletSummary | null = { balance: 500, withdrawable: 500, bonus_balance: 0 };
+let mockSummaryError: unknown = null;
 const mockRefreshSummary = jest.fn();
 jest.mock('../../../../hooks/useWalletSummary', () => ({
   useWalletSummary: () => ({
     data: mockSummary,
     loading: false,
-    error: null,
+    error: mockSummaryError,
     refresh: mockRefreshSummary,
   }),
 }));
@@ -81,6 +82,7 @@ beforeEach(() => {
   jest.clearAllMocks();
   mockKeySeq = 0;
   mockSummary = { balance: 500, withdrawable: 500, bonus_balance: 0 };
+  mockSummaryError = null;
   (useRouter as jest.Mock).mockReturnValue(mockRouter);
   useAuthStore.setState({
     user: { id: 'c1', full_name: 'Rina Cruz' } as User,
@@ -345,5 +347,28 @@ describe('withdraw — the minimum', () => {
     await waitFor(() => expect(screen.getAllByText(refusal).length).toBeGreaterThan(0));
     expect(mockRefreshSummary).toHaveBeenCalled();
     expect(mockRouter.back).not.toHaveBeenCalled();
+  });
+});
+
+describe('withdraw — when the balance can’t be loaded', () => {
+  it('says so with a Retry instead of a skeleton that never resolves', () => {
+    mockSummary = null;
+    mockSummaryError = { status: 500, kind: 'server', message: 'Server Error' };
+    const screen = renderScreen();
+
+    expect(screen.getByText("Couldn't load your balance")).toBeTruthy();
+    // The catalogued reason — not "check your connection" for a server fault.
+    expect(screen.getByText("This one's on us — please try again in a moment.")).toBeTruthy();
+    // No form to fill in for an amount we can't check.
+    expect(screen.queryByLabelText('Amount')).toBeNull();
+
+    fireEvent.press(screen.getByText('Retry'));
+    expect(mockRefreshSummary).toHaveBeenCalled();
+  });
+
+  it('still shows the skeleton while the first read is simply in flight', () => {
+    mockSummary = null;
+    const screen = renderScreen();
+    expect(screen.queryByText("Couldn't load your balance")).toBeNull();
   });
 });

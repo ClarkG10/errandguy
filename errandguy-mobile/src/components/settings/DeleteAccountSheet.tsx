@@ -8,6 +8,7 @@ import {
   ScrollView,
   KeyboardAvoidingView,
   Platform,
+  Linking,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import * as Haptics from 'expo-haptics';
@@ -17,6 +18,8 @@ import { Illustration } from '../ui/Illustration';
 import { PayoutDestinationForm } from '../payout/PayoutDestinationForm';
 import { DeleteAccountPageLink } from './DeleteAccountPageLink';
 import { userService, type AccountDeletionResult } from '../../services/user.service';
+import { useWalletSummary } from '../../hooks/useWalletSummary';
+import { formatCurrency } from '../../utils/formatCurrency';
 import { LightColors } from '../../constants/colors';
 import { copy } from '../../constants/copy';
 import { errorMessage } from '../../utils/errorCatalog';
@@ -32,6 +35,12 @@ import {
 import type { PayoutChannel } from '../../types';
 
 type Step = 'confirm' | 'destination' | 'done';
+
+/** Where a deleted account's owner can still ask about their payout. */
+const SUPPORT_EMAIL = 'support@errandguyph.com';
+
+/** "delete", " Delete " — what someone types when told to type DELETE. */
+const isDeleteConfirmed = (text: string) => text.trim().toUpperCase() === 'DELETE';
 
 interface DeleteAccountSheetProps {
   visible: boolean;
@@ -74,7 +83,14 @@ export function DeleteAccountSheet({
   const [destination, setDestination] = useState<PayoutDestinationDraft>(EMPTY_PAYOUT_DESTINATION);
   const [fieldErrors, setFieldErrors] = useState<PayoutDestinationErrors>({});
   const [doneMessage, setDoneMessage] = useState('');
+  // The queued payout's id: after sign-out it is the only handle on that money.
+  const [payoutRef, setPayoutRef] = useState<string | null>(null);
   const latch = useRef(false);
+  const confirmed = isDeleteConfirmed(confirmText);
+  // Bonus credit (left from the retired referral program) can't be paid out —
+  // the server lets it lapse with the account — so say so BEFORE, not never.
+  const walletQ = useWalletSummary({ enabled: visible });
+  const bonusCredit = walletQ.data?.bonus_balance ?? 0;
 
   const reset = useCallback(() => {
     setStep('confirm');
@@ -83,6 +99,7 @@ export function DeleteAccountSheet({
     setDestination(EMPTY_PAYOUT_DESTINATION);
     setFieldErrors({});
     setDoneMessage('');
+    setPayoutRef(null);
   }, []);
 
   const finish = useCallback(async () => {
@@ -112,7 +129,7 @@ export function DeleteAccountSheet({
         return;
       }
       payload = toPayoutDestinationPayload(destination);
-    } else if (confirmText !== 'DELETE') {
+    } else if (!confirmed) {
       return;
     }
 
@@ -132,6 +149,7 @@ export function DeleteAccountSheet({
             ? res.data.message
             : 'Your account has been deleted.',
         );
+        setPayoutRef(result.payout.id ?? null);
         setStep('done');
       } else {
         await finish();
@@ -157,7 +175,7 @@ export function DeleteAccountSheet({
       latch.current = false;
       setDeleting(false);
     }
-  }, [step, destination, channels, confirmText, finish]);
+  }, [step, destination, channels, confirmed, finish]);
 
   return (
     <Modal
@@ -196,9 +214,42 @@ export function DeleteAccountSheet({
                   <Text className="text-base font-montserrat-bold text-textPrimary mt-3 mb-2 text-center">
                     Your account has been deleted
                   </Text>
-                  <Text className="text-sm font-montserrat text-textSecondary mb-6 text-center">
+                  <Text className="text-sm font-montserrat text-textSecondary mb-3 text-center">
                     {doneMessage}
                   </Text>
+                  {/* What happens next — after sign-out there is no account
+                      left to check, and nothing to send a notification to. */}
+                  <Text className="text-sm font-montserrat text-textSecondary mb-3 text-center">
+                    Our team sends it by hand. Your account is gone, so we can’t notify you
+                    when it’s sent. If it hasn’t arrived after 3 business days, email us
+                    {payoutRef ? ' and include the reference below.' : '.'}
+                  </Text>
+                  <Pressable
+                    onPress={() => {
+                      const subject = encodeURIComponent(
+                        `Payout after account deletion${payoutRef ? ` (${payoutRef})` : ''}`,
+                      );
+                      Linking.openURL(`mailto:${SUPPORT_EMAIL}?subject=${subject}`).catch(() => {});
+                    }}
+                    hitSlop={8}
+                    accessibilityRole="link"
+                    accessibilityLabel={`Email ${SUPPORT_EMAIL}`}
+                    className="mb-2"
+                  >
+                    <Text className="text-sm font-montserrat-bold text-primary text-center">
+                      {SUPPORT_EMAIL}
+                    </Text>
+                  </Pressable>
+                  {payoutRef ? (
+                    <Text
+                      selectable
+                      className="text-xs font-montserrat text-textTertiary mb-6 text-center"
+                    >
+                      Reference: {payoutRef}
+                    </Text>
+                  ) : (
+                    <View className="mb-4" />
+                  )}
                   <Button title="Done" fullWidth onPress={() => void finish()} />
                 </View>
               ) : (
@@ -218,6 +269,15 @@ export function DeleteAccountSheet({
                         Maya{allowBank ? ', or a bank account' : ''} — and it goes out as part of
                         deleting your account.
                       </Text>
+                      {bonusCredit > 0 ? (
+                        <View className="flex-row items-start rounded-xl px-3 py-2.5 mb-3 bg-surfaceMuted">
+                          <Text className="flex-1 text-[13px] font-montserrat text-textSecondary">
+                            Your {formatCurrency(bonusCredit)} bonus credit can’t be sent to you —
+                            it’s lost when you delete your account. Use it on an errand first if
+                            you want it.
+                          </Text>
+                        </View>
+                      ) : null}
                       <DeleteAccountPageLink className="mb-5" />
                     </>
                   ) : null}
@@ -291,7 +351,7 @@ export function DeleteAccountSheet({
                     fullWidth
                     loading={deleting}
                     loadingTitle="Deleting…"
-                    disabled={step === 'confirm' && confirmText !== 'DELETE'}
+                    disabled={step === 'confirm' && !confirmed}
                     onPress={submit}
                   />
                   <Button title="Cancel" variant="ghost" fullWidth onPress={close} />

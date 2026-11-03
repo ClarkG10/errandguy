@@ -131,6 +131,8 @@ import {
 import { itemsCashDue, itemsCashReadyLine } from '../../../utils/shoppingMoney';
 import { cancelMoneyLines, cancelReceiptMessage, type CancelPreview } from '../../../utils/cancelPreview';
 import { rebookDraft } from '../../../utils/rebookDraft';
+import { farePaymentLine } from '../../../utils/farePaymentLine';
+import { dialNumber, EMERGENCY_NUMBER } from '../../../components/safety/emergency';
 import { refundedToWallet } from '../../../utils/noRunner';
 import { scheduledWindowLabel, SCHEDULED_MATCH_LEAD_MINUTES } from '../../../utils/scheduledBooking';
 import { formatRating } from '../../../utils/rating';
@@ -1365,7 +1367,9 @@ export default function TrackingScreen() {
         setSosNow(Date.now());
         setShowSOSModal(false);
         haptics.warning();
-        toast.success(`SOS sent. ${sosAlertedText(result)}`);
+        // The server's sentence alone — it already says the alert went out
+        // ("SOS sent. SOS sent to…" read twice). Same as the runner cockpit.
+        toast.success(sosAlertedText(result));
         return;
       }
       if (result.status === 'queued') {
@@ -1584,7 +1588,6 @@ export default function TrackingScreen() {
         <SafeAreaView className="flex-1 bg-background" edges={['top']}>
           <ErrorState
             title="Couldn't load this errand"
-            description="Check your connection and try again."
             onRetry={retryLoad}
           />
         </SafeAreaView>
@@ -2084,6 +2087,32 @@ export default function TrackingScreen() {
       </View>
     ) : null;
 
+  // The fare and how it's paid. Tracking never said either: a cash customer
+  // couldn't see how much to hand over, and nobody could tell a paid GCash
+  // errand from one still waiting. Cancelled / no-runner errands show their
+  // money outcome instead. On a shopping run this is the fare only — the item
+  // money is the cash strip.
+  const fareLine = farePaymentLine(booking);
+  const fareSection = !isMoneyOutcome ? (
+    <View
+      className="mt-3 flex-row items-center justify-between rounded-xl px-3 py-2.5 bg-surfaceMuted"
+      accessible
+      accessibilityLabel={`${isShopping ? 'Errand fare, not counting items' : 'Errand fare'}: ${formatCurrency(booking.total_amount)}${fareLine ? `. ${fareLine}` : ''}`}
+    >
+      <View className="flex-1 pr-3">
+        <Text className="text-[13px] font-montserrat-semi text-textPrimary">
+          {isShopping ? 'Errand fare' : 'Fare'}
+        </Text>
+        {fareLine ? (
+          <Text className="text-[11px] font-montserrat text-textSecondary mt-0.5">{fareLine}</Text>
+        ) : null}
+      </View>
+      <Text className="text-[15px] font-inter-semi text-textPrimary tabular-nums">
+        {formatCurrency(booking.total_amount)}
+      </Text>
+    </View>
+  ) : null;
+
   // Live shopping progress — the runner's ticks, mirrored read-only. Sits
   // OUTSIDE the collapsed "Trip details" disclosure while the errand is
   // running: "has my runner found the milk yet?" is the question the customer
@@ -2304,6 +2333,17 @@ export default function TrackingScreen() {
                     );
                   })()}
                 </View>
+                {/* Handed over without a signature: the runner's reason is the
+                    completion's status-log note ("No signature: …"). */}
+                {!booking.signature_url && (() => {
+                  const note = statusLogs.find((l) => l.status === 'completed')?.note;
+                  if (!note?.startsWith('No signature: ')) return null;
+                  return (
+                    <Text className="text-[12px] font-montserrat text-textSecondary mt-3">
+                      {`No signature · ${note.slice('No signature: '.length)}`}
+                    </Text>
+                  );
+                })()}
               </View>
             )}
           </>
@@ -3281,6 +3321,7 @@ export default function TrackingScreen() {
                 )}
               </View>
               {moneyOutcomeSection}
+              {fareSection}
               {tripRouteSection}
               {detailsSection}
               {runnerCard ? <View className="mt-3">{runnerCard}</View> : null}
@@ -3305,6 +3346,7 @@ export default function TrackingScreen() {
                 </View>
               ) : null}
               {runnerCard}
+              {fareSection}
               {itemsCashSection}
               {shoppingProgressSection}
               {stopsProgressSection}
@@ -3438,6 +3480,14 @@ export default function TrackingScreen() {
                   loading={sosSubmitting}
                   disabled={sosSubmitting}
                   onPress={confirmSOS}
+                />
+                {/* The copy above says "call 911" — the call is one tap, not
+                    a number to remember and dial by hand. Works with no data. */}
+                <Button
+                  title={`Call ${EMERGENCY_NUMBER}`}
+                  variant="outline"
+                  fullWidth
+                  onPress={() => dialNumber(EMERGENCY_NUMBER)}
                 />
                 <Button
                   title="Cancel"

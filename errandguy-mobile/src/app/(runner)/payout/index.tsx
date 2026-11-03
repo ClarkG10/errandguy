@@ -493,12 +493,12 @@ export default function PayoutScreen() {
               // track) so the runner sees momentum instead of a locked door.
               <View className="mt-3">
                 <Text className="text-[11px] font-inter-semi text-white/90 tabular-nums mb-1.5">
-                  {pesos(balance)} of {pesos(minPayout)} to your first payout
+                  {pesos(balance)} of {pesos(minPayout)} needed to cash out
                 </Text>
                 <View
                   className="overflow-hidden"
                   accessibilityRole="progressbar"
-                  accessibilityLabel={`${pesos(balance)} of ${pesos(minPayout)} toward your first payout`}
+                  accessibilityLabel={`${pesos(balance)} of ${pesos(minPayout)} needed to cash out`}
                   accessibilityValue={{ min: 0, max: minPayout, now: Math.round(balance) }}
                   style={{
                     height: 6,
@@ -701,9 +701,9 @@ export default function PayoutScreen() {
           ) : payoutsQ.error && recentPayouts.length === 0 ? (
             <Card className="px-4 py-3">
               <ErrorState
+                error={payoutsQ.error}
                 compact
                 title="Couldn't load payouts"
-                description="Check your connection and try again."
                 onRetry={() => payoutsQ.refresh()}
               />
             </Card>
@@ -893,9 +893,9 @@ export default function PayoutScreen() {
           ) : activityQ.error && activity.length === 0 ? (
             <Card className="px-4 py-3">
               <ErrorState
+                error={activityQ.error}
                 compact
                 title="Couldn't load your wallet activity"
-                description="Check your connection and try again."
                 onRetry={() => activityQ.refresh()}
               />
             </Card>

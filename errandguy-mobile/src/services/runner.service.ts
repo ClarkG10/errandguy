@@ -144,6 +144,9 @@ export const runnerService = {
       deliveryPhoto?: string | null;
       signature?: string | null;
       note?: string | null;
+      /** Completing a handover without a signature (a delivery photo must
+       *  already be on file): one of the server's NO_SIGNATURE_REASONS keys. */
+      noSignatureReason?: string | null;
       lat?: number | null;
       lng?: number | null;
       capturedAt?: string | null;
@@ -199,7 +202,12 @@ export const runnerService = {
           : undefined,
       });
     } else {
-      p = api.post(`/runner/errand/${id}/status`, { status });
+      p = api.post(`/runner/errand/${id}/status`, {
+        status,
+        // Only the no-signature completion sends these without a file.
+        ...(opts?.noSignatureReason ? { no_signature_reason: opts.noSignatureReason } : {}),
+        ...(opts?.noSignatureReason && opts?.note ? { note: opts.note } : {}),
+      });
     }
     p.then(invalidateRunnerErrands).catch(() => {});
     return p;

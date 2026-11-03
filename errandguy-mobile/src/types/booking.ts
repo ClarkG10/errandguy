@@ -82,6 +82,9 @@ export interface ErrandType {
    *  absent on an older server (see DEFAULT_SHOPPING_BUDGET_MAX). Laravel may
    *  send a decimal as a string. */
   shopping_budget_max?: number | string | null;
+  /** The least a booking of this type can cost: cheapest vehicle at 0 km,
+   *  service fee and surcharge included. Absent on an older server. */
+  minimum_price?: number | string | null;
 }
 
 export interface Booking {

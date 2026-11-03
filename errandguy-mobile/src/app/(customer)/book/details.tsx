@@ -10,8 +10,9 @@ import {
   useWindowDimensions,
   Keyboard,
   Platform,
+  BackHandler,
 } from 'react-native';
-import { useRouter } from 'expo-router';
+import { useFocusEffect, useRouter } from 'expo-router';
 import * as Haptics from 'expo-haptics';
 import {
   ChevronLeft,
@@ -419,6 +420,13 @@ export default function TaskDetailsScreen() {
     if (fromAmount == null && km == null) return null;
     return { fromAmount, km, eta };
   }, [estimate, rule.allowedVehicles, rule.defaultVehicle]);
+
+  // The map step's title, in the floating header and on the card: "Set
+  // pickup", "Set drop-off", or the type's own wording ("Which store?").
+  const locationStepTitle =
+    phase === 'pickup'
+      ? rule.pickupStepCopy?.title ?? `Set ${rule.pickupLabel.toLowerCase()}`
+      : rule.dropoffStepCopy?.title ?? `Set ${rule.dropoffLabel.toLowerCase()}`;
 
   const mapOpen = true;
   const [currentAddress, setCurrentAddress] = useState('');
@@ -867,6 +875,21 @@ export default function TaskDetailsScreen() {
       setRouteCoords([]);
     }
   }, [phase, router, updateDraft, rule.singleLocation, draftBooking.pickup_lat, draftBooking.pickup_lng, draftBooking.pickup_address, draftBooking.dropoff_lat, draftBooking.dropoff_lng, draftBooking.dropoff_address]);
+
+  // Android system back (button or gesture) steps back through the map phases
+  // exactly like the on-screen arrow — it used to leave the whole screen from
+  // the drop-off or details phase. Focus-scoped so it never answers for Review
+  // pushed on top; on the first phase back leaves as usual.
+  useFocusEffect(
+    useCallback(() => {
+      if (Platform.OS !== 'android' || phase === 'pickup') return;
+      const sub = BackHandler.addEventListener('hardwareBackPress', () => {
+        handleBack();
+        return true;
+      });
+      return () => sub.remove();
+    }, [phase, handleBack]),
+  );
 
   /* ── Change a confirmed location (tapped from details phase) ── */
   const handleChangeLocation = useCallback(
@@ -1465,10 +1488,19 @@ export default function TaskDetailsScreen() {
         addRecentRecipient(savedAddrUserId, { name: name.trim(), phone: phone.trim() });
       }
     });
-    setStep(2);
+    // "Now" is the default and Review offers "Schedule for later", so the
+    // "When?" screen is no longer a step every booking walks through. It opens
+    // here only for an errand the customer already chose to book for later
+    // (Home's Schedule shortcut) that has no bookable time yet — the server
+    // takes one at least 30 minutes out.
+    const scheduledAt = draftBooking.scheduled_at ? Date.parse(draftBooking.scheduled_at) : NaN;
+    const needsTime =
+      draftBooking.schedule_type === 'scheduled' &&
+      !(Number.isFinite(scheduledAt) && scheduledAt > Date.now() + 30 * 60_000);
+    setStep(3);
     if (navLatch.current) return;
     navLatch.current = true;
-    router.push('/(customer)/book/schedule');
+    router.push(needsTime ? '/(customer)/book/schedule' : '/(customer)/book/review');
     setTimeout(() => {
       navLatch.current = false;
     }, 700);
@@ -1484,9 +1516,17 @@ export default function TaskDetailsScreen() {
     return DEFAULT_CENTER;
   }, []);
 
-  /* ── Auto-fill current location on pickup phase ── */
+  /* ── Auto-fill current location ──
+     On the pickup for most errands. A "Buy for me" run starts at a store, so
+     the customer's own spot is where it's delivered (rule.currentLocationLeg)
+     — filling the store with their house made every shopping run start at
+     home. Its store step still starts the map (and the search bias) near
+     them, with nothing filled in. */
+  const currentLocationLeg = rule.currentLocationLeg;
   useEffect(() => {
-    if (phase !== 'pickup' || draftBooking.pickup_lat) return;
+    const fillsThisLeg = phase === currentLocationLeg;
+    if (!fillsThisLeg && phase !== 'pickup') return;
+    if (phase === 'pickup' ? draftBooking.pickup_lat : draftBooking.dropoff_lat) return;
     let cancelled = false;
     (async () => {
       try {
@@ -1512,9 +1552,10 @@ export default function TaskDetailsScreen() {
         if (cancelled || !pos) return;
         const coord: [number, number] = [pos.lng, pos.lat];
         setUserLocation(coord);
-        setCurrentCoord(coord);
         skipNextGeocode.current = true;
         mapRef.current?.animateToRegion({ latitude: coord[1], longitude: coord[0], latitudeDelta: 0.008, longitudeDelta: 0.008 }, 800);
+        if (!fillsThisLeg) return;
+        setCurrentCoord(coord);
         const addr = await reverseGeocode(coord[0], coord[1]);
         if (!cancelled) setCurrentAddress(addr);
       } catch {
@@ -1522,7 +1563,7 @@ export default function TaskDetailsScreen() {
       }
     })();
     return () => { cancelled = true; };
-  }, [phase]);
+  }, [phase, currentLocationLeg]);
 
   /* ── Contact quick-fill ──
      Pickup/drop-off contacts used to be two empty boxes retyped every single
@@ -1753,7 +1794,7 @@ export default function TaskDetailsScreen() {
                 unreadable; the pill matches the back button's chrome. */}
             <View style={st.phaseTitlePill}>
               <Text style={st.phaseTitle}>
-                {phase === 'pickup' ? 'Set pickup' : phase === 'dropoff' ? 'Set dropoff' : 'Add details'}
+                {phase === 'details' ? 'Add details' : locationStepTitle}
               </Text>
             </View>
           </View>
@@ -1785,8 +1826,8 @@ export default function TaskDetailsScreen() {
                   style={st.searchInput}
                   placeholder={
                     phase === 'pickup'
-                      ? `Search ${rule.pickupLabel.toLowerCase()}...`
-                      : `Search ${rule.dropoffLabel.toLowerCase()}...`
+                      ? rule.pickupStepCopy?.search ?? `Search ${rule.pickupLabel.toLowerCase()}...`
+                      : rule.dropoffStepCopy?.search ?? `Search ${rule.dropoffLabel.toLowerCase()}...`
                   }
                   placeholderTextColor={LightColors.textMuted}
                   value={searchQuery}
@@ -1975,7 +2016,11 @@ export default function TaskDetailsScreen() {
           <View style={{ width: '100%', maxWidth: contentMaxWidth, alignSelf: 'center' }}>
             {phase !== 'details' ? (
               <Button
-                title={phase === 'pickup' ? `Confirm ${rule.pickupLabel}` : `Confirm ${rule.dropoffLabel}`}
+                title={
+                  phase === 'pickup'
+                    ? rule.pickupStepCopy?.confirm ?? `Confirm ${rule.pickupLabel}`
+                    : rule.dropoffStepCopy?.confirm ?? `Confirm ${rule.dropoffLabel}`
+                }
                 onPress={handleConfirmLocation}
                 disabled={!currentAddress || isMoving}
                 fullWidth
@@ -2033,9 +2078,7 @@ export default function TaskDetailsScreen() {
             alignSelf: 'center',
           }}
         >
-          <Text style={st.cardTitle}>
-            {phase === 'pickup' ? `Set ${rule.pickupLabel.toLowerCase()}` : `Set ${rule.dropoffLabel.toLowerCase()}`}
-          </Text>
+          <Text style={st.cardTitle}>{locationStepTitle}</Text>
 
           <View style={st.addressRow}>
             <View style={[st.addressDot, { backgroundColor: pinColor + '18' }]}>

@@ -13,6 +13,13 @@
 
 export type VehicleKey = 'walk' | 'bicycle' | 'motorcycle' | 'car';
 
+/** The title, search placeholder and confirm button of one map step. */
+export interface MapStepCopy {
+  title: string;
+  search: string;
+  confirm: string;
+}
+
 export interface ErrandTypeRule {
   /** Show "What do you need done?" / item description field. */
   showDescription: boolean;
@@ -34,6 +41,18 @@ export interface ErrandTypeRule {
   pickupLabel: string;
   /** Label used in the bottom card / route strip for the dropoff point. */
   dropoffLabel: string;
+  /**
+   * Map-step wording for the pickup / drop-off point, where "Set / Search /
+   * Confirm <label>" reads wrong ("Confirm Buy from", "Set deliver to").
+   */
+  pickupStepCopy?: MapStepCopy;
+  dropoffStepCopy?: MapStepCopy;
+  /**
+   * The map step that starts on the customer's current location. Most errands
+   * start where the customer is; a shopping run starts at a store and ends at
+   * their door.
+   */
+  currentLocationLeg: 'pickup' | 'dropoff';
   /** Vehicle types this errand can be fulfilled with. */
   allowedVehicles: VehicleKey[];
   /** Preferred default vehicle when the user opens Review. */
@@ -121,6 +140,7 @@ const DEFAULT_RULE: ErrandTypeRule = {
   // "Drop-off", hyphenated — the spelling STATUS_LABELS and every customer
   // surface uses. This default was the one place it rendered as "Dropoff".
   dropoffLabel: 'Drop-off',
+  currentLocationLeg: 'pickup',
   allowedVehicles: ['walk', 'bicycle', 'motorcycle', 'car'],
   defaultVehicle: 'motorcycle',
   singleLocation: false,
@@ -147,6 +167,11 @@ const RULES: Record<string, Partial<ErrandTypeRule>> = {
     pickupLabel: 'Queue location',
     dropoffLabel: 'Queue location',
     showDropoffContact: false,
+    // There is no trip to make faster, and Review hides the vehicle picker
+    // here, so the cheapest option is the only honest one: a motorcycle would
+    // add its premium and leave the errand to motorcycle and car runners only.
+    allowedVehicles: ['walk'],
+    defaultVehicle: 'walk',
     statusFlow: SINGLE_LOCATION_FLOW,
     statusActions: {
       accepted: 'Head to queue location',
@@ -154,16 +179,26 @@ const RULES: Record<string, Partial<ErrandTypeRule>> = {
       arrived_at_pickup: 'My turn — finishing up',
       picked_up: 'Mark as completed',
     },
-    helperNote:
-      'Pricing is based on travel; you will pay the runner separately for the actual waiting time once they arrive.',
+    helperNote: 'Fixed price. No extra charge for waiting time.',
   },
 
   purchase: {
     descriptionLabel: 'What should the runner buy?',
     descriptionPlaceholder: 'Item name, brand, size, store preference, alternatives...',
     descriptionRequired: true,
-    pickupLabel: 'Buy from',
+    pickupLabel: 'Store',
     dropoffLabel: 'Deliver to',
+    pickupStepCopy: {
+      title: 'Which store?',
+      search: 'Search for a store',
+      confirm: 'Confirm store',
+    },
+    dropoffStepCopy: {
+      title: 'Where to deliver?',
+      search: 'Search for an address',
+      confirm: 'Confirm drop-off',
+    },
+    currentLocationLeg: 'dropoff',
     showItemValue: false,
     showPickupContact: false,
     requiresShoppingBudget: true,
@@ -244,6 +279,18 @@ export function getErrandTypeRule(slug?: string | null): ErrandTypeRule {
 }
 
 export const DEFAULT_ERRAND_TYPE_RULE = DEFAULT_RULE;
+
+/**
+ * The vehicle a booking is priced and matched on. A single-location errand
+ * hides the vehicle picker, so it always gets its type's default: a restored
+ * draft or a rebook can't carry an older pick (and its premium) in unseen.
+ */
+export function bookingVehicle(rule: ErrandTypeRule, stored?: string | null): VehicleKey {
+  if (!rule.singleLocation && stored && rule.allowedVehicles.includes(stored as VehicleKey)) {
+    return stored as VehicleKey;
+  }
+  return rule.defaultVehicle;
+}
 
 /**
  * Every slug with a rule override, in declaration order (the four current

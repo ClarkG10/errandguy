@@ -8,9 +8,10 @@ import type { Booking } from '../../types';
  * WHY the cast instead of widening `Booking`:
  *   `payment_method_type`, `amount_to_collect`, `distance_to_pickup_km` and
  *   `accept_deadline` are RUNNER-GATED fields that BookingResource only emits
- *   for runner/admin viewers, and the Reverb offer projection
- *   (App\Events\IncomingRequest::broadcastWith) does not carry them at all.
- *   So an offer can legitimately arrive without them — from the realtime
+ *   for runner/admin viewers. The Reverb offer projection
+ *   (App\Events\IncomingRequest::broadcastWith) carries `payment_method_type`
+ *   and `shopping_budget` (a newer server; an older one sends neither) but
+ *   none of the others. So an offer can legitimately arrive without them — from the realtime
  *   channel, from an older SWR cache entry, or from an endpoint that hasn't
  *   been refetched yet. Every reader here degrades to "not shown" rather than
  *   rendering a wrong number. Mirrors the same tolerant-cast idiom already

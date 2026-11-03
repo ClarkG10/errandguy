@@ -1,11 +1,12 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { View } from 'react-native';
 import { CenteredLoader } from '@/components/ui/Spinner';
-import { Stack, useRouter, useSegments } from 'expo-router';
+import { Stack, usePathname, useRouter, useSegments } from 'expo-router';
 import { useAuthStore } from '../../stores/authStore';
 import { useRunnerStore } from '../../stores/runnerStore';
 import { useRealtimeNotifications } from '../../hooks/useRealtimeNotifications';
 import { useIncomingRequest } from '../../hooks/useIncomingRequest';
+import { useRunnerIdleReminder } from '../../hooks/useRunnerIdleReminder';
 import { invalidateQuery } from '../../hooks/useQuery';
 import { IncomingRequestModal } from '../../components/runner/IncomingRequestModal';
 import {
@@ -165,6 +166,24 @@ function OfferWatcher() {
   const acceptErrand = useRunnerStore((s) => s.acceptErrand);
   const declineErrand = useRunnerStore((s) => s.declineErrand);
   const clearIncomingRequest = useRunnerStore((s) => s.clearIncomingRequest);
+  const onErrand = useRunnerStore((s) => !!s.currentErrand);
+
+  // Online and waiting when the app goes to the background → a local nudge
+  // before matching stops seeing them (useRunnerIdleReminder). Lives here, not
+  // on Home, so it holds wherever in the runner app they left from.
+  useRunnerIdleReminder(isOnline && !onErrand);
+
+  // An offer pop-up can be raised over that offer's OWN errand screen (a
+  // cold-start push tap lands there — see errand/[id].tsx). Accept must not
+  // push a second copy of it, and a decline or lapse must not leave the runner
+  // on a job that isn't theirs.
+  const pathname = usePathname();
+  const pathnameRef = useRef(pathname);
+  pathnameRef.current = pathname;
+  const isOnOfferScreen = useCallback(
+    (offerId: string) => pathnameRef.current === `/errand/${offerId}`,
+    [],
+  );
 
   /** Locks the accept so a double-tap can't fire two claims. */
   const claimingRef = useRef(false);
@@ -238,7 +257,7 @@ function OfferWatcher() {
       const res = await runnerService.acceptErrand(offer.id);
       haptics.success();
       acceptErrand((res?.data?.data ?? offer) as Booking);
-      router.push(`/(runner)/errand/${offer.id}` as any);
+      if (!isOnOfferScreen(offer.id)) router.push(`/(runner)/errand/${offer.id}` as any);
     } catch (err) {
       haptics.error();
       toast.error(
@@ -253,7 +272,7 @@ function OfferWatcher() {
     } finally {
       claimingRef.current = false;
     }
-  }, [acceptErrand, clearIncomingRequest, router]);
+  }, [acceptErrand, clearIncomingRequest, isOnOfferScreen, router]);
 
   const handleDecline = useCallback(() => {
     const offer = useRunnerStore.getState().incomingRequest?.booking;
@@ -264,7 +283,8 @@ function OfferWatcher() {
     // Home's reconcile poll can't re-raise it if this POST fails.
     declineErrand(offer.id);
     runnerService.declineErrand(offer.id).catch(() => {});
-  }, [declineErrand]);
+    if (isOnOfferScreen(offer.id)) router.replace('/(runner)/(tabs)' as any);
+  }, [declineErrand, isOnOfferScreen, router]);
 
   /**
    * The countdown ran out on THIS device. That is not a decision, so it must
@@ -274,8 +294,10 @@ function OfferWatcher() {
    * hands the offer back if the server is somehow still honouring the accept.
    */
   const handleExpire = useCallback(() => {
+    const offerId = useRunnerStore.getState().incomingRequest?.booking?.id;
     clearIncomingRequest();
-  }, [clearIncomingRequest]);
+    if (offerId && isOnOfferScreen(offerId)) router.replace('/(runner)/(tabs)' as any);
+  }, [clearIncomingRequest, isOnOfferScreen, router]);
 
   if (!incomingRequest) return null;
 

@@ -11,7 +11,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { configureReanimatedLogger, ReanimatedLogLevel } from 'react-native-reanimated';
-import { Platform, LogBox, StatusBar } from 'react-native';
+import { Platform, LogBox, StatusBar, AppState } from 'react-native';
 import { useAuthStore } from '../stores/authStore';
 import { useBookingStore } from '../stores/bookingStore';
 import { usePaymentStore } from '../stores/paymentStore';
@@ -20,6 +20,7 @@ import { userService } from '../services/user.service';
 import { preloadAfterAuth, preloadCoreImages } from '../services/preload.service';
 import { initMutationQueue } from '../services/mutationQueue';
 import { endLocalSession } from '../services/session.service';
+import { resumeSosIntent } from '../services/sosIntent';
 import { useNotifications } from '../hooks/useNotifications';
 import { useOtaLaunchCheck } from '../hooks/useOtaUpdate';
 import { ToastProvider } from '../components/ui/ToastProvider';
@@ -28,6 +29,7 @@ import { WhatsNewSheet } from '../components/ui/WhatsNewSheet';
 import { ApiActivityBar } from '../components/ui/ApiActivityBar';
 import { OfflineBanner } from '../components/ui/OfflineBanner';
 import { ErrorBoundary } from '../components/ui/ErrorBoundary';
+import { NotificationPrimer } from '../components/settings/NotificationPrimer';
 import { installErrorLogging } from '../utils/errorLogging';
 import '../../global.css';
 
@@ -175,7 +177,11 @@ export default function RootLayout() {
   // on what was actually meant instead: past the (auth) group. A verified
   // flag is a bonus, never a prerequisite for hearing "runner accepted".
   const canRegisterPush = isAuthenticated && segments[0] !== '(auth)';
-  useNotifications(canRegisterPush);
+  // Customers are asked in the app's own words first (<NotificationPrimer/>),
+  // so their OS prompt isn't spent on a cold dialog over Home. Runners keep the
+  // direct prompt: their home screen's "notifications are off" warning and its
+  // Settings shortcut are built around it.
+  useNotifications(canRegisterPush, { askOs: role === 'runner' });
 
   // Silently check for an OTA update once the app is past bootstrap. A
   // non-critical update downloads and applies on the next launch; a critical
@@ -191,6 +197,21 @@ export default function RootLayout() {
     // changes made while offline sync themselves the moment we're back online.
     void initMutationQueue();
   }, [loadFromStorage, loadDraftFromStorage, loadPaymentAttempt]);
+
+  // An SOS pressed with no signal is saved to disk and retried. Resume it here
+  // — as soon as a signed-in session is ready and every time the app comes
+  // back to the foreground — not only when the errand screen happens to be
+  // open: after a kill, the person may never navigate back to it, and iOS
+  // pauses the retry timer while the app is in the background. Safe to call
+  // repeatedly and alongside the SOS screens' own calls (single-flight).
+  useEffect(() => {
+    if (isLoading || !isAuthenticated) return;
+    void resumeSosIntent();
+    const sub = AppState.addEventListener('change', (state) => {
+      if (state === 'active') void resumeSosIntent();
+    });
+    return () => sub.remove();
+  }, [isLoading, isAuthenticated]);
 
   // Validate token on app load
   useEffect(() => {
@@ -255,7 +276,7 @@ export default function RootLayout() {
     const currentAuthScreen = ((segments as unknown as string[])[1] ?? '') as string;
 
     // Screens authenticated users must stay on to finish registration
-    const registrationFlowScreens = ['register', 'verify-otp', 'role-select', 'permissions', 'contacts-permission'];
+    const registrationFlowScreens = ['register', 'verify-otp', 'role-select', 'permissions'];
 
     if (!isAuthenticated && !inAuthGroup) {
       // Skip onboarding carousel for returning users
@@ -304,6 +325,9 @@ export default function RootLayout() {
             swap. Self-gating — renders null until the runtime version changes.
             Never blocks launch. */}
         <WhatsNewSheet />
+        {/* "Get updates about your errands?" — the customer's in-app ask
+            before the one-shot OS prompt. Self-gating. */}
+        <NotificationPrimer enabled={canRegisterPush && role === 'customer'} />
       </GestureHandlerRootView>
     </SafeAreaProvider>
   );

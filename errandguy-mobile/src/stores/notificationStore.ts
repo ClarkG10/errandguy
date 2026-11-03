@@ -2,6 +2,13 @@ import { create } from 'zustand';
 import { notificationService } from '../services/notification.service';
 import type { AppNotification } from '../types';
 
+/**
+ * 'granted' — pushes arrive. 'undetermined' — they don't, but the app may
+ * still ask the OS (it has a prompt left). 'denied' — they don't, and only the
+ * phone's Settings can change that. null — not read yet this launch.
+ */
+export type PushPermission = 'granted' | 'denied' | 'undetermined' | null;
+
 interface NotificationState {
   notifications: AppNotification[];
   /**
@@ -24,9 +31,11 @@ interface NotificationState {
    *
    * `null` = not determined yet this launch (registration hasn't run, or the
    * platform can't tell us). Treat null as "don't warn" — warning on an
-   * unknown is worse than staying quiet.
+   * unknown is worse than staying quiet. `undetermined` = off, but the OS
+   * prompt hasn't been used up: customers are asked in-app first
+   * (components/settings/NotificationPrimer), never with a cold OS dialog.
    */
-  pushPermission: 'granted' | 'denied' | null;
+  pushPermission: PushPermission;
 
   setNotifications: (notifications: AppNotification[]) => void;
   /**
@@ -48,7 +57,7 @@ interface NotificationState {
   /** Re-read the server's unread total into the badge. Never throws. */
   refreshUnreadCount: () => Promise<void>;
   setIsLoading: (loading: boolean) => void;
-  setPushPermission: (state: 'granted' | 'denied' | null) => void;
+  setPushPermission: (state: PushPermission) => void;
 }
 
 export const useNotificationStore = create<NotificationState>((set) => ({

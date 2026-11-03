@@ -101,6 +101,7 @@ export function SavedAddressSheet({
           // the fix already applied on the full addresses/index screen.
           <View className="py-6">
             <ErrorState
+              error={addressesQ.error}
               title="Couldn't load your addresses"
               onRetry={() => {
                 void addressesQ.refresh();

@@ -1,6 +1,7 @@
 import {
   ERRAND_TYPE_SLUGS,
   RETIRED_ERRAND_SLUGS,
+  bookingVehicle,
   getErrandTypeRule,
   isRetiredErrandSlug,
 } from '../errandTypeRules';
@@ -85,5 +86,70 @@ describe('a bill payment still in progress (legacy alias)', () => {
     ]);
     expect(getNextStatus('picked_up', 'bills_payment')).toBe('completed');
     expect(statusActionLabel('arrived_at_pickup', 'bills_payment')).toBe('Pay bill + capture receipt');
+  });
+});
+
+describe('a queue / pila errand', () => {
+  const queue = getErrandTypeRule('queue');
+
+  /**
+   * Review hides the vehicle picker for a single-location errand, so whatever
+   * vehicle it lands on is invisible. It used to be the global default,
+   * motorcycle: the server added the motorcycle premium and offered the job
+   * only to motorcycle and car runners.
+   */
+  it('is priced and matched on foot', () => {
+    expect(queue.defaultVehicle).toBe('walk');
+    expect(queue.allowedVehicles).toEqual(['walk']);
+    expect(bookingVehicle(queue)).toBe('walk');
+  });
+
+  it('never keeps an older vehicle from a restored draft or a rebook', () => {
+    expect(bookingVehicle(queue, 'motorcycle')).toBe('walk');
+    expect(bookingVehicle(queue, 'car')).toBe('walk');
+  });
+
+  it('tells the truth about the price — there is no waiting fee', () => {
+    expect(queue.helperNote).toBe('Fixed price. No extra charge for waiting time.');
+    expect(queue.helperNote).not.toMatch(/separately|travel/i);
+  });
+});
+
+describe('the vehicle a booking goes out on', () => {
+  it('keeps the customer’s pick where the picker is shown', () => {
+    const delivery = getErrandTypeRule('delivery');
+    expect(bookingVehicle(delivery, 'car')).toBe('car');
+    expect(bookingVehicle(delivery, 'bicycle')).toBe('bicycle');
+  });
+
+  it('falls back to the type’s default for nothing, or for a vehicle it doesn’t allow', () => {
+    const delivery = getErrandTypeRule('delivery');
+    expect(bookingVehicle(delivery)).toBe(delivery.defaultVehicle);
+    expect(bookingVehicle(delivery, null)).toBe(delivery.defaultVehicle);
+    expect(bookingVehicle(delivery, 'helicopter')).toBe(delivery.defaultVehicle);
+  });
+});
+
+describe('a "Buy for me" errand on the map', () => {
+  const purchase = getErrandTypeRule('purchase');
+
+  it('starts the customer’s own location on the drop-off, not the store', () => {
+    expect(purchase.currentLocationLeg).toBe('dropoff');
+    for (const slug of ['delivery', 'queue', 'custom']) {
+      expect(getErrandTypeRule(slug).currentLocationLeg).toBe('pickup');
+    }
+  });
+
+  it('words the store step naturally', () => {
+    expect(purchase.pickupLabel).toBe('Store');
+    expect(purchase.pickupStepCopy).toEqual({
+      title: 'Which store?',
+      search: 'Search for a store',
+      confirm: 'Confirm store',
+    });
+    expect(purchase.dropoffStepCopy?.confirm).toBe('Confirm drop-off');
+    for (const copy of [purchase.pickupStepCopy, purchase.dropoffStepCopy]) {
+      expect(Object.values(copy ?? {}).join(' ')).not.toMatch(/buy from|deliver to/i);
+    }
   });
 });

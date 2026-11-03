@@ -38,7 +38,8 @@ import { recordSosActive, type SosRole } from './sosActive';
  * a provable no-op.
  *
  * The intent is persisted BEFORE the first attempt, so an app kill mid-request
- * cannot lose it; the next mount of an SOS surface resumes the loop.
+ * cannot lose it; the next launch (root layout) or mount of an SOS surface
+ * resumes the loop.
  *
  * Stand-down MUST drop the intent first (`standDownSos`) — otherwise a queued
  * replay would re-raise an alert the user already cancelled.
@@ -56,6 +57,9 @@ export type { SosRole };
 export interface SosIntent {
   bookingId: string;
   role: SosRole;
+  /** Who pressed it. A saved SOS is only ever resumed for that account, never
+   *  under whoever signs in next on a shared phone. Absent on older saves. */
+  userId?: string | null;
   /** When the person actually pressed it (not when we last tried). */
   triggeredAt: number;
   attempts: number;
@@ -368,6 +372,7 @@ export async function raiseSos(
       : {
           bookingId,
           role,
+          userId: currentUserId(),
           triggeredAt: Date.now(),
           attempts: 0,
           lastAttemptAt: null,
@@ -422,19 +427,47 @@ export function standDownSos(bookingId: string): { hadUnsentIntent: boolean } {
   return { hadUnsentIntent };
 }
 
+/** The disk read of an in-progress resume, shared by concurrent callers. */
+let resuming: Promise<SosIntent | null> | null = null;
+
 /**
- * Rehydrate a persisted intent and resume retrying. Called on mount by every
- * screen that can raise an SOS, so an app killed mid-request picks the alarm
- * back up the moment the person opens the app again.
+ * Rehydrate a persisted intent and resume retrying. Called by the root layout
+ * once a signed-in session is ready and every time the app comes back to the
+ * foreground, and on mount by every screen that can raise an SOS — so an app
+ * killed mid-request picks the alarm back up the moment the person opens the
+ * app again, whichever screen it opens on.
+ *
+ * Safe to call repeatedly and concurrently: a held intent is only nudged
+ * (never re-sent while an attempt is in flight or a retry is scheduled), and
+ * callers that arrive during the disk read share it, so a cold start that
+ * resumes from both the root and the tracking screen loads — and sends — once.
  */
-export async function resumeSosIntent(): Promise<SosIntent | null> {
+export function resumeSosIntent(): Promise<SosIntent | null> {
   wireEdges();
   if (get().intent) {
     if (!retryTimer && !inFlight) retryNow();
-    return get().intent;
+    return Promise.resolve(get().intent);
   }
+  if (!resuming) {
+    resuming = loadPersistedIntent().finally(() => {
+      resuming = null;
+    });
+  }
+  return resuming;
+}
+
+/** The signed-in account's id. Lazy require: authStore → clearAccountScopedState → this module. */
+function currentUserId(): string | null {
+  const { useAuthStore } = require('../stores/authStore');
+  return useAuthStore.getState().user?.id ?? null;
+}
+
+async function loadPersistedIntent(): Promise<SosIntent | null> {
   try {
     const raw = await AsyncStorage.getItem(STORAGE_KEY);
+    // A fresh press landed while we read the disk: it is the newer truth.
+    const live = get().intent;
+    if (live) return live;
     if (!raw) return null;
     const parsed = JSON.parse(raw) as SosIntent;
     if (!parsed?.bookingId || !parsed?.triggeredAt) {
@@ -442,6 +475,10 @@ export async function resumeSosIntent(): Promise<SosIntent | null> {
       return null;
     }
     parsed.coords = readSosCoords(parsed.coords);
+    // Another account's SOS (a shared phone, before sign-in cleanup has run):
+    // leave it alone rather than send it under this sign-in.
+    const me = currentUserId();
+    if (parsed.userId && me && parsed.userId !== me) return null;
     if (Date.now() - parsed.triggeredAt >= MAX_INTENT_AGE_MS) {
       await persist(null);
       return null;
@@ -497,6 +534,7 @@ export function useQueuedSos(bookingId: string | null | undefined) {
 export async function clearSosIntent(): Promise<void> {
   clearTimer();
   inFlight = false;
+  resuming = null;
   standDownAt = null;
   set({
     intent: null,

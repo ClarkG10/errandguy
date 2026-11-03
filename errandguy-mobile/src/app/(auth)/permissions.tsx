@@ -9,11 +9,12 @@ import {
 
 const LOCATION_PERMISSION = require('../../../assets/location-permission.png');
 
-// WHY location matters — concrete benefits, not an abstract paragraph.
+// WHY location matters — concrete benefits, not an abstract paragraph. True
+// for customers and runners alike: nobody has picked a side yet.
 const WHY_LOCATION = [
-  'Find nearby runners',
-  'Calculate accurate ETAs',
-  'Precise pickup & drop-off',
+  'Fill in addresses with one tap',
+  'Match errands with runners nearby',
+  'Live tracking and arrival times',
 ];
 
 const checkStatus = async (): Promise<PermissionStatus | null> => {
@@ -27,8 +28,10 @@ const requestPermission = async (): Promise<PermissionStatus | null> => {
 };
 
 /**
- * Location permission screen — step 1 of the two-step permission primer.
- * All lifecycle behavior lives in the shared PermissionPrimer.
+ * Location permission screen — the last onboarding step before sign-up
+ * ("Get Started" is for new people; returning ones use "Log in" on the
+ * welcome screen and on sign-up). All lifecycle behavior lives in the shared
+ * PermissionPrimer.
  */
 export default function LocationPermissionScreen() {
   const router = useRouter();
@@ -38,7 +41,6 @@ export default function LocationPermissionScreen() {
       illustrationSource={LOCATION_PERMISSION}
       title="Allow location access"
       reasons={WHY_LOCATION}
-      stepIndex={1}
       checkStatus={checkStatus}
       requestPermission={requestPermission}
       grantedLabel="Location access enabled"
@@ -47,7 +49,12 @@ export default function LocationPermissionScreen() {
       allowLabel="Allow Location"
       requestErrorMessage="Couldn’t check location access. You can enable it later in Settings."
       skipHint="Continues without granting location access — you can enable it later in Settings"
-      onNext={() => router.push('/(auth)/contacts-permission')}
+      // Log in goes underneath sign-up, so back (the arrow, or Android's back
+      // button) lands on Log in instead of closing the app.
+      onNext={() => {
+        router.replace('/(auth)/login');
+        router.push('/(auth)/register');
+      }}
     />
   );
 }

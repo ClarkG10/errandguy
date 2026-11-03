@@ -16,6 +16,7 @@ import {
   Info,
   FileText,
   Archive,
+  ArchiveRestore,
   Trash2,
   Headphones,
   Megaphone,
@@ -40,6 +41,7 @@ import { queueable } from '../../../services/mutationQueue';
 import { warmTracking } from '../../../services/preload.service';
 import { notificationRoute } from '../../../utils/notificationRoute';
 import { useQuery } from '../../../hooks/useQuery';
+import { useArchivedNotifications } from '../../../hooks/useArchivedNotifications';
 import { useReducedMotion } from '../../../hooks/useReducedMotion';
 import { useHideTabBarOnScroll } from '../../../hooks/useHideTabBarOnScroll';
 import { CacheTTL } from '../../../services/cache.service';
@@ -228,7 +230,10 @@ function NotificationSkeletonRows() {
 
 interface NotificationRowProps {
   item: AppNotification;
+  /** Shown in the archive: the one action is "Move to inbox". */
+  archived?: boolean;
   onPress: (item: AppNotification) => void;
+  /** Archive — or, for an archived row, move it back to the inbox. */
   onArchive: (item: AppNotification) => void;
   onDelete: (item: AppNotification) => void;
   /** Registers this row's swipeable methods with the screen (single-
@@ -244,6 +249,7 @@ interface NotificationRowProps {
 
 const NotificationRow = React.memo(function NotificationRow({
   item,
+  archived = false,
   onPress,
   onArchive,
   onDelete,
@@ -262,6 +268,30 @@ const NotificationRow = React.memo(function NotificationRow({
   const label = TYPE_LABELS[item.type] ?? 'Update';
   const TypeIcon = meta.icon;
 
+  // In the archive the one swipe action is the way back.
+  const renderMoveToInbox = () => (
+    <View className="flex-row items-center h-full pl-2">
+      <Pressable
+        onPress={() => onArchive(item)}
+        className="items-center justify-center px-3 py-2.5"
+        style={({ pressed }) => [
+          { minWidth: 60, borderRadius: 14, backgroundColor: LightColors.primaryLight },
+          pressed && { opacity: 0.8 },
+        ]}
+        accessibilityRole="button"
+        accessibilityLabel={`Move ${item.title} to inbox`}
+      >
+        <ArchiveRestore size={18} color={LightColors.primaryDark} strokeWidth={1.9} />
+        <Text
+          className="text-[12px] font-montserrat-semi mt-1"
+          style={{ color: LightColors.primaryDark }}
+        >
+          Move to inbox
+        </Text>
+      </Pressable>
+    </View>
+  );
+
   return (
     <View className="px-5 pb-2">
       <ReanimatedSwipeable
@@ -271,7 +301,7 @@ const NotificationRow = React.memo(function NotificationRow({
         // wide; labels + icons carry a composed accessibilityLabel so
         // a screen reader announces the target notification, not just
         // "Delete".
-        renderRightActions={() => (
+        renderRightActions={archived ? renderMoveToInbox : () => (
           // Floating rounded action chips, vertically centered in the row —
           // reads as two deliberate buttons rather than the old pair of flat
           // full-height rectangles whose square corners poked past the
@@ -336,13 +366,17 @@ const NotificationRow = React.memo(function NotificationRow({
           // Swipe actions are unreachable to screen readers — expose
           // them on the rotor so VoiceOver users get per-row
           // archive/delete too.
-          accessibilityActions={[
-            { name: 'archive', label: 'Archive' },
-            { name: 'delete', label: 'Delete' },
-          ]}
+          accessibilityActions={
+            archived
+              ? [{ name: 'archive', label: 'Move to inbox' }]
+              : [
+                  { name: 'archive', label: 'Archive' },
+                  { name: 'delete', label: 'Delete' },
+                ]
+          }
           onAccessibilityAction={(e) => {
             if (e.nativeEvent.actionName === 'archive') onArchive(item);
-            else if (e.nativeEvent.actionName === 'delete') onDelete(item);
+            else if (e.nativeEvent.actionName === 'delete' && !archived) onDelete(item);
           }}
         >
           {/* Type icon chip — soft tinted circle + type accent icon. */}
@@ -412,6 +446,15 @@ export default function NotificationsScreen() {
 
   const [refreshing, setRefreshing] = useState(false);
   const [category, setCategory] = useState<CategoryKey>('all');
+  // The archive replaces the inbox list while it's open; `category` keeps the
+  // inbox chip to return to.
+  const [showArchived, setShowArchived] = useState(false);
+  const archived = useArchivedNotifications(userId, showArchived);
+  const {
+    removeRow: removeArchivedRow,
+    restoreRow: restoreArchivedRow,
+    markReadLocal: markArchivedReadLocal,
+  } = archived;
   const [clearConfirmVisible, setClearConfirmVisible] = useState(false);
   const [clearing, setClearing] = useState(false);
   // Single-row delete is gated behind a confirm dialog so a stray swipe can't
@@ -520,11 +563,12 @@ export default function NotificationsScreen() {
     }
   }, [notifQ.data, setNotifications, refreshUnreadCount]);
 
+  const refreshArchived = archived.refresh;
   const onRefresh = useCallback(async () => {
     setRefreshing(true);
-    await notifQ.refresh();
+    await (showArchived ? refreshArchived() : notifQ.refresh());
     setRefreshing(false);
-  }, [notifQ]);
+  }, [showArchived, refreshArchived, notifQ]);
 
   const registerRow = useCallback(
     (id: string, ref: React.RefObject<SwipeableMethods | null> | null) => {
@@ -605,7 +649,8 @@ export default function NotificationsScreen() {
   // Optimistically drop the row, then reconcile with the server. On
   // failure we restore ONLY the failed row at its original index —
   // a full-snapshot rollback could resurrect rows removed concurrently
-  // whose server deletes already succeeded.
+  // whose server deletes already succeeded. Undoable like delete: archiving
+  // used to hide a row for good, with no way back.
   const handleArchive = useCallback(
     async (item: AppNotification) => {
       Haptics.selectionAsync().catch(() => {});
@@ -614,14 +659,52 @@ export default function NotificationsScreen() {
         .getState()
         .notifications.findIndex((n) => n.id === item.id);
       remove(item.id);
+      const archiving = notificationService.archiveNotification(item.id);
+      let undone = false;
+      toast.info('Notification archived', {
+        actionLabel: 'Undo',
+        onAction: () => {
+          undone = true;
+          restoreAt(item, index);
+          // Unarchive only once the archive has landed — sent side by side,
+          // they could arrive out of order and leave it archived after all.
+          void archiving
+            .then(
+              () => notificationService.unarchiveNotification(item.id),
+              () => undefined, // the archive itself failed: nothing to undo
+            )
+            .catch(() => {
+              remove(item.id);
+              toast.error("Couldn't undo. You'll find it under Archived.");
+            });
+        },
+      });
       try {
-        await notificationService.archiveNotification(item.id);
+        await archiving;
       } catch {
+        if (undone) return;
         restoreAt(item, index);
         toast.error("Couldn't archive notification. Please try again.");
       }
     },
     [remove, restoreAt],
+  );
+
+  // From the archive: back into the inbox (the inbox refetches on success).
+  const handleUnarchive = useCallback(
+    async (item: AppNotification) => {
+      Haptics.selectionAsync().catch(() => {});
+      if (openRowIdRef.current === item.id) openRowIdRef.current = null;
+      const index = removeArchivedRow(item.id);
+      try {
+        await notificationService.unarchiveNotification(item.id);
+        toast.success('Moved back to your inbox');
+      } catch {
+        restoreArchivedRow(item, index);
+        toast.error("Couldn't move it back. Please try again.");
+      }
+    },
+    [removeArchivedRow, restoreArchivedRow],
   );
 
   // Delete is optimistic AND undoable: the row disappears immediately,
@@ -696,7 +779,10 @@ export default function NotificationsScreen() {
       // the server call is fire-and-forget (markRead is idempotent, so
       // the worst case is the row re-rendering unread on next fetch).
       if (!notification.is_read) {
+        // markRead is a no-op for an archived row (it isn't in the inbox
+        // store), so the badge — which never counted it — doesn't move.
         markRead(notification.id);
+        markArchivedReadLocal(notification.id);
         notificationService.markAsRead(notification.id).catch(() => {});
       }
 
@@ -714,15 +800,16 @@ export default function NotificationsScreen() {
       }
       router.push(target as never);
     },
-    [router, markRead, closeOpenRow],
+    [router, markRead, markArchivedReadLocal, closeOpenRow],
   );
 
   const renderNotification = useCallback(
     ({ item }: { item: AppNotification }) => (
       <NotificationRow
         item={item}
+        archived={showArchived}
         onPress={handleNotificationPress}
-        onArchive={handleArchive}
+        onArchive={showArchived ? handleUnarchive : handleArchive}
         onDelete={requestDelete}
         registerRow={registerRow}
         onRowWillOpen={handleRowWillOpen}
@@ -730,8 +817,10 @@ export default function NotificationsScreen() {
       />
     ),
     [
+      showArchived,
       handleNotificationPress,
       handleArchive,
+      handleUnarchive,
       requestDelete,
       registerRow,
       handleRowWillOpen,
@@ -743,8 +832,11 @@ export default function NotificationsScreen() {
   // Inbox rather than an endless wall. Bucket boundaries use the device
   // local clock for "Today / Yesterday" and a 7-day window for "This Week".
   const visibleNotifications = useMemo(
-    () => notifications.filter((n) => matchesCategory(n.type, category)),
-    [notifications, category],
+    () =>
+      showArchived
+        ? archived.rows
+        : notifications.filter((n) => matchesCategory(n.type, category)),
+    [showArchived, archived.rows, notifications, category],
   );
 
   const sections = useMemo(() => {
@@ -795,14 +887,19 @@ export default function NotificationsScreen() {
   // Only treat it as the *initial* load when the query is fetching and
   // the store has nothing yet — this is what previously let "No
   // notifications" flash during the first fetch.
-  const initialLoading = notifQ.loading && notifications.length === 0;
+  const initialLoading = showArchived
+    ? archived.loading && archived.rows.length === 0
+    : notifQ.loading && notifications.length === 0;
+  // The list the footer, pull-to-refresh and sync pill speak for.
+  const listLoadingMore = showArchived ? archived.loadingMore : loadingMore;
+  const listHasMore = showArchived ? archived.hasMore : hasMore;
 
   return (
     <View className="flex-1 bg-background">
       <GradientHeader
         title="Notifications"
         trailing={
-          notifications.length > 0 ? (
+          !showArchived && notifications.length > 0 ? (
             // gap 20 + inner hitSlop trimmed to 8 keeps the two hit
             // rects from overlapping between "Mark all read" and the
             // destructive trash.
@@ -850,12 +947,13 @@ export default function NotificationsScreen() {
         contentContainerStyle={{ paddingHorizontal: 20, gap: 8, alignItems: 'center' }}
       >
         {CATEGORIES.map((c) => {
-          const active = category === c.key;
+          const active = !showArchived && category === c.key;
           return (
             <Pressable
               key={c.key}
               onPress={() => {
                 Haptics.selectionAsync().catch(() => {});
+                setShowArchived(false);
                 setCategory(c.key);
               }}
               hitSlop={{ top: 8, bottom: 8, left: 4, right: 4 }}
@@ -878,6 +976,30 @@ export default function NotificationsScreen() {
             </Pressable>
           );
         })}
+        {/* Not a category: it swaps the inbox for the archive, where an
+            archived notification can be read again or moved back. */}
+        <Pressable
+          onPress={() => {
+            Haptics.selectionAsync().catch(() => {});
+            closeOpenRow();
+            setShowArchived(true);
+          }}
+          hitSlop={{ top: 8, bottom: 8, left: 4, right: 4 }}
+          className={`px-4 py-2 rounded-full ${showArchived ? 'bg-primary' : 'bg-surfaceMuted'}`}
+          accessibilityRole="tab"
+          accessibilityState={{ selected: showArchived }}
+          accessibilityLabel="Archived notifications"
+        >
+          <Text
+            className={`text-[13px] ${
+              showArchived
+                ? 'font-montserrat-bold text-white'
+                : 'font-montserrat-semi text-textSecondary'
+            }`}
+          >
+            Archived
+          </Text>
+        </Pressable>
       </ScrollView>
 
       {/* Ambient sync status — kept quiet: tiny tertiary pill tucked
@@ -885,10 +1007,10 @@ export default function NotificationsScreen() {
           it never collides with the skeleton rows. */}
       <View className="px-5 pb-1">
         <SyncIndicator
-          syncing={notifQ.isStale}
-          updatedAt={notifQ.updatedAt}
-          error={!!notifQ.error}
-          onRetry={notifQ.refresh}
+          syncing={showArchived ? archived.isStale : notifQ.isStale}
+          updatedAt={showArchived ? archived.updatedAt : notifQ.updatedAt}
+          error={showArchived ? !!archived.error : !!notifQ.error}
+          onRetry={showArchived ? archived.refresh : notifQ.refresh}
           align="flex-start"
         />
       </View>
@@ -926,19 +1048,19 @@ export default function NotificationsScreen() {
         windowSize={5}
         removeClippedSubviews={true}
         contentContainerStyle={{ paddingTop: 4, paddingBottom: TAB_CONTENT_BOTTOM_INSET }}
-        onEndReached={handleLoadMore}
+        onEndReached={showArchived ? archived.loadMore : handleLoadMore}
         onEndReachedThreshold={0.4}
         ListFooterComponent={
-          loadingMore ? (
+          listLoadingMore ? (
             <View className="py-4 items-center">
               <Text className="text-[11px] font-montserrat text-textTertiary">
                 Loading…
               </Text>
             </View>
-          ) : !hasMore && visibleNotifications.length > 0 ? (
+          ) : !listHasMore && visibleNotifications.length > 0 ? (
             <View className="py-4 items-center">
               <Text className="text-[11px] font-montserrat text-textTertiary">
-                You're all caught up
+                {showArchived ? 'That’s everything you’ve archived' : "You're all caught up"}
               </Text>
             </View>
           ) : null
@@ -948,9 +1070,26 @@ export default function NotificationsScreen() {
             // First fetch in flight — placeholder rows, never the
             // empty state.
             <NotificationSkeletonRows />
+          ) : showArchived ? (
+            archived.error ? (
+              <ErrorState
+                title="Couldn't load archived notifications"
+                error={archived.error}
+                onRetry={() => {
+                  void archived.refresh();
+                }}
+              />
+            ) : (
+              <EmptyState
+                illustration={<Illustration name="empty-notifications" size={168} />}
+                title="Nothing archived"
+                description="Notifications you archive are kept here, so you can read them again or move them back to your inbox."
+              />
+            )
           ) : notifQ.error && notifications.length === 0 ? (
             <ErrorState
               title="Couldn't load notifications"
+              error={notifQ.error}
               onRetry={() => {
                 notifQ.refresh();
               }}

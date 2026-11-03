@@ -45,6 +45,9 @@ jest.mock('../../../../utils/browser', () => ({
 jest.mock('../../../../hooks/useBookingStatus', () => ({ useBookingStatus: jest.fn() }));
 jest.mock('../../../../hooks/useSmartPolling', () => ({ useSmartPolling: jest.fn() }));
 jest.mock('../../../../hooks/useBackGuard', () => ({ useBackGuard: jest.fn() }));
+jest.mock('../../../../hooks/useNotificationPermission', () => ({
+  useNotificationPermission: () => 'granted',
+}));
 jest.mock('../../../../hooks/useForegroundInterval', () => ({ useForegroundInterval: jest.fn() }));
 
 // Visual-only pieces with native/animated internals.

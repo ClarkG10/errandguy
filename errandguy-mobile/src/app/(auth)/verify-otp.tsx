@@ -13,19 +13,31 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { ChevronLeft } from 'lucide-react-native';
 import { OTPInput } from '../../components/ui/OTPInput';
 import { Button } from '../../components/ui/Button';
+import { Input } from '../../components/ui/Input';
 import { Illustration } from '../../components/ui/Illustration';
 import { useCountdown } from '../../hooks/useCountdown';
 import { authService } from '../../services/auth.service';
+import { userService } from '../../services/user.service';
 import { useAuthStore } from '../../stores/authStore';
 import { toast } from '../../stores/toastStore';
 import { errorMessage } from '../../utils/errorCatalog';
+import { email as emailSchema } from '../../utils/validation/schemas';
+import { APP_CONFIG } from '../../constants/config';
 import { copy } from '../../constants/copy';
 import { LightColors } from '../../constants/colors';
 import { useResponsive } from '../../constants/responsive';
 
+/**
+ * Seconds before "Resend" is offered. Each new code replaces the one still on
+ * its way (an email can take a minute), and the server allows only 3 new
+ * codes an hour per address (the `otp` throttle) — so the wait is long enough
+ * for the first email to arrive, but well short of the old five minutes.
+ */
+const RESEND_COOLDOWN_S = 2 * APP_CONFIG.OTP_COUNTDOWN;
+
 export default function VerifyOTPScreen() {
   const router = useRouter();
-  const { phone, email, purpose } = useLocalSearchParams<{
+  const { phone, email: emailParam, purpose } = useLocalSearchParams<{
     phone?: string;
     email?: string;
     purpose?: string;
@@ -34,14 +46,29 @@ export default function VerifyOTPScreen() {
 
   const setUser = useAuthStore((s) => s.setUser);
   const setToken = useAuthStore((s) => s.setToken);
+  const isAuthenticated = useAuthStore((s) => s.isAuthenticated);
   const [code, setCode] = useState('');
   const [otpError, setOtpError] = useState<string | null>(null);
   const [otpSuccess, setOtpSuccess] = useState(false);
   const [loading, setLoading] = useState(false);
   const [resending, setResending] = useState(false);
   const [attemptsRemaining, setAttemptsRemaining] = useState(5);
+  // The address the code goes to. Starts as the one signed up with; "Change"
+  // can correct it right here.
+  const [email, setEmail] = useState(emailParam);
+  const [editingEmail, setEditingEmail] = useState(false);
+  const [emailDraft, setEmailDraft] = useState(emailParam ?? '');
+  const [emailError, setEmailError] = useState<string | null>(null);
+  const [savingEmail, setSavingEmail] = useState(false);
 
-  const { isExpired, start, reset, formatted } = useCountdown(300, true);
+  const { isExpired, start, reset, formatted } = useCountdown(RESEND_COOLDOWN_S, true);
+
+  // Straight after sign-up the account already exists and is signed in, so a
+  // mistyped email is fixed on the account itself (PUT /user/profile, which
+  // also marks it unconfirmed) and the code re-sent to the new address.
+  // Going "back" used to drop the person at Log in, then on Home with the
+  // wrong address still on the account.
+  const canChangeEmailHere = purpose === 'register-verify' && !phone && isAuthenticated;
 
   const maskedIdentifier = phone
     ? phone.replace(/(\d{4})\d{4}(\d{3})/, '$1****$2')
@@ -121,7 +148,7 @@ export default function VerifyOTPScreen() {
     try {
       const payload = phone ? { phone } : { email };
       await authService.sendOTP(payload);
-      reset(300);
+      reset(RESEND_COOLDOWN_S);
       start();
       setAttemptsRemaining(5);
       setOtpError(null);
@@ -136,6 +163,64 @@ export default function VerifyOTPScreen() {
 
   const goBack = () =>
     router.canGoBack() ? router.back() : router.replace('/(auth)/login');
+
+  const handleChange = () => {
+    if (!canChangeEmailHere) {
+      goBack();
+      return;
+    }
+    Haptics.selectionAsync().catch(() => {});
+    setEmailDraft(email ?? '');
+    setEmailError(null);
+    setEditingEmail(true);
+  };
+
+  const handleSaveEmail = async () => {
+    if (savingEmail) return;
+    const parsed = emailSchema.safeParse(emailDraft);
+    if (!parsed.success) {
+      setEmailError(parsed.error.issues[0]?.message ?? 'Enter a valid email address.');
+      return;
+    }
+    const next = parsed.data;
+    if (next.toLowerCase() === (email ?? '').toLowerCase()) {
+      setEditingEmail(false);
+      return;
+    }
+    setSavingEmail(true);
+    try {
+      const res = await userService.updateProfile({ email: next });
+      const updated = res.data?.data;
+      if (updated) setUser(updated);
+    } catch (error: any) {
+      const fieldError = error?.errors?.email;
+      setEmailError(
+        (Array.isArray(fieldError) ? fieldError[0] : fieldError) ??
+          errorMessage(error, 'Couldn’t change your email. Please try again.'),
+      );
+      setSavingEmail(false);
+      return;
+    }
+    // The account now holds the new address, whatever happens to the send.
+    setEmail(next);
+    setEditingEmail(false);
+    setCode('');
+    setOtpError(null);
+    try {
+      await authService.sendOTP({ email: next });
+      reset(RESEND_COOLDOWN_S);
+      start();
+      setAttemptsRemaining(5);
+      toast.success('Email updated. We sent a new code.');
+    } catch (error: any) {
+      // Resend is offered at once so the person isn't left waiting on a code
+      // that never went out.
+      reset(0);
+      toast.error(errorMessage(error, copy.auth.otpResendFailed));
+    } finally {
+      setSavingEmail(false);
+    }
+  };
 
   return (
     <SafeAreaView className="flex-1 bg-surface">
@@ -181,21 +266,59 @@ export default function VerifyOTPScreen() {
             >
               Verify your {phone ? 'number' : 'email'}
             </Text>
-            <Text className="text-[15px] font-montserrat text-textSecondary mt-2 mb-8">
-              We sent a 6-digit code to{' '}
-              <Text className="font-montserrat-semi text-textPrimary">
-                {maskedIdentifier}
+            {editingEmail ? (
+              <View className="mt-4 mb-8">
+                <Input
+                  label="Email address"
+                  value={emailDraft}
+                  onChangeText={(t) => {
+                    setEmailDraft(t);
+                    setEmailError(null);
+                  }}
+                  error={emailError ?? undefined}
+                  keyboardType="email-address"
+                  autoCapitalize="none"
+                  autoCorrect={false}
+                  autoComplete="email"
+                  textContentType="emailAddress"
+                  returnKeyType="send"
+                  onSubmitEditing={handleSaveEmail}
+                  autoFocus
+                />
+                <View className="mt-3 gap-2">
+                  <Button
+                    title="Send code to this email"
+                    fullWidth
+                    loading={savingEmail}
+                    loadingTitle="Sending…"
+                    onPress={handleSaveEmail}
+                  />
+                  <Button
+                    title="Cancel"
+                    variant="ghost"
+                    fullWidth
+                    disabled={savingEmail}
+                    onPress={() => setEditingEmail(false)}
+                  />
+                </View>
+              </View>
+            ) : (
+              <Text className="text-[15px] font-montserrat text-textSecondary mt-2 mb-8">
+                We sent a 6-digit code to{' '}
+                <Text className="font-montserrat-semi text-textPrimary">
+                  {maskedIdentifier}
+                </Text>
+                .{phone ? '' : ' It can take a minute — check your spam folder too.'}{' '}
+                <Text
+                  className="text-primary font-montserrat-semi"
+                  onPress={handleChange}
+                  accessibilityRole="link"
+                  accessibilityLabel={phone ? 'Change phone number' : 'Change email address'}
+                >
+                  Change
+                </Text>
               </Text>
-              .{' '}
-              <Text
-                className="text-primary font-montserrat-semi"
-                onPress={goBack}
-                accessibilityRole="link"
-                accessibilityLabel={phone ? 'Change phone number' : 'Change email address'}
-              >
-                Change
-              </Text>
-            </Text>
+            )}
 
             <OTPInput
               value={code}
@@ -249,6 +372,9 @@ export default function VerifyOTPScreen() {
                   )}
                 </Pressable>
               )}
+              <Text className="text-xs font-montserrat text-textTertiary text-center mt-1">
+                A new code replaces the last one. You can ask for 3 an hour.
+              </Text>
             </View>
 
             <Button

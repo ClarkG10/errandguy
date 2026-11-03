@@ -31,7 +31,7 @@ const CONFIG: Record<VerificationStatus, {
     bg: 'bg-warningSoft',
     text: 'text-warningDark',
     color: LightColors.warning,
-    message: 'Your account is under review. Verification typically takes 1-2 business days.',
+    message: 'Your account is under review. Verification typically takes 1–2 business days.',
     // Pending runners previously had no way to review what they had
     // submitted — every other state links to the documents screen, so
     // pending should too.

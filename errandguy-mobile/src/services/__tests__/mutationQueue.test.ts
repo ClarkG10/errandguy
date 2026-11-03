@@ -13,6 +13,7 @@ import {
   useMutationQueueStore,
 } from '../mutationQueue';
 import { useNetworkStore } from '../../stores/networkStore';
+import { useToastStore } from '../../stores/toastStore';
 
 // expo-crypto isn't mocked globally; the queue only needs unique ids.
 let mockUuidSeq = 0;
@@ -46,10 +47,20 @@ jest.mock('../booking.service', () => ({
 jest.mock('../notification.service', () => ({ notificationService: {} }));
 // currentUserId() reads authStore lazily; drive it per test.
 let mockUserId: string | null = 'user-a';
+const mockSetUser = jest.fn();
 jest.mock('../../stores/authStore', () => ({
-  useAuthStore: { getState: () => ({ user: mockUserId ? { id: mockUserId } : null }) },
+  useAuthStore: {
+    getState: () => ({ user: mockUserId ? { id: mockUserId } : null, setUser: mockSetUser }),
+  },
 }));
-jest.mock('../user.service', () => ({ userService: {} }));
+const mockUpdateProfile = jest.fn();
+const mockGetProfile = jest.fn();
+jest.mock('../user.service', () => ({
+  userService: {
+    updateProfile: (...a: unknown[]) => mockUpdateProfile(...a),
+    getProfile: (...a: unknown[]) => mockGetProfile(...a),
+  },
+}));
 
 const pending = () => useMutationQueueStore.getState().pending;
 
@@ -59,8 +70,11 @@ beforeEach(async () => {
   mockCompleteStop.mockResolvedValue({ data: {} });
   mockReviewBooking.mockResolvedValue({ data: {} });
   useNetworkStore.setState({ isOffline: false, lastChangedAt: null });
+  useToastStore.setState({ toasts: [] });
   await clearMutationQueue();
 });
+
+const toasts = () => useToastStore.getState().toasts;
 
 describe('mutationQueue — registry', () => {
   it('registers the checklist, stop-tick and review kinds', () => {
@@ -441,5 +455,65 @@ describe('an entry queued by the app build that had saved payment methods', () =
 
     expect(mockUpdateChecklistTicks).toHaveBeenCalledTimes(1);
     expect(pending()).toHaveLength(0);
+  });
+});
+
+describe('a queued change the server refuses is announced, not dropped in silence', () => {
+  const profileEdit = () =>
+    queueable('user.updateProfile', { full_name: 'Rina', email: 'taken@example.com' }, {
+      dedupeKey: 'user-profile',
+    });
+
+  it('tells the person, in the server’s words, and puts their real profile back', async () => {
+    mockUpdateProfile.mockRejectedValue({
+      status: 422,
+      kind: 'validation',
+      message: 'The email has already been taken.',
+    });
+    mockGetProfile.mockResolvedValue({ data: { data: { id: 'user-a', email: 'mine@example.com' } } });
+    enqueueMutation(profileEdit().offline);
+
+    await flushMutationQueue();
+
+    expect(pending()).toHaveLength(0);
+    expect(toasts()).toHaveLength(1);
+    expect(toasts()[0].variant).toBe('error');
+    expect(toasts()[0].message).toBe(
+      'Your profile change wasn’t saved. The email has already been taken.',
+    );
+    // The optimistic email lives in authStore, out of the query cache's reach.
+    expect(mockSetUser).toHaveBeenCalledWith({ id: 'user-a', email: 'mine@example.com' });
+  });
+
+  it('still announces it when the profile re-read fails', async () => {
+    mockUpdateProfile.mockRejectedValue({ status: 422, kind: 'validation', message: 'Nope.' });
+    mockGetProfile.mockRejectedValue({ status: 0, kind: 'offline' });
+    enqueueMutation(profileEdit().offline);
+
+    await flushMutationQueue();
+
+    expect(toasts()[0]?.message).toBe('Your profile change wasn’t saved. Nope.');
+  });
+
+  it('drops a refused checklist tick quietly — the errand closed, nothing to explain', async () => {
+    mockUpdateChecklistTicks.mockRejectedValue({ status: 422, message: 'Errand closed.' });
+    enqueueMutation(
+      queueable('runner.updateChecklistTicks', { bookingId: 'bk-1', items: [] }).offline,
+    );
+
+    await flushMutationQueue();
+
+    expect(pending()).toHaveLength(0);
+    expect(toasts()).toHaveLength(0);
+  });
+
+  it('a successful replay says nothing', async () => {
+    mockUpdateProfile.mockResolvedValue({ data: {} });
+    enqueueMutation(profileEdit().offline);
+
+    await flushMutationQueue();
+
+    expect(toasts()).toHaveLength(0);
+    expect(mockSetUser).not.toHaveBeenCalled();
   });
 });

@@ -703,7 +703,7 @@ export default function RunnerProfileScreen() {
       <DeleteAccountSheet
         visible={showDeleteModal}
         onClose={() => setShowDeleteModal(false)}
-        description="This can't be undone. Your profile, documents, earnings history and errand history will be permanently removed."
+        description="This can't be undone. Your name, contact details, ID documents, selfie and payout details are deleted. Records of past errands, earnings and payouts are kept without your name, email or phone number, because the law requires us to keep financial records."
         allowBank
         onDeleted={onAccountDeleted}
       />

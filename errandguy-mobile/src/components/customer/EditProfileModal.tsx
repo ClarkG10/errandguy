@@ -13,6 +13,7 @@ import { toast } from '../../stores/toastStore';
 import { runOptimistic } from '../../utils/optimistic';
 import { errorMessage } from '../../utils/errorCatalog';
 import { haptics } from '../../utils/haptics';
+import { isPhMobile, toPhMobileE164 } from '../../utils/phone';
 import { queueable } from '../../services/mutationQueue';
 import { LightColors } from '../../constants/colors';
 import { copy } from '../../constants/copy';
@@ -27,8 +28,10 @@ export function EditProfileModal({ visible, onClose }: EditProfileModalProps) {
 
   const [fullName, setFullName] = useState(user?.full_name ?? '');
   const [email, setEmail] = useState(user?.email ?? '');
+  const [phone, setPhone] = useState(user?.phone ?? '');
   const [nameError, setNameError] = useState<string | undefined>();
   const [emailError, setEmailError] = useState<string | undefined>();
+  const [phoneError, setPhoneError] = useState<string | undefined>();
   const [avatarPickerVisible, setAvatarPickerVisible] = useState(false);
   const [uploadingAvatar, setUploadingAvatar] = useState(false);
   const [avatarPct, setAvatarPct] = useState<number | null>(null);
@@ -42,8 +45,10 @@ export function EditProfileModal({ visible, onClose }: EditProfileModalProps) {
     if (visible) {
       setFullName(user?.full_name ?? '');
       setEmail(user?.email ?? '');
+      setPhone(user?.phone ?? '');
       setNameError(undefined);
       setEmailError(undefined);
+      setPhoneError(undefined);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [visible]);
@@ -52,7 +57,8 @@ export function EditProfileModal({ visible, onClose }: EditProfileModalProps) {
   // close never routes through a pointless network call.
   const isDirty =
     fullName.trim() !== (user?.full_name ?? '') ||
-    email.trim() !== (user?.email ?? '');
+    email.trim() !== (user?.email ?? '') ||
+    phone.trim() !== (user?.phone ?? '');
 
   const handleSave = async () => {
     let valid = true;
@@ -64,9 +70,17 @@ export function EditProfileModal({ visible, onClose }: EditProfileModalProps) {
       setEmailError('Enter a valid email address');
       valid = false;
     }
+    // Same rule as the runner's edit screen: the server only takes a PH mobile
+    // number (09…, +63 9…), and the service sends it as +639XXXXXXXXX.
+    if (phone.trim() && !isPhMobile(phone.trim())) {
+      setPhoneError('Enter a valid PH mobile number, e.g. 0917 123 4567');
+      valid = false;
+    }
     if (!valid) return;
     const nextName = fullName.trim();
     const nextEmail = email.trim();
+    // The shape the server stores it in, so the profile shows what it will hold.
+    const nextPhone = phone.trim() ? toPhMobileE164(phone.trim()) : null;
     // Snapshot for rollback (this modal is layered over the profile tab and
     // does NOT re-fire the tab's focus-refresh on close, so there's no
     // server-read race to clobber the optimistic value).
@@ -76,16 +90,35 @@ export function EditProfileModal({ visible, onClose }: EditProfileModalProps) {
     // server keeps the old value. Omit it from the optimistic patch too (rather
     // than setting email:null) so the UI never shows a removal the server will
     // silently revert on the next focus-refresh. A single shared patch keeps
-    // apply and commit consistent.
-    const patch = { full_name: nextName, ...(nextEmail ? { email: nextEmail } : {}) };
+    // apply and commit consistent. The phone works the same way.
+    const patch = {
+      full_name: nextName,
+      ...(nextEmail ? { email: nextEmail } : {}),
+      ...(nextPhone ? { phone: nextPhone } : {}),
+    };
+    // A changed email/phone is unverified until confirmed again — the server
+    // clears the flag on save, so clear it here too, or the green "verified"
+    // tick sits on the new, unconfirmed address until the next refresh.
+    const verifiedPatch = {
+      ...(nextEmail && nextEmail !== (prev?.email ?? '') ? { email_verified: false } : {}),
+      ...(nextPhone && nextPhone !== (prev?.phone ?? '') ? { phone_verified: false } : {}),
+    };
     const q = queueable('user.updateProfile', patch, { dedupeKey: 'user-profile' });
     await runOptimistic({
       apply: () => {
-        updateProfile(patch);
+        updateProfile({ ...patch, ...verifiedPatch });
         onClose(); // instant — the profile reflects the change immediately
       },
       rollback: () => {
-        if (prev) updateProfile({ full_name: prev.full_name, email: prev.email ?? null });
+        if (prev) {
+          updateProfile({
+            full_name: prev.full_name,
+            email: prev.email ?? null,
+            phone: prev.phone ?? null,
+            email_verified: prev.email_verified,
+            phone_verified: prev.phone_verified,
+          });
+        }
       },
       commit: q.commit,
       offline: q.offline,
@@ -227,6 +260,20 @@ export function EditProfileModal({ visible, onClose }: EditProfileModalProps) {
                 autoCorrect={false}
                 autoComplete="email"
                 textContentType="emailAddress"
+              />
+              <Input
+                label="Phone Number (optional)"
+                value={phone}
+                onChangeText={(v) => {
+                  setPhone(v);
+                  setPhoneError(undefined);
+                }}
+                placeholder="09XX XXX XXXX"
+                error={phoneError}
+                keyboardType="phone-pad"
+                maxLength={13}
+                autoComplete="tel"
+                textContentType="telephoneNumber"
               />
 
               <View className="mt-4">

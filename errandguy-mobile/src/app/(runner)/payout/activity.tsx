@@ -220,8 +220,8 @@ export default function WalletActivityScreen() {
             </Card>
           ) : page1Failed ? (
             <ErrorState
+              error={page1Q.error}
               title="Couldn't load your wallet activity"
-              description="Check your connection and try again."
               onRetry={() => page1Q.refresh()}
             />
           ) : (

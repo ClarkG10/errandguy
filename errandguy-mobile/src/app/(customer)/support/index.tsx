@@ -17,11 +17,7 @@ import { Plus, X, ChevronRight, Headphones, Link2 } from 'lucide-react-native';
 import { useQuery } from '../../../hooks/useQuery';
 import { CacheTTL } from '../../../services/cache.service';
 import { useAuthStore } from '../../../stores/authStore';
-import {
-  supportService,
-  type SupportTicket,
-  type SupportTicketStatus,
-} from '../../../services/support.service';
+import { supportService, type SupportTicket } from '../../../services/support.service';
 import { GradientHeader } from '../../../components/ui/GradientHeader';
 import { Badge } from '../../../components/ui/Badge';
 import { Button } from '../../../components/ui/Button';
@@ -38,23 +34,12 @@ import { errorMessage } from '../../../utils/errorCatalog';
 import { copy } from '../../../constants/copy';
 import { toast } from '../../../stores/toastStore';
 import { storage } from '../../../utils/storage';
+import { supportStatusLabel } from '../../../utils/supportStatus';
 import {
   SUPPORT_CATEGORIES as CATEGORIES,
   composePrefillFromParams,
   type LinkedErrand,
 } from '../../../utils/supportCompose';
-
-// Ticket status → Badge variant + human label. Mirrors the server's
-// SupportTicket status machine (open → pending → resolved/closed).
-const STATUS_META: Record<
-  SupportTicketStatus,
-  { label: string; variant: 'soft' | 'warning' | 'success' | 'neutral' }
-> = {
-  open: { label: 'Open', variant: 'soft' },
-  pending: { label: 'Awaiting reply', variant: 'warning' },
-  resolved: { label: 'Resolved', variant: 'success' },
-  closed: { label: 'Closed', variant: 'neutral' },
-};
 
 /**
  * ── Compose draft ──────────────────────────────────────────────────────────
@@ -376,7 +361,8 @@ export default function SupportTicketsScreen() {
 
   const renderTicket = useCallback(
     ({ item }: { item: SupportTicket }) => {
-      const meta = STATUS_META[item.status] ?? STATUS_META.open;
+      // Whose turn it is, in the person's words (utils/supportStatus).
+      const meta = supportStatusLabel(item.status, item.latest_message?.sender_type);
       // Last message preview — fall back to a plain label for an
       // image-only reply (image_url with null content) so the row is
       // never blank below the subject.
@@ -480,7 +466,7 @@ export default function SupportTicketsScreen() {
   return (
     <View className="flex-1 bg-background">
       <GradientHeader
-        title="Support"
+        title="Support tickets"
         showBack
         fallbackHref="/(customer)/help"
       />
@@ -505,7 +491,7 @@ export default function SupportTicketsScreen() {
           ) : failed ? (
             <ErrorState
               title="Couldn't load your tickets"
-              description="Check your connection and try again."
+              error={ticketsQ.error}
               onRetry={() => ticketsQ.refresh()}
             />
           ) : (

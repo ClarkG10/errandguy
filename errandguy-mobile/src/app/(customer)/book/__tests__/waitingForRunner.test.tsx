@@ -5,6 +5,7 @@ import ConfirmScreen, { STILL_LOOKING_AFTER_MS } from '../confirm';
 import { useBookingStore } from '../../../../stores/bookingStore';
 import { bookingService } from '../../../../services/booking.service';
 import { useToastStore } from '../../../../stores/toastStore';
+import { turnOnPush } from '../../../../services/pushPermission';
 import { makeBooking } from '../../../../__mocks__/factories';
 import type { Booking, BookingStatus } from '../../../../types';
 
@@ -39,6 +40,12 @@ jest.mock('../../../../services/booking.service', () => ({
 jest.mock('../../../../hooks/useBookingStatus', () => ({ useBookingStatus: jest.fn() }));
 jest.mock('../../../../hooks/useSmartPolling', () => ({ useSmartPolling: jest.fn() }));
 jest.mock('../../../../hooks/useBackGuard', () => ({ useBackGuard: jest.fn() }));
+// The OS notification permission, as this phone reports it (null = unknown).
+let mockPushPermission: 'granted' | 'denied' | 'undetermined' | null = 'granted';
+jest.mock('../../../../hooks/useNotificationPermission', () => ({
+  useNotificationPermission: () => mockPushPermission,
+}));
+jest.mock('../../../../services/pushPermission', () => ({ turnOnPush: jest.fn() }));
 // jest has no foreground AppState, so the real hook never arms its interval;
 // a plain interval is what it does on a device with the screen showing.
 jest.mock('../../../../hooks/useForegroundInterval', () => ({
@@ -125,6 +132,7 @@ const renderScreen = () =>
 beforeEach(() => {
   jest.useFakeTimers();
   jest.clearAllMocks();
+  mockPushPermission = 'granted';
   (bookingService.getBooking as jest.Mock).mockReset();
   // Default: the re-read agrees with whatever the store holds (an older
   // server — no can_retry_match — so Search again stays on offer).
@@ -219,6 +227,32 @@ describe('waiting for a runner', () => {
  * the catalog's "You already have an errand" — instead of the only way
  * forward, a new booking.
  */
+/**
+ * "You can leave, it keeps searching" is only true for someone who will hear
+ * "runner found" — with notifications off they never do.
+ */
+describe('waiting with notifications off', () => {
+  it.each(['denied', 'undetermined'] as const)('says so when %s, with the fix one tap away', (state) => {
+    mockPushPermission = state;
+    const utils = renderScreen();
+    expect(
+      utils.getByText('Notifications are off. If you leave this screen, we can’t tell you when a runner is found.'),
+    ).toBeTruthy();
+    fireEvent.press(utils.getByText('Turn on notifications'));
+    // The OS prompt while one is left, otherwise the phone's Settings.
+    expect(turnOnPush).toHaveBeenCalledTimes(1);
+  });
+
+  it('stays quiet when notifications are on, or the phone can’t tell', () => {
+    for (const state of ['granted', null] as const) {
+      mockPushPermission = state;
+      const utils = renderScreen();
+      expect(utils.queryByText('Turn on notifications')).toBeNull();
+      utils.unmount();
+    }
+  });
+});
+
 describe('when searching again is off the table', () => {
   it('leads with Book again and says where the money went — no Search again', async () => {
     const { getByText, queryByText } = renderScreen();

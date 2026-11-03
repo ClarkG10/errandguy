@@ -1,19 +1,31 @@
 import React from 'react';
 import { View, Text, StyleSheet, type ViewStyle } from 'react-native';
-import { CloudOff, RefreshCw } from 'lucide-react-native';
+import { AlertCircle, CloudOff, RefreshCw } from 'lucide-react-native';
 import type { LucideIcon } from 'lucide-react-native';
 import { Button } from './Button';
 import { Illustration } from './Illustration';
 import { LightColors } from '../../constants/colors';
+import { describeError } from '../../utils/errorCatalog';
+
+/** Said when nothing more specific is known — it blames nobody. */
+const NEUTRAL_DESCRIPTION = 'Please try again.';
 
 interface ErrorStateProps {
-  /** Lucide icon. Defaults to CloudOff (most load failures are connectivity). */
+  /** Lucide icon. Defaults to CloudOff, or AlertCircle when `error` shows
+   *  the failure wasn't the connection. */
   icon?: LucideIcon;
   /** Full-layout illustration. Defaults to the error-generic artwork;
    *  pass null to fall back to the halo + icon. Ignored in compact mode. */
   illustration?: React.ReactNode | null;
   title?: string;
+  /** Explicit copy. Wins over `error`. */
   description?: string;
+  /**
+   * The load failure (e.g. a useQuery `error`). Its catalogued message
+   * (utils/errorCatalog) becomes the description, so "check your connection"
+   * is only said when it really was the connection.
+   */
+  error?: unknown;
   /** When provided, renders a Retry button that invokes this callback. */
   onRetry?: () => void;
   /** Label for the retry button. Defaults to "Retry". */
@@ -39,16 +51,34 @@ interface ErrorStateProps {
  *               inside a Card or a list section that partially loaded.
  */
 export function ErrorState({
-  icon: Icon = CloudOff,
+  icon,
   illustration = <Illustration name="error-generic" size={168} />,
   title = "Couldn't load this",
-  description = 'Check your internet connection and try again.',
+  description: descriptionProp,
+  error,
   onRetry,
   retryLabel = 'Retry',
   compact = false,
   style,
   testID,
 }: ErrorStateProps) {
+  // The default used to read "Check your internet connection" for EVERY
+  // failure — a 500, a 404 and a refused request included — so people on a
+  // perfectly good connection were told to fix it. Only an api-layer error
+  // (it carries `kind`/`status`) is catalogued; a raw JS exception's message
+  // is developer text, never shown.
+  const apiError =
+    error != null && typeof error === 'object' && ('kind' in error || 'status' in error)
+      ? (error as { kind?: string })
+      : null;
+  const description =
+    descriptionProp ?? (apiError ? describeError(apiError).message : NEUTRAL_DESCRIPTION);
+  const Icon =
+    icon ??
+    (apiError && apiError.kind !== 'offline' && apiError.kind !== 'timeout'
+      ? AlertCircle
+      : CloudOff);
+
   if (compact) {
     return (
       <View style={[s.compactRow, style]} testID={testID}>

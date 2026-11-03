@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   View,
   Text,
+  Pressable,
   StatusBar,
   StyleSheet,
   AppState,
@@ -20,6 +21,8 @@ import { useBackGuard } from '../../../hooks/useBackGuard';
 import { useForegroundInterval } from '../../../hooks/useForegroundInterval';
 import { useSmartPolling } from '../../../hooks/useSmartPolling';
 import { useCompleteBookingPayment } from '../../../hooks/useCompleteBookingPayment';
+import { useNotificationPermission } from '../../../hooks/useNotificationPermission';
+import { turnOnPush } from '../../../services/pushPermission';
 import { bookingService } from '../../../services/booking.service';
 import { errorMessage, LEGACY_WORDED_REFUSALS } from '../../../utils/errorCatalog';
 import { haptics } from '../../../utils/haptics';
@@ -145,6 +148,36 @@ export default function ConfirmScreen() {
     return () => clearTimeout(t);
   }, [state, hasPickup]);
   const showSearchMap = state === 'searching' && hasPickup && !mapExpired;
+
+  // "You can leave, it keeps searching" is only half true with notifications
+  // off: the search goes on, but "runner found" never reaches the customer.
+  // Say so where they wait, with the fix one tap away — the OS prompt while
+  // one is left, otherwise the phone's Settings (turnOnPush).
+  const pushPermission = useNotificationPermission(
+    state === 'searching' || state === 'scheduled',
+  );
+  const notificationsOffLine =
+    pushPermission === 'denied' || pushPermission === 'undetermined' ? (
+      <View className="mt-3 items-center">
+        <Text className="text-xs font-montserrat text-textSecondary text-center">
+          {state === 'scheduled'
+            ? 'Notifications are off, so we can’t tell you when a runner is found.'
+            : 'Notifications are off. If you leave this screen, we can’t tell you when a runner is found.'}
+        </Text>
+        <Pressable
+          onPress={() => {
+            void turnOnPush();
+          }}
+          accessibilityRole="button"
+          hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
+          style={({ pressed }) => (pressed ? { opacity: 0.6 } : null)}
+        >
+          <Text className="text-sm font-montserrat-semi text-primary mt-1">
+            Turn on notifications
+          </Text>
+        </Pressable>
+      </View>
+    ) : null;
 
   // Cold-start / deep-link (e.g. returning from Xendit checkout after the app
   // was killed): the store may hydrate the scheduled booking only after mount,
@@ -747,6 +780,7 @@ export default function ConfirmScreen() {
                   Booking: {bookingNumber}
                 </Text>
               ) : null}
+              {notificationsOffLine}
               <View className="mt-5 w-full">
                 <Button
                   title="Cancel Booking"
@@ -781,6 +815,7 @@ export default function ConfirmScreen() {
                   Booking: {bookingNumber}
                 </Text>
               ) : null}
+              {notificationsOffLine}
               <View className="mt-5 w-full">
                 <Button
                   title="Done"

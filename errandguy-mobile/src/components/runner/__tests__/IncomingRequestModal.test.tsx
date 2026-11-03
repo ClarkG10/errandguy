@@ -1,6 +1,8 @@
 import React from 'react';
+import { Modal } from 'react-native';
 import { render, act, fireEvent } from '@testing-library/react-native';
 import { IncomingRequestModal } from '../IncomingRequestModal';
+import { toast } from '../../../stores/toastStore';
 import { makeBooking } from '../../../__mocks__/factories';
 import type { Booking } from '../../../types';
 
@@ -157,5 +159,91 @@ describe('IncomingRequestModal booked vehicle', () => {
 
     expect(getByText('On-site')).toBeTruthy();
     expect(queryByText('Motorcycle booked')).toBeNull();
+  });
+});
+
+/**
+ * The two money figures on an offer used to sit side by side unlabelled — the
+ * runner's pay and the cash to collect — and Android back declined a paid job.
+ */
+describe('IncomingRequestModal money labels and back button', () => {
+  beforeEach(() => jest.useFakeTimers());
+  afterEach(() => {
+    jest.clearAllTimers();
+    jest.useRealTimers();
+  });
+
+  it('labels the pay "You earn" and the cash chip "Collect from customer"', () => {
+    const { getByText } = render(
+      <IncomingRequestModal
+        booking={matchedOffer({ amount_to_collect: 350, payment_method_type: 'cash' })}
+        onAccept={jest.fn()}
+        onDecline={jest.fn()}
+        onExpire={jest.fn()}
+        timeoutSeconds={90}
+      />,
+    );
+
+    expect(getByText('You earn')).toBeTruthy();
+    expect(getByText('₱210.00')).toBeTruthy();
+    expect(getByText('Collect from customer ₱350.00')).toBeTruthy();
+  });
+
+  it('shows the item budget from the realtime offer on a Buy-for-me errand', () => {
+    const { getByText } = render(
+      <IncomingRequestModal
+        booking={matchedOffer({
+          errand_type: { id: 't-p', name: 'Buy for me', slug: 'purchase' },
+          shopping_budget: 1500,
+          payment_method_type: 'gcash',
+        })}
+        onAccept={jest.fn()}
+        onDecline={jest.fn()}
+        onExpire={jest.fn()}
+        timeoutSeconds={90}
+      />,
+    );
+
+    expect(getByText('₱1,500.00')).toBeTruthy();
+    expect(getByText('Prepaid · GCash')).toBeTruthy();
+  });
+
+  it('Android back does not decline the offer', () => {
+    const onDecline = jest.fn();
+    const onExpire = jest.fn();
+    const { UNSAFE_getByType } = render(
+      <IncomingRequestModal
+        booking={matchedOffer()}
+        onAccept={jest.fn()}
+        onDecline={onDecline}
+        onExpire={onExpire}
+        timeoutSeconds={90}
+      />,
+    );
+
+    act(() => {
+      UNSAFE_getByType(Modal).props.onRequestClose();
+    });
+
+    expect(onDecline).not.toHaveBeenCalled();
+    expect(onExpire).not.toHaveBeenCalled();
+  });
+
+  it('says the offer is no longer available when it lapses — not where it went', () => {
+    const info = jest.spyOn(toast, 'info');
+    render(
+      <IncomingRequestModal
+        booking={matchedOffer()}
+        onAccept={jest.fn()}
+        onDecline={jest.fn()}
+        onExpire={jest.fn()}
+        timeoutSeconds={2}
+      />,
+    );
+
+    tickSeconds(3);
+
+    expect(info).toHaveBeenCalledWith('This offer is no longer available.');
+    info.mockRestore();
   });
 });

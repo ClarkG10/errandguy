@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   View,
   Text,
@@ -10,6 +10,8 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import { LinearGradient } from 'expo-linear-gradient';
 import * as Haptics from 'expo-haptics';
+import * as FileSystem from 'expo-file-system/legacy';
+import * as Sharing from 'expo-sharing';
 import { Wallet, Download, ChevronRight, Clock, Gift } from 'lucide-react-native';
 import { toast } from '../../../stores/toastStore';
 import { useWalletStore } from '../../../stores/walletStore';
@@ -25,11 +27,13 @@ import { ErrorState } from '../../../components/ui/ErrorState';
 import { GradientHeader } from '../../../components/ui/GradientHeader';
 import { SyncIndicator } from '../../../components/ui/SyncIndicator';
 import { Skeleton } from '../../../components/ui/Skeleton';
+import { Spinner } from '../../../components/ui/Spinner';
 import { Eyebrow } from '../../../components/ui/Typography';
 import { BrandRefreshControl } from '../../../components/ui/BrandRefreshControl';
 import { formatCurrency } from '../../../utils/formatCurrency';
 import { formatRelativeTime } from '../../../utils/formatDate';
 import { cashDebtMessage } from '../../../utils/cashDebt';
+import { withdrawMinimum } from '../../../utils/withdrawal';
 import { LightColors, Elevation } from '../../../constants/colors';
 import { ledgerIcon, isLedgerCredit, signedLedgerAmount } from '../../../utils/walletLedger';
 import type { WalletTransaction, WalletTransactionType } from '../../../types';
@@ -39,7 +43,9 @@ import type { WalletTransaction, WalletTransactionType } from '../../../types';
 // instead of hiding rows client-side. `null` = no filter.
 const TX_FILTERS: { key: WalletTransactionType | null; label: string }[] = [
   { key: null, label: 'All' },
-  { key: 'payment', label: 'Payments' },
+  // Only errands paid FROM the wallet are wallet rows; a GCash, Maya or cash
+  // errand never touches it — so "Payments" promised more than it shows.
+  { key: 'payment', label: 'Paid from wallet' },
   { key: 'refund', label: 'Refunds' },
   { key: 'payout', label: 'Withdrawals' },
 ];
@@ -63,28 +69,9 @@ function TransactionsSkeleton() {
   );
 }
 
-/**
- * `expo-file-system` and `expo-sharing` are native modules. If the dev
- * client hasn't been rebuilt since they were added, a static `import`
- * crashes the whole JS bundle at evaluation. We resolve them through an
- * opaque indirection (same guard as ImageLightbox) so Metro can't
- * pre-bundle them and any failure is caught → friendly toast.
- */
-function tryRequire<T = any>(moduleName: string): T | null {
-  try {
-    const req = (globalThis as any).require ?? (() => null);
-    return req(moduleName) as T;
-  } catch {
-    return null;
-  }
-}
-let fileSystemCache: any | null | undefined;
-function getFileSystem(): any | null {
-  if (fileSystemCache !== undefined) return fileSystemCache;
-  // The legacy submodule exposes the imperative writeAsStringAsync + dirs.
-  fileSystemCache = tryRequire('expo-file-system/legacy');
-  return fileSystemCache;
-}
+/** Rows per page of the on-screen history (the server's default page). */
+const TX_PAGE_SIZE = 20;
+const NO_TX: WalletTransaction[] = [];
 
 // RFC-4180-ish escaping: quote fields containing comma / quote / newline.
 const csvCell = (value: string | number | null | undefined): string => {
@@ -187,17 +174,45 @@ export default function WalletScreen() {
   const summaryQ = useWalletSummary();
   const withdrawable = summaryQ.data?.withdrawable ?? null;
   const bonusCredit = summaryQ.data?.bonus_balance ?? 0;
+  // The server's floor — the same figure the withdraw screen checks.
+  const withdrawMin = withdrawMinimum(summaryQ.data);
 
+  // Page 1 is cached via useQuery (cache-first); older pages append on scroll —
+  // the history used to stop at the newest 20 rows, with no way to see more.
+  // Same idiom as the runner's wallet activity screen.
   const txQ = useQuery<WalletTransaction[]>(
     ['wallet', 'transactions', userId, txFilter ?? 'all'],
     async () => {
-      const r = await paymentService.getWalletTransactions(
-        txFilter ? { type: txFilter } : undefined,
-      );
+      const r = await paymentService.getWalletTransactions({
+        page: 1,
+        per_page: TX_PAGE_SIZE,
+        ...(txFilter ? { type: txFilter } : {}),
+      });
       return (r.data.data ?? []) as WalletTransaction[];
     },
     { staleTime: 30_000, ttl: CacheTTL.MEDIUM },
   );
+  const [extraPages, setExtraPages] = useState<WalletTransaction[]>([]);
+  const [txPage, setTxPage] = useState(1);
+  const [hasMore, setHasMore] = useState(true);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [loadMoreFailed, setLoadMoreFailed] = useState(false);
+
+  // A new filter (or a pull-to-refresh) starts over at page 1, and a page
+  // still loading from before is ignored when it lands — see fetchNextTxPage.
+  const txFilterRef = useRef(txFilter);
+  txFilterRef.current = txFilter;
+  const txPagingGen = useRef(0);
+  useEffect(() => {
+    txPagingGen.current += 1;
+    setExtraPages([]);
+    setTxPage(1);
+    setHasMore(true);
+    setLoadMoreFailed(false);
+  }, [txFilter]);
+  useEffect(() => {
+    if (txQ.data && txPage === 1) setHasMore(txQ.data.length >= TX_PAGE_SIZE);
+  }, [txQ.data, txPage]);
 
   // Mirror into the store so other components reading from the store stay
   // in sync (e.g., header balance pill). Only the UNFILTERED list mirrors —
@@ -216,9 +231,40 @@ export default function WalletScreen() {
 
   const onRefresh = useCallback(async () => {
     setRefreshing(true);
+    txPagingGen.current += 1;
+    setExtraPages([]);
+    setTxPage(1);
+    setHasMore(true);
+    setLoadMoreFailed(false);
     await Promise.all([balanceQ.refresh(), summaryQ.refresh(), txQ.refresh()]);
     setRefreshing(false);
   }, [balanceQ, summaryQ, txQ]);
+
+  const fetchNextTxPage = useCallback(async () => {
+    setLoadingMore(true);
+    setLoadMoreFailed(false);
+    const nextPage = txPage + 1;
+    const forFilter = txFilter;
+    const gen = txPagingGen.current;
+    const stale = () => txFilterRef.current !== forFilter || txPagingGen.current !== gen;
+    try {
+      const r = await paymentService.getWalletTransactions({
+        page: nextPage,
+        per_page: TX_PAGE_SIZE,
+        ...(forFilter ? { type: forFilter } : {}),
+      });
+      if (stale()) return;
+      const data = (r.data?.data ?? []) as WalletTransaction[];
+      setExtraPages((prev) => [...prev, ...data]);
+      setTxPage(nextPage);
+      setHasMore(data.length >= TX_PAGE_SIZE);
+    } catch {
+      // Inline retry in the footer — a list that silently stops is confusing.
+      if (!stale()) setLoadMoreFailed(true);
+    } finally {
+      setLoadingMore(false);
+    }
+  }, [txPage, txFilter]);
 
   const openWithdraw = useCallback(() => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
@@ -236,10 +282,27 @@ export default function WalletScreen() {
   const [exporting, setExporting] = useState(false);
 
   // List source: the query result for the active filter; the store copy
-  // backs the unfiltered view so cached data paints instantly.
-  const txList = txFilter ? txQ.data ?? [] : txQ.data ?? transactions;
+  // backs the unfiltered view so cached data paints instantly. Older pages
+  // follow, de-duplicated across every page — a row that arrives between two
+  // page loads shifts the server's pages by one.
+  const page1 = txFilter ? txQ.data ?? NO_TX : txQ.data ?? transactions;
+  const txList = useMemo(() => {
+    if (!extraPages.length) return page1;
+    const seen = new Set(page1.map((t) => t.id));
+    const older = extraPages.filter((t) => {
+      if (seen.has(t.id)) return false;
+      seen.add(t.id);
+      return true;
+    });
+    return [...page1, ...older];
+  }, [page1, extraPages]);
   const txInitialLoading = txQ.loading && !txQ.data;
   const txFailed = !!txQ.error && !txQ.data;
+
+  const onEndReached = useCallback(() => {
+    if (!hasMore || loadingMore || loadMoreFailed || !txQ.data) return;
+    void fetchNextTxPage();
+  }, [hasMore, loadingMore, loadMoreFailed, txQ.data, fetchNextTxPage]);
 
   // Group wallet transactions into date buckets so customers can scan
   // for a specific transaction without scrolling through a flat list.
@@ -269,17 +332,12 @@ export default function WalletScreen() {
 
   // Export the loaded transactions as a CSV. Mirrors the ImageLightbox
   // download pattern: write into the app sandbox via expo-file-system,
-  // then hand the file to the native share sheet (expo-sharing when it's
-  // linked — it attaches the file on both platforms — otherwise RN Share).
+  // then hand the file to the native share sheet (expo-sharing — it attaches
+  // the file on both platforms — or RN Share where sharing isn't available).
   const handleExport = useCallback(async () => {
     if (exporting) return;
     if (!txList.length) {
       toast.info('No transactions to export yet');
-      return;
-    }
-    const FileSystem = getFileSystem();
-    if (!FileSystem) {
-      toast.error('Export unavailable. Please rebuild the app to enable it.');
       return;
     }
     setExporting(true);
@@ -288,7 +346,7 @@ export default function WalletScreen() {
 
       // Export the WHOLE history, not the page on screen.
       //
-      // The list fetches one server page (20 rows), so this used to hand over
+      // The list fetched one server page (20 rows), so this used to hand over
       // a CSV of the 20 most recent transactions named
       // "errandguy-transactions-<date>.csv" — a file that looks like a complete
       // record and silently isn't. A short on-screen list is visibly short; an
@@ -309,8 +367,7 @@ export default function WalletScreen() {
       const fileUri = `${FileSystem.cacheDirectory}errandguy-transactions-${stamp}.csv`;
       await FileSystem.writeAsStringAsync(fileUri, csv);
 
-      const Sharing = tryRequire('expo-sharing');
-      if (Sharing?.shareAsync && (await Sharing.isAvailableAsync())) {
+      if (await Sharing.isAvailableAsync()) {
         await Sharing.shareAsync(fileUri, {
           mimeType: 'text/csv',
           dialogTitle: 'Export transactions',
@@ -372,9 +429,10 @@ export default function WalletScreen() {
           />
         </View>
         <View className="flex-1 ml-3">
+          {/* Two lines, so the errand number at the end is never cut off. */}
           <Text
             className="text-[14px] font-montserrat-bold text-textPrimary"
-            numberOfLines={1}
+            numberOfLines={2}
           >
             {item.display_description ?? item.description ?? item.type.replace('_', ' ')}
           </Text>
@@ -509,7 +567,7 @@ export default function WalletScreen() {
                 <ErrorState
                   compact
                   title="Couldn't load your balance"
-                  description="Check your connection and retry."
+                  error={balanceQ.error}
                   onRetry={() => balanceQ.refresh()}
                 />
               </View>
@@ -549,9 +607,13 @@ export default function WalletScreen() {
               >
                 {formatCurrency(numericBalance)}
               </Text>
+              {/* Under the server's minimum nothing can go out yet, so say what
+                  it takes rather than offering an amount that would be refused. */}
               {withdrawable != null ? (
                 <Text className="text-[11px] font-montserrat text-white/85 mt-1.5">
-                  {formatCurrency(withdrawable)} can be withdrawn to GCash or Maya
+                  {withdrawable >= withdrawMin
+                    ? `${formatCurrency(withdrawable)} can be withdrawn to GCash or Maya`
+                    : `You can withdraw to GCash or Maya once you have ${formatCurrency(withdrawMin)} or more`}
                 </Text>
               ) : null}
               {/* Credit left from the retired referral program: it pays for
@@ -742,13 +804,43 @@ export default function WalletScreen() {
         maxToRenderPerBatch={10}
         windowSize={5}
         removeClippedSubviews={true}
+        onEndReached={onEndReached}
+        onEndReachedThreshold={0.3}
+        ListFooterComponent={
+          loadingMore ? (
+            <View className="py-5 items-center">
+              <Spinner size="small" />
+            </View>
+          ) : loadMoreFailed ? (
+            <View className="py-5 items-center">
+              <Text className="text-[12px] font-montserrat text-textSecondary mb-2">
+                Couldn’t load more transactions.
+              </Text>
+              <Pressable
+                onPress={() => void fetchNextTxPage()}
+                hitSlop={12}
+                accessibilityRole="button"
+                accessibilityLabel="Retry loading more transactions"
+              >
+                <Text className="text-[12px] font-montserrat-bold text-primary">Try again</Text>
+              </Pressable>
+            </View>
+          ) : !hasMore && txList.length > 0 ? (
+            <Text
+              className="text-[11px] font-montserrat text-center py-5"
+              style={{ color: LightColors.textMuted }}
+            >
+              That’s your full wallet history.
+            </Text>
+          ) : null
+        }
         ListEmptyComponent={
           txInitialLoading ? (
             <TransactionsSkeleton />
           ) : txFailed ? (
             <ErrorState
               title="Couldn't load transactions"
-              description="Check your connection and try again."
+              error={txQ.error}
               onRetry={() => txQ.refresh()}
             />
           ) : (

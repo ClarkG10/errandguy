@@ -4,12 +4,52 @@ import { AlertCircle } from 'lucide-react-native';
 import { ErrorState } from '../ErrorState';
 
 describe('ErrorState', () => {
-  it('renders the default title and description', () => {
-    const { getByText } = render(<ErrorState />);
+  it('renders the default title and a description that blames nobody', () => {
+    const { getByText, queryByText } = render(<ErrorState />);
     expect(getByText("Couldn't load this")).toBeTruthy();
-    expect(
-      getByText('Check your internet connection and try again.'),
-    ).toBeTruthy();
+    expect(getByText('Please try again.')).toBeTruthy();
+    // A 500 or a 404 is not the person's connection.
+    expect(queryByText(/connection/i)).toBeNull();
+  });
+
+  it('says "check your connection" only when the error was the connection', () => {
+    const offline = render(
+      <ErrorState error={{ status: 0, kind: 'offline', message: 'Network Error' }} />,
+    );
+    expect(offline.getByText('Check your connection and try again.')).toBeTruthy();
+
+    const server = render(
+      <ErrorState error={{ status: 500, kind: 'server', message: 'Server Error' }} />,
+    );
+    expect(server.getByText("This one's on us — please try again in a moment.")).toBeTruthy();
+    expect(server.queryByText(/connection/i)).toBeNull();
+  });
+
+  it('shows the server-worded reason for a specific refusal', () => {
+    const { getByText } = render(
+      <ErrorState
+        error={{ status: 403, kind: 'forbidden', message: 'This ticket is not yours.' }}
+      />,
+    );
+    expect(getByText('This ticket is not yours.')).toBeTruthy();
+  });
+
+  it('never shows a raw JS exception message', () => {
+    const { getByText, queryByText } = render(
+      <ErrorState error={new TypeError("Cannot read properties of undefined (reading 'id')")} />,
+    );
+    expect(getByText('Please try again.')).toBeTruthy();
+    expect(queryByText(/Cannot read/)).toBeNull();
+  });
+
+  it('keeps an explicit description over the error', () => {
+    const { getByText } = render(
+      <ErrorState
+        description="Pull down to try again."
+        error={{ status: 0, kind: 'offline', message: 'Network Error' }}
+      />,
+    );
+    expect(getByText('Pull down to try again.')).toBeTruthy();
   });
 
   it('renders a custom title and description', () => {

@@ -292,6 +292,7 @@ export function ConversationList({ chatHrefPrefix, fallbackHref }: Props) {
             <ChatInboxSkeleton />
           ) : conversationsQ.error ? (
             <ErrorState
+              error={conversationsQ.error}
               title="Couldn't load messages"
               onRetry={() => conversationsQ.refresh()}
             />

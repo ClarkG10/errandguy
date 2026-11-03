@@ -12,6 +12,7 @@ import {
   KeyboardAvoidingView,
   Linking,
   AppState,
+  Switch,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -38,8 +39,12 @@ import {
   Pencil,
   RefreshCw,
   AlertTriangle,
+  CheckCircle2,
+  Circle,
 } from 'lucide-react-native';
 import { VerificationBanner } from '../../../components/runner/VerificationBanner';
+import { earnedLabel } from '../../../components/runner/errandEarnings';
+import { useKeepAwakeWhile } from '../../../hooks/useKeepAwakeWhile';
 import { ShiftSummarySheet } from '../../../components/runner/ShiftSummarySheet';
 import { offerExpiresAt, readAcceptDeadline } from '../../../components/runner/offerMeta';
 import { ActiveRunnerErrandCard } from '../../../components/runner/ActiveRunnerErrandCard';
@@ -62,7 +67,6 @@ import { useNetworkStore } from '../../../stores/networkStore';
 import { useNotificationStore } from '../../../stores/notificationStore';
 import { runnerService } from '../../../services/runner.service';
 import { formatCurrency } from '../../../utils/formatCurrency';
-import { formatRunnerPayout } from '../../../utils/runnerPayout';
 import { formatRelativeTime } from '../../../utils/formatDate';
 import { formatDistanceKm } from '../../../utils/formatDistance';
 import { storage } from '../../../utils/storage';
@@ -91,6 +95,14 @@ import { prefetchDemand } from '../../../services/preload.service';
 
 /** Whole-peso display for the goal progress line — "₱650 of ₱1,000". */
 const pesos = (v: number) => `₱${Math.round(v).toLocaleString('en-PH')}`;
+
+/** Same names the vehicle settings screen uses. */
+const VEHICLE_NAMES: Record<string, string> = {
+  walk: 'Walking',
+  bicycle: 'Bicycle',
+  motorcycle: 'Motorcycle',
+  car: 'Car',
+};
 
 /**
  * Shape of GET /runner/peak-hours `data` — mirrors PeakHoursData in demand.tsx.
@@ -645,6 +657,36 @@ export default function RunnerHomeScreen() {
     setGoalModalVisible(false);
   }, [goalStorageKey]);
 
+  // ── Keep the screen on while waiting ───────────────────────────────────
+  // Location only streams while ErrandGuy is open (no background location by
+  // design), so a phone that auto-locks after 30s quietly ends a shift: 15
+  // minutes later matching stops seeing the runner, with nothing on screen to
+  // say so. Holding the display while online and idle keeps them reachable.
+  // On by default; the switch below is remembered per account for a runner
+  // who would rather save the battery.
+  const keepAwakeKey = useMemo(() => `@eg_runner_keep_awake:${userId}`, [userId]);
+  const [keepAwakeWaiting, setKeepAwakeWaiting] = useState(true);
+  useEffect(() => {
+    let mounted = true;
+    storage
+      .get(keepAwakeKey)
+      .then((v) => {
+        if (mounted) setKeepAwakeWaiting(v !== 'off');
+      })
+      .catch(() => {});
+    return () => {
+      mounted = false;
+    };
+  }, [keepAwakeKey]);
+  const toggleKeepAwake = useCallback(() => {
+    Haptics.selectionAsync().catch(() => {});
+    const next = !keepAwakeWaiting;
+    setKeepAwakeWaiting(next);
+    storage.set(keepAwakeKey, next ? 'on' : 'off').catch(() => {});
+  }, [keepAwakeKey, keepAwakeWaiting]);
+  // Own tag, so it can never release the cockpit's hold during a job.
+  useKeepAwakeWhile(isOnline && !activeErrand && keepAwakeWaiting, 'runner-home-waiting');
+
   const initialLoading =
     enabled && profileQ.loading && historyQ.loading && !profileQ.data && !historyQ.data;
 
@@ -663,6 +705,15 @@ export default function RunnerHomeScreen() {
 
   const handleToggleOnline = async (value: boolean) => {
     if (togglingOnline) return;
+    // The server refuses to switch a runner off mid-errand. The button used to
+    // flip to OFFLINE anyway, then snap back with that refusal and a Retry
+    // that could only fail again. It is shown locked while a job is live, and
+    // a tap says why instead of calling the server.
+    if (!value && activeErrand) {
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning).catch(() => {});
+      toast.info('Finish your errand first. You can go offline after.');
+      return;
+    }
     // Raw Pressable — medium impact acknowledges the press instantly;
     // the outcome haptics below confirm or reject once the server answers.
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => {});
@@ -714,11 +765,16 @@ export default function RunnerHomeScreen() {
         router.push('/(runner)/settings/documents' as any);
         return;
       }
-      if (cachedProfile && (!cachedProfile.preferred_types || cachedProfile.preferred_types.length === 0)) {
-        toast.warning(
-          'Pick at least one errand type you\u2019d like to receive before going online.',
-        );
-        router.push('/(runner)/settings/preferred-types' as any);
+      // No vehicle on file: the server refuses — but only AFTER a
+      // high-accuracy GPS wait below, so a new runner's first GO cost a long
+      // spin and then a detour anyway. Ask first. (No errand-type check: an
+      // empty list means "every type" to matching.) Either copy knowing a
+      // vehicle is enough: the store has it the moment the vehicle screen
+      // saves, the query a beat later — the server still has the last word.
+      if (cachedProfile && !cachedProfile.vehicle_type && !runnerProfile?.vehicle_type) {
+        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning).catch(() => {});
+        toast.warning('Add your vehicle before going online, so we can send you errands it can do.');
+        router.push('/(runner)/settings/vehicle' as any);
         return;
       }
     }
@@ -859,7 +915,80 @@ export default function RunnerHomeScreen() {
     if (!Number.isFinite(owed) || typeof message !== 'string' || !message) return null;
     return { owed, message };
   })();
+  // The heads-up BEFORE that block (owing ≥80% of the ceiling), so a runner
+  // can take a prepaid errand while cash work still flows. Same tolerant read;
+  // never shown alongside the block itself.
+  const cashDebtWarning = (() => {
+    if (cashDebtBlock) return null;
+    const raw = (profileQ.data ?? runnerProfile)?.cash_debt_warning;
+    if (!raw || typeof raw !== 'object') return null;
+    const owed = Number((raw as any).owed);
+    const message = (raw as any).message;
+    if (!Number.isFinite(owed) || typeof message !== 'string' || !message) return null;
+    return { owed, message };
+  })();
   const firstName = user?.full_name?.split(' ')[0] ?? 'Runner';
+
+  // ── "Before your first shift" ──────────────────────────────────────────
+  // What a runner waiting on approval can already do, so approval day starts
+  // with GO instead of three detours (errand types, a long GPS wait, then
+  // "add your vehicle"). Read off the same self profile; documents only ride
+  // the full profile fetch, so that row hides until they've loaded.
+  const setupProfile = profileQ.data ?? runnerProfile;
+  const setupDocs: { document_type?: string; status?: string }[] | null = Array.isArray(
+    setupProfile?.documents,
+  )
+    ? setupProfile.documents
+    : null;
+  const requiredDocs = ['government_id', 'selfie'];
+  const docsRejected =
+    !!setupDocs &&
+    requiredDocs.some((t) =>
+      setupDocs.some((d) => d.document_type === t && d.status === 'rejected'),
+    );
+  const docsSent =
+    !!setupDocs &&
+    requiredDocs.every((t) =>
+      setupDocs.some((d) => d.document_type === t && d.status !== 'rejected'),
+    );
+  const setupVehicle: string | null = setupProfile?.vehicle_type ?? null;
+  const setupTypes: string[] = Array.isArray(setupProfile?.preferred_types)
+    ? setupProfile.preferred_types
+    : [];
+  const firstShiftSteps = [
+    ...(setupDocs
+      ? [
+          {
+            key: 'documents',
+            label: 'Documents',
+            done: docsSent && !docsRejected,
+            hint: docsRejected
+              ? 'One needs uploading again'
+              : docsSent
+              ? 'Sent · we’re checking them'
+              : 'Upload your ID and a selfie',
+            route: '/(runner)/settings/documents',
+          },
+        ]
+      : []),
+    {
+      key: 'vehicle',
+      label: 'Vehicle',
+      done: !!setupVehicle,
+      hint: setupVehicle
+        ? VEHICLE_NAMES[setupVehicle] ?? setupVehicle
+        : 'Choose what you’ll use',
+      route: '/(runner)/settings/vehicle',
+    },
+    {
+      key: 'types',
+      label: 'Errand types',
+      // Nothing to do here: an empty list means every type.
+      done: true,
+      hint: setupTypes.length > 0 ? `${setupTypes.length} selected` : 'All errand types',
+      route: '/(runner)/settings/preferred-types',
+    },
+  ];
 
   if (initialLoading) {
     return (
@@ -902,8 +1031,13 @@ export default function RunnerHomeScreen() {
     (pingStale ||
       (neverPinged && isServerLocationStale(profileQ.data?.last_location_at)));
 
+  // Going offline is refused while an errand is live; the button shows it.
+  const offlineLocked = isOnline && !!activeErrand;
+
   const statusCaption = !canGoOnline
     ? 'Verification required'
+    : offlineLocked
+    ? 'On an errand · you can go offline once it’s done'
     : isOnline && locationPinging && (dispatchStale || neverPinged)
     ? 'Reconnecting your location…'
     : isOnline && dispatchStale
@@ -1054,6 +1188,7 @@ export default function RunnerHomeScreen() {
                       // affordance on a legible white inset instead of a
                       // misleading ₱0.00.
                       <ErrorState
+                        error={earningsTodayQ.error}
                         compact
                         onRetry={onRefresh}
                         title="Couldn't load your earnings"
@@ -1138,10 +1273,13 @@ export default function RunnerHomeScreen() {
                         disabled={togglingOnline}
                         hitSlop={10}
                         accessibilityRole="button"
-                        accessibilityState={{ busy: togglingOnline }}
+                        // Locked (not dead) mid-errand: the tap explains why.
+                        accessibilityState={{ busy: togglingOnline, disabled: offlineLocked }}
                         accessibilityLabel={
                           !canGoOnline
                             ? 'Verification required'
+                            : offlineLocked
+                            ? 'Online. You can go offline once your errand is done'
                             : isOnline
                             ? 'Go offline'
                             : 'Go online'
@@ -1157,7 +1295,7 @@ export default function RunnerHomeScreen() {
                             : 'rgba(255,255,255,0.14)',
                           borderWidth: !canGoOnline ? 0 : isOnline ? 0 : 1.5,
                           borderColor: 'rgba(255,255,255,0.6)',
-                          opacity: togglingOnline ? 0.7 : 1,
+                          opacity: togglingOnline || offlineLocked ? 0.7 : 1,
                         }}
                       >
                         <Power
@@ -1329,6 +1467,47 @@ export default function RunnerHomeScreen() {
             />
           </View>
         )}
+        {!canGoOnline && (
+          <View className="px-5 mb-2">
+            <Text
+              className="text-[10px] font-montserrat-bold uppercase text-textSecondary mb-2"
+              style={{ letterSpacing: 1.4 }}
+            >
+              Before your first shift
+            </Text>
+            <View className="bg-surface rounded-2xl border border-divider">
+              {firstShiftSteps.map((step, idx) => (
+                <Pressable
+                  key={step.key}
+                  onPress={() => router.push(step.route as any)}
+                  accessibilityRole="button"
+                  accessibilityLabel={`${step.label}, ${step.done ? 'done' : 'to do'}. ${step.hint}`}
+                  className="flex-row items-center px-4 py-3.5"
+                  style={
+                    idx < firstShiftSteps.length - 1
+                      ? { borderBottomWidth: 1, borderBottomColor: LightColors.divider }
+                      : undefined
+                  }
+                >
+                  {step.done ? (
+                    <CheckCircle2 size={18} color={LightColors.success} strokeWidth={2.2} />
+                  ) : (
+                    <Circle size={18} color={LightColors.textMuted} strokeWidth={2} />
+                  )}
+                  <View className="flex-1 ml-3">
+                    <Text className="text-[13px] font-montserrat-bold text-textPrimary">
+                      {step.label}
+                    </Text>
+                    <Text className="text-[11px] font-montserrat text-textSecondary mt-0.5">
+                      {step.hint}
+                    </Text>
+                  </View>
+                  <ChevronRight size={14} color={LightColors.textMuted} />
+                </Pressable>
+              ))}
+            </View>
+          </View>
+        )}
 
         {/* Cash-debt block. The server stops offering CASH errands and refuses
             them at accept once unsettled commission passes
@@ -1361,6 +1540,31 @@ export default function RunnerHomeScreen() {
             </Text>
           </View>
         )}
+        {cashDebtWarning && (
+          <View className="mx-5 -mt-3 mb-4 bg-warning/10 border border-warning/30 rounded-2xl px-4 py-3">
+            <View className="flex-row items-center mb-1">
+              <AlertTriangle size={14} color={LightColors.warningDark} strokeWidth={2.4} />
+              <Text
+                className="ml-1.5 text-[12px] font-montserrat-bold text-warningDark"
+                maxFontSizeMultiplier={1.3}
+              >
+                Close to the cash limit — ₱
+                {Number(cashDebtWarning.owed).toLocaleString('en-PH', {
+                  minimumFractionDigits: 2,
+                  maximumFractionDigits: 2,
+                })}{' '}
+                owed
+              </Text>
+            </View>
+            <Text
+              className="text-[11px] font-montserrat text-textSecondary"
+              style={{ lineHeight: 16 }}
+              maxFontSizeMultiplier={1.3}
+            >
+              {cashDebtWarning.message}
+            </Text>
+          </View>
+        )}
 
         {/* Location permission nudge — only when needed and only when
             verified (otherwise verification banner is the priority). */}
@@ -1371,12 +1575,12 @@ export default function RunnerHomeScreen() {
                 Turn on location
               </Text>
               <Text className="text-[11px] font-montserrat text-textSecondary mt-0.5">
-                Customers can&apos;t see you on the map without it.
+                Without it you can&apos;t go online or get errands.
               </Text>
             </View>
             <Pressable
               onPress={async () => {
-                const ok = await ensureLocationPermission({ feature: 'appear on the map for customers' });
+                const ok = await ensureLocationPermission({ feature: 'go online and receive errands' });
                 setLocationGranted(ok);
               }}
               accessibilityRole="button"
@@ -1472,6 +1676,30 @@ export default function RunnerHomeScreen() {
                 After 30 minutes without your location, we switch you offline.
               </Text>
             ) : null}
+            {isOnline ? (
+              <Pressable
+                onPress={toggleKeepAwake}
+                accessibilityRole="switch"
+                accessibilityLabel="Keep screen on while waiting"
+                accessibilityHint="Stops your phone locking, so offers keep reaching you"
+                accessibilityState={{ checked: keepAwakeWaiting }}
+                hitSlop={6}
+                className="flex-row items-center mt-3"
+              >
+                <Text className="text-[12px] font-montserrat-semi text-textSecondary mr-2">
+                  Keep screen on while waiting
+                </Text>
+                {/* Visual only — the row owns the touch + a11y, as in
+                    Appearance settings. */}
+                <View pointerEvents="none" importantForAccessibility="no-hide-descendants">
+                  <Switch
+                    value={keepAwakeWaiting}
+                    trackColor={{ false: LightColors.dividerStrong, true: LightColors.primaryMuted }}
+                    thumbColor={keepAwakeWaiting ? LightColors.primary : LightColors.surface}
+                  />
+                </View>
+              </Pressable>
+            ) : null}
             {/* Softer live-demand hint while online + idle: when the next busy
                 slot is known, point to it so a quiet spell still feels
                 actionable. Neutral chrome (bg-surfaceMuted, blue glyph) — this
@@ -1500,7 +1728,7 @@ export default function RunnerHomeScreen() {
             Lifetime
           </Text>
           {lifetimeFailed ? (
-            <ErrorState compact onRetry={onRefresh} title="Couldn't load your stats" />
+            <ErrorState error={profileQ.error} compact onRetry={onRefresh} title="Couldn't load your stats" />
           ) : (
           <View className="flex-row py-4 border-y border-divider">
             <View className="flex-1 items-center">
@@ -1630,7 +1858,9 @@ export default function RunnerHomeScreen() {
                   router.push(`/(runner)/errand/${errand.id}` as any);
                 }}
                 accessibilityRole="button"
-                accessibilityLabel={`${errand.errand_type?.name ?? 'Errand'}, ${formatRunnerPayout(errand.runner_payout)}`}
+                accessibilityLabel={`${errand.errand_type?.name ?? 'Errand'}${
+                  errand.status === 'cancelled' ? ', cancelled' : ''
+                }, ${earnedLabel(errand)}`}
               >
                 <View className="flex-1 mr-3">
                   <Text
@@ -1639,14 +1869,21 @@ export default function RunnerHomeScreen() {
                   >
                     {errand.errand_type?.name ?? 'Errand'}
                   </Text>
-                  {formatDistanceKm(errand.distance_km) ? (
+                  {errand.status === 'cancelled' || formatDistanceKm(errand.distance_km) ? (
                     <Text className="text-[11px] font-inter tabular-nums text-textSecondary mt-0.5">
-                      {formatDistanceKm(errand.distance_km)}
+                      {[
+                        errand.status === 'cancelled' ? 'Cancelled' : null,
+                        formatDistanceKm(errand.distance_km),
+                      ]
+                        .filter(Boolean)
+                        .join(' · ')}
                     </Text>
                   ) : null}
                 </View>
+                {/* What it actually paid: a cancelled errand shows its
+                    cancellation fee (or ₱0.00), never the would-be payout. */}
                 <Text className="text-[14px] font-inter-semi tabular-nums text-textPrimary">
-                  {formatRunnerPayout(errand.runner_payout)}
+                  {earnedLabel(errand)}
                 </Text>
                 <ChevronRight size={16} color={LightColors.textMuted} style={{ marginLeft: 8 }} />
               </Pressable>

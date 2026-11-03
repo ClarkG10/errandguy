@@ -30,7 +30,7 @@ import * as Haptics from 'expo-haptics';
 import dayjs from 'dayjs';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useAuthStore } from '../../../stores/authStore';
-import { useBookingStore, type DraftBooking } from '../../../stores/bookingStore';
+import { useBookingStore } from '../../../stores/bookingStore';
 import { useNotificationStore } from '../../../stores/notificationStore';
 import { bookingService } from '../../../services/booking.service';
 import { warmTracking } from '../../../services/preload.service';
@@ -46,6 +46,7 @@ import {
   isRenderableActiveBooking,
 } from '../../../components/customer/ActiveBookingCard';
 import { BookingDetailSheet } from '../../../components/customer/BookingDetailSheet';
+import { ConfirmModal } from '../../../components/ui/ConfirmModal';
 import { ErrandTypeIcon } from '../../../components/ui/ErrandTypeIcon';
 import { ErrorState } from '../../../components/ui/ErrorState';
 import { HomeSkeleton } from '../../../components/ui/Skeleton';
@@ -60,6 +61,7 @@ import { formatCurrency } from '../../../utils/formatCurrency';
 import { formatRelativeTime } from '../../../utils/formatDate';
 import { scheduledWindowLabel, SCHEDULED_MATCH_LEAD_MINUTES } from '../../../utils/scheduledBooking';
 import { isAwaitingPayment } from '../../../utils/bookingPayment';
+import { repeatDraft } from '../../../utils/repeatDraft';
 import {
   mergeActiveBookings,
   parseActiveBookings,
@@ -76,13 +78,18 @@ const ICON_MAP: Record<string, LucideIcon> = {
 // Persisted `currentStep` → the book/ route the user was last on. The
 // booking screens read the (already-hydrated) draft straight from the
 // store, so deep-linking here needs no params — just the right route.
-// Keyed by the step values the flow persists (type→1, details→2,
-// schedule→3); step 0 has no resume affordance.
+// Keyed by the step values the flow persists (type→1, details→3); step 0
+// has no resume affordance. 2 is what older builds saved on leaving details
+// for the retired "When?" step; it resumes on Review like everything past
+// details now does.
 const RESUME_STEP_ROUTES: Record<number, string> = {
   1: '/(customer)/book/details',
-  2: '/(customer)/book/schedule',
+  2: '/(customer)/book/review',
   3: '/(customer)/book/review',
 };
+
+/** Steps in the booking funnel (BookingStepIndicator): Type, Details, Review. */
+const BOOKING_STEP_COUNT = 3;
 
 // Terminal-success statuses whose full route/items we're willing to clone
 // straight onto Review (a fresh, clean repeat). Cancelled/no_runner
@@ -95,60 +102,6 @@ const REPEATABLE_STATUSES = ['completed', 'delivered'];
 const ACTIVE_ZONE_INSET = 32;
 const ACTIVE_CARD_PEEK = 30;
 const ACTIVE_CARD_GAP = 10;
-
-/**
- * Clone a terminal booking into a fresh booking draft so "Repeat last" can
- * drop the customer straight onto the pre-filled Review screen — no backend
- * round-trip. Mirrors buildDraftFromBooking in BookingDetailSheet.tsx (kept
- * local so the home screen doesn't have to widen that component's exports).
- *
- * When the source lacks pickup coordinates the route can't be reconstructed,
- * so we degrade to seeding just the errand type and let the caller re-pick.
- */
-function buildDraftFromBooking(b: Booking): Partial<DraftBooking> {
-  const slug = b.errand_type?.slug;
-  const typeSeed: Partial<DraftBooking> = {
-    errand_type_id: b.errand_type_id,
-    ...(slug ? { errand_type_slug: slug } : {}),
-  };
-
-  const hasPickupCoords = b.pickup_lat != null && b.pickup_lng != null;
-  if (!hasPickupCoords) return typeSeed;
-
-  return {
-    ...typeSeed,
-    pickup_address: b.pickup_address,
-    pickup_lat: b.pickup_lat,
-    pickup_lng: b.pickup_lng,
-    ...(b.pickup_contact_name ? { pickup_contact_name: b.pickup_contact_name } : {}),
-    ...(b.pickup_contact_phone ? { pickup_contact_phone: b.pickup_contact_phone } : {}),
-    ...(b.dropoff_address != null ? { dropoff_address: b.dropoff_address } : {}),
-    ...(b.dropoff_lat != null ? { dropoff_lat: b.dropoff_lat } : {}),
-    ...(b.dropoff_lng != null ? { dropoff_lng: b.dropoff_lng } : {}),
-    ...(b.dropoff_contact_name ? { dropoff_contact_name: b.dropoff_contact_name } : {}),
-    ...(b.dropoff_contact_phone ? { dropoff_contact_phone: b.dropoff_contact_phone } : {}),
-    ...(b.description != null ? { description: b.description } : {}),
-    ...(b.special_instructions != null
-      ? { special_instructions: b.special_instructions }
-      : {}),
-    ...(b.estimated_item_value != null
-      ? { estimated_item_value: b.estimated_item_value }
-      : {}),
-    ...(b.shopping_budget != null ? { shopping_budget: b.shopping_budget } : {}),
-    ...(b.vehicle_type_rate ? { vehicle_type_rate: b.vehicle_type_rate } : {}),
-    ...(b.shopping_items && b.shopping_items.length > 0
-      ? {
-          shoppingItems: b.shopping_items.map((it) => ({
-            id: it.id,
-            name: it.name,
-            qty: it.qty,
-          })),
-        }
-      : {}),
-    // Deliberately NOT cloned: any payment selection — the customer
-    // re-confirms it on Review.
-  };
-}
 
 /**
  * Customer Home — radically simplified.
@@ -469,20 +422,19 @@ export default function CustomerHomeScreen() {
   // case where there's no repeatable booking at all (seed the type only).
   const repeatFrom = useCallback(
     (source: Booking | null | undefined, fallbackTypeId?: string) => {
-      if (source) {
-        const draft = buildDraftFromBooking(source);
-        if (draft.pickup_lat != null) {
-          // Full seed → clean replacement of any half-filled draft, then Review.
-          clearDraft();
-          updateDraft(draft);
-          router.push('/(customer)/book/review');
-          return;
-        }
+      const draft = source ? repeatDraft(source) : null;
+      if (draft) {
+        // Full seed → clean replacement of any half-filled draft, then Review.
+        clearDraft();
+        updateDraft(draft);
+        setDraftStep(3);
+        router.push('/(customer)/book/review');
+        return;
       }
       // No coords (or no source) → fall back to the type-only new-booking flow.
       startBooking(fallbackTypeId ?? source?.errand_type_id);
     },
-    [clearDraft, updateDraft, router, startBooking],
+    [clearDraft, updateDraft, setDraftStep, router, startBooking],
   );
 
   // Resumable mid-flow draft. We only surface the card once the persisted
@@ -509,8 +461,8 @@ export default function CustomerHomeScreen() {
       route,
       typeName,
       iconName: draftType?.icon_name,
-      // Mirror BookingStepIndicator's 1-based "Step N of 4" wording.
-      stepNumber: Math.min(draftStep + 1, 4),
+      // Mirror BookingStepIndicator's 1-based "Step N of 3" wording.
+      stepNumber: Math.min(draftStep + 1, BOOKING_STEP_COUNT),
     };
   }, [
     isDraftHydrated,
@@ -526,6 +478,34 @@ export default function CustomerHomeScreen() {
     if (!resumeInfo) return;
     router.push(resumeInfo.route as any);
   }, [resumeInfo, router]);
+
+  // ── Never wipe a saved draft without asking ──────────────────────────
+  // Every "new errand" surface below used to call startBooking(), which
+  // clears the draft, so the screen's biggest tap areas silently threw away
+  // a half-built errand sitting right under the "Continue your errand" card.
+  // Now: the generic "start" surfaces simply resume it; a tap that names
+  // something else (another type, a repeat, the Schedule shortcut) asks
+  // first. With no resumable draft (or the card dismissed for the session)
+  // everything behaves as before.
+  const [pendingStart, setPendingStart] = useState<(() => void) | null>(null);
+  const guardDraft = useCallback(
+    (start: () => void) => {
+      if (resumeInfo) setPendingStart(() => start);
+      else start();
+    },
+    [resumeInfo],
+  );
+  const startOrResume = useCallback(() => {
+    if (resumeInfo) resumeBooking();
+    else startBooking();
+  }, [resumeInfo, resumeBooking, startBooking]);
+  const startType = useCallback(
+    (typeId: string) => {
+      if (resumeInfo && draftBooking.errand_type_id === typeId) resumeBooking();
+      else guardDraft(() => startBooking(typeId));
+    },
+    [resumeInfo, draftBooking.errand_type_id, resumeBooking, guardDraft, startBooking],
+  );
 
   // Section eyebrow. With one card it names what the card is; with several it
   // states the count, which is also the only place the stack's size is spoken
@@ -680,7 +660,7 @@ export default function CustomerHomeScreen() {
               lastBooking?.errand_type?.name ??
               'errand'
             } booking`,
-            onPress: () => repeatFrom(repeatSource, repeatFallbackTypeId),
+            onPress: () => guardDraft(() => repeatFrom(repeatSource, repeatFallbackTypeId)),
           },
         ]
       : []),
@@ -696,10 +676,11 @@ export default function CustomerHomeScreen() {
       // has to land AFTER startBooking()'s clearDraft() (both are synchronous
       // zustand sets, so this ordering holds); Continue on that step still
       // blocks until a time is picked, and the user can toggle back to Now.
-      onPress: () => {
-        startBooking();
-        updateDraft({ schedule_type: 'scheduled' });
-      },
+      onPress: () =>
+        guardDraft(() => {
+          startBooking();
+          updateDraft({ schedule_type: 'scheduled' });
+        }),
     },
     {
       key: 'help',
@@ -835,7 +816,7 @@ export default function CustomerHomeScreen() {
               pressed && { backgroundColor: 'rgba(255,255,255,0.08)' },
             ]}
             android_ripple={{ color: 'rgba(255,255,255,0.12)' }}
-            onPress={withLightImpact(() => startBooking())}
+            onPress={withLightImpact(startOrResume)}
             accessibilityRole="button"
             accessibilityLabel="Start a new booking"
           />
@@ -897,7 +878,7 @@ export default function CustomerHomeScreen() {
             and the radius actually reads. */}
         <View className="px-5" style={{ marginTop: -32 }}>
           <Pressable
-            onPress={withLightImpact(() => startBooking())}
+            onPress={withLightImpact(startOrResume)}
             accessibilityRole="button"
             accessibilityLabel="Start a new booking"
             className="bg-surface px-4 py-4 rounded-[28px] border border-divider"
@@ -965,7 +946,7 @@ export default function CustomerHomeScreen() {
                 android_ripple={{ color: 'rgba(37,99,235,0.08)' }}
                 className="flex-1 flex-row items-center"
                 accessibilityRole="button"
-                accessibilityLabel={`Continue your ${resumeInfo.typeName} errand, step ${resumeInfo.stepNumber} of 4`}
+                accessibilityLabel={`Continue your ${resumeInfo.typeName} errand, step ${resumeInfo.stepNumber} of ${BOOKING_STEP_COUNT}`}
                 accessibilityHint="Returns to where you left off in the booking"
                 style={({ pressed }) => pressed && hs.cardPressed}
               >
@@ -991,7 +972,7 @@ export default function CustomerHomeScreen() {
                     className="text-[11.5px] font-montserrat text-textSecondary mt-0.5"
                     numberOfLines={1}
                   >
-                    {resumeInfo.typeName} · Step {resumeInfo.stepNumber} of 4
+                    {resumeInfo.typeName} · Step {resumeInfo.stepNumber} of {BOOKING_STEP_COUNT}
                   </Text>
                 </View>
                 <ChevronRight
@@ -1200,7 +1181,7 @@ export default function CustomerHomeScreen() {
               </Text>
               {featuredTypes.length > 0 && (
                 <Pressable
-                  onPress={() => startBooking()}
+                  onPress={() => guardDraft(() => startBooking())}
                   hitSlop={{ top: 16, bottom: 16, left: 16, right: 16 }}
                   accessibilityRole="button"
                   accessibilityLabel="See all errand types"
@@ -1214,6 +1195,7 @@ export default function CustomerHomeScreen() {
             </View>
             {featuredTypes.length === 0 ? (
               <ErrorState
+                error={errandTypesQ.error}
                 compact
                 title="Couldn't load services"
                 onRetry={() => {
@@ -1225,7 +1207,7 @@ export default function CustomerHomeScreen() {
                 {frequentType && (
                   <Pressable
                     onPress={withLightImpact(() =>
-                      repeatFrom(frequentSource, frequentType.id),
+                      guardDraft(() => repeatFrom(frequentSource, frequentType.id)),
                     )}
                     style={({ pressed }) => [
                       hs.frequentChip,
@@ -1252,7 +1234,7 @@ export default function CustomerHomeScreen() {
                 return (
                   <View key={type.id} style={{ width: '25%' }} className="px-1.5">
                     <Pressable
-                      onPress={withLightImpact(() => startBooking(type.id))}
+                      onPress={withLightImpact(() => startType(type.id))}
                       // White card + border + layout via className. NativeWind
                       // drops backgroundColor/flex props from the function-style
                       // form, which is why the tile rendered with NO fill no
@@ -1384,6 +1366,7 @@ export default function CustomerHomeScreen() {
           <View className="px-5 mt-7">
             <Eyebrow className="mb-2">Recent</Eyebrow>
             <ErrorState
+              error={recentBookingsQ.error}
               compact
               title="Couldn't load your errands"
               onRetry={() => {
@@ -1401,7 +1384,7 @@ export default function CustomerHomeScreen() {
               from this screen.
             </Text>
             <Pressable
-              onPress={withLightImpact(() => startBooking())}
+              onPress={withLightImpact(startOrResume)}
               className="flex-row items-center mt-3 self-start"
               hitSlop={{ top: 12, bottom: 12, left: 8, right: 8 }}
               accessibilityRole="button"
@@ -1426,6 +1409,23 @@ export default function CustomerHomeScreen() {
         booking={selectedBooking}
         isVisible={!!selectedBooking}
         onClose={() => setSelectedBooking(null)}
+      />
+
+      <ConfirmModal
+        visible={!!pendingStart}
+        title="Start a new errand?"
+        message={`This clears your unfinished ${
+          resumeInfo && resumeInfo.typeName !== 'errand' ? `${resumeInfo.typeName} ` : ''
+        }errand. To finish it instead, tap Continue your errand.`}
+        confirmLabel="Start new"
+        cancelLabel="Keep it"
+        destructive
+        onConfirm={() => {
+          const start = pendingStart;
+          setPendingStart(null);
+          start?.();
+        }}
+        onCancel={() => setPendingStart(null)}
       />
     </View>
   );

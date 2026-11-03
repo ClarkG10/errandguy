@@ -43,6 +43,23 @@ describe('both surfaces raise SOS through the durable loop', () => {
     expect(COCKPIT_CODE).toContain('resumeSosIntent()');
   });
 
+  it('also resumes from the root, on sign-in and on every return to the foreground', () => {
+    // After a kill the person may never reopen the errand screen, and iOS
+    // pauses the retry timer in the background — so the root picks it up.
+    const ROOT = stripComments(read('_layout.tsx'));
+    const effect = ROOT.slice(ROOT.indexOf('void resumeSosIntent();')).slice(0, 300);
+    expect(ROOT).toContain('if (isLoading || !isAuthenticated) return;');
+    expect(effect).toMatch(/if \(state === 'active'\) void resumeSosIntent\(\);/);
+  });
+
+  it('the pending sheet promises only what the retry loop really does', () => {
+    const sheetText = SHEET.replace(/\s+/g, ' ');
+    expect(sheetText).not.toContain('even if you close the app');
+    expect(SHEET).not.toContain('Keep trying in the background');
+    expect(sheetText).toContain('Keep ErrandGuy open');
+    expect(sheetText).toContain('tries again the next time you open it');
+  });
+
   it('flips to "active" when a BACKGROUND retry is the one that lands', () => {
     expect(TRACKING_CODE).toContain('if (!sosAck) return;');
     expect(COCKPIT_CODE).toContain('if (!sosAck) return;');
@@ -125,8 +142,14 @@ describe('neither surface promises more than the server says happened', () => {
   });
 
   it('the sent toast repeats who the SERVER says it alerted', () => {
-    expect(TRACKING_CODE).toContain('toast.success(`SOS sent. ${sosAlertedText(result)}`)');
-    expect(COCKPIT_CODE).toContain('toast.success(`SOS sent. ${sosAlertedText(result)}`)');
+    // Both surfaces show the server's sentence alone — it already says the
+    // alert went out ("SOS sent. SOS sent to…" read twice).
+    expect(TRACKING_CODE).toContain('toast.success(sosAlertedText(result))');
+    expect(TRACKING_CODE).not.toContain('toast.success(`SOS sent. ${sosAlertedText(result)}`)');
+    // The runner cockpit shows the server's sentence alone — it already says
+    // the alert went out ("SOS sent. SOS sent to…" read twice).
+    expect(COCKPIT_CODE).toContain('toast.success(sosAlertedText(result))');
+    expect(COCKPIT_CODE).not.toContain('toast.success(`SOS sent. ${sosAlertedText(result)}`)');
   });
 
   // The rule above was correct and was still defeated end-to-end: the SERVER

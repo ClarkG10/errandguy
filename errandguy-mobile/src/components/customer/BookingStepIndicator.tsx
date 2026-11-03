@@ -3,16 +3,19 @@ import { View, Text } from 'react-native';
 import { Check } from 'lucide-react-native';
 import { LightColors } from '../../constants/colors';
 
-const STEP_LABELS = ['Type', 'Details', 'Schedule', 'Review'] as const;
+// "When?" is no longer a step of its own: every errand goes from Details
+// straight to Review on "Now", and Review's "Schedule for later" opens the
+// schedule screen as a side trip.
+const STEP_LABELS = ['Type', 'Details', 'Review'] as const;
 
-export type BookingStep = 0 | 1 | 2 | 3;
+export type BookingStep = 0 | 1 | 2;
 
 interface BookingStepIndicatorProps {
   /** Zero-based index of the *current* step (the in-progress one). */
   currentStep: BookingStep;
   /**
    * Optional override of the step labels. Defaults to
-   * `['Type', 'Details', 'Schedule', 'Review']`.
+   * `['Type', 'Details', 'Review']`.
    */
   labels?: readonly string[];
   /** Adds horizontal padding to align with screen content. */
@@ -20,7 +23,7 @@ interface BookingStepIndicatorProps {
 }
 
 /**
- * The single source of truth for the 4-step booking flow indicator.
+ * The single source of truth for the 3-step booking flow indicator.
  *
  * Why this exists:
  * - The previous flow had two visual treatments (one floating-on-map

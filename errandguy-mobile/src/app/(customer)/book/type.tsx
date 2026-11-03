@@ -8,8 +8,6 @@ import { useBookingStore } from '../../../stores/bookingStore';
 import { configService } from '../../../services/config.service';
 import { useQuery } from '../../../hooks/useQuery';
 import { CacheTTL } from '../../../services/cache.service';
-import { Button } from '../../../components/ui/Button';
-import { BottomActionBar } from '../../../components/ui/BottomActionBar';
 import { ConfirmModal } from '../../../components/ui/ConfirmModal';
 import { BookingStepIndicator } from '../../../components/customer/BookingStepIndicator';
 import { GradientHeader } from '../../../components/ui/GradientHeader';
@@ -19,8 +17,10 @@ import { ErrandTypeIcon } from '../../../components/ui/ErrandTypeIcon';
 import { BrandRefreshControl } from '../../../components/ui/BrandRefreshControl';
 import { Illustration } from '../../../components/ui/Illustration';
 import { formatCurrency } from '../../../utils/formatCurrency';
+import { errandTypeMinimumPrice } from '../../../utils/errandTypePrice';
 import { LightColors, Elevation } from '../../../constants/colors';
 import { useResponsive } from '../../../constants/responsive';
+import { getErrandTypeRule } from '../../../constants/errandTypeRules';
 import type { ErrandType } from '../../../types';
 import { toast } from '../../../stores/toastStore';
 
@@ -41,6 +41,9 @@ export default function TypeSelectionScreen() {
     draftBooking.errand_type_id ?? params.preselected,
   );
   const [showDiscardModal, setShowDiscardModal] = useState(false);
+  // A tile tapped while the draft holds another type's details: ask before
+  // the switch throws them away (there's no Continue step to catch a mis-tap).
+  const [pendingTypeId, setPendingTypeId] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
   // Set once the user has confirmed leaving so the beforeRemove guard
   // doesn't re-intercept leaveFlow's own router.back().
@@ -106,9 +109,8 @@ export default function TypeSelectionScreen() {
     (loadingTypes || refreshing) && errandTypes.length === 0;
 
   // A persisted draft or deep link can reference a type that config has
-  // since deactivated — never let Continue proceed with a dangling id.
-  const selectionValid =
-    !!selectedId && errandTypes.some((t) => t.id === selectedId);
+  // since deactivated — never highlight a dangling id (chooseType only ever
+  // continues with a tile that's on screen).
   useEffect(() => {
     if (!errandTypesQ.data || !selectedId) return;
     if (!errandTypesQ.data.some((t) => t.id === selectedId && t.is_active)) {
@@ -164,9 +166,31 @@ export default function TypeSelectionScreen() {
     return unsubscribe;
   }, [navigation, hasDraftData]);
 
-  const handleContinue = useCallback(() => {
-    if (!selectedId || !selectionValid) return;
-    const selectedType = errandTypes.find((t) => t.id === selectedId);
+  // What switching the draft to another type would throw away: the
+  // type-specific details below, and for a one-place errand (Queue) the
+  // drop-off and stops too (details.tsx prunes them).
+  const switchLosesDetails = (typeId: string, slug: string): boolean => {
+    if (!draftBooking.errand_type_id || draftBooking.errand_type_id === typeId) return false;
+    return !!(
+      draftBooking.description?.trim() ||
+      draftBooking.shoppingItems?.some((i) => i.name.trim() !== '') ||
+      draftBooking.shopping_budget ||
+      draftBooking.estimated_item_value ||
+      (getErrandTypeRule(slug).singleLocation &&
+        (draftBooking.dropoff_address || (draftBooking.stops?.length ?? 0) > 0))
+    );
+  };
+
+  // Tapping a tile IS the choice: it goes straight on to details. (It used to
+  // only highlight the tile and wait for a Continue tap at the bottom.)
+  const chooseType = useCallback((typeId: string, confirmed = false) => {
+    const selectedType = errandTypes.find((t) => t.id === typeId);
+    if (!selectedType || navLatch.current) return;
+    if (!confirmed && switchLosesDetails(typeId, selectedType.slug)) {
+      setPendingTypeId(typeId);
+      return;
+    }
+    navLatch.current = true;
     // If errand type changed, drop ONLY the fields that are tied to the
     // previous service shape — the vehicle plus shopping metadata. We deliberately keep pickup/dropoff coords, address text,
     // contact info, and photos because those are reusable and re-typing
@@ -175,7 +199,7 @@ export default function TypeSelectionScreen() {
     // incompatible fields (e.g. dropoff for single-location errands).
     if (
       draftBooking.errand_type_id &&
-      draftBooking.errand_type_id !== selectedId
+      draftBooking.errand_type_id !== typeId
     ) {
       updateDraft({
         vehicle_type_rate: undefined,
@@ -189,17 +213,16 @@ export default function TypeSelectionScreen() {
       });
     }
     updateDraft({
-      errand_type_id: selectedId,
-      errand_type_slug: selectedType?.slug,
+      errand_type_id: typeId,
+      errand_type_slug: selectedType.slug,
     });
     setStep(1);
-    if (navLatch.current) return;
-    navLatch.current = true;
     router.push('/(customer)/book/details');
     setTimeout(() => {
       navLatch.current = false;
     }, 700);
-  }, [selectedId, selectionValid, errandTypes, draftBooking.errand_type_id, updateDraft, setStep, router]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- switchLosesDetails reads draftBooking
+  }, [errandTypes, draftBooking, updateDraft, setStep, router]);
 
   return (
     <View className="flex-1 bg-background">
@@ -216,7 +239,7 @@ export default function TypeSelectionScreen() {
         </View>
       </GradientHeader>
 
-      {/* Step indicator — makes the 4-step funnel visible from step 1
+      {/* Step indicator — makes the 3-step funnel visible from step 1
           (previously this screen had no indicator at all). Clamped to
           the same content column as the grid so tablet edges align. */}
       <View className="px-5 mt-3 mb-3">
@@ -235,12 +258,9 @@ export default function TypeSelectionScreen() {
           // Let the empty/error states (flex-1) center vertically when
           // the grid has nothing to show.
           flexGrow: 1,
-          // Clearance for the sticky BottomActionBar: its height is
-          // 16 top pad + ~48-51 button + max(inset, 12) bottom pad, so
-          // a fixed spacer under-shoots on notch iPhones (34pt inset)
-          // and 3-button Android (48dp). Inset-aware keeps the last
-          // row of tiles clear of the bar on every device.
-          paddingBottom: Math.max(insets.bottom, 12) + 96,
+          // Inset-aware so the last row of tiles clears the home
+          // indicator / 3-button Android nav bar.
+          paddingBottom: Math.max(insets.bottom, 12) + 24,
         }}
         refreshControl={
           <BrandRefreshControl refreshing={refreshing} onRefresh={handleRefresh} />
@@ -265,22 +285,24 @@ export default function TypeSelectionScreen() {
             ))}
           </View>
         ) : (
-        <View
-          className="flex-row flex-wrap justify-between"
-          accessibilityRole="radiogroup"
-          accessibilityLabel="Errand type"
-        >
+        <View className="flex-row flex-wrap justify-between">
           {errandTypes.map((type) => {
             const isSelected = selectedId === type.id;
+            const fromPrice = errandTypeMinimumPrice(type);
 
             return (
               <Pressable
                 key={type.id}
-                accessibilityRole="radio"
-                accessibilityLabel={`${type.name}. ${
-                  type.description ? `${type.description}. ` : ''
-                }From ${formatCurrency(type.base_fee)}`}
-                accessibilityState={{ checked: isSelected, selected: isSelected }}
+                accessibilityRole="button"
+                accessibilityLabel={[
+                  type.name,
+                  type.description,
+                  fromPrice != null ? `From ${formatCurrency(fromPrice)}` : null,
+                ]
+                  .filter(Boolean)
+                  .join('. ')}
+                accessibilityHint="Goes to errand details"
+                accessibilityState={{ selected: isSelected }}
                 // Selection pattern: the chosen tile lifts to a soft
                 // blue-tinted surface with a 2px brand border — content
                 // stays DARK on a LIGHT ground. (The old pattern filled the
@@ -303,6 +325,7 @@ export default function TypeSelectionScreen() {
                 onPress={() => {
                   Haptics.selectionAsync().catch(() => {});
                   setSelectedId(type.id);
+                  chooseType(type.id);
                 }}
               >
                 <View className="mb-2">
@@ -334,13 +357,17 @@ export default function TypeSelectionScreen() {
                 >
                   {type.description}
                 </Text>
-                <Text
-                  className="text-[12px] font-inter tabular-nums"
-                  style={{ color: LightColors.textSecondary }}
-                  numberOfLines={1}
-                >
-                  From {formatCurrency(type.base_fee)}
-                </Text>
+                {/* The true least it can cost — service fee included (the
+                    base fee alone undersold every type by 15%). */}
+                {fromPrice != null && (
+                  <Text
+                    className="text-[12px] font-inter tabular-nums"
+                    style={{ color: LightColors.textSecondary }}
+                    numberOfLines={1}
+                  >
+                    From {formatCurrency(fromPrice)}
+                  </Text>
+                )}
               </Pressable>
             );
           })}
@@ -351,8 +378,8 @@ export default function TypeSelectionScreen() {
             has visible progress. */}
         {!showSkeletons && errandTypes.length === 0 && errandTypesQ.error && (
           <ErrorState
+            error={errandTypesQ.error}
             title="Couldn't load errand types"
-            description="Check your internet connection and try again."
             onRetry={() => {
               handleRefresh().catch(() => {});
             }}
@@ -374,19 +401,6 @@ export default function TypeSelectionScreen() {
         )}
       </ScrollView>
 
-      {/* Bottom CTA */}
-      <BottomActionBar>
-        <View style={{ maxWidth: contentMaxWidth, width: '100%', alignSelf: 'center' }}>
-          <Button
-            title={selectedId ? 'Continue' : 'Choose an errand type'}
-            onPress={handleContinue}
-            disabled={!selectionValid}
-            fullWidth
-            accessibilityHint="Goes to errand details"
-          />
-        </View>
-      </BottomActionBar>
-
       <ConfirmModal
         visible={showDiscardModal}
         title="Discard this booking?"
@@ -399,6 +413,20 @@ export default function TypeSelectionScreen() {
           leaveFlow();
         }}
         onCancel={() => setShowDiscardModal(false)}
+      />
+      <ConfirmModal
+        visible={pendingTypeId != null}
+        title="Switch errand type?"
+        message="The details you entered for this errand won't carry over to the new type."
+        confirmLabel="Switch"
+        cancelLabel="Keep editing"
+        destructive
+        onConfirm={() => {
+          const typeId = pendingTypeId;
+          setPendingTypeId(null);
+          if (typeId) chooseType(typeId, true);
+        }}
+        onCancel={() => setPendingTypeId(null)}
       />
     </View>
   );

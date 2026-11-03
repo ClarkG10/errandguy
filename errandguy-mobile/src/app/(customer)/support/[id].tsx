@@ -16,7 +16,6 @@ import {
   supportService,
   type SupportMessage,
   type SupportTicket,
-  type SupportTicketStatus,
 } from '../../../services/support.service';
 import { useKeyboard } from '../../../hooks/useKeyboard';
 import { useSmartPolling } from '../../../hooks/useSmartPolling';
@@ -33,6 +32,7 @@ import { formatTime, formatChatDayLabel, localDayKey } from '../../../utils/form
 import { errorMessage } from '../../../utils/errorCatalog';
 import { copy } from '../../../constants/copy';
 import { toast } from '../../../stores/toastStore';
+import { lastSupportSender, supportStatusLabel } from '../../../utils/supportStatus';
 
 // A thread message plus local-only send state.
 type ThreadMessage = SupportMessage & { pending?: boolean };
@@ -64,16 +64,6 @@ const SUPPORT_NOTIFICATION_TYPES = ['support_reply', 'support_status'];
  * whole poll interval.
  */
 const MICRO_CACHE_GRACE_MS = 8_500;
-
-const STATUS_META: Record<
-  SupportTicketStatus,
-  { label: string; variant: 'soft' | 'warning' | 'success' | 'neutral' }
-> = {
-  open: { label: 'Open', variant: 'soft' },
-  pending: { label: 'Awaiting reply', variant: 'warning' },
-  resolved: { label: 'Resolved', variant: 'success' },
-  closed: { label: 'Closed', variant: 'neutral' },
-};
 
 /** Build the inverted-FlatList rows (newest at index 0) from a
  *  chronological (oldest → newest) message array, inserting day
@@ -120,7 +110,7 @@ export default function SupportThreadScreen() {
   const [nextBefore, setNextBefore] = useState<string | null>(null);
   const [hasMore, setHasMore] = useState(false);
   const [initialLoading, setInitialLoading] = useState(true);
-  const [loadError, setLoadError] = useState(false);
+  const [loadError, setLoadError] = useState<unknown>(null);
   const [loadingOlder, setLoadingOlder] = useState(false);
   const [inputText, setInputText] = useState('');
   const [sending, setSending] = useState(false);
@@ -129,15 +119,15 @@ export default function SupportThreadScreen() {
   const loadInitial = useCallback(async () => {
     if (!id) return;
     setInitialLoading(true);
-    setLoadError(false);
+    setLoadError(null);
     try {
       const r = await supportService.getTicket(id);
       setTicket(r.data.data.ticket);
       setMessages(r.data.data.messages);
       setHasMore(r.data.meta.has_more);
       setNextBefore(r.data.meta.next_before);
-    } catch {
-      setLoadError(true);
+    } catch (err) {
+      setLoadError(err ?? true);
     } finally {
       setInitialLoading(false);
     }
@@ -308,11 +298,13 @@ export default function SupportThreadScreen() {
           ? { ...prev, status: 'pending' }
           : prev,
       );
-    } catch {
+    } catch (err) {
       Haptics.notificationAsync(
         Haptics.NotificationFeedbackType.Error,
       ).catch(() => {});
-      toast.error(errorMessage(undefined, copy.support.messageSendFailed));
+      // The server's reason when it gives one (a message too long, a ticket
+      // that isn't theirs any more) — not the same line for every failure.
+      toast.error(errorMessage(err, copy.support.messageSendFailed));
       // Drop the optimistic bubble and restore the text for a retry.
       setMessages((prev) => prev.filter((m) => m.id !== tempId));
       setInputText((prev) => (prev ? prev : text));
@@ -393,7 +385,10 @@ export default function SupportThreadScreen() {
     );
   }, [width]);
 
-  const statusMeta = ticket ? STATUS_META[ticket.status] ?? STATUS_META.open : null;
+  // Whose turn it is, from the newest settled message (utils/supportStatus).
+  const statusMeta = ticket
+    ? supportStatusLabel(ticket.status, lastSupportSender(messages.filter((m) => !m.pending)))
+    : null;
 
   return (
     <View className="flex-1 bg-background">
@@ -470,7 +465,7 @@ export default function SupportThreadScreen() {
 
         {loadError && messages.length === 0 ? (
           <View className="px-4 py-2">
-            <ErrorState compact onRetry={loadInitial} />
+            <ErrorState compact error={loadError} onRetry={loadInitial} />
           </View>
         ) : null}
 

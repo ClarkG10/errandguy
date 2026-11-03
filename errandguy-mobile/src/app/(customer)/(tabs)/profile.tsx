@@ -1,5 +1,5 @@
-import React, { useCallback, useMemo, useState } from 'react';
-import { View, Text, ScrollView, Pressable } from 'react-native';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import { View, Text, ScrollView, Pressable, AppState, Linking } from 'react-native';
 import { useRouter, useFocusEffect } from 'expo-router';
 import {
   BadgeCheck,
@@ -22,6 +22,7 @@ import {
   ShieldCheck,
   UserX,
   ArrowUpRight,
+  Bell,
 } from 'lucide-react-native';
 import type { LucideIcon } from 'lucide-react-native';
 import * as Haptics from 'expo-haptics';
@@ -39,13 +40,17 @@ import { useAccountSecurity } from '../../../components/settings/AccountSecurity
 import { openPublicPage } from '../../../components/settings/PublicPageLink';
 import { useAuthStore } from '../../../stores/authStore';
 import { useBookingStore } from '../../../stores/bookingStore';
+import { useNotificationStore } from '../../../stores/notificationStore';
 import { useAuth } from '../../../hooks/useAuth';
 import { useQuery } from '../../../hooks/useQuery';
+import { useWalletSummary } from '../../../hooks/useWalletSummary';
 import { userService } from '../../../services/user.service';
 import { bookingService } from '../../../services/booking.service';
+import { readPushPermission, turnOnPush } from '../../../services/pushPermission';
 import { CacheTTL } from '../../../services/cache.service';
 import { parseActiveBookings } from '../../../utils/activeBookings';
 import { formatCurrency } from '../../../utils/formatCurrency';
+import { withdrawMinimum } from '../../../utils/withdrawal';
 import { LightColors } from '../../../constants/colors';
 import { copy } from '../../../constants/copy';
 import { TAB_CONTENT_BOTTOM_INSET } from '../../../constants/tabLayout';
@@ -62,6 +67,8 @@ interface MenuItem {
   route?: string;
   trailing?: React.ReactNode;
   onPress?: () => void;
+  /** Screen-reader label when the trailing state matters (defaults to label). */
+  a11yLabel?: string;
 }
 
 // App idiom: Light impact on raw-Pressable taps (shared Button self-fires).
@@ -95,8 +102,28 @@ export default function CustomerProfileScreen() {
   useFocusEffect(
     useCallback(() => {
       refreshUser();
+      void readPushPermission();
     }, [refreshUser]),
   );
+
+  // Whether pushes reach this phone. Re-read on foreground too: "Turn on" can
+  // send the person to the phone's Settings, and the row must say what they
+  // just did there when they come back.
+  const pushPermission = useNotificationStore((s) => s.pushPermission);
+  useEffect(() => {
+    const sub = AppState.addEventListener('change', (state) => {
+      if (state === 'active') void readPushPermission();
+    });
+    return () => sub.remove();
+  }, []);
+
+  // The Withdraw pill only shows when a withdrawal can actually go through:
+  // at least the server's minimum, read from the same source the withdraw
+  // screen uses. The balance is the one refreshed on every focus above (it is
+  // exactly what can be withdrawn — bonus credit is kept apart from it).
+  const walletSummaryQ = useWalletSummary();
+  const withdrawable = Math.max(0, Number(user?.wallet_balance ?? 0));
+  const canWithdraw = withdrawable > 0 && withdrawable >= withdrawMinimum(walletSummaryQ.data);
 
   const onRefresh = useCallback(async () => {
     setRefreshing(true);
@@ -292,13 +319,38 @@ export default function CustomerProfileScreen() {
 
   const supportMenu: MenuItem[] = [
     {
+      label: 'Notifications',
+      icon: Bell,
+      a11yLabel:
+        pushPermission === 'granted'
+          ? 'Notifications, on'
+          : pushPermission === 'denied' || pushPermission === 'undetermined'
+            ? 'Notifications, off. Turn on'
+            : 'Notifications',
+      trailing:
+        pushPermission === 'granted' ? (
+          <Text className="text-[13px] font-montserrat text-textSecondary">On</Text>
+        ) : pushPermission === 'denied' || pushPermission === 'undetermined' ? (
+          <Text className="text-[12px] font-montserrat-bold text-warningDark">
+            Off · Turn on
+          </Text>
+        ) : undefined,
+      // Off: ask the phone (or open its Settings once the prompt is used up).
+      // On: the phone's Settings is where they're managed.
+      onPress: () => {
+        if (pushPermission === 'granted') Linking.openSettings().catch(() => {});
+        else void turnOnPush();
+      },
+    },
+    {
       label: 'Appearance & Accessibility',
       icon: Accessibility,
       route: '/(customer)/appearance',
     },
     { label: 'Help & Support', icon: HelpCircle, route: '/(customer)/help' },
-    // Distinct destination from Help & Support: the in-app ticket flow.
-    { label: 'Report an Issue', icon: Flag, route: '/(customer)/support' },
+    // Distinct destination from Help & Support: the in-app ticket inbox,
+    // named exactly as its screen is titled.
+    { label: 'Support tickets', icon: Flag, route: '/(customer)/support' },
     {
       label: 'Check for updates',
       icon: RefreshCw,
@@ -319,6 +371,25 @@ export default function CustomerProfileScreen() {
 
   const renderMenuItem = (item: MenuItem, isLast: boolean) => {
     const RowIcon = item.icon;
+    // A row with nowhere to go (App version) is plain text — announcing it as
+    // a button that does nothing misleads screen-reader users.
+    if (!item.onPress && !item.route) {
+      return (
+        <React.Fragment key={item.label}>
+          {/* Grouped, so it reads as one line: "App version, 1.4.2 (88)". */}
+          <View className="flex-row items-center py-3" accessible accessibilityRole="text">
+            <View className="w-10 h-10 rounded-full items-center justify-center mr-3 bg-surfaceMuted">
+              <RowIcon size={18} color={LightColors.primary} strokeWidth={1.9} />
+            </View>
+            <Text className="flex-1 text-[15px] font-montserrat-semi text-textPrimary">
+              {item.label}
+            </Text>
+            {item.trailing}
+          </View>
+          {!isLast && <Hairline />}
+        </React.Fragment>
+      );
+    }
     return (
       <React.Fragment key={item.label}>
         <Pressable
@@ -328,7 +399,7 @@ export default function CustomerProfileScreen() {
           }}
           className="flex-row items-center py-3"
           accessibilityRole="button"
-          accessibilityLabel={item.label}
+          accessibilityLabel={item.a11yLabel ?? item.label}
         >
           {/* Leading icon chip — soft blue circle + primary icon. */}
           <View className="w-10 h-10 rounded-full items-center justify-center mr-3 bg-surfaceMuted">
@@ -489,7 +560,7 @@ export default function CustomerProfileScreen() {
               {formatCurrency(user?.wallet_balance ?? 0)}
             </Text>
           </Pressable>
-          {Number(user?.wallet_balance ?? 0) > 0 ? (
+          {canWithdraw ? (
             <Pressable
               onPress={() => {
                 lightTap();
@@ -549,7 +620,7 @@ export default function CustomerProfileScreen() {
       <DeleteAccountSheet
         visible={showDeleteModal}
         onClose={() => setShowDeleteModal(false)}
-        description="This can't be undone. Your profile, errand history and saved details will be permanently removed."
+        description="This can't be undone. Your name, contact details, saved addresses and trusted contacts are deleted. Records of past errands and payments are kept without your name, email or phone number, because the law requires us to keep financial records."
         // An account that also has a runner profile can send its balance to a
         // bank, like the server allows.
         allowBank={isRunnerAlready}

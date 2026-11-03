@@ -71,7 +71,7 @@ describe('a GCash/Maya booking waiting for its payment', () => {
     // CHECKOUT_CANCELLED_MESSAGE) — the same one the waiting screen and
     // tracking use through useCompleteBookingPayment.
     expect(REVIEW).toMatch(
-      /import \{\s*bookingPaymentFailure,\s*CHECKOUT_CANCELLED,\s*\} from '..\/..\/..\/hooks\/useCompleteBookingPayment'/,
+      /import \{\s*bookingPaymentFailure,\s*settleClosedCheckout,\s*\} from '..\/..\/..\/hooks\/useCompleteBookingPayment'/,
     );
     expect(REVIEW).toMatch(/bookingPaymentFailure\(attempt\?\.failureReason\)/);
     expect(REVIEW).toMatch(/failureMessage=\{paymentFailure\?\.message\}/);

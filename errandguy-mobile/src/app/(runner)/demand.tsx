@@ -184,7 +184,7 @@ export default function DemandScreen() {
     return (
       <View className="flex-1 bg-background">
         <GradientHeader title="Busy areas" showBack fallbackHref="/(runner)/(tabs)" />
-        <ErrorState title="Couldn't load demand data" onRetry={retryAll} />
+        <ErrorState error={heatmapQ.error ?? peakQ.error} title="Couldn't load demand data" onRetry={retryAll} />
       </View>
     );
   }
@@ -213,6 +213,7 @@ export default function DemandScreen() {
           {heatmapFailed ? (
             <Card padding="lg">
               <ErrorState
+                error={heatmapQ.error}
                 compact
                 title="Couldn't load the map"
                 onRetry={() => heatmapQ.refresh()}
@@ -274,6 +275,7 @@ export default function DemandScreen() {
           <Card padding="lg">
             {peakFailed ? (
               <ErrorState
+                error={peakQ.error}
                 compact
                 title="Couldn't load peak hours"
                 onRetry={() => peakQ.refresh()}

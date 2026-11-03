@@ -31,7 +31,7 @@ const VEHICLE_OPTIONS: { type: VehicleType; label: string; Icon: LucideIcon }[] 
   { type: 'car', label: 'Car', Icon: Car },
 ];
 
-const needsPlate = (t: VehicleType) => t === 'motorcycle' || t === 'car';
+const needsPlate = (t: VehicleType | null) => t === 'motorcycle' || t === 'car';
 
 export default function VehicleScreen() {
   const router = useRouter();
@@ -40,11 +40,11 @@ export default function VehicleScreen() {
   const { contentMaxWidth } = useResponsive();
   const { runnerProfile, setRunnerProfile } = useRunnerStore();
 
-  // Default to Walking (not Motorcycle) when there's no saved profile —
-  // any default is an assumption, and Walking is the neutral one that
-  // doesn't pre-expand a plate field the runner may never need.
-  const [vehicleType, setVehicleType] = useState<VehicleType>(
-    runnerProfile?.vehicle_type ?? 'walk',
+  // Nothing preselected when no vehicle is saved. Walking used to be, with
+  // Save live — so a motorcycle rider tapping straight through saved
+  // "Walking" and was only ever offered walking errands. The runner picks.
+  const [vehicleType, setVehicleType] = useState<VehicleType | null>(
+    runnerProfile?.vehicle_type ?? null,
   );
   const [plate, setPlate] = useState(runnerProfile?.vehicle_plate ?? '');
   const [plateError, setPlateError] = useState<string | undefined>(undefined);
@@ -54,21 +54,19 @@ export default function VehicleScreen() {
   // Snapshot the opening values so the Save CTA and discard guard can tell
   // whether anything actually changed.
   const initial = useRef({
-    type: runnerProfile?.vehicle_type ?? 'walk',
+    type: runnerProfile?.vehicle_type ?? null,
     plate: runnerProfile?.vehicle_plate ?? '',
   });
   const dirty =
     vehicleType !== initial.current.type ||
     (needsPlate(vehicleType) && plate.trim() !== initial.current.plate.trim());
-  // No vehicle on file yet. "Walking" is only PRESELECTED — nothing is saved —
-  // so Save must stay live even though nothing was changed: going online is
-  // refused until a vehicle is on file, and a walker used to face a disabled
-  // Save with no way to put "Walking" on record, ever. Only when the profile
-  // is actually loaded: with no profile in hand we can't tell "nothing saved"
-  // from "not fetched yet", and enabling Save then could overwrite a saved
-  // car with the Walking guess.
+  // No vehicle on file yet (only once the profile has loaded — with none in
+  // hand we can't tell "nothing saved" from "not fetched yet"). Drives the
+  // "Choose your vehicle" copy.
   const nothingSaved = !!runnerProfile && !runnerProfile.vehicle_type;
-  const canSave = dirty || nothingSaved;
+  // Save stays off until a vehicle is actually chosen; picking one from
+  // nothing counts as a change.
+  const canSave = vehicleType != null && dirty;
 
   // Once the user confirms leaving (or a save succeeds) the beforeRemove
   // guard must not re-intercept our own router.back().
@@ -98,6 +96,7 @@ export default function VehicleScreen() {
   }, [navigation, dirty]);
 
   const handleSave = async () => {
+    if (!vehicleType) return;
     // A motorcycle/car with no plate makes no sense — surface it inline on
     // the field rather than persisting an empty plate.
     if (needsPlate(vehicleType) && !plate.trim()) {

@@ -39,7 +39,8 @@ interface SosPendingSheetProps {
   onRetry: () => void;
   /** Drop the queued alert (also used by "I'm safe"). */
   onCancelAlert: () => void;
-  /** Leave the sheet — the retry loop keeps running in the background. */
+  /** Leave the sheet — the retry loop keeps running while the app is open
+   *  (iOS pauses it in the background; the next launch resumes it). */
   onClose: () => void;
 }
 
@@ -111,9 +112,10 @@ export function SosPendingSheet({
               style={{ lineHeight: 19 }}
               maxFontSizeMultiplier={1.4}
             >
-              There’s no connection right now. Your SOS is saved and will send
-              itself the moment there’s signal — even if you close the app. Calls
-              often work when data doesn’t:
+              There’s no connection right now. Your SOS is saved. Keep ErrandGuy
+              open — it sends as soon as you have signal. If you close the app, it
+              tries again the next time you open it, for up to an hour. Calls often
+              work when data doesn’t:
             </Text>
 
             {/* Voice fallbacks — the only things that work with no data. */}
@@ -194,7 +196,7 @@ export function SosPendingSheet({
                 </Text>
               </Pressable>
               <Button
-                title="Keep trying in the background"
+                title="Close and keep trying"
                 variant="ghost"
                 fullWidth
                 onPress={onClose}

@@ -31,8 +31,6 @@ export interface PermissionPrimerProps {
   title: string;
   /** Concrete benefit bullets — the persuasive core of the primer. */
   reasons: string[];
-  /** Position in the two-step permission flow. */
-  stepIndex: 1 | 2;
   /** Optional trust line rendered under the reasons with a lock icon. */
   privacyNote?: string;
   /**
@@ -59,9 +57,9 @@ export interface PermissionPrimerProps {
 }
 
 /**
- * Shared permission primer — one component behind both the location and
- * contacts screens so the two consecutive steps stay visually and
- * behaviorally locked in sync.
+ * Permission primer — onboarding's location screen. (Contacts had a second
+ * screen here, before the account even existed; they are now asked for in
+ * context, the first time someone picks a contact.)
  *
  * Handles the full permission lifecycle — not just the happy path:
  *   • First ask  → OS dialog via `requestPermission`.
@@ -83,7 +81,6 @@ export function PermissionPrimer({
   illustrationSource,
   title,
   reasons,
-  stepIndex,
   privacyNote,
   checkStatus,
   requestPermission,
@@ -249,12 +246,6 @@ export function PermissionPrimer({
           </MotiView>
         )}
 
-        <View style={s.stepRow} accessible accessibilityLabel={`Step ${stepIndex} of 2`}>
-          {([1, 2] as const).map((n) => (
-            <View key={n} style={[s.stepDot, n === stepIndex && s.stepDotActive]} />
-          ))}
-        </View>
-
         <Text
           className="text-[26px] font-montserrat-bold text-ink text-center"
           style={s.title}
@@ -365,18 +356,6 @@ const s = StyleSheet.create({
   container: { paddingHorizontal: 24 },
   scroll: { flex: 1 },
   content: { flexGrow: 1, justifyContent: 'center', alignItems: 'center' },
-  stepRow: { flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 16 },
-  stepDot: {
-    width: 6,
-    height: 6,
-    borderRadius: 3,
-    backgroundColor: LightColors.dividerStrong,
-  },
-  stepDotActive: {
-    width: 16,
-    borderRadius: 999,
-    backgroundColor: LightColors.primary,
-  },
   title: { marginBottom: 8, lineHeight: 32, letterSpacing: -0.4 },
   whyList: { marginTop: 12, alignSelf: 'stretch', gap: 12, paddingHorizontal: 8 },
   whyRow: { flexDirection: 'row', alignItems: 'center', gap: 12 },

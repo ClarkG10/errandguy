@@ -66,7 +66,7 @@ const KINDS: NotifKind[] = [
   {
     key: 'new_errands',
     label: 'New Errand Requests',
-    description: 'A new errand near you is up for grabs, or one was offered to you directly',
+    description: 'An errand was offered to you. Accept or decline it before the timer runs out',
     icon: Bell,
   },
   {
