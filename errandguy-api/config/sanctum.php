@@ -68,6 +68,22 @@ return [
 
     /*
     |--------------------------------------------------------------------------
+    | Track "Last Used" On Every Request
+    |--------------------------------------------------------------------------
+    |
+    | Sanctum's default writes personal_access_tokens.last_used_at on EVERY
+    | authenticated request — a row write per runner GPS ping (every few
+    | seconds per online runner) and per poll. Nothing reads the column:
+    | signed-in devices, pruning (sanctum:prune-expired) and token rotation all
+    | go by created_at / expires_at, and the push "last seen" lives on
+    | device_tokens. Off unless something comes to need it.
+    |
+    */
+
+    'last_used_at' => (bool) env('SANCTUM_TRACK_LAST_USED', false),
+
+    /*
+    |--------------------------------------------------------------------------
     | Sanctum Middleware
     |--------------------------------------------------------------------------
     |

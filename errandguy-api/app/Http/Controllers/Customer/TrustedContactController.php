@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Customer;
 use App\Http\Controllers\Controller;
 use App\Http\Requests\TrustedContactRequest;
 use App\Models\TrustedContact;
+use App\Support\ErrorCode;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 
@@ -28,9 +29,7 @@ class TrustedContactController extends Controller
 
         // Enforce max 5 contacts
         if ($user->trustedContacts()->count() >= 5) {
-            return response()->json([
-                'message' => 'Maximum of 5 trusted contacts reached.',
-            ], 422);
+            return $this->fail(ErrorCode::TRUSTED_CONTACT_LIMIT, 'Maximum of 5 trusted contacts reached.', 422);
         }
 
         $contact = $user->trustedContacts()->create($request->validated());

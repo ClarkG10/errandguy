@@ -9,8 +9,11 @@ the mobile app's Sanctum tokens.
 
 Grouped in the sidebar (who can open each page is in **Roles** below):
 
-- **Operations** — Bookings (view, admin cancel, re-run matching), Errand Types
-  (pricing CRUD), Reviews (moderation / flag). Promo codes are retired, so a
+- **Operations** — Bookings (view; cancel, re-run matching, return to matching
+  and mark completed from the list or the errand page, which also has
+  tap-to-call phones and links to both people and the payment), Errand Types
+  (edit prices, copy and the on/off switch; no adding or deleting types, the
+  slug is fixed, every edit is in the audit log), Reviews (moderation / flag). Promo codes are retired, so a
   booking only shows a "Past promo code discount" line when it was made with
   one before then.
 - **People** — Users (suspend/unsuspend), Runner Profiles (approve/reject +
@@ -18,7 +21,10 @@ Grouped in the sidebar (who can open each page is in **Roles** below):
 - **Money** — Payments (refund), Payouts (runner payouts, customer withdrawals
   and payouts queued by account deletion: "Send via Xendit", "Check with
   Xendit" for a sent payout, manual complete/fail for an unsent one, and "Pay a
-  runner"), Wallet Transactions (ledger).
+  runner"; sending to an account other than the one on record needs a reason
+  and alerts money staff; a payout marked completed by hand needs how it was
+  paid and the reference; CSV export), Wallet Transactions (ledger, with a
+  "By staff" column and filter for money moved by hand).
 - **Safety & Support** — SOS Alerts (resolve, with a live red badge; every
   admin page of safety staff beeps and shows a browser notification on a new
   SOS), Support Tickets (threaded reply; "Reports about a person" filter).
@@ -197,3 +203,9 @@ Set `$navigationGroup`, gate with `canViewAny()`/`canCreate()` using the
 `can*()` (incl. `canDeleteAny()`): the AdminUser `Gate::before` allows
 everything, so a missing one opens it to every role. A new setting the code
 reads goes in `SystemSettings` plus a data migration that creates its row.
+
+## Times
+
+Every time in the panel, the booking timeline and CSV exports is Manila time
+(`FilamentTimezone`, set in `AdminPanelProvider`). Exported time columns say
+"(Manila time)" in their header. Timestamps are still stored in UTC.

@@ -59,7 +59,7 @@ class ExportCsv
                     $out = fopen('php://output', 'w');
                     // UTF-8 BOM so Excel opens ₱ / accented names correctly.
                     fwrite($out, "\xEF\xBB\xBF");
-                    fputcsv($out, array_keys($columns));
+                    fputcsv($out, self::headers($columns, (clone $query)->first()));
 
                     // Eloquent chunk() keeps the resource's eager-loads + casts,
                     // so relationship accessors in the column callbacks still work.
@@ -96,13 +96,31 @@ class ExportCsv
                 return response()->streamDownload(function () use ($records, $columns): void {
                     $out = fopen('php://output', 'w');
                     fwrite($out, "\xEF\xBB\xBF");
-                    fputcsv($out, array_keys($columns));
+                    fputcsv($out, self::headers($columns, $records->first()));
                     foreach ($records as $record) {
                         fputcsv($out, array_map(fn (callable $cb) => self::stringify($cb($record)), array_values($columns)));
                     }
                     fclose($out);
                 }, $filenameBase.'-selected-'.now()->format('Ymd-His').'.csv', ['Content-Type' => 'text/csv; charset=UTF-8']);
             });
+    }
+
+    /**
+     * The header row. A column holding times says "(Manila time)": times are
+     * written in Manila time like the panel shows them, and a sheet compared
+     * against UTC data would otherwise be 8 hours off without a hint. Which
+     * columns hold times is read off the first row.
+     *
+     * @param  array<string, callable>  $columns
+     * @return array<int, string>
+     */
+    private static function headers(array $columns, mixed $sample): array
+    {
+        return array_map(function (string $header, callable $cb) use ($sample): string {
+            $value = $sample === null ? null : rescue(fn () => $cb($sample), null, false);
+
+            return $value instanceof \DateTimeInterface ? $header.' (Manila time)' : $header;
+        }, array_keys($columns), array_values($columns));
     }
 
     private static function allowed(bool $personalData): bool
@@ -117,8 +135,11 @@ class ExportCsv
         if ($value === null) {
             return '';
         }
-        if ($value instanceof \Illuminate\Support\Carbon || $value instanceof \DateTimeInterface) {
-            return $value->format('Y-m-d H:i:s');
+        if ($value instanceof \DateTimeInterface) {
+            // Manila time, like every time shown in the panel (stored UTC).
+            return \Illuminate\Support\Carbon::instance($value)
+                ->timezone(config('app.business_timezone', 'Asia/Manila'))
+                ->format('Y-m-d H:i:s');
         }
         if (is_bool($value)) {
             return $value ? 'yes' : 'no';

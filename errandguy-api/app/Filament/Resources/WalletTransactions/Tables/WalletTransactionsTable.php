@@ -50,6 +50,12 @@ class WalletTransactionsTable
                 TextColumn::make('description')
                     ->limit(40)
                     ->toggleable(),
+                // Who moved it by hand: the insider-control view finance
+                // reviews ("every manual credit, debit and payout, by whom").
+                TextColumn::make('initiatedByStaff.full_name')
+                    ->label('By staff')
+                    ->placeholder('—')
+                    ->toggleable(),
                 TextColumn::make('reference_id')
                     ->toggleable(isToggledHiddenByDefault: true),
                 TextColumn::make('created_at')
@@ -66,6 +72,8 @@ class WalletTransactionsTable
                         'commission' => 'Cash commission',
                         'payment' => 'Payment',
                         'refund' => 'Refund',
+                        'adjustment' => 'Staff adjustment',
+                        'tip_payment' => 'Tip paid by customer',
                         // Legacy types: top-ups and referral bonuses are
                         // retired, but their rows stay in the ledger.
                         'top_up' => 'Top-up (legacy)',
@@ -78,6 +86,11 @@ class WalletTransactionsTable
                         'failed' => 'Failed',
                         'reversed' => 'Reversed',
                     ]),
+                SelectFilter::make('initiated_by_staff_id')
+                    ->label('Moved by staff')
+                    ->relationship('initiatedByStaff', 'full_name')
+                    ->searchable()
+                    ->preload(),
                 DateRangeFilter::make('created_at', 'Date'),
             ])
             ->headerActions([
@@ -89,6 +102,7 @@ class WalletTransactionsTable
                     'Status' => fn (WalletTransaction $r): ?string => $r->status,
                     'Description' => fn (WalletTransaction $r): ?string => $r->description,
                     'Reference' => fn (WalletTransaction $r): ?string => $r->reference_id,
+                    'By staff' => fn (WalletTransaction $r): ?string => $r->initiatedByStaff?->full_name,
                     'Created' => fn (WalletTransaction $r) => $r->created_at,
                     // No phone or email columns, and only money roles can open
                     // this page at all (canViewAny) — so finance, whose job is

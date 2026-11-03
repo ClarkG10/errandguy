@@ -4,6 +4,7 @@ namespace Tests\Feature\Admin;
 
 use App\Exceptions\BookingStateException;
 use App\Filament\Resources\Bookings\Pages\ListBookings;
+use App\Filament\Resources\Bookings\Pages\ViewBooking;
 use App\Jobs\AutoCancelBookingJob;
 use App\Jobs\MatchRunnerJob;
 use App\Models\AdminAlert;
@@ -126,6 +127,75 @@ class StuckErrandActionsTest extends TestCase
             'offered_runner_ids' => [$this->runner->id],
             'offer_count' => 1,
         ], $overrides), $paymentStatus, $method);
+    }
+
+    // ── Staff cancel of an errand in progress ───────────────────────────
+
+    public function test_staff_cancel_flags_item_money_the_runner_fronted(): void
+    {
+        Event::fake();
+        $booking = $this->accepted(['actual_item_cost' => 2500]);
+
+        app(BookingService::class)->adminCancel($booking->id, $this->admin->id, 'Customer unreachable');
+
+        $alert = AdminAlert::where('type', 'runner_owed_items')->sole();
+        $this->assertSame($booking->id, $alert->subject_id);
+        $this->assertStringContainsString('₱2,500.00', $alert->body);
+        $this->assertSame('refunded', $booking->fresh()->payment_status);
+    }
+
+    public function test_staff_cancel_without_item_money_raises_no_alert(): void
+    {
+        Event::fake();
+        $booking = $this->accepted();
+
+        app(BookingService::class)->adminCancel($booking->id, $this->admin->id, 'Duplicate errand');
+
+        $this->assertSame(0, AdminAlert::where('type', 'runner_owed_items')->count());
+    }
+
+    public function test_the_cancel_dialog_spells_out_the_money(): void
+    {
+        $notice = BookingService::cancelNotice($this->accepted([
+            'status' => 'delivered', 'actual_item_cost' => 300,
+        ])->load('runner'));
+
+        $this->assertStringContainsString('full ₱115.00 back in their ErrandGuy wallet', $notice);
+        $this->assertStringContainsString('is not paid for this errand', $notice);
+        $this->assertStringContainsString('₱300.00 for the customer’s items', $notice);
+        $this->assertStringContainsString('Mark completed', $notice);
+
+        $this->assertSame(
+            'Nothing was paid online, so there is nothing to refund.',
+            BookingService::cancelNotice($this->booking([], 'unpaid', 'cash')),
+        );
+    }
+
+    public function test_a_refund_never_lands_on_an_errand_that_is_live_again(): void
+    {
+        // Cancelled, then put back to matching before its refund ran: the
+        // refund must not go out while the errand is being worked.
+        $booking = $this->booking(['status' => 'pending']);
+
+        app(BookingService::class)->refundUnfulfilled($booking->id, 'No runner available — auto-refund');
+
+        $this->assertSame('paid', $booking->fresh()->payment_status);
+        $this->assertSame(0, WalletTransaction::where('reference_id', $booking->id)->where('type', 'refund')->count());
+    }
+
+    public function test_errand_actions_are_on_the_errand_page_too(): void
+    {
+        $booking = $this->accepted();
+
+        Livewire::test(ViewBooking::class, ['record' => $booking->getRouteKey()])
+            ->assertActionVisible('cancel')
+            ->assertActionVisible('returnToMatching')
+            ->assertActionHidden('markCompleted') // ops is not a money role
+            ->callAction('returnToMatching', ['reason' => 'Runner’s phone died'])
+            ->assertHasNoActionErrors();
+
+        $this->assertNotSame($this->runner->id, $booking->fresh()->runner_id);
+        $this->assertTrue(Activity::where('event', 'booking.returned_to_matching')->where('subject_id', $booking->id)->exists());
     }
 
     // ── Re-run matching ─────────────────────────────────────────────────

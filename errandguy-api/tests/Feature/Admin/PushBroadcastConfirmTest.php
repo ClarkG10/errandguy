@@ -78,6 +78,17 @@ class PushBroadcastConfirmTest extends TestCase
         Bus::assertDispatchedTimes(SendPushJob::class, 2);
     }
 
+    public function test_one_person_is_found_by_name_or_the_number_they_read_out(): void
+    {
+        $maria = \App\Models\User::factory()->create(['role' => 'customer', 'full_name' => 'Maria Santos', 'phone' => '+639171234567']);
+        \App\Models\User::factory()->create(['role' => 'runner', 'full_name' => 'Pedro Reyes', 'phone' => '+639998887777']);
+
+        $this->assertSame([$maria->id], array_keys(PushBroadcast::findPeople('maria')));
+        $this->assertSame([$maria->id], array_keys(PushBroadcast::findPeople('0917 123 4567')));
+        $this->assertStringContainsString('Maria Santos · Customer', PushBroadcast::findPeople('maria')[$maria->id]);
+        $this->assertSame('This will go to 1 person (that user).', PushBroadcast::confirmationLine('user', $maria->id));
+    }
+
     public function test_the_page_renders(): void
     {
         $this->get('/admin/push-broadcast')->assertOk()->assertSee('New broadcast');

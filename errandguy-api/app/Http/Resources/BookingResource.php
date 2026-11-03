@@ -3,6 +3,7 @@
 namespace App\Http\Resources;
 
 use App\Models\AdminUser;
+use App\Models\Booking;
 use App\Models\SOSAlert;
 use App\Models\User;
 use App\Services\BookingService;
@@ -179,11 +180,16 @@ class BookingResource extends JsonResource
             // hid gateway_ref). Derived from the `bookings.payment_method`
             // column, the same field the admin screens read.
             'payment_method_type' => $this->when($canSeeRunnerOps, fn () => $this->paymentMethodType()),
+            // The same value under the name the customer app reads for the fare
+            // line on tracking ("Pay the runner in cash", "Paid with GCash").
+            // It was never sent, so that line never showed. The booking's own
+            // customer sees it, plus everyone who already sees the type above.
+            'payment_method' => $this->when($isOwner || $canSeeRunnerOps, fn () => $this->paymentMethodType()),
             // Peso total the runner must collect from the customer IN PERSON,
             // or null when there is nothing to collect (prepaid, no fronted
             // item cost). Computed from existing columns — it changes no
             // settlement behaviour whatsoever.
-            'amount_to_collect' => $this->when($canSeeRunnerOps, fn () => $this->amountToCollect()),
+            'amount_to_collect' => $this->when($canSeeRunnerOps, fn () => self::amountToCollectFor($this->resource)),
             // Straight-line km from the runner's last known position to this
             // booking's pickup, attached by RunnerErrandController (offer feed
             // + matched offer). Null when the runner has no GPS fix on file, in
@@ -307,7 +313,7 @@ class BookingResource extends JsonResource
             'can_retry_match' => $this->when(
                 $isOwner,
                 fn () => $viewer->can('retryMatch', $this->resource)
-                    && BookingService::retryBlockReason($this->resource) === null,
+                    && BookingService::customerRetryBlockReason($this->resource) === null,
             ),
             'is_trackable' => in_array($this->status, ['accepted', 'heading_to_pickup', 'arrived_at_pickup', 'picked_up', 'in_transit', 'arrived_at_dropoff', 'delivered']),
             'created_at' => $this->created_at,
@@ -348,14 +354,26 @@ class BookingResource extends JsonResource
      *     online, so the runner is out of pocket until the customer repays them
      *     in cash at the door — on prepaid errands too. Only counted once the
      *     runner has REPORTED it (the budget is a ceiling, not an amount).
+     *
+     * Nothing is left to collect once the errand is completed: completion is
+     * the runner confirming the handover, cash included. A cash booking keeps
+     * payment_status 'unpaid' after settlement, so without this a finished cash
+     * errand went on saying "Collect ₱X". Before completion nothing changes —
+     * the no-signature rule (UpdateErrandStatusRequest) still sees money due.
+     *
+     * Static so the realtime offer (IncomingRequest) sends the same figure.
      */
-    protected function amountToCollect(): ?float
+    public static function amountToCollectFor(Booking $booking): ?float
     {
-        $fareDue = ($this->payment_method === 'cash' && $this->payment_status !== 'paid')
-            ? (float) $this->total_amount
+        if ($booking->status === 'completed') {
+            return null;
+        }
+
+        $fareDue = ($booking->payment_method === 'cash' && $booking->payment_status !== 'paid')
+            ? (float) $booking->total_amount
             : 0.0;
 
-        $itemsDue = max(0.0, (float) ($this->actual_item_cost ?? 0));
+        $itemsDue = max(0.0, (float) ($booking->actual_item_cost ?? 0));
 
         $total = round($fareDue + $itemsDue, 2);
 

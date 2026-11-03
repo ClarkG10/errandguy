@@ -5,6 +5,7 @@ namespace App\Http\Requests\Booking;
 use App\Http\Requests\Concerns\NormalizesPhoneNumbers;
 use App\Models\ErrandType;
 use App\Services\PaymentMethodCatalog;
+use App\Services\PricingService;
 use App\Support\VehicleClass;
 use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Validation\Rule;
@@ -26,6 +27,9 @@ class CreateBookingRequest extends FormRequest
      * still finish.
      */
     private const SINGLE_LOCATION_SLUGS = ['queue'];
+
+    /** Longest description allowed when it carries a written-out shopping list. */
+    private const SHOPPING_DESCRIPTION_MAX = 10000;
 
     public function authorize(): bool
     {
@@ -51,6 +55,11 @@ class CreateBookingRequest extends FormRequest
         $isSingleLocation = $errandType && in_array($errandType->slug, self::SINGLE_LOCATION_SLUGS, true);
         $dropoffRule = $isSingleLocation ? 'nullable' : 'required';
         $isShopping = $errandType && in_array($errandType->slug, ErrandType::SHOPPING_SLUGS, true);
+        // A shopping list (also on an old food/grocery errand booked again,
+        // which becomes "Buy for me") may run long; nothing else needs to.
+        $isShoppingList = $errandType
+            && in_array(ErrandType::preferenceSlug($errandType->slug), ErrandType::SHOPPING_SLUGS, true)
+            && filled($this->input('shopping_items'));
 
         return [
             'errand_type_id' => [
@@ -84,7 +93,13 @@ class CreateBookingRequest extends FormRequest
             'stops.*.contact_name' => ['nullable', 'string', 'max:100'],
             'stops.*.contact_phone' => ['nullable', 'string', 'regex:/^(\+63|0)9\d{9}$/'],
             'stops.*.note' => ['nullable', 'string', 'max:300'],
-            'description' => ['nullable', 'string', 'max:500'],
+            // A "Buy for me" list arrives twice: as shopping_items AND written
+            // out into the description ("Shopping list:\n• Milk ×2…", the copy
+            // runners and staff read). Up to 100 items of up to 80 characters
+            // in the app is roughly 9,000 characters, so 500 refused any list
+            // past about 18 items. The column is TEXT; any other description
+            // keeps its 500 limit.
+            'description' => ['nullable', 'string', 'max:'.($isShoppingList ? self::SHOPPING_DESCRIPTION_MAX : 500)],
             'special_instructions' => ['nullable', 'string', 'max:300'],
             'item_photos' => ['nullable', 'array', 'max:5'],
             // Raster-only (no SVG) — see UpdateErrandStatusRequest: an SVG proof
@@ -122,7 +137,29 @@ class CreateBookingRequest extends FormRequest
             // once). customer_offer has no rule, so it never reaches
             // validated().
             'pricing_mode' => ['nullable', Rule::in(['fixed'])],
-            'vehicle_type_rate' => ['nullable', Rule::in(VehicleClass::LADDER)],
+            'vehicle_type_rate' => [
+                'bail',
+                'nullable',
+                Rule::in(VehicleClass::LADDER),
+                // Staff withdraw a vehicle for one errand type by setting its
+                // per-km rate to 0, and the quote stops offering it — but a
+                // booking still carrying it (an older quote, a stale draft) was
+                // accepted and priced on a 0 rate. Checked against the type
+                // being booked, after a retired type was remapped above.
+                // A queue errand is always booked on foot (the app hides the
+                // vehicle picker and sends 'walk'), so walking stays valid for
+                // it whatever its rates say.
+                function (string $attribute, mixed $value, \Closure $fail) use ($errandType, $isSingleLocation): void {
+                    if (! $errandType || ! $errandType->is_active || ($isSingleLocation && $value === 'walk')) {
+                        return;
+                    }
+
+                    if (! in_array($value, app(PricingService::class)->supportedVehicleTypes($errandType), true)) {
+                        $fail(ucfirst(VehicleClass::label($value)).' isn’t available for '.$errandType->name
+                            .' right now. Please choose another vehicle.');
+                    }
+                },
+            ],
             // Cash, GCash, Maya or the wallet — whichever the operator has
             // enabled. A retired method (card, GrabPay) that the app build
             // already on phones can still offer gets its own clear refusal

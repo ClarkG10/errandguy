@@ -376,6 +376,8 @@ class PayoutSafetyTest extends TestCase
                 'channel_code' => 'PH_BDO',
                 'account_number' => '001234567890',
                 'account_holder_name' => 'Rhea Runner',
+                // Not the GCash account she saved, so it needs a reason.
+                'change_reason' => 'Runner asked to be paid to her bank this time',
             ])
             ->assertHasNoActionErrors();
 
@@ -388,6 +390,136 @@ class PayoutSafetyTest extends TestCase
         $this->assertSame('PH_BDO', $activity->properties['channel_code']);
         $this->assertSame('001234567890', $activity->properties['account_number']);
         $this->assertSame('Rhea Runner', $activity->properties['account_name']);
+    }
+
+    public function test_pay_a_runner_that_xendit_rejects_says_the_money_already_moved(): void
+    {
+        // The debit and the pending payout are made before the send. When
+        // Xendit then rejects it, staff used to see only "Could not send
+        // payout" — so they tried again and the runner was debited twice.
+        $this->sendOutcome = 'reject';
+
+        Livewire::test(Payouts::class)
+            ->callAction('payRunner', [
+                'user_id' => $this->runner->id,
+                'amount' => 150,
+                'channel_code' => 'PH_GCASH',
+                'account_number' => '09171234567',
+                'account_holder_name' => 'Rhea Runner',
+            ])
+            ->assertNotified('Payout created, but not sent');
+
+        $tx = WalletTransaction::where('user_id', $this->runner->id)->where('type', 'payout')->sole();
+        $this->assertSame('pending', $tx->status);
+        $this->assertFalse($tx->isSentToGateway());
+        $this->assertEquals(50.0, (float) $this->runner->fresh()->wallet_balance);
+
+        $activity = Activity::where('event', 'payout.admin_initiated')->where('subject_id', $tx->id)->sole();
+        $this->assertFalse($activity->properties['sent']);
+    }
+
+    public function test_sending_to_a_different_account_needs_a_reason_and_alerts_finance(): void
+    {
+        $tx = $this->pendingPayout(); // requested to GCash 09171234567
+
+        // Changed with no reason: nothing goes out.
+        Livewire::test(Payouts::class)
+            ->callTableAction('sendViaXendit', $tx, [
+                'channel_code' => 'PH_GCASH', 'account_number' => '09998887777', 'account_holder_name' => 'Someone Else',
+            ])
+            ->assertNotified('Say why the account changed');
+        $this->assertFalse($tx->fresh()->isSentToGateway());
+        $this->assertSame(0, \App\Models\AdminAlert::where('type', 'payout_destination_changed')->count());
+
+        // Changed with a reason: sent, alerted and audited.
+        Livewire::test(Payouts::class)
+            ->callTableAction('sendViaXendit', $tx, [
+                'channel_code' => 'PH_GCASH', 'account_number' => '09998887777', 'account_holder_name' => 'Rhea Runner',
+                'change_reason' => 'Runner called: old SIM lost',
+            ]);
+        $this->assertTrue($tx->fresh()->isSentToGateway());
+        $alert = \App\Models\AdminAlert::where('type', 'payout_destination_changed')->sole();
+        $this->assertStringContainsString('old SIM lost', $alert->body);
+        $this->assertTrue(Activity::where('event', 'payout.sent')->where('subject_id', $tx->id)->sole()->properties['destination_changed']);
+    }
+
+    public function test_pay_a_runner_to_an_account_they_did_not_save_needs_a_reason_and_alerts(): void
+    {
+        $form = [
+            'user_id' => $this->runner->id,
+            'amount' => 100,
+            'channel_code' => 'PH_GCASH',
+            'account_number' => '09998887777', // she saved 09171234567
+            'account_holder_name' => 'Someone Else',
+        ];
+
+        Livewire::test(Payouts::class)
+            ->callAction('payRunner', $form)
+            ->assertNotified('Say why the account changed');
+        // Refused before any money moved.
+        $this->assertSame(0, WalletTransaction::where('user_id', $this->runner->id)->where('type', 'payout')->count());
+        $this->assertEquals(200.0, (float) $this->runner->fresh()->wallet_balance);
+
+        Livewire::test(Payouts::class)
+            ->callAction('payRunner', [...$form, 'change_reason' => 'Runner called from a new number']);
+        $this->assertSame(1, WalletTransaction::where('user_id', $this->runner->id)->where('type', 'payout')->count());
+        $alert = \App\Models\AdminAlert::where('type', 'payout_destination_changed')->sole();
+        $this->assertSame('Payout sent to a different account', $alert->title);
+        $this->assertStringContainsString('new number', $alert->body);
+    }
+
+    public function test_a_rejected_send_to_a_different_account_is_still_flagged_as_an_attempt(): void
+    {
+        $this->sendOutcome = 'reject';
+        $tx = $this->pendingPayout();
+
+        Livewire::test(Payouts::class)->callTableAction('sendViaXendit', $tx, [
+            'channel_code' => 'PH_GCASH', 'account_number' => '09998887777', 'account_holder_name' => 'Rhea Runner',
+            'change_reason' => 'Runner called: old SIM lost',
+        ]);
+
+        $alert = \App\Models\AdminAlert::where('type', 'payout_destination_changed')->sole();
+        $this->assertSame('Payout to a different account tried', $alert->title);
+        $this->assertStringContainsString('Xendit refused it', $alert->body);
+    }
+
+    public function test_the_same_account_typed_differently_is_not_a_change(): void
+    {
+        $this->assertFalse(Payouts::destinationChanged(
+            PayoutDestination::make('gcash', '09171234567', 'Rhea Runner'), 'PH_GCASH', '+63 917 123 4567',
+        ));
+        $this->assertTrue(Payouts::destinationChanged(
+            PayoutDestination::make('gcash', '09171234567', 'Rhea Runner'), 'PH_PAYMAYA', '09171234567',
+        ));
+    }
+
+    public function test_a_payout_completed_by_hand_records_how_it_was_paid(): void
+    {
+        $tx = $this->pendingPayout();
+
+        Livewire::test(Payouts::class)
+            ->callTableAction('complete', $tx, ['paid_how' => ''])
+            ->assertHasTableActionErrors(['paid_how' => 'required']);
+        $this->assertSame('pending', $tx->fresh()->status);
+
+        Livewire::test(Payouts::class)
+            ->callTableAction('complete', $tx, ['paid_how' => 'GCash to 0917 123 4567, ref 99887766'])
+            ->assertHasNoTableActionErrors();
+        $this->assertSame('completed', $tx->fresh()->status);
+        $this->assertSame(
+            'GCash to 0917 123 4567, ref 99887766',
+            Activity::where('event', 'payout.completed')->where('subject_id', $tx->id)->sole()->properties['paid_how'],
+        );
+    }
+
+    public function test_finance_can_export_payouts_and_the_badge_counts_only_unsent_ones(): void
+    {
+        $this->pendingPayout();
+        $this->sentPayout();
+        \App\Support\AdminCache::flush();
+
+        Livewire::test(Payouts::class)->assertTableActionVisible('exportCsv');
+        $this->assertSame('1', Payouts::getNavigationBadge());
     }
 
     public function test_the_bulk_send_button_is_gone(): void

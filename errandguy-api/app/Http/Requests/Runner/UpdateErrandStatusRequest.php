@@ -73,7 +73,7 @@ class UpdateErrandStatusRequest extends FormRequest
         // money is due at the door: completion settles an unpaid cash fare as
         // collected (and debits the runner's commission) and closes out the
         // item money the runner fronted, so whoever pays can also sign.
-        // Mirrors BookingResource::amountToCollect().
+        // Mirrors BookingResource::amountToCollectFor().
         $moneyDue = ($booking?->payment_method === 'cash' && $booking?->payment_status !== 'paid')
             || (float) ($booking?->actual_item_cost ?? 0) > 0;
         $signatureExcused = $this->filled('no_signature_reason')

@@ -27,10 +27,10 @@ class BookingInfolist
                             ->weight('bold')
                             ->size(TextSize::Large)
                             ->copyable(),
-                        TextEntry::make('status')
+                        TextEntry::make('status')->formatStateUsing(fn (?string $state): string => \App\Filament\Support\StatusLabels::booking($state))
                             ->badge()
                             ->color(fn (string $state): string => self::statusColor($state)),
-                        TextEntry::make('payment_status')
+                        TextEntry::make('payment_status')->formatStateUsing(fn (?string $state): string => \App\Filament\Support\StatusLabels::payment($state))
                             ->label('Payment')
                             ->badge()
                             ->color(fn (string $state): string => match ($state) {
@@ -43,10 +43,31 @@ class BookingInfolist
                             ->money('PHP')
                             ->weight('bold')
                             ->color('success'),
-                        TextEntry::make('customer.full_name')->label('Customer')->icon('heroicon-m-user'),
-                        TextEntry::make('runner.full_name')->label('Runner')->placeholder('Unassigned')->icon('heroicon-m-truck'),
+                        // Who is on it, one click from their account and one tap
+                        // from a call: on a stalled errand the first thing ops
+                        // does is phone the runner.
+                        TextEntry::make('customer.full_name')->label('Customer')->icon('heroicon-m-user')
+                            ->url(fn (Booking $record): ?string => self::userUrl($record->customer_id)),
+                        TextEntry::make('runner.full_name')->label('Runner')->placeholder('Unassigned')->icon('heroicon-m-truck')
+                            ->url(fn (Booking $record): ?string => self::userUrl($record->runner_id)),
                         TextEntry::make('errandType.name')->label('Errand type')->placeholder('—')->badge()->color('gray'),
                         TextEntry::make('created_at')->label('Placed')->since()->dateTimeTooltip(),
+                        TextEntry::make('customer.phone')->label('Customer phone')->placeholder('—')
+                            ->icon('heroicon-m-phone')
+                            ->url(fn (Booking $record): ?string => filled($record->customer?->phone) ? 'tel:'.$record->customer->phone : null),
+                        TextEntry::make('runner.phone')->label('Runner phone')->placeholder('—')
+                            ->icon('heroicon-m-phone')
+                            ->url(fn (Booking $record): ?string => filled($record->runner?->phone) ? 'tel:'.$record->runner->phone : null),
+                        // The payment record (gateway reference, refunds) for the
+                        // money roles, who are the only ones who can open it.
+                        TextEntry::make('payment.id')->label('Payment record')
+                            ->formatStateUsing(fn (): string => 'Open payment')
+                            ->icon('heroicon-m-banknotes')
+                            ->url(fn (Booking $record): ?string => $record->payment
+                                ? \App\Filament\Resources\Payments\PaymentResource::getUrl('view', ['record' => $record->payment])
+                                : null)
+                            ->visible(fn (Booking $record): bool => \App\Filament\Resources\Payments\PaymentResource::canViewAny()
+                                && $record->payment !== null),
                     ]),
 
                 Tabs::make()
@@ -60,7 +81,7 @@ class BookingInfolist
                                 Section::make('Fee breakdown')
                                     ->columns(3)
                                     ->schema([
-                                        TextEntry::make('payment_method')->badge()->color('gray'),
+                                        TextEntry::make('payment_method')->formatStateUsing(fn (?string $state): string => \App\Filament\Support\StatusLabels::method($state))->badge()->color('gray'),
                                         TextEntry::make('pricing_mode')->badge()->color('gray'),
                                         TextEntry::make('schedule_type')->badge()->color('gray'),
                                         TextEntry::make('base_fee')->money('PHP'),
@@ -74,7 +95,9 @@ class BookingInfolist
                                             ->helperText('From a promo code used before promo codes were retired.')
                                             ->visible(fn (Booking $record): bool => (float) $record->promo_discount > 0),
                                         TextEntry::make('cancellation_fee')->money('PHP')->color('danger'),
-                                        TextEntry::make('runner_payout')->money('PHP')->color('warning'),
+                                        TextEntry::make('runner_payout')->money('PHP')->color('warning')
+                                            // Runner earnings are for the money roles.
+                                            ->visible(fn (): bool => auth('admin')->user()?->canManageMoney() ?? false),
                                         TextEntry::make('distance_km')->label('Distance')->suffix(' km')->numeric(2)->placeholder('—'),
                                         TextEntry::make('total_amount')->money('PHP')->weight('bold')->color('success'),
                                     ]),
@@ -216,5 +239,13 @@ class BookingInfolist
         }
 
         return $events;
+    }
+
+    /** The user's admin page, when the viewer can open it. */
+    private static function userUrl(?string $userId): ?string
+    {
+        return $userId && \App\Filament\Resources\Users\UserResource::canViewAny()
+            ? \App\Filament\Resources\Users\UserResource::getUrl('view', ['record' => $userId])
+            : null;
     }
 }

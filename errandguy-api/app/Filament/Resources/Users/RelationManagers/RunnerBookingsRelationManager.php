@@ -32,12 +32,14 @@ class RunnerBookingsRelationManager extends RelationManager
             ->paginated([10, 25])
             ->columns([
                 TextColumn::make('booking_number')->searchable()->weight('semibold'),
-                TextColumn::make('status')->badge()->color(fn (string $s): string => match ($s) {
+                TextColumn::make('status')->formatStateUsing(fn (?string $state): string => \App\Filament\Support\StatusLabels::booking($state))->badge()->color(fn (string $s): string => match ($s) {
                     'completed', 'delivered' => 'success',
                     'cancelled', 'no_runner' => 'danger',
                     default => 'warning',
                 }),
-                TextColumn::make('runner_payout')->label('Payout')->money('PHP')->color('success')->alignEnd(),
+                TextColumn::make('runner_payout')->label('Payout')->money('PHP')->color('success')->alignEnd()
+                    // Runner earnings are for the money roles (docs/ADMIN_PANEL.md).
+                    ->visible(fn (): bool => auth('admin')->user()?->canManageMoney() ?? false),
                 TextColumn::make('total_amount')->money('PHP')->alignEnd(),
                 TextColumn::make('completed_at')->label('Completed')->since()->dateTimeTooltip()->placeholder('—')->alignEnd(),
             ])

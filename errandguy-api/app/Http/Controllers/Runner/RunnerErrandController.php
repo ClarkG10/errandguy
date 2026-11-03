@@ -52,8 +52,10 @@ class RunnerErrandController extends Controller
      * at the payment counter. Every other retired slug needs no entry here —
      * document/laundry/food/grocery and old passenger rides all follow the
      * standard STATUS_ORDER.
+     *
+     * Public so DetectStalledErrandsCommand reads the same list.
      */
-    private const SINGLE_LOCATION_SLUGS = ['queue', 'bills_payment'];
+    public const SINGLE_LOCATION_SLUGS = ['queue', 'bills_payment'];
 
     /**
      * Terminal statuses after which a booking's per-stop ticks are frozen —
@@ -137,9 +139,7 @@ class RunnerErrandController extends Controller
             ->first();
 
         if (! $booking) {
-            return response()->json([
-                'message' => 'Errand not found',
-            ], 404);
+            return $this->fail(ErrorCode::NOT_FOUND, 'Errand not found.', 404);
         }
 
         // Deep links from the offer push land here, so the same approximate
@@ -156,18 +156,27 @@ class RunnerErrandController extends Controller
         $user = $request->user();
         $profile = $user->runnerProfile;
 
-        if (!$profile || !$profile->is_online || $profile->verification_status !== 'approved') {
-            return response()->json([
-                'message' => 'You must be online and approved to accept errands.',
-            ], 422);
+        // Two refusals with their own codes (the status stays 422): "not
+        // approved" has app copy of its own, and an approved runner who is
+        // merely offline must not be told their account isn't approved.
+        if (! $profile || $profile->verification_status !== 'approved') {
+            return $this->fail(
+                ErrorCode::RUNNER_NOT_APPROVED,
+                'Your runner account must be approved before you can accept errands.',
+                422,
+            );
+        }
+        if (! $profile->is_online) {
+            return $this->fail(ErrorCode::ACCEPT_NOT_ALLOWED, 'Go online to accept errands.', 422);
         }
 
         // Atomically claim the booking to prevent a lapsed offer from being
         // accepted after it moved on (lockForUpdate serialises it against the
         // stale-offer sweep, a decline, or a cancel).
         $oldStatus = 'matched';
+        $alreadyAccepted = false;
         try {
-            $booking = DB::transaction(function () use ($id, $user, $profile, &$oldStatus) {
+            $booking = DB::transaction(function () use ($id, $user, $profile, &$oldStatus, &$alreadyAccepted) {
                 $booking = Booking::whereKey($id)->lockForUpdate()->firstOrFail();
 
                 // Self-deal guard: a user who is BOTH a customer and an approved
@@ -180,6 +189,16 @@ class RunnerErrandController extends Controller
                 // (ids are UUIDs → compare as strings.)
                 if ((string) $booking->customer_id === (string) $user->id) {
                     throw new \RuntimeException('self_deal');
+                }
+
+                // A retry of this runner's own accept that already landed (the
+                // response was lost on a weak signal): it worked, so say so.
+                // It used to read as "no longer available" — the runner was
+                // told they'd lost an errand they were holding.
+                if ($booking->status === 'accepted' && (string) $booking->runner_id === (string) $user->id) {
+                    $alreadyAccepted = true;
+
+                    return $booking;
                 }
 
                 // Only the runner this errand is offered to may accept it, and
@@ -304,6 +323,20 @@ class RunnerErrandController extends Controller
             );
         }
 
+        // Nothing to log, bust or announce a second time.
+        if ($alreadyAccepted) {
+            $booking->load([
+                'errandType',
+                'customer:id,phone,full_name,avatar_url,role,status,phone_verified,avg_rating,total_ratings,created_at',
+                'statusLogs',
+            ]);
+
+            return response()->json([
+                'data' => new BookingResource($booking),
+                'message' => 'Errand accepted.',
+            ]);
+        }
+
         BookingStatusLog::create([
             'booking_id' => $booking->id,
             'status' => 'accepted',
@@ -414,20 +447,25 @@ class RunnerErrandController extends Controller
         $user = $request->user();
 
         if ($user->id !== $booking->runner_id) {
-            return response()->json([
-                'message' => 'You are not assigned to this errand.',
-            ], 403);
+            return $this->fail(ErrorCode::ERRAND_NOT_ASSIGNED, 'You are not assigned to this errand.', 403);
         }
 
         $validated = $request->validated();
         $newStatus = $validated['status'];
         $oldStatus = $booking->status;
 
+        // A retry of a step that already landed (the app timed out waiting
+        // for the answer and sent it again): the errand is where the runner
+        // asked it to be, so answer as if this request had moved it. Before
+        // any upload is stored and with nothing logged, settled or announced
+        // again — the first request did all of that.
+        if ($oldStatus === $newStatus) {
+            return $this->statusUpdated($booking);
+        }
+
         // Validate status transition order (per errand type)
         if (!$this->isValidTransition($oldStatus, $newStatus, $booking)) {
-            return response()->json([
-                'message' => "Invalid status transition from '{$oldStatus}' to '{$newStatus}' for this errand type.",
-            ], 422);
+            return $this->fail(ErrorCode::BOOKING_STATE_INVALID, $this->transitionRefusal($booking));
         }
 
         $updateData = ['status' => $newStatus];
@@ -459,9 +497,9 @@ class RunnerErrandController extends Controller
         // Defensive: if shopping_budget is set, hard-cap actual_item_cost server-side.
         if (isset($updateData['actual_item_cost']) && $booking->shopping_budget !== null
             && (float) $updateData['actual_item_cost'] > (float) $booking->shopping_budget) {
-            return response()->json([
-                'message' => 'Reported amount exceeds the customer’s spending limit for the items.',
-            ], 422);
+            $message = 'Reported amount exceeds the customer’s spending limit for the items.';
+
+            return $this->fail(ErrorCode::VALIDATION_FAILED, $message, errors: ['actual_item_cost' => [$message]]);
         }
         // Mark picked_up_at even when there is no pickup_photo (e.g. queue, shopping).
         if ($newStatus === 'picked_up' && !isset($updateData['picked_up_at'])) {
@@ -516,6 +554,10 @@ class RunnerErrandController extends Controller
             if ($locked && (string) $locked->runner_id !== (string) $user->id) {
                 return 'not_assigned';
             }
+            // A double tap: the other request just made this same step.
+            if ($locked && $locked->status === $newStatus) {
+                return 'already';
+            }
             if (! $locked || $locked->status !== $oldStatus) {
                 return 'conflict'; // already moved on — treat as an idempotent no-op
             }
@@ -566,15 +608,15 @@ class RunnerErrandController extends Controller
         });
 
         if ($conflict === 'not_assigned') {
-            return response()->json([
-                'message' => 'You are not assigned to this errand.',
-            ], 403);
+            return $this->fail(ErrorCode::ERRAND_NOT_ASSIGNED, 'You are not assigned to this errand.', 403);
+        }
+
+        if ($conflict === 'already') {
+            return $this->statusUpdated($booking->fresh(['errandType']));
         }
 
         if ($conflict === 'conflict') {
-            return response()->json([
-                'message' => 'This errand was just updated. Pull to refresh.',
-            ], 409);
+            return $this->fail(ErrorCode::BOOKING_STALE, 'This errand was just updated. Pull to refresh.', 409);
         }
 
         // Dispatch AFTER the transaction commits (mirroring accept()/decline()),
@@ -583,12 +625,35 @@ class RunnerErrandController extends Controller
         // ShouldDispatchAfterCommit as a belt-and-suspenders guard.
         event(new BookingStatusChanged($booking, $oldStatus, $newStatus));
 
+        return $this->statusUpdated($booking);
+    }
+
+    /** The answer to a status change: the booking as it now stands. */
+    private function statusUpdated(Booking $booking): JsonResponse
+    {
         $booking->load(['errandType', 'customer', 'statusLogs']);
 
         return response()->json([
             'data' => new BookingResource($booking),
             'message' => 'Status updated.',
         ]);
+    }
+
+    /**
+     * Why a step can't be made, in words the runner can act on (it used to
+     * read "Invalid status transition from 'cancelled' to 'picked_up'…").
+     */
+    private function transitionRefusal(Booking $booking): string
+    {
+        return match ($booking->status) {
+            'cancelled' => $booking->cancelled_by !== null
+                && (string) $booking->cancelled_by === (string) $booking->customer_id
+                    ? 'This errand was cancelled by the customer.'
+                    : 'This errand was cancelled.',
+            'completed' => 'This errand is already completed.',
+            'matched' => 'Accept this errand before updating it.',
+            default => 'That step isn’t next for this errand. Refresh to see where it is.',
+        };
     }
 
     /**

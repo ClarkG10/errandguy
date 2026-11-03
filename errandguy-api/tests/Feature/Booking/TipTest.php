@@ -139,4 +139,44 @@ class TipTest extends TestCase
                 ->where('user_id', $this->customer->id)->where('type', 'tip')->count());
         }
     }
+
+    public function test_a_tip_the_service_finds_already_paid_is_a_conflict_not_a_low_balance(): void
+    {
+        // The controller's tip_amount check passed (a tip landing at the same
+        // moment), but the service sees the customer's tip row under its lock.
+        WalletTransaction::create([
+            'user_id' => $this->customer->id, 'type' => 'tip', 'amount' => -50,
+            'balance_after' => 500, 'reference_id' => $this->booking->id, 'description' => 'Tip for your runner',
+        ]);
+
+        $this->actingAs($this->customer)
+            ->postJson("/api/v1/bookings/{$this->booking->id}/tip", ['amount' => 50])
+            ->assertStatus(409)
+            ->assertJsonPath('code', 'CONFLICT');
+
+        $this->assertEquals(500.0, (float) $this->customer->fresh()->wallet_balance);
+    }
+
+    public function test_a_database_error_during_a_tip_is_a_server_error_with_no_sql_in_it(): void
+    {
+        WalletTransaction::creating(function () {
+            throw new \Illuminate\Database\QueryException(
+                'mysql',
+                'insert into `wallet_transactions` …',
+                [],
+                new \PDOException('SQLSTATE[HY000]: General error: 1030 Got error from storage engine'),
+            );
+        });
+
+        $response = $this->actingAs($this->customer)
+            ->postJson("/api/v1/bookings/{$this->booking->id}/tip", ['amount' => 50])
+            ->assertStatus(500)
+            ->assertJsonPath('code', 'SERVER_ERROR');
+
+        $this->assertStringNotContainsString('insert into', (string) $response->json('message'));
+        // Rolled back: neither wallet moved.
+        $this->assertEquals(500.0, (float) $this->customer->fresh()->wallet_balance);
+        $this->assertEquals(100.0, (float) $this->runner->fresh()->wallet_balance);
+        $this->assertEquals(0.0, (float) $this->booking->fresh()->tip_amount);
+    }
 }

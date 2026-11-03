@@ -215,7 +215,72 @@ class StatusUpdateTest extends TestCase
             ]);
 
         $response->assertStatus(422)
-            ->assertJsonPath('message', "Invalid status transition from 'accepted' to 'in_transit' for this errand type.");
+            ->assertJsonPath('code', 'BOOKING_STATE_INVALID')
+            ->assertJsonPath('message', 'That step isn’t next for this errand. Refresh to see where it is.');
+    }
+
+    public function test_a_step_on_an_errand_the_customer_cancelled_says_so(): void
+    {
+        // It used to read "Invalid status transition from 'cancelled' to …".
+        $this->booking->update([
+            'status' => 'cancelled', 'cancelled_at' => now(), 'cancelled_by' => $this->customer->id,
+        ]);
+
+        $this->actingAs($this->runner)
+            ->postJson("/api/v1/runner/errand/{$this->booking->id}/status", ['status' => 'heading_to_pickup'])
+            ->assertStatus(422)
+            ->assertJsonPath('code', 'BOOKING_STATE_INVALID')
+            ->assertJsonPath('message', 'This errand was cancelled by the customer.');
+    }
+
+    public function test_a_refusal_for_someone_elses_errand_carries_its_code(): void
+    {
+        $otherRunner = User::factory()->create(['role' => 'runner', 'status' => 'active']);
+
+        $this->actingAs($otherRunner)
+            ->postJson("/api/v1/runner/errand/{$this->booking->id}/status", ['status' => 'heading_to_pickup'])
+            ->assertStatus(403)
+            ->assertJsonPath('code', 'ERRAND_NOT_ASSIGNED')
+            ->assertJsonPath('message', 'You are not assigned to this errand.');
+    }
+
+    public function test_retrying_a_step_that_already_landed_answers_with_the_errand(): void
+    {
+        Event::fake();
+        $step = fn () => $this->actingAs($this->runner)
+            ->postJson("/api/v1/runner/errand/{$this->booking->id}/status", ['status' => 'heading_to_pickup']);
+
+        $step()->assertOk();
+        // The app timed out and sent it again: same answer, not a 422.
+        $step()->assertOk()
+            ->assertJsonPath('data.status', 'heading_to_pickup')
+            ->assertJsonPath('message', 'Status updated.');
+
+        $this->assertSame(1, \App\Models\BookingStatusLog::where('booking_id', $this->booking->id)
+            ->where('status', 'heading_to_pickup')->count());
+        Event::assertDispatchedTimes(\App\Events\BookingStatusChanged::class, 1);
+    }
+
+    public function test_retrying_a_completion_that_already_landed_pays_the_runner_once(): void
+    {
+        $this->booking->update(['payment_method' => 'wallet', 'payment_status' => 'paid']);
+        $this->completeBooking();
+        $this->assertEquals('100.00', $this->runner->fresh()->wallet_balance);
+        $storedBefore = count(Storage::disk('media')->allFiles());
+
+        $this->actingAs($this->runner)
+            ->postJson("/api/v1/runner/errand/{$this->booking->id}/status", [
+                'status' => 'completed',
+                'signature' => UploadedFile::fake()->image('s.png'),
+            ])
+            ->assertOk()
+            ->assertJsonPath('data.status', 'completed');
+
+        $this->assertEquals('100.00', $this->runner->fresh()->wallet_balance);
+        $this->assertSame(1, \App\Models\WalletTransaction::where('user_id', $this->runner->id)
+            ->where('reference_id', $this->booking->id)->where('type', 'earning')->count());
+        // The retry's signature was never stored.
+        $this->assertSame($storedBefore, count(Storage::disk('media')->allFiles()));
     }
 
     public function test_non_assigned_runner_cannot_update_status(): void

@@ -27,7 +27,7 @@ class WalletTransactionResource extends Resource
 
     public static function getEloquentQuery(): Builder
     {
-        return parent::getEloquentQuery()->with(['user']);
+        return parent::getEloquentQuery()->with(['user', 'initiatedByStaff:id,full_name']);
     }
 
     public static function infolist(Schema $schema): Schema

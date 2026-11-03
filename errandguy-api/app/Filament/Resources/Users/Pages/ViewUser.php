@@ -21,6 +21,9 @@ class ViewUser extends ViewRecord
     protected function getHeaderActions(): array
     {
         return [
+            // Same actions and role gates as the list row.
+            \App\Filament\Resources\Users\Tables\UsersTable::suspendAction(),
+            \App\Filament\Resources\Users\Tables\UsersTable::unsuspendAction(),
             Action::make('adjustWallet')
                 ->label('Adjust wallet')
                 ->icon(Heroicon::OutlinedBanknotes)

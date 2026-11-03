@@ -222,7 +222,10 @@ class PaymentBeforeMatchingTest extends TestCase
 
         $this->paySucceeded('whk-1');
         $this->getJson("/api/v1/payments/{$payment->id}/status")->assertOk();
-        $this->travel(6)->minutes();
+        // Only a couple of minutes: the search itself is faked here, so after
+        // longer the errand looks exactly like one whose search never ran, and
+        // the sweep rightly resumes it (ResumeStalledSearchTest).
+        $this->travel(2)->minutes();
         $this->artisan('errandguy:reconcile-booking-payments')->assertExitCode(0);
         $this->paySucceeded('whk-2');
 

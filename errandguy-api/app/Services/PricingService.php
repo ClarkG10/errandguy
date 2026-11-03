@@ -154,9 +154,11 @@ class PricingService
      *
      * Logic: a vehicle is offered iff its per-km column is > 0, which
      * gives ops a single row to flip (set a rate to 0 to withdraw that
-     * vehicle for the type) without code changes.
+     * vehicle for the type) without code changes. Booking creation checks the
+     * chosen vehicle against this too (CreateBookingRequest), so the quote and
+     * the booking can't disagree.
      */
-    private function supportedVehicleTypes(?ErrandType $errandType): array
+    public function supportedVehicleTypes(?ErrandType $errandType): array
     {
         if (!$errandType) {
             return ['walk', 'bicycle', 'motorcycle', 'car'];

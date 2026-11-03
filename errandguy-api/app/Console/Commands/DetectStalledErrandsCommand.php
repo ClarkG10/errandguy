@@ -2,8 +2,10 @@
 
 namespace App\Console\Commands;
 
+use App\Http\Controllers\Runner\RunnerErrandController;
 use App\Models\AdminAlert;
 use App\Models\Booking;
+use App\Models\ErrandType;
 use App\Models\SystemConfig;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\Cache;
@@ -93,6 +95,23 @@ class DetectStalledErrandsCommand extends Command
         'delivered' => 20,
     ];
 
+    /**
+     * DEFAULT idle thresholds for single-location errands (queue, and legacy
+     * bills payment — RunnerErrandController::SINGLE_LOCATION_SLUGS) at the
+     * statuses that mean something else for them. On a queue errand
+     * 'arrived_at_pickup' is "I'm in line" and 'picked_up' is "my turn —
+     * finishing up": a line at a government office or a bank runs for hours,
+     * with nothing to tick meanwhile, so the 45/60-minute delivery thresholds
+     * raised a false "stalled" alert on nearly every queue errand.
+     *
+     * A status switched off (0) is off for these errands too, and a standard
+     * threshold staff set higher than these wins.
+     */
+    public const SINGLE_LOCATION_THRESHOLDS = [
+        'arrived_at_pickup' => 360,
+        'picked_up' => 120,
+    ];
+
     /** Human labels for the alert body — mirrors the admin BookingsTable. */
     private const STATUS_LABELS = [
         'accepted' => 'Accepted',
@@ -139,16 +158,16 @@ class DetectStalledErrandsCommand extends Command
         $raised = 0;
         $skipped = 0;
 
-        foreach (self::DEFAULT_THRESHOLDS as $status => $defaultMinutes) {
-            $minutes = $this->thresholdFor($status, $defaultMinutes);
-            if ($minutes === null) {
-                continue; // this status's monitor is switched off
-            }
-
+        foreach ($this->watches() as [$status, $minutes, $singleLocation]) {
             $cutoff = $now->copy()->subMinutes($minutes);
 
             $query = Booking::query()
                 ->where('status', $status)
+                // Where single-location errands get their own (longer)
+                // threshold, each watch takes only its own errands.
+                ->when($singleLocation !== null, fn ($q) => $singleLocation
+                    ? $q->whereIn('errand_type_id', $this->singleLocationTypeIds())
+                    : $q->whereNotIn('errand_type_id', $this->singleLocationTypeIds()))
                 ->whereNotNull('runner_id')
                 ->where('updated_at', '<', $cutoff)
                 // A scheduled booking a runner accepted well in advance is
@@ -226,6 +245,43 @@ class DetectStalledErrandsCommand extends Command
         $this->info(($dryRun ? '[dry-run] ' : '')."Raised {$raised} stalled-errand alert(s) (skipped {$skipped} already alerted).");
 
         return self::SUCCESS;
+    }
+
+    /**
+     * What to scan this run: [status, minutes, scope], where scope is null
+     * for every errand at that status, true for single-location errands only
+     * and false for every other errand. A status switched off in
+     * system_config is left out entirely.
+     *
+     * @return list<array{0: string, 1: int, 2: bool|null}>
+     */
+    private function watches(): array
+    {
+        $watches = [];
+
+        foreach (self::DEFAULT_THRESHOLDS as $status => $defaultMinutes) {
+            $minutes = $this->thresholdFor($status, $defaultMinutes);
+            if ($minutes === null) {
+                continue; // this status's monitor is switched off
+            }
+
+            if (isset(self::SINGLE_LOCATION_THRESHOLDS[$status])) {
+                $watches[] = [$status, $minutes, false];
+                $watches[] = [$status, max($minutes, self::SINGLE_LOCATION_THRESHOLDS[$status]), true];
+            } else {
+                $watches[] = [$status, $minutes, null];
+            }
+        }
+
+        return $watches;
+    }
+
+    /** Errand types that finish at a single location, as an id subquery. */
+    private function singleLocationTypeIds(): \Illuminate\Database\Eloquent\Builder
+    {
+        return ErrandType::query()
+            ->whereIn('slug', RunnerErrandController::SINGLE_LOCATION_SLUGS)
+            ->select('id');
     }
 
     /**

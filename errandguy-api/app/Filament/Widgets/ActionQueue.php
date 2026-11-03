@@ -66,9 +66,21 @@ class ActionQueue extends StatsOverviewWidget
                 'sos' => SOSAlert::where('status', 'active')->count(),
                 'sos_oldest' => SOSAlert::where('status', 'active')->min('triggered_at'),
                 'verifications' => $verificationQuery()->count(),
-                'verifications_oldest' => $verificationQuery()->min('created_at'),
-                'payouts' => WalletTransaction::where('type', 'payout')->where('status', 'pending')->count(),
-                'payouts_oldest' => WalletTransaction::where('type', 'payout')->where('status', 'pending')->min('created_at'),
+                // Aged from the last document sent, like the list's Waiting
+                // column: the earliest of each application's latest upload.
+                // Worked out in SQL (withMax on a query would load every
+                // profile in full just to take a minimum).
+                'verifications_oldest' => \App\Models\RunnerDocument::query()
+                    ->whereIn('runner_id', $verificationQuery()->select('id'))
+                    ->groupBy('runner_id')
+                    ->selectRaw('max(created_at) as submitted_at')
+                    ->get()
+                    ->min('submitted_at'),
+                // Work for staff: not yet handed to Xendit. A sent one settles on
+                // its own when Xendit answers, so it is shown apart.
+                'payouts' => WalletTransaction::where('type', 'payout')->where('status', 'pending')->whereNull('payout_sent_at')->count(),
+                'payouts_oldest' => WalletTransaction::where('type', 'payout')->where('status', 'pending')->whereNull('payout_sent_at')->min('created_at'),
+                'payouts_sent' => WalletTransaction::where('type', 'payout')->where('status', 'pending')->whereNotNull('payout_sent_at')->count(),
                 'stuck' => $stuckQuery()->count(),
                 'stuck_oldest' => $stuckQuery()->min('created_at'),
                 // Support was the only user-blocking queue with no card here,
@@ -90,7 +102,7 @@ class ActionQueue extends StatsOverviewWidget
                 ->descriptionIcon('heroicon-m-shield-exclamation')
                 ->color($d['sos'] > 0 ? 'danger' : 'gray')
                 ->url(SOSAlertResource::canViewAny()
-                    ? SOSAlertResource::getUrl('index', ['tableFilters' => ['status' => ['value' => 'active']]])
+                    ? SOSAlertResource::getUrl('index', ['filters' => ['status' => ['value' => 'active']]])
                     : null),
 
             Stat::make('Stuck errands', number_format($d['stuck']))
@@ -98,7 +110,7 @@ class ActionQueue extends StatsOverviewWidget
                 ->descriptionIcon('heroicon-m-exclamation-triangle')
                 ->color($d['stuck'] > 0 ? 'danger' : 'gray')
                 ->url(BookingResource::canViewAny()
-                    ? BookingResource::getUrl('index', ['tableFilters' => ['status' => ['value' => 'no_runner']]])
+                    ? BookingResource::getUrl('index', ['filters' => ['status' => ['value' => 'no_runner']]])
                     : null),
 
             Stat::make('Pending verifications', number_format($d['verifications']))
@@ -119,7 +131,8 @@ class ActionQueue extends StatsOverviewWidget
 
         if (Payouts::canAccess()) {
             $stats[] = Stat::make('Pending payouts', number_format($d['payouts']))
-                ->description($this->withAge($d['payouts'] > 0 ? 'Awaiting disbursement' : 'Nothing pending', $d['payouts_oldest']))
+                ->description($this->withAge($d['payouts'] > 0 ? 'Awaiting disbursement' : 'Nothing to send', $d['payouts_oldest'])
+                    .(($d['payouts_sent'] ?? 0) > 0 ? ' · '.number_format($d['payouts_sent']).' with Xendit' : ''))
                 ->descriptionIcon('heroicon-m-banknotes')
                 ->color($this->escalate($d['payouts_oldest'], $d['payouts'] > 0 ? 'primary' : 'gray', 720, 2880))
                 ->url(Payouts::getUrl());

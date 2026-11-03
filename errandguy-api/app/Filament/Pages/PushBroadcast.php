@@ -41,7 +41,7 @@ class PushBroadcast extends Page
         'all' => 'Everyone',
         'customers' => 'All customers',
         'runners' => 'All runners',
-        'user' => 'A specific user (by ID)',
+        'user' => 'One person',
     ];
 
     public static function canAccess(): bool
@@ -64,9 +64,14 @@ class PushBroadcast extends Page
                                 ->live()
                                 ->default('customers')
                                 ->options(self::AUDIENCES),
-                            TextInput::make('user_id')
-                                ->label('User ID')
-                                ->live(onBlur: true)
+                            // Staff know people by name or number, not by ID.
+                            Select::make('user_id')
+                                ->label('Person')
+                                ->searchable()
+                                ->getSearchResultsUsing(fn (string $search): array => self::findPeople($search))
+                                ->getOptionLabelUsing(fn ($value): ?string => self::personLabel(User::find($value)))
+                                ->helperText('Search by name, email or mobile number.')
+                                ->live()
                                 ->visible(fn (Get $get): bool => $get('audience') === 'user')
                                 ->required(fn (Get $get): bool => $get('audience') === 'user'),
                             TextInput::make('title')->required()->maxLength(120),
@@ -86,6 +91,32 @@ class PushBroadcast extends Page
         ];
     }
 
+    /** @return array<string, string> up to 20 matches, id => "Name · role · number" */
+    public static function findPeople(string $search): array
+    {
+        $search = trim($search);
+        $canonical = \App\Support\PhilippinePhone::canonical($search);
+
+        return User::query()
+            ->where(fn (Builder $q) => $q
+                ->where('full_name', 'like', "%{$search}%")
+                ->orWhere('email', 'like', "%{$search}%")
+                ->orWhere('phone', 'like', "%{$search}%")
+                ->when($canonical, fn (Builder $q) => $q->orWhere('phone', $canonical)))
+            ->orderBy('full_name')
+            ->limit(20)
+            ->get(['id', 'full_name', 'role', 'phone'])
+            ->mapWithKeys(fn (User $u): array => [$u->id => self::personLabel($u)])
+            ->all();
+    }
+
+    private static function personLabel(?User $user): ?string
+    {
+        return $user
+            ? implode(' · ', array_filter([$user->full_name ?: 'No name', ucfirst((string) $user->role), $user->phone]))
+            : null;
+    }
+
     /** The people a broadcast to this audience reaches. */
     public static function audienceQuery(string $audience, ?string $userId = null): Builder
     {
@@ -103,7 +134,7 @@ class PushBroadcast extends Page
     public static function confirmationLine(string $audience, ?string $userId = null): string
     {
         if ($audience === 'user' && blank($userId)) {
-            return 'Enter the user ID on the previous step.';
+            return 'Choose the person on the previous step.';
         }
 
         $count = self::audienceQuery($audience, $userId)->count();

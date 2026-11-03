@@ -55,4 +55,25 @@ class TrustedContactValidationTest extends TestCase
             'priority' => 1,
         ]);
     }
+
+    public function test_a_sixth_contact_is_refused_with_its_own_code(): void
+    {
+        foreach (range(1, 5) as $n) {
+            $this->actingAs($this->customer)
+                ->postJson('/api/v1/user/trusted-contacts', [
+                    'name' => "Contact {$n}", 'phone' => '0917123456'.$n, 'relationship' => 'friend', 'priority' => $n,
+                ])
+                ->assertStatus(201);
+        }
+
+        $this->actingAs($this->customer)
+            ->postJson('/api/v1/user/trusted-contacts', [
+                'name' => 'Contact 6', 'phone' => '09171234560', 'relationship' => 'friend', 'priority' => 6,
+            ])
+            ->assertStatus(422)
+            ->assertJsonPath('code', 'TRUSTED_CONTACT_LIMIT')
+            ->assertJsonPath('message', 'Maximum of 5 trusted contacts reached.');
+
+        $this->assertDatabaseCount('trusted_contacts', 5);
+    }
 }

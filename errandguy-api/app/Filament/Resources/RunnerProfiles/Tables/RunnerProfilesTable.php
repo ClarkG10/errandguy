@@ -123,16 +123,24 @@ class RunnerProfilesTable
                 // Earnings are money figures: money roles only.
                 TextColumn::make('total_earnings')->money('PHP')->sortable()
                     ->visible(fn (): bool => self::canSeeMoney()),
-                TextColumn::make('created_at')
+                // Waiting since their last document, not since sign-up: an
+                // account made weeks ago that sent its ID today has waited
+                // minutes, and a resubmission waits from when it was sent.
+                TextColumn::make('documents_submitted_at')
                     ->label('Waiting')
                     ->since()
+                    ->placeholder('No documents yet')
                     ->sortable()
                     ->badge()
-                    ->color(fn ($state): string => match (true) {
-                        $state === null => 'gray',
-                        $state->diffInHours(now()) >= 72 => 'danger',
-                        $state->diffInHours(now()) >= 24 => 'warning',
-                        default => 'success',
+                    ->color(function ($state): string {
+                        $hours = $state ? \Illuminate\Support\Carbon::parse($state)->diffInHours(now()) : null;
+
+                        return match (true) {
+                            $hours === null => 'gray',
+                            $hours >= 72 => 'danger',
+                            $hours >= 24 => 'warning',
+                            default => 'success',
+                        };
                     }),
             ])
             ->filters([
@@ -217,93 +225,116 @@ class RunnerProfilesTable
             ->recordActions([
                 ViewAction::make(),
 
-                Action::make('approve')
-                    ->label('Approve runner')
-                    ->icon(Heroicon::OutlinedShieldCheck)
-                    ->color('success')
-                    ->requiresConfirmation()
-                    ->modalDescription('Their government ID and selfie are approved. This lets them go online and accept errands.')
-                    // Only offered once the government ID and selfie are both
-                    // approved (Documents tab). Approving a runner never
-                    // approves their documents for them.
-                    ->visible(fn ($record): bool => $record->verification_status !== 'approved'
-                        && static::canModerate()
-                        && static::documentsApproved($record))
-                    ->action(function ($record): void {
-                        if (! $record->hasApprovedRequiredDocuments()) {
-                            AdminNotify::warning(
-                                'Runner not approved',
-                                'Their government ID and selfie must both be approved first.',
-                            );
-
-                            return;
-                        }
-
-                        $record->update([
-                            'verification_status' => 'approved',
-                            'approved_at' => now(),
-                        ]);
-
-                        // See the bulk action above: the type routes the tap and
-                        // unlocks the go-online button the moment the push lands.
-                        \App\Jobs\SendPushJob::dispatch(
-                            $record->user_id,
-                            'Verification Approved!',
-                            static::approvalPushBody($record),
-                            ['type' => 'document_update'],
-                        );
-
-                        AdminNotify::success(
-                            'Runner approved',
-                            $record,
-                            context: ['Runner' => $record->user?->full_name],
-                            audit: 'runner.approved',
-                            note: 'They can now accept errands and have been notified.',
-                        );
-                    }),
-
-                Action::make('reject')
-                    ->label('Reject runner')
-                    ->icon(Heroicon::OutlinedShieldExclamation)
-                    ->color('danger')
-                    ->requiresConfirmation()
-                    ->modalDescription(fn ($record): string => 'Rejects '
-                        .($record->user?->full_name ?? 'this runner').'’s verification and notifies them with your reason.')
-                    ->schema([
-                        Textarea::make('reason')->required()->maxLength(500),
-                    ])
-                    ->visible(fn ($record): bool => $record->verification_status !== 'rejected'
-                        && static::canModerate())
-                    ->action(function (array $data, $record): void {
-                        $record->update([
-                            'verification_status' => 'rejected',
-                        ]);
-
-                        RunnerDocument::where('runner_id', $record->id)
-                            ->where('status', 'pending')
-                            ->update([
-                                'status' => 'rejected',
-                                'rejection_reason' => $data['reason'],
-                                'reviewed_by' => auth('admin')->id(),
-                                'reviewed_at' => now(),
-                            ]);
-
-                        \App\Jobs\SendPushJob::dispatch(
-                            $record->user_id,
-                            'Verification Update',
-                            $data['reason'],
-                            ['type' => 'document_update'],
-                        );
-
-                        AdminNotify::success(
-                            'Runner rejected',
-                            $record,
-                            context: ['Runner' => $record->user?->full_name],
-                            audit: 'runner.rejected',
-                            properties: ['reason' => $data['reason']],
-                            note: 'They’ve been notified with your reason.',
-                        );
-                    }),
+                self::approveAction(),
+                self::rejectAction(),
             ]);
+    }
+
+    // Approve / reject, shared by the list row and the runner's page (where
+    // the documents are reviewed), so staff decide where they read.
+    public static function approveAction(): Action
+    {
+        return Action::make('approve')
+            ->label('Approve runner')
+            ->icon(Heroicon::OutlinedShieldCheck)
+            ->color('success')
+            ->requiresConfirmation()
+            ->modalDescription('Their government ID and selfie are approved. This lets them go online and accept errands.')
+            // Only offered once the government ID and selfie are both
+            // approved (Documents tab). Approving a runner never
+            // approves their documents for them.
+            ->visible(fn ($record): bool => $record->verification_status !== 'approved'
+                && static::canModerate()
+                && static::documentsApproved($record))
+            ->action(function ($record): void {
+                if (! $record->hasApprovedRequiredDocuments()) {
+                    AdminNotify::warning(
+                        'Runner not approved',
+                        'Their government ID and selfie must both be approved first.',
+                    );
+
+                    return;
+                }
+
+                $record->update([
+                    'verification_status' => 'approved',
+                    'approved_at' => now(),
+                ]);
+
+                // See the bulk action above: the type routes the tap and
+                // unlocks the go-online button the moment the push lands.
+                \App\Jobs\SendPushJob::dispatch(
+                    $record->user_id,
+                    'Verification Approved!',
+                    static::approvalPushBody($record),
+                    ['type' => 'document_update'],
+                );
+
+                AdminNotify::success(
+                    'Runner approved',
+                    $record,
+                    context: ['Runner' => $record->user?->full_name],
+                    audit: 'runner.approved',
+                    note: 'They can now accept errands and have been notified.',
+                );
+            });
+    }
+
+    public static function rejectAction(): Action
+    {
+        return Action::make('reject')
+            ->label('Reject runner')
+            ->icon(Heroicon::OutlinedShieldExclamation)
+            ->color('danger')
+            ->requiresConfirmation()
+            ->modalDescription(fn ($record): string => 'Rejects '
+                .($record->user?->full_name ?? 'this runner').'’s verification and notifies them with your reason.'
+                .($record->verification_status === 'approved'
+                    ? ' They are taken offline and get no more errands; any errand they are on now raises an alert so you can hand it to someone else.'
+                    : ''))
+            ->schema([
+                Textarea::make('reason')->required()->maxLength(500),
+            ])
+            ->visible(fn ($record): bool => $record->verification_status !== 'rejected'
+                && static::canModerate())
+            ->action(function (array $data, $record): void {
+                $wasApproved = $record->verification_status === 'approved';
+                $record->update([
+                    'verification_status' => 'rejected',
+                ]);
+
+                // Revoking an approved runner must be as safe as a
+                // suspension: off the map now, and nobody's errand left
+                // with someone who can no longer finish it.
+                if ($wasApproved && $record->user) {
+                    \App\Models\RunnerProfile::switchOffline($record->user_id);
+                    app(\App\Services\UserModerationService::class)->flagActiveErrands($record->user, 'rejected');
+                }
+
+                RunnerDocument::where('runner_id', $record->id)
+                    ->where('status', 'pending')
+                    ->update([
+                        'status' => 'rejected',
+                        'rejection_reason' => $data['reason'],
+                        'reviewed_by' => auth('admin')->id(),
+                        'reviewed_at' => now(),
+                    ]);
+
+                \App\Jobs\SendPushJob::dispatch(
+                    $record->user_id,
+                    'Verification Update',
+                    $data['reason'],
+                    ['type' => 'document_update'],
+                );
+
+                AdminNotify::success(
+                    'Runner rejected',
+                    $record,
+                    context: ['Runner' => $record->user?->full_name],
+                    audit: 'runner.rejected',
+                    properties: ['reason' => $data['reason']],
+                    note: 'They’ve been notified with your reason.',
+                );
+            });
     }
 }

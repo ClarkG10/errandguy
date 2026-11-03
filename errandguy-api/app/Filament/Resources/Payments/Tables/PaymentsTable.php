@@ -29,6 +29,12 @@ class PaymentsTable
                     ->searchable(),
                 TextColumn::make('customer.full_name')
                     ->searchable(),
+                // Finance looks a charge up by the Xendit id on a statement.
+                TextColumn::make('gateway_tx_id')
+                    ->label('Xendit id')
+                    ->searchable()
+                    ->copyable()
+                    ->toggleable(isToggledHiddenByDefault: true),
                 TextColumn::make('amount')
                     ->money('PHP')
                     ->sortable()
@@ -45,7 +51,7 @@ class PaymentsTable
                             ->label('Total collected')
                             ->query(fn (\Illuminate\Database\Query\Builder $query) => $query->where('status', 'completed'))
                     ),
-                TextColumn::make('method')
+                TextColumn::make('method')->formatStateUsing(fn (?string $state): string => \App\Filament\Support\StatusLabels::method($state))
                     ->badge()
                     ->toggleable(),
                 TextColumn::make('status')
@@ -123,19 +129,26 @@ class PaymentsTable
                     // Finance/super_admin only, completed payments only, and
                     // only once the errand is over (PaymentService refuses a
                     // live one: cancelling it is what refunds it).
+                    // Not offered where the service would refuse it anyway: cash
+                    // is never held by the platform, and a live errand is
+                    // refunded by cancelling it.
                     ->visible(fn ($record): bool => $record->status === 'completed'
+                        && $record->method !== 'cash'
+                        && ! ($record->booking && ! in_array($record->booking->status, \App\Enums\BookingStatus::ENDED, true))
                         && (auth('admin')->user()?->canManageMoney() ?? false))
-                    ->modalDescription(fn ($record): string => match (true) {
-                        $record->booking && ! in_array($record->booking->status, \App\Enums\BookingStatus::ENDED, true) => 'This errand is still in progress, so its payment can’t be refunded here. Cancel the errand instead — cancelling refunds the customer.',
-                        $record->method === 'card' => 'Full refund reversed to the original card via Xendit.',
-                        $record->method === 'cash' => 'Cash is settled with the runner directly — this cannot be refunded here.',
-                        default => 'Full refund to the customer\'s ErrandGuy wallet.',
-                    })
+                    ->modalDescription(fn ($record): string => ($record->method === 'card'
+                            ? 'Full refund reversed to the original card via Xendit.'
+                            : 'Full refund of ₱'.number_format((float) $record->amount, 2).' to the customer’s ErrandGuy wallet, which they can withdraw.')
+                        // A refund doesn't take back what the runner was paid:
+                        // on a completed errand the platform pays for both.
+                        .($record->booking?->status === 'completed' && (float) $record->booking->runner_payout > 0
+                            ? ' The errand was completed, so the runner keeps their ₱'.number_format((float) $record->booking->runner_payout, 2).' earning — ErrandGuy pays this refund.'
+                            : ''))
                     ->schema([
                         Textarea::make('reason')
-                            ->default('REQUESTED_BY_CUSTOMER')
                             ->required()
-                            ->maxLength(500),
+                            ->maxLength(500)
+                            ->helperText('Why it is refunded. Kept in the audit log.'),
                     ])
                     ->action(function (array $data, $record): void {
                         try {
@@ -147,7 +160,9 @@ class PaymentsTable
                                 if (blank($record->gateway_tx_id)) {
                                     throw new \RuntimeException('This card payment has no gateway reference to reverse.');
                                 }
-                                $service->refundPayment($record->id, null, $data['reason']);
+                                // Xendit only accepts its own reason codes; the
+                                // staff member's words go to the audit log below.
+                                $service->refundPayment($record->id, null, 'REQUESTED_BY_CUSTOMER');
                                 $refundedTo = 'gateway';
                             } else {
                                 $service->refundToWallet($record->id, $data['reason']);
@@ -165,6 +180,21 @@ class PaymentsTable
                             // code (REQUESTED_BY_CUSTOMER) so it rides in the data
                             // payload, not the user-facing body. (A2)
                             self::notifyCustomerOfRefund($record, $refundedTo);
+
+                            // Refunds are money staff move by hand too, so a
+                            // large one is surfaced like a large adjustment.
+                            $staff = auth('admin')->user();
+                            if ($staff) {
+                                \App\Services\StaffMoneyLimit::alertIfLarge(
+                                    \App\Services\StaffMoneyLimit::ALERT_REFUND,
+                                    $staff,
+                                    (float) $record->amount,
+                                    'Large refund: ₱'.number_format((float) $record->amount, 2),
+                                    'Refunded ₱'.number_format((float) $record->amount, 2)
+                                        .' to '.($record->customer?->full_name ?? 'a customer').'’s wallet. Reason: '.$data['reason'].'.',
+                                    $record->id,
+                                );
+                            }
 
                             AdminNotify::success(
                                 'Refund processed',

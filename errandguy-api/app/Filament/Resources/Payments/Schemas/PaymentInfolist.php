@@ -32,7 +32,7 @@ class PaymentInfolist
                                 'refunded' => 'info',
                                 default => 'gray',
                             }),
-                        TextEntry::make('method')->badge()->color('gray'),
+                        TextEntry::make('method')->formatStateUsing(fn (?string $state): string => \App\Filament\Support\StatusLabels::method($state))->badge()->color('gray'),
                         TextEntry::make('booking.booking_number')->label('Booking')->placeholder('—'),
                         TextEntry::make('customer.full_name')->label('Customer')->icon('heroicon-m-user')->placeholder('—'),
                         TextEntry::make('created_at')->label('Created')->since()->dateTimeTooltip(),

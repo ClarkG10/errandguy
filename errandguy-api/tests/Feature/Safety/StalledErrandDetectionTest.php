@@ -247,4 +247,50 @@ class StalledErrandDetectionTest extends TestCase
         $this->artisan('errandguy:detect-stalled-errands')->assertSuccessful();
         $this->assertSame(1, $this->stalledAlerts());
     }
+
+    public function test_a_queue_runner_standing_in_line_for_hours_is_not_stalled(): void
+    {
+        // On a queue errand 'arrived_at_pickup' is "I'm in line" and
+        // 'picked_up' is "my turn — finishing up". Both can last hours.
+        $inLine = $this->makeErrand(['__slug' => 'queue', 'status' => 'arrived_at_pickup']);
+        $this->idleFor($inLine, 180);
+        $atTheWindow = $this->makeErrand(['__slug' => 'queue', 'status' => 'picked_up']);
+        $this->idleFor($atTheWindow, 90);
+
+        $this->artisan('errandguy:detect-stalled-errands')->assertSuccessful();
+
+        $this->assertSame(0, $this->stalledAlerts());
+    }
+
+    public function test_a_queue_errand_idle_past_its_own_threshold_still_alerts(): void
+    {
+        $inLine = $this->makeErrand(['__slug' => 'queue', 'status' => 'arrived_at_pickup']);
+        $this->idleFor($inLine, 400);
+
+        $this->artisan('errandguy:detect-stalled-errands')->assertSuccessful();
+
+        $this->assertSame(1, $this->stalledAlerts());
+        $this->assertSame($inLine->id, AdminAlert::where('type', 'stalled_errand')->value('subject_id'));
+    }
+
+    public function test_a_delivery_at_the_same_status_keeps_its_short_threshold(): void
+    {
+        $delivery = $this->makeErrand(['status' => 'arrived_at_pickup']);
+        $this->idleFor($delivery, 90);
+
+        $this->artisan('errandguy:detect-stalled-errands')->assertSuccessful();
+
+        $this->assertSame(1, $this->stalledAlerts());
+    }
+
+    public function test_switching_a_status_off_switches_it_off_for_queue_errands_too(): void
+    {
+        SystemConfig::setValue('stall_alert_minutes_arrived_at_pickup', '0');
+        $inLine = $this->makeErrand(['__slug' => 'queue', 'status' => 'arrived_at_pickup']);
+        $this->idleFor($inLine, 1000);
+
+        $this->artisan('errandguy:detect-stalled-errands')->assertSuccessful();
+
+        $this->assertSame(0, $this->stalledAlerts());
+    }
 }

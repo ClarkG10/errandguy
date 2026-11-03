@@ -339,7 +339,10 @@ class ChatController extends Controller
                         'is_image' => (bool) $last->image_url,
                         'is_system' => (bool) $last->is_system,
                         'is_outgoing' => $last->sender_id === $userId,
-                        'created_at' => optional($last->created_at)->toIso8601String(),
+                        // $last is a raw DB::table row, so created_at is a
+                        // string — optional()->toIso8601String() on a string
+                        // quietly gave null, and every inbox row lost its time.
+                        'created_at' => $last->created_at ? \Carbon\Carbon::parse($last->created_at)->toIso8601String() : null,
                     ] : null,
                     'unread_count' => (int) ($unreadPerBooking->get($b->id) ?? 0),
                     'sort_ts' => $last ? \Carbon\Carbon::parse($last->created_at)->timestamp : \Carbon\Carbon::parse($b->updated_at)->timestamp,

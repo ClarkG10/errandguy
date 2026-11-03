@@ -18,7 +18,7 @@
                     <span style="font-size:.8125rem;font-weight:600;">{{ $e['label'] }}</span>
                     @if (filled($e['time'] ?? null))
                         <span style="font-size:.6875rem;color:rgb(100 116 139);font-variant-numeric:tabular-nums;">
-                            {{ $e['time'] instanceof \Illuminate\Support\Carbon ? $e['time']->format('j M Y, g:i A') : $e['time'] }}
+                            {{ $e['time'] instanceof \Illuminate\Support\Carbon ? $e['time']->copy()->timezone(config('app.business_timezone', 'Asia/Manila'))->format('j M Y, g:i A') : $e['time'] }}
                         </span>
                     @endif
                 </div>

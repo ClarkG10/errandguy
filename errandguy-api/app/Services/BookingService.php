@@ -132,6 +132,27 @@ class BookingService
     }
 
     /**
+     * retryBlockReason for the CUSTOMER's own "Search again", plus one more:
+     *
+     *  - 'searching' : the errand is still pending — its search is running.
+     *                  A retry would wipe the round's offer count and skip
+     *                  list and restart the window, so a customer tapping
+     *                  repeatedly could re-offer it to the runners who just
+     *                  let it go and keep it searching indefinitely. The app
+     *                  only offers "Search again" once the errand is
+     *                  no_runner, so nothing it does is refused.
+     *
+     * Staff "Re-run matching" (adminRematch) keeps using retryBlockReason: a
+     * stuck pending errand is exactly what it is for. Shared by
+     * BookingController::retryMatch and BookingResource `can_retry_match`.
+     */
+    public static function customerRetryBlockReason(Booking $booking): ?string
+    {
+        return self::retryBlockReason($booking)
+            ?? ($booking->status === 'pending' ? 'searching' : null);
+    }
+
+    /**
      * True for an errand paid through the gateway (GCash/Maya, or a card or
      * GrabPay errand booked before those were retired). Cash and the wallet
      * settle without it, and so does an older booking with no method recorded.
@@ -562,6 +583,26 @@ class BookingService
             Cache::forget("runner_active_booking_id:{$booking->runner_id}");
         }
 
+        // A runner who already paid for the customer's items is owed that
+        // money, and nothing in a cancellation pays it back (the customer's
+        // fare is refunded in full). Same alert as adminReturnToMatching, so
+        // it reaches finance instead of being lost. Raised before the refund:
+        // a refund that throws is finished later by the reaper, which knows
+        // nothing about item money.
+        $itemCost = round((float) $booking->actual_item_cost, 2);
+        if ($booking->runner_id && $itemCost > 0) {
+            $runnerName = User::withTrashed()->whereKey($booking->runner_id)->value('full_name') ?: 'The runner';
+            AdminAlert::raise(
+                'runner_owed_items',
+                'warning',
+                'Runner owed for items',
+                "{$runnerName} paid ".self::peso($itemCost).' for the items on errand '
+                    .($booking->booking_number ?? $booking->id).' before staff cancelled it, and is owed it. '
+                    .'Settle it with them.',
+                $booking->id,
+            );
+        }
+
         $this->refundUnfulfilled($booking->id, 'Admin cancelled the booking');
 
         // Notify + broadcast the cancellation, after the refund so the push can
@@ -867,6 +908,36 @@ class BookingService
         return 'Nothing was collected for it yet, so the runner is not paid.';
     }
 
+    /**
+     * What a staff cancel does with the money, for the confirm dialog: the
+     * customer's refund, that the runner is not paid, and any item money the
+     * runner fronted (adminCancel raises an alert for it).
+     */
+    public static function cancelNotice(Booking $booking): string
+    {
+        $parts = [];
+
+        $parts[] = $booking->payment_status === 'paid'
+            ? 'The customer gets the full '.self::peso((float) $booking->total_amount).' back in their ErrandGuy wallet, with no cancellation fee.'
+            : 'Nothing was paid online, so there is nothing to refund.';
+
+        if ($booking->runner_id && in_array($booking->status, BookingStatus::IN_PROGRESS, true)) {
+            $runner = $booking->runner?->full_name ?? 'The runner';
+            $parts[] = "{$runner} is not paid for this errand.";
+
+            $itemCost = (float) $booking->actual_item_cost;
+            if ($itemCost > 0) {
+                $parts[] = "{$runner} already paid ".self::peso($itemCost).' for the customer’s items and is owed it — an alert is raised so it gets settled.';
+            }
+
+            if (in_array($booking->status, ['arrived_at_dropoff', 'delivered'], true)) {
+                $parts[] = 'The runner has already reached the drop-off: if the errand was done, ask finance to use “Mark completed” instead so the runner is paid.';
+            }
+        }
+
+        return implode(' ', $parts);
+    }
+
     /** "₱1,250.00", for staff-facing messages. */
     private static function peso(float $amount): string
     {
@@ -903,15 +974,17 @@ class BookingService
                 return;
             }
 
-            // Never refund a COMPLETED errand. Belt-and-braces behind
-            // adminCancel's row lock: this method is only ever called for a
-            // booking that will not be fulfilled, so a 'completed' row here
-            // means a caller raced a completion — and refunding the full fare
-            // for work that was actually delivered is money out with nothing
-            // to reclaim it.
-            if ($locked->status === 'completed') {
-                Log::warning('refundUnfulfilled called on a COMPLETED booking — refusing', [
+            // Only refund an errand that has actually ended unfulfilled. Every
+            // caller commits 'cancelled' / 'no_runner' first and refunds in a
+            // separate transaction, so anything else here means the errand
+            // moved on in between: a runner completed it (refunding delivered
+            // work is money out with nothing to reclaim it), or a retry put it
+            // back to 'pending' and it is being worked (the refund would land
+            // on a live errand and its runner would then be paid nothing).
+            if (! in_array($locked->status, ['cancelled', 'no_runner'], true)) {
+                Log::warning('refundUnfulfilled called on a booking that is not cancelled — refusing', [
                     'booking_id' => $locked->id,
+                    'status' => $locked->status,
                     'reason' => $reason,
                 ]);
 

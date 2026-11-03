@@ -295,4 +295,63 @@ class CancelRaceTest extends TestCase
         $this->assertSame('paid', $booking->fresh()->payment_status);
         $this->assertEquals(0.0, (float) $this->customer->fresh()->wallet_balance);
     }
+
+    /**
+     * Two cancels on one booking (a double tap, or a retried request): both
+     * read it pending, the first commits. The second used to find it already
+     * cancelled under the lock and then fall through anyway, writing a second
+     * status log and firing a second BookingCancelled — a second push to the
+     * customer and a second broadcast.
+     */
+    public function test_a_cancel_that_loses_the_race_to_another_cancel_does_nothing_twice(): void
+    {
+        \Illuminate\Support\Facades\Event::fake([\App\Events\BookingCancelled::class]);
+
+        $booking = $this->booking(['status' => 'pending', 'payment_method' => 'cash', 'payment_status' => 'unpaid']);
+
+        // The first cancel commits between this request's unlocked read and
+        // its locked re-read.
+        $this->raceAfterFirstRead($booking->id, [
+            'status' => 'cancelled',
+            'cancelled_at' => now(),
+            'cancelled_by' => $this->customer->id,
+            'cancellation_reason' => 'Changed my mind',
+            'cancellation_fee' => 0,
+        ]);
+
+        $this->actingAs($this->customer)
+            ->postJson("/api/v1/bookings/{$booking->id}/cancel", ['reason' => 'Changed my mind'])
+            ->assertOk()
+            ->assertJsonPath('data.status', 'cancelled')
+            ->assertJsonPath('message', 'This errand was already cancelled.');
+
+        \Illuminate\Support\Facades\Event::assertNotDispatched(\App\Events\BookingCancelled::class);
+        $this->assertSame(0, \App\Models\BookingStatusLog::where('booking_id', $booking->id)->where('status', 'cancelled')->count());
+    }
+
+    public function test_retrying_a_cancel_that_went_through_answers_the_same_without_doing_it_twice(): void
+    {
+        $booking = $this->booking(['status' => 'pending', 'payment_method' => 'cash', 'payment_status' => 'unpaid']);
+
+        $this->actingAs($this->customer)
+            ->postJson("/api/v1/bookings/{$booking->id}/cancel", ['reason' => 'Changed my mind'])
+            ->assertOk();
+
+        // The first answer was lost; the app sends it again.
+        \Illuminate\Support\Facades\Event::fake([\App\Events\BookingCancelled::class]);
+        $this->actingAs($this->customer)
+            ->postJson("/api/v1/bookings/{$booking->id}/cancel", ['reason' => 'Changed my mind'])
+            ->assertOk()
+            ->assertJsonPath('data.status', 'cancelled')
+            ->assertJsonPath('message', 'This errand was already cancelled.');
+
+        \Illuminate\Support\Facades\Event::assertNotDispatched(\App\Events\BookingCancelled::class);
+        $this->assertSame(1, \App\Models\BookingStatusLog::where('booking_id', $booking->id)->where('status', 'cancelled')->count());
+
+        // Someone else asking still gets nothing.
+        $stranger = \App\Models\User::factory()->create(['role' => 'customer', 'status' => 'active']);
+        $this->actingAs($stranger)
+            ->postJson("/api/v1/bookings/{$booking->id}/cancel", ['reason' => 'x'])
+            ->assertForbidden();
+    }
 }

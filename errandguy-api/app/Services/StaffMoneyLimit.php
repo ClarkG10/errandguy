@@ -33,6 +33,12 @@ final class StaffMoneyLimit
 
     public const ALERT_PAYOUT = 'staff_large_payout';
 
+    /** A refund staff made from the Payments page. */
+    public const ALERT_REFUND = 'staff_large_refund';
+
+    /** A payout sent to a different account than the one it was requested to. */
+    public const ALERT_DESTINATION = 'payout_destination_changed';
+
     public static function dailyCap(): float
     {
         return self::setting(self::DAILY_CAP_KEY);

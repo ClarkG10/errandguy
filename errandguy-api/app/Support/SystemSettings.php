@@ -88,7 +88,7 @@ final class SystemSettings
         'admin_adjustment_alert_threshold' => [
             'label' => 'Alert on a hand-made money move from (₱)',
             'type' => self::NUMBER, 'default' => '5000', 'min' => 100, 'max' => 100000,
-            'description' => 'A single wallet adjustment or “Pay a runner” payout of this many pesos or more puts an alert on the dashboard for money staff.',
+            'description' => 'A single wallet adjustment, “Pay a runner” payout or refund of this many pesos or more puts an alert on the dashboard for money staff.',
         ],
 
         // ── Matching ──

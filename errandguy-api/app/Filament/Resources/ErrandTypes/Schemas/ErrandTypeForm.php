@@ -22,10 +22,9 @@ class ErrandTypeForm
                             ->required()
                             ->maxLength(60),
                         TextInput::make('slug')
-                            ->required()
-                            ->maxLength(30)
-                            ->unique(ignoreRecord: true)
-                            ->helperText('Stable identifier used by the app. Avoid changing once live.'),
+                            ->disabled()
+                            ->dehydrated(false)
+                            ->helperText('Fixed: the app and runners’ errand preferences depend on it.'),
                         Textarea::make('description')
                             ->columnSpanFull()
                             ->rows(2),
@@ -38,10 +37,8 @@ class ErrandTypeForm
                             ->helperText('Lower shows first in the app.'),
                         Toggle::make('is_active')
                             ->default(true)
-                            ->disabled(fn (?ErrandType $record): bool => $record !== null
-                                && in_array($record->slug, ErrandType::REMOVED_SLUGS, true))
-                            ->helperText(fn (?ErrandType $record): string => $record !== null
-                                && in_array($record->slug, ErrandType::REMOVED_SLUGS, true)
+                            ->disabled(fn (?ErrandType $record): bool => in_array($record?->slug, ErrandType::REMOVED_SLUGS, true))
+                            ->helperText(fn (?ErrandType $record): string => in_array($record?->slug, ErrandType::REMOVED_SLUGS, true)
                                 ? 'This type was removed and can no longer be switched on.'
                                 : 'Hidden from the app when off.'),
                     ]),

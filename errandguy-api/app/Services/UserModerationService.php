@@ -45,20 +45,30 @@ class UserModerationService
         DeviceSessions::signOutEverywhere($user);
 
         RunnerProfile::switchOffline($user->id);
+        $this->flagActiveErrands($user, 'suspended');
 
-        Booking::where('runner_id', $user->id)
+        return true;
+    }
+
+    /**
+     * A runner just lost the right to work (suspended, or their verification
+     * revoked): raise a critical alert for each errand they are in the middle
+     * of, so staff return it to matching or cancel it — the customer is still
+     * waiting on someone who can no longer finish it.
+     */
+    public function flagActiveErrands(User $runner, string $what): void
+    {
+        Booking::where('runner_id', $runner->id)
             ->whereIn('status', BookingStatus::IN_PROGRESS)
             ->get(['id', 'booking_number'])
             ->each(fn (Booking $booking) => AdminAlert::raise(
                 'runner_suspended_mid_errand',
                 'critical',
-                'Suspended runner was mid-errand',
-                ($user->full_name ?? 'A runner').' was suspended while working errand '
+                ucfirst($what).' runner was mid-errand',
+                ($runner->full_name ?? 'A runner')." was {$what} while working errand "
                     .($booking->booking_number ?? $booking->id)
                     .'. Return it to matching or cancel it — the customer is still waiting.',
                 $booking->id,
             ));
-
-        return true;
     }
 }

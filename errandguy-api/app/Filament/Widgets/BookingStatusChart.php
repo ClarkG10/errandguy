@@ -88,7 +88,8 @@ class BookingStatusChart extends ChartWidget
     protected function getOptions(): RawJs
     {
         // Map each human label to its status-filtered Bookings list, matching the
-        // tableFilters deep-link idiom used by the ActionQueue widget. Keyed by
+        // `filters` deep-link idiom used by the ActionQueue widget (Filament
+        // reads table filters from ?filters=…, not ?tableFilters=…). Keyed by
         // label so it stays correct regardless of which zero-count segments the
         // dataset drops; the empty-state label simply has no entry (no-op click).
         //
@@ -100,7 +101,7 @@ class BookingStatusChart extends ChartWidget
         // is why the all-single-quoted PaymentMixChart options render fine.
         $pairs = [];
         foreach (self::STATUSES as $status => [$label]) {
-            $url = BookingResource::getUrl('index', ['tableFilters' => ['status' => ['value' => $status]]]);
+            $url = BookingResource::getUrl('index', ['filters' => ['status' => ['value' => $status]]]);
             $key = addcslashes($label, "\\'");
             $val = addcslashes($url, "\\'");
             $pairs[] = "'{$key}': '{$val}'";

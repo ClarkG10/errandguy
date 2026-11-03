@@ -164,6 +164,20 @@ class StaffMoneyLimitTest extends TestCase
      * staff money move takes the staff row lock before reading anything, so
      * on MySQL the day's total it checks includes every move already made.
      */
+    public function test_finance_can_list_every_hand_made_move_by_staff_member(): void
+    {
+        $other = $this->staff('super_admin', 'boss@errandguy.test');
+        $mine = $this->wallet->adjust($this->finance, $this->customer->id, 100, 'Goodwill');
+        $theirs = $this->wallet->adjust($other, $this->customer->id, 50, 'Refund by hand');
+
+        $this->actingAs($this->finance, 'admin');
+        Livewire::test(\App\Filament\Resources\WalletTransactions\Pages\ListWalletTransactions::class)
+            ->filterTable('initiated_by_staff_id', $this->finance->id)
+            ->assertCanSeeTableRecords([$mine])
+            ->assertCanNotSeeTableRecords([$theirs])
+            ->assertTableColumnStateSet('initiatedByStaff.full_name', 'Finance Staff', $mine);
+    }
+
     public function test_the_staff_lock_comes_before_any_read(): void
     {
         $source = function (string $class, string $method): string {

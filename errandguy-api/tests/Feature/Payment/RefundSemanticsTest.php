@@ -219,8 +219,11 @@ class RefundSemanticsTest extends TestCase
         }
     }
 
-    public function test_the_refund_action_tells_staff_to_cancel_a_live_errand(): void
+    public function test_the_refund_action_is_not_offered_on_a_live_errand(): void
     {
+        // A live errand is refunded by cancelling it (the errand page has
+        // Cancel), so the Refund button isn't shown for one — it used to open a
+        // dialog whose confirm did nothing.
         $booking = $this->bookViaWallet('accepted');
         $payment = Payment::where('booking_id', $booking->id)->firstOrFail();
         $this->actingAs(\App\Models\AdminUser::create([
@@ -229,14 +232,39 @@ class RefundSemanticsTest extends TestCase
         ]), 'admin');
 
         \Livewire\Livewire::test(\App\Filament\Resources\Payments\Pages\ListPayments::class)
-            ->mountTableAction('refund', $payment)
-            ->assertMountedActionModalSee('This errand is still in progress, so its payment can’t be refunded here. Cancel the errand instead');
+            ->assertTableActionHidden('refund', $payment);
 
-        \Livewire\Livewire::test(\App\Filament\Resources\Payments\Pages\ListPayments::class)
-            ->callTableAction('refund', $payment, ['reason' => 'REQUESTED_BY_CUSTOMER']);
-
+        // And the service still refuses it if called anyway.
+        try {
+            app(PaymentService::class)->refundToWallet($payment->id, 'test');
+        } catch (\Throwable) {
+        }
         $this->assertSame('completed', $payment->fresh()->status);
         $this->assertSame('paid', $booking->fresh()->payment_status);
+    }
+
+    public function test_a_completed_errand_refund_says_the_runner_keeps_their_pay_and_large_ones_alert(): void
+    {
+        $booking = $this->bookViaWallet('completed');
+        $booking->update(['runner_payout' => 85]);
+        $payment = Payment::where('booking_id', $booking->id)->firstOrFail();
+        \App\Models\SystemConfig::updateOrCreate(['key' => 'admin_adjustment_alert_threshold'], ['value' => '100']);
+        $this->assertGreaterThanOrEqual(100, (float) $payment->amount);
+        $this->actingAs(\App\Models\AdminUser::create([
+            'email' => 'finance@errandguy.test', 'password_hash' => 'x',
+            'full_name' => 'Finance', 'role' => 'finance', 'is_active' => true,
+        ]), 'admin');
+
+        \Livewire\Livewire::test(\App\Filament\Resources\Payments\Pages\ListPayments::class)
+            ->mountTableAction('refund', $payment)
+            ->assertMountedActionModalSee('the runner keeps their ₱85.00 earning');
+
+        \Livewire\Livewire::test(\App\Filament\Resources\Payments\Pages\ListPayments::class)
+            ->callTableAction('refund', $payment, ['reason' => 'Items arrived damaged']);
+
+        $this->assertSame('refunded', $payment->fresh()->status);
+        $alert = \App\Models\AdminAlert::where('type', \App\Services\StaffMoneyLimit::ALERT_REFUND)->sole();
+        $this->assertStringContainsString('Items arrived damaged', $alert->body);
     }
 
     public function test_card_refund_without_gateway_reference_is_rejected(): void

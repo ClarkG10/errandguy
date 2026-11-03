@@ -133,60 +133,71 @@ class UsersTable
             ->recordActions([
                 ViewAction::make(),
 
-                Action::make('suspend')
-                    ->label('Suspend')
-                    ->icon(Heroicon::OutlinedShieldExclamation)
-                    ->color('danger')
-                    ->requiresConfirmation()
-                    ->modalDescription(fn (User $record): string => 'Suspends '
-                        .($record->full_name ?? 'this user').' and immediately revokes their active sessions. A runner is also taken offline and stops getting offers.')
-                    ->schema([
-                        Textarea::make('reason')->required()->maxLength(500),
-                    ])
-                    ->visible(fn ($record): bool => $record->status !== 'suspended'
-                        && (auth('admin')->user()?->hasAnyRole(
-                            AdminUser::ROLE_SUPER_ADMIN,
-                            AdminUser::ROLE_ADMIN,
-                            AdminUser::ROLE_OPS,
-                        ) ?? false))
-                    ->action(function (array $data, $record): void {
-                        app(UserModerationService::class)->suspend($record, $data['reason']);
-
-                        AdminNotify::success(
-                            'User suspended',
-                            $record,
-                            context: ['User' => $record->full_name],
-                            audit: 'user.suspended',
-                            properties: ['reason' => $data['reason']],
-                            note: 'Their active sessions were revoked.',
-                        );
-                    }),
-
-                Action::make('unsuspend')
-                    ->label('Unsuspend')
-                    ->icon(Heroicon::OutlinedShieldCheck)
-                    ->color('success')
-                    ->requiresConfirmation()
-                    ->visible(fn ($record): bool => $record->status === 'suspended'
-                        && (auth('admin')->user()?->hasAnyRole(
-                            AdminUser::ROLE_SUPER_ADMIN,
-                            AdminUser::ROLE_ADMIN,
-                            AdminUser::ROLE_OPS,
-                        ) ?? false))
-                    ->action(function ($record): void {
-                        $record->update([
-                            'status' => 'active',
-                            'suspended_reason' => null,
-                            'suspended_at' => null,
-                        ]);
-
-                        AdminNotify::success(
-                            'User reinstated',
-                            $record,
-                            context: ['User' => $record->full_name],
-                            audit: 'user.unsuspended',
-                        );
-                    }),
+                self::suspendAction(),
+                self::unsuspendAction(),
             ]);
+    }
+
+    // Suspend / unsuspend, shared by the list row and the user's page (where a
+    // "report this person" ticket links to), so staff act where they read.
+    public static function suspendAction(): Action
+    {
+        return Action::make('suspend')
+            ->label('Suspend')
+            ->icon(Heroicon::OutlinedShieldExclamation)
+            ->color('danger')
+            ->requiresConfirmation()
+            ->modalDescription(fn (User $record): string => 'Suspends '
+                .($record->full_name ?? 'this user').' and immediately revokes their active sessions. A runner is also taken offline and stops getting offers.')
+            ->schema([
+                Textarea::make('reason')->required()->maxLength(500),
+            ])
+            ->visible(fn ($record): bool => $record->status !== 'suspended'
+                && (auth('admin')->user()?->hasAnyRole(
+                    AdminUser::ROLE_SUPER_ADMIN,
+                    AdminUser::ROLE_ADMIN,
+                    AdminUser::ROLE_OPS,
+                ) ?? false))
+            ->action(function (array $data, $record): void {
+                app(UserModerationService::class)->suspend($record, $data['reason']);
+
+                AdminNotify::success(
+                    'User suspended',
+                    $record,
+                    context: ['User' => $record->full_name],
+                    audit: 'user.suspended',
+                    properties: ['reason' => $data['reason']],
+                    note: 'Their active sessions were revoked.',
+                );
+            });
+    }
+
+    public static function unsuspendAction(): Action
+    {
+        return Action::make('unsuspend')
+            ->label('Unsuspend')
+            ->icon(Heroicon::OutlinedShieldCheck)
+            ->color('success')
+            ->requiresConfirmation()
+            ->visible(fn ($record): bool => $record->status === 'suspended'
+                && (auth('admin')->user()?->hasAnyRole(
+                    AdminUser::ROLE_SUPER_ADMIN,
+                    AdminUser::ROLE_ADMIN,
+                    AdminUser::ROLE_OPS,
+                ) ?? false))
+            ->action(function ($record): void {
+                $record->update([
+                    'status' => 'active',
+                    'suspended_reason' => null,
+                    'suspended_at' => null,
+                ]);
+
+                AdminNotify::success(
+                    'User reinstated',
+                    $record,
+                    context: ['User' => $record->full_name],
+                    audit: 'user.unsuspended',
+                );
+            });
     }
 }

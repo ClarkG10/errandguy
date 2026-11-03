@@ -168,4 +168,33 @@ class WalletBookingAtomicityTest extends TestCase
 
         $this->assertDatabaseMissing('admin_alerts', ['type' => 'charged_unrefunded_cancellation']);
     }
+
+    public function test_the_detective_sweep_only_looks_at_recent_cancellations(): void
+    {
+        // Every 15 minutes it used to re-test every cancelled booking ever
+        // made. A month-old orphan was alerted on long ago; a fresh one still is.
+        $old = $this->makeBooking([
+            'booking_number' => 'EG-20260907-OLD1', 'status' => 'cancelled',
+            'cancellation_fee' => 0, 'cancelled_at' => now()->subDays(40),
+        ]);
+        WalletTransaction::create([
+            'user_id' => $this->customer->id, 'type' => 'payment', 'amount' => -115.00,
+            'balance_after' => 885.00, 'reference_id' => $old->id, 'description' => 'Payment for booking',
+        ]);
+
+        $this->artisan('errandguy:reconcile-booking-payments')->assertSuccessful();
+        $this->assertDatabaseMissing('admin_alerts', ['type' => 'charged_unrefunded_cancellation']);
+
+        $recent = $this->makeBooking([
+            'booking_number' => 'EG-20260907-NEW1', 'status' => 'cancelled',
+            'cancellation_fee' => 0, 'cancelled_at' => now()->subDays(2),
+        ]);
+        WalletTransaction::create([
+            'user_id' => $this->customer->id, 'type' => 'payment', 'amount' => -115.00,
+            'balance_after' => 770.00, 'reference_id' => $recent->id, 'description' => 'Payment for booking',
+        ]);
+
+        $this->artisan('errandguy:reconcile-booking-payments')->assertSuccessful();
+        $this->assertDatabaseHas('admin_alerts', ['type' => 'charged_unrefunded_cancellation', 'subject_id' => $recent->id]);
+    }
 }

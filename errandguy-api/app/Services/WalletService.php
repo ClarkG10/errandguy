@@ -2,6 +2,7 @@
 
 namespace App\Services;
 
+use App\Exceptions\WalletChargeException;
 use App\Models\AdminUser;
 use App\Models\Booking;
 use App\Models\User;
@@ -477,7 +478,7 @@ class WalletService
             $walletBalance = (float) $user->wallet_balance;
             $bonusBalance = (float) $user->bonus_balance;
             if ($walletBalance + $bonusBalance < $amount) {
-                throw new \RuntimeException('Insufficient wallet balance.');
+                throw WalletChargeException::insufficientBalance();
             }
 
             // Spend the non-withdrawable bonus FIRST, then withdrawable cash.
@@ -510,11 +511,17 @@ class WalletService
      * withdrawable balance. The tip is a SEPARATE 'tip' transaction from the
      * fare, so a fare refund never touches it and it is never clawed back.
      *
-     * @throws \RuntimeException  Insufficient balance, or the errand was already tipped.
+     * @throws WalletChargeException  Insufficient balance, already tipped, or no runner to pay.
      */
     public function tip(string $bookingId, string $customerId, string $runnerId, float $amount): void
     {
         DB::transaction(function () use ($bookingId, $customerId, $runnerId, $amount) {
+            // Lock the booking FIRST, then the wallets. completeGatewayTip (a
+            // GCash/Maya tip settling) locks booking → runner → customer, as
+            // do cancel and completion settlement; taking the wallets first
+            // here could deadlock against it when both tips land at once.
+            $booking = Booking::whereKey($bookingId)->lockForUpdate()->first();
+
             // Lock both wallets in a deterministic (sorted) order so this never
             // deadlocks against another two-wallet path.
             $ids = [$customerId, $runnerId];
@@ -523,22 +530,26 @@ class WalletService
             $customer = $users->get($customerId);
             $runner = $users->get($runnerId);
             if (! $customer || ! $runner) {
-                throw new \RuntimeException('Customer or runner not found.');
+                throw WalletChargeException::nobodyToTip();
             }
 
             // Idempotency: one tip per booking (the customer-side 'tip' debit is
             // the guard; the (user_id, reference_id, type) unique index backs it).
-            $already = WalletTransaction::where('user_id', $customerId)
-                ->where('reference_id', $bookingId)
-                ->where('type', 'tip')
-                ->exists();
+            // A GCash/Maya tip settles without a customer 'tip' row, so the
+            // booking's own tip_amount (now read under its lock) counts too —
+            // the same check the controller makes before calling this.
+            $already = ($booking && (float) $booking->tip_amount > 0)
+                || WalletTransaction::where('user_id', $customerId)
+                    ->where('reference_id', $bookingId)
+                    ->where('type', 'tip')
+                    ->exists();
             if ($already) {
-                throw new \RuntimeException('This errand has already been tipped.');
+                throw WalletChargeException::alreadyTipped();
             }
 
             // Tips come from withdrawable cash only, never promo bonus.
             if ((float) $customer->wallet_balance < $amount) {
-                throw new \RuntimeException('Insufficient wallet balance for this tip.');
+                throw WalletChargeException::insufficientBalance('Insufficient wallet balance for this tip.');
             }
 
             $customerNewBalance = (float) $customer->wallet_balance - $amount;

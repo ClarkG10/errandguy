@@ -13,6 +13,7 @@ use App\Http\Resources\BookingResource;
 use App\Jobs\ExpireUnpaidBookingJob;
 use App\Jobs\MatchRunnerJob;
 use App\Exceptions\PaymentGatewayException;
+use App\Exceptions\WalletChargeException;
 use App\Models\Booking;
 use App\Models\BookingStatusLog;
 use App\Models\BookingStop;
@@ -280,7 +281,7 @@ class BookingController extends Controller
                     return $payment;
                 });
                 $paymentId = $payment->id;
-            } catch (\RuntimeException $e) {
+            } catch (WalletChargeException $e) {
                 // Not enough balance — mark the booking failed (never hard-delete:
                 // a Payment row may already reference it, which on Postgres would
                 // raise an FK error).
@@ -293,6 +294,43 @@ class BookingController extends Controller
                     'This booking costs ₱'.number_format((float) $amount, 2).' but your wallet balance is ₱'.$balance
                         .'. Please pay with GCash, Maya or cash instead — you weren’t charged.',
                 );
+            } catch (\Throwable $e) {
+                // Anything else (a deadlock, a dropped connection) is not the
+                // customer's balance, so it must not be reported as one.
+                //
+                // A connection lost during COMMIT can surface after the commit
+                // landed: then the money moved and this errand IS paid. Failing
+                // it would strand the debit (nothing refunds a 'failed' booking)
+                // and the 5xx would let the app's retry charge again — so carry
+                // on exactly as if the charge had answered.
+                $landed = rescue(fn () => Payment::where('booking_id', $booking->id)
+                    ->where('method', 'wallet')
+                    ->where('status', PaymentStatus::Completed->value)
+                    ->first(), null, false);
+
+                if ($landed) {
+                    $payment = $landed;
+                    $paymentId = $landed->id;
+                    $booking->refresh();
+                } else {
+                    // Rolled back: no money moved. Close this booking with the
+                    // true reason — a 5xx releases the idempotency key, so the
+                    // app's retry books afresh and this one must not sit
+                    // 'pending' with nothing searching for it — then let
+                    // ApiExceptionRenderer answer with a retryable server error.
+                    try {
+                        $this->failBooking($booking, $user->id, 'Payment failed: the wallet charge could not be completed');
+                    } catch (\Throwable $closeError) {
+                        // The database may still be down; the stranded-booking
+                        // reaper ends an unpaid pending booking on its own.
+                        \Illuminate\Support\Facades\Log::error('Could not close a booking after its wallet charge failed', [
+                            'booking_number' => $booking->booking_number,
+                            'error' => $closeError->getMessage(),
+                        ]);
+                    }
+
+                    throw $e;
+                }
             }
         } elseif ($paymentMethod === 'cash') {
             $payment = Payment::create([
@@ -505,6 +543,16 @@ class BookingController extends Controller
     {
         $booking = Booking::findOrFail($id);
 
+        // A retry of this customer's own cancel that already went through (the
+        // first answer was lost on a bad connection): answer with the errand as
+        // it stands. Checked before the policy, which refuses a cancelled
+        // errand — the retry used to get a 403 for a cancel that worked.
+        if ($booking->status === 'cancelled'
+            && $booking->customer_id === $request->user()->id
+            && $booking->cancelled_by === $request->user()->id) {
+            return $this->alreadyCancelled($booking, CancellationPolicy::preview($booking));
+        }
+
         $this->authorize('cancel', $booking);
 
         $policy = CancellationPolicy::preview($booking);
@@ -525,8 +573,10 @@ class BookingController extends Controller
             $locked = Booking::whereKey($booking->id)->lockForUpdate()->firstOrFail();
 
             // Already cancelled by a racing/earlier request — nothing to do.
+            // Said explicitly: returning null here used to fall through to a
+            // second status log and a second "cancelled" push and broadcast.
             if ($locked->status === 'cancelled') {
-                return null;
+                return 'already_cancelled';
             }
 
             // Authoritative re-evaluation against the LOCKED row. The booking may
@@ -625,6 +675,13 @@ class BookingController extends Controller
 
         $booking->refresh();
 
+        // Lost the race to another cancel (a double tap): that request already
+        // logged it, told the customer and the runner, and moved the money.
+        // Answer with the booking as it stands and do none of it again.
+        if ($outcome === 'already_cancelled') {
+            return $this->alreadyCancelled($booking, $policy);
+        }
+
         // Stop attributing the assigned runner's next ~30s of GPS pings to this
         // now-cancelled booking (RunnerLocationController caches the active
         // booking-id per runner). Mirrors the bust in RunnerErrandController.
@@ -678,15 +735,15 @@ class BookingController extends Controller
         if ($refunded > 0) {
             $newBalance = number_format((float) $request->user()->fresh()->wallet_balance, 2);
             $message = $fee > 0
-                ? 'Booking cancelled. A ₱'.number_format($fee, 2).$feeLine.' and ₱'
+                ? 'Errand cancelled. A ₱'.number_format($fee, 2).$feeLine.' and ₱'
                     .number_format($refunded, 2).' was refunded to your ErrandGuy wallet (new balance ₱'.$newBalance.').'
-                : 'Booking cancelled. ₱'.number_format($refunded, 2)
+                : 'Errand cancelled. ₱'.number_format($refunded, 2)
                     .' was refunded to your ErrandGuy wallet (new balance ₱'.$newBalance.').';
         } elseif ($fee > 0) {
-            $message = 'Booking cancelled. A ₱'.number_format($fee, 2).$feeLine
+            $message = 'Errand cancelled. A ₱'.number_format($fee, 2).$feeLine
                 .'. Nothing else was collected, so there is no refund.';
         } else {
-            $message = 'Booking cancelled — no fee was charged.';
+            $message = 'Errand cancelled — no fee was charged.';
         }
 
         return response()->json([
@@ -695,6 +752,24 @@ class BookingController extends Controller
             // (overriding the preview fee) so the app shows a precise breakdown.
             'cancellation' => array_merge((array) $policy, ['fee' => $fee, 'refunded' => $refunded]),
             'message' => $message,
+        ]);
+    }
+
+    /** The answer to a cancel of an errand that is already cancelled: nothing is done again. */
+    private function alreadyCancelled(Booking $booking, array $policy): JsonResponse
+    {
+        $booking->load(['errandType', 'statusLogs', 'stops']);
+        $fee = (float) $booking->cancellation_fee;
+
+        return response()->json([
+            'data' => new BookingResource($booking),
+            'cancellation' => array_merge($policy, [
+                'fee' => $fee,
+                'refunded' => $booking->payment_status === 'refunded'
+                    ? round(max(0, (float) $booking->total_amount - $fee), 2)
+                    : 0.0,
+            ]),
+            'message' => 'This errand was already cancelled.',
         ]);
     }
 
@@ -930,7 +1005,8 @@ class BookingController extends Controller
      * the system default).
      *
      * A refusal is a 409 RETRY_NOT_ALLOWED with the reason in data.reason
-     * (refunded | unpaid | scheduled | conflict) and copy saying what to do.
+     * (refunded | unpaid | scheduled | searching | conflict) and copy saying
+     * what to do.
      */
     public function retryMatch(Request $request, string $id): JsonResponse
     {
@@ -978,7 +1054,9 @@ class BookingController extends Controller
             // is paid by the platform on completion. Cash bookings hold no upfront
             // money (collected in person on completion), so they can always retry;
             // the customer must rebook instead, which creates a fresh charge.
-            $blocked = \App\Services\BookingService::retryBlockReason($locked);
+            // The customer's variant also refuses an errand still being
+            // searched (see customerRetryBlockReason).
+            $blocked = \App\Services\BookingService::customerRetryBlockReason($locked);
             if ($blocked !== null) {
                 return $blocked;
             }
@@ -1014,6 +1092,7 @@ class BookingController extends Controller
                         ? 'This errand hasn’t been paid for yet. We start looking for a runner as soon as your GCash/Maya payment is confirmed.'
                         : 'This errand was never paid for, so it can’t be retried. Please create a new booking to try again.',
                     'scheduled' => 'This errand is scheduled for later. We’ll start looking for a runner 15 minutes before its time.',
+                    'searching' => 'We’re still looking for a runner for this errand. If nobody takes it, you can search again then.',
                     default => 'This booking is already in progress. Pull to refresh to see its current status.',
                 },
                 data: ['reason' => $outcome],
@@ -1069,10 +1148,15 @@ class BookingController extends Controller
             return $this->fail(ErrorCode::CONFLICT, 'You’ve already tipped this errand.');
         }
 
+        // Only the refusals tip() names are the customer's to hear, each under
+        // its own code. A database error is a RuntimeException too: the old
+        // catch-all sent it as "insufficient balance" with the SQL as the
+        // message. It now reaches ApiExceptionRenderer as a plain server error
+        // (nothing moved — the transaction rolled back).
         try {
             app(WalletService::class)->tip($booking->id, $booking->customer_id, $booking->runner_id, $amount);
-        } catch (\RuntimeException $e) {
-            return $this->fail(ErrorCode::INSUFFICIENT_WALLET_BALANCE, $e->getMessage());
+        } catch (WalletChargeException $e) {
+            return $this->fail($e->errorCode, $e->getMessage());
         }
 
         \App\Jobs\SendPushJob::dispatch(
@@ -1111,6 +1195,23 @@ class BookingController extends Controller
         ], [
             'method.in' => 'Please tip with GCash, Maya or your ErrandGuy wallet.',
         ]);
+
+        // Staff can switch GCash or Maya off (Money → Platform payment
+        // methods); booking creation already honours that, and a tip is the
+        // same charge through the same gateway.
+        if (! \App\Services\PaymentMethodCatalog::isEnabled($data['method'])) {
+            $names = ['gcash' => 'GCash', 'maya' => 'Maya', 'wallet' => 'your ErrandGuy wallet'];
+            $others = array_values(array_intersect_key(
+                $names,
+                array_flip(array_diff(\App\Services\PaymentMethodCatalog::enabledTypes(), [$data['method']])),
+            ));
+            $last = array_pop($others);
+            $message = $names[$data['method']].' isn’t available right now'
+                .($last === null ? '.' : ' — please tip with '.($others === [] ? $last : implode(', ', $others).' or '.$last).'.');
+
+            return $this->fail(ErrorCode::VALIDATION_FAILED, $message, errors: ['method' => [$message]]);
+        }
+
         $amount = round((float) $data['amount'], 2);
 
         $booking = Booking::where('id', $id)

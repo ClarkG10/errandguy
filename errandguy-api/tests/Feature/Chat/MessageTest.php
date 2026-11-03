@@ -248,4 +248,21 @@ class MessageTest extends TestCase
             ->assertJsonStructure(['data', 'meta' => ['has_more', 'next_before']])
             ->assertJsonCount(1, 'data');
     }
+
+    public function test_the_inbox_shows_when_the_last_message_was_sent(): void
+    {
+        $this->actingAs($this->customer)
+            ->postJson("/api/v1/chat/{$this->booking->id}/messages", ['content' => 'On my way?'])
+            ->assertStatus(201);
+        $stored = Message::where('booking_id', $this->booking->id)->latest('created_at')->firstOrFail()->created_at;
+
+        // The latest message is read with a raw query, so its time is a string;
+        // it used to come back null on every conversation row.
+        $this->actingAs($this->runner)
+            ->getJson('/api/v1/chat/conversations')
+            ->assertOk()
+            ->assertJsonPath('data.0.booking_id', (string) $this->booking->id)
+            ->assertJsonPath('data.0.last_message.preview', 'On my way?')
+            ->assertJsonPath('data.0.last_message.created_at', $stored->toIso8601String());
+    }
 }

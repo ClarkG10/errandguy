@@ -171,6 +171,24 @@ class GatewayTipTest extends TestCase
         Http::assertNothingSent();
     }
 
+    public function test_a_tip_with_a_method_staff_switched_off_is_refused(): void
+    {
+        $booking = $this->makeCompletedBooking();
+        \App\Services\PaymentMethodCatalog::setEnabled(['maya', 'wallet', 'cash']);
+
+        $this->actingAs($this->customer)
+            ->postJson("/api/v1/bookings/{$booking->id}/tip-checkout", ['amount' => 50, 'method' => 'gcash'])
+            ->assertStatus(422)
+            ->assertJsonPath('code', 'VALIDATION_FAILED')
+            ->assertJsonPath('message', 'GCash isn’t available right now — please tip with Maya or your ErrandGuy wallet.');
+
+        $this->assertSame(0, WalletTransaction::count());
+        Http::assertNothingSent();
+
+        // The method still switched on works as before.
+        $this->startTip($booking, 'pr_tip_maya', method: 'maya');
+    }
+
     public function test_payment_succeeded_credits_the_runner_and_stamps_the_tip(): void
     {
         $booking = $this->makeCompletedBooking();

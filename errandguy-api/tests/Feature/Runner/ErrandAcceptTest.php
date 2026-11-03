@@ -181,6 +181,54 @@ class ErrandAcceptTest extends TestCase
         }
     }
 
+    public function test_the_realtime_offer_carries_what_the_push_does(): void
+    {
+        // The popup opened from the realtime offer used to have no real
+        // countdown, distance, instructions, stops or cash figure until its
+        // REST upgrade landed.
+        $this->booking->update([
+            'payment_method' => 'cash', 'payment_status' => 'unpaid',
+            'special_instructions' => 'Ring the bell twice',
+        ]);
+        \App\Models\BookingStop::create([
+            'booking_id' => $this->booking->id, 'sequence' => 1, 'address' => '789 Pine',
+            'lat' => 14.56, 'lng' => 121.03, 'contact_name' => 'Ana', 'contact_phone' => '09171234567',
+            'note' => 'Leave at the gate',
+        ]);
+        $this->offerToRunner();
+        $booking = $this->booking->fresh();
+
+        $payload = (new \App\Events\IncomingRequest($booking, 2.4))->broadcastWith();
+
+        $this->assertSame(\App\Services\BookingService::matchAcceptDeadline($booking->matched_at), $payload['accept_deadline']);
+        $this->assertSame(2.4, $payload['distance_to_pickup_km']);
+        $this->assertSame('Ring the bell twice', $payload['special_instructions']);
+        $this->assertEquals(115.0, $payload['amount_to_collect']);
+        $this->assertCount(1, $payload['stops']);
+        $this->assertSame('789 Pine', $payload['stops'][0]['address']);
+        $this->assertSame('Leave at the gate', $payload['stops'][0]['note']);
+        // Offers still never carry a phone number or contact name.
+        $this->assertArrayNotHasKey('contact_phone', $payload['stops'][0]);
+        $this->assertArrayNotHasKey('contact_name', $payload['stops'][0]);
+        $this->assertStringNotContainsString('09171234567', json_encode($payload));
+    }
+
+    public function test_a_long_shopping_list_never_makes_the_realtime_offer_too_big_to_send(): void
+    {
+        // Reverb refuses a message over 10 KB; a 100-item list is ~10,000
+        // characters, double-encoded on the way out. The offer card shows
+        // three lines, so the broadcast carries a short version.
+        $list = "Shopping list:\n".implode("\n", array_fill(0, 100, '• Fresh whole milk, full cream, one litre carton ×2'));
+        $this->booking->update(['description' => $list]);
+        $this->offerToRunner();
+
+        $payload = (new \App\Events\IncomingRequest($this->booking->fresh()))->broadcastWith();
+
+        $this->assertLessThanOrEqual(503, mb_strlen($payload['description']));
+        $this->assertStringStartsWith('Shopping list:', $payload['description']);
+        $this->assertLessThan(10000, strlen(json_encode(json_encode($payload))));
+    }
+
     public function test_the_offer_push_says_the_pay_distance_and_errand_type(): void
     {
         Event::fake();
@@ -299,7 +347,60 @@ class ErrandAcceptTest extends TestCase
             ->postJson("/api/v1/runner/errand/{$this->booking->id}/accept");
 
         $response->assertStatus(422)
-            ->assertJsonPath('message', 'You must be online and approved to accept errands.');
+            ->assertJsonPath('code', 'ACCEPT_NOT_ALLOWED')
+            ->assertJsonPath('message', 'Go online to accept errands.');
+    }
+
+    public function test_an_unapproved_runner_is_told_their_account_needs_approval(): void
+    {
+        // Not "be online" — going online wouldn't help them.
+        $this->profile->update(['verification_status' => 'pending']);
+
+        $this->actingAs($this->runner)
+            ->postJson("/api/v1/runner/errand/{$this->booking->id}/accept")
+            ->assertStatus(422)
+            ->assertJsonPath('code', 'RUNNER_NOT_APPROVED');
+    }
+
+    public function test_retrying_an_accept_that_already_landed_answers_with_the_errand(): void
+    {
+        // The first answer was lost on a weak signal and the app sent it again.
+        // That used to say "no longer available" about an errand they held.
+        Event::fake();
+        $this->offerToRunner();
+
+        $this->actingAs($this->runner)
+            ->postJson("/api/v1/runner/errand/{$this->booking->id}/accept")
+            ->assertOk();
+
+        $this->actingAs($this->runner)
+            ->postJson("/api/v1/runner/errand/{$this->booking->id}/accept")
+            ->assertOk()
+            ->assertJsonPath('data.status', 'accepted')
+            ->assertJsonPath('message', 'Errand accepted.');
+
+        $this->assertSame(1, \App\Models\BookingStatusLog::where('booking_id', $this->booking->id)
+            ->where('status', 'accepted')->count());
+        Event::assertDispatchedTimes(\App\Events\BookingStatusChanged::class, 1);
+    }
+
+    public function test_an_errand_another_runner_holds_still_reads_as_taken(): void
+    {
+        $other = User::factory()->create(['role' => 'runner', 'status' => 'active']);
+        $this->booking->update(['status' => 'accepted', 'runner_id' => $other->id]);
+
+        $this->actingAs($this->runner)
+            ->postJson("/api/v1/runner/errand/{$this->booking->id}/accept")
+            ->assertStatus(409)
+            ->assertJsonPath('code', 'BOOKING_STALE');
+    }
+
+    public function test_an_errand_that_is_not_theirs_is_a_coded_not_found(): void
+    {
+        $this->actingAs($this->runner)
+            ->getJson("/api/v1/runner/errand/{$this->booking->id}")
+            ->assertStatus(404)
+            ->assertJsonPath('code', 'NOT_FOUND');
     }
 
     public function test_acceptance_creates_status_log_and_notification(): void

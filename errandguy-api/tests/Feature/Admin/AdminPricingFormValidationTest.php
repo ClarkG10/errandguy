@@ -2,8 +2,9 @@
 
 namespace Tests\Feature\Admin;
 
-use App\Filament\Resources\ErrandTypes\Pages\CreateErrandType;
+use App\Filament\Resources\ErrandTypes\Pages\EditErrandType;
 use App\Models\AdminUser;
+use App\Models\ErrandType;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Hash;
 use Livewire\Livewire;
@@ -31,13 +32,22 @@ class AdminPricingFormValidationTest extends TestCase
         $this->actingAs($admin, 'admin');
     }
 
+    private function type(): ErrandType
+    {
+        return ErrandType::create([
+            'slug' => 'delivery', 'name' => 'Delivery', 'description' => 'x', 'icon_name' => 'Package',
+            'base_fee' => 50, 'per_km_walk' => 15, 'per_km_bicycle' => 12,
+            'per_km_motorcycle' => 10, 'per_km_car' => 18, 'is_active' => true, 'sort_order' => 1,
+        ]);
+    }
+
     public function test_errand_type_form_rejects_a_negative_fee(): void
     {
         $this->actAsCatalogAdmin();
 
-        Livewire::test(CreateErrandType::class)
-            ->fillForm(['name' => 'Test Type', 'slug' => 'test-type', 'base_fee' => 50, 'per_km_car' => -10])
-            ->call('create')
+        Livewire::test(EditErrandType::class, ['record' => $this->type()->getRouteKey()])
+            ->fillForm(['per_km_car' => -10])
+            ->call('save')
             ->assertHasFormErrors(['per_km_car']);
     }
 
@@ -47,9 +57,9 @@ class AdminPricingFormValidationTest extends TestCase
 
         // per_km_car is decimal(6,2) (ceiling 9999.99); a fat-fingered rate both
         // overcharges every customer and overflows the column on strict MySQL.
-        Livewire::test(CreateErrandType::class)
-            ->fillForm(['name' => 'Test Type', 'slug' => 'test-type', 'base_fee' => 50, 'per_km_car' => 99999])
-            ->call('create')
+        Livewire::test(EditErrandType::class, ['record' => $this->type()->getRouteKey()])
+            ->fillForm(['per_km_car' => 99999])
+            ->call('save')
             ->assertHasFormErrors(['per_km_car']);
     }
 }

@@ -25,12 +25,12 @@ class CustomerBookingsRelationManager extends RelationManager
             ->paginated([10, 25])
             ->columns([
                 TextColumn::make('booking_number')->searchable()->weight('semibold'),
-                TextColumn::make('status')->badge()->color(fn (string $s): string => match ($s) {
+                TextColumn::make('status')->formatStateUsing(fn (?string $state): string => \App\Filament\Support\StatusLabels::booking($state))->badge()->color(fn (string $s): string => match ($s) {
                     'completed', 'delivered' => 'success',
                     'cancelled', 'no_runner' => 'danger',
                     default => 'warning',
                 }),
-                TextColumn::make('payment_status')->label('Payment')->badge()->color(fn (string $s): string => match ($s) {
+                TextColumn::make('payment_status')->formatStateUsing(fn (?string $state): string => \App\Filament\Support\StatusLabels::payment($state))->label('Payment')->badge()->color(fn (string $s): string => match ($s) {
                     'paid' => 'success', 'refunded' => 'info', 'failed', 'expired' => 'danger', default => 'warning',
                 }),
                 TextColumn::make('total_amount')->money('PHP')->alignEnd(),

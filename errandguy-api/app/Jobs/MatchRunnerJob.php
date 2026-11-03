@@ -280,7 +280,10 @@ class MatchRunnerJob implements ShouldQueue
                                 'vehicle_type' => $matchedBooking->vehicle_type_rate,
                             ],
                         );
-                        IncomingRequest::dispatch($matchedBooking);
+                        IncomingRequest::dispatch(
+                            $matchedBooking,
+                            $runner->distance_km !== null ? round((float) $runner->distance_km, 1) : null,
+                        );
                     } catch (Throwable $e) {
                         Log::warning("Match notification enqueue failed for booking {$matchedBooking->id}: {$e->getMessage()}");
                     }
@@ -373,6 +376,21 @@ class MatchRunnerJob implements ShouldQueue
         $baseRadius = (float) SystemConfig::getValue('matching_radius_km', '10');
 
         return round($baseRadius * self::LADDER_MULTIPLIERS[$rung], 2);
+    }
+
+    /**
+     * How long an immediate errand's whole search ladder can take with the
+     * current settings (every sweep and the waits between them). Something
+     * still pending with no offer well past this was never searched.
+     */
+    public static function ladderSeconds(): int
+    {
+        $attempts = min(
+            max(1, (int) SystemConfig::getValue('matching_retry_attempts', (string) self::DEFAULT_LADDER_ATTEMPTS)),
+            count(self::LADDER_MULTIPLIERS),
+        );
+
+        return $attempts * self::ladderDelaySeconds();
     }
 
     private static function ladderDelaySeconds(): int

@@ -3,7 +3,6 @@
 namespace App\Filament\Resources\ErrandTypes\Pages;
 
 use App\Filament\Resources\ErrandTypes\ErrandTypeResource;
-use Filament\Actions\CreateAction;
 use Filament\Resources\Pages\ListRecords;
 
 class ListErrandTypes extends ListRecords
@@ -12,8 +11,6 @@ class ListErrandTypes extends ListRecords
 
     protected function getHeaderActions(): array
     {
-        return [
-            CreateAction::make(),
-        ];
+        return [];
     }
 }

@@ -37,4 +37,28 @@ class LogApiRequestsRedactionTest extends TestCase
             return isset($context['url']) && str_contains($context['url'], '{token}');
         });
     }
+
+    public function test_the_gps_throttle_answering_429_is_not_logged_as_an_error(): void
+    {
+        // The runner app pushes its position every few seconds and the server
+        // takes one per 5s; a burst on resume gets 429s by design. Logged as
+        // errors (body and all) they flooded the warning log.
+        \Illuminate\Support\Facades\Cache::flush();
+        $runner = \App\Models\User::factory()->create(['role' => 'runner', 'status' => 'active']);
+        \App\Models\RunnerProfile::create([
+            'user_id' => $runner->id, 'verification_status' => 'approved', 'is_online' => true, 'preferred_types' => [],
+        ]);
+        $ping = fn () => $this->actingAs($runner)->postJson('/api/v1/runner/location', ['lat' => 14.6, 'lng' => 120.98]);
+
+        $ping()->assertOk();
+        Log::spy();
+        $ping()->assertStatus(429);
+
+        Log::shouldNotHaveReceived('warning');
+
+        // A real failure on the same route still logs.
+        $this->actingAs($runner)->postJson('/api/v1/runner/location', ['lat' => 999])->assertStatus(422);
+        Log::shouldHaveReceived('warning')->withArgs(fn ($message, $context = []) => $message === 'API Error Response'
+            && ($context['status'] ?? null) === 422);
+    }
 }

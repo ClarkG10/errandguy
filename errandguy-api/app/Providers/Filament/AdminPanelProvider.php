@@ -21,6 +21,7 @@ use Filament\Enums\ThemeMode;
 use Filament\Support\Colors\Color;
 use Filament\Support\Enums\Width;
 use Filament\Support\Facades\FilamentColor;
+use Filament\Support\Facades\FilamentTimezone;
 use Filament\Support\Icons\Heroicon;
 use Filament\View\PanelsRenderHook;
 use Illuminate\Auth\Events\PasswordReset;
@@ -36,6 +37,13 @@ class AdminPanelProvider extends PanelProvider
 {
     public function boot(): void
     {
+        // Show every time in the panel in Manila time. Timestamps are stored in
+        // UTC (config app.timezone), but the date filters and "today" figures
+        // are Manila days, so a UTC column made an SOS at 9:05 PM read 1:05 PM
+        // and a "Nov 3" filter list rows dated Nov 2. Date-only pickers keep
+        // the app timezone (Filament only converts pickers that have a time).
+        FilamentTimezone::set(config('app.business_timezone', 'Asia/Manila'));
+
         // The "Forgot password?" email: ours, sent straight away (not queued)
         // and worded for staff. Filament builds it through the container.
         $this->app->bind(FilamentResetPasswordEmail::class, StaffPasswordLink::class);

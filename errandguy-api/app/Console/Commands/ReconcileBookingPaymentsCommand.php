@@ -36,7 +36,9 @@ use Illuminate\Support\Facades\Log;
  * the errand on failure/expiry.
  *
  * It also starts matching for a paid errand whose search never began (the
- * confirming path died between recording the payment and starting matching).
+ * confirming path died between recording the payment and starting matching),
+ * and resumes one whose search was claimed but never ran (the process died
+ * between stamping matching_started_at and the first sweep).
  *
  * Last, cheap DETECTIVE controls. Any booking that reached 'completed' without
  * its money is a service delivered for free. Payment now comes before any
@@ -54,6 +56,16 @@ class ReconcileBookingPaymentsCommand extends Command
         {--dry-run : Report what would be reconciled without settling anything}';
 
     protected $description = 'Reconcile pending booking charges against the payment gateway, and flag completed-but-unpaid errands';
+
+    /**
+     * The least time a claimed search may show no offer before it counts as
+     * never having run. The real wait also covers the whole search ladder
+     * (staff can stretch it to minutes), so a slow search isn't restarted.
+     */
+    private const STALLED_SEARCH_MINUTES = 3;
+
+    /** How far back the charged-but-never-refunded check looks. */
+    private const ORPHAN_LOOKBACK_DAYS = 30;
 
     public function handle(PaymentService $payments): int
     {
@@ -134,6 +146,7 @@ class ReconcileBookingPaymentsCommand extends Command
 
         if (! $dryRun) {
             $this->startPaidButUnmatched($minAgeMinutes);
+            $this->resumeSearchesThatNeverRan();
             $this->flagCompletedButUnpaid();
             $this->flagChargedButNeverRefunded();
         }
@@ -179,6 +192,71 @@ class ReconcileBookingPaymentsCommand extends Command
     }
 
     /**
+     * Backstop: a paid errand whose search was claimed but never ran.
+     *
+     * Starting a search stamps matching_started_at and commits, and only then
+     * arms the no-runner auto-cancel and runs the first sweep
+     * (BookingService::beginMatching). A process that dies in between (deploy
+     * restart, OOM) leaves the errand pending and paid with nothing searching
+     * and no auto-cancel armed — and every other backstop, startPaidButUnmatched
+     * above included, only looks at errands with matching_started_at still
+     * NULL. The customer waited out the whole window for a wallet refund.
+     *
+     * Picked out by: pending, paid, no runner, never offered to anyone this
+     * round (offer_count 0), its search claimed over STALLED_SEARCH_MINUTES
+     * ago — longer than the instant search's whole re-sweep ladder (3 sweeps
+     * 45 s apart) — and still inside its search window (past it, the
+     * stranded-booking reaper cancels and refunds it). Scheduled errands are
+     * left out: their search legitimately re-sweeps with no offers until the
+     * window closes, and errandguy:start-due-scheduled-matching owns them.
+     *
+     * Resumed with beginMatching itself, which re-arms the auto-cancel and
+     * runs a sweep; both are safe to repeat (the auto-cancel no-ops once the
+     * errand leaves pending, and the sweep locks the row and only matches a
+     * pending one). This sweep runs every 15 minutes and an errand whose
+     * resumed search is answered (matched, or "no runner") leaves pending, so
+     * at most one more sweep reaches an errand still waiting on its queued
+     * re-sweeps — harmless, and bounded by its search window.
+     */
+    private function resumeSearchesThatNeverRan(): void
+    {
+        $stalledAfter = max(self::STALLED_SEARCH_MINUTES * 60, \App\Jobs\MatchRunnerJob::ladderSeconds() + 120);
+
+        $bookings = Booking::query()
+            ->where('status', 'pending')
+            ->whereNull('runner_id')
+            ->where('payment_status', 'paid')
+            ->where('offer_count', 0)
+            ->whereNotNull('matching_started_at')
+            ->where('matching_started_at', '<=', now()->subSeconds($stalledAfter))
+            ->where(fn ($q) => $q->where('schedule_type', '!=', 'scheduled')
+                ->orWhereNull('schedule_type')
+                ->orWhereNull('scheduled_at'))
+            ->orderBy('matching_started_at')
+            ->limit(50)
+            ->get();
+
+        $resumed = 0;
+        foreach ($bookings as $booking) {
+            if (BookingService::isScheduled($booking) || ! BookingService::matchingDeadline($booking)->isFuture()) {
+                continue;
+            }
+
+            try {
+                BookingService::beginMatching($booking);
+                $resumed++;
+            } catch (\Throwable $e) {
+                Log::error('Could not resume the search for a paid errand', ['booking_id' => $booking->id, 'error' => $e->getMessage()]);
+            }
+        }
+
+        if ($resumed > 0) {
+            Log::warning("Resumed the search for {$resumed} paid errand(s) whose search never ran");
+            $this->warn("Resumed the search for {$resumed} paid errand(s) whose search never ran.");
+        }
+    }
+
+    /**
      * Detective control: money taken for an errand that never happened.
      *
      * A wallet-funded booking debits the customer and then records the paid flag.
@@ -193,8 +271,18 @@ class ReconcileBookingPaymentsCommand extends Command
      */
     private function flagChargedButNeverRefunded(): void
     {
+        // Recent cancellations only. This runs every 15 minutes and used to
+        // test every cancelled booking ever made against wallet_transactions,
+        // a scan that grows for the life of the platform. An orphan is
+        // alerted on from the first sweep after its cancel, so a month of
+        // re-alerts is plenty. Every cancel path stamps cancelled_at; a row
+        // without one (an older or 'failed' booking) is aged by updated_at.
+        $since = now()->subDays(self::ORPHAN_LOOKBACK_DAYS);
+
         $orphaned = Booking::query()
             ->whereIn('status', ['cancelled', 'failed'])
+            ->where(fn ($q) => $q->where('cancelled_at', '>=', $since)
+                ->orWhere(fn ($q) => $q->whereNull('cancelled_at')->where('updated_at', '>=', $since)))
             ->whereExists(fn ($q) => $q->selectRaw('1')
                 ->from('wallet_transactions')
                 ->whereColumn('wallet_transactions.reference_id', 'bookings.id')

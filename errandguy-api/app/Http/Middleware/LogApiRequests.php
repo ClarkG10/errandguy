@@ -50,7 +50,12 @@ class LogApiRequests
         }
 
         $queries = app(RequestMetrics::class)->queries;
-        $isError = $status >= 400;
+        // A 429 on the runner GPS push is the 1-per-5s location throttle doing
+        // its job (a burst on resume, two watchers for a moment), not an
+        // error: logged as one, with its body, it flooded the warning log and
+        // buried real failures. Other 429s still log.
+        $isExpectedThrottle = $status === 429 && str_contains($path, 'runner/location');
+        $isError = $status >= 400 && ! $isExpectedThrottle;
         $isSlow = $duration > self::SLOW_THRESHOLD_MS;
         // A fast 2xx that ran a lot of queries is almost always an N+1 or an
         // unbounded fetch — the thing that quietly caps throughput. Surface it.

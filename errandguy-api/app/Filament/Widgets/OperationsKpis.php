@@ -33,10 +33,21 @@ class OperationsKpis extends StatsOverviewWidget
             $since = BusinessDay::start(30);
             $base = fn () => Booking::where('created_at', '>=', $since);
 
+            // An errand nobody took ends 'no_runner' and is then switched to
+            // 'cancelled' by the auto-cancel (AutoCancelBookingJob), and a
+            // GCash/Maya checkout nobody paid is cancelled too. Counting raw
+            // statuses showed a near-0% no-runner rate during a runner shortage
+            // and blamed customers for both, so split the three apart.
             $total = (clone $base())->count();
             $completed = (clone $base())->where('status', 'completed')->count();
-            $cancelled = (clone $base())->where('status', 'cancelled')->count();
-            $noRunner = (clone $base())->where('status', 'no_runner')->count();
+            $allCancelled = (clone $base())->where('status', 'cancelled')->count();
+            $autoCancelledNoRunner = (clone $base())->where('status', 'cancelled')
+                ->where('cancellation_reason', 'like', 'Auto-cancelled: no runner%')->count();
+            $unpaid = (clone $base())->where('status', 'cancelled')
+                ->where('cancellation_code', \App\Services\BookingService::PAYMENT_NOT_COMPLETED_CODE)->count();
+
+            $noRunner = (clone $base())->where('status', 'no_runner')->count() + $autoCancelledNoRunner;
+            $cancelled = $allCancelled - $autoCancelledNoRunner - $unpaid;
 
             $avgMin = (float) Booking::where('status', 'completed')
                 ->whereNotNull('accepted_at')->whereNotNull('completed_at')
@@ -44,7 +55,7 @@ class OperationsKpis extends StatsOverviewWidget
                 ->selectRaw('avg('.AdminChartData::minutesBetween('accepted_at', 'completed_at').') as m')
                 ->value('m');
 
-            return compact('total', 'completed', 'cancelled', 'noRunner', 'avgMin');
+            return compact('total', 'completed', 'cancelled', 'noRunner', 'unpaid', 'avgMin');
         });
 
         $pct = fn (int $n): string => $d['total'] > 0 ? number_format($n / $d['total'] * 100, 1).'%' : '—';
@@ -58,7 +69,8 @@ class OperationsKpis extends StatsOverviewWidget
                 ->color($completionRate >= 80 ? 'success' : ($completionRate >= 60 ? 'warning' : 'danger')),
 
             Stat::make('Cancellation rate', $pct($d['cancelled']))
-                ->description(number_format($d['cancelled']).' cancelled')
+                ->description(number_format($d['cancelled']).' cancelled'
+                    .(($d['unpaid'] ?? 0) > 0 ? ' · '.number_format($d['unpaid']).' unpaid checkouts dropped' : ''))
                 ->descriptionIcon('heroicon-m-x-circle')
                 ->color($cancelRate <= 10 ? 'success' : ($cancelRate <= 20 ? 'warning' : 'danger')),
 

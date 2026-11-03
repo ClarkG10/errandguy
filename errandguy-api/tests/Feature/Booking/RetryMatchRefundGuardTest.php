@@ -171,4 +171,44 @@ class RetryMatchRefundGuardTest extends TestCase
         $this->assertEquals('pending', $booking->fresh()->status);
         Bus::assertDispatched(MatchRunnerJob::class);
     }
+
+    public function test_an_errand_still_being_searched_cannot_be_reset_by_the_customer(): void
+    {
+        // Mid-search: two runners have already let the offer go this round.
+        // A retry used to wipe that (offer count, skip list, window), so it
+        // could be offered straight back to them and kept searching forever.
+        $booking = $this->makeBooking('pending', 'wallet', 'paid');
+        $booking->update([
+            'offer_count' => 2,
+            'offered_runner_ids' => ['runner-a', 'runner-b'],
+            'matching_started_at' => now()->subMinutes(5),
+        ]);
+
+        $this->actingAs($this->customer)
+            ->getJson("/api/v1/bookings/{$booking->id}")
+            ->assertJsonPath('data.can_retry_match', false);
+
+        $this->actingAs($this->customer)
+            ->postJson("/api/v1/bookings/{$booking->id}/retry-match")
+            ->assertStatus(409)
+            ->assertJsonPath('code', 'RETRY_NOT_ALLOWED')
+            ->assertJsonPath('data.reason', 'searching');
+
+        $fresh = $booking->fresh();
+        $this->assertSame(2, $fresh->offer_count);
+        $this->assertSame(['runner-a', 'runner-b'], $fresh->offered_runner_ids);
+        Bus::assertNotDispatched(MatchRunnerJob::class);
+        Bus::assertNotDispatchedSync(MatchRunnerJob::class);
+    }
+
+    public function test_staff_can_still_re_run_matching_on_a_stuck_pending_errand(): void
+    {
+        // The staff lever shares the money guards but not the pending refusal.
+        $booking = $this->makeBooking('pending', 'cash', 'unpaid');
+
+        app(\App\Services\BookingService::class)->adminRematch($booking->id);
+
+        $this->assertSame('pending', $booking->fresh()->status);
+        $this->assertSame(0, $booking->fresh()->offer_count);
+    }
 }

@@ -29,14 +29,14 @@ class ListRunnerProfiles extends ListRecords
         return [
             'ready' => Tab::make('Ready to review')->icon('heroicon-m-inbox-arrow-down')->badgeColor('warning')
                 ->badge($ready)
-                // SLA queue: oldest application on top so the longest-waiting
-                // runner is reviewed first. The asc order is applied to the base
-                // query before the table's default created_at,desc, and being the
-                // first orderBy clause on the same column it wins.
+                // SLA queue: the longest wait for a review on top, counted
+                // from the last document they sent (not sign-up). Applied to
+                // the base query, so it is the first ORDER BY and wins over the
+                // table's default created_at,desc.
                 ->modifyQueryUsing(fn (Builder $query): Builder => $query
                     ->pending()
                     ->readyForReview()
-                    ->orderBy('created_at', 'asc')),
+                    ->orderBy('documents_submitted_at', 'asc')),
             'incomplete' => Tab::make('Incomplete')->icon('heroicon-m-ellipsis-horizontal-circle')->badgeColor('gray')
                 ->badge($incomplete)
                 // Deliberately NOT oldest-first: this is a signup funnel, not a

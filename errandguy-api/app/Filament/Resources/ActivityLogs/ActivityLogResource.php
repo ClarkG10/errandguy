@@ -68,9 +68,7 @@ class ActivityLogResource extends Resource
                     ->state(fn (Activity $r): string => self::causerLabel($r))
                     ->icon('heroicon-m-user')->color('primary'),
                 TextColumn::make('subject_label')->label('On')
-                    ->state(fn (Activity $r): string => $r->subject_type
-                        ? class_basename($r->subject_type).' #'.substr((string) $r->subject_id, 0, 8)
-                        : '—')
+                    ->state(fn (Activity $r): string => self::subjectLabel($r))
                     ->color('gray'),
                 TextColumn::make('log_name')->label('Log')->badge()->color('gray')->toggleable(isToggledHiddenByDefault: true),
             ])
@@ -79,6 +77,13 @@ class ActivityLogResource extends Resource
                     ->distinct()->orderBy('log_name')->pluck('log_name', 'log_name')->filter()->all()),
                 SelectFilter::make('event')->options(fn (): array => Activity::query()
                     ->distinct()->orderBy('event')->pluck('event', 'event')->filter()->all()),
+                // "What did this staff member do?"
+                SelectFilter::make('causer_id')->label('By staff')
+                    ->options(fn (): array => AdminUser::query()->orderBy('full_name')->pluck('full_name', 'id')->all())
+                    ->query(fn (\Illuminate\Database\Eloquent\Builder $query, array $data) => filled($data['value'] ?? null)
+                        ? $query->where('causer_type', AdminUser::class)->where('causer_id', $data['value'])
+                        : $query)
+                    ->searchable(),
                 \App\Filament\Support\DateRangeFilter::make('created_at', 'When'),
             ])
             ->recordActions([
@@ -99,7 +104,7 @@ class ActivityLogResource extends Resource
                     TextEntry::make('causer_label')->label('Performed by')
                         ->state(fn (Activity $r): string => self::causerLabel($r)),
                     TextEntry::make('subject_label')->label('Subject')
-                        ->state(fn (Activity $r): string => $r->subject_type ? class_basename($r->subject_type).' #'.$r->subject_id : '—')
+                        ->state(fn (Activity $r): string => self::subjectLabel($r, full: true))
                         ->columnSpan(2),
                 ]),
             Section::make('Properties')
@@ -113,6 +118,43 @@ class ActivityLogResource extends Resource
                         ->columnSpanFull(),
                 ]),
         ]);
+    }
+
+    /**
+     * What it was done to, in the words staff use: "Errand EG-1023",
+     * "Juan Cruz", "Setting matching_radius_km" — not a UUID prefix.
+     */
+    private static function subjectLabel(Activity $r, bool $full = false): string
+    {
+        if (! $r->subject_type) {
+            return '—';
+        }
+
+        $kind = class_basename($r->subject_type);
+        $ref = $kind.' #'.($full ? $r->subject_id : substr((string) $r->subject_id, 0, 8));
+
+        // Entries about retired features (disputes, referrals) name a class
+        // that no longer exists: loading their subject would fail the page.
+        // Not eager-loaded for the same reason; a page is 10–25 rows.
+        if (! class_exists($r->subject_type)) {
+            return $ref;
+        }
+
+        $s = $r->subject;
+        if ($s !== null && $full) {
+            return self::subjectLabel($r).' ('.$kind.' '.$r->subject_id.')';
+        }
+
+        return match (true) {
+            $s === null => $ref.' (deleted)',
+            $s instanceof \App\Models\Booking => 'Errand '.($s->booking_number ?? substr((string) $s->id, 0, 8)),
+            $s instanceof \App\Models\User, $s instanceof AdminUser => (string) ($s->full_name ?: $s->email ?: $kind),
+            $s instanceof \App\Models\ErrandType => 'Errand type '.$s->name,
+            $s instanceof \App\Models\SystemConfig => 'Setting '.$s->key,
+            $s instanceof \App\Models\WalletTransaction => ucfirst(str_replace('_', ' ', (string) $s->type)).' ₱'.number_format(abs((float) $s->amount), 2),
+            $s instanceof \App\Models\Payment => 'Payment ₱'.number_format((float) $s->amount, 2),
+            default => $kind.' #'.substr((string) $r->subject_id, 0, 8),
+        };
     }
 
     /** Who did it; a failed staff sign-in has no signed-in staff member behind it. */

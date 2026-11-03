@@ -2,12 +2,15 @@
 
 namespace App\Events;
 
+use App\Http\Resources\BookingResource;
 use App\Models\Booking;
+use App\Services\BookingService;
 use Illuminate\Broadcasting\InteractsWithSockets;
 use Illuminate\Broadcasting\PrivateChannel;
 use Illuminate\Contracts\Broadcasting\ShouldBroadcast;
 use Illuminate\Foundation\Events\Dispatchable;
 use Illuminate\Queue\SerializesModels;
+use Illuminate\Support\Str;
 
 /**
  * Broadcasts a just-matched booking to the runner's private stream — the
@@ -32,6 +35,11 @@ class IncomingRequest implements ShouldBroadcast
 
     public function __construct(
         public Booking $booking,
+        /**
+         * Straight-line km from the runner to the pickup, as matching measured
+         * it (the same figure the offer push carries). Null when unknown.
+         */
+        public ?float $distanceToPickupKm = null,
     ) {}
 
     public function broadcastOn(): PrivateChannel
@@ -46,7 +54,7 @@ class IncomingRequest implements ShouldBroadcast
 
     public function broadcastWith(): array
     {
-        $b = $this->booking->loadMissing('errandType');
+        $b = $this->booking->loadMissing(['errandType', 'stops']);
 
         return [
             'id' => $b->id,
@@ -65,7 +73,23 @@ class IncomingRequest implements ShouldBroadcast
             'dropoff_address' => $b->dropoff_address,
             'dropoff_lat' => $b->dropoff_lat,
             'dropoff_lng' => $b->dropoff_lng,
-            'description' => $b->description,
+            // Trimmed: a "Buy for me" list can run to ~10,000 characters and
+            // Reverb refuses a message over 10 KB (the offer would silently
+            // never arrive). The offer card shows three lines of it; the
+            // errand screen fetches the full text after accepting.
+            'description' => $b->description !== null ? Str::limit($b->description, 500) : null,
+            'special_instructions' => $b->special_instructions,
+            // Extra drop-offs on a multi-stop errand: where, in order, and the
+            // customer's note — never the contact at each stop (the same
+            // withholding as pickup/dropoff above).
+            'stops' => $b->stops->map(fn ($stop) => [
+                'id' => $stop->id,
+                'sequence' => $stop->sequence,
+                'address' => $stop->address,
+                'lat' => $stop->lat,
+                'lng' => $stop->lng,
+                'note' => $stop->note,
+            ])->values()->all(),
             'distance_km' => $b->distance_km,
             // The vehicle the customer paid for. Matching only offers an errand
             // to a runner whose vehicle can serve it, but the runner should
@@ -87,6 +111,14 @@ class IncomingRequest implements ShouldBroadcast
             // TYPE string only, never a gateway reference. Same value
             // BookingResource sends runners as payment_method_type.
             'payment_method_type' => $b->payment_method,
+            // Cash to take at the door (fare on a cash errand, plus reported
+            // item money), or null — the same figure BookingResource sends.
+            'amount_to_collect' => BookingResource::amountToCollectFor($b),
+            // The offer's real countdown and pickup distance, which the push
+            // already carried; the realtime popup fell back to a 30-second
+            // guess and no distance until its REST upgrade landed.
+            'accept_deadline' => BookingService::matchAcceptDeadline($b->matched_at),
+            'distance_to_pickup_km' => $this->distanceToPickupKm,
             'schedule_type' => $b->schedule_type,
             'scheduled_at' => optional($b->scheduled_at)->toIso8601String(),
             'matched_at' => optional($b->matched_at)->toIso8601String(),

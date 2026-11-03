@@ -30,7 +30,10 @@ class RunnerProfileResource extends Resource
         // withDocumentCounts(): the list's "Docs" cell (and its ready/incomplete
         // colour) resolves from these aggregates, so a reviewable application is
         // distinguishable without opening the row.
-        return parent::getEloquentQuery()->with(['user'])->withDocumentCounts();
+        // documents_submitted_at: when they last sent a document — the real
+        // start of their wait for a review (created_at is sign-up day).
+        return parent::getEloquentQuery()->with(['user'])->withDocumentCounts()
+            ->withMax('documents as documents_submitted_at', 'created_at');
     }
 
     public static function infolist(Schema $schema): Schema
@@ -103,6 +106,14 @@ class RunnerProfileResource extends Resource
     public static function getGloballySearchableAttributes(): array
     {
         return ['user.full_name', 'user.phone', 'vehicle_plate'];
+    }
+
+    /** A phone typed as 0917… / 63917… finds the runner too (stored +639…). */
+    public static function modifyGlobalSearchQuery(\Illuminate\Database\Eloquent\Builder $query, string $search): void
+    {
+        if ($canonical = \App\Support\PhilippinePhone::canonical($search)) {
+            $query->orWhereHas('user', fn ($q) => $q->where('phone', $canonical));
+        }
     }
 
     public static function getGlobalSearchResultTitle(Model $record): string

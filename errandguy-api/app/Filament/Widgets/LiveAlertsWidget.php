@@ -4,8 +4,11 @@ namespace App\Filament\Widgets;
 
 use App\Filament\Pages\Payouts;
 use App\Filament\Resources\Bookings\BookingResource;
+use App\Filament\Resources\Payments\PaymentResource;
+use App\Filament\Resources\RunnerProfiles\RunnerProfileResource;
 use App\Filament\Resources\SOSAlerts\SOSAlertResource;
 use App\Filament\Resources\Users\UserResource;
+use App\Filament\Resources\WalletTransactions\WalletTransactionResource;
 use App\Models\AdminAlert;
 use App\Services\StaffMoneyLimit;
 use Filament\Actions\Action;
@@ -41,7 +44,23 @@ class LiveAlertsWidget extends TableWidget
     }
 
     /** Alerts about staff moving money by hand: for money roles only. */
-    private const MONEY_ROLE_TYPES = [StaffMoneyLimit::ALERT_ADJUSTMENT, StaffMoneyLimit::ALERT_PAYOUT];
+    private const MONEY_ROLE_TYPES = [StaffMoneyLimit::ALERT_ADJUSTMENT, StaffMoneyLimit::ALERT_PAYOUT, StaffMoneyLimit::ALERT_DESTINATION, StaffMoneyLimit::ALERT_REFUND];
+
+    /**
+     * Alerts only the money roles can act on. Everyone may see them (a
+     * stranded refund is worth knowing about), but only finance can mark one
+     * seen: `read_at` is shared by all staff, so a support agent dismissing it
+     * would hide it from the people who have to fix it.
+     */
+    private const MONEY_ACTION_TYPES = [
+        ...self::MONEY_ROLE_TYPES,
+        'payout_paid_after_failed', 'payout_bounced_deleted_account', 'payout_reconciled',
+        'booking_payment_reconciled', 'charged_unrefunded_cancellation', 'completed_unpaid_booking',
+        'wallet_reconcile_mismatch', 'tip_reconciled', 'tip_refunded', 'topup_reconciled',
+        'runner_owed_items',
+    ];
+
+    private const SOS_TYPES = ['sos', 'sos_delivery'];
 
     public function table(Table $table): Table
     {
@@ -73,7 +92,7 @@ class LiveAlertsWidget extends TableWidget
                     ->label('Dismiss')
                     ->icon(Heroicon::OutlinedCheck)
                     ->color('gray')
-                    ->visible(fn (AdminAlert $record): bool => $record->read_at === null)
+                    ->visible(fn (AdminAlert $record): bool => $record->read_at === null && self::canDismiss($record))
                     ->action(fn (AdminAlert $record) => $record->update(['read_at' => now()])),
             ]);
     }
@@ -86,6 +105,20 @@ class LiveAlertsWidget extends TableWidget
             'warning' => 'warning',
             default => 'gray',
         };
+    }
+
+    /** Only staff who can act on an alert may mark it seen for everyone. */
+    public static function canDismiss(AdminAlert $record): bool
+    {
+        if (in_array($record->type, self::SOS_TYPES, true)) {
+            return SOSAlertResource::canViewAny();
+        }
+
+        if (in_array($record->type, self::MONEY_ACTION_TYPES, true)) {
+            return auth('admin')->user()?->canManageMoney() ?? false;
+        }
+
+        return true;
     }
 
     /**
@@ -101,8 +134,25 @@ class LiveAlertsWidget extends TableWidget
             // Every booking-subject alert deep-links to the booking — the
             // operator's whole job on these rows is to open it. The stall
             // monitor passes the booking id.
-            'no_runner', 'stalled_errand', 'runner_owed_items' => $record->subject_id && BookingResource::canViewAny()
+            'no_runner', 'stalled_errand', 'runner_owed_items', 'runner_suspended_mid_errand',
+            'charged_unrefunded_cancellation', 'completed_unpaid_booking' => $record->subject_id && BookingResource::canViewAny()
                 ? BookingResource::getUrl('view', ['record' => $record->subject_id])
+                : null,
+            // A runner sent new documents: their application.
+            'kyc_resubmitted' => $record->subject_id && RunnerProfileResource::canViewAny()
+                ? RunnerProfileResource::getUrl('view', ['record' => $record->subject_id])
+                : null,
+            // A charge the reconciler settled: the payment.
+            'booking_payment_reconciled' => $record->subject_id && PaymentResource::canViewAny()
+                ? PaymentResource::getUrl('view', ['record' => $record->subject_id])
+                : null,
+            // Tips / legacy top-ups settled or refunded by a sweep: the ledger row.
+            'tip_reconciled', 'tip_refunded', 'topup_reconciled' => $record->subject_id && WalletTransactionResource::canViewAny()
+                ? WalletTransactionResource::getUrl('view', ['record' => $record->subject_id])
+                : null,
+            // A wallet whose balance disagrees with its ledger: the ledger.
+            'wallet_reconcile_mismatch' => WalletTransactionResource::canViewAny()
+                ? WalletTransactionResource::getUrl('index')
                 : null,
             // A large wallet adjustment: the user whose wallet it was.
             StaffMoneyLimit::ALERT_ADJUSTMENT => $record->subject_id && UserResource::canViewAny()
@@ -110,7 +160,11 @@ class LiveAlertsWidget extends TableWidget
                 : null,
             // Payout alerts are worked on the Payouts page.
             'payout_paid_after_failed', 'payout_bounced_deleted_account', 'payout_reconciled',
-            StaffMoneyLimit::ALERT_PAYOUT => Payouts::canAccess() ? Payouts::getUrl() : null,
+            StaffMoneyLimit::ALERT_PAYOUT, StaffMoneyLimit::ALERT_DESTINATION => Payouts::canAccess() ? Payouts::getUrl() : null,
+            // A large staff refund: the payment it refunded.
+            StaffMoneyLimit::ALERT_REFUND => $record->subject_id && PaymentResource::canViewAny()
+                ? PaymentResource::getUrl('view', ['record' => $record->subject_id])
+                : null,
             default => null,
         };
     }

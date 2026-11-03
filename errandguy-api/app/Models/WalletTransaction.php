@@ -95,6 +95,12 @@ class WalletTransaction extends Model
         return $this->belongsTo(User::class);
     }
 
+    /** The staff member who moved this money by hand (adjustment or payout), if any. */
+    public function initiatedByStaff(): BelongsTo
+    {
+        return $this->belongsTo(AdminUser::class, 'initiated_by_staff_id');
+    }
+
     /**
      * Booking referenced by this transaction (only meaningful for
      * payment/earning/refund types where reference_id stores a booking

@@ -121,4 +121,56 @@ class RunnerApprovalRequiresDocumentsTest extends TestCase
         );
         Bus::assertDispatchedTimes(SendPushJob::class, 1);
     }
+
+    public function test_rejecting_an_approved_runner_takes_them_offline_and_flags_their_errand(): void
+    {
+        $profile = $this->runner('Was Approved', ['government_id' => 'approved', 'selfie' => 'approved']);
+        $profile->update(['verification_status' => 'approved', 'is_online' => true]);
+
+        $customer = User::factory()->create(['role' => 'customer', 'status' => 'active']);
+        $type = \App\Models\ErrandType::create([
+            'slug' => 'delivery', 'name' => 'Delivery', 'description' => 'x', 'icon_name' => 'Package',
+            'base_fee' => 50, 'per_km_walk' => 15, 'per_km_bicycle' => 12,
+            'per_km_motorcycle' => 10, 'per_km_car' => 18, 'is_active' => true, 'sort_order' => 1,
+        ]);
+        $booking = \App\Models\Booking::create([
+            'booking_number' => 'EG-REJ-1', 'customer_id' => $customer->id, 'runner_id' => $profile->user_id,
+            'errand_type_id' => $type->id, 'status' => 'picked_up', 'payment_status' => 'unpaid', 'payment_method' => 'cash',
+            'pickup_address' => 'A', 'pickup_lat' => 14.6, 'pickup_lng' => 120.98,
+            'dropoff_address' => 'B', 'dropoff_lat' => 14.55, 'dropoff_lng' => 121.02,
+            'schedule_type' => 'now', 'pricing_mode' => 'fixed', 'vehicle_type_rate' => 'motorcycle',
+            'distance_km' => 5, 'base_fee' => 50, 'distance_fee' => 50, 'service_fee' => 15,
+            'surcharge' => 0, 'total_amount' => 115, 'runner_payout' => 100, 'is_transportation' => false,
+        ]);
+
+        Livewire::test(ListRunnerProfiles::class, ['activeTab' => 'all'])
+            ->callTableAction('reject', $profile, ['reason' => 'ID turned out to be fake'])
+            ->assertHasNoTableActionErrors();
+
+        $profile->refresh();
+        $this->assertSame('rejected', $profile->verification_status);
+        $this->assertFalse((bool) $profile->is_online);
+        $alert = \App\Models\AdminAlert::where('type', 'runner_suspended_mid_errand')->sole();
+        $this->assertSame($booking->id, $alert->subject_id);
+        $this->assertSame('Rejected runner was mid-errand', $alert->title);
+    }
+
+    public function test_runners_and_people_can_be_acted_on_from_their_own_page(): void
+    {
+        $ready = $this->runner('All Good', ['government_id' => 'approved', 'selfie' => 'approved']);
+
+        Livewire::test(\App\Filament\Resources\RunnerProfiles\Pages\ViewRunnerProfile::class, ['record' => $ready->getRouteKey()])
+            ->assertActionVisible('approve')
+            ->assertActionVisible('reject')
+            ->callAction('approve')
+            ->assertHasNoActionErrors();
+        $this->assertSame('approved', $ready->fresh()->verification_status);
+
+        Livewire::test(\App\Filament\Resources\Users\Pages\ViewUser::class, ['record' => $ready->user_id])
+            ->assertActionVisible('suspend')
+            ->assertActionHidden('unsuspend')
+            ->callAction('suspend', ['reason' => 'Reported for rude behaviour'])
+            ->assertHasNoActionErrors();
+        $this->assertSame('suspended', $ready->user->fresh()->status);
+    }
 }

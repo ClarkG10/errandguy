@@ -2,7 +2,6 @@
 
 namespace App\Filament\Resources\ErrandTypes;
 
-use App\Filament\Resources\ErrandTypes\Pages\CreateErrandType;
 use App\Filament\Resources\ErrandTypes\Pages\EditErrandType;
 use App\Filament\Resources\ErrandTypes\Pages\ListErrandTypes;
 use App\Filament\Resources\ErrandTypes\Schemas\ErrandTypeForm;
@@ -47,7 +46,6 @@ class ErrandTypeResource extends Resource
     {
         return [
             'index' => ListErrandTypes::route('/'),
-            'create' => CreateErrandType::route('/create'),
             'edit' => EditErrandType::route('/{record}/edit'),
         ];
     }
@@ -59,9 +57,13 @@ class ErrandTypeResource extends Resource
         return auth('admin')->user()?->hasAnyRole(AdminUser::ROLE_SUPER_ADMIN, AdminUser::ROLE_ADMIN) ?? false;
     }
 
+    // Each type has its own flow in the app (steps, shopping, single
+    // location), so staff edit prices, copy and the on/off switch but never add
+    // or remove a type: a new slug has no flow behind it, and a type with
+    // errands can't be deleted (bookings reference it).
     public static function canCreate(): bool
     {
-        return static::canManageCatalog();
+        return false;
     }
 
     public static function canEdit(Model $record): bool
@@ -71,6 +73,11 @@ class ErrandTypeResource extends Resource
 
     public static function canDelete(Model $record): bool
     {
-        return static::canManageCatalog();
+        return false;
+    }
+
+    public static function canDeleteAny(): bool
+    {
+        return false;
     }
 }

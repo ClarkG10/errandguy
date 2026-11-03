@@ -62,6 +62,18 @@ class UserResource extends Resource
         return ['full_name', 'email', 'phone'];
     }
 
+    /**
+     * Phones are stored as +639XXXXXXXXX, but staff type the number a caller
+     * reads out ("0917 123 4567"), which matched nothing. Also match it
+     * exactly once it's put in the stored form (same rule as the Users table).
+     */
+    public static function modifyGlobalSearchQuery(Builder $query, string $search): void
+    {
+        if ($canonical = \App\Support\PhilippinePhone::canonical($search)) {
+            $query->orWhere('phone', $canonical);
+        }
+    }
+
     public static function getRecordRouteBindingEloquentQuery(): Builder
     {
         return parent::getRecordRouteBindingEloquentQuery()

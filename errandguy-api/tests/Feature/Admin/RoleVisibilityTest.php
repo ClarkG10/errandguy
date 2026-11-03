@@ -161,6 +161,27 @@ class RoleVisibilityTest extends TestCase
         $this->assertNull(LiveAlertsWidget::linkFor($sos));
     }
 
+    public function test_alerts_that_need_action_are_one_click_away_and_only_the_people_who_act_can_dismiss_them(): void
+    {
+        $bookingId = (string) Str::uuid();
+        AdminAlert::raise('runner_suspended_mid_errand', 'critical', 'Runner suspended mid-errand', null, $bookingId);
+        AdminAlert::raise('completed_unpaid_booking', 'critical', 'Completed, unpaid', null, $bookingId);
+        AdminAlert::raise('kyc_resubmitted', 'info', 'New documents', null, (string) Str::uuid());
+        $suspended = AdminAlert::where('type', 'runner_suspended_mid_errand')->sole();
+        $unpaid = AdminAlert::where('type', 'completed_unpaid_booking')->sole();
+        $kyc = AdminAlert::where('type', 'kyc_resubmitted')->sole();
+
+        $this->as('ops');
+        $this->assertStringContainsString($bookingId, (string) LiveAlertsWidget::linkFor($suspended));
+        $this->assertNotNull(LiveAlertsWidget::linkFor($kyc));
+        $this->assertTrue(LiveAlertsWidget::canDismiss($suspended));
+        // A money alert stays up until finance has seen it.
+        $this->assertFalse(LiveAlertsWidget::canDismiss($unpaid));
+
+        $this->as('finance');
+        $this->assertTrue(LiveAlertsWidget::canDismiss($unpaid));
+    }
+
     public function test_alerts_about_staff_moving_money_are_for_money_roles(): void
     {
         AdminAlert::raise(StaffMoneyLimit::ALERT_ADJUSTMENT, 'warning', 'Large wallet adjustment: +₱8,000.00');

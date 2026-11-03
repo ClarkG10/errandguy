@@ -26,13 +26,13 @@ class LatestBookings extends TableWidget
             ->columns([
                 TextColumn::make('booking_number')->label('Booking')->searchable()->weight('semibold'),
                 TextColumn::make('customer.full_name')->label('Customer')->description(fn (Booking $b): ?string => $b->runner?->full_name ? 'Runner: '.$b->runner->full_name : 'Unassigned'),
-                TextColumn::make('status')->badge()->color(fn (string $state): string => match ($state) {
+                TextColumn::make('status')->formatStateUsing(fn (?string $state): string => \App\Filament\Support\StatusLabels::booking($state))->badge()->color(fn (string $state): string => match ($state) {
                     'completed' => 'success',
                     'cancelled', 'no_runner' => 'danger',
                     'pending' => 'warning',
                     default => 'info',
                 }),
-                TextColumn::make('payment_status')->label('Payment')->badge()->color(fn (string $state): string => match ($state) {
+                TextColumn::make('payment_status')->formatStateUsing(fn (?string $state): string => \App\Filament\Support\StatusLabels::payment($state))->label('Payment')->badge()->color(fn (string $state): string => match ($state) {
                     'paid' => 'success',
                     'failed', 'expired' => 'danger',
                     'refunded' => 'info',

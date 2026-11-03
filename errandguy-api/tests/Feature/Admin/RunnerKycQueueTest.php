@@ -58,7 +58,8 @@ class RunnerKycQueueTest extends TestCase
                 'file_path' => "runner-documents/{$user->id}/{$type}/x.jpg",
                 'file_url' => null,
                 'status' => $docStatus,
-            ]);
+            // Sent on the day they registered, unless a test says otherwise.
+            ])->forceFill(['created_at' => $profile->created_at])->save();
         }
 
         return $profile;
@@ -187,5 +188,23 @@ class RunnerKycQueueTest extends TestCase
 
         \Livewire\Livewire::test(\App\Filament\Widgets\ActionQueue::class)
             ->assertSee('Nothing ready to review', escape: false);
+    }
+
+    public function test_the_wait_counts_from_the_last_document_sent_not_sign_up(): void
+    {
+        // Signed up a month ago, sent the ID and selfie an hour ago: waiting
+        // an hour, not a month (and not first in the queue because of it).
+        $late = $this->runner('Late Sender', '30', ['government_id' => 'pending', 'selfie' => 'pending']);
+        RunnerDocument::where('runner_id', $late->id)->get()
+            ->each(fn (RunnerDocument $d) => $d->forceFill(['created_at' => now()->subHour()])->save());
+        $early = $this->runner('Early Sender', '3', ['government_id' => 'pending', 'selfie' => 'pending']);
+
+        AdminCache::flush();
+
+        \Livewire\Livewire::test(\App\Filament\Widgets\ActionQueue::class)
+            ->assertSee('Oldest 3 days ago', escape: false);
+
+        \Livewire\Livewire::test(\App\Filament\Resources\RunnerProfiles\Pages\ListRunnerProfiles::class, ['activeTab' => 'ready'])
+            ->assertCanSeeTableRecords([$early, $late], inOrder: true);
     }
 }
