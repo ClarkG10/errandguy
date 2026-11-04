@@ -267,6 +267,23 @@ class RefundSemanticsTest extends TestCase
         $this->assertStringContainsString('Items arrived damaged', $alert->body);
     }
 
+    public function test_finance_can_refund_from_the_payment_page_too(): void
+    {
+        $booking = $this->bookViaWallet('completed');
+        $payment = Payment::where('booking_id', $booking->id)->firstOrFail();
+        $this->actingAs(\App\Models\AdminUser::create([
+            'email' => 'finance@errandguy.test', 'password_hash' => 'x',
+            'full_name' => 'Finance', 'role' => 'finance', 'is_active' => true,
+        ]), 'admin');
+
+        \Livewire\Livewire::test(\App\Filament\Resources\Payments\Pages\ViewPayment::class, ['record' => $payment->getRouteKey()])
+            ->assertActionVisible('refund')
+            ->callAction('refund', ['reason' => 'Wrong item delivered'])
+            ->assertHasNoActionErrors();
+
+        $this->assertSame('refunded', $payment->fresh()->status);
+    }
+
     public function test_card_refund_without_gateway_reference_is_rejected(): void
     {
         $booking = $this->bookViaWallet();

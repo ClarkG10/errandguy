@@ -22,8 +22,9 @@ class SOSController extends Controller
      */
     public function trigger(Request $request, string $id): JsonResponse
     {
+        // An errand they are working — not one only offered to them.
         $booking = Booking::where('runner_id', $request->user()->id)
-            ->whereNotIn('status', ['completed', 'cancelled', 'no_runner'])
+            ->whereIn('status', \App\Enums\BookingStatus::IN_PROGRESS)
             ->findOrFail($id);
 
         $alert = $this->sosService->triggerSOS(
@@ -35,8 +36,11 @@ class SOSController extends Controller
 
         $summary = $this->sosService->alertSummary($alert);
 
+        // A summary, never the model: the alert arrives with its booking
+        // loaded (contact phones, photos, payout) and the raiser's account,
+        // which an offered runner — or anyone — must not get from here.
         return response()->json([
-            'data' => $alert,
+            'data' => \App\Services\SOSService::publicSummary($alert),
             'message' => $summary['message'],
             'alerted' => $summary['alerted'],
         ], 201);

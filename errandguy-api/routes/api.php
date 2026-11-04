@@ -224,6 +224,10 @@ Route::prefix('v1')->group(function () {
 
             Route::get('/earnings', [RunnerEarningsController::class, 'summary']);
             Route::get('/earnings/history', [RunnerEarningsController::class, 'history']);
+            // Per-day totals for the same window as /earnings (Manila days),
+            // so the earnings tab's day groups and week chart no longer depend
+            // on how many rows of the list it has loaded.
+            Route::get('/earnings/daily', [RunnerEarningsController::class, 'daily']);
             // Throttled: synchronous DomPDF rendering of up to 500 line items
             // pins a PHP-FPM worker for seconds, so a retry storm / rapid taps
             // could starve the pool. 6/min per runner is ample for a real

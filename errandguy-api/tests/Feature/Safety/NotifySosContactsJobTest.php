@@ -140,6 +140,37 @@ class NotifySosContactsJobTest extends TestCase
         $this->assertSame(0, AdminAlert::where('type', 'sos_delivery')->count(), 'everything went out');
     }
 
+    public function test_raising_sos_over_and_over_cannot_turn_it_into_a_text_cannon(): void
+    {
+        Mail::fake();
+        $this->staffRecipients();
+        $sms = new FakeSmsSender(configured: true);
+
+        // Four alerts in one day (raise, call off, raise again, ...).
+        foreach (range(1, NotifySosContactsJob::CONTACT_TEXT_ROUNDS_PER_DAY + 1) as $_) {
+            $alert = $this->alert();
+            (new NotifySosContactsJob($alert->id))->handle($sms);
+            $alert->update(['status' => 'cancelled']);
+        }
+
+        $contactRounds = collect($sms->sent)->filter(fn (array $call) => in_array('+639170000001', $call['numbers'], true));
+        $this->assertCount(NotifySosContactsJob::CONTACT_TEXT_ROUNDS_PER_DAY, $contactRounds);
+
+        // Staff are texted every time, and told the contacts weren't.
+        $staffRounds = collect($sms->sent)->filter(fn (array $call) => $call['numbers'] === ['09181112222']);
+        $this->assertCount(NotifySosContactsJob::CONTACT_TEXT_ROUNDS_PER_DAY + 1, $staffRounds);
+        $this->assertStringContainsString('not texted again', AdminAlert::where('type', 'sos_delivery')->sole()->body);
+
+        // And the person is never told their contacts are being texted when
+        // they won't be.
+        \Illuminate\Support\Facades\Cache::put(NotifySosContactsJob::contactRoundsKey($this->customer->id), NotifySosContactsJob::CONTACT_TEXT_ROUNDS_PER_DAY, 3600);
+        $this->app->instance(\App\Services\Sms\SmsSender::class, $sms);
+        $summary = app(\App\Services\SOSService::class)->alertSummary($this->alert());
+        $this->assertStringNotContainsString('texting your live location', $summary['message']);
+        $this->assertStringContainsString('didn’t text them again', $summary['message']);
+        $this->assertSame(0, $summary['alerted']['trusted_contacts_texting']);
+    }
+
     public function test_the_staff_email_renders(): void
     {
         $alert = $this->alert();

@@ -139,4 +139,19 @@ class ClientErrorTest extends TestCase
             'message' => str_repeat('x', 1001),
         ])->assertStatus(422);
     }
+
+    public function test_a_report_cannot_write_extra_lines_into_the_log(): void
+    {
+        \Illuminate\Support\Facades\Log::spy();
+
+        $this->postJson('/api/v1/client-errors', [
+            'message' => "boom\n[2026-11-04 10:00:00] production.CRITICAL: forged line",
+        ])->assertOk();
+
+        \Illuminate\Support\Facades\Log::shouldHaveReceived('log')->withArgs(
+            fn ($level, $message, $context) => ! str_contains($message, "\n")
+                && str_contains($message, 'boom [2026-11-04')
+                && str_contains($context['message'], "\n"),
+        );
+    }
 }

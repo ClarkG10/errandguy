@@ -120,100 +120,110 @@ class PaymentsTable
             ])
             ->recordActions([
                 ViewAction::make(),
-                Action::make('refund')
-                    ->label('Refund')
-                    ->icon(Heroicon::OutlinedBanknotes)
-                    ->color('warning')
-                    ->requiresConfirmation()
-                    // Full refund only (partial awaits the P2 refunds ledger).
-                    // Finance/super_admin only, completed payments only, and
-                    // only once the errand is over (PaymentService refuses a
-                    // live one: cancelling it is what refunds it).
-                    // Not offered where the service would refuse it anyway: cash
-                    // is never held by the platform, and a live errand is
-                    // refunded by cancelling it.
-                    ->visible(fn ($record): bool => $record->status === 'completed'
-                        && $record->method !== 'cash'
-                        && ! ($record->booking && ! in_array($record->booking->status, \App\Enums\BookingStatus::ENDED, true))
-                        && (auth('admin')->user()?->canManageMoney() ?? false))
-                    ->modalDescription(fn ($record): string => ($record->method === 'card'
-                            ? 'Full refund reversed to the original card via Xendit.'
-                            : 'Full refund of ₱'.number_format((float) $record->amount, 2).' to the customer’s ErrandGuy wallet, which they can withdraw.')
-                        // A refund doesn't take back what the runner was paid:
-                        // on a completed errand the platform pays for both.
-                        .($record->booking?->status === 'completed' && (float) $record->booking->runner_payout > 0
-                            ? ' The errand was completed, so the runner keeps their ₱'.number_format((float) $record->booking->runner_payout, 2).' earning — ErrandGuy pays this refund.'
-                            : ''))
-                    ->schema([
-                        Textarea::make('reason')
-                            ->required()
-                            ->maxLength(500)
-                            ->helperText('Why it is refunded. Kept in the audit log.'),
-                    ])
-                    ->action(function (array $data, $record): void {
-                        try {
-                            $service = app(\App\Services\PaymentService::class);
-                            // Hybrid: a (legacy, pre-retirement) card payment reverses
-                            // to source; wallet/GCash/Maya go to the wallet; cash is
-                            // rejected by the service (never held).
-                            if ($record->method === 'card') {
-                                if (blank($record->gateway_tx_id)) {
-                                    throw new \RuntimeException('This card payment has no gateway reference to reverse.');
-                                }
-                                // Xendit only accepts its own reason codes; the
-                                // staff member's words go to the audit log below.
-                                $service->refundPayment($record->id, null, 'REQUESTED_BY_CUSTOMER');
-                                $refundedTo = 'gateway';
-                            } else {
-                                $service->refundToWallet($record->id, $data['reason']);
-                                $refundedTo = 'wallet';
-                            }
-
-                            // Tell the CUSTOMER. Money arriving (or leaving, back
-                            // to a card) with no explanation is a guaranteed
-                            // support ticket. Placed on the ACTION (not in
-                            // PaymentService) so the cancel paths, which
-                            // notify via their own events, can't
-                            // double-push. Cache flag keeps a re-run silent even
-                            // though refundToWallet/refundPayment already reject a
-                            // second refund. The admin's raw reason is a gateway
-                            // code (REQUESTED_BY_CUSTOMER) so it rides in the data
-                            // payload, not the user-facing body. (A2)
-                            self::notifyCustomerOfRefund($record, $refundedTo);
-
-                            // Refunds are money staff move by hand too, so a
-                            // large one is surfaced like a large adjustment.
-                            $staff = auth('admin')->user();
-                            if ($staff) {
-                                \App\Services\StaffMoneyLimit::alertIfLarge(
-                                    \App\Services\StaffMoneyLimit::ALERT_REFUND,
-                                    $staff,
-                                    (float) $record->amount,
-                                    'Large refund: ₱'.number_format((float) $record->amount, 2),
-                                    'Refunded ₱'.number_format((float) $record->amount, 2)
-                                        .' to '.($record->customer?->full_name ?? 'a customer').'’s wallet. Reason: '.$data['reason'].'.',
-                                    $record->id,
-                                );
-                            }
-
-                            AdminNotify::success(
-                                'Refund processed',
-                                $record,
-                                context: [
-                                    'Amount' => '₱'.number_format((float) $record->amount, 2),
-                                    'Method' => ucfirst((string) $record->method),
-                                    'Customer' => $record->customer?->full_name,
-                                ],
-                                audit: 'payment.refunded',
-                                properties: ['method' => $record->method, 'amount' => 'full', 'reason' => $data['reason']],
-                            );
-                        } catch (\Throwable $e) {
-                            AdminNotify::error('Refund failed', $e, $record, context: [
-                                'Amount' => '₱'.number_format((float) $record->amount, 2),
-                            ]);
-                        }
-                    }),
+                self::refundAction(),
             ]);
+    }
+
+    /**
+     * Refund, shared by the list row and the payment's own page (where the
+     * errand page's "Open payment" link lands), with the same role gate.
+     */
+    public static function refundAction(): Action
+    {
+        return Action::make('refund')
+            ->label('Refund')
+            ->icon(Heroicon::OutlinedBanknotes)
+            ->color('warning')
+            ->requiresConfirmation()
+            // Full refund only (partial awaits the P2 refunds ledger).
+            // Finance/super_admin only, completed payments only, and
+            // only once the errand is over (PaymentService refuses a
+            // live one: cancelling it is what refunds it).
+            // Not offered where the service would refuse it anyway: cash
+            // is never held by the platform, and a live errand is
+            // refunded by cancelling it.
+            ->visible(fn ($record): bool => $record->status === 'completed'
+                && $record->method !== 'cash'
+                && ! ($record->booking && ! in_array($record->booking->status, \App\Enums\BookingStatus::ENDED, true))
+                && (auth('admin')->user()?->canManageMoney() ?? false))
+            ->modalDescription(fn ($record): string => ($record->method === 'card'
+                    ? 'Full refund reversed to the original card via Xendit.'
+                    : 'Full refund of ₱'.number_format((float) $record->amount, 2).' to the customer’s ErrandGuy wallet, which they can withdraw.')
+                // A refund doesn't take back what the runner was paid:
+                // on a completed errand the platform pays for both.
+                .($record->booking?->status === 'completed' && (float) $record->booking->runner_payout > 0
+                    ? ' The errand was completed, so the runner keeps their ₱'.number_format((float) $record->booking->runner_payout, 2).' earning — ErrandGuy pays this refund.'
+                    : ''))
+            ->schema([
+                Textarea::make('reason')
+                    ->required()
+                    // payment_status_transitions.reason is 191 characters.
+                    ->maxLength(191)
+                    ->helperText('Why it is refunded. Kept in the audit log.'),
+            ])
+            ->action(function (array $data, $record): void {
+                try {
+                    $service = app(\App\Services\PaymentService::class);
+                    // Hybrid: a (legacy, pre-retirement) card payment reverses
+                    // to source; wallet/GCash/Maya go to the wallet; cash is
+                    // rejected by the service (never held).
+                    if ($record->method === 'card') {
+                        if (blank($record->gateway_tx_id)) {
+                            throw new \RuntimeException('This card payment has no gateway reference to reverse.');
+                        }
+                        // Xendit only accepts its own reason codes; the
+                        // staff member's words go to the audit log below.
+                        $service->refundPayment($record->id, null, 'REQUESTED_BY_CUSTOMER');
+                        $refundedTo = 'gateway';
+                    } else {
+                        $service->refundToWallet($record->id, $data['reason']);
+                        $refundedTo = 'wallet';
+                    }
+
+                    // Tell the CUSTOMER. Money arriving (or leaving, back
+                    // to a card) with no explanation is a guaranteed
+                    // support ticket. Placed on the ACTION (not in
+                    // PaymentService) so the cancel paths, which
+                    // notify via their own events, can't
+                    // double-push. Cache flag keeps a re-run silent even
+                    // though refundToWallet/refundPayment already reject a
+                    // second refund. The admin's raw reason is a gateway
+                    // code (REQUESTED_BY_CUSTOMER) so it rides in the data
+                    // payload, not the user-facing body. (A2)
+                    self::notifyCustomerOfRefund($record, $refundedTo);
+
+                    // Refunds are money staff move by hand too, so a
+                    // large one is surfaced like a large adjustment.
+                    $staff = auth('admin')->user();
+                    if ($staff) {
+                        \App\Services\StaffMoneyLimit::alertIfLarge(
+                            \App\Services\StaffMoneyLimit::ALERT_REFUND,
+                            $staff,
+                            (float) $record->amount,
+                            'Large refund: ₱'.number_format((float) $record->amount, 2),
+                            'Refunded ₱'.number_format((float) $record->amount, 2)
+                                .' to '.($record->customer?->full_name ?? 'a customer').'’s wallet. Reason: '.$data['reason'].'.',
+                            $record->id,
+                        );
+                    }
+
+                    AdminNotify::success(
+                        'Refund processed',
+                        $record,
+                        context: [
+                            'Amount' => '₱'.number_format((float) $record->amount, 2),
+                            'Method' => ucfirst((string) $record->method),
+                            'Customer' => $record->customer?->full_name,
+                        ],
+                        audit: 'payment.refunded',
+                        properties: ['method' => $record->method, 'amount' => 'full', 'reason' => $data['reason']],
+                    );
+                } catch (\Throwable $e) {
+                    AdminNotify::error('Refund failed', $e, $record, context: [
+                        'Amount' => '₱'.number_format((float) $record->amount, 2),
+                    ]);
+                }
+            });
     }
 
     /**

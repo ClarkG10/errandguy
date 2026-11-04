@@ -14,6 +14,13 @@ use Illuminate\Validation\ValidationException;
 
 class LoginController extends Controller
 {
+    /**
+     * A bcrypt hash of nothing in particular, at the production cost
+     * (BCRYPT_ROUNDS=12), checked against when there is no such account.
+     * Fixed rather than made per request, which would cost twice as much.
+     */
+    private const NO_ACCOUNT_HASH = '$2y$12$cs2fzf/cnHCIamkVd3QsP./pihML/bKTuersDRUWlM/9xvaT9X4T6';
+
     public function login(LoginRequest $request): JsonResponse
     {
         // Never log the raw phone/email (CWE-532: plaintext contact PII in the
@@ -29,7 +36,16 @@ class LoginController extends Controller
             ->when($request->email, fn ($q) => $q->where('email', $request->email))
             ->first();
 
-        if (!$user || !Hash::check($request->password, $user->password_hash)) {
+        // Check a password even when there is no such account, so a wrong
+        // address answers as slowly as a wrong password: skipping the hash
+        // answered measurably faster and told anyone which phones and emails
+        // have accounts.
+        $passwordMatches = Hash::check(
+            (string) $request->password,
+            $user?->password_hash ?? self::NO_ACCOUNT_HASH,
+        );
+
+        if (! $user || ! $passwordMatches) {
             Log::warning('Login failed - invalid credentials', [
                 'user_found' => (bool) $user,
                 'ip' => $request->ip(),

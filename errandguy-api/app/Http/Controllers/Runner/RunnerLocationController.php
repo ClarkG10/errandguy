@@ -29,9 +29,12 @@ class RunnerLocationController extends Controller
         $activeBookingId = null;
 
         if ($clientBookingId) {
+            // Accepted and not finished. Not an offer: an offered runner
+            // hasn't taken the errand, and tagging their pings to it streamed
+            // their live position to the customer before they said yes.
             $owns = $user->runnerBookings()
                 ->whereKey($clientBookingId)
-                ->whereNotIn('status', ['completed', 'cancelled', 'pending', 'no_runner'])
+                ->whereIn('status', \App\Enums\BookingStatus::IN_PROGRESS)
                 ->exists();
             if ($owns) {
                 $activeBookingId = $clientBookingId;
@@ -54,7 +57,7 @@ class RunnerLocationController extends Controller
             // are UUID strings, so '' can never collide with a real id.
             $cached = Cache::remember($cacheKey, 30, function () use ($user) {
                 return $user->runnerBookings()
-                    ->whereNotIn('status', ['completed', 'cancelled', 'pending', 'no_runner'])
+                    ->whereIn('status', \App\Enums\BookingStatus::IN_PROGRESS)
                     ->value('id') ?? '';
             });
             $activeBookingId = $cached ?: null;

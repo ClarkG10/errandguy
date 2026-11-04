@@ -110,7 +110,9 @@ class Payment extends Model
             'from_status' => $from,
             'to_status' => $to->value,
             'actor' => $actor,
-            'reason' => $reason,
+            // The column holds 191 characters; a longer staff note must not
+            // fail the refund it describes (MySQL strict mode refuses it).
+            'reason' => $reason !== null ? \Illuminate\Support\Str::limit($reason, 188) : null,
             'meta' => empty($meta) ? null : $meta,
             'created_at' => now(),
         ]);

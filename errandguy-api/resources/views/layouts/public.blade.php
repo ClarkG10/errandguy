@@ -24,6 +24,10 @@
         li { margin-bottom: 6px; }
         .muted { color: #64748B; font-size: 14px; }
         a { color: #2563EB; }
+        a.btn {
+            display: inline-block; background: #2563EB; color: #fff; text-decoration: none;
+            padding: 12px 24px; border-radius: 999px; font-weight: 600; font-size: 14px; margin-top: 4px;
+        }
         .placeholder {
             background: #FEF3C7; border: 1px solid #F59E0B; border-radius: 12px;
             padding: 12px 16px; margin: 16px 0 20px; color: #78350F; font-size: 14px;

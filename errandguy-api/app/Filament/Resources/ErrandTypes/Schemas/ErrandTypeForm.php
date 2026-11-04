@@ -20,7 +20,7 @@ class ErrandTypeForm
                     ->schema([
                         TextInput::make('name')
                             ->required()
-                            ->maxLength(60),
+                            ->maxLength(50),
                         TextInput::make('slug')
                             ->disabled()
                             ->dehydrated(false)
@@ -29,7 +29,7 @@ class ErrandTypeForm
                             ->columnSpanFull()
                             ->rows(2),
                         TextInput::make('icon_name')
-                            ->maxLength(50)
+                            ->maxLength(30)
                             ->helperText('Icon key the mobile app maps to.'),
                         TextInput::make('sort_order')
                             ->numeric()

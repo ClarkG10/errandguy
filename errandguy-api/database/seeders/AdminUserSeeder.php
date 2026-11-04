@@ -28,7 +28,11 @@ class AdminUserSeeder extends Seeder
             return;
         }
 
-        AdminUser::updateOrCreate(
+        // Creates the account only. An existing one is left alone: re-seeding
+        // used to reset its password and re-enable and promote it, even a
+        // staff member deliberately disabled. Changes go through
+        // errandguy:make-admin, which is explicit about what it does.
+        $admin = AdminUser::firstOrCreate(
             ['email' => $email],
             [
                 'password_hash' => Hash::make($password),
@@ -38,6 +42,8 @@ class AdminUserSeeder extends Seeder
             ]
         );
 
-        $this->command?->info("AdminUserSeeder: ensured super-admin {$email}.");
+        $this->command?->info($admin->wasRecentlyCreated
+            ? "AdminUserSeeder: created super-admin {$email}."
+            : "AdminUserSeeder: {$email} already exists — left unchanged (use errandguy:make-admin to change it).");
     }
 }

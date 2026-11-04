@@ -39,7 +39,26 @@ class NotifySosContactsJob extends BaseJob
     /** One attempt: a retry would text everyone a second time. */
     public int $tries = 1;
 
+    /** How many rounds of trusted-contact texts one person's alerts may send in a Manila day. */
+    public const CONTACT_TEXT_ROUNDS_PER_DAY = 3;
+
     public function __construct(public string $alertId) {}
+
+    /** Today's (Manila) count of trusted-contact text rounds for one person's alerts. */
+    public static function contactRoundsKey(string $userId): string
+    {
+        return 'sos-contact-texts:'.$userId.':'.\App\Support\BusinessDay::date();
+    }
+
+    /**
+     * Whether this person's next alert will text their trusted contacts. The
+     * reply to the person checks this BEFORE promising "we're texting your
+     * contacts" — it must never say so when the day's rounds are used up.
+     */
+    public static function canTextContactsAgainToday(string $userId): bool
+    {
+        return (int) \Illuminate\Support\Facades\Cache::get(self::contactRoundsKey($userId), 0) < self::CONTACT_TEXT_ROUNDS_PER_DAY;
+    }
 
     public function handle(SmsSender $sms): void
     {
@@ -86,9 +105,26 @@ class NotifySosContactsJob extends BaseJob
             return;
         }
 
+        // At most a few rounds of texts a day per person. Raising and calling
+        // off SOS in a loop otherwise texted the same (up to five) numbers each
+        // time — any numbers, under our name, on our SMS bill. Not per errand:
+        // someone who calls an alert off by mistake and raises it again for
+        // real must reach their contacts with the new live link. Staff are
+        // still alerted every time.
+        $roundsKey = self::contactRoundsKey($alert->triggered_by);
+        \Illuminate\Support\Facades\Cache::add($roundsKey, 0, now()->addHours(26));
+        if (\Illuminate\Support\Facades\Cache::increment($roundsKey) > self::CONTACT_TEXT_ROUNDS_PER_DAY) {
+            $gaps[] = 'Trusted contacts were not texted again: they were already texted '
+                .self::CONTACT_TEXT_ROUNDS_PER_DAY.' times today about this person\'s alerts.';
+
+            return;
+        }
+
         try {
             $result = $sms->send($contacts->pluck('phone')->all(), $this->contactMessage($alert));
         } catch (\Throwable $e) {
+            // Nothing went out: this round doesn't count toward the day's.
+            \Illuminate\Support\Facades\Cache::decrement($roundsKey);
             Log::error('SOS trusted-contact texts failed', ['alert_id' => $alert->id, 'error' => $e->getMessage()]);
             $gaps[] = 'Texts to trusted contacts failed.';
 

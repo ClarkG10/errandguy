@@ -17,6 +17,24 @@ use Illuminate\Support\Str;
 
 class SOSService
 {
+    /**
+     * What the raiser's app is told about the alert they just raised.
+     *
+     * @return array<string, mixed>
+     */
+    public static function publicSummary(\App\Models\SOSAlert $alert): array
+    {
+        return [
+            'id' => $alert->id,
+            'booking_id' => $alert->booking_id,
+            'status' => $alert->status,
+            'triggered_by_role' => $alert->triggered_by_role,
+            'triggered_at' => $alert->triggered_at,
+            'contacts_notified' => $alert->contacts_notified,
+            'live_link_expires_at' => $alert->live_link_expires_at,
+        ];
+    }
+
     /** How long the live-location link handed out with an SOS keeps working. */
     public const LIVE_LINK_MINUTES = 60;
 
@@ -311,7 +329,10 @@ class SOSService
             ->where('is_active', true)
             ->pluck('phone');
         $textable = $contacts->filter(fn ($phone) => PhilippinePhone::normalize($phone) !== null)->count();
-        $texting = $smsReady ? $textable : 0;
+        // Trusted contacts get a few rounds of texts a day per person
+        // (NotifySosContactsJob); past that, say so instead of promising texts.
+        $roundsLeft = \App\Jobs\NotifySosContactsJob::canTextContactsAgainToday((string) $alert->triggered_by);
+        $texting = $smsReady && $roundsLeft ? $textable : 0;
 
         $staffEmails = count(OpsAlertRecipients::emails());
         $staffPhones = $smsReady ? count(OpsAlertRecipients::phones()) : 0;
@@ -319,6 +340,8 @@ class SOSService
         $message = 'SOS sent to ErrandGuy’s safety team.';
         if ($contacts->isEmpty()) {
             $message .= ' You have no trusted contacts saved.';
+        } elseif ($smsReady && $textable > 0 && ! $roundsLeft) {
+            $message .= ' We’ve already texted your trusted contacts several times today, so we didn’t text them again — call them if you can.';
         } elseif ($texting > 0) {
             $message .= ' We’re texting your live location to '.$texting.' trusted '
                 .($texting === 1 ? 'contact' : 'contacts').' now.';

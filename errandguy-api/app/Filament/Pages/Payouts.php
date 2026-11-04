@@ -105,8 +105,10 @@ class Payouts extends Page implements HasTable
      */
     public static function destinationChanged(?array $recorded, ?string $channelCode, ?string $accountNumber): bool
     {
+        // Nothing on record to compare with: whatever staff type is their
+        // choice, not the person's, so it counts as a change.
         if (! $recorded) {
-            return false;
+            return filled($accountNumber);
         }
 
         $recordedCode = $recorded['channel_code'] ?? null;
@@ -130,28 +132,45 @@ class Payouts extends Page implements HasTable
         return Textarea::make('change_reason')
             ->label('Why it goes to a different account')
             ->maxLength(500)
-            ->helperText("Only if you changed the account above from {$from}. Required then: the other finance staff are alerted.");
+            ->helperText("Only if you changed the account above from {$from}. That needs a super admin and a reason, and the other money staff are alerted.");
     }
 
     /**
-     * Refuse a payout to an account other than the recorded one unless staff
-     * say why. Returns true (and tells them) when it must stop here.
+     * A payout goes to the account on record. Sending it anywhere else takes a
+     * super admin and a written reason: one finance user could otherwise send
+     * people's withdrawals to an account of their own — a redirect isn't money
+     * they created, so it never counted toward their daily limit. Returns true
+     * (and tells them) when it must stop here.
      */
     private static function refuseUnexplainedChange(?array $recorded, array $data, ?WalletTransaction $record = null): bool
     {
-        if (! self::destinationChanged($recorded, $data['channel_code'] ?? null, $data['account_number'] ?? null)
-            || trim((string) ($data['change_reason'] ?? '')) !== '') {
+        if (! self::destinationChanged($recorded, $data['channel_code'] ?? null, $data['account_number'] ?? null)) {
             return false;
         }
 
-        AdminNotify::error(
-            'Say why the account changed',
-            'Their payout account is '.PayoutDestination::label($recorded)
-                .'. Put that account back, or add the reason for sending it elsewhere. Nothing was sent.',
-            $record,
-        );
+        $onRecord = $recorded ? 'Their payout account is '.PayoutDestination::label($recorded).'.' : 'There is no payout account on record.';
 
-        return true;
+        if (! (auth('admin')->user()?->isSuperAdmin() ?? false)) {
+            AdminNotify::error(
+                'A super admin has to approve this account',
+                $onRecord.' Only a super admin can send a payout to a different account. Nothing was sent.',
+                $record,
+            );
+
+            return true;
+        }
+
+        if (trim((string) ($data['change_reason'] ?? '')) === '') {
+            AdminNotify::error(
+                'Say why the account changed',
+                $onRecord.' Put that account back, or add the reason for sending it elsewhere. Nothing was sent.',
+                $record,
+            );
+
+            return true;
+        }
+
+        return false;
     }
 
     /**
@@ -179,14 +198,20 @@ class Payouts extends Page implements HasTable
         );
     }
 
-    /** The audit-log properties that say exactly where the money went. */
+    /**
+     * The audit-log properties that say where the money went — masked
+     * ("GCash •••• 4567"). The audit log is open to the admin role, which has
+     * no money access; the full account stays on the payout itself, which
+     * only money staff can open.
+     */
     private static function destinationAudit(string $channelCode, string $accountNumber, string $accountName): array
     {
+        $channel = PayoutDestination::channelForCode($channelCode) ?? 'bank';
+
         return [
-            'channel' => PayoutDestination::channelForCode($channelCode) ?? 'bank',
+            'channel' => $channel,
             'channel_code' => $channelCode,
-            'account_number' => $accountNumber,
-            'account_name' => $accountName,
+            'to' => PayoutDestination::label(PayoutDestination::make($channel, $accountNumber, $accountName, channelCode: $channelCode)),
         ];
     }
 

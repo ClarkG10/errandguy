@@ -21,8 +21,8 @@ Grouped in the sidebar (who can open each page is in **Roles** below):
 - **Money** — Payments (refund), Payouts (runner payouts, customer withdrawals
   and payouts queued by account deletion: "Send via Xendit", "Check with
   Xendit" for a sent payout, manual complete/fail for an unsent one, and "Pay a
-  runner"; sending to an account other than the one on record needs a reason
-  and alerts money staff; a payout marked completed by hand needs how it was
+  runner"; sending to an account other than the one on record needs a super
+  admin and a reason, and alerts money staff; a payout marked completed by hand needs how it was
   paid and the reference; CSV export), Wallet Transactions (ledger, with a
   "By staff" column and filter for money moved by hand).
 - **Safety & Support** — SOS Alerts (resolve, with a live red badge; every
@@ -47,12 +47,16 @@ be opened by URL either.
 | | super_admin | admin | finance | support | ops |
 |---|:-:|:-:|:-:|:-:|:-:|
 | Dashboard, Bookings, Users, Runner Profiles, Reviews, Errand Types (view), Trusted Contacts, Saved Addresses, Notification log | ✓ | ✓ | ✓ | ✓ | ✓ |
-| Cancel / re-run errands, suspend users, approve runners & KYC documents | ✓ | ✓ | | | ✓ |
+| Cancel / re-run errands, suspend users, approve runners & KYC documents, flag/unflag reviews | ✓ | ✓ | | | ✓ |
 | Support Tickets, SOS Alerts (+ SOS alarm) | ✓ | ✓ | | ✓ | ✓ |
-| Errand Types (edit), delete/unflag reviews, Push Broadcast, Audit log | ✓ | ✓ | | | |
+| Errand Types (edit), delete reviews, Push Broadcast, Audit log | ✓ | ✓ | | | |
+| Erase an account (a deletion request made without the app) | ✓ | ✓ | | | |
 | Payments, Payouts, Wallet Transactions, Platform Payment Methods, wallet adjustments | ✓ | | ✓ | | |
-| GMV, platform revenue and runner earnings (dashboard, errand list, top runners, runner profiles) | ✓ | | ✓ | | |
-| CSV exports with phone numbers, emails or wallet data (Users, Runners, Wallet ledger) | ✓ | ✓ | | | |
+| GMV, platform revenue, runner earnings and wallet balances (dashboard, errand list, users, top runners, runner profiles) | ✓ | | ✓ | | |
+| Send a payout to an account other than the one on record (needs a reason; alerts money staff) | ✓ | | | | |
+| Dismiss an alert about staff moving money by hand | ✓ | | | | |
+| CSV exports with phone numbers or emails (Users, Runners) | ✓ | ✓ | | | |
+| Wallet ledger and Payouts CSV export | ✓ | | ✓ | | |
 | Staff, System configs | ✓ | | | | |
 
 Other CSV exports (bookings, payments, tickets, SOS, reviews, notifications)

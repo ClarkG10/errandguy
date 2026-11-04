@@ -7,6 +7,8 @@ use App\Http\Resources\BookingResource;
 use App\Http\Resources\EarningsResource;
 use App\Models\RunnerProfile;
 use App\Models\SystemConfig;
+use App\Support\AdminChartData;
+use App\Support\BusinessDay;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 
@@ -41,11 +43,7 @@ class RunnerEarningsController extends Controller
         // whereMonth which wrap the column in a function and prevent
         // index usage on completed_at. An unrecognised period stays
         // unfiltered (lifetime), exactly as before.
-        $this->applyWindow($query, match ($period) {
-            'today', 'this_week', 'this_month' => $this->namedWindow($period),
-            'custom' => $this->customWindow($request),
-            default => [null, null],
-        });
+        $this->applyWindow($query, $this->summaryWindow($request, $period));
 
         // Single aggregate query instead of separate sum() + count().
         // Tips are summed ALONGSIDE the payout, never into it: runner_payout is
@@ -75,6 +73,77 @@ class RunnerEarningsController extends Controller
 
         return response()->json([
             'data' => new EarningsResource($data),
+        ]);
+    }
+
+    /**
+     * GET /runner/earnings/daily — the period's totals per Manila calendar day.
+     *
+     * The earnings tab used to build its day groups and its week chart from
+     * the per-errand list, fetched as ONE page of up to 100 rows. A runner with
+     * more completed errands than that in the month (or a busy week) silently
+     * lost the oldest days from both — the day subtotals and the bars read
+     * lower than what they earned, under a hero total that was right. So the
+     * per-day sums now come from the database, over the WHOLE window, and the
+     * list underneath is free to load a page at a time.
+     *
+     * Same window as summary() (same period values, same Manila boundaries),
+     * so the days add up to the hero total. Each errand counts on the Manila
+     * date of its completed_at: one finished 23:30 Manila is that day's, not
+     * the next (UTC) day's. Days with no completed errand are left out.
+     *
+     * `cash_earnings` is how much of the day's payout was collected in cash at
+     * the door (the rest went to the wallet). It is null when any of that day's
+     * errands has no payment method on record — the app then shows no
+     * cash/online split rather than a guess.
+     */
+    public function daily(Request $request): JsonResponse
+    {
+        $request->validate([
+            'period' => ['nullable', 'string', 'max:30'],
+            'date_from' => ['nullable', 'date'],
+            'date_to' => ['nullable', 'date'],
+        ]);
+
+        $period = $request->input('period', 'today');
+
+        $query = $request->user()->runnerBookings()->completed();
+        $this->applyWindow($query, $this->summaryWindow($request, $period));
+
+        // One GROUP BY over the window. The bucket shifts completed_at (UTC)
+        // into Manila time before taking the date — the same expression the
+        // admin charts use, written for MySQL and SQLite alike.
+        $bucket = AdminChartData::dayBucket('completed_at');
+        $rows = $query->toBase()
+            ->selectRaw("{$bucket} as day")
+            ->selectRaw('COUNT(*) as errands')
+            ->selectRaw('COALESCE(SUM(runner_payout), 0) as earnings')
+            ->selectRaw('COALESCE(SUM(tip_amount), 0) as tips')
+            ->selectRaw("COALESCE(SUM(CASE WHEN LOWER(payment_method) = 'cash' THEN runner_payout ELSE 0 END), 0) as cash_earnings")
+            ->selectRaw("SUM(CASE WHEN payment_method IS NULL OR payment_method = '' THEN 1 ELSE 0 END) as unknown_method")
+            ->groupBy('day')
+            ->orderByDesc('day')
+            ->get();
+
+        return response()->json([
+            'data' => [
+                'period' => $period,
+                // The calendar the dates are on, so the app can put each
+                // errand in its list under the same day as these totals.
+                'timezone' => BusinessDay::timezone(),
+                'utc_offset_minutes' => now(BusinessDay::timezone())->utcOffset(),
+                'days' => $rows->map(fn ($row): array => [
+                    'date' => (string) $row->day,
+                    'errands' => (int) $row->errands,
+                    // Payout only. Tips are reported beside it, never in it —
+                    // the same rule as summary().
+                    'earnings' => round((float) $row->earnings, 2),
+                    'tips' => round((float) $row->tips, 2),
+                    'cash_earnings' => (int) $row->unknown_method > 0
+                        ? null
+                        : round((float) $row->cash_earnings, 2),
+                ])->values()->all(),
+            ],
         ]);
     }
 
@@ -118,6 +187,23 @@ class RunnerEarningsController extends Controller
         return response()->json(
             BookingResource::collection($bookings)->response()->getData(true)
         );
+    }
+
+    /**
+     * The window summary() and daily() total over. Shared so the per-day
+     * figures can never cover a different stretch than the hero total.
+     * Nullable on purpose: `?period=` arrives as null, and an unrecognised
+     * period has always meant lifetime, never an error.
+     *
+     * @return array{0: ?\Carbon\CarbonInterface, 1: ?\Carbon\CarbonInterface}
+     */
+    private function summaryWindow(Request $request, ?string $period): array
+    {
+        return match ($period) {
+            'today', 'this_week', 'this_month' => $this->namedWindow($period),
+            'custom' => $this->customWindow($request),
+            default => [null, null],
+        };
     }
 
     /**

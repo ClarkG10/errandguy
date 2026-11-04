@@ -18,6 +18,9 @@ use Illuminate\Http\Request;
  */
 class HeatmapController extends Controller
 {
+    /** The fewest different customers a heatmap cell shows, so no cell is one person's address. */
+    private const MIN_ERRANDS_PER_CELL = 3;
+
     /** SWR soft / hard TTL (seconds): fresh for 15m, physically kept for 30m. */
     private const SWR_SOFT = 900;
     private const SWR_HARD = 1800;
@@ -33,8 +36,16 @@ class HeatmapController extends Controller
     {
         $days = $this->clampDays($request->integer('days', 14), 90);
 
+        // Where customers' errands start is their home more often than not.
+        // Only for runners we have verified, and only cells with several
+        // errands in them: a cell of one pointed at one person's address to
+        // anyone who switched their account to runner.
+        if ($request->user()?->runnerProfile?->verification_status !== 'approved') {
+            return response()->json(['data' => ['days' => $days, 'cells' => []]]);
+        }
+
         $cells = CacheService::swr(
-            "runner:heatmap:{$days}",
+            "runner:heatmap:v2:{$days}",
             self::SWR_SOFT,
             self::SWR_HARD,
             fn () => Booking::query()
@@ -45,6 +56,9 @@ class HeatmapController extends Controller
                 ->selectRaw($this->roundExpr('pickup_lng') . ' as lng')
                 ->selectRaw('count(*) as weight')
                 ->groupByRaw($this->roundExpr('pickup_lat') . ', ' . $this->roundExpr('pickup_lng'))
+                // Distinct customers, not errands: one regular customer's
+                // three errands from home would still show their home.
+                ->havingRaw('count(distinct customer_id) >= ?', [self::MIN_ERRANDS_PER_CELL])
                 ->get()
                 ->map(fn ($row) => [
                     'lat' => (float) $row->lat,

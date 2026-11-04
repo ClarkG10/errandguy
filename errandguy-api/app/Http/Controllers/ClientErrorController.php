@@ -53,10 +53,17 @@ class ClientErrorController extends Controller
         $platform = $data['platform'] ?? (Str::limit((string) $request->header('X-Platform'), 20, '') ?: null);
         $appVersion = $data['app_version'] ?? (Str::limit((string) $request->header('X-App-Version'), 30, '') ?: null);
 
-        Log::log($fatal ? 'error' : 'warning', '[client-crash] '.Str::limit($data['message'], 300), [
+        // One line, whatever was sent: the log formatter keeps line breaks
+        // inside a message, so a crafted report (anyone can post here) could
+        // write fake "production.CRITICAL" lines into the log. The full text
+        // still goes in the context below, which is written as escaped JSON.
+        $headline = Str::limit(str_replace(["\r", "\n"], ' ', (string) $data['message']), 300);
+
+        Log::log($fatal ? 'error' : 'warning', '[client-crash] '.$headline, [
             'user_id' => auth('sanctum')->user()?->getAuthIdentifier(),
             'signed_in' => auth('sanctum')->check(),
             'fatal' => $fatal,
+            'message' => $data['message'],
             'name' => $data['name'] ?? null,
             'platform' => $platform,
             'app_version' => $appVersion,

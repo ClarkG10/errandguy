@@ -122,10 +122,9 @@ class ChatController extends Controller
         $validated = $request->validated();
 
         // Inline image upload — the mobile client sends a local file URI
-        // through multipart/form-data, we persist it on the public disk
-        // and store the resulting CDN URL on the message row. The legacy
-        // image_url path stays for system-issued or pre-hosted images.
-        $imageUrl = $validated['image_url'] ?? null;
+        // through multipart/form-data; we store it and link it ourselves.
+        // (A client-supplied image_url is refused by SendMessageRequest.)
+        $imageUrl = null;
         if ($request->hasFile('image')) {
             // PRIVATE media disk + participant-gated URL (was the public disk):
             // chat images are arbitrary user content and must not be fetchable by
@@ -307,7 +306,9 @@ class ChatController extends Controller
                 }
 
                 $isCustomer = $userId === $b->customer_id;
-                $other = $isCustomer ? $b->runner : $b->customer;
+                // A customer meets their runner when the runner accepts (as in
+                // BookingResource): no name or face for an offer.
+                $other = $isCustomer ? ($b->accepted_at !== null ? $b->runner : null) : $b->customer;
 
                 $preview = null;
                 if ($last) {

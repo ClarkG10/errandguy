@@ -161,7 +161,10 @@ class MatchRunnerJob implements ShouldQueue
                         'booking_id' => $booking->id,
                         'status' => 'matched',
                         'changed_by' => null,
-                        'note' => 'Runner matched: ' . ($runner->user->full_name ?? 'Unknown'),
+                        // No name: the customer's errand timeline carries these
+                        // notes, and an offered runner isn't theirs to know yet
+                        // (staff see who it was on the errand page).
+                        'note' => 'Offered to a runner',
                     ]);
 
                     // NOTE: the in-app "New errand offer" notification is

@@ -807,8 +807,10 @@ class BookingController extends Controller
                 ->findOrFail($id);
             $this->authorize('track', $booking);
 
+            // Only while the runner is working it: not during the offer (a
+            // stranger who may decline), not after the errand ends.
             $latestLocation = null;
-            if ($booking->runner_id) {
+            if ($booking->runner_id && in_array($booking->status, \App\Enums\BookingStatus::IN_PROGRESS, true)) {
                 $latestLocation = RunnerLocation::where('booking_id', $booking->id)
                     ->where('runner_id', $booking->runner_id)
                     ->orderByDesc('created_at')
@@ -840,8 +842,9 @@ class BookingController extends Controller
 
         $this->authorize('track', $booking);
 
+        // Only while the runner is working it (see the lean path above).
         $latestLocation = null;
-        if ($booking->runner_id) {
+        if ($booking->runner_id && in_array($booking->status, \App\Enums\BookingStatus::IN_PROGRESS, true)) {
             $latestLocation = RunnerLocation::where('booking_id', $booking->id)
                 ->where('runner_id', $booking->runner_id)
                 ->orderByDesc('created_at')
@@ -1223,6 +1226,12 @@ class BookingController extends Controller
         }
         if (! $booking->runner_id) {
             return $this->fail(ErrorCode::BOOKING_STATE_INVALID, 'This errand had no runner to tip.');
+        }
+        // A runner who has since deleted their account can't receive it: the
+        // money would land in an erased wallet nobody can withdraw from. (The
+        // wallet tip already refuses them.)
+        if (\App\Models\User::onlyTrashed()->whereKey($booking->runner_id)->exists()) {
+            return $this->fail(ErrorCode::BOOKING_STATE_INVALID, 'Your runner has left ErrandGuy, so they can’t receive a tip any more.');
         }
 
         // A charge started earlier for this errand may already have been paid

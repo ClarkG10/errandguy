@@ -24,10 +24,12 @@ class BookingResource extends JsonResource
         $isAdmin = $request->user() instanceof AdminUser;
         $canSeeContacts = $isParticipant || $isAdmin;
 
-        // A runner who has only been OFFERED the errand ('matched') has not
-        // taken it and may decline: no phone numbers — the customer's or the
-        // pick-up / drop-off contacts' — until they accept.
-        $isOfferedRunner = $this->status === 'matched'
+        // A runner who was only OFFERED the errand has not taken it and may
+        // decline: no phone numbers — the customer's or the pick-up / drop-off
+        // contacts' — until they accept. Keyed on the accept itself, not the
+        // status: a customer cancelling during the offer leaves the offered
+        // runner on the row, and the phones then showed up in their history.
+        $isOfferedRunner = $this->accepted_at === null
             && $request->user() instanceof User
             && $request->user()->id === $this->runner_id;
         $canSeePhones = $canSeeContacts && ! $isOfferedRunner;
@@ -63,6 +65,18 @@ class BookingResource extends JsonResource
         $awaitingPayment = BookingService::awaitingPayment($this->resource);
         $isOwner = $viewer instanceof User && $viewer->id === $this->customer_id;
 
+        // The customer meets their runner when the runner ACCEPTS. While the
+        // errand is only offered the runner may decline and is a stranger, and
+        // a free cancel at this point made it possible to book anywhere and
+        // learn who the nearest runner is: no name, face or number until then.
+        // The phone is for reaching them during the errand, so it goes again
+        // once the errand ends (it used to stay in the order history).
+        // Keyed on the accept itself: a customer who cancels during the offer
+        // leaves the offered runner on the row and must not see them then
+        // either.
+        $runnerHiddenFromCustomer = $isOwner && $this->accepted_at === null;
+        $runnerPhoneHiddenFromCustomer = $isOwner && ! in_array($this->status, \App\Enums\BookingStatus::IN_PROGRESS, true);
+
         return [
             'id' => $this->id,
             'booking_number' => $this->booking_number,
@@ -79,8 +93,8 @@ class BookingResource extends JsonResource
                 fn () => new ErrandTypeResource($this->errandType),
             ),
             'runner' => $this->when(
-                $this->relationLoaded('runner') && $this->runner,
-                fn () => new UserResource($this->runner),
+                $this->relationLoaded('runner') && $this->runner && ! $runnerHiddenFromCustomer,
+                fn () => (new UserResource($this->runner))->withoutPhone($runnerPhoneHiddenFromCustomer),
             ),
             'customer' => $this->when(
                 $this->relationLoaded('customer') && $this->customer,

@@ -52,8 +52,12 @@ class SystemConfigSeeder extends Seeder
             ],
         ];
 
+        // Only settings that are missing. updateOrCreate put every default
+        // back, so one `db:seed` against a live database (a developer .env
+        // can point at production) would blank the SOS alert recipients and
+        // reset the fee and payment switches staff had set.
         foreach ($configs as $config) {
-            SystemConfig::updateOrCreate(
+            SystemConfig::firstOrCreate(
                 ['key' => $config['key']],
                 $config
             );

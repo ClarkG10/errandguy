@@ -57,7 +57,7 @@ class LiveAlertsWidget extends TableWidget
         'payout_paid_after_failed', 'payout_bounced_deleted_account', 'payout_reconciled',
         'booking_payment_reconciled', 'charged_unrefunded_cancellation', 'completed_unpaid_booking',
         'wallet_reconcile_mismatch', 'tip_reconciled', 'tip_refunded', 'topup_reconciled',
-        'runner_owed_items',
+        'runner_owed_items', 'credit_to_deleted_account',
     ];
 
     private const SOS_TYPES = ['sos', 'sos_delivery'];
@@ -110,6 +110,13 @@ class LiveAlertsWidget extends TableWidget
     /** Only staff who can act on an alert may mark it seen for everyone. */
     public static function canDismiss(AdminAlert $record): bool
     {
+        // An alert about a staff member moving money by hand is a second pair
+        // of eyes on them: a super admin clears it, never the person it is
+        // about (finance could otherwise dismiss their own).
+        if (in_array($record->type, self::MONEY_ROLE_TYPES, true)) {
+            return auth('admin')->user()?->isSuperAdmin() ?? false;
+        }
+
         if (in_array($record->type, self::SOS_TYPES, true)) {
             return SOSAlertResource::canViewAny();
         }
@@ -147,7 +154,7 @@ class LiveAlertsWidget extends TableWidget
                 ? PaymentResource::getUrl('view', ['record' => $record->subject_id])
                 : null,
             // Tips / legacy top-ups settled or refunded by a sweep: the ledger row.
-            'tip_reconciled', 'tip_refunded', 'topup_reconciled' => $record->subject_id && WalletTransactionResource::canViewAny()
+            'tip_reconciled', 'tip_refunded', 'topup_reconciled', 'credit_to_deleted_account' => $record->subject_id && WalletTransactionResource::canViewAny()
                 ? WalletTransactionResource::getUrl('view', ['record' => $record->subject_id])
                 : null,
             // A wallet whose balance disagrees with its ledger: the ledger.

@@ -45,6 +45,19 @@ class CreateBookingRequest extends FormRequest
         if ($this->has('errand_type_id')) {
             $this->merge(['errand_type_id' => ErrandType::bookableIdFor($this->input('errand_type_id'))]);
         }
+
+        // Stored times are UTC. A time sent with an offset ("…T10:00:00+08:00")
+        // passed validation but was stored as written, i.e. as 10:00 UTC — an
+        // errand scheduled 8 hours late. Convert it to UTC first. Anything that
+        // doesn't parse is left for the `date` rule to refuse.
+        $when = $this->input('scheduled_at');
+        if (is_string($when) && $when !== '') {
+            try {
+                $this->merge(['scheduled_at' => \Illuminate\Support\Carbon::parse($when)->utc()->toIso8601ZuluString()]);
+            } catch (\Throwable) {
+                // Not a date: validation says so.
+            }
+        }
     }
 
     public function rules(): array

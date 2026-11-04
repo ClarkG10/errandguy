@@ -3,6 +3,7 @@
 namespace App\Providers\Filament;
 
 use App\Filament\Pages\Auth\StaffLogin;
+use App\Filament\Pages\Auth\StaffRequestPasswordReset;
 use App\Filament\Pages\Dashboard;
 use App\Http\Middleware\AuthenticateStaff;
 use App\Models\AdminUser;
@@ -98,7 +99,7 @@ class AdminPanelProvider extends PanelProvider
             ], isRequired: true)
             // "Forgot password?" and the set-password link a new staff member
             // gets, through the staff-only `admins` broker.
-            ->passwordReset()
+            ->passwordReset(StaffRequestPasswordReset::class)
             ->authPasswordBroker('admins')
             ->brandName('ErrandGuy Admin')
             // Mode-adaptive lockup (icon + CSS wordmark) instead of a raster that
@@ -169,6 +170,12 @@ class AdminPanelProvider extends PanelProvider
                 SubstituteBindings::class,
                 DisableBladeIconComponents::class,
                 DispatchServingFilamentEvent::class,
+            ])
+            // Also on Livewire calls (button clicks, the 15–20s refreshes): a
+            // password change has to end the other browsers' sessions there
+            // too, not only on their next full page load.
+            ->persistentMiddleware([
+                AuthenticateSession::class,
             ])
             // Filament's sign-in check, plus: a disabled staff member is
             // signed out on their next request (also on Livewire calls).

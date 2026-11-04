@@ -48,7 +48,9 @@ class UserInfolist
                 Section::make('Wallet & reputation')
                     ->columns(4)
                     ->schema([
-                        TextEntry::make('wallet_balance')->money('PHP')->weight('bold')->color('success'),
+                        TextEntry::make('wallet_balance')->money('PHP')->weight('bold')->color('success')
+                            // Money figures are for the money roles, like the wallet tab.
+                            ->visible(fn (): bool => auth('admin')->user()?->canManageMoney() ?? false),
                         TextEntry::make('avg_rating')->label('Rating')->numeric(2)->icon('heroicon-m-star')->iconColor('accent')->placeholder('—'),
                         TextEntry::make('total_ratings')->label('Total ratings')->numeric()->placeholder('0'),
                         TextEntry::make('customer_bookings_count')

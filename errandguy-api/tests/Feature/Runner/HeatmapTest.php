@@ -35,13 +35,22 @@ class HeatmapTest extends TestCase
             'is_active' => true, 'sort_order' => 1,
         ]);
 
-        $customer = User::factory()->create(['role' => 'customer', 'status' => 'active']);
+        $customer = fn () => User::factory()->create(['role' => 'customer', 'status' => 'active'])->id;
 
-        // Two bookings share a geo cell (rounded to 3dp) → weight 2;
-        // a third sits in a different cell → weight 1.
-        $this->makeBooking($customer->id, 14.6001, 120.9801);
-        $this->makeBooking($customer->id, 14.6002, 120.9802);
-        $this->makeBooking($customer->id, 14.7000, 121.0500);
+        // Four customers' bookings share one geo cell (rounded to 3dp) →
+        // weight 4, three another → weight 3. One customer's three errands
+        // from home sit in a third cell and are never shown: a cell needs
+        // several different customers, or it is one person's address.
+        foreach ([1, 2, 3, 4] as $i) {
+            $this->makeBooking($customer(), 14.6001 + $i * 0.00001, 120.9801);
+        }
+        foreach ([1, 2, 3] as $i) {
+            $this->makeBooking($customer(), 14.6501 + $i * 0.00001, 120.9901);
+        }
+        $regular = $customer();
+        foreach ([1, 2, 3] as $_) {
+            $this->makeBooking($regular, 14.7000, 121.0500);
+        }
     }
 
     public function test_heatmap_returns_weighted_cells(): void
@@ -58,10 +67,22 @@ class HeatmapTest extends TestCase
             ]);
 
         $cells = collect($response->json('data.cells'));
-        // Three bookings collapse into two cells.
+        // Ten bookings, two cells shown; the regular customer's home is not.
         $this->assertCount(2, $cells);
-        $this->assertEquals(3, $cells->sum('weight'));
-        $this->assertEquals(2, $cells->max('weight'));
+        $this->assertEquals(7, $cells->sum('weight'));
+        $this->assertEquals(4, $cells->max('weight'));
+        $this->assertFalse($cells->contains(fn ($c) => abs($c['lat'] - 14.7) < 0.001));
+    }
+
+    public function test_a_runner_not_yet_verified_gets_no_heatmap(): void
+    {
+        // Anyone can switch their account to runner; verification is what
+        // makes them one of ours.
+        $this->runner->runnerProfile()->update(['verification_status' => 'pending']);
+
+        $this->actingAs($this->runner)->getJson('/api/v1/runner/heatmap?days=14')
+            ->assertOk()
+            ->assertJsonPath('data.cells', []);
     }
 
     public function test_peak_hours_returns_dow_hour_grid(): void
@@ -81,7 +102,7 @@ class HeatmapTest extends TestCase
         // Every booking created "now" lands in exactly one dow/hour cell,
         // so the grid must sum to the number of seeded bookings.
         $total = collect($grid)->flatten()->sum();
-        $this->assertEquals(3, $total);
+        $this->assertEquals(10, $total);
     }
 
     public function test_customer_cannot_access_heatmap(): void

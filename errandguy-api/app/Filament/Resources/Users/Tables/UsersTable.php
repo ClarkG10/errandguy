@@ -53,7 +53,9 @@ class UsersTable
                         'suspended' => 'danger',
                         default => 'gray',
                     }),
-                TextColumn::make('wallet_balance')->money('PHP')->sortable(),
+                // Money figures are for the money roles, like the wallet tab.
+                TextColumn::make('wallet_balance')->money('PHP')->sortable()
+                    ->visible(fn (): bool => auth('admin')->user()?->canManageMoney() ?? false),
                 TextColumn::make('avg_rating')->label('Rating')->numeric(2)->sortable(),
                 IconColumn::make('email_verified')->boolean()->toggleable(isToggledHiddenByDefault: true),
                 IconColumn::make('phone_verified')->boolean()->toggleable(isToggledHiddenByDefault: true),
@@ -79,7 +81,8 @@ class UsersTable
                     'Email' => fn (User $r): ?string => $r->email,
                     'Role' => fn (User $r): ?string => $r->role,
                     'Status' => fn (User $r): ?string => $r->status,
-                    'Wallet balance (PHP)' => fn (User $r) => $r->wallet_balance,
+                    // Money figures: money roles only.
+                    ...self::walletColumn(),
                     'Avg rating' => fn (User $r) => $r->avg_rating,
                     'Joined' => fn (User $r) => $r->created_at,
                 ], personalData: true),
@@ -91,7 +94,8 @@ class UsersTable
                     'Email' => fn (User $r): ?string => $r->email,
                     'Role' => fn (User $r): ?string => $r->role,
                     'Status' => fn (User $r): ?string => $r->status,
-                    'Wallet balance (PHP)' => fn (User $r) => $r->wallet_balance,
+                    // Money figures: money roles only.
+                    ...self::walletColumn(),
                     'Joined' => fn (User $r) => $r->created_at,
                 ], personalData: true),
 
@@ -199,5 +203,13 @@ class UsersTable
                     audit: 'user.unsuspended',
                 );
             });
+    }
+
+    /** The wallet balance export column, for the money roles only. */
+    private static function walletColumn(): array
+    {
+        return (auth('admin')->user()?->canManageMoney() ?? false)
+            ? ['Wallet balance (PHP)' => fn (User $r) => $r->wallet_balance]
+            : [];
     }
 }

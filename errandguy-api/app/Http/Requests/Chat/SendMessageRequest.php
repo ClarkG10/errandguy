@@ -15,23 +15,14 @@ class SendMessageRequest extends FormRequest
     {
         return [
             'content' => ['nullable', 'string', 'max:2000'],
-            // Either a pre-hosted URL OR an inline upload. The url-form is
-            // documented as server-issued only (system messages / future
-            // server-issued images); an inline image from a client always goes
-            // through the `image` upload below onto the private, participant-
-            // gated media disk. Restrict image_url to our own host: an external
-            // URL persisted here and rendered by the counterparty's <Image>
-            // would beacon their IP/UA/view-time to an attacker server and
-            // bypass the private-media hardening. Anything not on config('app.url')
-            // is rejected; the client only ever sends null here.
-            'image_url' => [
-                'nullable', 'string', 'url', 'max:500',
-                function ($attribute, $value, $fail) {
-                    if ($value && !str_starts_with($value, rtrim((string) config('app.url'), '/'))) {
-                        $fail('The image URL host is not allowed.');
-                    }
-                },
-            ],
+            // Images come ONLY as an inline upload (`image` below), which the
+            // server stores on the private, participant-gated media disk and
+            // links itself. A client-supplied link is refused outright: the
+            // app never sends one, and a host check by prefix was beaten by
+            // "https://<our-host>.evil.tld/internal/media/…" — rendered by the
+            // other person's app, which then sent its login token there.
+            // Server-issued system messages are written directly, not here.
+            'image_url' => ['prohibited'],
             'image' => ['nullable', 'image', 'mimes:jpeg,jpg,png,webp', 'max:5120'], // 5 MB
         ];
     }
@@ -41,10 +32,9 @@ class SendMessageRequest extends FormRequest
         return [
             function ($validator) {
                 $content = $this->input('content');
-                $imageUrl = $this->input('image_url');
                 $hasUpload = $this->hasFile('image');
 
-                if (empty($content) && empty($imageUrl) && !$hasUpload) {
+                if (empty($content) && !$hasUpload) {
                     $validator->errors()->add(
                         'content',
                         'Either content or an image must be provided.'

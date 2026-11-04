@@ -3,6 +3,7 @@
 namespace App\Services;
 
 use App\Exceptions\WalletChargeException;
+use App\Models\AdminAlert;
 use App\Models\AdminUser;
 use App\Models\Booking;
 use App\Models\User;
@@ -80,6 +81,21 @@ class WalletService
         ], $extra));
 
         $user->update(['wallet_balance' => $newBalance]);
+
+        // Money arriving in an erased account (a late GCash charge refunded
+        // after deletion, a tip to a runner who has left) can't be withdrawn
+        // by anyone, and nothing else would say it happened. Committed with
+        // the credit itself, so a rolled-back credit leaves no alert.
+        if ($delta > 0 && method_exists($user, 'trashed') && $user->trashed()) {
+            AdminAlert::raise(
+                'credit_to_deleted_account',
+                'critical',
+                'Money credited to a deleted account',
+                '₱'.number_format($delta, 2)." ({$type}) went into an erased account's wallet. "
+                    .'Send it to the account on their deletion payout, or back to whoever paid it.',
+                $transaction->id,
+            );
+        }
 
         return $transaction;
     }

@@ -266,4 +266,145 @@ class AccountErasureTest extends TestCase
 
         $this->assertNull(User::withTrashed()->find($user->id)->deleted_at);
     }
+
+    public function test_erasure_also_clears_the_vehicle_location_inbox_chat_and_their_name_in_errand_notes(): void
+    {
+        $runner = User::factory()->create(['role' => 'runner', 'status' => 'active', 'wallet_balance' => 0, 'full_name' => 'Juan Dela Cruz']);
+        $profile = RunnerProfile::create([
+            'user_id' => $runner->id, 'verification_status' => 'approved', 'preferred_types' => [],
+            'vehicle_plate' => 'ABC 1234', 'current_lat' => 14.6, 'current_lng' => 121.0, 'last_location_at' => now(),
+            'working_area_lat' => 14.6, 'working_area_lng' => 121.0,
+        ]);
+        $customer = User::factory()->create(['role' => 'customer', 'status' => 'active']);
+        $booking = $this->makeBooking(['customer_id' => $customer->id, 'runner_id' => $runner->id]);
+        \App\Models\BookingStatusLog::create(['booking_id' => $booking->id, 'status' => 'accepted', 'changed_by' => $runner->id, 'note' => 'Accepted by runner Juan Dela Cruz']);
+        \App\Models\Message::create(['booking_id' => $booking->id, 'sender_id' => $runner->id, 'content' => 'I am outside your gate']);
+        \App\Models\Notification::create(['user_id' => $runner->id, 'title' => 'New errand', 'body' => 'x', 'type' => 'booking_update']);
+
+        $this->actingAs($runner)->deleteJson('/api/v1/user/account')->assertOk();
+
+        $profile->refresh();
+        $this->assertNull($profile->vehicle_plate);
+        $this->assertNull($profile->current_lat);
+        $this->assertNull($profile->working_area_lat);
+        $this->assertNull($profile->last_location_at);
+        $this->assertSame('Accepted by runner Deleted User', \App\Models\BookingStatusLog::where('booking_id', $booking->id)->value('note'));
+        $this->assertSame('[Deleted with the account]', \App\Models\Message::where('booking_id', $booking->id)->value('content'));
+        $this->assertSame(0, \App\Models\Notification::where('user_id', $runner->id)->count());
+    }
+
+    public function test_staff_can_erase_a_suspended_account_that_asked_by_email(): void
+    {
+        $user = User::factory()->create(['role' => 'customer', 'status' => 'suspended', 'wallet_balance' => 150, 'full_name' => 'Maria Santos', 'email' => 'maria@example.com']);
+        $form = [
+            'reason' => 'Email from maria@example.com, 4 Nov',
+            'channel' => 'gcash', 'account_number' => '09171234567', 'account_name' => 'Maria Santos',
+        ];
+
+        // An admin (no money access) can't send her balance to an account
+        // only named in an email: that is a payout to an account not on
+        // record, which takes a super admin.
+        $this->actingAs(\App\Models\AdminUser::forceCreate([
+            'email' => 'admin@errandguy.test', 'password_hash' => 'x', 'full_name' => 'Admin',
+            'role' => 'admin', 'is_active' => true,
+        ]), 'admin');
+        \Livewire\Livewire::test(\App\Filament\Resources\Users\Pages\ViewUser::class, ['record' => $user->id])
+            ->callAction('eraseAccount', $form)
+            ->assertNotified('A super admin has to approve this account');
+        $this->assertFalse($user->fresh()->trashed());
+
+        $this->actingAs(\App\Models\AdminUser::forceCreate([
+            'email' => 'boss@errandguy.test', 'password_hash' => 'x', 'full_name' => 'Boss',
+            'role' => 'super_admin', 'is_active' => true,
+        ]), 'admin');
+
+        // A balance needs somewhere to go.
+        \Livewire\Livewire::test(\App\Filament\Resources\Users\Pages\ViewUser::class, ['record' => $user->id])
+            ->callAction('eraseAccount', ['reason' => $form['reason']])
+            ->assertNotified('Not erased');
+        $this->assertFalse($user->fresh()->trashed());
+
+        \Livewire\Livewire::test(\App\Filament\Resources\Users\Pages\ViewUser::class, ['record' => $user->id])
+            ->callAction('eraseAccount', $form)
+            ->assertNotified('Account erased');
+
+        $erased = User::withTrashed()->find($user->id);
+        $this->assertTrue($erased->trashed());
+        $this->assertSame('Deleted User', $erased->full_name);
+        $this->assertNull($erased->email);
+        $payout = \App\Models\WalletTransaction::where('user_id', $user->id)->where('type', 'payout')->sole();
+        $this->assertEquals(-150.0, (float) $payout->amount);
+        $this->assertSame('pending', $payout->status);
+        $this->assertTrue(\Spatie\Activitylog\Models\Activity::where('event', 'user.erased')->exists());
+        // The other money staff are told where it is going.
+        $this->assertSame(1, \App\Models\AdminAlert::where('type', 'payout_destination_changed')->count());
+    }
+
+    public function test_an_admin_can_erase_when_the_balance_goes_to_the_saved_payout_account(): void
+    {
+        $runner = User::factory()->create(['role' => 'runner', 'status' => 'active', 'wallet_balance' => 80, 'full_name' => 'Rhea Runner']);
+        RunnerProfile::create([
+            'user_id' => $runner->id, 'verification_status' => 'approved', 'preferred_types' => [],
+            'payout_channel' => 'gcash', 'ewallet_number' => '09171234567', 'payout_account_name' => 'Rhea Runner',
+        ]);
+        $this->actingAs(\App\Models\AdminUser::forceCreate([
+            'email' => 'admin@errandguy.test', 'password_hash' => 'x', 'full_name' => 'Admin',
+            'role' => 'admin', 'is_active' => true,
+        ]), 'admin');
+
+        \Livewire\Livewire::test(\App\Filament\Resources\Users\Pages\ViewUser::class, ['record' => $runner->id])
+            ->callAction('eraseAccount', ['reason' => 'Email request'])
+            ->assertNotified('Account erased');
+
+        $this->assertTrue(User::withTrashed()->find($runner->id)->trashed());
+        $this->assertSame(0, \App\Models\AdminAlert::where('type', 'payout_destination_changed')->count());
+    }
+
+    public function test_erasure_deletes_their_chat_photos_and_leaves_other_peoples_words_alone(): void
+    {
+        Storage::fake('media');
+        $runner = User::factory()->create(['role' => 'runner', 'status' => 'active', 'wallet_balance' => 0, 'full_name' => 'Ana']);
+        RunnerProfile::create(['user_id' => $runner->id, 'verification_status' => 'approved', 'preferred_types' => []]);
+        $customer = User::factory()->create(['role' => 'customer', 'status' => 'active']);
+        $booking = $this->makeBooking(['customer_id' => $customer->id, 'runner_id' => $runner->id]);
+        $path = "chat-images/{$booking->id}/photo.jpg";
+        Storage::disk('media')->put($path, 'x');
+        \App\Models\Message::create([
+            'booking_id' => $booking->id, 'sender_id' => $runner->id,
+            'image_url' => route('booking.media', ['path' => $path]),
+        ]);
+        \App\Models\BookingStatusLog::create(['booking_id' => $booking->id, 'status' => 'cancelled', 'changed_by' => $customer->id, 'note' => 'Bananas were sold out']);
+
+        $this->actingAs($runner)->deleteJson('/api/v1/user/account')->assertOk();
+
+        Storage::disk('media')->assertMissing($path);
+        $this->assertSame('Bananas were sold out', \App\Models\BookingStatusLog::where('booking_id', $booking->id)->value('note'));
+    }
+
+    public function test_only_super_admins_and_admins_can_erase(): void
+    {
+        $user = User::factory()->create(['role' => 'customer', 'status' => 'active', 'wallet_balance' => 0]);
+        $this->actingAs(\App\Models\AdminUser::forceCreate([
+            'email' => 'support@errandguy.test', 'password_hash' => 'x', 'full_name' => 'Support',
+            'role' => 'support', 'is_active' => true,
+        ]), 'admin');
+
+        \Livewire\Livewire::test(\App\Filament\Resources\Users\Pages\ViewUser::class, ['record' => $user->id])
+            ->assertActionHidden('eraseAccount');
+    }
+
+    public function test_money_landing_in_an_erased_wallet_raises_an_alert(): void
+    {
+        $user = User::factory()->create(['role' => 'customer', 'status' => 'active', 'wallet_balance' => 0]);
+        $this->actingAs($user)->deleteJson('/api/v1/user/account')->assertOk();
+
+        // A late GCash charge settles and is refunded to the wallet.
+        app(\App\Services\WalletService::class)->applyLedgerDelta(
+            User::withTrashed()->find($user->id), 'refund', 115, null, 'Refund for a cancelled errand',
+        );
+
+        $alert = \App\Models\AdminAlert::where('type', 'credit_to_deleted_account')->sole();
+        $this->assertSame('critical', $alert->severity);
+        $this->assertStringContainsString('₱115.00', $alert->body);
+    }
 }

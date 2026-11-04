@@ -55,6 +55,19 @@ class EnsureIdempotency
             return $next($request);
         }
 
+        // The app sends a UUID. A key that can't be stored is refused here
+        // rather than later: too long a key failed its insert and then
+        // answered "still being processed" for good, and on payouts and
+        // withdrawals (the required routes) it becomes the payout's
+        // reference, a 36-character column.
+        $maxLength = $mode === 'required' ? 36 : 64;
+        $wellFormed = preg_match('/^[A-Za-z0-9_-]{1,'.$maxLength.'}$/', $key) === 1;
+        if (! $wellFormed) {
+            return response()->json([
+                'message' => 'This request has a malformed Idempotency-Key header. Please update the app and try again.',
+            ], 400);
+        }
+
         $userId = $request->user()?->id;
         $hash = hash('sha256', $request->method() . '|' . $request->path() . '|' . json_encode($request->all()));
 

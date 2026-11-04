@@ -91,6 +91,16 @@ class PayoutSafetyTest extends TestCase
         });
     }
 
+    /** Sending a payout to an account not on record takes a super admin. */
+    private function asSuperAdmin(): void
+    {
+        $this->actingAs(AdminUser::forceCreate([
+            'email' => 'boss@errandguy.test', 'password_hash' => Hash::make('Password1!'),
+            'full_name' => 'Boss', 'role' => 'super_admin', 'is_active' => true,
+            'has_email_authentication' => true,
+        ]), 'admin');
+    }
+
     /** A pending ₱300 payout (the wallet is already debited to 200). */
     private function pendingPayout(array $overrides = []): WalletTransaction
     {
@@ -350,8 +360,9 @@ class PayoutSafetyTest extends TestCase
         $activity = Activity::where('event', 'payout.sent')->where('subject_id', $tx->id)->firstOrFail();
         $this->assertSame('maya', $activity->properties['channel']);
         $this->assertSame('PH_PAYMAYA', $activity->properties['channel_code']);
-        $this->assertSame('09281112222', $activity->properties['account_number']);
-        $this->assertSame('Rhea R.', $activity->properties['account_name']);
+        // Masked: the audit log is open to the admin role (no money access).
+        $this->assertSame('Maya •••• 2222', $activity->properties['to']);
+        $this->assertArrayNotHasKey('account_number', $activity->properties->all());
     }
 
     public function test_a_payout_requested_before_destinations_were_recorded_prefills_from_the_profile(): void
@@ -369,6 +380,7 @@ class PayoutSafetyTest extends TestCase
 
     public function test_pay_a_runner_records_the_destination_in_the_activity_log(): void
     {
+        $this->asSuperAdmin();
         Livewire::test(Payouts::class)
             ->callAction('payRunner', [
                 'user_id' => $this->runner->id,
@@ -388,8 +400,8 @@ class PayoutSafetyTest extends TestCase
         $activity = Activity::where('event', 'payout.admin_initiated')->firstOrFail();
         $this->assertSame('bank', $activity->properties['channel']);
         $this->assertSame('PH_BDO', $activity->properties['channel_code']);
-        $this->assertSame('001234567890', $activity->properties['account_number']);
-        $this->assertSame('Rhea Runner', $activity->properties['account_name']);
+        $this->assertStringEndsWith('•••• 7890', $activity->properties['to']);
+        $this->assertStringNotContainsString('001234567890', json_encode($activity->properties));
     }
 
     public function test_pay_a_runner_that_xendit_rejects_says_the_money_already_moved(): void
@@ -420,6 +432,7 @@ class PayoutSafetyTest extends TestCase
 
     public function test_sending_to_a_different_account_needs_a_reason_and_alerts_finance(): void
     {
+        $this->asSuperAdmin();
         $tx = $this->pendingPayout(); // requested to GCash 09171234567
 
         // Changed with no reason: nothing goes out.
@@ -445,6 +458,7 @@ class PayoutSafetyTest extends TestCase
 
     public function test_pay_a_runner_to_an_account_they_did_not_save_needs_a_reason_and_alerts(): void
     {
+        $this->asSuperAdmin();
         $form = [
             'user_id' => $this->runner->id,
             'amount' => 100,
@@ -470,6 +484,7 @@ class PayoutSafetyTest extends TestCase
 
     public function test_a_rejected_send_to_a_different_account_is_still_flagged_as_an_attempt(): void
     {
+        $this->asSuperAdmin();
         $this->sendOutcome = 'reject';
         $tx = $this->pendingPayout();
 
@@ -481,6 +496,27 @@ class PayoutSafetyTest extends TestCase
         $alert = \App\Models\AdminAlert::where('type', 'payout_destination_changed')->sole();
         $this->assertSame('Payout to a different account tried', $alert->title);
         $this->assertStringContainsString('Xendit refused it', $alert->body);
+    }
+
+    public function test_finance_cannot_send_a_payout_to_an_account_not_on_record_or_clear_the_alert(): void
+    {
+        // As finance (setUp): someone's withdrawal sent to an account of the
+        // staff member's choosing is refused before anything is sent.
+        $tx = $this->pendingPayout();
+        Livewire::test(Payouts::class)
+            ->callTableAction('sendViaXendit', $tx, [
+                'channel_code' => 'PH_GCASH', 'account_number' => '09998887777', 'account_holder_name' => 'Me',
+                'change_reason' => 'Runner asked',
+            ])
+            ->assertNotified('A super admin has to approve this account');
+        $this->assertFalse($tx->fresh()->isSentToGateway());
+
+        // Nor can money staff clear an alert about themselves.
+        \App\Models\AdminAlert::raise(\App\Services\StaffMoneyLimit::ALERT_DESTINATION, 'warning', 'Payout sent to a different account', 'x');
+        $alert = \App\Models\AdminAlert::sole();
+        $this->assertFalse(\App\Filament\Widgets\LiveAlertsWidget::canDismiss($alert));
+        $this->asSuperAdmin();
+        $this->assertTrue(\App\Filament\Widgets\LiveAlertsWidget::canDismiss($alert));
     }
 
     public function test_the_same_account_typed_differently_is_not_a_change(): void

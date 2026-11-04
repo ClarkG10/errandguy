@@ -98,6 +98,12 @@ class SettingsSafetyTest extends TestCase
         $this->save('auto_cancel_timeout_minutes', '10')->assertHasNoFormErrors();
         $this->assertSame('10', SystemConfig::find('auto_cancel_timeout_minutes')->value);
 
+        // Re-seeding never undoes what staff set...
+        $this->seed(\Database\Seeders\SystemConfigSeeder::class);
+        $this->assertSame('10', SystemConfig::find('auto_cancel_timeout_minutes')->value);
+
+        // ...and a missing setting gets the default the code uses.
+        SystemConfig::where('key', 'auto_cancel_timeout_minutes')->delete();
         $this->seed(\Database\Seeders\SystemConfigSeeder::class);
         $this->assertSame('30', SystemConfig::find('auto_cancel_timeout_minutes')->value);
 

@@ -7,13 +7,8 @@ use App\Http\Controllers\Controller;
 use App\Http\Requests\UpdateProfileRequest;
 use App\Http\Requests\UploadAvatarRequest;
 use App\Http\Resources\UserResource;
-use App\Models\Review;
 use App\Models\RunnerProfile;
-use App\Models\SOSAlert;
-use App\Models\SupportMessage;
-use App\Models\SupportTicket;
-use App\Models\WalletTransaction;
-use App\Services\WalletService;
+use App\Services\AccountErasureService;
 use App\Support\CashDebtPolicy;
 use App\Support\DeviceSessions;
 use App\Support\ErrorCode;
@@ -25,9 +20,6 @@ use Illuminate\Support\Str;
 
 class ProfileController extends Controller
 {
-    /** What a deleted account's support messages and ticket subjects become. */
-    private const ERASED_TEXT = '[Deleted with the account]';
-
     public function show(Request $request): JsonResponse
     {
         return response()->json([
@@ -198,28 +190,23 @@ class ProfileController extends Controller
      *     erasing the identity would make it uncollectable;
      *   • bonus credit (non-withdrawable) never blocks; it lapses with the
      *     account.
+     *
+     * The erasure itself is AccountErasureService, shared with the staff
+     * "Erase account" action for requests made without the app.
      */
     public function deleteAccount(Request $request): JsonResponse
     {
         $user = $request->user();
+        $profile = $user->runnerProfile;
 
-        // Block deletion while there's an in-flight booking on either side
-        // (customer or runner). Letting an account vanish mid-errand
-        // strands the counterparty and orphans the GPS / chat / payout.
-        $hasActive = \App\Models\Booking::where(function ($q) use ($user) {
-                $q->where('customer_id', $user->id)
-                  ->orWhere('runner_id', $user->id);
-            })
+        // Ask where to send a remaining balance only after the quick check
+        // that nothing is in flight (the service checks again under its lock).
+        if (\App\Models\Booking::where(fn ($q) => $q->where('customer_id', $user->id)->orWhere('runner_id', $user->id))
             ->whereNotIn('status', BookingStatus::ENDED)
-            ->exists();
-
-        if ($hasActive) {
-            return response()->json([
-                'message' => 'You have an active errand in progress. Please complete or cancel it before deleting your account.',
-            ], 422);
+            ->exists()) {
+            return $this->activeErrandRefusal();
         }
 
-        $profile = $user->runnerProfile;
         $validated = $request->validate(
             PayoutDestination::rules($request->input('channel'), allowBank: $profile !== null, required: false),
             PayoutDestination::messages(allowBank: $profile !== null),
@@ -227,163 +214,15 @@ class ProfileController extends Controller
 
         $destination = filled($validated['channel'] ?? null)
             ? PayoutDestination::fromInput($validated)
-            : $profile?->payoutDestination($user->full_name);
+            : null; // the service falls back to the runner's saved details
 
-        // ── Right to erasure (PH Data Privacy Act) — PRIV-1 ─────────────────
-        // A soft delete leaves child PII intact (the FK cascade only fires on a
-        // HARD delete), so erase it explicitly. Financial records (bookings,
-        // wallet_transactions, payments) are RETAINED for audit/tax, but the PII
-        // embedded in or attached to them is removed/redacted.
-        //
-        // Collect files to remove AFTER the DB work commits — file deletes are
-        // not transactional, so doing them only once the rows are gone avoids
-        // orphaning a live account's files should the transaction roll back.
-        $filesToDelete = [];
-        $kycFilesToDelete = [];
-        if ($profile) {
-            foreach ($profile->documents as $doc) {
-                // KYC docs now live on the private kyc disk (file_path); legacy
-                // rows still carry a public file_url. Erase whichever applies so
-                // a deleted account never leaves an identity document behind.
-                if ($doc->file_path) {
-                    $kycFilesToDelete[] = $doc->file_path;
-                } elseif ($doc->file_url) {
-                    $filesToDelete[] = $this->publicDiskPath($doc->file_url);
-                }
-            }
-        }
-        if ($user->avatar_url) {
-            $filesToDelete[] = $this->publicDiskPath($user->avatar_url);
+        $outcome = app(AccountErasureService::class)->erase($user, $destination);
+
+        if ($outcome['status'] === 'active_errand') {
+            return $this->activeErrandRefusal();
         }
 
-        $outcome = \Illuminate\Support\Facades\DB::transaction(function () use ($user, $profile, $destination) {
-            // The balance is decided under the account's row lock, so a payout,
-            // earning or refund landing at the same moment can't slip past it.
-            $locked = \App\Models\User::whereKey($user->id)->lockForUpdate()->first();
-            if (! $locked) {
-                return ['deleted' => true]; // a racing request already erased it
-            }
-
-            $balance = round((float) $locked->wallet_balance, 2);
-            if ($balance < 0) {
-                return ['error' => 'debt', 'balance' => $balance];
-            }
-
-            $payout = null;
-            if ($balance > 0) {
-                if ($destination === null) {
-                    return ['error' => 'destination', 'balance' => $balance];
-                }
-
-                $payout = app(WalletService::class)->createPendingPayout(
-                    $locked->id,
-                    $balance,
-                    (string) Str::uuid(),
-                    $destination,
-                    0.0,
-                    'Withdrawal on account deletion',
-                );
-            }
-
-            if ($profile) {
-                // A payout requested before payout details were recorded on the
-                // payout itself is sent to the profile's details, which are
-                // about to be erased: copy them onto it first, or staff would
-                // have nowhere to send it.
-                $profileDestination = $profile->payoutDestination($user->full_name);
-                if ($profileDestination !== null) {
-                    WalletTransaction::where('user_id', $user->id)
-                        ->where('type', 'payout')
-                        ->where('status', 'pending')
-                        ->whereNull('payout_destination')
-                        ->get()
-                        ->each(fn (WalletTransaction $pending) => $pending->update(['payout_destination' => $profileDestination]));
-                }
-
-                // KYC identity documents (gov ID / selfie / licence). Deleting
-                // the rows (files below) also clears a deleted runner's
-                // world-readable documents — mitigating SEC-1 for the account.
-                $profile->documents()->delete();
-                $profile->update([
-                    'bank_name' => null,
-                    'bank_account_number' => null,
-                    'ewallet_number' => null,
-                    'payout_channel_code' => null,
-                    'payout_channel' => null,
-                    'payout_account_name' => null,
-                ]);
-            }
-
-            // Pure-PII child rows — no financial value (a legacy linked
-            // payment account holds a gateway token, not money).
-            $user->savedAddresses()->delete();
-            $user->trustedContacts()->delete();
-            $user->paymentMethods()->delete();
-
-            // Redact the contact PII the user entered on THEIR OWN (customer)
-            // bookings — keep the booking (financial record), drop the personal
-            // contact details. Scoped to their own bookings so another party's
-            // PII on a shared booking is never touched.
-            $bookingIds = \App\Models\Booking::where('customer_id', $user->id)->pluck('id');
-            if ($bookingIds->isNotEmpty()) {
-                \App\Models\Booking::whereIn('id', $bookingIds)->update([
-                    'pickup_contact_name' => null,
-                    'pickup_contact_phone' => null,
-                    'dropoff_contact_name' => null,
-                    'dropoff_contact_phone' => null,
-                ]);
-                \App\Models\BookingStop::whereIn('booking_id', $bookingIds)->update([
-                    'contact_name' => null,
-                    'contact_phone' => null,
-                ]);
-            }
-
-            // What they wrote elsewhere. The rows stay — a support thread, a
-            // review's star rating and an SOS record are history the other
-            // side and staff still need — but the words and places are erased.
-            SupportMessage::where('sender_id', $user->id)
-                ->where('sender_type', 'user')
-                ->update(['content' => self::ERASED_TEXT, 'image_url' => null]);
-            SupportTicket::where('user_id', $user->id)->update(['subject' => self::ERASED_TEXT]);
-            // Comments only: the rating is unchanged, so no average moves.
-            Review::where('reviewer_id', $user->id)->whereNotNull('comment')->update(['comment' => null]);
-            SOSAlert::where('triggered_by', $user->id)->update([
-                'trigger_lat' => null,
-                'trigger_lng' => null,
-                'trigger_accuracy_m' => null,
-                'live_link_token' => null,
-            ]);
-            SOSAlert::where('customer_id', $user->id)->update(['customer_lat' => null, 'customer_lng' => null]);
-            SOSAlert::where('runner_id', $user->id)->update(['runner_lat' => null, 'runner_lng' => null]);
-
-            // Anonymize the account row itself. Only these columns are written
-            // (the balance was just debited through the ledger on its own row).
-            $user->update([
-                'full_name' => 'Deleted User',
-                'email' => null,
-                'phone' => null,
-                'avatar_url' => null,
-                'fcm_token' => null,
-                'default_lat' => null,
-                'default_lng' => null,
-            ]);
-
-            // Revoke all API tokens, and drop every registered push device (the
-            // FK cascade only fires on a HARD delete, and this is a soft delete)
-            // so a deleted account stops receiving pushes.
-            $user->tokens()->delete();
-            $user->deviceTokens()->delete();
-
-            // A deleted runner can't answer an offer: stop matching them.
-            RunnerProfile::switchOffline($user->id);
-
-            // Soft delete the account.
-            $user->delete();
-
-            return ['payout' => $payout];
-        });
-
-        if (($outcome['error'] ?? null) === 'debt') {
+        if ($outcome['status'] === 'debt') {
             // Someone leaving won't earn their way out of the debt, so say how
             // else to settle it.
             return $this->fail(
@@ -393,7 +232,7 @@ class ProfileController extends Controller
             );
         }
 
-        if (($outcome['error'] ?? null) === 'destination') {
+        if ($outcome['status'] === 'needs_destination') {
             return $this->fail(
                 ErrorCode::PAYOUT_METHOD_REQUIRED,
                 'Your wallet has ₱'.number_format($outcome['balance'], 2).'. Tell us where to send it — '
@@ -401,18 +240,6 @@ class ProfileController extends Controller
                     .' — and we’ll send it to you as part of deleting your account.',
                 errors: ['channel' => ['Choose where to send your remaining balance.']],
             );
-        }
-
-        // Remove the collected PII files from disk (best-effort, post-commit).
-        foreach ($filesToDelete as $path) {
-            if ($path !== '' && $path !== null) {
-                Storage::disk('public')->delete($path);
-            }
-        }
-        foreach ($kycFilesToDelete as $path) {
-            if ($path !== '' && $path !== null) {
-                Storage::disk('kyc')->delete($path);
-            }
         }
 
         $payout = $outcome['payout'] ?? null;
@@ -433,11 +260,18 @@ class ProfileController extends Controller
         );
     }
 
+    private function activeErrandRefusal(): JsonResponse
+    {
+        return response()->json([
+            'message' => 'You have an active errand in progress. Please complete or cancel it before deleting your account.',
+        ], 422);
+    }
+
     /**
      * Turn a public-disk file URL into a disk-relative path, independent of the
      * APP_URL it was generated under — public URLs are always ".../storage/{path}",
-     * so a later domain change can't leave a gov-ID / avatar file undeletable
-     * (a plain str_replace of the current base URL would silently no-op then).
+     * so a later domain change can't leave an avatar file undeletable (a plain
+     * str_replace of the current base URL would silently no-op then).
      */
     private function publicDiskPath(string $url): ?string
     {

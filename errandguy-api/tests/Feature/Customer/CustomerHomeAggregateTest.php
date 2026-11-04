@@ -141,9 +141,9 @@ class CustomerHomeAggregateTest extends TestCase
         );
 
         $this->assertSame(
-            $this->actingAs($this->customer)->getJson('/api/v1/bookings?per_page=5')->assertOk()->json('data'),
+            $this->actingAs($this->customer)->getJson('/api/v1/bookings?per_page=10')->assertOk()->json('data'),
             $home['recent_bookings'],
-            'recent_bookings drifted from GET /bookings?per_page=5',
+            'recent_bookings drifted from GET /bookings?per_page=10',
         );
 
         // The app's ['wallet','balance'] cache key holds the NUMBER, so the
@@ -193,18 +193,21 @@ class CustomerHomeAggregateTest extends TestCase
         $this->assertEqualsWithDelta(1234.50, $home['wallet_balance'], 0.001);
     }
 
-    public function test_recent_bookings_is_capped_at_five_regardless_of_client_input(): void
+    public function test_recent_bookings_is_capped_at_ten_regardless_of_client_input(): void
     {
-        // 7 bookings exist; the aggregate is a fixed snapshot, so neither
+        // 12 bookings exist; the aggregate is a fixed snapshot, so neither
         // per_page nor page may reshape it.
-        $this->assertCount(5, $this->home()['recent_bookings']);
+        foreach (range(7, 11) as $i) {
+            $this->makeBooking('completed', $i);
+        }
+        $this->assertCount(10, $this->home()['recent_bookings']);
 
         $tampered = $this->actingAs($this->customer)
             ->getJson('/api/v1/customer/home?per_page=100&page=3')
             ->assertOk()
             ->json('data.recent_bookings');
 
-        $this->assertCount(5, $tampered);
+        $this->assertCount(10, $tampered);
         $this->assertSame($this->home()['recent_bookings'], $tampered);
     }
 

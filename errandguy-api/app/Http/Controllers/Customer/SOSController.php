@@ -35,8 +35,11 @@ class SOSController extends Controller
 
         $summary = $this->sosService->alertSummary($alert);
 
+        // A summary, never the model: the alert arrives with its booking
+        // loaded (contact phones, photos, payout) and the raiser's account,
+        // which an offered runner — or anyone — must not get from here.
         return response()->json([
-            'data' => $alert,
+            'data' => \App\Services\SOSService::publicSummary($alert),
             'message' => $summary['message'],
             'alerted' => $summary['alerted'],
         ], 201);

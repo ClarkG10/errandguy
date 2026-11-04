@@ -71,6 +71,22 @@ class RunnerProfileResource extends JsonResource
                 $isSelf,
                 fn (): float => (float) SystemConfig::getValue('min_payout_amount', '100'),
             ),
+            // Two more staff settings the app used to hard-code, for the same
+            // reason as payout_minimum: changing one in the admin panel left
+            // the app telling runners the old number.
+            //  - cash_debt_limit: how much a runner may owe from cash errands
+            //    before cash work pauses (runner_cash_debt_limit; 0 = no
+            //    limit). The block below names it only once a runner is over
+            //    it; the payout screens' debt sentence needs it before then.
+            //  - offer_accept_seconds: how long a runner has to accept an
+            //    offer (matched_acceptance_timeout_seconds), as the help page
+            //    states it. Same value and default ExpireStaleMatchesJob and
+            //    BookingService::matchAcceptDeadline enforce.
+            'cash_debt_limit' => $this->when($isSelf, fn (): float => CashDebtPolicy::limit()),
+            'offer_accept_seconds' => $this->when(
+                $isSelf,
+                fn (): int => max(1, (int) SystemConfig::getValue('matched_acceptance_timeout_seconds', '90')),
+            ),
             // Why the offer feed is short. Over the cash-debt ceiling, CASH
             // errands are filtered out of the pull feed AND out of dispatch AND
             // refused at accept — so without this the runner just watches work

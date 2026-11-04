@@ -6,6 +6,7 @@ use App\Exceptions\WithdrawalException;
 use App\Http\Controllers\Controller;
 use App\Models\WalletTransaction;
 use App\Services\WalletService;
+use App\Support\CashDebtPolicy;
 use App\Support\PayoutDestination;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -43,6 +44,11 @@ class WalletController extends Controller
             // runner minimum for an account with a runner profile — exactly
             // what POST /wallet/withdraw enforces (PAYOUT_MIN_AMOUNT below it).
             'withdraw_min' => WalletService::withdrawalMinimumFor($user),
+            // Additive: the cash-errand debt at which cash work pauses (₱;
+            // 0 = no limit), from runner_cash_debt_limit. The wallet explains
+            // a negative balance in CashDebtPolicy::message's words, which
+            // name this figure — the app had it hard-coded at ₱1,000.
+            'cash_debt_limit' => CashDebtPolicy::limit(),
         ]);
     }
 

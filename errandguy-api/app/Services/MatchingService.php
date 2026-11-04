@@ -14,6 +14,9 @@ use Illuminate\Support\Facades\Log;
 
 class MatchingService
 {
+    /** How many nearest-first batches matching looks through for a runner who takes the type. */
+    private const MAX_CANDIDATE_BATCHES = 4;
+
     /**
      * How old a waiting runner's last location may be and still get offers.
      * The app stops sending location while the phone is locked, so a runner
@@ -88,7 +91,7 @@ class MatchingService
     ): Collection {
         $allowedVehicles = VehicleClass::eligibleRunnerVehicles($bookedVehicle);
 
-        $runners = RunnerProfile::where('is_online', true)
+        $query = RunnerProfile::where('is_online', true)
             ->where('verification_status', 'approved')
             // Skip every runner this errand was already offered to (and the one
             // just found busy mid-race), so a re-match always tries someone new.
@@ -163,14 +166,43 @@ class MatchingService
                 '((current_lat - ?) * (current_lat - ?)) + ((current_lng - ?) * (current_lng - ?)) asc',
                 [$lat, $lat, $lng, $lng]
             )
-            ->limit($limit)
-            ->get();
+            // A stable order for runners at the same distance, so batches
+            // (below) never skip or repeat one.
+            ->orderBy('runner_profiles.user_id')
+            ->limit($limit);
 
         // Filter by distance and preferred errand types. A retired type is
         // matched against the type that replaced it (ErrandType::preferenceSlug).
         $errandTypeSlug = ErrandType::whereKey($errandTypeId)->value('slug');
         $errandTypeSlug = $errandTypeSlug ? ErrandType::preferenceSlug($errandTypeSlug) : null;
-        $eligible = $runners->filter(function (RunnerProfile $runner) use ($lat, $lng, $radiusKm, $errandTypeSlug) {
+
+        // The type filter runs after the SQL limit, so in a busy area the
+        // nearest $limit runners can all prefer other types while a willing
+        // runner sits just behind them — and the errand ended "no runner".
+        // Look at the next batch while a batch had nobody for this errand,
+        // stopping once the batches leave the search radius (they are
+        // nearest-first) or after a few batches.
+        $offset = 0;
+        do {
+            $runners = (clone $query)->offset($offset)->get();
+            $eligible = $this->eligibleAmong($runners, $lat, $lng, $radiusKm, $errandTypeSlug);
+            $offset += $limit;
+            $last = $runners->last();
+            $moreInRange = $runners->count() === $limit && $last !== null
+                && $this->haversineDistance($lat, $lng, (float) $last->current_lat, (float) $last->current_lng) <= $radiusKm;
+        } while ($eligible->isEmpty() && $moreInRange && $offset < $limit * self::MAX_CANDIDATE_BATCHES);
+
+        // Nearest first.
+        return $eligible->sortBy('distance_km')->values();
+    }
+
+    /**
+     * The runners in one batch who are inside the radius and take this type,
+     * each tagged with its exact distance.
+     */
+    private function eligibleAmong(Collection $runners, float $lat, float $lng, float $radiusKm, ?string $errandTypeSlug): Collection
+    {
+        return $runners->filter(function (RunnerProfile $runner) use ($lat, $lng, $radiusKm, $errandTypeSlug) {
             $distance = $this->haversineDistance(
                 $lat,
                 $lng,
@@ -182,9 +214,10 @@ class MatchingService
                 return false;
             }
 
-            // Check preferred types — stored as errand-type slugs.
-            $preferredTypes = $runner->preferred_types ?? [];
-            if (!empty($preferredTypes) && $errandTypeSlug && !in_array($errandTypeSlug, $preferredTypes, true)) {
+            // Check preferred types — stored as errand-type slugs. Empty
+            // means every type.
+            $preferredTypes = self::preferredSlugs($runner->preferred_types);
+            if ($preferredTypes !== [] && $errandTypeSlug && !in_array($errandTypeSlug, $preferredTypes, true)) {
                 return false;
             }
 
@@ -193,9 +226,23 @@ class MatchingService
 
             return true;
         });
+    }
 
-        // Nearest first.
-        return $eligible->sortBy('distance_km')->values();
+    /**
+     * A runner's preferred type slugs as a list. Tolerates a value stored
+     * JSON-encoded twice by an older writer (the array cast then yields a
+     * string, and in_array on it threw, failing the whole match).
+     *
+     * @return list<string>
+     */
+    private static function preferredSlugs(mixed $raw): array
+    {
+        $value = $raw;
+        for ($i = 0; $i < 2 && is_string($value); $i++) {
+            $value = json_decode($value, true);
+        }
+
+        return is_array($value) ? array_values(array_map('strval', array_filter($value, 'is_scalar'))) : [];
     }
 
     private function haversineDistance(float $lat1, float $lng1, float $lat2, float $lng2): float

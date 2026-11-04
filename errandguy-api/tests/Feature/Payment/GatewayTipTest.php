@@ -189,6 +189,20 @@ class GatewayTipTest extends TestCase
         $this->startTip($booking, 'pr_tip_maya', method: 'maya');
     }
 
+    public function test_a_runner_who_deleted_their_account_cannot_be_tipped(): void
+    {
+        $booking = $this->makeCompletedBooking();
+        \App\Models\User::whereKey($booking->runner_id)->first()->delete();
+
+        $this->actingAs($this->customer)
+            ->postJson("/api/v1/bookings/{$booking->id}/tip-checkout", ['amount' => 50, 'method' => 'gcash'])
+            ->assertStatus(422)
+            ->assertJsonPath('code', 'BOOKING_STATE_INVALID');
+
+        $this->assertSame(0, WalletTransaction::count());
+        Http::assertNothingSent();
+    }
+
     public function test_payment_succeeded_credits_the_runner_and_stamps_the_tip(): void
     {
         $booking = $this->makeCompletedBooking();

@@ -248,6 +248,28 @@ class MatchingServiceTest extends TestCase
         $this->assertNull($this->service->findRunner($this->booking->id));
     }
 
+    public function test_a_willing_runner_behind_a_crowd_of_others_is_still_found(): void
+    {
+        // The 55 nearest runners only take "Buy for me"; the one who takes
+        // deliveries is a little farther. The type filter runs after the
+        // nearest-50 cut, so this errand used to end with no runner.
+        for ($i = 0; $i < 55; $i++) {
+            $this->runner(['current_lat' => 14.5995 + $i * 0.00001, 'current_lng' => 120.9842, 'preferred_types' => ['purchase']]);
+        }
+        $willing = $this->runner(['current_lat' => 14.6100, 'current_lng' => 120.9842, 'preferred_types' => ['delivery']]);
+
+        $this->assertSame($willing->id, $this->service->findRunner($this->booking->id)?->user_id);
+    }
+
+    public function test_preferences_stored_twice_encoded_still_match_instead_of_crashing(): void
+    {
+        $runner = $this->runner();
+        \Illuminate\Support\Facades\DB::table('runner_profiles')->where('user_id', $runner->id)
+            ->update(['preferred_types' => json_encode(json_encode(['delivery']))]);
+
+        $this->assertSame($runner->id, $this->service->findRunner($this->booking->id)?->user_id);
+    }
+
     /** An online, approved runner on a motorcycle at the pickup, unless overridden. */
     private function runner(array $profile = [], array $user = []): User
     {

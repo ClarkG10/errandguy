@@ -138,18 +138,25 @@ class MessageTest extends TestCase
             ->assertJsonValidationErrors(['image_url']);
     }
 
-    public function test_app_host_image_url_is_accepted(): void
+    public function test_no_client_supplied_image_link_is_accepted_however_it_is_dressed(): void
     {
-        // A server-issued URL on our own host still works (the documented
-        // system-message / server-issued image form).
-        $url = rtrim((string) config('app.url'), '/').'/internal/media/photo.jpg';
+        // A prefix check on our own host was beaten by a look-alike host or a
+        // user-info part, and the other person's app sent its login token
+        // with the image request. Images come only as an upload now.
+        $own = rtrim((string) config('app.url'), '/');
+        $host = (string) parse_url($own, PHP_URL_HOST);
+        foreach ([
+            $own.'/internal/media/chat-images/'.$this->booking->id.'/x.jpg',
+            $own.'.evil.tld/internal/media/x.png',
+            'https://'.$host.'@evil.tld/internal/media/x.png',
+        ] as $url) {
+            $this->actingAs($this->customer)
+                ->postJson("/api/v1/chat/{$this->booking->id}/messages", ['content' => 'look', 'image_url' => $url])
+                ->assertStatus(422)
+                ->assertJsonValidationErrors(['image_url']);
+        }
 
-        $response = $this->actingAs($this->customer)
-            ->postJson("/api/v1/chat/{$this->booking->id}/messages", [
-                'image_url' => $url,
-            ]);
-
-        $response->assertStatus(201);
+        $this->assertSame(0, Message::count());
     }
 
     public function test_customer_can_view_messages(): void

@@ -91,7 +91,9 @@ class NotificationService
     {
         $notification = Notification::create([
             'user_id' => $userId,
-            'title' => $title,
+            // notifications.title holds 100 characters; a longer one would
+            // fail the insert and, with it, the push that follows it.
+            'title' => \Illuminate\Support\Str::limit($title, 97),
             'body' => $body,
             'type' => $data['type'] ?? 'system',
             'data' => $data,

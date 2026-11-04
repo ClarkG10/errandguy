@@ -233,4 +233,17 @@ class CustomerWithdrawalTest extends TestCase
 
         $this->assertEquals(-40.0, (float) WalletTransaction::where('type', 'payout')->sole()->amount);
     }
+
+    public function test_a_key_that_cannot_be_stored_is_refused_before_anything_moves(): void
+    {
+        // Too long for the payout reference (36), or with characters a key
+        // never has: refused up front, not a 500 or a permanent "still
+        // being processed".
+        foreach ([str_repeat('a', 37), 'key with spaces'] as $bad) {
+            $this->withdraw($this->toGcash(100), $bad)->assertStatus(400);
+        }
+
+        $this->assertEquals(300.0, (float) $this->customer->fresh()->wallet_balance);
+        $this->assertSame(0, \App\Models\IdempotencyKey::count());
+    }
 }

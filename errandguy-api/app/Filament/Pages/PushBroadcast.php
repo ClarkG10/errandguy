@@ -74,7 +74,7 @@ class PushBroadcast extends Page
                                 ->live()
                                 ->visible(fn (Get $get): bool => $get('audience') === 'user')
                                 ->required(fn (Get $get): bool => $get('audience') === 'user'),
-                            TextInput::make('title')->required()->maxLength(120),
+                            TextInput::make('title')->required()->maxLength(100),
                             Textarea::make('body')->required()->maxLength(500),
                         ]),
                     Step::make('Confirm')

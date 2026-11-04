@@ -40,10 +40,13 @@ use Illuminate\Http\Request;
 class HomeController extends Controller
 {
     /**
-     * How many recent bookings the Home list needs. Fixed server-side so the
-     * aggregate is a stable snapshot rather than a client-tunable list.
+     * How many recent bookings the Home screen needs. Fixed server-side so the
+     * aggregate is a stable snapshot rather than a client-tunable list. Ten,
+     * because this seeds the same cache the Home screen fills with
+     * GET /bookings?per_page=10 to rank the customer's most-used errand types;
+     * five left that ranking working from half its data after a cold start.
      */
-    private const RECENT_BOOKINGS = 5;
+    private const RECENT_BOOKINGS = 10;
 
     public function show(Request $request): JsonResponse
     {

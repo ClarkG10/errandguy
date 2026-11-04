@@ -202,6 +202,23 @@ class CreateBookingGuardsTest extends TestCase
         $this->assertSame(1, WalletTransaction::where('type', 'payment')->count());
     }
 
+    public function test_a_schedule_time_sent_with_an_offset_is_stored_as_the_same_moment(): void
+    {
+        $delivery = $this->type('delivery');
+        $manila = now('Asia/Manila')->addDay()->setTime(10, 0);
+
+        $this->actingAs($this->customer)
+            ->postJson('/api/v1/bookings', $this->payload($delivery, [
+                'payment_method' => 'cash',
+                'schedule_type' => 'scheduled',
+                'scheduled_at' => $manila->format('Y-m-d\\TH:i:sP'), // "…T10:00:00+08:00"
+            ]))
+            ->assertCreated();
+
+        // 10:00 in Manila is 02:00 UTC — not 10:00 UTC (6 PM in Manila).
+        $this->assertTrue(Booking::sole()->scheduled_at->equalTo($manila));
+    }
+
     public function test_a_real_shortfall_is_still_reported_as_one(): void
     {
         $delivery = $this->type('delivery');

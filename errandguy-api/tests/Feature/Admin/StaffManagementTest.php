@@ -9,7 +9,7 @@ use App\Models\AdminUser;
 use App\Notifications\StaffPasswordLink;
 use App\Services\StaffAccountService;
 use App\Support\StaffSignIn;
-use Filament\Auth\Pages\PasswordReset\RequestPasswordReset;
+use App\Filament\Pages\Auth\StaffRequestPasswordReset;
 use Filament\Auth\Pages\PasswordReset\ResetPassword;
 use Filament\Facades\Filament;
 use Illuminate\Foundation\Testing\RefreshDatabase;
@@ -111,10 +111,11 @@ class StaffManagementTest extends TestCase
         $this->flushSession();
         auth('admin')->logout();
 
-        Livewire::test(RequestPasswordReset::class)
+        Livewire::test(StaffRequestPasswordReset::class)
             ->set('data.email', 'ops@errandguy.test')
             ->call('request')
-            ->assertHasNoErrors();
+            ->assertHasNoErrors()
+            ->assertNotified('Check your email');
 
         Notification::assertSentTo($ops, StaffPasswordLink::class, function (StaffPasswordLink $n) use ($ops): bool {
             return ! $n->isInvite
@@ -123,6 +124,23 @@ class StaffManagementTest extends TestCase
         });
         // Not queued: getting back into the panel can't wait on the queue worker.
         $this->assertNotInstanceOf(\Illuminate\Contracts\Queue\ShouldQueue::class, new StaffPasswordLink('t'));
+    }
+
+    public function test_forgot_password_answers_the_same_for_an_address_that_is_not_staff(): void
+    {
+        Notification::fake();
+        $this->flushSession();
+        auth('admin')->logout();
+
+        // Same answer as for a real staff address: no way to learn which
+        // addresses are staff (and then lock them out with wrong passwords).
+        Livewire::test(StaffRequestPasswordReset::class)
+            ->set('data.email', 'nobody@example.com')
+            ->call('request')
+            ->assertHasNoErrors()
+            ->assertNotified('Check your email');
+
+        Notification::assertNothingSent();
     }
 
     public function test_an_email_already_used_by_staff_is_refused(): void
