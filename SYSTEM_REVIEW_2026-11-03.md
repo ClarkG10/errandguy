@@ -656,3 +656,220 @@ were also run against the old code, to show they fail without the fix.
    store build is needed.
 3. **Optional:** set `SANCTUM_TRACK_LAST_USED=false` explicitly in the Forge env. It already
    defaults to off.
+
+---
+
+## 9. Second pass (2026-11-04)
+
+The same brief was sent again, so this pass looked at what the first one had not:
+
+- **A security and authorization sweep** across every API route, broadcast channel, web route and admin action. Each was checked as each kind of person: a guest, another customer, another runner, and each staff role.
+- **A database and data-integrity review:** schema constraints against the business rules, account deletion against the privacy promises, and form limits against column sizes.
+- **The open items from §5** that needed no owner decision.
+
+The two new reviewers backed their findings with throwaway test probes. Those probes were kept outside the repo.
+
+### 9.1 Security
+
+**X1 · Critical · Chat images**
+- **Before:** a chat message could carry an image link such as `https://<our-host>.evil.tld/internal/media/x.png`. The server's prefix check passed it. The other person's app attached its login token to any image path that looked like ours.
+- **Problem:** anyone on an errand with you could steal your session. That means your money, and your account through a change of email followed by a password reset.
+- **Change:**
+  - The server refuses client-supplied image links; the app only uploads images anyway.
+  - The app sends its token only to the API's own origin, matching scheme, host and port, and never to a link containing `user@`.
+- **Tests:** they include the look-alike host and the user-info forms. The app test was shown to fail on the old code.
+- **Status:** Fixed.
+
+**X2 · High · An offered runner revealed to the customer**
+- **Before:** while an errand was only offered, `track` returned the runner's name, phone, avatar, plate and live GPS. The runner's phone also stayed in the customer's history afterwards.
+- **Problem:** anyone could book a free cash errand anywhere, see who the nearest runner is and follow them, then cancel for nothing.
+- **Change:**
+  - Nothing about the runner is shown until they accept.
+  - Their phone is shown only while the errand is being worked.
+  - Their live location is shown only while they work it.
+  - Pings during an offer are no longer tagged to the errand.
+- **Status:** Fixed.
+
+**X3 · High · Payouts**
+- **Before:** one finance user could send people's withdrawals to their own account. A redirect never counted toward their daily limit, they could dismiss the alert themselves, and a payout with no recorded account needed no reason at all.
+- **Change:**
+  - Sending to an account not on record needs a super admin and a reason, and still alerts.
+  - Only a super admin can dismiss alerts about staff moving money.
+  - No recorded account counts as a change.
+- **Note:** this tightens a control I added in the first pass.
+- **Status:** Fixed.
+
+**X4 · Medium · No password re-entry**
+- **Before:** a session token alone can change the email, the phone and a runner's payout account, delete the account, and withdraw.
+- **Recommended:** ask for the password again on those actions, and tell the old email address about the change.
+- **Status:** Not changed. It needs app screens (a password prompt in four places) and is a product decision. With X1 closed, the main way to steal a token is gone.
+
+**X5 · Medium · An offered runner after a cancel**
+- **Before:** after the customer cancelled during the offer, the offered runner's history showed the customer's and the contacts' phone numbers. Runner SOS answered with the raw booking, phones and payout included.
+- **Change:** phone numbers are gated on the runner having accepted. SOS answers with a summary, and runner SOS is only allowed on an errand they are working.
+- **Status:** Fixed.
+
+**X6 · Medium · SOS as a text cannon**
+- **Before:** raising and calling off SOS in a loop texted any five numbers each time, under ErrandGuy's name and on its SMS bill.
+- **Change:** trusted contacts are texted at most 3 rounds per person per Manila day. Staff are still alerted every time.
+- **Kept on purpose:** a person who calls an alert off by mistake can still reach their contacts with a new link.
+- **Status:** Fixed.
+
+**X7 · Medium · Audit log**
+- **Before:** it showed full payout account numbers and holder names to the admin role, which has no money access.
+- **Change:** it now shows a masked label ("GCash •••• 4567").
+- **Status:** Fixed.
+
+**X8 · Medium · Staff "Forgot password?"**
+- **Before:** it said whether an email belonged to a staff account. A known staff email can then be locked out with wrong passwords.
+- **Change:** the same answer every time.
+- **Status:** Fixed.
+
+**X9 · Medium · Staff password change**
+- **Before:** after a password change, another browser's open admin page kept working through its live updates.
+- **Change:** the session check now also runs on those updates.
+- **Status:** Fixed. Check it in a browser.
+
+**X10 · Low/Medium · Runner demand heatmap**
+- **Before:** it showed ~110 m points for single errands, which are often a home, to anyone who switched their account to runner.
+- **Change:** approved runners only, and at least 3 errands per cell.
+- **Status:** Fixed.
+
+**X11 · Low · Staff "My account"**
+- **Before:** staff can change their own email with only their password.
+- **Status:** Not changed (it needs a two-step code flow).
+
+**X12 · Low · `/client-errors`**
+- **Before:** anyone could write fake lines into the server log through it.
+- **Change:** the log line is kept to one line, and the full text goes in the escaped JSON context.
+- **Status:** Fixed.
+
+**X13 · Low · Role matrix mismatches**
+- **Before:** the docs disagreed with the code on review flagging (ops can) and on the ledger export (finance can).
+- **Change:** the docs were corrected to match the code, which was the sensible side.
+- **Status:** Fixed.
+
+**X14 · Low · User wallet balances**
+- **Before:** visible and sortable for every staff role.
+- **Change:** money roles only.
+- **Status:** Fixed.
+
+**X15 · Low · Sign-in timing**
+- **Before:** sign-in answered faster for an unknown phone or email.
+- **Change:** a fixed password hash is checked when the account doesn't exist, so both answers take the same time.
+- **Not changed:** sign-up's "this number is already registered" (a UX trade-off).
+- **Status:** Fixed.
+
+### 9.2 Data and privacy
+
+**Y1 · High · Account deletion without the app**
+- **Before:** a deletion request by email, which the public page offers and Google Play requires, or from a suspended user, could only be done by hand in the database. That skips the money checks and half the erasure.
+- **Change:** the erasure moved into `AccountErasureService`, and staff have a new "Erase account" action on the user page (super admin and admin). It runs the same steps and the same money rules, works for suspended accounts, and is audited.
+- **Status:** Fixed.
+
+**Y2 · Medium · What erasure keeps vs the public page**
+- **Before:** the page said kept records carry no name. In fact runner names stayed in errand notes, a runner's vehicle plate and last location were kept, and the inbox and chat texts were kept.
+- **Change:**
+  - Those are now erased.
+  - The page and the app wording now list exactly what is kept: errand addresses, details and photos; a runner's position at each errand step; payout accounts with the name on them; amounts and dates.
+- **Status:** Fixed. The retention period is still to be written by your lawyer.
+
+**Y3 · Medium · Money landing in an erased wallet**
+- **Before:** a GCash tip to a runner who had left, or a late charge refunded after deletion, landed silently.
+- **Change:** a critical alert is raised, and GCash/Maya tips to a deleted runner are refused.
+- **Status:** Fixed.
+
+**Y4 · Medium · Text longer than its column**
+- **Before:** broadcast titles over 100 characters and refund reasons over 191 failed on MySQL strict mode. The whole broadcast failed silently, and the refund rolled back with a raw SQL error.
+- **Change:** forms match the columns, with truncation where the rows are written.
+- **Status:** Fixed.
+
+**Y5 · Medium · `db:seed` against a live database**
+- **Before:** it would blank the SOS alert recipients, reset fees and payment switches, and reset and re-enable a disabled admin.
+- **Change:** the seeders only create what's missing.
+- **Status:** Fixed.
+
+**Y6 · Low · Scheduled times with an offset**
+- **Before:** they were stored 8 hours late (latent: today's app sends UTC).
+- **Change:** converted to UTC first.
+- **Status:** Fixed.
+
+**Y7 · Low · Account deletion race**
+- **Before:** the "no active errand" check ran outside the lock.
+- **Change:** it is repeated under the lock.
+- **Status:** Fixed.
+
+**Y8 · Low · Idempotency-Key**
+- **Before:** an over-long key gave a permanent 409, or a 500 on payouts.
+- **Change:** it is validated up front (400).
+- **Status:** Fixed.
+
+**Y9 · Low · Errand-type form limits**
+- **Before:** the name and icon fields allowed more than their columns hold.
+- **Change:** aligned.
+- **Status:** Fixed.
+
+**Not changed (low; each needs a migration or a policy):**
+- No database guard against duplicate KYC documents of one type.
+- The money unique-index guards aren't re-checked on deploy. The `errandguy:preflight` command checks them; run it on production once.
+- No retention period for `admin_alerts` and `activity_log`.
+- Some migration rollbacks would drop money and audit columns.
+- No maximum distance on bookings.
+
+### 9.3 Open items from §5, now done
+
+| Was | Now |
+|---|---|
+| D4: earnings tab dropped days past 100 errands a period | New `GET /runner/earnings/daily` (Manila days, computed in SQL). The tab shows complete day totals and pages the line items. |
+| D6: matching took the nearest 50 before filtering by type | It looks through up to 4 batches of 50 while nobody in a batch takes the type. It also no longer crashes on a doubly-encoded preference value. |
+| D8: staff-set limits hard-coded in the app | The cash-debt pause and the offer window come from the server, with the old values as fallbacks. |
+| D9: vehicle options not from the server | The booking screen offers only vehicles the server prices; a withdrawn choice switches over. |
+| D11: refund only on the Payments list | It is also on the payment's own page. |
+| W1: deletion page layout | It uses the shared public layout and footer. |
+| Home "frequently booked" ranking ran on half its data after a cold start | The home summary sends 10 recent errands, matching the screen. |
+| Runner history: page 2+ of a search used a stale term | Fixed, and a page from a previous search is dropped. |
+
+### 9.4 Adversarial review of the second pass
+
+Two fresh reviewers read the second pass. They found no Critical issue. Two High
+findings were in my own new code. Everything below was fixed before commit.
+
+| Found | Fix |
+|---|---|
+| **High.** The new "Erase account" let an admin (no money access) send someone's whole balance to any account. The payout was then recorded with that account, which got around the super-admin payout rule from X3. | Erasure pays only the saved payout account. Any other account needs a super admin, and raises the same money-staff alert. |
+| **High (safety).** The new daily SOS text cap meant a 4th SOS still told the person "we're texting your contacts" when it wasn't. This brought back the old "SOS lied about contacts" bug. | The reply checks the same counter first and says to call them instead. A round isn't used up if the send fails. |
+| A customer who cancelled during the offer still saw the runner's name, rating and plate. The offered runner's name also appeared in the errand timeline note and the chat inbox. | Hiding is keyed on the runner having accepted, not on the status. The offer note no longer names the runner, and the chat inbox shows no counterparty before acceptance. |
+| Erasure replaced the name anywhere in a note: "Ana" would turn "Banana" into "BDeleted User". It also missed notes on offers the runner declined. | Only the system's own notes are matched, as whole notes, on any errand. |
+| Erasure left the person's chat photos on disk. The 30-day cleanup only deletes a chat's photo folder while some message still links a photo. | Their chat photos are deleted with the account. |
+| The staff reset page still showed whether an address was staff, because it cleared the form only on success. | The form is always cleared. |
+| A regular customer's 3 errands from home could still show in the heatmap. | Each cell needs 3 different customers. |
+| Matching batches could skip or repeat runners standing at the same distance. | Added a stable tie-break. |
+| The Users CSV export still gave the admin role wallet balances. | That column is for money roles only. |
+| A staff erase of an account that was deleted a moment earlier could error. | It now says "Already erased". |
+| **Medium (app).** A list's in-flight request was shared across keys. Switching earnings period (or editing a search) mid-request showed the old answer under the new label, such as the week's earnings as "This month". This bug was older than this pass. | `useQuery` shares a request only within the same key, and a late answer for an old key is only cached. Tested, and shown to fail on the old hook. |
+| Earnings could silently drop a row after page 1 refreshed in the background. | The older pages start over when page 1's rows shift. |
+| "Syncing…" stuck on when the daily-totals endpoint failed. | It ignores a failed daily refresh. |
+| The runner SOS button showed during an offer, where the server now refuses it. | Shown once the runner has accepted. |
+| History: a trailing space reset paging without dropping an in-flight page, and pull-to-refresh didn't drop one either. | A generation counter covers both. |
+| The review screen said "Fare unavailable" over a skeleton that never finished. | It shows "No vehicle is available…" with a retry. |
+| The app's deletion text and the public page disagreed. | Aligned, with a link to the full list. |
+
+One finding was refuted on checking: "a bounced deletion payout raises two alerts". Payout bounces and reversals write the re-credit directly, not through the primitive that raises the new alert.
+
+### 9.5 Quality assurance (second pass)
+
+| Check | After pass 1 | After pass 2 |
+|---|---|---|
+| `tsc --noEmit` | clean | **clean** |
+| jest, full suite | 1,576 | **1,621 / 1,621** (175 suites) |
+| phpunit, SQLite | 1,460 | **1,499 / 1,499** |
+| phpunit, local MySQL 9.7 (throwaway database, dropped) | 1,459 + 1 skip | **1,498 + 1 skip** (the same SQLite-only backup guard) |
+
+**Needs a phone or a browser:**
+
+- **Chat images, proof photos and a runner's own ID preview** in a production build. The login is now sent only to the API's exact origin, so a stored `http://` link (rather than `https://`) would no longer load.
+- **The earnings tab:** paging, the retry footer, switching period on a slow network, tab-bar hiding and pull-to-refresh on the new list, and CSV export over 30 errands.
+- **A staff password change** in one browser while another has the admin panel open. The open page should be signed out on its next click or refresh.
+- **The booking screen** after a vehicle's per-km rate is set to 0 in admin.
+
+**Release order for these commits:** deploy the server first, and check that `GET /api/v1/runner/earnings/daily` answers. Then publish the app. Against the old server, the earnings tab would fall back to summing one 30-row page, so the order matters this time.
