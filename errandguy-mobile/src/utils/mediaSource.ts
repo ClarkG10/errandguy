@@ -1,5 +1,5 @@
 import { secureStorage } from './storage';
-import { resolveImageUrl } from './resolveImageUrl';
+import { isApiOriginUrl, resolveImageUrl } from './resolveImageUrl';
 
 /**
  * The private routes that need the bearer:
@@ -30,8 +30,11 @@ export function mediaSource(
   const resolved = resolveImageUrl(url);
   if (!resolved) return undefined;
 
-  // Only the gated routes need auth.
-  if (!GATED_MEDIA.test(resolved)) {
+  // Only the gated routes need auth — and only ever on the API's own origin.
+  // A chat message could carry an image link to another host whose path
+  // merely looks like ours; sending the login with it would hand the
+  // other person this account's token.
+  if (!GATED_MEDIA.test(resolved) || !isApiOriginUrl(resolved)) {
     return { uri: resolved };
   }
 

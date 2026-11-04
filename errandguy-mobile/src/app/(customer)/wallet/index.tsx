@@ -32,7 +32,7 @@ import { Eyebrow } from '../../../components/ui/Typography';
 import { BrandRefreshControl } from '../../../components/ui/BrandRefreshControl';
 import { formatCurrency } from '../../../utils/formatCurrency';
 import { formatRelativeTime } from '../../../utils/formatDate';
-import { cashDebtMessage } from '../../../utils/cashDebt';
+import { cashDebtLimit, cashDebtMessage } from '../../../utils/cashDebt';
 import { withdrawMinimum } from '../../../utils/withdrawal';
 import { LightColors, Elevation } from '../../../constants/colors';
 import { ledgerIcon, isLedgerCredit, signedLedgerAmount } from '../../../utils/walletLedger';
@@ -590,7 +590,7 @@ export default function WalletScreen() {
                   −{formatCurrency(Math.abs(numericBalance))}
                 </Text>
                 <Text className="text-[11px] font-montserrat text-white/85 mt-1.5">
-                  {cashDebtMessage(Math.abs(numericBalance))}
+                  {cashDebtMessage(Math.abs(numericBalance), cashDebtLimit(summaryQ.data))}
                 </Text>
               </>
             );

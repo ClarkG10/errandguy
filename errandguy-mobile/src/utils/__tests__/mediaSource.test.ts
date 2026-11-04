@@ -11,7 +11,27 @@ const PUBLIC_AVATAR = 'https://api.errandguy.app/storage/avatars/1_x.jpg';
 const LOCAL = 'file:///var/tmp/preview.jpg';
 
 describe('mediaSource', () => {
+  const realApiUrl = process.env.EXPO_PUBLIC_API_URL;
+  beforeAll(() => {
+    process.env.EXPO_PUBLIC_API_URL = 'https://api.errandguy.app/api/v1';
+  });
+  afterAll(() => {
+    process.env.EXPO_PUBLIC_API_URL = realApiUrl;
+  });
   afterEach(() => peek.mockReset());
+
+  it('never sends the login to another host, however much its link looks like ours', () => {
+    peek.mockReturnValue('tok123');
+    for (const url of [
+      'https://api.errandguy.app.evil.tld/internal/media/chat-images/b/x.jpg',
+      'https://api.errandguy.app@evil.tld/internal/media/chat-images/b/x.jpg',
+      'https://evil.tld/internal/media/chat-images/b/x.jpg',
+      'http://api.errandguy.app/internal/media/chat-images/b/x.jpg',
+      'https://evil.tld/api/v1/runner/documents/doc/file',
+    ]) {
+      expect(mediaSource(url)).toEqual({ uri: url });
+    }
+  });
 
   it('attaches the bearer for gated /internal/ media + documents when a token exists', () => {
     peek.mockReturnValue('tok123');

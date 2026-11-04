@@ -15,6 +15,7 @@ import { useChatStore } from '../stores/chatStore';
 import { useBookingStore } from '../stores/bookingStore';
 import { runPool } from '../utils/asyncPool';
 import { parseActiveBookings } from '../utils/activeBookings';
+import { EARNINGS_PAGE_SIZE, parseEarningsDaily } from '../utils/earningsDays';
 import type { Booking, Conversation, Message } from '../types';
 
 // Mirrors the AsyncStorage key used by the trusted-contacts screen
@@ -739,12 +740,32 @@ export async function preloadRunnerEssentials(userId: string) {
         },
         CacheTTL.MEDIUM,
       ),
+    // The Earnings tab opens on "This week": its first page of errands and the
+    // per-day totals its day groups and chart are built from. Same keys, page
+    // size and period as the tab's own queries — this used to warm the list
+    // with no period at all, i.e. lifetime rows under the week's key.
     () =>
       seed(
-        ['runner', 'earnings', 'history', 'week', userId],
+        ['runner', 'earnings', 'list', 'week', userId],
         async () => {
-          const r = await runnerService.getEarningsHistory({ page: 1, per_page: 30 });
+          const r = await runnerService.getEarningsHistory({
+            page: 1,
+            per_page: EARNINGS_PAGE_SIZE,
+            period: 'week',
+          });
           return r.data?.data ?? r.data ?? [];
+        },
+        CacheTTL.MEDIUM,
+      ),
+    () =>
+      seed(
+        ['runner', 'earnings', 'daily', 'week', userId],
+        async () => {
+          const daily = parseEarningsDaily((await runnerService.getEarningsDaily('week')).data?.data);
+          // Nothing usable (an older server): leave the key cold rather than
+          // pin the tab to its fallback for the whole freshness window.
+          if (!daily) throw new Error('no daily earnings');
+          return daily;
         },
         CacheTTL.MEDIUM,
       ),

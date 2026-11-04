@@ -1,8 +1,8 @@
-import React, { useMemo, useState, useCallback, useEffect } from 'react';
-import { View, Text, ScrollView, Pressable, Share } from 'react-native';
+import React, { useMemo, useState, useCallback, useEffect, useRef } from 'react';
+import { View, Text, SectionList, Pressable, Share } from 'react-native';
 import { useRouter, useFocusEffect } from 'expo-router';
 import { LinearGradient } from 'expo-linear-gradient';
-import { Wallet, Download, FileText, Clock, ChevronDown, ChevronUp } from 'lucide-react-native';
+import { Download, FileText, Clock, ChevronDown, ChevronUp, RefreshCw } from 'lucide-react-native';
 import * as Haptics from 'expo-haptics';
 import * as FileSystem from 'expo-file-system/legacy';
 import { Card } from '../../../components/ui/Card';
@@ -17,6 +17,16 @@ import { GradientHeader } from '../../../components/ui/GradientHeader';
 import { SyncIndicator } from '../../../components/ui/SyncIndicator';
 import { EarningsBreakdown } from '../../../components/runner/EarningsBreakdown';
 import { settledIn, splitEarnings } from '../../../components/runner/errandEarnings';
+import {
+  EARNINGS_PAGE_SIZE,
+  buildWeekChart,
+  groupEarningsByDay,
+  parseEarningsDaily,
+  splitFromDays,
+  uniqueRows,
+  type EarningsDaily,
+  type EarningsDayGroup,
+} from '../../../utils/earningsDays';
 import { payoutMinimum, type SelfRunnerProfile } from '../../../components/runner/payoutMethod';
 import { useResponsive } from '../../../constants/responsive';
 import { useAuthStore } from '../../../stores/authStore';
@@ -28,7 +38,7 @@ import { useHideTabBarOnScroll } from '../../../hooks/useHideTabBarOnScroll';
 import { CacheTTL } from '../../../services/cache.service';
 import { formatCurrency } from '../../../utils/formatCurrency';
 import { formatRunnerPayout } from '../../../utils/runnerPayout';
-import { formatTime, formatWeekdayMonthDay } from '../../../utils/formatDate';
+import { formatTime } from '../../../utils/formatDate';
 import { secureStorage } from '../../../utils/storage';
 import { toast } from '../../../stores/toastStore';
 import type { Booking, WalletTransaction } from '../../../types';
@@ -37,6 +47,11 @@ import { TAB_CONTENT_BOTTOM_INSET_RUNNER } from '../../../constants/tabLayout';
 import { prefetchPayoutActivity } from '../../../services/preload.service';
 
 type Period = 'today' | 'week' | 'month';
+
+/** Rows a CSV export may hold — the same cap as the server's PDF statement. */
+const CSV_MAX_ROWS = 500;
+/** The server's largest page (Request::perPage max), so an export takes ≤5 requests. */
+const CSV_FETCH_PAGE_SIZE = 100;
 
 /** Server period slug matching RunnerEarningsController / ExportController. */
 const API_PERIOD: Record<Period, string> = {
@@ -155,24 +170,102 @@ export default function EarningsScreen() {
     async () => (await runnerService.getEarnings(period)).data.data,
     { staleTime: 60_000, ttl: CacheTTL.MEDIUM },
   );
+  // Per-day totals for the period — what the day-group subtotals and the
+  // week chart show. They used to be added up here from ONE page of up to 100
+  // errands, so a busy month lost its oldest days from both; the server now
+  // sums the whole window (same window as the hero) per Manila day. Null from
+  // an older server without the endpoint: the rows below are added up instead.
+  const dailyQ = useQuery<EarningsDaily | null>(
+    ['runner', 'earnings', 'daily', period, userId],
+    async () => parseEarningsDaily((await runnerService.getEarningsDaily(period)).data?.data),
+    { staleTime: 60_000, ttl: CacheTTL.MEDIUM },
+  );
+
   // The per-errand list must reflect the SAME window as the hero card. We pass
   // `period` to the server (which computes the window in UTC, identical to the
   // summary hero) rather than a client-LOCAL date_from — the latter drifted by
   // the runner's UTC offset (PH = +8), so the list showed a day's worth of
   // extra rows that didn't sum to the hero total.
-
-  // per_page must comfortably cover the whole window: a busy runner can
-  // clear 30 errands in a couple of days, and a truncated page-1 both
-  // undercounts the day-group subtotals AND leaves early weekdays out
-  // of the chart (history is sorted newest-first, so the oldest days
-  // are the ones that get cut).
-  const perPage = period === 'today' ? 50 : 100;
+  //
+  // Page 1 is cached via useQuery; older pages append as the runner scrolls
+  // (the runner history tab's pattern). The day totals no longer come from
+  // these rows, so the list no longer has to fetch the whole period up front.
   const historyQ = useQuery<Booking[]>(
-    ['runner', 'earnings', 'history', period, userId],
+    ['runner', 'earnings', 'list', period, userId],
     async () =>
-      ((await runnerService.getEarningsHistory({ page: 1, per_page: perPage, period })).data.data ?? []) as Booking[],
+      ((
+        await runnerService.getEarningsHistory({ page: 1, per_page: EARNINGS_PAGE_SIZE, period })
+      ).data.data ?? []) as Booking[],
     { staleTime: 60_000, ttl: CacheTTL.MEDIUM },
   );
+
+  const [extraPages, setExtraPages] = useState<Booking[]>([]);
+  const [page, setPage] = useState(1);
+  const [hasMore, setHasMore] = useState(true);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [loadMoreFailed, setLoadMoreFailed] = useState(false);
+  // Bumped whenever the list starts over (period switch, pull-to-refresh), so
+  // an older page that lands afterwards is dropped instead of appended to the
+  // wrong period's list.
+  const listGeneration = useRef(0);
+
+  const resetPaging = useCallback(() => {
+    listGeneration.current += 1;
+    setExtraPages([]);
+    setPage(1);
+    setHasMore(true);
+    setLoadingMore(false);
+    setLoadMoreFailed(false);
+  }, []);
+
+  useEffect(() => {
+    resetPaging();
+  }, [period, resetPaging]);
+
+  // Page 1 can be refetched behind the runner's back (an errand completes,
+  // the app comes back after a minute). If its first row changed, the rows
+  // shifted down and the older pages already appended sit at the old offsets:
+  // a row would fall between them and never show. Start the older pages over.
+  const firstRowId = historyQ.data?.[0]?.id ?? null;
+  const lastFirstRowId = useRef<string | null>(null);
+  useEffect(() => {
+    if (historyQ.data) setHasMore(historyQ.data.length >= EARNINGS_PAGE_SIZE);
+    if (lastFirstRowId.current !== null && firstRowId !== lastFirstRowId.current && extraPages.length > 0) {
+      resetPaging();
+    }
+    lastFirstRowId.current = firstRowId;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [historyQ.data]);
+
+  const fetchNextPage = useCallback(async () => {
+    const generation = listGeneration.current;
+    const nextPage = page + 1;
+    setLoadingMore(true);
+    setLoadMoreFailed(false);
+    try {
+      const res = await runnerService.getEarningsHistory({
+        page: nextPage,
+        per_page: EARNINGS_PAGE_SIZE,
+        period,
+      });
+      if (generation !== listGeneration.current) return;
+      const data = (res.data.data ?? []) as Booking[];
+      setExtraPages((prev) => [...prev, ...data]);
+      setPage(nextPage);
+      setHasMore(data.length >= EARNINGS_PAGE_SIZE);
+    } catch {
+      // An inline retry in the footer, not a toast — and no automatic retry,
+      // or the scroll position would keep re-firing the failing request.
+      if (generation === listGeneration.current) setLoadMoreFailed(true);
+    } finally {
+      if (generation === listGeneration.current) setLoadingMore(false);
+    }
+  }, [page, period]);
+
+  const onEndReached = useCallback(() => {
+    if (!historyQ.data || !hasMore || loadingMore || loadMoreFailed) return;
+    fetchNextPage();
+  }, [historyQ.data, hasMore, loadingMore, loadMoreFailed, fetchNextPage]);
 
   // The two figures a runner actually ACTS on — what they can cash out right
   // now, and whether a payout is already in flight — used to live only on the
@@ -222,10 +315,19 @@ export default function EarningsScreen() {
   );
 
   const earningsData = summaryQ.data ?? null;
-  const earningsList = historyQ.data ?? [];
+  const daily = dailyQ.data ?? null;
+  const earningsList = useMemo(
+    () => uniqueRows([...(historyQ.data ?? []), ...extraPages]),
+    [historyQ.data, extraPages],
+  );
+  // From the server's day totals when they reconcile with the hero (they cover
+  // the whole period); else from the rows, which only works once they are all
+  // loaded. Either way it hides rather than disagree with the total above it.
   const earningsSplit = useMemo(
-    () => splitEarnings(earningsList, earningsData?.total_earnings),
-    [earningsList, earningsData?.total_earnings],
+    () =>
+      splitFromDays(daily, earningsData?.total_earnings) ??
+      splitEarnings(earningsList, earningsData?.total_earnings),
+    [daily, earningsList, earningsData?.total_earnings],
   );
 
   // Collapse an open breakdown when the period switches — the row it belonged
@@ -234,84 +336,50 @@ export default function EarningsScreen() {
     setOpenBreakdown(null);
   }, [period]);
 
+  // The day totals are waited for too, so the group subtotals never paint from
+  // a partial page and then jump. A failed or missing endpoint doesn't hold
+  // the screen: the rows are added up instead.
   const initialLoading =
-    (summaryQ.loading && !summaryQ.data) || (historyQ.loading && !historyQ.data);
+    (summaryQ.loading && !summaryQ.data) ||
+    (historyQ.loading && !historyQ.data) ||
+    (dailyQ.loading && !dailyQ.data && !dailyQ.error);
   const summaryFailed = !!summaryQ.error && !summaryQ.data;
   const historyFailed = !!historyQ.error && !historyQ.data;
 
-  // Group rows by calendar day with a per-day subtotal so the runner can
-  // see e.g. "Tuesday: ₱1,240" without manually adding rows together.
-  const earningsByDay = useMemo(() => {
-    if (!earningsList.length) return [];
-    const today = new Date();
-    const startOfToday = new Date(today.getFullYear(), today.getMonth(), today.getDate()).getTime();
-    const startOfYesterday = startOfToday - 24 * 60 * 60 * 1000;
-    const groups = new Map<string, { label: string; total: number; errands: Booking[]; sortKey: number }>();
-    for (const errand of earningsList) {
-      const ts = new Date(errand.completed_at ?? errand.created_at);
-      const dayKey = `${ts.getFullYear()}-${ts.getMonth()}-${ts.getDate()}`;
-      const dayStart = new Date(ts.getFullYear(), ts.getMonth(), ts.getDate()).getTime();
-      let label: string;
-      if (dayStart === startOfToday) label = 'Today';
-      else if (dayStart === startOfYesterday) label = 'Yesterday';
-      else label = formatWeekdayMonthDay(ts);
-      // runner_payout is a Laravel decimal cast → JSON STRING ("14.60").
-      // Without Number() the `+=` below STRING-concatenates, so any day with
-      // 2+ errands collapses to ₱0.00 (NaN) and the weekly chart breaks.
-      // Payout only — never the customer's total_amount (see utils/runnerPayout).
-      const amount = Number(errand.runner_payout ?? 0);
-      const existing = groups.get(dayKey);
-      if (existing) {
-        existing.total += amount;
-        existing.errands.push(errand);
-      } else {
-        groups.set(dayKey, { label, total: amount, errands: [errand], sortKey: dayStart });
-      }
-    }
-    return Array.from(groups.values()).sort((a, b) => b.sortKey - a.sortKey);
-  }, [earningsList]);
+  // Rows grouped by Manila day (the server's calendar), each headed by that
+  // WHOLE day's total — a day whose older errands are still on the next page
+  // already shows what it really paid.
+  const earningsByDay = useMemo(
+    () => groupEarningsByDay(earningsList, daily),
+    [earningsList, daily],
+  );
 
-  // Mon–Sun columns for the weekly bar chart. Built from the same rows
-  // as earningsByDay but zero-filled across all 7 days so quiet days
-  // read as gaps rather than disappearing.
-  const weekChart = useMemo(() => {
-    if (period !== 'week') return null;
-    const now = new Date();
-    const monday = new Date(now);
-    const dow = monday.getDay() || 7; // Sunday → 7
-    monday.setHours(0, 0, 0, 0);
-    monday.setDate(monday.getDate() - (dow - 1));
-    const totals = [0, 0, 0, 0, 0, 0, 0];
-    for (const errand of earningsList) {
-      const ts = new Date(errand.completed_at ?? errand.created_at);
-      const dayStart = new Date(ts.getFullYear(), ts.getMonth(), ts.getDate());
-      const idx = Math.round((dayStart.getTime() - monday.getTime()) / 86_400_000);
-      if (idx >= 0 && idx < 7) {
-        totals[idx] += Number(errand.runner_payout ?? 0);
-      }
-    }
-    const max = Math.max(...totals);
-    const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-    const todayIdx = Math.round((todayStart.getTime() - monday.getTime()) / 86_400_000);
-    const bestIdx = max > 0 ? totals.indexOf(max) : -1;
-    return { totals, max, bestIdx, todayIdx };
-  }, [period, earningsList]);
+  // Mon–Sun columns for the weekly bar chart, from the same day totals,
+  // zero-filled across all 7 days so quiet days read as gaps rather than
+  // disappearing.
+  const weekChart = useMemo(
+    () => (period === 'week' ? buildWeekChart(earningsList, daily) : null),
+    [period, earningsList, daily],
+  );
 
   const onRefresh = useCallback(async () => {
     setRefreshing(true);
+    resetPaging();
     await Promise.all([
       summaryQ.refresh(),
+      dailyQ.refresh(),
       historyQ.refresh(),
       payoutsQ.refresh(),
       refreshMoneyPicture(),
     ]);
     setRefreshing(false);
-  }, [summaryQ, historyQ, payoutsQ, refreshMoneyPicture]);
+  }, [summaryQ, dailyQ, historyQ, payoutsQ, refreshMoneyPicture, resetPaging]);
 
   const retryAll = useCallback(() => {
     summaryQ.refresh();
+    dailyQ.refresh();
     historyQ.refresh();
-  }, [summaryQ, historyQ]);
+  }, [summaryQ, dailyQ, historyQ]);
 
   const selectPeriod = useCallback((p: Period) => {
     Haptics.selectionAsync().catch(() => {});
@@ -321,23 +389,40 @@ export default function EarningsScreen() {
   // Which export is in flight (disables both actions + shows a spinner).
   const [exporting, setExporting] = useState<null | 'csv' | 'pdf'>(null);
 
-  // Primary export: build a CSV from the already-loaded rows and hand the
-  // file to the OS share sheet (mirrors ImageLightbox's cache-file pattern).
+  // Primary export: build a CSV of the period's errands and hand the file to
+  // the OS share sheet (mirrors ImageLightbox's cache-file pattern).
   const handleExportCsv = useCallback(async () => {
     if (exporting) return;
     if (earningsList.length === 0) {
       toast.info('No earnings to export for this period.');
       return;
     }
-    // The CSV is built from the loaded page (capped at perPage), while the
-    // server PDF is complete — warn before sharing so the two exports don't
-    // silently disagree with the hero total on a >perPage month.
-    if (earningsList.length >= perPage) {
-      toast.info(`CSV includes the most recent ${perPage} errands for this period.`);
-    }
     setExporting('csv');
     try {
-      const csv = buildEarningsCsv(earningsList);
+      // The list loads a page at a time, but the file should cover the period:
+      // when rows are still unloaded, fetch the period in full-size pages, up
+      // to the PDF statement's own 500-row cap.
+      let rows = earningsList;
+      if (hasMore) {
+        const collected: Booking[] = [];
+        for (let p = 1; p <= CSV_MAX_ROWS / CSV_FETCH_PAGE_SIZE; p++) {
+          const res = await runnerService.getEarningsHistory({
+            page: p,
+            per_page: CSV_FETCH_PAGE_SIZE,
+            period,
+          });
+          const data = (res.data.data ?? []) as Booking[];
+          collected.push(...data);
+          if (data.length < CSV_FETCH_PAGE_SIZE) break;
+        }
+        rows = uniqueRows(collected).slice(0, CSV_MAX_ROWS);
+      }
+      // Warn before sharing a file that stops short of the hero total, so the
+      // CSV and the (complete) PDF don't silently disagree.
+      if ((earningsData?.total_errands ?? 0) > rows.length) {
+        toast.info(`CSV includes the most recent ${rows.length} errands for this period.`);
+      }
+      const csv = buildEarningsCsv(rows);
       const path = `${FileSystem.cacheDirectory}earnings-${period}-${Date.now()}.csv`;
       await FileSystem.writeAsStringAsync(path, csv, {
         encoding: FileSystem.EncodingType.UTF8,
@@ -350,7 +435,7 @@ export default function EarningsScreen() {
     } finally {
       setExporting(null);
     }
-  }, [exporting, earningsList, period]);
+  }, [exporting, earningsList, hasMore, period, earningsData?.total_errands]);
 
   // Secondary export: download the server-rendered PDF statement (authed)
   // to the cache dir, then share it. Period is forwarded so the PDF's figures
@@ -416,9 +501,9 @@ export default function EarningsScreen() {
     <View className="flex-1 bg-background">
       <GradientHeader title="Earnings" />
 
-      <ScrollView
+      <SectionList<Booking, EarningsDayGroup>
         {...hideOnScroll}
-        className="flex-1"
+        style={{ flex: 1 }}
         showsVerticalScrollIndicator={false}
         refreshControl={<BrandRefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
         contentContainerStyle={{
@@ -427,441 +512,497 @@ export default function EarningsScreen() {
           alignSelf: 'center',
           paddingBottom: TAB_CONTENT_BOTTOM_INSET_RUNNER,
         }}
-      >
-        {/* Hero Card — brand blue gradient balance card (same language
-            as the wallet / runner-home hero). White numerals are the
-            loudest thing on screen. When the summary fetch failed with
-            no cache, swap in an error card — a confident ₱0.00 would
-            be a lie. */}
-        {summaryFailed ? (
-          <Card className="mx-5 mb-4" padding="lg">
-            <ErrorState
-              error={summaryQ.error}
-              compact
-              title="Couldn't load your summary"
-              onRetry={() => summaryQ.refresh()}
-            />
-          </Card>
-        ) : (
-          <LinearGradient
-            colors={[
-              LightColors.gradientStart,
-              LightColors.gradientMid,
-              LightColors.gradientEnd,
-            ]}
-            start={{ x: 0, y: 0 }}
-            end={{ x: 1, y: 1 }}
-            style={{
-              marginHorizontal: 20,
-              marginBottom: 16,
-              borderRadius: 24,
-              padding: 24,
-              overflow: 'hidden',
-              ...Elevation.md,
-            }}
-          >
-            {/* Warm brand-gold glow behind the coins — a low-alpha accent
-                wash that hints at "earnings" without lifting the local
-                background under any numerals. Purely decorative and kept
-                to the top-right corner; the white balance stays loudest. */}
-            <View
-              pointerEvents="none"
-              style={{
-                position: 'absolute',
-                top: -18,
-                right: -14,
-                width: 108,
-                height: 108,
-                borderRadius: 54,
-                backgroundColor: LightColors.accent,
-                opacity: 0.16,
-              }}
-            />
-            {/* Subtle 3D coins accent — decorative only, tucked into the
-                top-right corner behind the left-aligned numerals so it
-                never competes with or crowds the total-earnings figure. */}
-            <Illustration
-              name="3d-coins"
-              size={64}
-              style={{ position: 'absolute', top: 10, right: 14, opacity: 0.9 }}
-            />
-            <Text
-              className="text-xs font-montserrat-semi text-white/90 uppercase"
-              style={{ letterSpacing: 1.2 }}
-            >
-              {periodLabel[period]}
-            </Text>
-            <Text className="text-4xl font-inter-semi tabular-nums text-white mt-1">
-              {formatCurrency(earningsData?.total_earnings ?? 0)}
-            </Text>
-            {/* Secondary stats — inline white text on the raw gradient
-                (translucent chips lightened the local background and
-                dragged the small white numerals under the AA floor).
-                Numbers ride Inter tabular; the middot is decorative. */}
-            {/* Tips sit on their own line, never folded into the total above:
-                the runner is told about each tip by push, so a headline that
-                excluded them read as money going missing. */}
-            {Number(earningsData?.total_tips ?? 0) > 0 && (
-              <Text className="text-[13px] font-montserrat text-white/85 mt-1">
-                plus{' '}
-                <Text className="font-inter-semi tabular-nums text-white">
-                  {formatCurrency(Number(earningsData?.total_tips ?? 0))}
-                </Text>{' '}
-                in tips
-              </Text>
-            )}
-            {/* Why this total and "Available now" below don't match: on a
-                cash errand the payout was collected at the door, and only
-                paid-online errands credit the wallet (which cash commissions
-                then draw from). Shown only when the rows reconcile to the
-                total above. */}
-            {earningsSplit && earningsSplit.cash > 0 ? (
-              <Text className="text-[12px] font-montserrat text-white/85 mt-1">
-                <Text className="font-inter-semi tabular-nums text-white">
-                  {formatCurrency(earningsSplit.cash)}
-                </Text>{' '}
-                cash already in hand ·{' '}
-                <Text className="font-inter-semi tabular-nums text-white">
-                  {formatCurrency(earningsSplit.wallet)}
-                </Text>{' '}
-                paid online
-              </Text>
-            ) : null}
-            <View className="flex-row items-center mt-3">
-              <Text className="text-[13px] font-inter-semi tabular-nums text-white">
-                {earningsData?.total_errands ?? 0}
-              </Text>
-              <Text className="text-[13px] font-montserrat text-white/85 ml-1">
-                errands
-              </Text>
-              <Text className="text-[13px] font-montserrat text-white/50 mx-2">·</Text>
-              <Text className="text-[13px] font-montserrat text-white/85">Avg</Text>
-              <Text className="text-[13px] font-inter-semi tabular-nums text-white ml-1">
-                {formatCurrency(earningsData?.avg_per_errand ?? 0)}
-              </Text>
-            </View>
-          </LinearGradient>
-        )}
-
-        {/* Period Selector — underline-style tab strip. Less rounded,
-            no nested pills, no background fills. The active tab
-            communicates state with weight + a 2px brand underline. */}
-        <View className="flex-row mx-5 mb-5 border-b border-divider">
-          {(['today', 'week', 'month'] as Period[]).map((p) => (
-            <Pressable
-              key={p}
-              onPress={() => selectPeriod(p)}
-              accessibilityRole="tab"
-              accessibilityState={{ selected: period === p }}
-              // Row content is ~28pt tall — extend to a >=44pt target.
-              hitSlop={{ top: 12, bottom: 8, left: 6, right: 6 }}
-              className="pr-5 pb-2.5 -mb-px"
-              style={period === p ? { borderBottomWidth: 2, borderBottomColor: LightColors.primary } : undefined}
-            >
-              <Text
-                className={`text-[13px] ${
-                  period === p
-                    ? 'font-montserrat-bold text-textPrimary'
-                    : 'font-montserrat-semi text-textSecondary'
-                }`}
+        // One section per day of the per-errand list. This was a ScrollView
+        // rendering every row of one 100-row fetch; the list now pages in as
+        // the runner scrolls, and the day headers carry the server's totals.
+        sections={earningsByDay}
+        keyExtractor={(item) => item.id}
+        // Day labels scroll with their rows, as they always did.
+        stickySectionHeadersEnabled={false}
+        // Rows re-render when a fee breakdown opens or closes.
+        extraData={openBreakdown}
+        onEndReached={onEndReached}
+        onEndReachedThreshold={0.5}
+        ListHeaderComponent={
+          <>
+            {/* Hero Card — brand blue gradient balance card (same language
+                as the wallet / runner-home hero). White numerals are the
+                loudest thing on screen. When the summary fetch failed with
+                no cache, swap in an error card — a confident ₱0.00 would
+                be a lie. */}
+            {summaryFailed ? (
+              <Card className="mx-5 mb-4" padding="lg">
+                <ErrorState
+                  error={summaryQ.error}
+                  compact
+                  title="Couldn't load your summary"
+                  onRetry={() => summaryQ.refresh()}
+                />
+              </Card>
+            ) : (
+              <LinearGradient
+                colors={[
+                  LightColors.gradientStart,
+                  LightColors.gradientMid,
+                  LightColors.gradientEnd,
+                ]}
+                start={{ x: 0, y: 0 }}
+                end={{ x: 1, y: 1 }}
+                style={{
+                  marginHorizontal: 20,
+                  marginBottom: 16,
+                  borderRadius: 24,
+                  padding: 24,
+                  overflow: 'hidden',
+                  ...Elevation.md,
+                }}
               >
-                {p === 'today' ? 'Today' : p === 'week' ? 'This week' : 'This month'}
-              </Text>
-            </Pressable>
-          ))}
-        </View>
+                {/* Warm brand-gold glow behind the coins — a low-alpha accent
+                    wash that hints at "earnings" without lifting the local
+                    background under any numerals. Purely decorative and kept
+                    to the top-right corner; the white balance stays loudest. */}
+                <View
+                  pointerEvents="none"
+                  style={{
+                    position: 'absolute',
+                    top: -18,
+                    right: -14,
+                    width: 108,
+                    height: 108,
+                    borderRadius: 54,
+                    backgroundColor: LightColors.accent,
+                    opacity: 0.16,
+                  }}
+                />
+                {/* Subtle 3D coins accent — decorative only, tucked into the
+                    top-right corner behind the left-aligned numerals so it
+                    never competes with or crowds the total-earnings figure. */}
+                <Illustration
+                  name="3d-coins"
+                  size={64}
+                  style={{ position: 'absolute', top: 10, right: 14, opacity: 0.9 }}
+                />
+                <Text
+                  className="text-xs font-montserrat-semi text-white/90 uppercase"
+                  style={{ letterSpacing: 1.2 }}
+                >
+                  {periodLabel[period]}
+                </Text>
+                <Text className="text-4xl font-inter-semi tabular-nums text-white mt-1">
+                  {formatCurrency(earningsData?.total_earnings ?? 0)}
+                </Text>
+                {/* Secondary stats — inline white text on the raw gradient
+                    (translucent chips lightened the local background and
+                    dragged the small white numerals under the AA floor).
+                    Numbers ride Inter tabular; the middot is decorative. */}
+                {/* Tips sit on their own line, never folded into the total above:
+                    the runner is told about each tip by push, so a headline that
+                    excluded them read as money going missing. */}
+                {Number(earningsData?.total_tips ?? 0) > 0 && (
+                  <Text className="text-[13px] font-montserrat text-white/85 mt-1">
+                    plus{' '}
+                    <Text className="font-inter-semi tabular-nums text-white">
+                      {formatCurrency(Number(earningsData?.total_tips ?? 0))}
+                    </Text>{' '}
+                    in tips
+                  </Text>
+                )}
+                {/* Why this total and "Available now" below don't match: on a
+                    cash errand the payout was collected at the door, and only
+                    paid-online errands credit the wallet (which cash commissions
+                    then draw from). Shown only when the rows reconcile to the
+                    total above. */}
+                {earningsSplit && earningsSplit.cash > 0 ? (
+                  <Text className="text-[12px] font-montserrat text-white/85 mt-1">
+                    <Text className="font-inter-semi tabular-nums text-white">
+                      {formatCurrency(earningsSplit.cash)}
+                    </Text>{' '}
+                    cash already in hand ·{' '}
+                    <Text className="font-inter-semi tabular-nums text-white">
+                      {formatCurrency(earningsSplit.wallet)}
+                    </Text>{' '}
+                    paid online
+                  </Text>
+                ) : null}
+                <View className="flex-row items-center mt-3">
+                  <Text className="text-[13px] font-inter-semi tabular-nums text-white">
+                    {earningsData?.total_errands ?? 0}
+                  </Text>
+                  <Text className="text-[13px] font-montserrat text-white/85 ml-1">
+                    errands
+                  </Text>
+                  <Text className="text-[13px] font-montserrat text-white/50 mx-2">·</Text>
+                  <Text className="text-[13px] font-montserrat text-white/85">Avg</Text>
+                  <Text className="text-[13px] font-inter-semi tabular-nums text-white ml-1">
+                    {formatCurrency(earningsData?.avg_per_errand ?? 0)}
+                  </Text>
+                </View>
+              </LinearGradient>
+            )}
 
-        <View className="px-5 mb-4 -mt-1">
-          <SyncIndicator
-            syncing={summaryQ.isStale || historyQ.isStale}
-            updatedAt={summaryQ.updatedAt}
-            error={!!summaryQ.error}
-            offline={!!summaryQ.servedFromCacheOffline || !!historyQ.servedFromCacheOffline}
-            onRetry={onRefresh ?? summaryQ.refresh}
-            align="flex-start"
-          />
-        </View>
+            {/* Period Selector — underline-style tab strip. Less rounded,
+                no nested pills, no background fills. The active tab
+                communicates state with weight + a 2px brand underline. */}
+            <View className="flex-row mx-5 mb-5 border-b border-divider">
+              {(['today', 'week', 'month'] as Period[]).map((p) => (
+                <Pressable
+                  key={p}
+                  onPress={() => selectPeriod(p)}
+                  accessibilityRole="tab"
+                  accessibilityState={{ selected: period === p }}
+                  // Row content is ~28pt tall — extend to a >=44pt target.
+                  hitSlop={{ top: 12, bottom: 8, left: 6, right: 6 }}
+                  className="pr-5 pb-2.5 -mb-px"
+                  style={period === p ? { borderBottomWidth: 2, borderBottomColor: LightColors.primary } : undefined}
+                >
+                  <Text
+                    className={`text-[13px] ${
+                      period === p
+                        ? 'font-montserrat-bold text-textPrimary'
+                        : 'font-montserrat-semi text-textSecondary'
+                    }`}
+                  >
+                    {p === 'today' ? 'Today' : p === 'week' ? 'This week' : 'This month'}
+                  </Text>
+                </Pressable>
+              ))}
+            </View>
 
-        {/* (Removed the "Breakdown" card — it repeated the hero verbatim:
-            total earnings, total errands and avg-per-errand are all already
-            shown in the gradient hero above, so the card was a metric with
-            no added purpose. The daily chart + per-errand list below carry
-            the information the hero doesn't.) */}
+            <View className="px-5 mb-4 -mt-1">
+              <SyncIndicator
+                // A failed daily-totals refresh (or an older server without
+                // it) must not leave "Syncing…" up for good.
+                syncing={summaryQ.isStale || historyQ.isStale || (dailyQ.isStale && !dailyQ.error)}
+                updatedAt={summaryQ.updatedAt}
+                error={!!summaryQ.error}
+                offline={
+                  !!summaryQ.servedFromCacheOffline ||
+                  !!dailyQ.servedFromCacheOffline ||
+                  !!historyQ.servedFromCacheOffline
+                }
+                onRetry={onRefresh ?? summaryQ.refresh}
+                align="flex-start"
+              />
+            </View>
 
-        {/* Daily chart — 7 proportional bars (Mon–Sun), pure Views.
-            Best day gets the full brand blue; other days ride at a
-            muted tint so the peak reads instantly. */}
-        {period === 'week' && weekChart && weekChart.max > 0 && (
-          <View className="px-5 mb-6">
-            <Eyebrow className="mb-2">Daily breakdown</Eyebrow>
-            <Card padding="lg">
-              <View className="flex-row items-end">
-                {weekChart.totals.map((total, i) => {
-                  const isBest = i === weekChart.bestIdx;
-                  const isToday = i === weekChart.todayIdx;
-                  const barHeight =
-                    total > 0
-                      ? Math.max(8, Math.round((total / weekChart.max) * 72))
-                      : 3;
-                  return (
-                    <View
-                      key={i}
-                      className="flex-1 items-center"
-                      accessible
-                      accessibilityLabel={`${DAY_NAMES[i]}${isToday ? ', today' : ''}: ${formatCurrency(total)}${isBest ? ', best day' : ''}`}
-                    >
-                      {/* Color-independent best-day marker — a dot's
-                          presence (not its hue) flags the peak, so it
-                          survives color-blindness and sunlight. Reserved
-                          for every column to keep the labels aligned. */}
-                      <View style={{ height: 6, marginBottom: 2, justifyContent: 'center' }}>
-                        {isBest && total > 0 && (
+            {/* (Removed the "Breakdown" card — it repeated the hero verbatim:
+                total earnings, total errands and avg-per-errand are all already
+                shown in the gradient hero above, so the card was a metric with
+                no added purpose. The daily chart + per-errand list below carry
+                the information the hero doesn't.) */}
+
+            {/* Daily chart — 7 proportional bars (Mon–Sun), pure Views.
+                Best day gets the full brand blue; other days ride at a
+                muted tint so the peak reads instantly. */}
+            {period === 'week' && weekChart && weekChart.max > 0 && (
+              <View className="px-5 mb-6">
+                <Eyebrow className="mb-2">Daily breakdown</Eyebrow>
+                <Card padding="lg">
+                  <View className="flex-row items-end">
+                    {weekChart.totals.map((total, i) => {
+                      const isBest = i === weekChart.bestIdx;
+                      const isToday = i === weekChart.todayIdx;
+                      const barHeight =
+                        total > 0
+                          ? Math.max(8, Math.round((total / weekChart.max) * 72))
+                          : 3;
+                      return (
+                        <View
+                          key={i}
+                          className="flex-1 items-center"
+                          accessible
+                          accessibilityLabel={`${DAY_NAMES[i]}${isToday ? ', today' : ''}: ${formatCurrency(total)}${isBest ? ', best day' : ''}`}
+                        >
+                          {/* Color-independent best-day marker — a dot's
+                              presence (not its hue) flags the peak, so it
+                              survives color-blindness and sunlight. Reserved
+                              for every column to keep the labels aligned. */}
+                          <View style={{ height: 6, marginBottom: 2, justifyContent: 'center' }}>
+                            {isBest && total > 0 && (
+                              <View
+                                style={{
+                                  width: 5,
+                                  height: 5,
+                                  borderRadius: 2.5,
+                                  backgroundColor: LightColors.accentStrong,
+                                }}
+                              />
+                            )}
+                          </View>
+                          <Text
+                            className={`text-[12px] tabular-nums mb-1 ${
+                              isBest
+                                ? 'font-inter-bold text-accentDark'
+                                : 'font-inter-semi text-textSecondary'
+                            }`}
+                            numberOfLines={1}
+                          >
+                            {total > 0 ? compactAmount(total) : ' '}
+                          </Text>
                           <View
                             style={{
-                              width: 5,
-                              height: 5,
-                              borderRadius: 2.5,
-                              backgroundColor: LightColors.accentStrong,
+                              width: 18,
+                              height: barHeight,
+                              borderRadius: 5,
+                              backgroundColor:
+                                total <= 0
+                                  ? LightColors.dividerStrong
+                                  : isBest
+                                    ? LightColors.accentStrong
+                                    : LightColors.primary500,
                             }}
                           />
-                        )}
-                      </View>
-                      <Text
-                        className={`text-[12px] tabular-nums mb-1 ${
-                          isBest
-                            ? 'font-inter-bold text-accentDark'
-                            : 'font-inter-semi text-textSecondary'
-                        }`}
-                        numberOfLines={1}
-                      >
-                        {total > 0 ? compactAmount(total) : ' '}
-                      </Text>
-                      <View
-                        style={{
-                          width: 18,
-                          height: barHeight,
-                          borderRadius: 5,
-                          backgroundColor:
-                            total <= 0
-                              ? LightColors.dividerStrong
-                              : isBest
-                                ? LightColors.accentStrong
-                                : LightColors.primary500,
-                        }}
-                      />
-                      <Text
-                        className={`text-[12px] mt-1.5 ${
-                          isToday
-                            ? 'font-montserrat-bold text-primaryDark'
-                            : 'font-montserrat-semi text-textSecondary'
-                        }`}
-                      >
-                        {DAY_INITIALS[i]}
-                      </Text>
-                    </View>
-                  );
-                })}
-              </View>
-            </Card>
-          </View>
-        )}
-
-        {/* Per-Errand Earnings List — hairline rows grouped by day. */}
-        <View className="px-5 mb-6">
-          <Eyebrow className="mb-2">Per-errand</Eyebrow>
-          {historyFailed ? (
-            <ErrorState
-              error={historyQ.error}
-              compact
-              title="Couldn't load your errands"
-              onRetry={() => historyQ.refresh()}
-              style={{ paddingVertical: 12 }}
-            />
-          ) : earningsList.length === 0 ? (
-            <RunnerEmptyState
-              eyebrow="This period"
-              title="No earnings yet"
-              description="Completed errands for this period will show up here."
-              actionLabel="Go online to start earning"
-              onAction={() => router.push('/(runner)/(tabs)' as any)}
-            />
-          ) : (
-            earningsByDay.map((group) => (
-              <View key={group.label} className="mb-4">
-                <View className="flex-row items-center justify-between mb-1.5">
-                  <Text className="text-[10px] font-montserrat-bold uppercase text-textSecondary" style={{ letterSpacing: 1.2 }}>
-                    {group.label}
-                  </Text>
-                  <Text className="text-[11px] font-inter-semi tabular-nums text-textSecondary">
-                    {formatCurrency(group.total)}
-                  </Text>
-                </View>
-                {group.errands.map((errand, idx) => {
-                  const expanded = openBreakdown === errand.id;
-                  const how = settledIn(errand);
-                  const howLabel = how === 'cash' ? 'Cash' : how === 'online' ? 'Paid online' : null;
-                  return (
-                    <View key={errand.id}>
-                      {/* Rows used to be plain Views: a runner asking why one
-                          delivery paid ₱85 and another ₱140 had nowhere to
-                          look. The fee fields were already in this payload. */}
-                      <Pressable
-                        onPress={() => {
-                          Haptics.selectionAsync().catch(() => {});
-                          setOpenBreakdown(expanded ? null : errand.id);
-                        }}
-                        accessibilityRole="button"
-                        accessibilityState={{ expanded }}
-                        accessibilityLabel={`${errand.errand_type?.name ?? 'Errand'}, ${formatRunnerPayout(errand.runner_payout)}${howLabel ? `, ${howLabel.toLowerCase()}` : ''}`}
-                        accessibilityHint={
-                          expanded ? 'Hide the fee breakdown' : 'Show the fee breakdown'
-                        }
-                        // Layout stays in className — a Pressable styled only
-                        // through style={() => [obj]} loses flexDirection.
-                        className="flex-row items-center justify-between py-3"
-                        style={({ pressed }) => (pressed ? { opacity: 0.6 } : null)}
-                      >
-                        <View className="flex-1 mr-2">
-                          <Text className="text-[14px] font-montserrat-bold text-textPrimary" numberOfLines={1}>
-                            {errand.errand_type?.name ?? 'Errand'}
-                          </Text>
-                          <Text className="text-[11px] font-inter tabular-nums text-textTertiary mt-0.5">
-                            {/* formatTime, not toLocaleTimeString — see
-                                navigate/[id].tsx fmtArrival. A runner's own
-                                earnings rows read 24h on a 24h-locale device
-                                while the errand card above them read 12h. */}
-                            {formatTime(errand.completed_at ?? errand.created_at)}
-                            {/* Cash = collected at the door, already in
-                                hand; Paid online = goes to the wallet. */}
-                            {howLabel ? ` · ${howLabel}` : ''}
+                          <Text
+                            className={`text-[12px] mt-1.5 ${
+                              isToday
+                                ? 'font-montserrat-bold text-primaryDark'
+                                : 'font-montserrat-semi text-textSecondary'
+                            }`}
+                          >
+                            {DAY_INITIALS[i]}
                           </Text>
                         </View>
-                        <Text className="text-[14px] font-inter-semi tabular-nums text-textPrimary">
-                          {formatRunnerPayout(errand.runner_payout)}
-                        </Text>
-                        {expanded ? (
-                          <ChevronUp size={16} color={LightColors.textTertiary} style={{ marginLeft: 6 }} />
-                        ) : (
-                          <ChevronDown size={16} color={LightColors.textMuted} style={{ marginLeft: 6 }} />
-                        )}
-                      </Pressable>
-                      {expanded && <EarningsBreakdown booking={errand} />}
-                      {idx < group.errands.length - 1 && <Hairline />}
-                    </View>
-                  );
-                })}
+                      );
+                    })}
+                  </View>
+                </Card>
               </View>
-            ))
-          )}
-        </View>
+            )}
 
-        {/* Cash-out strip — "how much can I withdraw right now, and is a
-            payout already on its way?" used to be answerable only after
-            navigating to the payout screen. Both figures live here now, next
-            to the button that acts on them. */}
-        <View className="px-5 mb-3">
-          <Card padding="md">
-            <View className="flex-row items-start">
-              <View className="flex-1 pr-3">
-                <Eyebrow>{balance < 0 ? 'Owed from cash errands' : 'Available now'}</Eyebrow>
-                <Text
-                  className="text-[22px] font-inter-semi tabular-nums text-textPrimary mt-1"
-                  numberOfLines={1}
-                  adjustsFontSizeToFit
-                  minimumFontScale={0.7}
-                >
-                  {balance < 0 ? '−' : ''}
-                  {formatCurrency(Math.abs(balance))}
+            {/* Per-Errand Earnings List — hairline rows grouped by day. */}
+            <View className="px-5">
+              <Eyebrow className="mb-2">Per-errand</Eyebrow>
+            </View>
+          </>
+        }
+        renderSectionHeader={({ section }) => (
+          <View className="flex-row items-center justify-between mb-1.5 px-5">
+            <Text className="text-[10px] font-montserrat-bold uppercase text-textSecondary" style={{ letterSpacing: 1.2 }}>
+              {section.label}
+            </Text>
+            {/* The whole day's payout, from the server — not just the rows
+                loaded so far. */}
+            <Text className="text-[11px] font-inter-semi tabular-nums text-textSecondary">
+              {formatCurrency(section.total)}
+            </Text>
+          </View>
+        )}
+        renderItem={({ item: errand, index, section }) => {
+          const expanded = openBreakdown === errand.id;
+          const how = settledIn(errand);
+          const howLabel = how === 'cash' ? 'Cash' : how === 'online' ? 'Paid online' : null;
+          return (
+            <View className="px-5">
+              {/* Rows used to be plain Views: a runner asking why one
+                  delivery paid ₱85 and another ₱140 had nowhere to
+                  look. The fee fields were already in this payload. */}
+              <Pressable
+                onPress={() => {
+                  Haptics.selectionAsync().catch(() => {});
+                  setOpenBreakdown(expanded ? null : errand.id);
+                }}
+                accessibilityRole="button"
+                accessibilityState={{ expanded }}
+                accessibilityLabel={`${errand.errand_type?.name ?? 'Errand'}, ${formatRunnerPayout(errand.runner_payout)}${howLabel ? `, ${howLabel.toLowerCase()}` : ''}`}
+                accessibilityHint={
+                  expanded ? 'Hide the fee breakdown' : 'Show the fee breakdown'
+                }
+                // Layout stays in className — a Pressable styled only
+                // through style={() => [obj]} loses flexDirection.
+                className="flex-row items-center justify-between py-3"
+                style={({ pressed }) => (pressed ? { opacity: 0.6 } : null)}
+              >
+                <View className="flex-1 mr-2">
+                  <Text className="text-[14px] font-montserrat-bold text-textPrimary" numberOfLines={1}>
+                    {errand.errand_type?.name ?? 'Errand'}
+                  </Text>
+                  <Text className="text-[11px] font-inter tabular-nums text-textTertiary mt-0.5">
+                    {/* formatTime, not toLocaleTimeString — see
+                        navigate/[id].tsx fmtArrival. A runner's own
+                        earnings rows read 24h on a 24h-locale device
+                        while the errand card above them read 12h. */}
+                    {formatTime(errand.completed_at ?? errand.created_at)}
+                    {/* Cash = collected at the door, already in
+                        hand; Paid online = goes to the wallet. */}
+                    {howLabel ? ` · ${howLabel}` : ''}
+                  </Text>
+                </View>
+                <Text className="text-[14px] font-inter-semi tabular-nums text-textPrimary">
+                  {formatRunnerPayout(errand.runner_payout)}
                 </Text>
-                <Text className="text-[11px] font-montserrat text-textTertiary mt-0.5">
-                  {balance < 0
-                    ? 'Cleared automatically from your next prepaid earnings'
-                    : balance < minPayout
-                      ? `Min ${formatCurrency(minPayout)} to cash out`
-                      : 'Ready to withdraw'}
+                {expanded ? (
+                  <ChevronUp size={16} color={LightColors.textTertiary} style={{ marginLeft: 6 }} />
+                ) : (
+                  <ChevronDown size={16} color={LightColors.textMuted} style={{ marginLeft: 6 }} />
+                )}
+              </Pressable>
+              {expanded && <EarningsBreakdown booking={errand} />}
+              {index < section.data.length - 1 && <Hairline />}
+            </View>
+          );
+        }}
+        // The gap between one day and the next.
+        renderSectionFooter={() => <View style={{ height: 16 }} />}
+        ListEmptyComponent={
+          <View className="px-5">
+            {historyFailed ? (
+              <ErrorState
+                error={historyQ.error}
+                compact
+                title="Couldn't load your errands"
+                onRetry={() => historyQ.refresh()}
+                style={{ paddingVertical: 12 }}
+              />
+            ) : (
+              <RunnerEmptyState
+                eyebrow="This period"
+                title="No earnings yet"
+                description="Completed errands for this period will show up here."
+                actionLabel="Go online to start earning"
+                onAction={() => router.push('/(runner)/(tabs)' as any)}
+              />
+            )}
+          </View>
+        }
+        ListFooterComponent={
+          <>
+            {loadingMore ? (
+              <View className="py-4 items-center justify-center">
+                <Text className="text-[11px] font-montserrat text-textTertiary">
+                  Loading…
                 </Text>
               </View>
-              <View
-                className="flex-1 pl-3"
-                style={{ borderLeftWidth: 1, borderLeftColor: LightColors.divider }}
+            ) : loadMoreFailed && earningsList.length > 0 ? (
+              // Same inline retry as the runner's history: the list waits for
+              // a tap instead of silently stopping mid-scroll.
+              <Pressable
+                onPress={() => {
+                  Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
+                  fetchNextPage();
+                }}
+                accessibilityRole="button"
+                accessibilityLabel="Retry loading more errands"
+                className="mx-5 my-2 py-3 rounded-2xl border border-divider bg-surface flex-row items-center justify-center"
+                style={{ minHeight: 44 }}
               >
-                <Eyebrow>Payout in flight</Eyebrow>
-                <Text
-                  className="text-[22px] font-inter-semi tabular-nums text-textPrimary mt-1"
-                  numberOfLines={1}
-                  adjustsFontSizeToFit
-                  minimumFontScale={0.7}
-                >
-                  {pendingPayout ? formatCurrency(pendingPayoutAmount) : '—'}
+                <RefreshCw size={14} color={LightColors.primary} strokeWidth={2} />
+                <Text className="text-[12px] font-montserrat-bold text-primary ml-2">
+                  Couldn’t load more · Try again
                 </Text>
-                <View className="flex-row items-center mt-0.5">
-                  {pendingPayout && (
-                    <Clock size={11} color={LightColors.warningDark} style={{ marginRight: 3 }} />
-                  )}
-                  <Text
-                    className="text-[11px] font-montserrat flex-1"
-                    style={{
-                      color: pendingPayout ? LightColors.warningDark : LightColors.textTertiary,
-                    }}
-                    numberOfLines={2}
+              </Pressable>
+            ) : null}
+            {/* The space the list kept below itself before the cash-out strip. */}
+            <View style={{ height: 24 }} />
+
+            {/* Cash-out strip — "how much can I withdraw right now, and is a
+                payout already on its way?" used to be answerable only after
+                navigating to the payout screen. Both figures live here now, next
+                to the button that acts on them. */}
+            <View className="px-5 mb-3">
+              <Card padding="md">
+                <View className="flex-row items-start">
+                  <View className="flex-1 pr-3">
+                    <Eyebrow>{balance < 0 ? 'Owed from cash errands' : 'Available now'}</Eyebrow>
+                    <Text
+                      className="text-[22px] font-inter-semi tabular-nums text-textPrimary mt-1"
+                      numberOfLines={1}
+                      adjustsFontSizeToFit
+                      minimumFontScale={0.7}
+                    >
+                      {balance < 0 ? '−' : ''}
+                      {formatCurrency(Math.abs(balance))}
+                    </Text>
+                    <Text className="text-[11px] font-montserrat text-textTertiary mt-0.5">
+                      {balance < 0
+                        ? 'Cleared automatically from your next prepaid earnings'
+                        : balance < minPayout
+                          ? `Min ${formatCurrency(minPayout)} to cash out`
+                          : 'Ready to withdraw'}
+                    </Text>
+                  </View>
+                  <View
+                    className="flex-1 pl-3"
+                    style={{ borderLeftWidth: 1, borderLeftColor: LightColors.divider }}
                   >
-                    {pendingPayout ? 'Processing — 1–3 business days' : 'Nothing pending'}
-                  </Text>
+                    <Eyebrow>Payout in flight</Eyebrow>
+                    <Text
+                      className="text-[22px] font-inter-semi tabular-nums text-textPrimary mt-1"
+                      numberOfLines={1}
+                      adjustsFontSizeToFit
+                      minimumFontScale={0.7}
+                    >
+                      {pendingPayout ? formatCurrency(pendingPayoutAmount) : '—'}
+                    </Text>
+                    <View className="flex-row items-center mt-0.5">
+                      {pendingPayout && (
+                        <Clock size={11} color={LightColors.warningDark} style={{ marginRight: 3 }} />
+                      )}
+                      <Text
+                        className="text-[11px] font-montserrat flex-1"
+                        style={{
+                          color: pendingPayout ? LightColors.warningDark : LightColors.textTertiary,
+                        }}
+                        numberOfLines={2}
+                      >
+                        {pendingPayout ? 'Processing — 1–3 business days' : 'Nothing pending'}
+                      </Text>
+                    </View>
+                  </View>
+                </View>
+              </Card>
+            </View>
+
+            {/* Payout Button */}
+            <View className="px-5 mb-4">
+              <Button
+                title={pendingPayout ? 'View payout status' : 'Request Payout'}
+                variant="primary"
+                onPress={() => {
+                  // The payout list is warmed at boot; the wallet-activity preview
+                  // beneath it was not, so a MONEY screen half-painted. Page size
+                  // must match the payout screen's own.
+                  prefetchPayoutActivity(userId);
+                  router.push('/(runner)/payout' as any);
+                }}
+                fullWidth
+              />
+            </View>
+
+            {/* Export — CSV (primary, from loaded rows) + PDF statement (server). */}
+            <View className="px-5 mb-4">
+              <Eyebrow className="mb-2">Export</Eyebrow>
+              <View className="flex-row" style={{ gap: 12 }}>
+                <View className="flex-1">
+                  <Button
+                    title="Export CSV"
+                    variant="secondary"
+                    icon={Download}
+                    onPress={handleExportCsv}
+                    loading={exporting === 'csv'}
+                    loadingTitle="Preparing CSV…"
+                    disabled={exporting === 'pdf'}
+                    fullWidth
+                    accessibilityHint="Share a CSV of this period's earnings"
+                  />
+                </View>
+                <View className="flex-1">
+                  <Button
+                    title="Download PDF"
+                    variant="ghost"
+                    icon={FileText}
+                    onPress={handleDownloadPdf}
+                    loading={exporting === 'pdf'}
+                    loadingTitle="Preparing PDF…"
+                    disabled={exporting === 'csv'}
+                    fullWidth
+                    accessibilityHint="Download and share the PDF earnings statement"
+                  />
                 </View>
               </View>
             </View>
-          </Card>
-        </View>
-
-        {/* Payout Button */}
-        <View className="px-5 mb-4">
-          <Button
-            title={pendingPayout ? 'View payout status' : 'Request Payout'}
-            variant="primary"
-            onPress={() => {
-              // The payout list is warmed at boot; the wallet-activity preview
-              // beneath it was not, so a MONEY screen half-painted. Page size
-              // must match the payout screen's own.
-              prefetchPayoutActivity(userId);
-              router.push('/(runner)/payout' as any);
-            }}
-            fullWidth
-          />
-        </View>
-
-        {/* Export — CSV (primary, from loaded rows) + PDF statement (server). */}
-        <View className="px-5 mb-4">
-          <Eyebrow className="mb-2">Export</Eyebrow>
-          <View className="flex-row" style={{ gap: 12 }}>
-            <View className="flex-1">
-              <Button
-                title="Export CSV"
-                variant="secondary"
-                icon={Download}
-                onPress={handleExportCsv}
-                loading={exporting === 'csv'}
-                loadingTitle="Preparing CSV…"
-                disabled={exporting === 'pdf'}
-                fullWidth
-                accessibilityHint="Share a CSV of this period's earnings"
-              />
-            </View>
-            <View className="flex-1">
-              <Button
-                title="Download PDF"
-                variant="ghost"
-                icon={FileText}
-                onPress={handleDownloadPdf}
-                loading={exporting === 'pdf'}
-                loadingTitle="Preparing PDF…"
-                disabled={exporting === 'csv'}
-                fullWidth
-                accessibilityHint="Download and share the PDF earnings statement"
-              />
-            </View>
-          </View>
-        </View>
-      </ScrollView>
+          </>
+        }
+      />
     </View>
   );
 }

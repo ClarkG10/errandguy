@@ -1,4 +1,4 @@
-import React, { useState, useCallback, useEffect, useMemo } from 'react';
+import React, { useState, useCallback, useEffect, useMemo, useRef } from 'react';
 import {
   View,
   Text,
@@ -72,12 +72,20 @@ export default function HistoryScreen() {
   // searching "Ana", scrolling to load page 2, then changing the term to "Ben"
   // would refetch page 1 for Ben while page 2 of Ana's results stayed appended
   // below it — a list quietly mixing results from two different searches.
+  // Which list is showing. A change (filter, or the trimmed term) starts it
+  // over, and a page requested for an earlier list is dropped when it lands.
+  const listKey = `${statusFilter}|${debouncedSearch.trim()}`;
+  // Bumped whenever the list starts over (new filter/term, pull-to-refresh),
+  // so a page requested before that is dropped when it lands.
+  const listGeneration = useRef(0);
+
   useEffect(() => {
+    listGeneration.current += 1;
     setExtraPages([]);
     setPage(1);
     setHasMore(true);
     setLoadMoreFailed(false);
-  }, [statusFilter, debouncedSearch]);
+  }, [listKey]);
 
   // Sync hasMore based on page-1 size.
   useEffect(() => {
@@ -92,6 +100,7 @@ export default function HistoryScreen() {
 
   const onRefresh = useCallback(async () => {
     setRefreshing(true);
+    listGeneration.current += 1;
     setExtraPages([]);
     setPage(1);
     setHasMore(true);
@@ -104,6 +113,7 @@ export default function HistoryScreen() {
     setLoadingMore(true);
     setLoadMoreFailed(false);
     const nextPage = page + 1;
+    const requestedFor = listGeneration.current;
     try {
       const params: Record<string, any> = { page: nextPage, per_page: 15 };
       if (statusFilter !== 'all') params.status = statusFilter;
@@ -111,6 +121,7 @@ export default function HistoryScreen() {
       // unfiltered rows and the list silently mixes matches with non-matches.
       if (debouncedSearch.trim()) params.search = debouncedSearch.trim();
       const res = await runnerService.getErrandHistory(params);
+      if (listGeneration.current !== requestedFor) return;
       const data: Booking[] = res.data.data ?? [];
       setExtraPages((prev) => [...prev, ...data]);
       setPage(nextPage);
@@ -118,11 +129,13 @@ export default function HistoryScreen() {
     } catch {
       // Surface an inline retry in the footer instead of a transient
       // toast — the list silently stopping mid-scroll is confusing.
-      setLoadMoreFailed(true);
+      if (listGeneration.current === requestedFor) setLoadMoreFailed(true);
     } finally {
       setLoadingMore(false);
     }
-  }, [page, statusFilter]);
+    // debouncedSearch: page 2 of a search must be fetched with the CURRENT
+    // term (it was missing, so a changed search loaded the old term's rows).
+  }, [page, statusFilter, debouncedSearch]);
 
   const onEndReached = useCallback(() => {
     // After a failure, wait for an explicit retry tap — otherwise the

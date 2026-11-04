@@ -56,6 +56,8 @@ import { shoppingBudgetError, shoppingBudgetMax } from '../../../utils/shoppingM
 import {
   bookingVehicle,
   getErrandTypeRule,
+  offeredVehicles,
+  vehicleWithinOffer,
   type VehicleKey,
 } from '../../../constants/errandTypeRules';
 import { useResponsive } from '../../../constants/responsive';
@@ -118,6 +120,8 @@ interface EstimateResult {
   motorcycle?: { total_amount: number; distance_fee: number; base_fee: number; service_fee: number; surcharge: number };
   car?: { total_amount: number; distance_fee: number; base_fee: number; service_fee: number; surcharge: number };
   distance_km?: number;
+  /** The vehicles the server offers for this errand type (absent on older servers). */
+  vehicle_types?: string[];
 }
 
 // Screen-reader copy for the full-screen create overlay (BookingProgress).
@@ -381,10 +385,32 @@ export default function ReviewScreen() {
   ];
 
   // Hide vehicles this errand type doesn't support (every current type allows
-  // all four; the rule keeps the per-type hook).
-  const vehicleOptions = allVehicleOptions.filter((opt) =>
-    rule.allowedVehicles.includes(opt.key as VehicleKey),
+  // all four; the rule keeps the per-type hook) — and, once the estimate is
+  // in, any the server doesn't offer or price: staff can withdraw one for a
+  // type, and booking it would be refused.
+  const offered = useMemo(
+    () => offeredVehicles(rule, estimate as Record<string, unknown> | null),
+    [rule, estimate],
   );
+  const vehicleOptions = allVehicleOptions.filter((opt) =>
+    offered.includes(opt.key as VehicleKey),
+  );
+  // The estimate is in but none of this type's vehicles came back priced.
+  // The server never sends an empty list today; if it did, say the fare is
+  // unavailable instead of "Calculating fare…" forever.
+  const noVehicleOffered = !!estimate && !rule.singleLocation && offered.length === 0;
+
+  // The vehicle picked (or restored from a draft) is no longer offered: move
+  // to one that is, and the draft with it, so the fare shown and the booking
+  // sent are for a vehicle the server takes. Queue keeps its own vehicle.
+  useEffect(() => {
+    if (!estimate || rule.singleLocation) return;
+    const next = vehicleWithinOffer(rule, vehicleType, offered);
+    if (!next || next === vehicleType) return;
+    setVehicleType(next);
+    updateDraft({ vehicle_type_rate: next });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [estimate, offered, rule, vehicleType]);
 
   const currentVehicleEstimate = estimate?.[vehicleType as keyof EstimateResult] as
     | { total_amount: number; distance_fee: number; base_fee: number; service_fee: number; surcharge: number }
@@ -1110,6 +1136,18 @@ export default function ReviewScreen() {
               onRetry={rerunEstimate}
             />
           </View>
+        ) : noVehicleOffered ? (
+          /* The fare came back, but no vehicle is on offer for this errand
+             type right now (staff switched them off): say so, with a retry,
+             instead of the "Calculating fare…" skeleton forever. */
+          <View className="mb-4">
+            <ErrorState
+              compact
+              title="No vehicle is available for this errand right now"
+              description="Try again in a little while, or choose another errand type."
+              onRetry={rerunEstimate}
+            />
+          </View>
         ) : (
           /* Estimate skeleton — mirrors the real PriceBreakdown's
              metrics (4 fee rows @ ~33pt, total row @ ~40pt) so the
@@ -1222,7 +1260,7 @@ export default function ReviewScreen() {
                 ? 'Waiting for connection…'
                 : currentVehicleEstimate && !isEstimateLoading
                   ? `Confirm ${formatCurrency(totalAmount)}`
-                  : estimateError
+                  : estimateError || noVehicleOffered
                     ? 'Fare unavailable'
                     : 'Calculating fare…'
             }

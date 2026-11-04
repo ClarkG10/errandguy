@@ -1,4 +1,4 @@
-import { cashDebtMessage, cashDebtText } from '../cashDebt';
+import { CASH_DEBT_LIMIT_FALLBACK, cashDebtLimit, cashDebtMessage, cashDebtText } from '../cashDebt';
 import { isLedgerCredit, signedLedgerAmount, ledgerIcon, LEDGER_ICONS } from '../walletLedger';
 import { parseWalletSummary } from '../../services/payment.service';
 import { spendableOnErrands } from '../../hooks/useWalletSummary';
@@ -34,6 +34,44 @@ describe('cashDebtMessage — word for word what CashDebtPolicy::message says', 
     expect(cashDebtText(-1500, { cash_debt_block: { message } })).toBe(message);
     expect(cashDebtText(-100, { cash_debt_block: null })).toBe(cashDebtMessage(-100));
     expect(cashDebtText(-100)).toBe(cashDebtMessage(-100));
+  });
+});
+
+/**
+ * The pause point used to be a hard-coded ₱1,000 on every screen that only had
+ * the balance. It now comes from the server (`cash_debt_limit` on the runner's
+ * own profile and on GET /wallet/balance), with ₱1,000 left only for a server
+ * that sends neither.
+ */
+describe('the cash-debt limit staff set', () => {
+  it('reads cash_debt_limit off the payload, falling back to ₱1,000', () => {
+    expect(cashDebtLimit({ cash_debt_limit: 1500 })).toBe(1500);
+    expect(cashDebtLimit({ cash_debt_limit: '1750.50' })).toBe(1750.5);
+    expect(cashDebtLimit({})).toBe(CASH_DEBT_LIMIT_FALLBACK);
+    expect(cashDebtLimit(null)).toBe(CASH_DEBT_LIMIT_FALLBACK);
+    expect(cashDebtLimit(undefined)).toBe(CASH_DEBT_LIMIT_FALLBACK);
+    expect(cashDebtLimit({ cash_debt_limit: 'abc' })).toBe(CASH_DEBT_LIMIT_FALLBACK);
+    expect(cashDebtLimit({ cash_debt_limit: -5 })).toBe(CASH_DEBT_LIMIT_FALLBACK);
+  });
+
+  it('keeps 0, which means the limit is off', () => {
+    expect(cashDebtLimit({ cash_debt_limit: 0 })).toBe(0);
+    expect(cashDebtMessage(100, cashDebtLimit({ cash_debt_limit: 0 }))).toBe(
+      'You owe ₱100.00 from cash errands. It’s cleared automatically from your next prepaid earnings.',
+    );
+  });
+
+  it('names the profile’s limit on a runner screen when there is no block yet', () => {
+    expect(cashDebtText(-240, { cash_debt_block: null, cash_debt_limit: 2500 })).toBe(
+      'You owe ₱240.00 from cash errands. It’s cleared automatically from your next prepaid earnings; cash errands pause at ₱2,500.',
+    );
+  });
+
+  it('is carried through the wallet summary, and left out when the server sends none', () => {
+    expect(parseWalletSummary({ balance: -240, cash_debt_limit: 1500 }).cash_debt_limit).toBe(1500);
+    expect(parseWalletSummary({ balance: -240, cash_debt_limit: 0 }).cash_debt_limit).toBe(0);
+    expect(parseWalletSummary({ balance: -240 })).not.toHaveProperty('cash_debt_limit');
+    expect(parseWalletSummary({ balance: -240, cash_debt_limit: 'x' })).not.toHaveProperty('cash_debt_limit');
   });
 });
 

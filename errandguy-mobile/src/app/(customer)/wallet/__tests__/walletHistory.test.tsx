@@ -167,3 +167,32 @@ describe('the withdraw minimum', () => {
     );
   });
 });
+
+describe('money owed from cash errands', () => {
+  // An account that is also a runner can owe from cash errands. The sentence
+  // under the balance names where cash work pauses — the figure staff set, as
+  // GET /wallet/balance now reports it, not a ₱1,000 baked into the app.
+  it('names the pause point the server reports', async () => {
+    mockSummary = { balance: -240, withdrawable: 0, bonus_balance: 0, withdraw_min: 100, cash_debt_limit: 1500 };
+    mockBalance.mockResolvedValue({ data: { data: { balance: -240 } } });
+    mockTx.mockResolvedValue({ data: { data: [] } });
+    const screen = renderScreen();
+
+    await waitFor(() =>
+      expect(
+        screen.getByText(
+          'You owe ₱240.00 from cash errands. It’s cleared automatically from your next prepaid earnings; cash errands pause at ₱1,500.',
+        ),
+      ).toBeTruthy(),
+    );
+  });
+
+  it('keeps ₱1,000 when an older server sends no limit', async () => {
+    mockSummary = { balance: -240, withdrawable: 0, bonus_balance: 0, withdraw_min: 100 };
+    mockBalance.mockResolvedValue({ data: { data: { balance: -240 } } });
+    mockTx.mockResolvedValue({ data: { data: [] } });
+    const screen = renderScreen();
+
+    await waitFor(() => expect(screen.getByText(/cash errands pause at ₱1,000\.$/)).toBeTruthy());
+  });
+});

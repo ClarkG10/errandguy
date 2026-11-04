@@ -59,6 +59,10 @@ export interface WalletSummary {
   /** The smallest withdrawal the server accepts (₱100 for customers today).
    *  Absent on an older server — callers fall back to DEFAULT_WITHDRAW_MIN. */
   withdraw_min?: number;
+  /** Owing this much from cash errands pauses cash work (₱; 0 = no limit),
+   *  from the server's `runner_cash_debt_limit`. Absent on an older server —
+   *  callers fall back to CASH_DEBT_LIMIT_FALLBACK. */
+  cash_debt_limit?: number;
 }
 
 export type WalletTransactionType =

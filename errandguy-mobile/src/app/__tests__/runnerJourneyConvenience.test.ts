@@ -179,7 +179,7 @@ describe('copy', () => {
 
   it('account deletion says what is deleted and what the law makes us keep', () => {
     expect(read('(runner)', '(tabs)', 'profile.tsx')).toContain(
-      "This can't be undone. Your name, contact details, ID documents, selfie and payout details are deleted. Records of past errands, earnings and payouts are kept without your name, email or phone number, because the law requires us to keep financial records.",
+      "This can't be undone. Your name, contact details, ID documents, selfie and saved payout details are deleted. Records of past errands, earnings and payouts are kept, without your contact details, because the law requires us to keep financial records — a payout record keeps the account it was sent to. The full list is on our account-deletion page.",
     );
   });
 });

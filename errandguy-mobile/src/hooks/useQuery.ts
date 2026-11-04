@@ -132,8 +132,15 @@ export function useQuery<T>(
   // background revalidation triggers can honour `staleTime` and skip a
   // refetch when the data is still fresh.
   const lastFetchedRef = useRef(0);
-  // Track the in-flight revalidation so concurrent triggers share it.
-  const inflightRef = useRef<Promise<void> | null>(null);
+  // Track the in-flight revalidation so concurrent triggers share it — but
+  // only triggers for the SAME key. Sharing it across keys handed a new key
+  // (another period, another search) the old key's request: the new key was
+  // never fetched and the old answer showed under the new label.
+  const inflightRef = useRef<{ key: string; promise: Promise<void>; token: object } | null>(null);
+  // The key this hook is showing now. A request for a key the screen has
+  // since left still caches its answer, but never touches the screen's state.
+  const currentKeyRef = useRef(cacheKey);
+  currentKeyRef.current = cacheKey;
   // Guards every async setState. Flips to false on unmount so a slow
   // network response can't cause a `setState on unmounted component`
   // warning (and the wasted re-render that comes with it). This is
@@ -149,13 +156,16 @@ export function useQuery<T>(
   }, []);
 
   const revalidate = useCallback(async () => {
-    if (inflightRef.current) return inflightRef.current;
+    if (inflightRef.current?.key === cacheKey) return inflightRef.current.promise;
+    const fetcher = fetcherRef.current;
+    const token = {};
+    const isCurrent = () => mountedRef.current && currentKeyRef.current === cacheKey;
     const promise = (async () => {
       try {
-        const fresh = await fetcherRef.current();
+        const fresh = await fetcher();
         const now = Date.now();
-        lastFetchedRef.current = now;
-        if (mountedRef.current) {
+        if (isCurrent()) {
+          lastFetchedRef.current = now;
           setData(fresh);
           setIsStale(false);
           setError(null);
@@ -167,13 +177,13 @@ export function useQuery<T>(
           ttl,
         );
       } catch (err) {
-        if (mountedRef.current) setError(err as Error);
+        if (isCurrent()) setError(err as Error);
       } finally {
-        if (mountedRef.current) setLoading(false);
-        inflightRef.current = null;
+        if (isCurrent()) setLoading(false);
+        if (inflightRef.current?.token === token) inflightRef.current = null;
       }
     })();
-    inflightRef.current = promise;
+    inflightRef.current = { key: cacheKey, promise, token };
     return promise;
   }, [cacheKey, ttl]);
 

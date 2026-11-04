@@ -620,7 +620,7 @@ export default function CustomerProfileScreen() {
       <DeleteAccountSheet
         visible={showDeleteModal}
         onClose={() => setShowDeleteModal(false)}
-        description="This can't be undone. Your name, contact details, saved addresses and trusted contacts are deleted. Records of past errands and payments are kept without your name, email or phone number, because the law requires us to keep financial records."
+        description="This can't be undone. Your name, contact details, saved addresses and trusted contacts are deleted. Records of past errands and payments are kept, without your contact details, because the law requires us to keep financial records — the full list is on our account-deletion page."
         // An account that also has a runner profile can send its balance to a
         // bank, like the server allows.
         allowBank={isRunnerAlready}

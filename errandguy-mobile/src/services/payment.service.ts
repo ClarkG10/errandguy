@@ -32,11 +32,15 @@ export function parseWalletSummary(payload: unknown): WalletSummary {
   };
   const balance = num(p.balance);
   const withdrawMin = p.withdraw_min != null ? num(p.withdraw_min) : 0;
+  // 0 is a real value here (the limit is switched off), so only a missing or
+  // unreadable figure is left out.
+  const debtLimit = p.cash_debt_limit != null ? Number(p.cash_debt_limit) : NaN;
   return {
     balance,
     withdrawable: p.withdrawable != null ? Math.max(0, num(p.withdrawable)) : Math.max(0, balance),
     bonus_balance: Math.max(0, num(p.bonus_balance)),
     ...(withdrawMin > 0 ? { withdraw_min: withdrawMin } : null),
+    ...(Number.isFinite(debtLimit) && debtLimit >= 0 ? { cash_debt_limit: debtLimit } : null),
   };
 }
 

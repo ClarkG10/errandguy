@@ -4,6 +4,8 @@ import {
   bookingVehicle,
   getErrandTypeRule,
   isRetiredErrandSlug,
+  offeredVehicles,
+  vehicleWithinOffer,
 } from '../errandTypeRules';
 import { getNextStatus, statusActionLabel } from '../../components/runner/StatusActionButton';
 
@@ -127,6 +129,68 @@ describe('the vehicle a booking goes out on', () => {
     expect(bookingVehicle(delivery)).toBe(delivery.defaultVehicle);
     expect(bookingVehicle(delivery, null)).toBe(delivery.defaultVehicle);
     expect(bookingVehicle(delivery, 'helicopter')).toBe(delivery.defaultVehicle);
+  });
+});
+
+/**
+ * Staff can withdraw a vehicle for an errand type (per-km rate 0). The estimate
+ * then leaves it out of `vehicle_types` with no price, and creating the booking
+ * refuses it — so Review must stop offering it once the estimate is in.
+ */
+describe('the vehicles Review offers once the estimate is in', () => {
+  const delivery = getErrandTypeRule('delivery');
+  const queue = getErrandTypeRule('queue');
+  const price = (total: number) => ({
+    total_amount: total, distance_fee: 0, base_fee: 0, service_fee: 0, surcharge: 0,
+  });
+
+  it('keeps today’s list while the estimate loads or has failed', () => {
+    expect(offeredVehicles(delivery, null)).toEqual(['walk', 'bicycle', 'motorcycle', 'car']);
+    expect(offeredVehicles(delivery, undefined)).toEqual(delivery.allowedVehicles);
+  });
+
+  it('drops a vehicle the server no longer offers for the type', () => {
+    const estimate = {
+      walk: price(80), bicycle: price(95), motorcycle: price(120),
+      vehicle_types: ['walk', 'bicycle', 'motorcycle'],
+    };
+    expect(offeredVehicles(delivery, estimate)).toEqual(['walk', 'bicycle', 'motorcycle']);
+  });
+
+  it('never offers a vehicle without a price, even if the list names it', () => {
+    const estimate = {
+      walk: price(80), motorcycle: price(120), car: price(0),
+      vehicle_types: ['walk', 'bicycle', 'motorcycle', 'car'],
+    };
+    expect(offeredVehicles(delivery, estimate)).toEqual(['walk', 'motorcycle']);
+  });
+
+  it('on an older server with no vehicle list, offers the priced ones', () => {
+    const estimate = { walk: price(80), bicycle: price(95), motorcycle: price(120), car: price(150) };
+    expect(offeredVehicles(delivery, estimate)).toEqual(['walk', 'bicycle', 'motorcycle', 'car']);
+    const { car: _car, ...noCar } = estimate;
+    expect(offeredVehicles(delivery, noCar)).toEqual(['walk', 'bicycle', 'motorcycle']);
+  });
+
+  it('reads prices sent as strings', () => {
+    const estimate = { walk: { total_amount: '80.00' }, vehicle_types: ['walk'] };
+    expect(offeredVehicles(delivery, estimate)).toEqual(['walk']);
+  });
+
+  it('leaves queue exactly as it was: walk, picker hidden', () => {
+    const estimate = { motorcycle: price(120), vehicle_types: ['motorcycle'] };
+    expect(offeredVehicles(queue, estimate)).toEqual(['walk']);
+    expect(bookingVehicle(queue, 'motorcycle')).toBe('walk');
+  });
+
+  it('keeps the pick while it is still offered', () => {
+    expect(vehicleWithinOffer(delivery, 'car', ['walk', 'motorcycle', 'car'])).toBe('car');
+  });
+
+  it('moves a withdrawn pick to the type’s default, or else the first offered', () => {
+    expect(vehicleWithinOffer(delivery, 'car', ['walk', 'bicycle', 'motorcycle'])).toBe('motorcycle');
+    expect(vehicleWithinOffer(delivery, 'motorcycle', ['bicycle', 'car'])).toBe('bicycle');
+    expect(vehicleWithinOffer(delivery, 'car', [])).toBeNull();
   });
 });
 

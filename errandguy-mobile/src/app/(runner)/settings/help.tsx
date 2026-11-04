@@ -33,6 +33,8 @@ import { useResponsive } from '../../../constants/responsive';
 import { LightColors } from '../../../constants/colors';
 import { toast } from '../../../stores/toastStore';
 import { useAuthStore } from '../../../stores/authStore';
+import { useRunnerStore } from '../../../stores/runnerStore';
+import { offerAcceptSeconds, offerWindowPhrase } from '../../../utils/offerWindow';
 import { prefetchSupportTickets } from '../../../services/preload.service';
 
 // LayoutAnimation is opt-in on old-architecture Android.
@@ -82,11 +84,16 @@ function FaqChevron({ open, reduceMotion }: { open: boolean; reduceMotion: boole
   );
 }
 
-const FAQS: FAQ[] = [
+/**
+ * The FAQ, with the offer window staff have set: "about 90 seconds" was
+ * hard-coded here while the server reads matched_acceptance_timeout_seconds,
+ * so a change in the admin panel left this page quoting the old figure.
+ */
+const runnerFaqs = (offerWindow: string): FAQ[] => [
   {
     question: 'How do I receive errand requests?',
     answer:
-      'Go online from the dashboard. When a customer books an errand near you, it is offered to you directly and you have about 90 seconds to accept or decline. With notifications on, offers keep reaching you for about 15 minutes after you lock your phone. If we get no location from you for 30 minutes, we switch you offline and let you know.',
+      `Go online from the dashboard. When a customer books an errand near you, it is offered to you directly and you have ${offerWindow} to accept or decline. With notifications on, offers keep reaching you for about 15 minutes after you lock your phone. If we get no location from you for 30 minutes, we switch you offline and let you know.`,
   },
   {
     question: 'When do I get paid?',
@@ -132,14 +139,19 @@ export default function HelpScreen() {
   const [expanded, setExpanded] = useState<string | null>(null);
   const [search, setSearch] = useState('');
 
+  // The accept window rides the runner's own profile (offer_accept_seconds);
+  // 90 seconds, the server default, until it has loaded.
+  const offerSeconds = useRunnerStore((st) => offerAcceptSeconds(st.runnerProfile));
+  const faqs = useMemo(() => runnerFaqs(offerWindowPhrase(offerSeconds)), [offerSeconds]);
+
   const filteredFaqs = useMemo(() => {
     const q = search.trim().toLowerCase();
-    if (!q) return FAQS;
-    return FAQS.filter(
+    if (!q) return faqs;
+    return faqs.filter(
       (faq) =>
         faq.question.toLowerCase().includes(q) || faq.answer.toLowerCase().includes(q),
     );
-  }, [search]);
+  }, [search, faqs]);
 
   const toggle = (question: string) => {
     Haptics.selectionAsync().catch(() => {});

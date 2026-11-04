@@ -2423,8 +2423,10 @@ export default function ActiveErrandScreen() {
                 {/* Always-visible emergency SOS — reachable in one tap
                     regardless of sheet/disclosure state. Keeps the exact
                     two-step arm (warning haptic) → ConfirmModal broadcast;
-                    only the reachability changed. */}
-                {!isReadOnly && isErrandActive && (
+                    only the reachability changed. Shown once the runner has
+                    taken the errand: the server takes runner SOS on an errand
+                    they are working, not one only offered to them. */}
+                {!isReadOnly && isErrandActive && booking?.status !== 'matched' && booking?.status !== 'pending' && (
                   <Pressable
                     onPress={() => {
                       // A live alert reopens its sheet (911, contacts, "I'm

@@ -325,6 +325,24 @@ export const runnerService = {
     });
   },
 
+  /**
+   * Per-day totals for a period (GET /runner/earnings/daily): payout, tips,
+   * errand count and the cash share for each Manila calendar day, summed by
+   * the server over the WHOLE window — the same window as getEarnings — so
+   * the Earnings tab's day groups and week chart no longer depend on how many
+   * rows of the list it has loaded. A server without this endpoint answers
+   * 404; the tab then falls back to adding up the loaded rows.
+   */
+  getEarningsDaily(period: 'today' | 'week' | 'month') {
+    const apiPeriod =
+      period === 'week' ? 'this_week' : period === 'month' ? 'this_month' : period;
+    return api.get('/runner/earnings/daily', {
+      params: { period: apiPeriod },
+      cacheTtlMs: 15_000,
+      silent: true,
+    });
+  },
+
   getErrandHistory(params?: {
     page?: number;
     per_page?: number;

@@ -293,6 +293,51 @@ export function bookingVehicle(rule: ErrandTypeRule, stored?: string | null): Ve
 }
 
 /**
+ * The vehicles Review may offer, once the fare estimate is in.
+ *
+ * `allowedVehicles` is the app's own list per errand type, but staff can
+ * withdraw a vehicle for a type from the admin panel (a per-km rate of 0). The
+ * estimate then leaves it out of `vehicle_types` and gives it no price, and
+ * creating the booking refuses it — so offering it from the app's list alone
+ * showed "₱0.00" or a fare the server would never take. Once the estimate has
+ * loaded this is the app's list cut down to what the server offers AND priced.
+ *
+ * Unchanged from before while the estimate is still loading (or failed), and
+ * on an older server that sends no `vehicle_types` (only the price check
+ * applies then). A single-location errand (queue) keeps its own list exactly:
+ * it hides the picker and always books its default.
+ */
+export function offeredVehicles(
+  rule: ErrandTypeRule,
+  estimate: Record<string, unknown> | null | undefined,
+): VehicleKey[] {
+  if (rule.singleLocation || !estimate) return rule.allowedVehicles;
+  const served = Array.isArray(estimate.vehicle_types) ? (estimate.vehicle_types as unknown[]) : null;
+  return rule.allowedVehicles.filter((key) => {
+    if (served && !served.includes(key)) return false;
+    const price = estimate[key] as { total_amount?: unknown } | null | undefined;
+    const total = Number(price?.total_amount);
+    return Number.isFinite(total) && total > 0;
+  });
+}
+
+/**
+ * Where the selection goes when the vehicle picked is no longer offered: the
+ * type's default when that is still offered (the same place a changed errand
+ * type snaps back to), else the first one offered. Null only when nothing is
+ * offered at all.
+ */
+export function vehicleWithinOffer(
+  rule: ErrandTypeRule,
+  selected: string,
+  offered: VehicleKey[],
+): VehicleKey | null {
+  if (offered.includes(selected as VehicleKey)) return selected as VehicleKey;
+  if (offered.includes(rule.defaultVehicle)) return rule.defaultVehicle;
+  return offered[0] ?? null;
+}
+
+/**
  * Every slug with a rule override, in declaration order (the four current
  * types, then the legacy bills_payment rule; aliased slugs reuse these).
  *
