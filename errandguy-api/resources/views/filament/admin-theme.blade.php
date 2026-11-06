@@ -185,11 +185,6 @@
     }
     .fi-simple-main { border-radius: var(--eg-r-xl) !important; padding: 2.25rem 2rem !important; box-shadow: var(--eg-shadow-lg), 0 0 0 1px rgb(37 99 235 / .10); backdrop-filter: blur(6px); }
     .dark .fi-simple-main { background: rgb(17 26 44 / .84) !important; box-shadow: 0 24px 60px -18px rgb(0 0 0 / .7), 0 0 0 1px rgb(96 165 250 / .14); }
-    .eg-login-hero { text-align: center; margin: -.25rem 0 1.25rem; }
-    .eg-login-mascot { height: 84px; width: auto; margin: 0 auto .5rem; display: block; filter: drop-shadow(0 10px 20px rgb(37 99 235 / .35)); }
-    .eg-login-title { margin: 0; font-size: 1.5rem; font-weight: 800; letter-spacing: -.02em; }
-    .eg-login-sub { margin: .35rem auto 0; max-width: 22rem; font-size: .82rem; line-height: 1.5; color: rgb(100 116 139); }
-    .dark .eg-login-sub { color: rgb(148 163 184); }
     .fi-simple-main .fi-form-actions .fi-btn { width: 100%; justify-content: center; }
     .eg-login-foot { margin-top: 1.25rem; padding-top: 1rem; border-top: 1px solid var(--eg-border); display: flex; align-items: center; justify-content: center; gap: .4rem; font-size: .72rem; color: rgb(100 116 139); }
     .dark .eg-login-foot { color: rgb(148 163 184); }

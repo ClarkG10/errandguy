@@ -71,7 +71,7 @@ class RunnerDocumentsRelationManager extends RelationManager
                     ->weight('semibold'),
                 ImageColumn::make('file')->label('File')->height(48)->square()
                     ->state(fn (RunnerDocument $record): ?string => $record->adminFileUrl()),
-                TextColumn::make('status')->badge()->color(fn (string $s): string => match ($s) {
+                TextColumn::make('status')->badge()->color(fn (string $state): string => match ($state) {
                     'approved' => 'success',
                     'rejected' => 'danger',
                     default => 'warning',
@@ -93,7 +93,7 @@ class RunnerDocumentsRelationManager extends RelationManager
                     ->color('success')
                     ->requiresConfirmation()
                     ->visible(fn (RunnerDocument $record): bool => $record->status !== 'approved' && static::canModerate())
-                    ->action(function (RunnerDocument $record): void {
+                    ->action(function (RunnerDocument $record, $livewire): void {
                         $record->update([
                             'status' => 'approved',
                             'rejection_reason' => null,
@@ -107,6 +107,9 @@ class RunnerDocumentsRelationManager extends RelationManager
                             context: ['Document' => static::label($record)],
                             audit: 'runner.document.approved',
                         );
+
+                        // The page's Approve runner button reads the documents.
+                        $livewire->dispatch('runner-documents-reviewed');
                     }),
 
                 Action::make('reject_doc')
@@ -120,7 +123,7 @@ class RunnerDocumentsRelationManager extends RelationManager
                             ->required()
                             ->maxLength(500),
                     ])
-                    ->action(function (array $data, RunnerDocument $record): void {
+                    ->action(function (array $data, RunnerDocument $record, $livewire): void {
                         $record->update([
                             'status' => 'rejected',
                             'rejection_reason' => $data['reason'],
@@ -148,6 +151,8 @@ class RunnerDocumentsRelationManager extends RelationManager
                             audit: 'runner.document.rejected',
                             properties: ['reason' => $data['reason']],
                         );
+
+                        $livewire->dispatch('runner-documents-reviewed');
                     }),
             ]);
     }

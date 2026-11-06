@@ -27,6 +27,12 @@ class SOSAlertResource extends Resource
 
     protected static ?string $slug = 'sos-alerts';
 
+    // Derived from the class name these read "S O S Alerts" in the menu,
+    // titles and breadcrumbs.
+    protected static ?string $modelLabel = 'SOS alert';
+
+    protected static ?string $pluralModelLabel = 'SOS alerts';
+
     public static function infolist(Schema $schema): Schema
     {
         return SOSAlertInfolist::configure($schema);

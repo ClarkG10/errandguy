@@ -51,7 +51,7 @@ class PaymentInfolist
 
                 // ---- Immutable status trail ----
                 Section::make('Status timeline')
-                    ->description('Every status change, recorded by Payment::transitionTo (never edited directly).')
+                    ->description('Every change to this payment’s status, oldest first, with who made it. It can’t be edited.')
                     ->schema([
                         ViewEntry::make('transitions_timeline')
                             ->hiddenLabel()

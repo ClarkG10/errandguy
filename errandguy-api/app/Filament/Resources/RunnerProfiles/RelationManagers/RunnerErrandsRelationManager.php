@@ -25,7 +25,7 @@ class RunnerErrandsRelationManager extends RelationManager
             ->paginated([10, 25])
             ->columns([
                 TextColumn::make('booking_number')->searchable()->weight('semibold'),
-                TextColumn::make('status')->formatStateUsing(fn (?string $state): string => \App\Filament\Support\StatusLabels::booking($state))->badge()->color(fn (string $s): string => match ($s) {
+                TextColumn::make('status')->formatStateUsing(fn (?string $state): string => \App\Filament\Support\StatusLabels::booking($state))->badge()->color(fn (string $state): string => match ($state) {
                     'completed', 'delivered' => 'success',
                     'cancelled', 'no_runner' => 'danger',
                     default => 'warning',

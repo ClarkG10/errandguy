@@ -12,6 +12,7 @@ use Filament\Notifications\Notification;
 use Filament\Schemas\Components\Component;
 use Illuminate\Contracts\Auth\Authenticatable;
 use Illuminate\Contracts\Auth\Guard;
+use Illuminate\Contracts\Support\Htmlable;
 use Illuminate\Validation\ValidationException;
 use SensitiveParameter;
 
@@ -28,6 +29,23 @@ class StaffLogin extends Login
 {
     /** Set when this attempt's failure has been recorded, so it counts once. */
     private bool $failureRecorded = false;
+
+    // One heading per step. A welcome block used to sit under Filament's own
+    // "Sign in", and stayed on the two-step code screen too, where it read
+    // "Verify your identity … Welcome back, sign in".
+    public function getHeading(): string|Htmlable|null
+    {
+        return filled($this->userUndertakingMultiFactorAuthentication)
+            ? parent::getHeading()
+            : 'Welcome back';
+    }
+
+    public function getSubheading(): string|Htmlable|null
+    {
+        return filled($this->userUndertakingMultiFactorAuthentication)
+            ? parent::getSubheading()
+            : 'Sign in to the ErrandGuy operations console — bookings, runners, payments & safety.';
+    }
 
     public function authenticate(): ?LoginResponse
     {

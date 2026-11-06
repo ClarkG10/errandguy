@@ -173,4 +173,35 @@ class RunnerApprovalRequiresDocumentsTest extends TestCase
             ->assertHasNoActionErrors();
         $this->assertSame('suspended', $ready->user->fresh()->status);
     }
+
+    public function test_the_runner_page_says_why_approve_is_not_usable_yet_and_unlocks_it_in_place(): void
+    {
+        $profile = $this->runner('Ramon Aquino', ['government_id' => 'approved', 'selfie' => 'pending']);
+        $selfie = $profile->documents()->where('document_type', 'selfie')->firstOrFail();
+
+        // On the runner's page Approve shows, greyed, instead of leaving staff
+        // with only "Reject runner"; the title is the runner's name.
+        $page = Livewire::test(\App\Filament\Resources\RunnerProfiles\Pages\ViewRunnerProfile::class, ['record' => $profile->getRouteKey()])
+            ->assertSee('Ramon Aquino')
+            ->assertActionVisible('approve')
+            ->assertActionDisabled('approve');
+
+        // The selfie is approved in the Documents tab (its own component),
+        // which tells the page; Approve unlocks without a reload.
+        Livewire::test(\App\Filament\Resources\RunnerProfiles\RelationManagers\RunnerDocumentsRelationManager::class, [
+            'ownerRecord' => $profile, 'pageClass' => \App\Filament\Resources\RunnerProfiles\Pages\ViewRunnerProfile::class,
+        ])->callTableAction('approve_doc', $selfie)
+            ->assertDispatched('runner-documents-reviewed');
+
+        $page->dispatch('runner-documents-reviewed')
+            ->assertActionEnabled('approve')
+            ->callAction('approve')
+            ->assertHasNoActionErrors();
+        $this->assertSame('approved', $profile->fresh()->verification_status);
+
+        // The list keeps hiding it until the documents are approved.
+        $other = $this->runner('Pending Docs', ['government_id' => 'pending', 'selfie' => 'pending']);
+        Livewire::test(ListRunnerProfiles::class, ['activeTab' => 'all'])
+            ->assertTableActionHidden('approve', $other);
+    }
 }

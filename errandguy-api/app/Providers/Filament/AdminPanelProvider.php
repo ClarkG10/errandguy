@@ -143,7 +143,6 @@ class AdminPanelProvider extends PanelProvider
             // Inject the branded theme + login/sidebar chrome with NO Vite build
             // step — pure render hooks so the deploy pipeline is unchanged.
             ->renderHook(PanelsRenderHook::HEAD_END, fn (): string => view('filament.admin-theme')->render())
-            ->renderHook(PanelsRenderHook::AUTH_LOGIN_FORM_BEFORE, fn (): string => view('filament.login-hero')->render())
             ->renderHook(PanelsRenderHook::AUTH_LOGIN_FORM_AFTER, fn (): string => view('filament.login-footer')->render())
             ->renderHook(PanelsRenderHook::SIDEBAR_FOOTER, fn (): string => view('filament.sidebar-footer')->render())
             // SOS alarm: every admin page of staff who handle safety beeps and

@@ -232,7 +232,7 @@ class RunnerProfilesTable
 
     // Approve / reject, shared by the list row and the runner's page (where
     // the documents are reviewed), so staff decide where they read.
-    public static function approveAction(): Action
+    public static function approveAction(bool $explainWhenBlocked = false): Action
     {
         return Action::make('approve')
             ->label('Approve runner')
@@ -240,12 +240,17 @@ class RunnerProfilesTable
             ->color('success')
             ->requiresConfirmation()
             ->modalDescription('Their government ID and selfie are approved. This lets them go online and accept errands.')
-            // Only offered once the government ID and selfie are both
-            // approved (Documents tab). Approving a runner never
-            // approves their documents for them.
+            // Only usable once the government ID and selfie are both approved
+            // (Documents tab). Approving a runner never approves their
+            // documents for them. The list row hides it until then; the
+            // runner's page shows it greyed with the reason.
             ->visible(fn ($record): bool => $record->verification_status !== 'approved'
                 && static::canModerate()
-                && static::documentsApproved($record))
+                && ($explainWhenBlocked || static::documentsApproved($record)))
+            ->disabled(fn ($record): bool => ! static::documentsApproved($record))
+            ->tooltip(fn ($record): ?string => static::documentsApproved($record)
+                ? null
+                : 'Approve their government ID and selfie first (Documents tab).')
             ->action(function ($record): void {
                 if (! $record->hasApprovedRequiredDocuments()) {
                     AdminNotify::warning(

@@ -12,6 +12,7 @@ use Filament\Resources\Resource;
 use Filament\Schemas\Schema;
 use Filament\Support\Icons\Heroicon;
 use Filament\Tables\Table;
+use Illuminate\Contracts\Support\Htmlable;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Model;
 
@@ -25,7 +26,22 @@ class PaymentResource extends Resource
 
     protected static ?int $navigationSort = 10;
 
+    // Still the id, so global search finds a payment by the id a gateway email
+    // or a log quotes; the title shown is the errand it paid for.
     protected static ?string $recordTitleAttribute = 'id';
+
+    public static function getRecordTitle(?Model $record): string|Htmlable|null
+    {
+        if (! $record) {
+            return static::getModelLabel();
+        }
+
+        $number = $record->booking?->booking_number;
+
+        return $number
+            ? 'Payment for '.$number
+            : 'Payment of ₱'.number_format((float) $record->amount, 2);
+    }
 
     public static function getEloquentQuery(): Builder
     {

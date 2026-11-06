@@ -36,7 +36,7 @@ class WalletTransactionsRelationManager extends RelationManager
             ->defaultSort('created_at', 'desc')
             ->paginated([10, 25])
             ->columns([
-                TextColumn::make('type')->badge()->color(fn (string $s): string => match ($s) {
+                TextColumn::make('type')->badge()->color(fn (string $state): string => match ($state) {
                     'top_up', 'earning', 'bonus', 'tip', 'cancel_fee' => 'success',
                     'refund' => 'info',
                     'payout', 'payment' => 'warning',
@@ -45,7 +45,7 @@ class WalletTransactionsRelationManager extends RelationManager
                 TextColumn::make('amount')->money('PHP')
                     ->color(fn ($state): string => (float) $state < 0 ? 'danger' : 'success')->alignEnd(),
                 TextColumn::make('balance_after')->label('Balance')->money('PHP')->alignEnd(),
-                TextColumn::make('status')->badge()->color(fn (string $s): string => match ($s) {
+                TextColumn::make('status')->badge()->color(fn (string $state): string => match ($state) {
                     'completed' => 'success', 'pending' => 'warning', 'failed' => 'danger', default => 'gray',
                 }),
                 TextColumn::make('description')->limit(40)->toggleable(),

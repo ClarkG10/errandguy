@@ -32,6 +32,17 @@ class AdminLoginPageTest extends TestCase
         $this->get('/admin/login')
             ->assertOk()
             ->assertDontSee('mascot.png')
-            ->assertSee('Welcome back'); // the rest of the hero stays
+            ->assertSee('Welcome back')
+            ->assertSee('Sign in to the ErrandGuy operations console', escape: false);
+    }
+
+    public function test_login_shows_one_heading_not_a_second_sign_in_title(): void
+    {
+        // The welcome used to be a render-hook block under Filament's own
+        // "Sign in" heading — two titles, and it stayed on the code step.
+        $html = $this->get('/admin/login')->assertOk()->getContent();
+
+        $this->assertStringNotContainsString('eg-login-hero', $html);
+        $this->assertSame(1, substr_count($html, 'fi-simple-header-heading'));
     }
 }

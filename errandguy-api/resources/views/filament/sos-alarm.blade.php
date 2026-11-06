@@ -12,6 +12,10 @@
     showing notifications. Until both are allowed, a small "Turn on SOS alarm"
     button sits in the corner; any click on the page also unlocks the sound.
 
+    Staff can shrink a silenced banner to a small red "SOS · N open" pill (it
+    covered a fifth of a phone screen on every page); a new alert expands it
+    and rings again. The banner is not shown for the alert whose page is open.
+
     data-navigate-once: the panel navigates without full reloads (SPA mode), so
     the script must run once per page load, and re-draw its banner after each
     navigation swaps the page body.
@@ -25,6 +29,7 @@
     var POLL_MS = 15000;
     var REPEAT_MS = 5000;
     var SEEN_KEY = 'eg_sos_seen';
+    var MIN_KEY = 'eg_sos_minimized';
 
     var seen = {};
     try { (JSON.parse(sessionStorage.getItem(SEEN_KEY) || '[]') || []).forEach(function (id) { seen[id] = true; }); } catch (e) {}
@@ -33,6 +38,19 @@
     var alerts = [];
     var ringing = null;
     var repeatTimer = null;
+    var minimized = false;
+    try { minimized = sessionStorage.getItem(MIN_KEY) === '1'; } catch (e) {}
+
+    function setMinimized(value) {
+        minimized = value;
+        try { sessionStorage.setItem(MIN_KEY, value ? '1' : '0'); } catch (e) {}
+        render();
+    }
+
+    // The alert this page is showing (its own SOS page): no banner for it.
+    function isOpenHere(alert) {
+        try { return new URL(alert.url, location.origin).pathname === location.pathname; } catch (e) { return false; }
+    }
 
     function audio() {
         if (!ctx) {
@@ -97,6 +115,8 @@
 
     function ring(alert) {
         ringing = alert;
+        minimized = false;
+        try { sessionStorage.setItem(MIN_KEY, '0'); } catch (e) {}
         beep();
         if (repeatTimer) clearInterval(repeatTimer);
         repeatTimer = setInterval(beep, REPEAT_MS);
@@ -133,13 +153,22 @@
         var node = box();
         node.innerHTML = '';
 
-        if (ringing || alerts.length) {
-            var a = ringing || alerts[0];
+        var elsewhere = alerts.filter(function (x) { return !isOpenHere(x); });
+        var a = ringing || elsewhere[0];
+
+        if (a && minimized && !ringing) {
+            node.appendChild(button(
+                'SOS · ' + alerts.length + ' open',
+                'background:#dc2626;color:#fff;font-weight:700;border-radius:999px;box-shadow:0 6px 20px rgba(0,0,0,.35);align-self:flex-end;',
+                function () { setMinimized(false); }
+            ));
+        } else if (a) {
             var banner = document.createElement('div');
             banner.style.cssText = 'background:#dc2626;color:#fff;border-radius:12px;padding:12px 14px;box-shadow:0 10px 30px rgba(0,0,0,.35);';
             var title = document.createElement('div');
             title.style.cssText = 'font-weight:700;';
-            title.textContent = a.title + (alerts.length > 1 ? ' (+' + (alerts.length - 1) + ' more open)' : '');
+            var others = alerts.filter(function (x) { return x.id !== a.id; }).length;
+            title.textContent = a.title + (others ? ' (+' + others + ' more open)' : '');
             var body = document.createElement('div');
             body.style.cssText = 'opacity:.9;margin:2px 0 8px;';
             body.textContent = a.body;
@@ -147,6 +176,7 @@
             row.style.cssText = 'display:flex;gap:8px;flex-wrap:wrap;';
             row.appendChild(button('Open alert', 'background:#fff;color:#b91c1c;font-weight:700;', function () { silence(); window.location.href = a.url; }));
             if (ringing) row.appendChild(button('Silence', 'background:rgba(255,255,255,.18);color:#fff;', silence));
+            else row.appendChild(button('Hide', 'background:rgba(255,255,255,.18);color:#fff;', function () { setMinimized(true); }));
             banner.appendChild(title);
             banner.appendChild(body);
             banner.appendChild(row);
