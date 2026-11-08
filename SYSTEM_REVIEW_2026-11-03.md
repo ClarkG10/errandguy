@@ -1075,7 +1075,7 @@ Production was never touched. The throwaway server ran on SQLite with its own st
 | W8 | Medium | Runner, handover | "Errand complete" showed at *delivered*, before the cash and signature. It now says "Finish the handover". | Fixed |
 | W9 | Medium | Runner, arrival prompt | Reopening an errand, the "mark arrived?" prompt fired on the cached older status and stayed up after the real one loaded. Its button would have pushed the errand a step further. The prompt now closes when the status moves on. | Fixed |
 | W10 | Medium | Erased accounts, staff panel | An erased account showed "active", with Suspend and Adjust wallet offered. Its deletion payout had no name on Payouts. It is now "deleted" (and fixed for past ones), those actions are hidden, and Payouts names it "Deleted User". | Fixed |
-| W11 | Medium | "No runner" errands | Home showed one as "Finding a runner" under "2 active", and Profile said "Errand in progress" and blocked the switch to runner mode. Tracking and staff call it ended. It no longer counts as live. | Fixed |
+| W11 | Medium | "No runner" errands | Home showed one as "Finding a runner" under "2 active", and Profile said "Errand in progress" and blocked the switch to runner mode. Tracking and staff call it ended. It no longer counts as live, in the app or in the server's role-switch check (§12.1). | Fixed |
 | W12 | Low | Tracking | While an offer waited, and after a cancel before anyone accepted, tracking showed "On the way · Call · Message" for a "?" runner, and "Report this person" with no one behind it. Both now need a runner who accepted. | Fixed |
 | W13 | Low | Runner history, staff list | An errand cancelled while only *offered* showed in the runner's history as "Cancelled ₱0.00", and in the staff list under that runner. It is out of their history, and the staff list says "Offered, not accepted". | Fixed |
 | W14 | Low | Payouts | "Send via Xendit — Real money leaves now" was offered with no Xendit keys, then said "Payout failed" while the payout stayed pending. Not offered without keys; the error says "Payout still pending". | Fixed |
@@ -1135,3 +1135,66 @@ Production was never touched. The throwaway server ran on SQLite with its own st
 1. In Forge, deploy the server first. It runs **four migrations**: `push_tickets` (§10), staff replies to support, marking finished cash errands paid, and marking erased accounts deleted.
 2. Run `php artisan errandguy:preflight` once.
 3. Publish the app with `eas update`.
+
+## 12. Triple check and the twenty polish rules (2026-11-08)
+
+You asked for everything to be triple-checked for production, and for the app to be checked against the twenty polish rules using the taste skill and other GitHub UI/UX references. The taste skill builds marketing websites, so for a phone app its principles were applied. The installed UI/UX Pro Max skill (built from a GitHub guideline set) supplied the mobile checklist. Its CRITICAL and HIGH items were checked: contrast, touch targets, one primary action, consistent icons, and tabular figures.
+
+### 12.1 Independent review of the fourth pass
+
+A reviewer who hadn't seen the reasoning read the five fourth-pass commits cold. It confirmed three defects, all fixed with tests (128b70b):
+- **Medium:** a cache outage during a suspension could leave a user marked suspended but still signed in, and in a bulk suspend it stopped every user after the failing one. The notice is now best-effort.
+- **Low–Medium:** a "no runner" errand still blocked the switch to runner mode on the server, while the app no longer showed it.
+- **Low:** the cache fix could still join a request already in flight before the change. The request cache is now cleared before screens refetch.
+
+Everything else it traced held:
+- the support migration on MySQL;
+- the vehicle-fee arithmetic against PricingService;
+- every reader of a cash errand's paid status;
+- token-exact suspension notices;
+- the role switch, the arrival prompt and the cash line.
+
+### 12.2 The twenty rules
+
+Checked in the code and on today's screenshots, fixed, then rendered again against a throwaway server (6557147).
+
+| Rule | Before | Now |
+|---|---|---|
+| 1 Filler badges | Tracking showed "Here" beside "Arrived" and "ON THE WAY" on the runner card, even after the runner had arrived | Both removed |
+| 2 Redundant labels | Tracking said its status 5 times; Home had two "What can we help…" headlines; "Set pickup" twice; two ETAs on the runner screen; Welcome had "WHAT IT DOES" eyebrows | Each said once |
+| 3 Italics | Two notices | None; a guard test checks it |
+| 4 Mono | None | Guarded |
+| 5 Design system | Home mixed a bold heading with a spaced-caps eyebrow; staff tables mixed header styles | One heading style per screen and per table |
+| 6 Show the product | Welcome uses illustrations | **Open:** needs real app screenshots taken on a phone |
+| 7–8 Main feature, grouping | Fine | — |
+| 9 Specific headlines | "Real-time tracking", "Safe & secure", "1 errands" | "Watch your runner, live", "Verified runners, fixed prices", "1 errand" |
+| 10 CTA | "Request payout" was the main button even when nothing could be paid out | Main button only when a payout is possible |
+| 11 Accent | Amber for cash and earnings | Fine |
+| 12 Icons | Tab bars on Ionicons, everything else on Lucide | All Lucide; guarded |
+| 13 Embellishments | Removed in §10.5 | **Open:** Home's 3D errand-type tiles are brand art, kept |
+| 14 Inner radius | Spot-checked | Fine |
+| 15 Contrast | Tertiary grey 4.48:1 on the page background | #617088, at least 4.5:1 on every light background; guarded |
+| 16 Wrapping | "OWED FROM CASH ER…" cut off | "You owe" |
+| 17 Optical alignment | Phone-only | Needs a device |
+| 18 Tabular figures | 4 standalone amounts without | All money figures |
+| 19 Loading states | Done in §10.5 | — |
+| 20 Animated feedback | Done in §10.5 | — |
+
+Also fixed while looking:
+- the runner's online caption said "receiving requests" with location off;
+- earnings read "You owe −₱6.76", a double negative.
+
+### 12.3 Checks
+
+- **Server tests:** 1,542 passed.
+- **App tests:** 1,808 passed (including the new design-rule guard, which fails on the old icon set and grey); type check clean.
+- **Real data:** the three new migrations ran on the end-to-end run's database:
+  - the three errands it had reported as "Unpaid" are now paid;
+  - the erased account reads "deleted";
+  - the support key is gone.
+- **Rendered after the fixes:** Home, tracking, the runner's errand screen, Earnings, runner Home, the pickup step and Welcome. The web build was confirmed at runtime to use the local server, with production hosts blocked. Afterwards the override file was deleted and the servers stopped.
+- **Not rendered:** the staff-table header fix, a one-line CSS rule.
+
+### 12.4 Release order
+
+Unchanged from §11.6: the server first (four migrations), then `php artisan errandguy:preflight`, then `eas update`.
