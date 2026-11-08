@@ -78,6 +78,14 @@ final class ApiExceptionRenderer
             ? self::json(ErrorCode::INVALID_STATUS_TRANSITION, null, [], self::debugMeta($e), 500)
             : null);
 
+        // Two identical requests at once (a double tap on "Submit review", a
+        // registration sent twice): the database's unique index lets one in
+        // and refuses the other. That is a duplicate, not a server fault — a
+        // 409 the app shows calmly, not a 500.
+        $exceptions->render(fn (\Illuminate\Database\UniqueConstraintViolationException $e, Request $r) => self::wantsJson($r)
+            ? self::json(ErrorCode::CONFLICT, 'That was already saved. Pull to refresh to see it.')
+            : null);
+
         // Catch-all LAST: prepared HTTP exceptions mapped by status; everything
         // else gets an honest 500 with no leaked internals.
         $exceptions->render(function (\Throwable $e, Request $r) {

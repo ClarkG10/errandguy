@@ -46,7 +46,10 @@ class SendOnboardingRemindersCommand extends Command
     private const FIRST_NUDGE_AFTER_HOURS = 20;
 
     /** Minimum gap between nudges. */
-    private const MIN_GAP_HOURS = 48;
+    // 47, not 48: the command runs once a day at 10:00, so a 48-hour gap
+    // missed by seconds about half the time and the second nudge slipped a
+    // whole day, to 72 hours.
+    private const MIN_GAP_HOURS = 47;
 
     /** Total nudges per runner, ever. */
     private const MAX_NUDGES = 3;

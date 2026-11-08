@@ -178,11 +178,11 @@ class WalletController extends Controller
         }
 
         if ($request->filled('date_from')) {
-            $query->where('created_at', '>=', \Carbon\Carbon::parse($request->input('date_from'))->startOfDay());
+            $query->where('created_at', '>=', \App\Support\BusinessDay::startOf((string) $request->input('date_from'))); // a Manila day, not a UTC one
         }
 
         if ($request->filled('date_to')) {
-            $query->where('created_at', '<=', \Carbon\Carbon::parse($request->input('date_to'))->endOfDay());
+            $query->where('created_at', '<', \App\Support\BusinessDay::startOf((string) $request->input('date_to'))->addDay());
         }
 
         $transactions = $query->paginate($request->perPage(20));

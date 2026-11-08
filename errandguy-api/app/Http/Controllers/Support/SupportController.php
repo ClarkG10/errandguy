@@ -49,6 +49,20 @@ class SupportController extends Controller
         $ticket = DB::transaction(function () use ($validated, $userId) {
             $now = now();
 
+            // A double tap (or a retry after a slow answer) sends the same
+            // ticket twice. Serialized on the person's row: the second finds
+            // the first and returns it, instead of opening a duplicate.
+            \App\Models\User::whereKey($userId)->lockForUpdate()->first();
+            $duplicate = SupportTicket::where('user_id', $userId)
+                ->where('subject', $validated['subject'])
+                ->where('booking_id', $validated['booking_id'] ?? null)
+                ->where('created_at', '>=', $now->copy()->subSeconds(30))
+                ->latest()
+                ->first();
+            if ($duplicate) {
+                return $duplicate;
+            }
+
             $ticket = SupportTicket::create([
                 'user_id' => $userId,
                 'booking_id' => $validated['booking_id'] ?? null,

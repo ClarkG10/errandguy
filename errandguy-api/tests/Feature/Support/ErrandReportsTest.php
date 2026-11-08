@@ -68,6 +68,19 @@ class ErrandReportsTest extends TestCase
             ->assertJsonPath('data.reported_user_id', null);
     }
 
+    public function test_a_double_tap_opens_one_ticket_not_two(): void
+    {
+        $first = $this->report($this->customer, ['booking_id' => $this->booking->id, 'category' => 'item_damaged'])->assertCreated();
+        $second = $this->report($this->customer, ['booking_id' => $this->booking->id, 'category' => 'item_damaged'])->assertCreated();
+
+        $this->assertSame($first->json('data.id'), $second->json('data.id'));
+        $this->assertSame(1, \App\Models\SupportTicket::where('user_id', $this->customer->id)->count());
+
+        // A different problem is a different ticket.
+        $this->report($this->customer, ['booking_id' => $this->booking->id, 'category' => 'item_damaged', 'subject' => 'Runner was rude'])->assertCreated();
+        $this->assertSame(2, \App\Models\SupportTicket::where('user_id', $this->customer->id)->count());
+    }
+
     public function test_a_report_cannot_point_at_someone_elses_errand(): void
     {
         $stranger = User::factory()->create(['role' => 'customer', 'status' => 'active']);

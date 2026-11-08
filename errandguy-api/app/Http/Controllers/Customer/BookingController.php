@@ -83,12 +83,15 @@ class BookingController extends Controller
             $query->where('errand_type_id', $request->input('errand_type_id'));
         }
 
+        // A malformed date was a 500 (Carbon threw); refuse it as input.
+        $request->validate(['date_from' => ['nullable', 'date'], 'date_to' => ['nullable', 'date']]);
+
         if ($request->filled('date_from')) {
-            $query->where('created_at', '>=', Carbon::parse($request->input('date_from'))->startOfDay());
+            $query->where('created_at', '>=', \App\Support\BusinessDay::startOf((string) $request->input('date_from'))); // a Manila day, not a UTC one
         }
 
         if ($request->filled('date_to')) {
-            $query->where('created_at', '<=', Carbon::parse($request->input('date_to'))->endOfDay());
+            $query->where('created_at', '<', \App\Support\BusinessDay::startOf((string) $request->input('date_to'))->addDay());
         }
 
         $bookings = $query->paginate($request->perPage(15));
